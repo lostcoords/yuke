@@ -5,56 +5,10 @@
 pub(crate) const MIGRATIONS: &[&str] = &[include_str!(r"../migrations/0001_sessions.sql")];
 
 pub(crate) mod events {
-    use yuke_sql::rusqlite::{Connection, Result, Row};
-    use yuke_sql::{FromRow, Query, execute};
+    use yuke_sql::rusqlite::{Connection, Result};
+    use yuke_sql::{Query, execute};
 
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct InsertSettings {
-        pub(crate) seq: u64,
-    }
-
-    impl FromRow for InsertSettings {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self { seq: row.get("seq")? })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct InsertCommit {
-        pub(crate) seq: u64,
-    }
-
-    impl FromRow for InsertCommit {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self { seq: row.get("seq")? })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct ForkCut {
-        pub(crate) cut: u64,
-    }
-
-    impl FromRow for ForkCut {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self { cut: row.get("cut")? })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct CompletedTurnCount {
-        pub(crate) count: i64,
-    }
-
-    impl FromRow for CompletedTurnCount {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                count: row.get("count")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct EventsAfter {
         pub(crate) seq: u64,
         pub(crate) kind: String,
@@ -76,62 +30,14 @@ pub(crate) mod events {
         pub(crate) end_message: Option<String>,
     }
 
-    impl FromRow for EventsAfter {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                seq: row.get("seq")?,
-                kind: row.get("kind")?,
-                blocks: row.get("blocks")?,
-                settings: row.get("settings")?,
-                consumed: row.get("consumed")?,
-                head: row.get("head")?,
-                keep: row.get("keep")?,
-                model: row.get("model")?,
-                base_url: row.get("base_url")?,
-                input_tokens: row.get("input_tokens")?,
-                output_tokens: row.get("output_tokens")?,
-                reasoning_tokens: row.get("reasoning_tokens")?,
-                cache_read_tokens: row.get("cache_read_tokens")?,
-                cache_write_tokens: row.get("cache_write_tokens")?,
-                finish_reason: row.get("finish_reason")?,
-                end_kind: row.get("end_kind")?,
-                end_finish_reason: row.get("end_finish_reason")?,
-                end_message: row.get("end_message")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct NewestSettings {
-        pub(crate) settings: Option<crate::Json<yuke_protocol::SessionSettings>>,
-    }
-
-    impl FromRow for NewestSettings {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                settings: row.get("settings")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct NewestReplacement {
         pub(crate) seq: u64,
         pub(crate) head: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) keep: Option<usize>,
     }
 
-    impl FromRow for NewestReplacement {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                seq: row.get("seq")?,
-                head: row.get("head")?,
-                keep: row.get("keep")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct PreviousCommit {
         pub(crate) seq: u64,
         pub(crate) head: Option<crate::Json<Vec<yuke_ai::Block>>>,
@@ -139,45 +45,12 @@ pub(crate) mod events {
         pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
     }
 
-    impl FromRow for PreviousCommit {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                seq: row.get("seq")?,
-                head: row.get("head")?,
-                keep: row.get("keep")?,
-                blocks: row.get("blocks")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct CommitsFrom {
         pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
         pub(crate) end_kind: Option<String>,
         pub(crate) end_finish_reason: Option<String>,
         pub(crate) end_message: Option<String>,
-    }
-
-    impl FromRow for CommitsFrom {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                blocks: row.get("blocks")?,
-                end_kind: row.get("end_kind")?,
-                end_finish_reason: row.get("end_finish_reason")?,
-                end_message: row.get("end_message")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct NewestSessionIn {
-        pub(crate) id: [u8; 16],
-    }
-
-    impl FromRow for NewestSessionIn {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self { id: row.get("id")? })
-        }
     }
 
     #[derive(Debug)]
@@ -187,10 +60,7 @@ pub(crate) mod events {
     }
 
     /// Add a settings event with the next event number of the session. It adds no row for an unknown session.
-    pub(crate) fn insert_settings<'a>(
-        connection: &'a Connection,
-        params: &InsertSettingsParams,
-    ) -> Query<'a, InsertSettings> {
+    pub(crate) fn insert_settings<'a>(connection: &'a Connection, params: &InsertSettingsParams) -> Query<'a, u64> {
         Query::new(
             connection,
             r"INSERT INTO events(session_id, seq, kind, settings)
@@ -198,6 +68,7 @@ SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :ses
 FROM sessions WHERE id = :session_id
 RETURNING seq;",
             &[(":session_id", &params.session_id), (":settings", &params.settings)],
+            |row| row.get("seq"),
         )
     }
 
@@ -222,10 +93,7 @@ RETURNING seq;",
     }
 
     /// Add a commit event with the next event number of the session. It adds no row for an unknown session.
-    pub(crate) fn insert_commit<'a>(
-        connection: &'a Connection,
-        params: &InsertCommitParams<'_>,
-    ) -> Query<'a, InsertCommit> {
+    pub(crate) fn insert_commit<'a>(connection: &'a Connection, params: &InsertCommitParams<'_>) -> Query<'a, u64> {
         Query::new(
             connection,
             r"INSERT INTO events(
@@ -256,13 +124,14 @@ RETURNING seq;",
                 (":end_finish_reason", &params.end_finish_reason),
                 (":end_message", &params.end_message),
             ],
+            |row| row.get("seq"),
         )
     }
 
     /// The newest event number that a fork with no `through` copies: the end of the newest completed turn. With no completed
     /// turn, it is the event before the first commit, or the newest event when the session has no commit. It returns no row
     /// for an unknown session.
-    pub(crate) fn fork_cut(connection: &Connection, id: [u8; 16]) -> Query<'_, ForkCut> {
+    pub(crate) fn fork_cut(connection: &Connection, id: [u8; 16]) -> Query<'_, u64> {
         Query::new(
             connection,
             r"SELECT coalesce(
@@ -272,25 +141,29 @@ RETURNING seq;",
 ) AS cut
 FROM sessions WHERE id = :id;",
             &[(":id", &id)],
+            |row| row.get("cut"),
         )
     }
 
     #[derive(Debug)]
-    pub(crate) struct CompletedTurnCountParams {
+    pub(crate) struct EndsCompletedTurnParams {
         pub(crate) session_id: [u8; 16],
         pub(crate) seq: u64,
     }
 
-    /// The number of commits with this number that end a completed turn: 0 or 1.
-    pub(crate) fn completed_turn_count<'a>(
+    /// Whether the commit with this number in this session ends a completed turn.
+    pub(crate) fn ends_completed_turn<'a>(
         connection: &'a Connection,
-        params: &CompletedTurnCountParams,
-    ) -> Query<'a, CompletedTurnCount> {
+        params: &EndsCompletedTurnParams,
+    ) -> Query<'a, bool> {
         Query::new(
             connection,
-            r"SELECT count(*) AS count FROM events
-WHERE session_id = :session_id AND seq = :seq AND kind = 'commit' AND end_kind = 'completed';",
+            r"SELECT EXISTS(
+  SELECT 1 FROM events
+  WHERE session_id = :session_id AND seq = :seq AND kind = 'commit' AND end_kind = 'completed'
+) AS present;",
             &[(":session_id", &params.session_id), (":seq", &params.seq)],
+            |row| row.get("present"),
         )
     }
 
@@ -341,17 +214,43 @@ ORDER BY seq;",
 FROM events WHERE session_id = :session_id AND seq > :after
 ORDER BY seq;",
             &[(":session_id", &params.session_id), (":after", &params.after)],
+            |row| {
+                Ok(EventsAfter {
+                    seq: row.get("seq")?,
+                    kind: row.get("kind")?,
+                    blocks: row.get("blocks")?,
+                    settings: row.get("settings")?,
+                    consumed: row.get("consumed")?,
+                    head: row.get("head")?,
+                    keep: row.get("keep")?,
+                    model: row.get("model")?,
+                    base_url: row.get("base_url")?,
+                    input_tokens: row.get("input_tokens")?,
+                    output_tokens: row.get("output_tokens")?,
+                    reasoning_tokens: row.get("reasoning_tokens")?,
+                    cache_read_tokens: row.get("cache_read_tokens")?,
+                    cache_write_tokens: row.get("cache_write_tokens")?,
+                    finish_reason: row.get("finish_reason")?,
+                    end_kind: row.get("end_kind")?,
+                    end_finish_reason: row.get("end_finish_reason")?,
+                    end_message: row.get("end_message")?,
+                })
+            },
         )
     }
 
     /// The settings of the newest settings event of the session. It returns no row for an unknown session.
-    pub(crate) fn newest_settings(connection: &Connection, session_id: [u8; 16]) -> Query<'_, NewestSettings> {
+    pub(crate) fn newest_settings(
+        connection: &Connection,
+        session_id: [u8; 16],
+    ) -> Query<'_, Option<crate::Json<yuke_protocol::SessionSettings>>> {
         Query::new(
             connection,
             r"SELECT settings FROM events
 WHERE session_id = :session_id AND kind = 'settings'
 ORDER BY seq DESC LIMIT 1;",
             &[(":session_id", &session_id)],
+            |row| row.get("settings"),
         )
     }
 
@@ -363,6 +262,13 @@ ORDER BY seq DESC LIMIT 1;",
 WHERE session_id = :session_id AND kind = 'commit' AND keep IS NOT NULL
 ORDER BY seq DESC LIMIT 1;",
             &[(":session_id", &session_id)],
+            |row| {
+                Ok(NewestReplacement {
+                    seq: row.get("seq")?,
+                    head: row.get("head")?,
+                    keep: row.get("keep")?,
+                })
+            },
         )
     }
 
@@ -383,6 +289,14 @@ ORDER BY seq DESC LIMIT 1;",
 WHERE session_id = :session_id AND kind = 'commit' AND seq < :before
 ORDER BY seq DESC LIMIT 1;",
             &[(":session_id", &params.session_id), (":before", &params.before)],
+            |row| {
+                Ok(PreviousCommit {
+                    seq: row.get("seq")?,
+                    head: row.get("head")?,
+                    keep: row.get("keep")?,
+                    blocks: row.get("blocks")?,
+                })
+            },
         )
     }
 
@@ -400,12 +314,20 @@ ORDER BY seq DESC LIMIT 1;",
 WHERE session_id = :session_id AND kind = 'commit' AND seq >= :first
 ORDER BY seq;",
             &[(":session_id", &params.session_id), (":first", &params.first)],
+            |row| {
+                Ok(CommitsFrom {
+                    blocks: row.get("blocks")?,
+                    end_kind: row.get("end_kind")?,
+                    end_finish_reason: row.get("end_finish_reason")?,
+                    end_message: row.get("end_message")?,
+                })
+            },
         )
     }
 
     /// The session whose newest settings event names the folder `cwd` and that has the newest event of those sessions. A
     /// new event row gets a rowid above each rowid in the table, so a larger rowid is a newer event.
-    pub(crate) fn newest_session_in<'a>(connection: &'a Connection, cwd: &str) -> Query<'a, NewestSessionIn> {
+    pub(crate) fn newest_session_in<'a>(connection: &'a Connection, cwd: &str) -> Query<'a, [u8; 16]> {
         Query::new(
             connection,
             r"SELECT settings_event.session_id AS id FROM events AS settings_event
@@ -417,38 +339,19 @@ WHERE settings_event.kind = 'settings'
 ORDER BY (SELECT max(rowid) FROM events WHERE session_id = settings_event.session_id) DESC
 LIMIT 1;",
             &[(":cwd", &cwd)],
+            |row| row.get("id"),
         )
     }
 }
 
 pub(crate) mod pending_inputs {
-    use yuke_sql::rusqlite::{Connection, Result, Row};
-    use yuke_sql::{FromRow, Query, execute};
+    use yuke_sql::rusqlite::{Connection, Result};
+    use yuke_sql::{Query, execute};
 
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct InsertPendingInput {
-        pub(crate) id: u64,
-    }
-
-    impl FromRow for InsertPendingInput {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self { id: row.get("id")? })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct PendingInputs {
         pub(crate) id: u64,
         pub(crate) input: crate::Json<yuke_protocol::Input>,
-    }
-
-    impl FromRow for PendingInputs {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                id: row.get("id")?,
-                input: row.get("input")?,
-            })
-        }
     }
 
     #[derive(Debug)]
@@ -461,13 +364,14 @@ pub(crate) mod pending_inputs {
     pub(crate) fn insert_pending_input<'a>(
         connection: &'a Connection,
         params: &InsertPendingInputParams,
-    ) -> Query<'a, InsertPendingInput> {
+    ) -> Query<'a, u64> {
         Query::new(
             connection,
             r"INSERT INTO pending_inputs(session_id, input)
 SELECT id, :input FROM sessions WHERE id = :session_id
 RETURNING id;",
             &[(":session_id", &params.session_id), (":input", &params.input)],
+            |row| row.get("id"),
         )
     }
 
@@ -476,6 +380,12 @@ RETURNING id;",
             connection,
             r"SELECT id, input FROM pending_inputs WHERE session_id = :session_id ORDER BY id;",
             &[(":session_id", &session_id)],
+            |row| {
+                Ok(PendingInputs {
+                    id: row.get("id")?,
+                    input: row.get("input")?,
+                })
+            },
         )
     }
 
@@ -495,34 +405,8 @@ RETURNING id;",
 }
 
 pub(crate) mod sessions {
-    use yuke_sql::rusqlite::{Connection, Result, Row};
-    use yuke_sql::{FromRow, Query, execute};
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct SessionPrompt {
-        pub(crate) prompt: crate::Json<Vec<yuke_agent::PromptSection>>,
-    }
-
-    impl FromRow for SessionPrompt {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                prompt: row.get("prompt")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct SessionCount {
-        pub(crate) count: i64,
-    }
-
-    impl FromRow for SessionCount {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                count: row.get("count")?,
-            })
-        }
-    }
+    use yuke_sql::rusqlite::{Connection, Result};
+    use yuke_sql::{Query, execute};
 
     #[derive(Debug)]
     pub(crate) struct InsertSessionParams {
@@ -554,20 +438,25 @@ pub(crate) mod sessions {
     }
 
     /// The sections of the system prompt of the session. It returns no row for an unknown session.
-    pub(crate) fn session_prompt(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionPrompt> {
+    pub(crate) fn session_prompt(
+        connection: &Connection,
+        id: [u8; 16],
+    ) -> Query<'_, crate::Json<Vec<yuke_agent::PromptSection>>> {
         Query::new(
             connection,
             r"SELECT prompt FROM sessions WHERE id = :id;",
             &[(":id", &id)],
+            |row| row.get("prompt"),
         )
     }
 
-    /// The number of sessions with this id: 0 or 1.
-    pub(crate) fn session_count(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionCount> {
+    /// Whether a session has this id.
+    pub(crate) fn session_exists(connection: &Connection, id: [u8; 16]) -> Query<'_, bool> {
         Query::new(
             connection,
-            r"SELECT count(*) AS count FROM sessions WHERE id = :id;",
+            r"SELECT EXISTS(SELECT 1 FROM sessions WHERE id = :id) AS present;",
             &[(":id", &id)],
+            |row| row.get("present"),
         )
     }
 

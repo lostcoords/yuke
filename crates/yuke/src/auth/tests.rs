@@ -18,16 +18,7 @@ const START: &str =
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
-    let folder = std::env::temp_dir()
-        .join(format!("yuke-auth-tests-{}", std::process::id()))
-        .join(name);
-    match fs::remove_dir_all(&folder) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => panic!("{error}"),
-    }
-    fs::create_dir_all(&folder).unwrap();
-    folder
+    yuke_testing::folder("auth", name)
 }
 
 /// The content of `auth.json`, or `{}` when it does not exist.

@@ -1,5 +1,5 @@
 //! The shared store behaviors, and the behaviors of the file: a reopen, and the owner lock across two stores.
-#![expect(clippy::unwrap_used, clippy::panic, reason = "a test fails by panicking")]
+#![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -15,13 +15,7 @@ use yuke_store::SqliteStore;
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
-    let folder = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("yuke-store").join(name);
-    match std::fs::remove_dir_all(&folder) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("{}: {error}", folder.display()),
-    }
-    folder
+    yuke_testing::folder("store", name)
 }
 
 async fn make_store(name: &str) -> std::sync::Arc<SqliteStore> {

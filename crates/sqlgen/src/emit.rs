@@ -2,7 +2,7 @@
 
 use std::fmt::{self, Write as _};
 
-use crate::resolve::{Module, Parameter, Query, RowType, pascal_case};
+use crate::resolve::{Column, Module, Parameter, Query, pascal_case};
 
 /// The generated file for `modules`. `migrations` holds the migration file names in number order.
 pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, fmt::Error> {
@@ -26,21 +26,18 @@ pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, 
 fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
     writeln!(code, "pub(crate) mod {} {{", module.name)?;
     // The module imports each name that it uses, so no path in it can be shorter, whatever the parent imports.
-    let rows = module.queries.iter().any(|query| query.row.is_some());
-    let executes = module.queries.iter().any(|query| query.row.is_none());
+    let reads = module.queries.iter().any(|query| !query.columns.is_empty());
+    let executes = module.queries.iter().any(|query| query.columns.is_empty());
     let mut runtime = Vec::new();
     let mut sqlite = Vec::new();
     if !module.queries.is_empty() {
         sqlite.push("Connection");
     }
-    if rows || executes {
-        sqlite.push("Result");
-    }
-    if rows {
-        sqlite.push("Row");
-        runtime.extend(["FromRow", "Query"]);
+    if reads {
+        runtime.push("Query");
     }
     if executes {
+        sqlite.push("Result");
         runtime.push("execute");
     }
     for (path, names) in [("yuke_sql", runtime), ("yuke_sql::rusqlite", sqlite)] {
@@ -49,8 +46,9 @@ fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
         }
     }
     code.push('\n');
-    for row in module.queries.iter().filter_map(|query| query.row.as_ref()) {
-        emit_row(code, row)?;
+    // A query of one column gives the value of that column, so only a query of several columns needs a row struct.
+    for query in module.queries.iter().filter(|query| query.columns.len() > 1) {
+        emit_row(code, &pascal_case(&query.name), &query.columns)?;
     }
     for query in &module.queries {
         emit_query(code, query)?;
@@ -59,27 +57,12 @@ fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
     Ok(())
 }
 
-fn emit_row(code: &mut String, row: &RowType) -> fmt::Result {
-    writeln!(
-        code,
-        "#[derive(Debug, Clone, PartialEq)]\npub(crate) struct {} {{",
-        row.name
-    )?;
-    for field in &row.fields {
-        writeln!(code, "pub(crate) {}: {},", field.name, field.rust_type)?;
+fn emit_row(code: &mut String, name: &str, columns: &[Column]) -> fmt::Result {
+    writeln!(code, "#[derive(Debug, PartialEq)]\npub(crate) struct {name} {{")?;
+    for column in columns {
+        writeln!(code, "pub(crate) {}: {},", column.name, column.rust_type)?;
     }
     code.push_str("}\n\n");
-    writeln!(
-        code,
-        "impl FromRow for {} {{\n\
-         fn from_row(row: &Row<'_>) -> Result<Self> {{\n\
-         Ok(Self {{",
-        row.name
-    )?;
-    for field in &row.fields {
-        writeln!(code, "{0}: row.get({0:?})?,", field.name)?;
-    }
-    code.push_str("})\n}\n}\n\n");
     Ok(())
 }
 
@@ -103,14 +86,26 @@ fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
         writeln!(code, "///{line}")?;
     }
     // The query borrows the connection. Elision covers that when the connection is the only reference argument.
-    let other_references = parameter_struct.is_some()
-        || query
-            .parameters
-            .iter()
-            .any(|parameter| parameter.rust_type.contains('&'));
-    let (lifetime, connection, output) = match &query.row {
-        Some(row) if other_references => ("<'a>", "&'a", format!("Query<'a, {}>", row.name)),
-        Some(row) => ("", "&", format!("Query<'_, {}>", row.name)),
+    let other_references = parameter_struct.is_some() || borrows;
+    let (value, read) = match query.columns.as_slice() {
+        [] => (None, String::new()),
+        [column] => (
+            Some(column.rust_type.clone()),
+            format!(", |row| row.get({:?})", column.name),
+        ),
+        columns => {
+            let name = pascal_case(&query.name);
+            let fields: Vec<_> = columns
+                .iter()
+                .map(|column| format!("{0}: row.get({0:?})?", column.name))
+                .collect();
+            let read = format!(", |row| Ok({name} {{ {} }})", fields.join(", "));
+            (Some(name), read)
+        }
+    };
+    let (lifetime, connection, output) = match &value {
+        Some(value) if other_references => ("<'a>", "&'a", format!("Query<'a, {value}>")),
+        Some(value) => ("", "&", format!("Query<'_, {value}>")),
         None => ("", "&", "Result<usize>".to_owned()),
     };
     write!(
@@ -139,10 +134,10 @@ fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
             }
         }
     }
-    let call = if query.row.is_some() { "Query::new" } else { "execute" };
+    let call = if value.is_some() { "Query::new" } else { "execute" };
     writeln!(
         code,
-        ") -> {output} {{\n{call}(connection, {}, &[{}])\n}}\n",
+        ") -> {output} {{\n{call}(connection, {}, &[{}]{read})\n}}\n",
         raw_string(&query.sql),
         bindings.join(", ")
     )

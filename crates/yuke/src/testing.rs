@@ -122,13 +122,9 @@ pub(crate) struct Place {
 impl Place {
     /// New empty folders for the test `name` of the suite `suite`.
     pub(crate) fn new(suite: &str, name: &str) -> Place {
-        let root = std::env::temp_dir().join(format!("yuke-{suite}-tests-{}/{name}", std::process::id()));
-        if root.exists() {
-            std::fs::remove_dir_all(&root).unwrap();
-        }
+        let root = yuke_testing::folder(suite, name);
         std::fs::create_dir_all(root.join("work")).unwrap();
         std::fs::create_dir_all(root.join("home")).unwrap();
-        let root = root.canonicalize().unwrap();
         Place {
             paths: Paths {
                 config: root.join("config"),

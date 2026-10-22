@@ -26,8 +26,9 @@ INSERT INTO notes(author, title, body) VALUES (:author, :title, :body);
 - A type of the crate needs its full path, for example `crate::NoteId`. The generated modules import no name of their
   parent.
 - A row declaration lists every returned column exactly once. It lists no column that the query does not return.
-  The field order can differ from the column order in the query. Its row struct has the name of the query in
-  PascalCase, for example `NoteById`.
+  The field order can differ from the column order in the query. A query of one column gives the value of that
+  column. A query of several columns gets a row struct with the name of the query in PascalCase, for example
+  `NoteById`.
 - A column takes its type from its schema declaration: `INTEGER` is `i64`, `REAL` is `f64`, `TEXT` is `String`, and `BLOB` is
   `Vec<u8>`. A computed column needs a type annotation. A domain type needs a type override.
 - A table column without `NOT NULL` needs `?`. Write `NOT NULL` on key columns, for example

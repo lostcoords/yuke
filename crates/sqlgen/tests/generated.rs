@@ -156,7 +156,7 @@ fn the_generated_queries_run_against_the_fixture_schema() {
         .map(|note| note.id)
         .collect();
     assert_eq!(found, [NoteId(2)]);
-    assert_eq!(notes::note_count(&connection).one().unwrap().count, 2);
+    assert_eq!(notes::note_count(&connection).one().unwrap(), 2);
     assert_eq!(notes::star_note(&connection, NoteId(2)).unwrap(), 1);
-    assert_eq!(notes::stars_of(&connection, NoteId(2)).one().unwrap().stars, 1);
+    assert_eq!(notes::stars_of(&connection, NoteId(2)).one().unwrap(), 1);
 }

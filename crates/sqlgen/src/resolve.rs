@@ -6,21 +6,12 @@ use crate::Error;
 use crate::parse::{self, Field, QueryDeclaration};
 
 /// The checked queries of one query file.
-#[derive(Debug)]
 pub(crate) struct Module {
     pub(crate) name: String,
     pub(crate) queries: Vec<Query>,
 }
 
-/// A row struct and its fields, in column order.
-#[derive(Debug)]
-pub(crate) struct RowType {
-    pub(crate) name: String,
-    pub(crate) fields: Vec<Column>,
-}
-
-/// A field of a row struct.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A returned column.
 pub(crate) struct Column {
     pub(crate) name: String,
     /// The Rust type, in `Option` when the annotation has `?`.
@@ -28,19 +19,17 @@ pub(crate) struct Column {
 }
 
 /// A checked query.
-#[derive(Debug)]
 pub(crate) struct Query {
     pub(crate) name: String,
     pub(crate) doc: Vec<String>,
     pub(crate) sql: String,
     /// The parameters, in the order of the annotation.
     pub(crate) parameters: Vec<Parameter>,
-    /// The row struct, or `None` for a query without columns.
-    pub(crate) row: Option<RowType>,
+    /// The returned columns, in column order. A query without columns runs through `execute`.
+    pub(crate) columns: Vec<Column>,
 }
 
 /// A parameter of a query.
-#[derive(Debug)]
 pub(crate) struct Parameter {
     pub(crate) name: String,
     /// The argument type of the annotation, without `Option`.
@@ -52,47 +41,38 @@ pub(crate) struct Parameter {
 pub(crate) fn resolve(
     connection: &rusqlite::Connection,
     file: &Path,
-    parsed: &[QueryDeclaration],
+    parsed: Vec<QueryDeclaration>,
 ) -> Result<Module, Error> {
     let name = file
         .file_stem()
         .and_then(|stem| stem.to_str())
         .filter(|stem| parse::is_field_name(stem))
-        .ok_or_else(|| Error::File {
-            file: file.to_owned(),
-            message: "the file name is not a module name in snake_case".to_owned(),
+        .ok_or_else(|| {
+            Error::new(format!(
+                "{}: the file name is not a module name in snake_case",
+                file.display()
+            ))
         })?
         .to_owned();
     let mut queries = Vec::new();
     for declaration in parsed {
-        let fail = |message: String| Error::Query {
-            file: file.to_owned(),
-            query: declaration.name.clone(),
-            message,
-        };
+        let fail = |message: String| Error::new(format!("{}: query `{}`: {message}", file.display(), declaration.name));
         let statement = connection
             .prepare(&declaration.sql)
             .map_err(|error| fail(format!("SQLite rejects the SQL: {error}")))?;
-        let parameters = parameters(&statement, declaration).map_err(fail)?;
-        let row = if statement.column_count() == 0 {
-            if !declaration.columns.is_empty() {
-                return Err(fail(
-                    "the query returns no column, so it has no row. Remove the part after `:`.".to_owned(),
-                ));
-            }
-            None
-        } else {
-            Some(RowType {
-                name: pascal_case(&declaration.name),
-                fields: columns(&statement, &declaration.columns).map_err(fail)?,
-            })
-        };
+        let parameters = parameters(&statement, &declaration).map_err(fail)?;
+        if statement.column_count() == 0 && !declaration.columns.is_empty() {
+            return Err(fail(
+                "the query returns no column, so it has no row. Remove the part after `:`.".to_owned(),
+            ));
+        }
+        let columns = columns(&statement, &declaration.columns).map_err(fail)?;
         queries.push(Query {
-            name: declaration.name.clone(),
-            doc: declaration.doc.clone(),
-            sql: declaration.sql.clone(),
+            name: declaration.name,
+            doc: declaration.doc,
+            sql: declaration.sql,
             parameters,
-            row,
+            columns,
         });
     }
     Ok(Module { name, queries })
@@ -143,7 +123,7 @@ fn parameters(statement: &rusqlite::Statement<'_>, declaration: &QueryDeclaratio
         .collect()
 }
 
-/// The row fields of `statement`, in column order. Each returned column has one field declaration.
+/// The returned columns of `statement`, in column order. Each returned column has one field declaration.
 fn columns(statement: &rusqlite::Statement<'_>, annotations: &[Field]) -> Result<Vec<Column>, String> {
     let names = statement.column_names();
     for annotation in annotations {

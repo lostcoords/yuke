@@ -9,10 +9,10 @@ pub(crate) const MIGRATIONS: &[&str] = &[
 ];
 
 pub(crate) mod notes {
-    use yuke_sql::rusqlite::{Connection, Result, Row};
-    use yuke_sql::{FromRow, Query, execute};
+    use yuke_sql::rusqlite::{Connection, Result};
+    use yuke_sql::{Query, execute};
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct NoteById {
         pub(crate) id: crate::NoteId,
         pub(crate) author: String,
@@ -20,18 +20,7 @@ pub(crate) mod notes {
         pub(crate) body: Option<String>,
     }
 
-    impl FromRow for NoteById {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                id: row.get("id")?,
-                author: row.get("author")?,
-                title: row.get("title")?,
-                body: row.get("body")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct NotesOf {
         pub(crate) title: String,
         pub(crate) body: Option<String>,
@@ -39,18 +28,7 @@ pub(crate) mod notes {
         pub(crate) id: crate::NoteId,
     }
 
-    impl FromRow for NotesOf {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                title: row.get("title")?,
-                body: row.get("body")?,
-                author: row.get("author")?,
-                id: row.get("id")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct NotesTitled {
         pub(crate) id: crate::NoteId,
         pub(crate) author: String,
@@ -58,71 +36,16 @@ pub(crate) mod notes {
         pub(crate) body: Option<String>,
     }
 
-    impl FromRow for NotesTitled {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                id: row.get("id")?,
-                author: row.get("author")?,
-                title: row.get("title")?,
-                body: row.get("body")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct NoteCount {
-        pub(crate) count: i64,
-    }
-
-    impl FromRow for NoteCount {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                count: row.get("count")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
-    pub(crate) struct StarsOf {
-        pub(crate) stars: i64,
-    }
-
-    impl FromRow for StarsOf {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                stars: row.get("stars")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct AddNote {
         pub(crate) id: crate::NoteId,
         pub(crate) pinned: i64,
     }
 
-    impl FromRow for AddNote {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                id: row.get("id")?,
-                pinned: row.get("pinned")?,
-            })
-        }
-    }
-
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, PartialEq)]
     pub(crate) struct TaggedTitles {
         pub(crate) title: String,
         pub(crate) tag: Option<String>,
-    }
-
-    impl FromRow for TaggedTitles {
-        fn from_row(row: &Row<'_>) -> Result<Self> {
-            Ok(Self {
-                title: row.get("title")?,
-                tag: row.get("tag")?,
-            })
-        }
     }
 
     #[derive(Debug)]
@@ -151,6 +74,14 @@ pub(crate) mod notes {
             connection,
             r"SELECT id, author, title, body FROM notes WHERE id = :id;",
             &[(":id", &id)],
+            |row| {
+                Ok(NoteById {
+                    id: row.get("id")?,
+                    author: row.get("author")?,
+                    title: row.get("title")?,
+                    body: row.get("body")?,
+                })
+            },
         )
     }
 
@@ -160,6 +91,14 @@ pub(crate) mod notes {
             connection,
             r"SELECT title, body, author, id FROM notes WHERE author = :author ORDER BY id;",
             &[(":author", &author)],
+            |row| {
+                Ok(NotesOf {
+                    title: row.get("title")?,
+                    body: row.get("body")?,
+                    author: row.get("author")?,
+                    id: row.get("id")?,
+                })
+            },
         )
     }
 
@@ -177,11 +116,21 @@ pub(crate) mod notes {
             connection,
             r"SELECT id, author, title, body FROM notes WHERE stars >= :stars AND (:title IS NULL OR title = :title);",
             &[(":stars", &params.stars), (":title", &params.title)],
+            |row| {
+                Ok(NotesTitled {
+                    id: row.get("id")?,
+                    author: row.get("author")?,
+                    title: row.get("title")?,
+                    body: row.get("body")?,
+                })
+            },
         )
     }
 
-    pub(crate) fn note_count(connection: &Connection) -> Query<'_, NoteCount> {
-        Query::new(connection, r"SELECT count(*) AS count FROM notes;", &[])
+    pub(crate) fn note_count(connection: &Connection) -> Query<'_, i64> {
+        Query::new(connection, r"SELECT count(*) AS count FROM notes;", &[], |row| {
+            row.get("count")
+        })
     }
 
     pub(crate) fn star_note(connection: &Connection, id: crate::NoteId) -> Result<usize> {
@@ -192,8 +141,13 @@ pub(crate) mod notes {
         )
     }
 
-    pub(crate) fn stars_of(connection: &Connection, id: crate::NoteId) -> Query<'_, StarsOf> {
-        Query::new(connection, r"SELECT stars FROM notes WHERE id = :id;", &[(":id", &id)])
+    pub(crate) fn stars_of(connection: &Connection, id: crate::NoteId) -> Query<'_, i64> {
+        Query::new(
+            connection,
+            r"SELECT stars FROM notes WHERE id = :id;",
+            &[(":id", &id)],
+            |row| row.get("stars"),
+        )
     }
 
     #[derive(Debug)]
@@ -208,6 +162,12 @@ pub(crate) mod notes {
             connection,
             r"INSERT INTO notes(author, title) VALUES (:author, :title) RETURNING id, pinned;",
             &[(":author", &params.author), (":title", &params.title)],
+            |row| {
+                Ok(AddNote {
+                    id: row.get("id")?,
+                    pinned: row.get("pinned")?,
+                })
+            },
         )
     }
 
@@ -218,6 +178,12 @@ pub(crate) mod notes {
             connection,
             r"SELECT notes.title, tags.name AS tag FROM notes LEFT JOIN tags ON tags.note = notes.id ORDER BY notes.id;",
             &[],
+            |row| {
+                Ok(TaggedTitles {
+                    title: row.get("title")?,
+                    tag: row.get("tag")?,
+                })
+            },
         )
     }
 }

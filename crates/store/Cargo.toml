@@ -21,6 +21,7 @@ yuke-sql = { path = "../sql" }
 tokio = { version = "1.53", features = ["macros", "rt"] }
 yuke-agent = { path = "../agent", features = ["testing"] }
 yuke-sqlgen = { path = "../sqlgen" }
+yuke-testing = { path = "../testing" }
 
 [lints]
 workspace = true

@@ -11,9 +11,9 @@ INSERT INTO sessions(id, prompt) SELECT :id, prompt FROM sessions WHERE id = :so
 --- The sections of the system prompt of the session. It returns no row for an unknown session.
 SELECT prompt FROM sessions WHERE id = :id;
 
---! session_count (id: [u8; 16]) : (count: i64)
---- The number of sessions with this id: 0 or 1.
-SELECT count(*) AS count FROM sessions WHERE id = :id;
+--! session_exists (id: [u8; 16]) : (present: bool)
+--- Whether a session has this id.
+SELECT EXISTS(SELECT 1 FROM sessions WHERE id = :id) AS present;
 
 --! delete_session (id: [u8; 16])
 --- Delete the session. The cascade deletes its events and its pending inputs.

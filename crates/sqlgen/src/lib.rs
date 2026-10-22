@@ -11,9 +11,9 @@
 //! SELECT id, author, title, body FROM notes WHERE id = :id;
 //! ```
 //!
-//! `--!` names a query, with its parameters in parentheses and its columns after `:`. A query that returns columns
-//! gets a row struct with the name of the query in `PascalCase`, for example `NoteById`. The row declaration lists every
-//! returned column exactly once. The field order can differ from the column order in the query. The `---` lines before
+//! `--!` names a query, with its parameters in parentheses and its columns after `:`. A query of one column gives the
+//! value of that column. A query of several columns gets a row struct with the name of the query in `PascalCase`, for
+//! example `NoteById`. The row declaration lists every returned column exactly once. The field order can differ from the column order in the query. The `---` lines before
 //! the SQL of a query are its doc comment. A field is not null, and `?` makes it an `Option`. Only a `NOT NULL`
 //! constraint lets a table column go without `?`. A type of the crate needs its full path, for example
 //! `crate::NoteId`, because the generated modules import no name of their parent.
@@ -49,25 +49,23 @@ use std::process::{Command, Stdio};
 /// Returns [`Error`] when a file cannot be read, a migration fails, a query file does not fit the grammar, a query
 /// fails a check, or rustfmt fails.
 pub fn generate(crate_folder: &Path) -> Result<Generated, Error> {
-    let connection = rusqlite::Connection::open_in_memory().map_err(Error::Database)?;
+    let connection = rusqlite::Connection::open_in_memory()
+        .map_err(|error| Error::caused("the in-memory database does not open".to_owned(), error))?;
     let mut migrations = Vec::new();
     for (place, file) in sql_files(&crate_folder.join("migrations"))?.into_iter().enumerate() {
         let name = migration_name(&file, place + 1)?;
         let sql = read(&file)?;
         connection
             .execute_batch(&sql)
-            .map_err(|source| Error::Migration { file, source })?;
+            .map_err(|error| Error::caused(format!("{}: the migration failed", file.display()), error))?;
         migrations.push(name);
     }
     let queries = crate_folder.join("queries");
     let mut modules = Vec::new();
     for file in sql_files(&queries)? {
         let source = read(&file)?;
-        let parsed = parse::parse(&source).map_err(|message| Error::File {
-            file: file.clone(),
-            message,
-        })?;
-        modules.push(resolve::resolve(&connection, &file, &parsed)?);
+        let parsed = parse::parse(&source).map_err(|message| Error::new(format!("{}: {message}", file.display())))?;
+        modules.push(resolve::resolve(&connection, &file, parsed)?);
     }
     let code = emit::emit(&migrations, &modules)
         .map_err(|error| format_error("yuke-sqlgen cannot write the generated code", error))?;
@@ -89,74 +87,38 @@ pub struct Generated {
     pub queries: usize,
 }
 
-/// The failure of [`generate`].
+/// The failure of [`generate`]: a text that names the file, and the query when one query fails, and the error under it
+/// when one exists.
 #[derive(Debug)]
-pub enum Error {
-    /// A file or a folder cannot be read.
-    Io {
-        /// The file or the folder.
-        path: PathBuf,
-        /// The cause.
-        source: std::io::Error,
-    },
-    /// The in-memory database cannot be opened.
-    Database(rusqlite::Error),
-    /// A migration failed.
-    Migration {
-        /// The migration file.
-        file: PathBuf,
-        /// The error of SQLite.
-        source: rusqlite::Error,
-    },
-    /// A query file does not fit the grammar, or one of its names is not valid.
-    File {
-        /// The query file.
-        file: PathBuf,
-        /// What is wrong, with the line when one line is wrong.
-        message: String,
-    },
-    /// A query failed a check.
-    Query {
-        /// The query file.
-        file: PathBuf,
-        /// The name of the query.
-        query: String,
-        /// What is wrong.
-        message: String,
-    },
-    /// A step that formats the generated code failed.
-    Format {
-        /// The failed step, for example `rustfmt does not start`.
-        step: &'static str,
-        /// The cause.
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-    /// rustfmt refused the generated code, with this text on its standard error.
-    Rustfmt(String),
+pub struct Error {
+    message: String,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+
+impl Error {
+    fn new(message: String) -> Self {
+        Error { message, source: None }
+    }
+
+    fn caused(message: String, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Error {
+            message,
+            source: Some(Box::new(source)),
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::Io { path, .. } => write!(f, "{} cannot be read", path.display()),
-            Error::Database(_) => f.write_str("the in-memory database does not open"),
-            Error::Migration { file, .. } => write!(f, "{}: the migration failed", file.display()),
-            Error::File { file, message } => write!(f, "{}: {message}", file.display()),
-            Error::Query { file, query, message } => write!(f, "{}: query `{query}`: {message}", file.display()),
-            Error::Format { step, .. } => f.write_str(step),
-            Error::Rustfmt(message) => write!(f, "rustfmt refused the generated code: {message}"),
-        }
+        f.write_str(&self.message)
     }
 }
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Io { source, .. } => Some(source),
-            Error::Database(source) | Error::Migration { source, .. } => Some(source),
-            Error::Format { source, .. } => Some(source.as_ref()),
-            Error::File { .. } | Error::Query { .. } | Error::Rustfmt(_) => None,
-        }
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -176,18 +138,12 @@ fn migration_name(file: &Path, place: usize) -> Result<String, Error> {
         ),
         (_, None) => "a migration name starts with its number and `_`, for example `0001_initial.sql`".to_owned(),
     };
-    Err(Error::File {
-        file: file.to_owned(),
-        message,
-    })
+    Err(Error::new(format!("{}: {message}", file.display())))
 }
 
 /// The `.sql` files of `folder`, in file name order.
 fn sql_files(folder: &Path) -> Result<Vec<PathBuf>, Error> {
-    let io = |source| Error::Io {
-        path: folder.to_owned(),
-        source,
-    };
+    let io = |error| Error::caused(format!("{} cannot be read", folder.display()), error);
     let mut files = Vec::new();
     for entry in std::fs::read_dir(folder).map_err(io)? {
         let path = entry.map_err(io)?.path();
@@ -200,10 +156,7 @@ fn sql_files(folder: &Path) -> Result<Vec<PathBuf>, Error> {
 }
 
 fn read(file: &Path) -> Result<String, Error> {
-    std::fs::read_to_string(file).map_err(|source| Error::Io {
-        path: file.to_owned(),
-        source,
-    })
+    std::fs::read_to_string(file).map_err(|error| Error::caused(format!("{} cannot be read", file.display()), error))
 }
 
 /// Format `code` with rustfmt. rustfmt runs in `crate_folder`, so it finds the `rustfmt.toml` of the workspace. The
@@ -228,7 +181,10 @@ fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
         .wait_with_output()
         .map_err(|error| format_error("rustfmt does not end", error))?;
     if !output.status.success() {
-        return Err(Error::Rustfmt(String::from_utf8_lossy(&output.stderr).into_owned()));
+        return Err(Error::new(format!(
+            "rustfmt refused the generated code: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     written.map_err(|error| format_error("the generated code does not reach rustfmt", error))?;
     String::from_utf8(output.stdout).map_err(|error| format_error("rustfmt writes no UTF-8 text", error))
@@ -236,8 +192,5 @@ fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
 
 /// The error of the failed format `step`, with `source` as its cause.
 fn format_error(step: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::Format {
-        step,
-        source: Box::new(source),
-    }
+    Error::caused(step.to_owned(), source)
 }

@@ -31,10 +31,12 @@ SELECT coalesce(
 ) AS cut
 FROM sessions WHERE id = :id;
 
---! completed_turn_count (session_id: [u8; 16], seq: u64) : (count: i64)
---- The number of commits with this number that end a completed turn: 0 or 1.
-SELECT count(*) AS count FROM events
-WHERE session_id = :session_id AND seq = :seq AND kind = 'commit' AND end_kind = 'completed';
+--! ends_completed_turn (session_id: [u8; 16], seq: u64) : (present: bool)
+--- Whether the commit with this number in this session ends a completed turn.
+SELECT EXISTS(
+  SELECT 1 FROM events
+  WHERE session_id = :session_id AND seq = :seq AND kind = 'commit' AND end_kind = 'completed'
+) AS present;
 
 --! copy_events (source: [u8; 16], session_id: [u8; 16], cut: u64)
 --- Copy each event of session `source` up to event `cut` to session `session_id` with its number, its token usage, and

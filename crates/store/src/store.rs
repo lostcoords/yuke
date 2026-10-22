@@ -233,10 +233,10 @@ impl Store for SqliteStore {
         };
 
         self.call(move |connection| {
-            let row = pending_inputs::insert_pending_input(connection, &params)
+            let id = pending_inputs::insert_pending_input(connection, &params)
                 .opt()
                 .map_err(failed)?;
-            row.map(|row| InputId(row.id)).ok_or(StoreError::NotFound)
+            id.map(InputId).ok_or(StoreError::NotFound)
         })
         .await
     }
@@ -266,10 +266,10 @@ impl Store for SqliteStore {
         let Some(cwd) = cwd.to_str().map(str::to_owned) else {
             return Ok(None);
         };
-        let row = self
+        let id = self
             .call(move |connection| events::newest_session_in(connection, &cwd).opt().map_err(failed))
             .await?;
-        Ok(row.map(|row| SessionId::from_bytes(row.id)))
+        Ok(id.map(SessionId::from_bytes))
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -449,12 +449,12 @@ fn save_settings(connection: &mut Connection, session: [u8; 16], settings: Strin
         session_id: session,
         settings,
     };
-    let row = events::insert_settings(&transaction, &params)
+    let seq = events::insert_settings(&transaction, &params)
         .opt()
         .map_err(failed)?
         .ok_or(StoreError::NotFound)?;
     transaction.commit().map_err(failed)?;
-    Ok(EventNumber(row.seq))
+    Ok(EventNumber(seq))
 }
 
 /// Save the commit event and remove the consumed inputs in one transaction. Returns [`StoreError::NotFound`] for an
@@ -468,7 +468,7 @@ fn save_commit(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
-    let row = events::insert_commit(&transaction, params)
+    let seq = events::insert_commit(&transaction, params)
         .opt()
         .map_err(failed)?
         .ok_or(StoreError::NotFound)?;
@@ -485,7 +485,7 @@ fn save_commit(
     }
 
     transaction.commit().map_err(failed)?;
-    Ok(EventNumber(row.seq))
+    Ok(EventNumber(seq))
 }
 
 /// The newest event of session `source` that a fork copies: event `through`, which must end a completed turn, or the
@@ -498,27 +498,22 @@ fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<Eve
             if through > LARGEST_SEQ {
                 return Err(StoreError::NotACompletedTurn);
             }
-            let params = events::CompletedTurnCountParams {
+            let params = events::EndsCompletedTurnParams {
                 session_id: source,
                 seq: through,
             };
-            if events::completed_turn_count(&transaction, &params)
+            if !events::ends_completed_turn(&transaction, &params)
                 .one()
                 .map_err(failed)?
-                .count
-                == 0
             {
                 return Err(StoreError::NotACompletedTurn);
             }
             through
         }
-        None => {
-            events::fork_cut(&transaction, source)
-                .opt()
-                .map_err(failed)?
-                .ok_or(StoreError::NotFound)?
-                .cut
-        }
+        None => events::fork_cut(&transaction, source)
+            .opt()
+            .map_err(failed)?
+            .ok_or(StoreError::NotFound)?,
     };
     transaction.commit().map_err(failed)?;
     Ok(cut)
@@ -593,11 +588,7 @@ fn commit_params(
 
 /// Tell whether the database has session `session`.
 pub(crate) fn has_session(connection: &Connection, session: [u8; 16]) -> Result<bool, StoreError> {
-    Ok(sessions::session_count(connection, session)
-        .one()
-        .map_err(failed)?
-        .count
-        > 0)
+    sessions::session_exists(connection, session).one().map_err(failed)
 }
 
 /// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise. Call this function before the

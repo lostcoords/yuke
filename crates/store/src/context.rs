@@ -16,7 +16,7 @@ pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<O
     let Some(settings) = events::newest_settings(connection, session).opt()? else {
         return Ok(None);
     };
-    let prompt = sessions::session_prompt(connection, session).one()?.prompt.0;
+    let prompt = sessions::session_prompt(connection, session).one()?.0;
     // The context starts at the newest replacement: its head, then the blocks that it keeps.
     let mut context = Vec::new();
     let mut first = 0;
@@ -47,7 +47,7 @@ pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<O
     };
     Ok(Some(Opened {
         id,
-        settings: required(settings.settings, "settings")?.0,
+        settings: required(settings, "settings")?.0,
         prompt,
         context,
         newest_turn,

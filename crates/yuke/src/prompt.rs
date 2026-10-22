@@ -142,12 +142,7 @@ mod tests {
     use super::*;
 
     fn folder(name: &str) -> PathBuf {
-        let folder = std::env::temp_dir().join(format!("yuke-prompt-test-{}/{name}", std::process::id()));
-        if folder.exists() {
-            std::fs::remove_dir_all(&folder).unwrap();
-        }
-        std::fs::create_dir_all(&folder).unwrap();
-        folder.canonicalize().unwrap()
+        yuke_testing::folder("prompt", name)
     }
 
     #[test]
