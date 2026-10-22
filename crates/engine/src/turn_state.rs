@@ -114,12 +114,8 @@ impl<'a> Commit<'a> {
 
     /// The commit that ends a turn with `result` after the `tail` blocks.
     pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &RoundError>) -> Self {
-        let end = match result {
-            Ok(outcome) => TurnEnd::Outcome(outcome.clone()),
-            Err(error) => TurnEnd::Failed(chain_text(error)),
-        };
         Commit {
-            end: Some(end),
+            end: Some(TurnEnd::from_result(result)),
             ..Commit::blocks(tail)
         }
     }
@@ -135,6 +131,16 @@ pub enum TurnEnd {
     Outcome(Outcome),
     /// A round failed, or the turn stopped before it saved its end. The text tells why.
     Failed(String),
+}
+
+impl TurnEnd {
+    /// The end of a turn that gave `result`. A failure keeps the [`chain_text`] of its error.
+    pub fn from_result(result: Result<&Outcome, &RoundError>) -> Self {
+        match result {
+            Ok(outcome) => Self::Outcome(outcome.clone()),
+            Err(error) => Self::Failed(chain_text(error)),
+        }
+    }
 }
 
 /// A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent

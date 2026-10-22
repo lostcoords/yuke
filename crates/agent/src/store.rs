@@ -56,7 +56,8 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError>;
 
-    /// Remove the pending input `input` of session `id`. Any caller can remove an input.
+    /// Remove the pending input `input` of session `id`. Any caller can remove an input. When the removal comes before a
+    /// commit that consumes the input, the commit fails, and the session is stale until [`crate::Session::recover`].
     ///
     /// # Errors
     ///

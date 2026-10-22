@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, InputSender, Loaded, MemoryStore, Opened, PromptSection, Store, StoreError};
+use yuke_agent::{Access, Loaded, MemoryStore, Opened, PromptSection, Store, StoreError};
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
@@ -53,15 +53,16 @@ pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<Con
 
 /// A tool that sends one input to its session, and answers "sent".
 pub(crate) struct SendsInput {
-    pub(crate) sender: InputSender,
+    pub(crate) store: Arc<dyn Store>,
+    pub(crate) session: SessionId,
     pub(crate) text: &'static str,
 }
 
 #[async_trait]
 impl Tool for SendsInput {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        self.sender
-            .send(user_input(self.text))
+        self.store
+            .accept_input(self.session, user_input(self.text))
             .await
             .map_err(|error| error.to_string())?;
         Ok("sent".into())

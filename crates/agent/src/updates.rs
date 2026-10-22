@@ -3,10 +3,7 @@
 use std::sync::Mutex;
 
 use yuke_engine::{Commit, Observer, TurnEvent, chain_text};
-use yuke_protocol::{
-    BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, SessionId, SessionUpdate, SessionUpdateParams,
-    StoredEvent,
-};
+use yuke_protocol::{BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, SessionUpdate, StoredEvent};
 
 use crate::lock;
 
@@ -14,17 +11,16 @@ use crate::lock;
 /// A callback must not block. The caller owns delivery queues and serialization.
 pub trait SessionObserver: Send + Sync {
     /// Receive a saved event or a live fact of its session.
-    fn update(&self, update: SessionUpdateParams);
+    fn update(&self, update: SessionUpdate);
 }
 
-impl<F: Fn(SessionUpdateParams) + Send + Sync> SessionObserver for F {
-    fn update(&self, update: SessionUpdateParams) {
+impl<F: Fn(SessionUpdate) + Send + Sync> SessionObserver for F {
+    fn update(&self, update: SessionUpdate) {
         self(update);
     }
 }
 
 pub(crate) struct Updates<'a> {
-    session_id: SessionId,
     observer: Option<&'a dyn SessionObserver>,
     state: Mutex<State>,
 }
@@ -42,9 +38,8 @@ struct Draft {
 }
 
 impl<'a> Updates<'a> {
-    pub(crate) fn new(session_id: SessionId, observer: Option<&'a dyn SessionObserver>) -> Self {
+    pub(crate) fn new(observer: Option<&'a dyn SessionObserver>) -> Self {
         Self {
-            session_id,
             observer,
             state: Mutex::default(),
         }
@@ -52,10 +47,7 @@ impl<'a> Updates<'a> {
 
     fn emit(&self, update: SessionUpdate) {
         if let Some(observer) = self.observer {
-            observer.update(SessionUpdateParams {
-                session_id: self.session_id,
-                update,
-            });
+            observer.update(update);
         }
     }
 

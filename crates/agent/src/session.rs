@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, InputSource, SessionEvent, SessionId, SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputSource, SessionEvent, SessionId, SessionSettings, StoredEvent,
 };
 
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
@@ -75,29 +75,22 @@ struct TurnJournal<'a> {
 struct TurnInputs<'a> {
     store: &'a dyn Store,
     id: SessionId,
-    state: Mutex<Inputs>,
-}
-
-#[derive(Default)]
-struct Inputs {
     /// The records of the inputs that the turn took and that no saved commit consumed. They are still pending.
-    taken: Vec<ConsumedInput>,
-    /// The end of the turn, after the store saved it.
-    ended: Option<TurnEnd>,
+    taken: Mutex<Vec<ConsumedInput>>,
 }
 
 impl TurnInputs<'_> {
     /// Take each pending input that the turn did not take, and return their model blocks in input order.
     async fn take(&self) -> Result<Vec<yuke_ai::Block>, StoreError> {
         let pending = self.store.pending(self.id).await?;
-        let mut inputs = lock(&self.state);
+        let mut taken = lock(&self.taken);
         let mut blocks = Vec::new();
         for input in pending {
-            if inputs.taken.iter().any(|taken| taken.id == input.id) {
+            if taken.iter().any(|known| known.id == input.id) {
                 continue;
             }
             let (consumed, model_blocks) = input.into_consumed();
-            inputs.taken.push(consumed);
+            taken.push(consumed);
             blocks.extend(model_blocks);
         }
         Ok(blocks)
@@ -116,13 +109,10 @@ impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
         // leave `taken` before the save. After a failed save, the next turn takes the pending inputs again.
-        let TurnInputs { store, id, state } = &self.inputs;
-        let consumed = std::mem::take(&mut lock(state).taken);
+        let TurnInputs { store, id, taken } = &self.inputs;
+        let consumed = std::mem::take(&mut *lock(taken));
         let event_number = store.commit(*id, commit, &consumed).await?;
         self.updates.committed(event_number, commit, consumed);
-        if let Some(end) = &commit.end {
-            lock(state).ended = Some(end.clone());
-        }
         Ok(())
     }
 }
@@ -261,14 +251,6 @@ impl Session {
         Ok(event_number)
     }
 
-    /// A sender of input. Another task can send input while a turn runs.
-    pub fn input(&self) -> InputSender {
-        InputSender {
-            store: Arc::clone(&self.store),
-            id: self.id,
-        }
-    }
-
     /// The next turn with `driver`. The turn takes each pending input as its input. When the turn runs, the session
     /// gives the driver its session settings, session id, journal, inbox, and blob store. These replace the values that
     /// the caller set on the driver.
@@ -329,44 +311,6 @@ fn open_calls(context: &[yuke_ai::Block]) -> impl Iterator<Item = &str> {
         yuke_ai::Block::ToolCall(call) => Some(call.call_id.as_str()),
         _ => None,
     })
-}
-
-/// Sends input to a session. The input is pending in the store before [`InputSender::send`] returns.
-#[derive(Clone)]
-pub struct InputSender {
-    store: Arc<dyn Store>,
-    id: SessionId,
-}
-
-impl fmt::Debug for InputSender {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InputSender")
-            .field("session", &self.id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl InputSender {
-    /// Save `input` as a pending input. A turn that runs takes it after its next commit. The next turn takes it
-    /// otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of [`Store::accept_input`].
-    pub async fn send(&self, input: Input) -> Result<InputId, StoreError> {
-        self.store.accept_input(self.id, input).await
-    }
-
-    /// Remove the pending input `input`. The store orders a removal and a commit that consumes the input. When the
-    /// commit comes first, the removal fails with [`StoreError::InputNotPending`]. When the removal comes first, the
-    /// commit fails with it, and the session is stale until [`Session::recover`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of [`Store::remove_input`].
-    pub async fn remove(&self, input: InputId) -> Result<(), StoreError> {
-        self.store.remove_input(self.id, input).await
-    }
 }
 
 /// One turn of a session. It does nothing until [`SessionTurn::run`].
@@ -435,7 +379,7 @@ impl<'s> SessionTurn<'s> {
         let inputs = TurnInputs {
             store: &*session.store,
             id: session.id,
-            state: Mutex::default(),
+            taken: Mutex::default(),
         };
         let mut input = inputs.take().await?;
         if input.is_empty() {
@@ -443,8 +387,7 @@ impl<'s> SessionTurn<'s> {
         }
         // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
         // before its first commit leaves its note pending.
-        let noted = lock(&inputs.state)
-            .taken
+        let noted = lock(&inputs.taken)
             .iter()
             .any(|taken| matches!(&taken.source, InputSource::Plugin { name } if name == SESSION_SOURCE));
         if !noted && let Some(note) = interruption_note(&session.newest_turn) {
@@ -453,7 +396,7 @@ impl<'s> SessionTurn<'s> {
         }
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
-        let updates = Updates::new(session.id, observer);
+        let updates = Updates::new(observer);
         let turn_journal = TurnJournal {
             inputs,
             updates: &updates,
@@ -470,25 +413,21 @@ impl<'s> SessionTurn<'s> {
             .turn(&mut session.context, input)
             .cancellation_token(cancellation_token)
             .observer(&updates);
-        let ran = turn.run().await;
-        if let Some(end) = lock(&turn_journal.inputs.state).ended.take() {
-            session.newest_turn = NewestTurn::Ended(end);
-        }
-        match ran {
-            Ok(outcome) => {
-                session.lease = lease;
-                Ok(outcome)
-            }
-            Err(TurnError::Round(error)) => {
-                session.lease = lease;
-                Err(SessionError::Round(error))
-            }
+        let ran = match turn.run().await {
+            Ok(outcome) => Ok(outcome),
+            Err(TurnError::Round(error)) => Err(error),
             // The commit can have saved or not, so the lease drops, and the session is stale.
-            Err(TurnError::Commit(error)) => Err(SessionError::Store(match error.downcast::<StoreError>() {
-                Ok(error) => *error,
-                Err(error) => StoreError::Failed(error),
-            })),
-        }
+            Err(TurnError::Commit(error)) => {
+                return Err(SessionError::Store(match error.downcast::<StoreError>() {
+                    Ok(error) => *error,
+                    Err(error) => StoreError::Failed(error),
+                }));
+            }
+        };
+        // The driver gives an outcome or a round error only after the store saved the end of the turn.
+        session.newest_turn = NewestTurn::Ended(TurnEnd::from_result(ran.as_ref()));
+        session.lease = lease;
+        ran.map_err(SessionError::Round)
     }
 }
 

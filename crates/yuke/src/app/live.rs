@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
-use yuke_agent::{InputSender, Loaded, Session, SessionError, SessionObserver, StoreError};
+use yuke_agent::{Loaded, Session, SessionError, SessionObserver, Store, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset, chain_text};
 use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
@@ -52,7 +52,7 @@ impl LiveSession {
         shared: Arc<Shared>,
     ) -> Result<LiveSession, AppError> {
         let inbox = Inbox {
-            input: session.input(),
+            store: Arc::clone(&shared.store),
             wake: Arc::new(Notify::new()),
             output: Arc::new(Output {
                 session: session.id(),
@@ -217,7 +217,7 @@ impl Drop for LiveSession {
 /// The input of one session: the saved queue, the observer, and the wake of the task.
 #[derive(Clone)]
 pub(super) struct Inbox {
-    input: InputSender,
+    store: Arc<dyn Store>,
     /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
     wake: Arc<Notify>,
     output: Arc<Output>,
@@ -226,7 +226,7 @@ pub(super) struct Inbox {
 impl Inbox {
     /// Save `input`, show it to the observer, and wake the task. The task runs a turn when the session is idle.
     pub(super) async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
-        let input_id = self.input.send(input.clone()).await?;
+        let input_id = self.store.accept_input(self.output.session, input.clone()).await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
         self.wake.notify_one();
@@ -235,7 +235,7 @@ impl Inbox {
 
     /// Remove the pending input `input_id`, and tell the observer.
     pub(super) async fn remove(&self, input_id: InputId) -> Result<(), StoreError> {
-        self.input.remove(input_id).await?;
+        self.store.remove_input(self.output.session, input_id).await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
         Ok(())
@@ -366,8 +366,8 @@ impl Output {
 
 // A turn sends its updates through the output, so they wait while a load runs.
 impl SessionObserver for Output {
-    fn update(&self, update: SessionUpdateParams) {
-        self.publish(update.update);
+    fn update(&self, update: SessionUpdate) {
+        self.publish(update);
     }
 }
 

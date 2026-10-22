@@ -595,17 +595,22 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
         settings: yuke_ai::Settings::new(),
         cwd: place.work.clone(),
     };
-    let session = Session::create(store, &settings, &[PromptSection::new("base", "the prompt")])
-        .await
-        .unwrap();
+    let session = Session::create(
+        Arc::clone(&store),
+        &settings,
+        &[PromptSection::new("base", "the prompt")],
+    )
+    .await
+    .unwrap();
     let input = Input::new(
         InputSource::User,
         InputKind::Message,
         vec![yuke_ai::Block::user_text("waiting")],
     )
     .unwrap();
-    session.input().send(input).await.unwrap();
-    session.id()
+    let id = session.id();
+    store.accept_input(id, input).await.unwrap();
+    id
 }
 
 #[tokio::test]

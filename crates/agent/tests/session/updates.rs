@@ -11,7 +11,6 @@ use yuke_ai::{Block, ToolDefinition, Wire};
 use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionEvent, SessionUpdate,
-    SessionUpdateParams,
 };
 use yuke_testing::{
     NoWait, ScriptedTransport, Stalled, failed_reply, model, model_of, sse, target, text_reply, tool_reply,
@@ -20,10 +19,10 @@ use yuke_testing::{
 use super::support::{FailingStore, StoreBehavior, prompt, settings, user_input};
 
 #[derive(Default)]
-struct Capture(Mutex<Vec<SessionUpdateParams>>);
+struct Capture(Mutex<Vec<SessionUpdate>>);
 
 impl SessionObserver for Capture {
-    fn update(&self, update: SessionUpdateParams) {
+    fn update(&self, update: SessionUpdate) {
         self.0.lock().unwrap().push(update);
     }
 }
@@ -34,7 +33,7 @@ impl Capture {
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|update| match &update.update {
+            .filter_map(|update| match update {
                 SessionUpdate::Live(live) => Some(live.clone()),
                 SessionUpdate::Saved(_) => None,
             })
@@ -83,7 +82,7 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     });
     let store = Arc::new(MemoryStore::new());
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -145,10 +144,9 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     ));
     assert_eq!(capture.positions(), [(3, 0, 0), (3, 1, 1)]);
     let updates = capture.0.lock().unwrap().clone();
-    assert!(updates.iter().all(|update| update.session_id == session.id()));
     let saved: Vec<_> = updates
         .iter()
-        .filter_map(|update| match &update.update {
+        .filter_map(|update| match update {
             SessionUpdate::Saved(event) => Some(event.clone()),
             SessionUpdate::Live(_) => None,
         })
@@ -163,11 +161,9 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     );
     let confirmed = updates
         .iter()
-        .position(|update| matches!(update.update, SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })))
+        .position(|update| matches!(update, SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })))
         .unwrap();
-    assert!(
-        matches!(&updates[confirmed - 1].update, SessionUpdate::Saved(event) if event.event_number == EventNumber(3))
-    );
+    assert!(matches!(&updates[confirmed - 1], SessionUpdate::Saved(event) if event.event_number == EventNumber(3)));
     assert_eq!(session.context()[2], Block::assistant_text("Hello world"));
 }
 
@@ -185,10 +181,9 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
         wire: Wire::OpenaiResponses(yuke_ai::ResponsesWire::default()),
         ..target()
     });
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -258,7 +253,7 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
     let tools = tools();
     let store = Arc::new(MemoryStore::new());
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
@@ -327,10 +322,9 @@ async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
     let overloaded = sse(&[r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#]);
     let transport = ScriptedTransport::new([overloaded, text_reply("done")]);
     let model = model();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -374,10 +368,9 @@ async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
 async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let model = model();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
         session
@@ -402,7 +395,7 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     assert_eq!(session.context(), [Block::user_text("go")]);
     assert!(!live.contains(&LiveUpdate::TurnUnconfirmed));
     let updates = capture.0.lock().unwrap();
-    assert!(matches!(updates.last().map(|update| &update.update),
+    assert!(matches!(updates.last(),
         Some(SessionUpdate::Saved(event)) if event.event_number == EventNumber(3)
             && matches!(&event.event, SessionEvent::Commit { commit, .. } if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed(_))))));
 }
@@ -440,10 +433,9 @@ async fn a_round_failure_reaches_clients_with_each_cause() {
         target: target(),
         source: Arc::new(RefusedLogin),
     };
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
 
     let ran = session
@@ -472,7 +464,7 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
         session
@@ -514,7 +506,7 @@ async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update(
     let store = FailingStore::new(StoreBehavior::FailPending);
     let transport = ScriptedTransport::new([]);
     let model = model();
-    let mut session = Session::create(store, &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
     let capture = Capture::default();
 
     let failed = session
@@ -531,10 +523,9 @@ async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update(
 #[tokio::test]
 async fn a_dropped_turn_discards_its_draft() {
     let model = model();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     {
         let mut future = pin!(
@@ -569,15 +560,14 @@ async fn a_dropped_turn_discards_its_draft() {
 async fn cancelled_text_reconciles_to_the_terminal_commit() {
     let transport = ScriptedTransport::new([text_reply("partial")]);
     let model = model();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     let cancellation = CancellationToken::new();
-    let observer = |update: SessionUpdateParams| {
+    let observer = |update| {
         if matches!(
-            &update.update,
+            update,
             SessionUpdate::Live(LiveUpdate::Model {
                 event: ModelUpdate::TextDelta { .. },
                 ..
@@ -621,10 +611,9 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         ..target()
     });
     let tools = tools();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
@@ -677,10 +666,9 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         wire: Wire::OpenaiResponses(yuke_ai::ResponsesWire::default()),
         ..target()
     });
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait))
@@ -739,15 +727,14 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
         r#"{"type":"content_block_start","index":2,"content_block":{"type":"text","text":"partial"}}"#,
     ])]);
     let model = model();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     let cancellation = CancellationToken::new();
-    let observer = |update: SessionUpdateParams| {
+    let observer = |update| {
         if matches!(
-            &update.update,
+            update,
             SessionUpdate::Live(LiveUpdate::Model {
                 event: ModelUpdate::TextDelta { .. },
                 ..
@@ -780,7 +767,7 @@ async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
         session
@@ -803,7 +790,7 @@ async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
         .lock()
         .unwrap()
         .iter()
-        .filter_map(|update| match &update.update {
+        .filter_map(|update| match update {
             SessionUpdate::Saved(event) => Some(event.event_number.0),
             SessionUpdate::Live(_) => None,
         })
@@ -841,10 +828,9 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         ..target()
     });
     let tools = tools();
-    let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-        .await
-        .unwrap();
-    session.input().send(user_input("go")).await.unwrap();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
         .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
@@ -902,14 +888,13 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
             r#"{"type":"message_stop"}"#,
         ])]);
         let model = model();
-        let mut session = Session::create(Arc::new(MemoryStore::new()), &settings(), &prompt())
-            .await
-            .unwrap();
-        session.input().send(user_input("go")).await.unwrap();
+        let store = Arc::new(MemoryStore::new());
+        let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+        store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         let cancellation = CancellationToken::new();
-        let observer = |update: SessionUpdateParams| {
-            match &update.update {
+        let observer = |update| {
+            match update {
                 SessionUpdate::Live(LiveUpdate::Model {
                     event: ModelUpdate::TextDelta { .. },
                     ..
@@ -939,10 +924,10 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
         assert_eq!(capture.positions(), [(3, 1, 0)]);
         let updates = capture.0.lock().unwrap();
         assert!(
-            matches!(&updates[updates.len() - 2].update, SessionUpdate::Saved(event) if event.event_number == EventNumber(3))
+            matches!(&updates[updates.len() - 2], SessionUpdate::Saved(event) if event.event_number == EventNumber(3))
         );
         assert!(matches!(
-            &updates[updates.len() - 1].update,
+            &updates[updates.len() - 1],
             SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })
         ));
     }
@@ -960,7 +945,7 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         let model = model();
         let tools = tools();
         let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-        session.input().send(user_input("go")).await.unwrap();
+        store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         assert!(
             session
@@ -987,7 +972,7 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|update| match &update.update {
+            .filter_map(|update| match update {
                 SessionUpdate::Saved(event) => Some(event.event_number.0),
                 SessionUpdate::Live(_) => None,
             })
@@ -1021,8 +1006,8 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
         let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
         let model = model();
         let tools = tools();
-        let mut session = Session::create(store, &settings(), &prompt()).await.unwrap();
-        session.input().send(user_input("go")).await.unwrap();
+        let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+        store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         {
             let mut future = pin!(

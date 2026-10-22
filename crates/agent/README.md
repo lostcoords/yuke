@@ -26,7 +26,7 @@ turn reads the blobs of its media from the store, so the driver needs no blob st
   owns the new session. The copy has the events up to that end, the settings at that point, the blobs of the source,
   no pending input, and no open turn. A fork names the end by its event number, or takes the newest completed turn. A
   number that does not end a completed turn gets `StoreError::NotACompletedTurn`.
-- An input from `Session::input` is pending in the store until a commit consumes it. An open starts no turn.
+- An input from `Store::accept_input` is pending in the store until a commit consumes it. An open starts no turn.
 - A turn reads the pending inputs from the store at its start and after each round. After a cancelled or failed turn,
   the next turn adds a notification from `host:session` after its inputs.
 - After a failed commit, or when the caller drops a turn, the session is stale. `Session::recover` opens it again
@@ -34,8 +34,8 @@ turn reads the blobs of its media from the store, so the driver needs no blob st
 
 ## Session updates
 
-`SessionTurn::observer` accepts a `SessionObserver`. It receives typed `SessionUpdateParams`, with no JSON round trip.
-The callback receives owned parameters and must return without a wait. The caller owns any delivery queue.
+`SessionTurn::observer` accepts a `SessionObserver`. It receives typed `SessionUpdate` values, with no JSON round trip.
+The callback receives owned updates and must return without a wait. The caller owns any delivery queue.
 
 Each provider attempt starts a distinct draft. Model updates retain block ids, boundaries, reasoning sections,
 argument fragments, and response completion. A response completion does not confirm a save or end the turn.
