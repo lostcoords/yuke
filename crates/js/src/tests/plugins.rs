@@ -188,7 +188,7 @@ async fn the_close_aborts_each_signal_then_awaits_each_cleanup_newest_first_once
         Some(
             "export function apply(ctx) {
                globalThis.signals.push(ctx.signal);
-               return () => { globalThis.events.push('three'); throw new Error('stuck'); };
+               return () => { globalThis.events.push('three'); throw Object.create(null); };
              }",
         ),
         &[],
@@ -215,7 +215,7 @@ async fn the_close_aborts_each_signal_then_awaits_each_cleanup_newest_first_once
             session_id: None,
             level: NoticeLevel::Error,
             source: "three".to_owned(),
-            message: "the cleanup of the plugin failed: Error: stuck".to_owned(),
+            message: "the cleanup of the plugin failed: a value without a text form".to_owned(),
         })
     );
 }

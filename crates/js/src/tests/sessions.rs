@@ -365,7 +365,7 @@ async fn a_session_that_throws_at_once_drops_its_tools_and_sends_a_notice() {
     let (folder, runtime, mut reports) = loaded(
         "a_session_that_throws_at_once_drops_its_tools_and_sends_a_notice",
         &format!(
-            "export function session(s) {{ s.tools.define({}); throw new Error('at once'); }}",
+            "export function session(s) {{ s.tools.define({}); throw Object.create(null); }}",
             tool("gone")
         ),
     )
@@ -377,7 +377,7 @@ async fn a_session_that_throws_at_once_drops_its_tools_and_sends_a_notice() {
     assert_eq!(tools.names(), Vec::<&str>::new());
     assert_eq!(
         notice.message,
-        "the session setup failed, and its tools and hooks are gone: Error: at once"
+        "the session setup failed, and its tools and hooks are gone: a value without a text form"
     );
 }
 
@@ -463,7 +463,7 @@ async fn a_close_refuses_definitions_before_the_abort_and_awaits_every_cleanup()
     let broken = plugin(
         &folder,
         "broken",
-        Some("export function session() { return () => { throw new Error('no cleanup'); }; }"),
+        Some("export function session() { return () => { throw Object.create(null); }; }"),
         &[],
         &[],
     );
@@ -509,7 +509,7 @@ async fn a_close_refuses_definitions_before_the_abort_and_awaits_every_cleanup()
     );
     assert_eq!(
         next_notice(&mut reports).await.message,
-        "the cleanup of the session failed: Error: no cleanup"
+        "the cleanup of the session failed: a value without a text form"
     );
     assert_eq!(error_of(&kept, "{}").await, "the session is closed");
 }
