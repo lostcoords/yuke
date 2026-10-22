@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::time::{Duration, Instant, SystemTime};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::route::{Credential, OAuth};
@@ -225,13 +225,12 @@ impl std::error::Error for OAuthError {
     }
 }
 
-/// Post the form `fields` to `url`, and return the whole answer.
-async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) -> Result<Answer, Fault> {
-    let body = form(fields);
+/// Post `body` with the media type `content_type` to `url`, and return the whole answer.
+async fn post(exchange: &dyn Exchange, url: &str, content_type: &'static str, body: &[u8]) -> Result<Answer, Fault> {
     let request = ExchangeRequest {
         url,
-        content_type: FORM,
-        body: body.as_bytes(),
+        content_type,
+        body,
         max_answer: MAX_ANSWER,
     };
     exchange
@@ -239,19 +238,24 @@ async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) 
         .await
 }
 
+/// Post the form `fields` to `url`, and return the whole answer.
+async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) -> Result<Answer, Fault> {
+    post(exchange, url, FORM, form(fields).as_bytes()).await
+}
+
 /// Post `body` as JSON to `url`, and return the whole answer.
-async fn post_json(exchange: &dyn Exchange, url: &str, body: &impl Serialize) -> Result<Answer, Fault> {
-    // A struct of texts always serializes, so an error is a bug of the flow.
-    let body = serde_json::to_vec(body).map_err(|_| Fault::InvalidRequest)?;
-    let request = ExchangeRequest {
-        url,
-        content_type: JSON,
-        body: &body,
-        max_answer: MAX_ANSWER,
-    };
-    exchange
-        .exchange(&request, Some(Instant::now() + EXCHANGE_TIMEOUT))
-        .await
+async fn post_json(exchange: &dyn Exchange, url: &str, body: &Value) -> Result<Answer, Fault> {
+    post(exchange, url, JSON, body.to_string().as_bytes()).await
+}
+
+/// The answer of an exchange that must succeed. A fault or a status outside 2xx gives `Transient`.
+fn accepted(result: Result<Answer, Fault>) -> Result<Answer, OAuthError> {
+    let answer = result.map_err(|fault| OAuthError::Transient(Some(fault)))?;
+    if succeeded(answer.head.status) {
+        Ok(answer)
+    } else {
+        Err(OAuthError::Transient(None))
+    }
 }
 
 /// Encode `fields` as `application/x-www-form-urlencoded` (WHATWG URL, section 5.2).
@@ -329,23 +333,16 @@ impl TokenAnswer {
     }
 }
 
-/// An error answer. The providers put the code in `error.code`, `error`, `code`, or `error_code`.
-#[derive(Deserialize)]
-struct ErrorAnswer {
-    error: Option<Value>,
-    code: Option<Value>,
-    error_code: Option<Value>,
-}
-
-/// The error code of an error answer `body`, in lowercase. The first non-empty text wins.
+/// The error code of an error answer `body`, in lowercase. The providers put the code in `error.code`, `error`, `code`,
+/// or `error_code`, and the first non-empty text wins.
 fn error_code(body: &[u8]) -> Option<String> {
-    let answer: ErrorAnswer = serde_json::from_slice(body).ok()?;
-    let nested = answer.error.as_ref().and_then(|error| error.get("code"));
+    let answer: Value = serde_json::from_slice(body).ok()?;
+    let error = answer.get("error");
     [
-        nested,
-        answer.error.as_ref(),
-        answer.code.as_ref(),
-        answer.error_code.as_ref(),
+        error.and_then(|error| error.get("code")),
+        error,
+        answer.get("code"),
+        answer.get("error_code"),
     ]
     .into_iter()
     .flatten()

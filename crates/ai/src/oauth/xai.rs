@@ -31,12 +31,7 @@ struct StartAnswer {
 
 pub(super) async fn start(exchange: &dyn Exchange) -> Result<PendingLogin, OAuthError> {
     let fields = [("client_id", CLIENT_ID), ("scope", SCOPE), ("referrer", REFERRER)];
-    let answer = super::post_form(exchange, DEVICE_CODE_URL, &fields)
-        .await
-        .map_err(|fault| OAuthError::Transient(Some(fault)))?;
-    if !super::succeeded(answer.head.status) {
-        return Err(OAuthError::Transient(None));
-    }
+    let answer = super::accepted(super::post_form(exchange, DEVICE_CODE_URL, &fields).await)?;
     let start: StartAnswer = serde_json::from_slice(&answer.body).map_err(|_| OAuthError::BadResponse)?;
     let device_code = super::nonblank(start.device_code).ok_or(OAuthError::BadResponse)?;
     Ok(PendingLogin {

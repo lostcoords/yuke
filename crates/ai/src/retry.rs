@@ -4,36 +4,26 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 
 use crate::failure::{Failure, ProviderKind};
-use crate::response::AttemptError;
+use crate::response::{AttemptError, AttemptInfo};
 use crate::transport::Fault;
 
-/// How a failure behaves for a repeat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Class {
-    /// A failure that can pass: the provider named a temporary condition, or the transport or the stream failed. A
-    /// repeat can duplicate a request that reached the provider, because neither provider takes an idempotency key.
-    Transient,
-    /// A 429 that names no known cause, as a rate limit and a spent quota both send. Only a retry delay or
-    /// `x-should-retry: true` lets it repeat, as Codex does.
-    AnsweredUnknown,
-    /// The retry policy does not repeat this failure.
-    NonRetryable,
-}
-
-/// How `cause` behaves for a repeat.
-fn classify(cause: Failure) -> Class {
+/// Whether `cause` may repeat without `x-should-retry: true`. A provider timeout also needs status 408, and an unknown
+/// 429 needs a retry delay. A repeat can duplicate a request, because neither provider takes an idempotency key.
+fn repeatable(cause: Failure, info: &AttemptInfo) -> bool {
     match cause {
         Failure::Provider(kind) => match kind {
-            ProviderKind::RateLimited | ProviderKind::ServerError | ProviderKind::Timeout | ProviderKind::Conflict => {
-                Class::Transient
-            }
-            ProviderKind::RateLimitUnknown => Class::AnsweredUnknown,
+            ProviderKind::RateLimited | ProviderKind::ServerError | ProviderKind::Conflict => true,
+            // A provider answered, so it holds the request. Only an explicit HTTP 408 says it did not process it.
+            ProviderKind::Timeout => info.status == Some(408),
+            // A 429 that names no known cause, as a rate limit and a spent quota both send. Only a retry delay lets it
+            // repeat, as Codex does.
+            ProviderKind::RateLimitUnknown => info.retry_after_ms.is_some(),
             ProviderKind::AuthFailed
             | ProviderKind::PermissionDenied
             | ProviderKind::QuotaExhausted
             | ProviderKind::BadStatus
             | ProviderKind::ContextOverflow
-            | ProviderKind::ProviderFailed => Class::NonRetryable,
+            | ProviderKind::ProviderFailed => false,
         },
         Failure::Transport(fault) => match fault {
             Fault::IdleTimeout
@@ -41,7 +31,7 @@ fn classify(cause: Failure) -> Class {
             | Fault::ConnectFailed
             | Fault::ConnectTimeout
             | Fault::ConnectionLost
-            | Fault::DnsFailed => Class::Transient,
+            | Fault::DnsFailed => true,
             Fault::InvalidRequest
             | Fault::RedirectRefused
             | Fault::BadUrl
@@ -49,12 +39,12 @@ fn classify(cause: Failure) -> Class {
             | Fault::AnswerTooLarge
             | Fault::TlsSetupFailed
             // The same certificate fails the check again.
-            | Fault::CertificateRejected => Class::NonRetryable,
+            | Fault::CertificateRejected => false,
         },
         // A stream without its terminal event is a truncation, not a malformed stream.
-        Failure::IncompleteStream => Class::Transient,
+        Failure::IncompleteStream => true,
         // A parse error never repeats.
-        Failure::Protocol | Failure::ResponseTooLarge => Class::NonRetryable,
+        Failure::Protocol | Failure::ResponseTooLarge => false,
     }
 }
 
@@ -87,7 +77,6 @@ impl Default for Policy {
 /// nearest bound, and NaN counts as 0.
 pub fn decide(policy: Policy, attempt_error: &AttemptError, number: NonZeroU32, jitter: f64) -> Option<Duration> {
     let info = &attempt_error.info;
-    let failure = attempt_error.cause;
     // The caller got an event of the attempt, so a repeat would show it again.
     if info.output_seen {
         return None;
@@ -96,16 +85,8 @@ pub fn decide(policy: Policy, attempt_error: &AttemptError, number: NonZeroU32, 
     if info.should_retry == Some(false) {
         return None;
     }
-    if info.should_retry != Some(true) {
-        match classify(failure) {
-            Class::NonRetryable => return None,
-            Class::AnsweredUnknown if info.retry_after_ms.is_none() => return None,
-            // A provider answered, so it holds the request. Only an explicit HTTP 408 says it did not process it.
-            Class::Transient if failure == Failure::Provider(ProviderKind::Timeout) && info.status != Some(408) => {
-                return None;
-            }
-            _ => {}
-        }
+    if info.should_retry != Some(true) && !repeatable(attempt_error.cause, info) {
+        return None;
     }
     if number >= policy.max_attempts {
         return None;
@@ -234,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn should_retry_header_overrides_class() {
+    fn should_retry_header_overrides_the_kind_of_the_failure() {
         assert_eq!(None, failed(Failure::Provider(ProviderKind::AuthFailed), 1));
         let vetoed = AttemptInfo {
             should_retry: Some(false),

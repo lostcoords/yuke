@@ -126,23 +126,12 @@ pub(crate) fn event_kind(root: &Value<'_>) -> ProviderKind {
 /// Build a sanitized line from error answer bytes: `type: message (code)` when the JSON names them, else
 /// the raw text. `None` when nothing printable remains.
 pub(crate) fn detail_text(bytes: &[u8]) -> Option<String> {
-    let trimmed = trim(bytes);
-    if trimmed.is_empty() {
-        return None;
-    }
-    let described = json::parse_bytes(trimmed).ok().and_then(|root| describe(&root));
-    let line = described.as_ref().map_or(trimmed, String::as_bytes);
+    let described = json::parse_bytes(bytes).ok().and_then(|root| describe(&root));
+    let line = described.as_ref().map_or(bytes, String::as_bytes);
+    // `sanitize` turns the C0, DEL, and C1 characters into spaces, so this trim also drops edge tabs and line ends.
     let clean = sanitize(line);
     let clean = clean.trim_matches(' ');
     if clean.is_empty() { None } else { Some(clean.to_owned()) }
-}
-
-/// Trim spaces, tabs, CRs, and LFs at both ends. Other whitespace stays.
-fn trim(bytes: &[u8]) -> &[u8] {
-    let kept = |b: &u8| !matches!(b, b' ' | b'\t' | b'\r' | b'\n');
-    let start = bytes.iter().position(kept).unwrap_or(bytes.len());
-    let end = bytes.iter().rposition(kept).map_or(start, |i| i + 1);
-    &bytes[start..end]
 }
 
 /// Hold the error fields of one answer, because each dialect puts them in another place.

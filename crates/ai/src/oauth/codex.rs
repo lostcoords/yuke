@@ -3,8 +3,8 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, json};
 
 use super::{FlowLogin, Grant, OAuthError, PendingLogin, Poll, TokenAnswer};
 use crate::base64;
@@ -30,11 +30,6 @@ const PERMANENT_REFRESH: &[&str] = &[
     "refresh_token_invalidated",
 ];
 
-#[derive(Serialize)]
-struct UserCodeRequest<'a> {
-    client_id: &'a str,
-}
-
 /// The start answer. Codex can spell the user code as `usercode`, and it can send the interval as a text.
 #[derive(Deserialize)]
 struct UserCodeAnswer {
@@ -44,12 +39,6 @@ struct UserCodeAnswer {
     interval: Option<Value>,
 }
 
-#[derive(Serialize)]
-struct PollRequest<'a> {
-    device_auth_id: &'a str,
-    user_code: &'a str,
-}
-
 /// The answer of an approved poll. The server makes the PKCE pair, and the exchange sends its verifier.
 #[derive(Deserialize)]
 struct CodeAnswer {
@@ -57,21 +46,9 @@ struct CodeAnswer {
     code_verifier: Option<String>,
 }
 
-#[derive(Serialize)]
-struct RefreshRequest<'a> {
-    client_id: &'a str,
-    grant_type: &'a str,
-    refresh_token: &'a str,
-}
-
 pub(super) async fn start(exchange: &dyn Exchange) -> Result<PendingLogin, OAuthError> {
-    let request = UserCodeRequest { client_id: CLIENT_ID };
-    let answer = super::post_json(exchange, USER_CODE_URL, &request)
-        .await
-        .map_err(|fault| OAuthError::Transient(Some(fault)))?;
-    if !super::succeeded(answer.head.status) {
-        return Err(OAuthError::Transient(None));
-    }
+    let request = json!({ "client_id": CLIENT_ID });
+    let answer = super::accepted(super::post_json(exchange, USER_CODE_URL, &request).await)?;
     let start: UserCodeAnswer = serde_json::from_slice(&answer.body).map_err(|_| OAuthError::BadResponse)?;
     Ok(PendingLogin {
         user_code: super::nonblank(start.user_code).ok_or(OAuthError::BadResponse)?,
@@ -89,10 +66,7 @@ pub(super) async fn poll(
     user_code: &str,
     now: SystemTime,
 ) -> Result<Poll, OAuthError> {
-    let request = PollRequest {
-        device_auth_id,
-        user_code,
-    };
+    let request = json!({ "device_auth_id": device_auth_id, "user_code": user_code });
     let answer = super::post_json(exchange, DEVICE_TOKEN_URL, &request)
         .await
         .map_err(|fault| OAuthError::Transient(Some(fault)))?;
@@ -113,12 +87,7 @@ pub(super) async fn poll(
         ("client_id", CLIENT_ID),
         ("code_verifier", code_verifier.as_str()),
     ];
-    let answer = super::post_form(exchange, TOKEN_URL, &fields)
-        .await
-        .map_err(|fault| OAuthError::Transient(Some(fault)))?;
-    if !super::succeeded(answer.head.status) {
-        return Err(OAuthError::Transient(None));
-    }
+    let answer = super::accepted(super::post_form(exchange, TOKEN_URL, &fields).await)?;
     grant(&answer.body, now).map(Poll::Approved)
 }
 
@@ -127,11 +96,7 @@ pub(super) async fn refresh(
     refresh_token: &str,
     now: SystemTime,
 ) -> Result<Grant, OAuthError> {
-    let request = RefreshRequest {
-        client_id: CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token,
-    };
+    let request = json!({ "client_id": CLIENT_ID, "grant_type": "refresh_token", "refresh_token": refresh_token });
     let answer = super::post_json(exchange, TOKEN_URL, &request)
         .await
         .map_err(super::refresh_fault)?;

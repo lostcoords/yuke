@@ -1,6 +1,5 @@
 //! What a call answers: the streamed events, the collected response, and the facts of the attempt.
 
-use std::borrow::Cow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -305,24 +304,15 @@ pub struct Completion {
 }
 
 impl Completion {
-    /// The text parts, joined without separators. Refusals, reasoning, and tools stay out. A single text part is
-    /// lent, and only several parts make a new string.
-    pub fn text(&self) -> Cow<'_, str> {
-        let mut parts = self.content.iter().filter_map(|part| match part {
-            Content::Text(text) => Some(text.as_str()),
-            _ => None,
-        });
-        let Some(first) = parts.next() else {
-            return Cow::Borrowed("");
-        };
-        match parts.next() {
-            None => Cow::Borrowed(first),
-            Some(second) => {
-                let mut joined = [first, second].concat();
-                parts.for_each(|part| joined.push_str(part));
-                Cow::Owned(joined)
-            }
-        }
+    /// Join the `Content::Text` parts without separators. Refusals, reasoning, and tool calls are not in the result.
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|part| match part {
+                Content::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Return the tool calls in start order. Run them only after a [`FinishReason::ToolCalls`] or
@@ -529,11 +519,10 @@ mod tests {
     }
 
     #[test]
-    fn text_borrows_one_part_and_joins_many() {
-        assert!(matches!(completion(Vec::new()).text(), Cow::Borrowed("")));
-        let one = completion(vec![Content::Refusal("no".into()), Content::Text("A".into())]);
-        assert!(matches!(one.text(), Cow::Borrowed("A")));
+    fn text_joins_only_the_text_parts() {
+        assert_eq!(completion(Vec::new()).text(), "");
         let several = completion(vec![
+            Content::Refusal("no".into()),
             Content::Text("A".into()),
             Content::Reasoning(Reasoning {
                 text: "r".into(),
