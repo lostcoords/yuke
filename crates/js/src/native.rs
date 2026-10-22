@@ -1,6 +1,7 @@
 //! The native module `yuke:internal/native`: Rust functions for the built-in modules. The engine builds its export
 //! object at its start, so a function can hold Rust state.
 
+mod ai;
 pub(crate) mod call;
 mod console;
 mod encoding;
@@ -20,6 +21,7 @@ use tokio::sync::mpsc;
 use yuke_engine::CancellationToken;
 
 use crate::error::{ErrorClass, Report, throw};
+use crate::models::Models;
 use crate::processes::Processes;
 use crate::tools::Registry;
 
@@ -94,9 +96,11 @@ pub(crate) fn install(
     ctx: &Ctx<'_>,
     registry: &Rc<Registry>,
     processes: &Arc<Processes>,
+    models: &Arc<dyn Models>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
+    ai::add(ctx, &object, models)?;
     fs::add(ctx, &object)?;
     process::add(ctx, &object, processes)?;
     lines::add(ctx, &object)?;

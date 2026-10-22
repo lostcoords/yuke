@@ -283,6 +283,43 @@ async fn a_level_that_the_model_does_not_take_is_an_error() {
     );
 }
 
+// A summary through `yuke:ai` covers the way from a plugin to the catalog, the credentials, and the transport.
+#[tokio::test]
+async fn a_plugin_summarizes_the_context_with_the_model_of_the_session_and_replaces_it() {
+    let place = Place::new("print", "summary");
+    place.plugin(
+        "summary",
+        "import { generateText } from 'yuke:ai';
+         export function session(s) {
+           s.hook('round.before', async ({ blocks, context, signal }) => {
+             if (blocks < 3) return undefined;
+             const instructions = 'Summarize the conversation.';
+             const summary = await generateText({ model: s.model, instructions, prompt: context(), abortSignal: signal });
+             return { replace: { head: [{ user_text: `Summary: ${summary.text}` }], keep: 0 } };
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["summary"] }"#).unwrap();
+    let replies = [
+        tool_reply(&[("c1", "read", r#"{"path":"missing.txt"}"#)]),
+        text_reply("They said hi."),
+        text_reply("Done."),
+    ];
+
+    let (finished, requests) = run_with(&place, &task("Hi.", SessionChoice::New), &replies).await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert_eq!(requests.len(), 3);
+    let summary = &requests[1];
+    assert_in_order(summary, &["Summarize the conversation.", "Hi."]);
+    assert!(
+        !summary.contains("You are yuke") && !summary.contains(r#""tools""#),
+        "{summary}"
+    );
+    assert!(requests[2].contains("Summary: They said hi."), "{}", requests[2]);
+    assert!(!requests[2].contains(r#""Hi.""#), "{}", requests[2]);
+}
+
 #[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");

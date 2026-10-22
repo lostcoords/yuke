@@ -75,6 +75,23 @@ export function mediaOf(value: unknown, place: string): ToolMedia {
 }
 
 /**
+ * A copy of the JSON value `value`, so a later change by the plugin does not reach the host. JSON would turn a number
+ * that is not finite into `null` and drop a symbol or a function, so each throws a `TypeError` that names `place`.
+ */
+export function jsonCopy<T>(value: T, place: string): T {
+  const text = JSON.stringify(value, (_key, item: unknown) => {
+    if (typeof item === "number" && !Number.isFinite(item)) {
+      throw new TypeError(`${place} holds a number that is not finite`);
+    }
+    if (typeof item === "symbol" || typeof item === "function") {
+      throw new TypeError(`${place} holds a ${typeof item}, which JSON cannot hold`);
+    }
+    return item;
+  });
+  return JSON.parse(text) as T;
+}
+
+/**
  * A copy of the own fields of the object `value`. A value that is not an object, a symbol key, or a field outside
  * `names` throws. An inherited field does not count.
  */

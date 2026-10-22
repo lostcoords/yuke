@@ -255,3 +255,29 @@ media?: Array<Media>,
  * with the declarations. A request that defers no tool writes only the text of the result.
  */
 loaded?: Array<ToolDefinition>, };
+
+/**
+ * Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it. A provider can
+ * leave out a count. A missing count is not zero.
+ */
+export type Usage = { 
+/**
+ * Every prompt token, `cache_read` and `cache_write` among them.
+ */
+input: number | null, 
+/**
+ * Every generated token, `reasoning` among them.
+ */
+output: number | null, 
+/**
+ * The output tokens the model spent on reasoning.
+ */
+reasoning: number | null, 
+/**
+ * The input tokens read from the prompt cache.
+ */
+cacheRead: number | null, 
+/**
+ * The input tokens written to the prompt cache.
+ */
+cacheWrite: number | null, };

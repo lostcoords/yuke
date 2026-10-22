@@ -64,7 +64,7 @@ impl LiveSession {
             }),
         };
         let host = Arc::new(Host {
-            folder: Mutex::new(session.settings().cwd.clone()),
+            settings: Mutex::new(session.settings().clone()),
             shared,
             inbox,
             closed: CancellationToken::new(),
@@ -155,6 +155,7 @@ impl LiveSession {
             recover(&mut session, output).await?;
         }
         let saved = save_settings(&mut session, settings, &host.shared).await?;
+        lock(&host.settings).clone_from(session.settings());
         output.publish(SessionUpdate::Saved(saved));
         Ok(())
     }
@@ -495,7 +496,7 @@ impl Parts {
                     return;
                 }
             };
-            lock(&self.host.folder).clone_from(&session.settings().cwd);
+            lock(&self.host.settings).clone_from(session.settings());
             let token = {
                 let mut turn = lock(&self.turn);
                 if self.host.closed.is_cancelled() {
@@ -688,8 +689,8 @@ fn check_answer(request: &InteractionRequest, response: &InteractionResponse) ->
 
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.
 struct Host {
-    /// The folder of the session. Each turn sets it from the settings.
-    folder: Mutex<PathBuf>,
+    /// The settings of the session now. A saved change of the settings and each turn set them.
+    settings: Mutex<SessionSettings>,
     shared: Arc<Shared>,
     inbox: Inbox,
     /// The close of the session. It ends each open question.
@@ -714,7 +715,7 @@ impl SessionHost for Host {
     }
 
     fn folder(&self) -> PathBuf {
-        lock(&self.folder).clone()
+        lock(&self.settings).cwd.clone()
     }
 
     fn job_changed(&self, job: Job) {
@@ -751,14 +752,21 @@ impl SessionHost for Host {
     fn model(&self, reference: &ModelReference) -> Result<Model, String> {
         model_of(reference, &self.shared).map_err(|error| chain_text(&error))
     }
+
+    fn model_reference(&self) -> ModelReference {
+        lock(&self.settings).model.clone()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use yuke_ai::Block;
     use yuke_protocol::{InputKind, InputSource, ModelReference};
+    use yuke_testing::ScriptedTransport;
 
     use super::*;
+    use crate::app::App;
+    use crate::testing::{Place, with_key};
 
     /// Keeps each session update that it receives.
     #[derive(Default)]
@@ -1045,5 +1053,44 @@ mod tests {
                 closed(1),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn after_new_settings_the_host_names_their_model_and_folder_before_any_turn() {
+        let place = Place::new(
+            "live",
+            "after_new_settings_the_host_names_their_model_and_folder_before_any_turn",
+        );
+        let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
+        let mut app = App::start(machine, Mode::Print, Arc::new(Recorder::default()))
+            .await
+            .unwrap();
+        let first = SessionSettings {
+            model: ModelReference {
+                provider: "minimax".to_owned(),
+                model: "MiniMax-M3".to_owned(),
+            },
+            settings: yuke_ai::Settings::new(),
+            cwd: place.work.clone(),
+        };
+        let id = app.create(first.clone()).await.unwrap();
+        let other = place.work.join("other");
+        std::fs::create_dir(&other).unwrap();
+        let model = ModelReference {
+            provider: "minimax".to_owned(),
+            model: "MiniMax-M2.7".to_owned(),
+        };
+        let changed = SessionSettings {
+            model: model.clone(),
+            cwd: other.clone(),
+            ..first
+        };
+
+        app.set_settings(id, changed).await.unwrap();
+        let host = &app.sessions[&id].parts.host;
+        let named = (host.model_reference(), host.folder());
+        app.shutdown().await;
+
+        assert_eq!(named, (model, other));
     }
 }

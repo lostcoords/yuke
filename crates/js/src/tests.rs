@@ -1,3 +1,4 @@
+mod ai;
 mod ask;
 mod exec;
 mod fs;
@@ -20,10 +21,11 @@ use std::time::{Duration, Instant};
 
 use rquickjs::{Ctx, FromJs, Promise};
 use tokio::sync::mpsc;
+use yuke_engine::CancellationToken;
 
 use crate::error::caught;
 use crate::plugins::PluginError;
-use crate::{Error, Options, Plugin, Processes, Report, Runtime, ScriptError};
+use crate::{CompleteAnswer, CompleteRequest, Error, Models, Options, Plugin, Processes, Report, Runtime, ScriptError};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
@@ -44,13 +46,33 @@ fn write(folder: &Path, files: &[(&str, &str)]) {
     }
 }
 
-async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
-    Runtime::start(Options {
+/// The models of a test runtime: none.
+struct NoModels;
+
+#[async_trait::async_trait]
+impl Models for NoModels {
+    async fn complete(
+        &self,
+        request: CompleteRequest,
+        _cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
+        Err(format!("no model {}/{}", request.model.provider, request.model.model).into())
+    }
+}
+
+/// The options of a test runtime in `folder` with `processes`.
+fn options(folder: &Path, processes: Arc<Processes>) -> Options {
+    Options {
         cache: folder.join("cache"),
-        processes: Arc::new(Processes::new(folder.join("processes"))),
-    })
-    .await
-    .unwrap()
+        processes,
+        models: Arc::new(NoModels),
+    }
+}
+
+async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
+    Runtime::start(options(folder, Arc::new(Processes::new(folder.join("processes")))))
+        .await
+        .unwrap()
 }
 
 /// The plugin `name` with its folders, its entry, and its services.

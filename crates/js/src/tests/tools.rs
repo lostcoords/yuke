@@ -34,6 +34,8 @@ pub(super) struct TestHost {
     pub(super) questions: Mutex<Vec<(String, InteractionRequest)>>,
     /// The answer of each question, in order. A question after the last answer waits for its cancel.
     pub(super) answers: Mutex<VecDeque<InteractionResponse>>,
+    /// The model of the session. A test can change it.
+    pub(super) model: Mutex<yuke_protocol::ModelReference>,
 }
 
 impl TestHost {
@@ -48,6 +50,10 @@ impl TestHost {
             inputs: Mutex::default(),
             questions: Mutex::default(),
             answers: Mutex::default(),
+            model: Mutex::new(yuke_protocol::ModelReference {
+                provider: "test".to_owned(),
+                model: "test-model".to_owned(),
+            }),
         }
     }
 }
@@ -104,6 +110,10 @@ impl SessionHost for TestHost {
             model: "other-model".into(),
             ..yuke_testing::target()
         }))
+    }
+
+    fn model_reference(&self) -> yuke_protocol::ModelReference {
+        self.model.lock().unwrap().clone()
     }
 }
 

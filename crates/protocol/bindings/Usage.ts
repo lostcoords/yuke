@@ -2,7 +2,7 @@
 
 /**
  * Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it. A provider can
- * leave out a count. Then the count is `None`, not `Some(0)`.
+ * leave out a count. A missing count is not zero.
  */
 export type Usage = { 
 /**

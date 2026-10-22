@@ -2,6 +2,7 @@
 //! threads send it calls through a channel and await the answers.
 
 use std::cell::RefCell;
+use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::pin;
@@ -12,10 +13,12 @@ use std::task::Poll;
 use std::thread::JoinHandle;
 
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
+use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::error::{Error, Report, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
+use crate::models::{Models, OnConsumer};
 use crate::native;
 use crate::processes::Processes;
 use crate::strip::Cache;
@@ -34,7 +37,7 @@ const THREAD_HEADROOM: usize = 2 << 20;
 const WEB: &str = "yuke:internal/web";
 
 /// The settings of a runtime.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Options {
     /// The folder that keeps the JavaScript of each TypeScript file. The runtime makes it when it is missing.
     pub cache: PathBuf,
@@ -42,6 +45,18 @@ pub struct Options {
     /// The child processes of the tools. Give every JavaScript runtime of the process the same value, so a job
     /// outlives a reload.
     pub processes: Arc<Processes>,
+
+    /// The models that the plugins call.
+    pub models: Arc<dyn Models>,
+}
+
+impl fmt::Debug for Options {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Options")
+            .field("cache", &self.cache)
+            .field("processes", &self.processes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A call for the JavaScript thread. It receives the tool registry.
@@ -85,6 +100,13 @@ impl Runtime {
     /// Returns [`Error::Thread`] when the thread or its tokio runtime does not start. Returns [`Error::Script`] when the
     /// engine does not start, and [`Error::Stopped`] when the thread ends before it is ready.
     pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
+        let options = Options {
+            models: Arc::new(OnConsumer {
+                models: options.models,
+                handle: Handle::current(),
+            }),
+            ..options
+        };
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
@@ -307,7 +329,7 @@ impl Engine {
                 crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, faults.clone())?;
                 crate::error::install_report_error(&ctx, faults.clone())?;
-                native::install(&ctx, &registry, &options.processes, faults)
+                native::install(&ctx, &registry, &options.processes, &options.models, faults)
             })
             .await
             .map_err(engine_error)?;

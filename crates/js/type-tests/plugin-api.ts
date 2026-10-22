@@ -1,6 +1,7 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
 import type {
   Block,
+  FinishReason,
   PluginApply,
   PluginContext,
   PluginSession,
@@ -204,6 +205,24 @@ async function programs(): Promise<void> {
   void signal;
 }
 void programs;
+
+// `yuke:ai` needs a model, takes a text or blocks, and its answer has the finish reason and the usage.
+async function models(): Promise<void> {
+  const { generateText } = await import("yuke:ai");
+  const prompt: Block[] = [{ user_text: "Hi." }];
+  const answer = await generateText({ model: s.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
+  await generateText({ model: s.model, instructions: "Be brief.", prompt: "Hi." });
+  const text: string = answer.text;
+  assert<Equal<typeof answer.finishReason, FinishReason>>();
+  const input: number | null = answer.usage.input;
+  // @ts-expect-error: a request names its model.
+  await generateText({ prompt });
+  // @ts-expect-error: a setting has its type.
+  await generateText({ model: s.model, prompt, temperature: "hot" });
+  void text;
+  void input;
+}
+void models;
 
 export { results };
 

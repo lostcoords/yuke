@@ -3,6 +3,7 @@
 //! of the protocol.
 
 mod live;
+mod models;
 mod trust;
 
 use std::collections::HashMap;
@@ -36,6 +37,7 @@ use yuke_protocol::{
 use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
+use self::models::PluginModels;
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
@@ -139,33 +141,35 @@ impl App {
             Mode::Server => Processes::new(processes_folder.clone()),
             Mode::Print => Processes::without_jobs(processes_folder.clone()),
         });
+        let shared = Arc::new(Shared {
+            machine,
+            providers,
+            store,
+            processes,
+            observer,
+            mode,
+            mcp,
+            last_question: Arc::default(),
+            logins: Mutex::default(),
+        });
         let (runtime, reports) = match Runtime::start(Options {
-            cache: machine.paths.cache.join("js"),
-            processes: Arc::clone(&processes),
+            cache: shared.machine.paths.cache.join("js"),
+            processes: Arc::clone(&shared.processes),
+            models: Arc::new(PluginModels(Arc::clone(&shared))),
         })
         .await
         {
             Ok(started) => started,
             Err(error) => {
-                if let Err(shutdown) = processes.shutdown().await {
+                if let Err(shutdown) = shared.processes.shutdown().await {
                     warn(&format!("{}: {shutdown}", processes_folder.display()));
                 }
                 return Err(chain_text(&error));
             }
         };
-        let reporter = tokio::spawn(report(reports, Arc::clone(&observer), io::stderr()));
+        let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));
         let app = App {
-            shared: Arc::new(Shared {
-                machine,
-                providers,
-                store,
-                processes,
-                observer,
-                mode,
-                mcp,
-                last_question: Arc::default(),
-                logins: Mutex::default(),
-            }),
+            shared,
             runtime,
             reporter,
             processes_folder,

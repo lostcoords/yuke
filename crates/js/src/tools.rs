@@ -58,11 +58,13 @@ pub trait SessionHost: MediaStore {
     ///
     /// Returns a text for the user when the catalog has no such model, or when its provider has no credential.
     fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String>;
+
+    /// The model that the session settings name now. A saved change of the settings takes effect at once.
+    fn model_reference(&self) -> yuke_protocol::ModelReference;
 }
 
 /// The state of the JavaScript thread: the tools that the JavaScript defined, the open sessions, and the processes that
 /// the calls start.
-#[derive(Debug)]
 pub(crate) struct Registry {
     pub(crate) processes: Arc<Processes>,
     tools: RefCell<Vec<Registered>>,
@@ -73,7 +75,6 @@ pub(crate) struct Registry {
 }
 
 /// One defined tool.
-#[derive(Debug)]
 struct Registered {
     id: u64,
     /// The open session of the tool, or `None` for a tool of every session.

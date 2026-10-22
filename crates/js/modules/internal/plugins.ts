@@ -1,4 +1,4 @@
-import { defineTool, fieldsOf, mediaOf } from "yuke:internal/define";
+import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { addAbortStep, hostOperation, hostSignal, signalOf } from "yuke:internal/events";
 import { notify, type Operation, unregister } from "yuke:internal/native";
 import type {
@@ -18,7 +18,7 @@ import type {
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
-import type { Block } from "yuke:protocol";
+import type { Block, ModelReference } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -178,14 +178,16 @@ type Question =
 type Ask = (source: string, question: Question) => Operation<boolean | string | undefined>;
 
 /**
- * What `openSession` gets: the open number of the host, the id of the session, its workspace folder, and the native
- * `ask` of the session.
+ * What `openSession` gets: the open number of the host, the id of the session, its workspace folder, and the natives
+ * of the session.
  */
 interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
   readonly folder: string;
   readonly ask: Ask;
+  /** The model that the settings of the session name now. */
+  readonly model: () => ModelReference;
   /** Tell the host the hook points that hold a handler. The host skips each other point. */
   readonly points: (names: string[]) => void;
 }
@@ -194,7 +196,7 @@ interface OpenRequest {
  * Start `session(s)` of each loaded plugin for the session of `request`. Each call starts before any of them settles.
  * The open does not wait for them; `ready(open)` does.
  */
-export function openSession({ open, sessionId, folder, ask, points }: OpenRequest): void {
+export function openSession({ open, sessionId, folder, ask, model, points }: OpenRequest): void {
   // Until each `session` settles, the host counts each point as held, and a hook waits for `ready`. A failed `session`
   // settles too, so the first publish already leaves out its handlers.
   let settled = false;
@@ -208,7 +210,9 @@ export function openSession({ open, sessionId, folder, ask, points }: OpenReques
     }
     points([...names]);
   };
-  scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, ask, plugin, session, publish));
+  scopes = sessionExports.map(({ plugin, session }) =>
+    start(open, sessionId, folder, ask, model, plugin, session, publish),
+  );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => {
     settled = true;
     publish();
@@ -308,20 +312,6 @@ interface RoundBeforePlan {
 const ROUND_BEFORE_FIELDS = ["replace", "model", "settings"];
 
 /**
- * A copy of the JSON value `value`, so a later change by the plugin does not reach the host. JSON has no `NaN` and no
- * infinity, so a number that is not finite throws a `TypeError` and does not become `null`.
- */
-function jsonCopy<T>(value: T): T {
-  const text = JSON.stringify(value, (_key, item: unknown) => {
-    if (typeof item === "number" && !Number.isFinite(item)) {
-      throw new TypeError("the answer holds a number that is not finite");
-    }
-    return item;
-  });
-  return JSON.parse(text) as T;
-}
-
-/**
  * Start the `round.before` handlers of the open session `open` before one round. Each handler gets the context after
  * the replacements before it. The answer is the plan of all handlers, or `undefined` when no handler answered. A
  * closed session answers nothing. A failed handler throws. `cancel` aborts the signal of the turn.
@@ -349,7 +339,7 @@ export function startRoundBefore({
           blocks: head.length + kept,
           context: () => {
             const before = context();
-            return [...jsonCopy(head), ...before.slice(before.length - kept)];
+            return [...jsonCopy(head, "the answer"), ...before.slice(before.length - kept)];
           },
           signal,
         });
@@ -364,7 +354,7 @@ export function startRoundBefore({
           if (typeof keep !== "number" || !Number.isSafeInteger(keep) || keep < 0) {
             throw new TypeError("the keep of the replace is not a whole number");
           }
-          const given = jsonCopy(replace.head as Block[]);
+          const given = jsonCopy(replace.head as Block[], "the answer");
           // A keep past the kept blocks also keeps the end of the earlier head.
           const keeps = Math.min(keep, head.length + kept);
           head = keeps <= kept ? given : [...given, ...head.slice(head.length - (keeps - kept))];
@@ -383,7 +373,7 @@ export function startRoundBefore({
           if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
             throw new TypeError("the settings of the answer are not an object");
           }
-          plan.settings = { plugin, changes: { ...plan.settings?.changes, ...jsonCopy(settings) } };
+          plan.settings = { plugin, changes: { ...plan.settings?.changes, ...jsonCopy(settings, "the answer") } };
         }
         answered = true;
         return false;
@@ -670,6 +660,7 @@ function start(
   sessionId: string,
   folder: string,
   ask: Ask,
+  model: () => ModelReference,
   plugin: string,
   session: PluginSession,
   publish: () => void,
@@ -711,6 +702,9 @@ function start(
   const s: SessionContext = Object.freeze({
     sessionId,
     folder,
+    get model(): ModelReference {
+      return Object.freeze(model());
+    },
     signal,
     tools: Object.freeze({
       define<const S extends ObjectSchema>(tool: Tool<S>): () => void {

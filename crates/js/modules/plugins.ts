@@ -286,6 +286,8 @@ export interface SessionContext {
   readonly sessionId: string;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
   readonly folder: string;
+  /** The model of the session now. A change of the settings changes it at once. */
+  readonly model: ModelReference;
   /** The host aborts this signal when the session closes or `session` of this plugin fails. The plugin then stops. */
   readonly signal: AbortSignal;
   /** The tools of the plugin in this session. They stay until their removal or the close of the session. */

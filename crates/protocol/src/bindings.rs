@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
-const PLUGIN_TYPES: &[&str] = &["Block", "FinishReason", "ModelReference", "Settings"];
+const PLUGIN_TYPES: &[&str] = &["Block", "FinishReason", "ModelReference", "Settings", "Usage"];
 
 /// The plugin module `yuke:protocol` from the files of `bindings`: the declaration of each type of [`PLUGIN_TYPES`] and
 /// of each type that one uses, in name order, in one file without the imports between them.

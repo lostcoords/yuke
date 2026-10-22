@@ -18,6 +18,7 @@ use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReferen
 
 use crate::Runtime;
 use crate::error::{Error, ErrorClass, caught, throw};
+use crate::models::merge_settings;
 use crate::native::Operation;
 use crate::plugins::loader;
 use crate::runtime::Caller;
@@ -56,6 +57,7 @@ impl Runtime {
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
         let ask_host = Arc::clone(&host);
+        let model_host = Arc::clone(&host);
         let points = HookPoints::default();
         let published = points.clone();
         let open = self
@@ -68,6 +70,10 @@ impl Runtime {
                     session_id,
                     folder,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
+                    model: caught(
+                        &ctx,
+                        Function::new(ctx.clone(), move || Json(model_host.model_reference())),
+                    )?,
                     points: caught(&ctx, published.function(&ctx))?,
                 };
                 if let Err(error) = caught(&ctx, open_session.call::<_, ()>((request,))) {
@@ -364,6 +370,8 @@ struct OpenRequest<'js> {
     folder: String,
     /// The native `ask(source, question)` of the session.
     ask: Function<'js>,
+    /// The native `model()` of the session, which gives the model that the settings name now.
+    model: Function<'js>,
     /// The native `points(names)` of the session, which gives the hook points that hold a handler.
     points: Function<'js>,
 }
@@ -605,20 +613,7 @@ impl PlannedRound {
         };
         let settings = match self.settings {
             Some(PlannedSettings { plugin, changes }) => {
-                let mut settings = serde_json::to_value(round.settings).map_err(|error| failed(&plugin, &error))?;
-                if let Some(fields) = settings.as_object_mut() {
-                    // serde skips an unknown field, so a misspelt setting would change nothing without this check.
-                    if let Some(unknown) = changes.0.keys().find(|key| !fields.contains_key(*key)) {
-                        return Err(failed(
-                            &plugin,
-                            &format!("the settings have the unknown field '{unknown}'"),
-                        ));
-                    }
-                    fields.extend(changes.0);
-                }
-                let settings = serde_json::from_value(settings)
-                    .map_err(|error| failed(&plugin, &format!("the settings are not valid: {error}")))?;
-                Some(settings)
+                Some(merge_settings(round.settings, changes.0).map_err(|error| failed(&plugin, &error))?)
             }
             None => None,
         };

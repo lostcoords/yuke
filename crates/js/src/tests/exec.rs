@@ -11,10 +11,10 @@ use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, JobState};
 
 use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in, tools_of};
-use super::{folder, start};
+use super::{folder, options, start};
 use crate::native;
 use crate::processes::{Request, recovered_home};
-use crate::{Options, Processes, Runtime, SessionHost};
+use crate::{Processes, Runtime, SessionHost};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
 fn job_id(started: &str) -> String {
@@ -357,10 +357,10 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
 #[tokio::test]
 async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     let folder = folder("a_background_start_fails_when_the_processes_start_no_jobs");
-    let (runtime, _faults) = Runtime::start(Options {
-        cache: folder.join("cache"),
-        processes: Arc::new(Processes::without_jobs(folder.join("processes"))),
-    })
+    let (runtime, _faults) = Runtime::start(options(
+        &folder,
+        Arc::new(Processes::without_jobs(folder.join("processes"))),
+    ))
     .await
     .unwrap();
     let (_runtime, host, tools) =
@@ -426,10 +426,7 @@ async fn a_background_command_takes_no_timeout() {
 
 /// A runtime with `processes` and the built-in tools, for the session of `host`.
 async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<TestHost>) -> (Runtime, Tools) {
-    let started = Runtime::start(Options {
-        cache: folder.join("cache"),
-        processes: Arc::clone(processes),
-    });
+    let started = Runtime::start(options(folder, Arc::clone(processes)));
     let (runtime, _faults) = tokio::time::timeout(WAIT, started).await.unwrap().unwrap();
     let (runtime, _host, tools) = tools_in(runtime, Arc::clone(host), &["yuke:internal/builtins"]).await;
     (runtime, tools)
