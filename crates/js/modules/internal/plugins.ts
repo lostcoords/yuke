@@ -193,7 +193,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession({ open, sessionId, folder, ask, model }: OpenRequest): void {
-  const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, ask, model, plugin, session));
+  const scopes = sessionExports.map(({ plugin, session }) =>
+    start(open, sessionId, folder, ask, model, plugin, session),
+  );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
