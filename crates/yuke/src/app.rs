@@ -114,8 +114,8 @@ pub(crate) struct App {
 }
 
 impl App {
-    /// Open the store, start the JavaScript runtime with the built-in tools, and load the plugins of `config.json`. The
-    /// app tells `observer` what happens.
+    /// Open the store, start the JavaScript runtime with the built-in tools, and load the bundled plugins and the plugins
+    /// of `config.json`. The app tells `observer` what happens.
     ///
     /// # Errors
     ///
@@ -124,7 +124,12 @@ impl App {
         let providers = Providers::load(&machine.paths.config)?;
         let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
-        let plugins = plugins::plugins(&machine.paths.config, &config.plugins, &machine.paths.data)?;
+        let plugins = plugins::plugins(
+            &machine.paths.config,
+            &config.plugins,
+            &config.disable,
+            &machine.paths.data,
+        )?;
         let store: Arc<dyn Store> = Arc::new(
             SqliteStore::open(&machine.paths.data)
                 .await

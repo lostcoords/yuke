@@ -1,12 +1,12 @@
-//! The plugins of the profile: the `plugins` list of `config.json` and the Agent Plugins `plugin.json` of each folder.
-//! The checks run before any plugin code: a bad list stops the start.
+//! The plugins of yuke and of the profile: the bundled plugins, then the `plugins` list of `config.json` and the Agent
+//! Plugins `plugin.json` of each folder. The checks run before any plugin code: a bad list stops the start.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path};
 
 use serde::Deserialize;
 use serde_json::Value;
-use yuke_js::Plugin;
+use yuke_js::{Origin, Plugin};
 
 use crate::config::read_json;
 
@@ -36,15 +36,56 @@ struct YukeFields {
     provides: Vec<String>,
 }
 
-/// The plugins of the folders `list`, in its order. A relative folder starts in `config_folder`. The function makes the
-/// data folder `<data>/plugins/<name>` of each plugin.
+/// The plugins of the binary, in load order: the name of each one and the `yuke:` name of its entry module. A bundled
+/// plugin uses and provides no service.
+const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:bundled/compaction")];
+
+/// The bundled plugins that `disable` does not name, then the plugins of the folders `list`, in its order. A relative
+/// folder starts in `config_folder`. The function makes the data folder `<data>/plugins/<name>` of each plugin.
 ///
 /// # Errors
 ///
 /// Returns a text that names the plugin and the problem: an unreadable folder or manifest, a bad name or field, a
-/// duplicate name, two providers of one service, or a missing or later provider.
-pub(crate) fn plugins(config_folder: &Path, list: &[String], data: &Path) -> Result<Vec<Plugin>, String> {
-    let mut plugins: Vec<Plugin> = Vec::with_capacity(list.len());
+/// duplicate name, two providers of one service, a missing or later provider, or a `disable` name that no bundled
+/// plugin has.
+pub(crate) fn plugins(
+    config_folder: &Path,
+    list: &[String],
+    disable: &[String],
+    data: &Path,
+) -> Result<Vec<Plugin>, String> {
+    with_bundled(BUNDLED, config_folder, list, disable, data)
+}
+
+/// [`plugins`] with the bundled plugins `bundled`.
+fn with_bundled(
+    bundled: &[(&str, &str)],
+    config_folder: &Path,
+    list: &[String],
+    disable: &[String],
+    data: &Path,
+) -> Result<Vec<Plugin>, String> {
+    if let Some(name) = disable
+        .iter()
+        .find(|name| !bundled.iter().any(|(bundled, _)| bundled == name))
+    {
+        return Err(format!(
+            "config.json: disable names '{name}', which is not a bundled plugin"
+        ));
+    }
+    let mut plugins: Vec<Plugin> = bundled
+        .iter()
+        .filter(|(name, _)| !disable.iter().any(|disabled| disabled == name))
+        .map(|&(name, module)| Plugin {
+            name: name.to_owned(),
+            origin: Origin::Bundled {
+                module: module.to_owned(),
+            },
+            data_dir: data.join("plugins").join(name),
+            uses: Vec::new(),
+            provides: Vec::new(),
+        })
+        .collect();
     let mut roots = HashSet::new();
     for folder in list {
         let fail = |message: String| format!("plugin folder {folder}: {message}");
@@ -62,8 +103,18 @@ pub(crate) fn plugins(config_folder: &Path, list: &[String], data: &Path) -> Res
     let mut providers: HashMap<&str, (usize, &str)> = HashMap::new();
     for (index, plugin) in plugins.iter().enumerate() {
         let fail = |message: String| format!("plugin {}: {message}", plugin.name);
-        if plugins[..index].iter().any(|other| other.name == plugin.name) {
-            return Err(fail("another plugin of the list has this name".to_owned()));
+        match plugins[..index].iter().find(|other| other.name == plugin.name) {
+            Some(Plugin {
+                origin: Origin::Bundled { .. },
+                ..
+            }) => {
+                return Err(fail(format!(
+                    "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
+                    plugin.name
+                )));
+            }
+            Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
+            None => {}
         }
         for service in &plugin.provides {
             if let Some((_, provider)) = providers.insert(service, (index, &plugin.name)) {
@@ -143,8 +194,10 @@ fn manifest_plugin(root: &Path, data: &Path) -> Result<Plugin, String> {
     Ok(Plugin {
         data_dir: data.join("plugins").join(&manifest.name),
         name: manifest.name,
-        root: root.to_owned(),
-        entry,
+        origin: Origin::Folder {
+            root: root.to_owned(),
+            entry,
+        },
         uses: fields.uses,
         provides: fields.provides,
     })

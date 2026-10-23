@@ -13,6 +13,9 @@ pub(crate) struct Config {
     /// The folders of the plugins, in load order. A relative folder starts in the folder of `config.json`.
     #[serde(default)]
     pub(crate) plugins: Vec<String>,
+    /// The bundled plugins that do not load, by name.
+    #[serde(default)]
+    pub(crate) disable: Vec<String>,
 }
 
 /// Read the JSON file `path`, with `//` and `/* */` comments. A missing file gives `Ok(None)`. An error names the path.

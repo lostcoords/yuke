@@ -14,10 +14,10 @@ use crate::{CompleteAnswer, CompleteRequest, Models, Processes, Runtime, ScriptS
 
 /// Records each side request. With `answer`, it returns that answer. Without one, it waits for the cancel.
 #[derive(Default)]
-struct Recorded {
-    requests: Mutex<Vec<SideRequest>>,
-    answer: Option<Result<CompleteAnswer, String>>,
-    cancelled: Mutex<bool>,
+pub(super) struct Recorded {
+    pub(super) requests: Mutex<Vec<SideRequest>>,
+    pub(super) answer: Option<Result<CompleteAnswer, String>>,
+    pub(super) cancelled: Mutex<bool>,
 }
 
 #[async_trait]
@@ -46,7 +46,7 @@ impl Models for Recorded {
 }
 
 /// An answer with the text `text`.
-fn answered(text: &str) -> Recorded {
+pub(super) fn answered(text: &str) -> Recorded {
     Recorded {
         answer: Some(Ok(CompleteAnswer {
             text: text.to_owned(),

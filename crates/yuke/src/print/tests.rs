@@ -389,6 +389,113 @@ async fn a_side_request_repeats_the_bytes_of_its_round_with_one_more_block() {
     assert_eq!(side, &expected);
 }
 
+/// A user text of about `tokens` estimated tokens: 4 characters each.
+fn long(letter: &str, tokens: usize) -> String {
+    letter.repeat(tokens * 4)
+}
+
+/// The input tokens that the first answer reports. The window of the test model is 1,048,576 tokens, so the next round
+/// nears it.
+const NEAR_WINDOW: u64 = 950_000;
+
+#[tokio::test]
+async fn a_session_near_the_window_compacts_before_the_round_and_keeps_the_summary() {
+    let place = Place::new("print", "compaction_before");
+    let first = long("a", 25_000);
+    let second = long("b", 25_000);
+    run_with(
+        &place,
+        &task(&first, SessionChoice::New),
+        &[yuke_testing::counted(&text_reply("One."), NEAR_WINDOW)],
+    )
+    .await
+    .0
+    .unwrap();
+
+    let (finished, requests) = run_with(
+        &place,
+        &task(&second, SessionChoice::Newest),
+        &[text_reply("## Goal\nThe work."), text_reply("Two.")],
+    )
+    .await;
+    let (_, third) = run_with(&place, &task("Third.", SessionChoice::Newest), &[text_reply("Three.")]).await;
+
+    assert_eq!(finished.unwrap().text, "Two.");
+    let [summary_request, round] = &requests[..] else {
+        panic!("{requests:?}")
+    };
+    // The summary request sends the whole context, then the prompt.
+    assert_in_order(summary_request, &[&first, "One.", &second]);
+    assert!(summary_request.contains("The conversation above is the history to summarize."));
+    assert!(
+        round.contains("## Goal\\nThe work.") && round.contains(&second),
+        "{round}"
+    );
+    assert!(!round.contains(&first), "{round}");
+    // The store keeps the replacement, so the next run starts from the summary.
+    assert!(third[0].contains("## Goal\\nThe work.") && !third[0].contains(&first));
+}
+
+#[tokio::test]
+async fn an_overflow_compacts_the_part_before_the_cut_and_the_round_goes_again() {
+    let place = Place::new("print", "compaction_overflow");
+    let first = long("a", 25_000);
+    let second = long("b", 25_000);
+    run_with(&place, &task(&first, SessionChoice::New), &[text_reply("One.")])
+        .await
+        .0
+        .unwrap();
+    let overflow = yuke_testing::sse(&[
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1100000 tokens > 1048576 maximum"}}"#,
+    ]);
+
+    let (finished, requests) = run_with(
+        &place,
+        &task(&second, SessionChoice::Newest),
+        &[overflow, text_reply("A summary."), text_reply("Two.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Two.");
+    let [_, summary_request, round] = &requests[..] else {
+        panic!("{requests:?}")
+    };
+    assert!(summary_request.contains(&first) && !summary_request.contains(&second));
+    assert!(round.contains("A summary.") && round.contains(&second) && !round.contains(&first));
+}
+
+#[tokio::test]
+async fn disable_in_the_config_turns_the_compaction_off() {
+    let place = Place::new("print", "compaction_disabled");
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "disable": ["compaction"] }"#,
+    )
+    .unwrap();
+    let first = long("a", 25_000);
+    run_with(
+        &place,
+        &task(&first, SessionChoice::New),
+        &[yuke_testing::counted(&text_reply("One."), NEAR_WINDOW)],
+    )
+    .await
+    .0
+    .unwrap();
+
+    let (finished, requests) = run_with(
+        &place,
+        &task(&long("b", 25_000), SessionChoice::Newest),
+        &[text_reply("Two.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Two.");
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains(&first));
+}
+
 #[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");

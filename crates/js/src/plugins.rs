@@ -12,21 +12,36 @@ use crate::error::{Error, caught};
 /// The name of the internal module that loads a plugin.
 const LOADER: &str = "yuke:internal/plugins";
 
-/// One plugin of the list. The consumer checks the manifest, the names, and the order before the load.
+/// One plugin of the list. The consumer checks the names and the order before the load, and the manifest of a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plugin {
     /// The name of the plugin. It is the source of its notices.
     pub name: String,
-    /// The folder of the plugin.
-    pub root: PathBuf,
+    /// Where the code of the plugin comes from.
+    pub origin: Origin,
     /// The data folder of the plugin. It must exist.
     pub data_dir: PathBuf,
-    /// The entry module, or `None` for a plugin without code.
-    pub entry: Option<PathBuf>,
     /// The services that the plugin gets from earlier plugins.
     pub uses: Vec<String>,
     /// The services that the plugin publishes.
     pub provides: Vec<String>,
+}
+
+/// Where the code of a plugin comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    /// A folder of the profile.
+    Folder {
+        /// The folder of the plugin.
+        root: PathBuf,
+        /// The entry module, or `None` for a plugin without code.
+        entry: Option<PathBuf>,
+    },
+    /// A module of the consumer, for example a `yuke:` name. The plugin has no folder, so its context has no `root`.
+    Bundled {
+        /// The name of the entry module.
+        module: String,
+    },
 }
 
 /// A plugin that did not load. Its text names the plugin and the reason.
@@ -132,11 +147,15 @@ impl Runtime {
             .run(async move |ctx: Ctx<'_>, _registry| {
                 let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
+                let (root, entry) = match &plugin.origin {
+                    Origin::Folder { root, entry } => (Some(path(root)), entry.as_ref().map(path)),
+                    Origin::Bundled { module } => (None, Some(module.clone())),
+                };
                 let spec = PluginSpec {
                     name: plugin.name,
-                    root: path(&plugin.root),
+                    root,
                     data_dir: path(&plugin.data_dir),
-                    entry: plugin.entry.as_ref().map(path),
+                    entry,
                     uses: plugin.uses,
                     provides: plugin.provides,
                 };
@@ -152,7 +171,8 @@ impl Runtime {
 #[qjs(rename_all = "camelCase")]
 struct PluginSpec {
     name: String,
-    root: String,
+    /// The folder of the plugin, or `None` for a bundled plugin.
+    root: Option<String>,
     data_dir: String,
     entry: Option<String>,
     uses: Vec<String>,

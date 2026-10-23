@@ -33,7 +33,7 @@ mod typescript;
 
 pub use error::{Error, Report, ScriptError};
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
-pub use plugins::{Plugin, PluginFailure};
+pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};

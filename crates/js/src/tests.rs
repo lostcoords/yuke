@@ -1,5 +1,6 @@
 mod ai;
 mod ask;
+mod compaction;
 mod exec;
 mod fs;
 mod globals;
@@ -27,7 +28,7 @@ use yuke_engine::CancellationToken;
 use crate::error::caught;
 use crate::plugins::PluginError;
 use crate::{
-    CompleteAnswer, CompleteRequest, Error, Models, Options, Plugin, Processes, Report, Runtime, ScriptError,
+    CompleteAnswer, CompleteRequest, Error, Models, Options, Origin, Plugin, Processes, Report, Runtime, ScriptError,
     SideRequest,
 };
 
@@ -106,9 +107,8 @@ fn descriptor(
 ) -> Plugin {
     Plugin {
         name: name.to_owned(),
-        root,
+        origin: Origin::Folder { root, entry },
         data_dir,
-        entry,
         uses: uses.iter().map(|&service| service.to_owned()).collect(),
         provides: provides.iter().map(|&service| service.to_owned()).collect(),
     }

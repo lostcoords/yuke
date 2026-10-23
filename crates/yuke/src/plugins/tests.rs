@@ -27,10 +27,21 @@ fn manifest(name: &str, fields: &Value) -> String {
     json!({ "name": name, "extensions": { "sh.yuke": fields } }).to_string()
 }
 
-/// The plugins of the folders `list`, in the config folder of `root`.
+/// The plugins of the folders `list`, in the config folder of `root`, with no bundled plugin.
 fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
-    let list: Vec<String> = list.iter().map(|&folder| folder.to_owned()).collect();
-    plugins(&root.join("config"), &list, &root.join("data"))
+    load_with(&[], root, list, &[])
+}
+
+/// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
+fn load_with(bundled: &[(&str, &str)], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
+    let strings = |names: &[&str]| -> Vec<String> { names.iter().map(|&name| name.to_owned()).collect() };
+    with_bundled(
+        bundled,
+        &root.join("config"),
+        &strings(list),
+        &strings(disable),
+        &root.join("data"),
+    )
 }
 
 #[test]
@@ -63,17 +74,21 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
         [
             Plugin {
                 name: "notes".to_owned(),
-                root: root.join("config/notes"),
+                origin: Origin::Folder {
+                    root: root.join("config/notes"),
+                    entry: Some(root.join("config/notes/./index.ts")),
+                },
                 data_dir: root.join("data/plugins/notes"),
-                entry: Some(root.join("config/notes/./index.ts")),
                 uses: Vec::new(),
                 provides: vec!["notes".to_owned()],
             },
             Plugin {
                 name: "reader".to_owned(),
-                root: reader,
+                origin: Origin::Folder {
+                    root: reader,
+                    entry: None,
+                },
                 data_dir: root.join("data/plugins/reader"),
-                entry: None,
                 uses: vec!["notes".to_owned()],
                 provides: Vec::new(),
             },
@@ -190,4 +205,66 @@ fn the_order_of_the_list_is_the_load_order_so_a_provider_comes_first() {
         Err("plugin reader: another plugin of the list has this name".to_owned())
     );
     assert_eq!(load(&root, &["notes", "reader"]).map(|plugins| plugins.len()), Ok(2));
+}
+
+/// Two bundled plugins of a test.
+const BUNDLED_PAIR: &[(&str, &str)] = &[("first", "yuke:bundled/first"), ("second", "yuke:bundled/second")];
+
+#[test]
+fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
+    let root = place("bundled_first");
+    write_plugin(&root, "config/mine", &manifest("mine", &json!({})));
+
+    let plugins = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap();
+
+    let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
+    assert_eq!(names, ["second", "mine"]);
+    assert_eq!(
+        plugins[0],
+        Plugin {
+            name: "second".to_owned(),
+            origin: Origin::Bundled {
+                module: "yuke:bundled/second".to_owned(),
+            },
+            data_dir: root.join("data/plugins/second"),
+            uses: Vec::new(),
+            provides: Vec::new(),
+        }
+    );
+    assert!(root.join("data/plugins/second").is_dir());
+}
+
+#[test]
+fn a_disable_name_that_no_bundled_plugin_has_stops_the_start() {
+    let root = place("bundled_unknown");
+
+    let refused = load_with(BUNDLED_PAIR, &root, &[], &["frist"]);
+
+    assert_eq!(
+        refused,
+        Err("config.json: disable names 'frist', which is not a bundled plugin".to_owned())
+    );
+}
+
+#[test]
+fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() {
+    let root = place("bundled_replace");
+    write_plugin(&root, "config/mine", &manifest("first", &json!({})));
+
+    let refused = load_with(BUNDLED_PAIR, &root, &["mine"], &[]);
+    let replaced = load_with(BUNDLED_PAIR, &root, &["mine"], &["first"]).unwrap();
+
+    assert_eq!(
+        refused,
+        Err(
+            "plugin first: a bundled plugin has this name: add \"first\" to \"disable\" in config.json to replace it"
+                .to_owned()
+        )
+    );
+    let origins: Vec<bool> = replaced
+        .iter()
+        .map(|plugin| matches!(plugin.origin, Origin::Folder { .. }))
+        .collect();
+    assert_eq!(origins, [false, true]);
+    assert_eq!(replaced[1].name, "first");
 }

@@ -8,7 +8,7 @@ use yuke_protocol::{NoticeLevel, NoticeParams};
 
 use super::tools::{TestHost, Tools};
 use super::{descriptor, evaluate, folder, module, script_error, start, write};
-use crate::{Plugin, PluginFailure, Report, Runtime};
+use crate::{Origin, Plugin, PluginFailure, Report, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
 pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provides: &[&str]) -> Plugin {
@@ -85,7 +85,7 @@ async fn apply_runs_once_with_its_context_and_session_runs_for_each_session() {
         seen,
         [
             "one".to_owned(),
-            one.root.to_string_lossy().into_owned(),
+            folder.join("one").to_string_lossy().into_owned(),
             one.data_dir.to_string_lossy().into_owned(),
             "false".to_owned(),
             "false".to_owned(),
@@ -491,14 +491,9 @@ async fn the_context_refuses_undeclared_services_and_apply_must_provide_each_dec
 
     let failures = runtime.load_plugins(&cases).await;
 
-    let entry = |name: &str| {
-        cases
-            .iter()
-            .find(|plugin| plugin.name == name)
-            .unwrap()
-            .entry
-            .clone()
-            .unwrap()
+    let entry = |name: &str| match &cases.iter().find(|plugin| plugin.name == name).unwrap().origin {
+        Origin::Folder { entry: Some(entry), .. } => entry.clone(),
+        other => panic!("{other:?}"),
     };
     assert_eq!(
         texts(&failures),
@@ -592,5 +587,50 @@ async fn notify_sends_a_notice_of_the_plugin_and_refuses_an_unknown_level() {
             .await
             .unwrap(),
         "notify: 'loud' is not debug, info, warn, or error"
+    );
+}
+
+#[tokio::test]
+async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
+    let folder = folder("a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root");
+    let (runtime, _reports) = start(&folder).await;
+    write(
+        &folder,
+        &[(
+            "bundled.ts",
+            &format!(
+                "export function apply(ctx) {{ globalThis.seen = [ctx.name, String('root' in ctx), ctx.dataDir]; }}
+                 export function session(s) {{ s.tools.define({}); }}",
+                tool("bundled_tool")
+            ),
+        )],
+    );
+    let data_dir = folder.join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let bundled = Plugin {
+        name: "bundled".to_owned(),
+        // This test names a file. A bundled plugin of the app names a baked `yuke:` module.
+        origin: Origin::Bundled {
+            module: folder.join("bundled.ts").to_str().unwrap().to_owned(),
+        },
+        data_dir: data_dir.clone(),
+        uses: Vec::new(),
+        provides: Vec::new(),
+    };
+
+    let failures = runtime.load_plugins(&[bundled]).await;
+    let tools = tool_names(&runtime, &folder).await;
+
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(tools, ["bundled_tool"]);
+    assert_eq!(
+        evaluate::<Vec<String>>(&runtime, "return globalThis.seen;")
+            .await
+            .unwrap(),
+        [
+            "bundled".to_owned(),
+            "false".to_owned(),
+            data_dir.to_string_lossy().into_owned()
+        ]
     );
 }

@@ -28,9 +28,9 @@ export interface Services {}
 
 /** What `apply` of a plugin gets. */
 export interface PluginContext {
-  /** The name of the plugin, from its `plugin.json`. */
+  /** The name of the plugin, from its `plugin.json`, or the name of a bundled plugin of yuke. */
   readonly name: string;
-  /** The absolute folder of the plugin. */
+  /** The absolute folder of the plugin. A bundled plugin of yuke has no folder, and its context has no `root`. */
   readonly root: string;
   /** The absolute data folder of the plugin. It exists, and it stays across reloads. */
   readonly dataDir: string;
