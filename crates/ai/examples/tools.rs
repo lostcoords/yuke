@@ -2,8 +2,7 @@
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
 use yuke_ai::{
-    Block, Effort, FinishReason, HttpOptions, HttpTransport, Options, Request, Settings, ToolCall, ToolChoice,
-    ToolDefinition, ToolResult,
+    Block, Effort, FinishReason, Options, Request, Settings, ToolCall, ToolChoice, ToolDefinition, ToolResult,
 };
 
 const SCHEMA: &str = r#"{
@@ -20,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
     let target = yuke_ai::catalog::resolve("openai/gpt-6-astra")?;
     let credential = yuke_ai::route::Credential::ApiKey(key.into());
-    let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
     let tools = [ToolDefinition {
         name: "uppercase_ascii".to_owned(),
         description: "Convert ASCII letters in text to uppercase. Leave other characters unchanged.".to_owned(),

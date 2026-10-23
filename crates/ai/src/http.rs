@@ -1,219 +1,26 @@
-//! Stream one SSE response, or read one whole small answer, over HTTP/1.1 with hyper on tokio, and rustls for
-//! `https`. Each request uses its own connection, so a fault before the request left proves that nothing was sent.
+//! The provider rules over [`yuke_http::Client`]. [`Transport`] streams one SSE response. [`Exchange`] reads one whole
+//! small answer. The client follows no redirect, so a key never reaches another origin.
 
-use std::future::Future;
-use std::io;
-use std::pin::{Pin, pin};
-use std::sync::{Arc, OnceLock};
+use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use http::header::{
-    ACCEPT, ACCEPT_ENCODING, CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, HOST, USER_AGENT,
-};
-use http::{HeaderMap, HeaderName, HeaderValue, Method, Request, Uri};
-use http_body_util::Full;
-use hyper::body::{Body as _, Incoming};
-use hyper::client::conn::http1;
-use hyper_util::rt::TokioIo;
-use rustls::pki_types::ServerName;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
-use tokio::time::{Instant, Sleep};
+use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, HeaderName, MaxSizeReached};
+use yuke_http::http::{HeaderMap, HeaderValue, Method};
+use yuke_http::{Client, Error};
 
 use crate::transport::{
     Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Header, Outgoing, Transport, next_chunk,
 };
 
-/// How an [`HttpTransport`] waits for the peer and names itself.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct HttpOptions {
-    /// The longest wait for the peer. The connect, the send, and the head share one wait. Each body read has one
-    /// wait. `None` sets no bound.
-    pub idle_timeout: Option<Duration>,
-    /// The client sends this value on every request, so a gateway can identify the agent. It must be a valid
-    /// header value.
-    pub user_agent: String,
-}
-
-impl HttpOptions {
-    /// Options with `user_agent` and the default idle timeout of 300 seconds.
-    pub fn new(user_agent: impl Into<String>) -> Self {
-        HttpOptions {
-            idle_timeout: Some(Duration::from_secs(300)),
-            user_agent: user_agent.into(),
-        }
-    }
-}
-
-/// The error of [`HttpTransport::new`]. See its `Display` text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InvalidUserAgent;
-
-impl std::fmt::Display for InvalidUserAgent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the user agent is not a valid header value")
-    }
-}
-
-impl std::error::Error for InvalidUserAgent {}
-
-/// The built-in transport. It uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider. On Unix outside Apple and
-/// Android, the `webpki` verifier checks certificates against the system roots: the paths in `SSL_CERT_FILE` or
-/// `SSL_CERT_DIR`, else the system bundle file. Elsewhere the platform verifier checks them. The key exchange offers the
-/// hybrid post-quantum group `X25519MLKEM768` first.
-#[derive(Debug)]
-pub struct HttpTransport {
-    idle_timeout: Option<Duration>,
-    user_agent: HeaderValue,
-    /// The TLS configuration, which the first successful `https` open builds. A failed build is not kept, so the next
-    /// open builds again.
-    tls: OnceLock<Arc<rustls::ClientConfig>>,
-}
-
-impl HttpTransport {
-    /// Creates a transport with `options`. The first `https` open builds the TLS configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`InvalidUserAgent`] if the user agent is not a valid header value.
-    pub fn new(options: HttpOptions) -> Result<Self, InvalidUserAgent> {
-        let user_agent = HeaderValue::try_from(options.user_agent).map_err(|_| InvalidUserAgent)?;
-        Ok(HttpTransport {
-            idle_timeout: options.idle_timeout,
-            user_agent,
-            tls: OnceLock::new(),
-        })
-    }
-
-    /// The TLS configuration. A failed build fails this open only.
-    fn tls(&self) -> Result<Arc<rustls::ClientConfig>, Fault> {
-        if let Some(config) = self.tls.get() {
-            return Ok(Arc::clone(config));
-        }
-        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let builder = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .map_err(|_| Fault::TlsSetupFailed)?;
-        let built = Arc::new(
-            with_verifier(builder)
-                .ok_or(Fault::TlsSetupFailed)?
-                .with_no_client_auth(),
-        );
-        // Two opens can build at once. The first set wins, and both use its value.
-        Ok(Arc::clone(self.tls.get_or_init(|| built)))
-    }
-
-    /// Send `request`, and read the head. The body streams.
-    async fn round_trip(&self, request: Plan<'_>, deadline: Option<Instant>) -> Result<(Head, BoxBody), Fault> {
-        // `HeaderMap::with_capacity` panics above its size limit, so too many headers fail the request before it leaves.
-        if request.headers.len() > MAX_HEADERS {
-            return Err(Fault::InvalidRequest);
-        }
-        let target = Target::parse(request.url)?;
-        let http_request = self.build(&target, request)?;
-
-        // Connect, send, and the head wait share the idle deadline, so a silent peer never holds the call.
-        let bound = earlier(self.idle_timeout.map(|idle| Instant::now() + idle), deadline);
-        let head = match bound {
-            None => send(self.connect(&target).await?, http_request).await,
-            Some((at, timed_out)) => {
-                // A deadline that already passed starts no leg, so an expired request is never sent.
-                if at <= Instant::now() {
-                    return Err(timed_out);
-                }
-                // A timeout before the connection opens proves that the request did not leave.
-                let socket = tokio::time::timeout_at(at, self.connect(&target))
-                    .await
-                    .map_err(|_| Fault::ConnectTimeout)??;
-                let outcome = tokio::time::timeout_at(at, send(socket, http_request)).await;
-                outcome.unwrap_or(Err(timed_out))
-            }
-        };
-        let (response, connection) = head?;
-        let head = read_head(response.headers(), response.status().as_u16(), wall_clock_seconds());
-        let body = HttpBody {
-            connection: Some(connection),
-            body: response.into_body(),
-            idle_timeout: self.idle_timeout,
-            deadline,
-            timer: None,
-            armed: None,
-            done: false,
-        };
-        Ok((head, Box::pin(body)))
-    }
-
-    /// Build the request head: host, user agent, connection, length, type, accept, then the caller headers. hyper
-    /// decides the wire order and the case of the fields.
-    fn build(&self, target: &Target, request: Plan<'_>) -> Result<Request<Full<Bytes>>, Fault> {
-        let mut headers = HeaderMap::with_capacity(7 + request.headers.len());
-        headers.insert(HOST, target.host_header.clone());
-        headers.insert(USER_AGENT, self.user_agent.clone());
-        headers.insert(CONNECTION, HeaderValue::from_static("close"));
-        headers.insert(CONTENT_LENGTH, HeaderValue::from(request.body.len()));
-        // A caller gives the type of an exchange, so a bad value fails the request instead of a panic.
-        let content_type = HeaderValue::from_str(request.content_type).map_err(|_| Fault::InvalidRequest)?;
-        headers.insert(CONTENT_TYPE, content_type);
-        headers.insert(ACCEPT, HeaderValue::from_static(request.accept));
-        // Without this field, RFC 9110 lets the server choose any compression. The decoder reads plain bytes only.
-        headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-        for header in request.headers {
-            let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
-            // Any byte but a control byte is valid, as `route::valid_header_value` checks.
-            let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
-            headers.append(name, value);
-        }
-        let mut http_request = Request::new(Full::new(Bytes::from(request.body)));
-        *http_request.method_mut() = Method::POST;
-        *http_request.uri_mut() = target.path.clone();
-        *http_request.headers_mut() = headers;
-        Ok(http_request)
-    }
-
-    /// Open the connection: TCP, and TLS for `https`.
-    async fn connect(&self, target: &Target) -> Result<Box<dyn Socket>, Fault> {
-        // A TLS configuration that fails to build fails the open before it connects.
-        let tls = if target.tls { Some(self.tls()?) } else { None };
-        let mut addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
-            .await
-            .map_err(|_| Fault::DnsFailed)?
-            .peekable();
-        if addresses.peek().is_none() {
-            return Err(Fault::DnsFailed);
-        }
-        let mut tcp = None;
-        for address in addresses {
-            if let Ok(stream) = TcpStream::connect(address).await {
-                tcp = Some(stream);
-                break;
-            }
-        }
-        let tcp = tcp.ok_or(Fault::ConnectFailed)?;
-        // The request goes out in one write, so no small segment waits for an acknowledgment.
-        tcp.set_nodelay(true).map_err(|_| Fault::ConnectFailed)?;
-        let socket: Box<dyn Socket> = if let Some(tls) = tls {
-            let name = ServerName::try_from(target.host.clone()).map_err(|_| Fault::BadUrl)?;
-            let stream = tokio_rustls::TlsConnector::from(tls)
-                .connect(name, tcp)
-                .await
-                .map_err(|error| handshake_fault(&error))?;
-            Box::new(stream)
-        } else {
-            Box::new(tcp)
-        };
-        Ok(socket)
-    }
-}
-
-impl Transport for HttpTransport {
+impl Transport for Client {
     fn open<'a>(
         &'a self,
         request: &'a Outgoing<'_>,
         deadline: Option<std::time::Instant>,
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        // hyper sends a body that owns its bytes, so the parts join here once.
+        // The client sends a body that owns its bytes, so the parts join here once.
         let mut body = Vec::with_capacity(request.body_len());
         for part in request.body() {
             body.extend_from_slice(part);
@@ -226,12 +33,11 @@ impl Transport for HttpTransport {
             accept: "text/event-stream",
             body,
         };
-        // The request deadline counts from here, before any preparation.
-        Box::pin(self.round_trip(plan, deadline.map(Instant::from_std)))
+        Box::pin(round_trip(self, plan, deadline))
     }
 }
 
-impl Exchange for HttpTransport {
+impl Exchange for Client {
     fn exchange<'a>(
         &'a self,
         request: &'a ExchangeRequest<'_>,
@@ -244,9 +50,8 @@ impl Exchange for HttpTransport {
             accept: "application/json",
             body: request.body.to_vec(),
         };
-        let deadline = deadline.map(Instant::from_std);
         Box::pin(async move {
-            let (head, mut body) = self.round_trip(plan, deadline).await?;
+            let (head, mut body) = round_trip(self, plan, deadline).await?;
             let mut bytes = Vec::new();
             while let Some(chunk) = next_chunk(&mut body).await {
                 let chunk = chunk?;
@@ -269,81 +74,52 @@ struct Plan<'a> {
     body: Vec<u8>,
 }
 
-/// Give `builder` the `webpki` verifier with the system roots. Return `None` when no root loads.
-///
-/// `SSL_CERT_FILE` or `SSL_CERT_DIR` names the exact roots. Otherwise the roots come from the system bundle file, and
-/// from the certificate folders only when no bundle file exists. A root only in a folder then needs `SSL_CERT_DIR`.
-#[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
-fn with_verifier(
-    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
-) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
-    // The probe drops a named path that does not exist, so a named path goes to the loader that keeps it.
-    let named = std::env::var_os("SSL_CERT_FILE").is_some() || std::env::var_os("SSL_CERT_DIR").is_some();
-    let loaded = match openssl_probe::probe().cert_file {
-        // The system tools write each root to the bundle, so one file read replaces hundreds.
-        Some(bundle) if !named => rustls_native_certs::load_certs_from_paths(Some(&bundle), None),
-        _ => rustls_native_certs::load_native_certs(),
-    };
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(loaded.certs);
-    (!roots.is_empty()).then(|| builder.with_root_certificates(roots))
-}
-
-/// Give `builder` the platform verifier. Return `None` when the verifier cannot start.
-#[cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))]
-fn with_verifier(
-    builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
-) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
-    rustls_platform_verifier::BuilderVerifierExt::with_platform_verifier(builder).ok()
-}
-
-/// The fault of a failed TLS handshake. The connector wraps the rustls error in the I/O error.
-fn handshake_fault(error: &io::Error) -> Fault {
-    match error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>()) {
-        Some(rustls::Error::InvalidCertificate(_)) => Fault::CertificateRejected,
-        _ => Fault::ConnectFailed,
-    }
-}
-
-/// The byte stream of one connection: plain TCP, or TLS over TCP.
-trait Socket: AsyncRead + AsyncWrite + Send + Unpin {}
-
-impl<T: AsyncRead + AsyncWrite + Send + Unpin> Socket for T {}
-
-type Connection = http1::Connection<TokioIo<Box<dyn Socket>>, Full<Bytes>>;
-
-/// Send the request on a fresh connection, and drive the connection until the head arrives.
-async fn send(
-    socket: Box<dyn Socket>,
-    request: Request<Full<Bytes>>,
-) -> Result<(http::Response<Incoming>, Connection), Fault> {
-    let (mut sender, mut connection) = http1::handshake(TokioIo::new(socket))
-        .await
-        .map_err(|err| fault_of(&err))?;
-    let mut response = pin!(sender.send_request(request));
-    let response = std::future::poll_fn(|cx| {
-        if let Poll::Ready(result) = response.as_mut().poll(cx) {
-            return Poll::Ready(result.map_err(|err| fault_of(&err)));
-        }
-        match Pin::new(&mut connection).poll(cx) {
-            // The connection ended before the head, so the response holds its cause.
-            Poll::Ready(Err(err)) => Poll::Ready(Err(fault_of(&err))),
-            Poll::Ready(Ok(())) => match response.as_mut().poll(cx) {
-                Poll::Ready(result) => Poll::Ready(result.map_err(|err| fault_of(&err))),
-                Poll::Pending => Poll::Ready(Err(Fault::ConnectionLost)),
-            },
-            Poll::Pending => Poll::Pending,
-        }
-    })
-    .await?;
-    drop(sender);
-    let status = response.status().as_u16();
+/// Send `plan` with the provider rules, and read the head. The body streams.
+async fn round_trip(
+    client: &Client,
+    plan: Plan<'_>,
+    deadline: Option<std::time::Instant>,
+) -> Result<(Head, BoxBody), Fault> {
+    let mut request = yuke_http::Request::new(Method::POST, plan.url);
+    request.headers = headers(&plan)?;
+    request.body = Bytes::from(plan.body);
+    let response = client.send(request, deadline).await.map_err(fault_of)?;
+    let status = response.status.as_u16();
     // The client never follows a redirect, so the key never reaches another origin. A 304 has no redirect target.
     if (300..400).contains(&status) && status != 304 {
         return Err(Fault::RedirectRefused);
     }
-    check_content_encoding(response.headers())?;
-    Ok((response, connection))
+    check_content_encoding(&response.headers)?;
+    let head = read_head(&response.headers, status, wall_clock_seconds());
+    Ok((head, Box::pin(ProviderBody(response.body))))
+}
+
+/// The headers of `plan`: the type, the accept, no compression, then the caller headers in order.
+fn headers(plan: &Plan<'_>) -> Result<HeaderMap, Fault> {
+    // A `HeaderMap` has a size limit, so too many headers fail the request before it leaves.
+    let full = |result: Result<(), MaxSizeReached>| result.map_err(|_| Fault::InvalidRequest);
+    let mut headers = HeaderMap::new();
+    // A caller gives the type of an exchange, so a bad value fails the request instead of a panic.
+    let content_type = HeaderValue::from_str(plan.content_type).map_err(|_| Fault::InvalidRequest)?;
+    full(headers.try_insert(CONTENT_TYPE, content_type).map(drop))?;
+    full(
+        headers
+            .try_insert(ACCEPT, HeaderValue::from_static(plan.accept))
+            .map(drop),
+    )?;
+    // Without this field, RFC 9110 lets the server choose any compression. The SSE parser reads plain bytes only.
+    full(
+        headers
+            .try_insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"))
+            .map(drop),
+    )?;
+    for header in plan.headers {
+        let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
+        // Any byte but a control byte is valid, as `route::valid_header_value` checks.
+        let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
+        full(headers.try_append(name, value).map(drop))?;
+    }
+    Ok(headers)
 }
 
 /// The request asks for `identity`, so a body in any other `content-encoding` is a malformed response.
@@ -356,173 +132,32 @@ fn check_content_encoding(headers: &HeaderMap) -> Result<(), Fault> {
     }
 }
 
-/// The most caller headers one request takes. A `HeaderMap` holds at most 32768 fields, and the transport writes seven.
-const MAX_HEADERS: usize = 32_000;
-
-/// Name one hyper failure. A truncated message is a lost connection, and a parse failure a malformed response.
-fn fault_of(err: &hyper::Error) -> Fault {
-    if err.is_parse() || err.is_parse_status() {
-        return Fault::MalformedResponse;
-    }
-    if err.is_incomplete_message() {
-        return Fault::ConnectionLost;
-    }
-    let mut source = std::error::Error::source(err);
-    while let Some(cause) = source {
-        if let Some(io) = cause.downcast_ref::<io::Error>() {
-            return io_fault(io);
-        }
-        source = cause.source();
-    }
-    Fault::ConnectionLost
-}
-
-/// Name one read failure. A TLS failure ends the connection, so it is a lost connection. Other invalid bytes are a
-/// malformed response.
-fn io_fault(io: &io::Error) -> Fault {
-    if matches!(io.get_ref(), Some(inner) if inner.is::<rustls::Error>()) {
-        return Fault::ConnectionLost;
-    }
-    match io.kind() {
-        io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput => Fault::MalformedResponse,
-        _ => Fault::ConnectionLost,
+/// The fault of a client error. Each error has the fault of the same name.
+fn fault_of(error: Error) -> Fault {
+    match error {
+        Error::InvalidRequest => Fault::InvalidRequest,
+        Error::BadUrl => Fault::BadUrl,
+        Error::DnsFailed => Fault::DnsFailed,
+        Error::ConnectFailed => Fault::ConnectFailed,
+        Error::ConnectTimeout => Fault::ConnectTimeout,
+        Error::CertificateRejected => Fault::CertificateRejected,
+        Error::TlsSetupFailed => Fault::TlsSetupFailed,
+        Error::IdleTimeout => Fault::IdleTimeout,
+        Error::RequestTimeout => Fault::RequestTimeout,
+        Error::ConnectionLost => Fault::ConnectionLost,
+        Error::MalformedResponse => Fault::MalformedResponse,
     }
 }
 
-/// Choose the earlier of the idle and the request deadline, with the fault that the chosen deadline names.
-fn earlier(idle: Option<Instant>, request: Option<Instant>) -> Option<(Instant, Fault)> {
-    match (idle, request) {
-        (None, None) => None,
-        // The earlier deadline binds, and names the error.
-        (None, Some(request)) => Some((request, Fault::RequestTimeout)),
-        (Some(idle), Some(request)) if request <= idle => Some((request, Fault::RequestTimeout)),
-        (Some(idle), _) => Some((idle, Fault::IdleTimeout)),
-    }
-}
+/// The body of a provider response.
+struct ProviderBody(yuke_http::Body);
 
-/// Where one request goes.
-#[derive(Debug)]
-struct Target {
-    tls: bool,
-    /// The host without IPv6 brackets, for the resolver and the TLS server name.
-    host: String,
-    port: u16,
-    /// `host[:port]` as the URL writes it.
-    host_header: HeaderValue,
-    /// The path and the query.
-    path: Uri,
-}
-
-impl Target {
-    fn parse(url: &str) -> Result<Self, Fault> {
-        let uri: Uri = url.parse().map_err(|_| Fault::BadUrl)?;
-        let tls = match uri.scheme_str() {
-            Some("http") => false,
-            Some("https") => true,
-            _ => return Err(Fault::BadUrl),
-        };
-        let authority = uri.authority().ok_or(Fault::BadUrl)?;
-        let host = authority.host();
-        if host.is_empty() {
-            return Err(Fault::BadUrl);
-        }
-        let host_and_port = authority
-            .as_str()
-            .rsplit_once('@')
-            .map_or(authority.as_str(), |(_, rest)| rest);
-        // The parser keeps a port that is no number, and `Authority::port` then reports none.
-        let port = match host_and_port.get(host.len()..).and_then(|rest| rest.strip_prefix(':')) {
-            Some(port) => port.parse().map_err(|_| Fault::BadUrl)?,
-            None if tls => 443,
-            None => 80,
-        };
-        let host_header = HeaderValue::try_from(host_and_port).map_err(|_| Fault::BadUrl)?;
-        let path = uri.path_and_query().map_or("/", http::uri::PathAndQuery::as_str);
-        Ok(Target {
-            tls,
-            host: host.trim_start_matches('[').trim_end_matches(']').to_owned(),
-            port,
-            host_header,
-            path: path.parse().map_err(|_| Fault::BadUrl)?,
-        })
-    }
-}
-
-/// One response body. The body owns its connection, and drives the connection while the caller reads.
-struct HttpBody {
-    /// `None` once the connection ended.
-    connection: Option<Connection>,
-    body: Incoming,
-    idle_timeout: Option<Duration>,
-    deadline: Option<Instant>,
-    /// The timer of the read deadlines. Each read for more bytes resets it, so the body allocates it once.
-    timer: Option<Pin<Box<Sleep>>>,
-    /// The fault of the armed deadline, or `None` while no read waits.
-    armed: Option<Fault>,
-    /// The body ended or failed. It returns nothing more.
-    done: bool,
-}
-
-impl HttpBody {
-    fn fail(&mut self, fault: Fault) -> Poll<Option<Result<Bytes, Fault>>> {
-        self.done = true;
-        self.connection = None;
-        Poll::Ready(Some(Err(fault)))
-    }
-}
-
-impl Body for HttpBody {
+impl Body for ProviderBody {
     fn poll_chunk(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, Fault>>> {
-        let this = self.get_mut();
-        if this.done {
-            return Poll::Ready(None);
-        }
-        if let Some(connection) = &mut this.connection {
-            match Pin::new(connection).poll(cx) {
-                Poll::Ready(Ok(())) => this.connection = None,
-                Poll::Ready(Err(err)) => return this.fail(fault_of(&err)),
-                Poll::Pending => {}
-            }
-        }
-        loop {
-            match Pin::new(&mut this.body).poll_frame(cx) {
-                Poll::Ready(Some(Ok(frame))) => {
-                    // A trailer frame carries no body bytes.
-                    if let Ok(data) = frame.into_data()
-                        && !data.is_empty()
-                    {
-                        this.armed = None;
-                        return Poll::Ready(Some(Ok(data)));
-                    }
-                }
-                Poll::Ready(Some(Err(err))) => return this.fail(fault_of(&err)),
-                Poll::Ready(None) => {
-                    this.done = true;
-                    this.armed = None;
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => break,
-            }
-        }
-        if this.armed.is_none()
-            && let Some((at, fault)) = earlier(this.idle_timeout.map(|idle| Instant::now() + idle), this.deadline)
-        {
-            // A deadline that already passed starts no read.
-            if at <= Instant::now() {
-                return this.fail(fault);
-            }
-            match &mut this.timer {
-                Some(timer) => timer.as_mut().reset(at),
-                None => this.timer = Some(Box::pin(tokio::time::sleep_until(at))),
-            }
-            this.armed = Some(fault);
-        }
-        if let (Some(fault), Some(timer)) = (this.armed, &mut this.timer)
-            && timer.as_mut().poll(cx).is_ready()
-        {
-            return this.fail(fault);
-        }
-        Poll::Pending
+        self.get_mut()
+            .0
+            .poll_chunk(cx)
+            .map(|chunk| chunk.map(|chunk| chunk.map_err(fault_of)))
     }
 }
 

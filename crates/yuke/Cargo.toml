@@ -15,6 +15,7 @@ tokio = { version = "1.53", features = ["io-std", "io-util", "macros", "net", "r
 yuke-agent = { path = "../agent" }
 yuke-ai = { path = "../ai" }
 yuke-engine = { path = "../engine" }
+yuke-http = { path = "../http" }
 yuke-js = { path = "../js" }
 yuke-mcp = { path = "../mcp" }
 yuke-protocol = { path = "../protocol" }

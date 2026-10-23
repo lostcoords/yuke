@@ -2609,6 +2609,7 @@ dependencies = [
  "yuke-agent",
  "yuke-ai",
  "yuke-engine",
+ "yuke-http",
  "yuke-js",
  "yuke-mcp",
  "yuke-protocol",
@@ -2635,20 +2636,12 @@ name = "yuke-ai"
 version = "0.0.1-dev"
 dependencies = [
  "bytes",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
  "memchr",
- "openssl-probe",
- "rustls",
- "rustls-native-certs",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "tokio",
- "tokio-rustls",
  "ts-rs",
+ "yuke-http",
 ]
 
 [[package]]
@@ -2664,7 +2657,25 @@ dependencies = [
  "tokio-util",
  "ts-rs",
  "yuke-ai",
+ "yuke-http",
  "yuke-testing",
+]
+
+[[package]]
+name = "yuke-http"
+version = "0.0.1-dev"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "openssl-probe",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-platform-verifier",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

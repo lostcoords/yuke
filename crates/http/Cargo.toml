@@ -1,0 +1,34 @@
+[package]
+name = "yuke-http"
+version = "0.0.1-dev"
+description = "An HTTP/1.1 client that uses hyper and rustls. It sends one request and follows no redirect."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+# The feature exposes the loopback server of the tests to the tests of other crates.
+testing = ["tokio/io-util"]
+
+[dependencies]
+bytes = "1.12"
+http = "1.5"
+http-body-util = "0.1.5"
+hyper = { version = "1.11", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+rustls = { version = "0.23.45", default-features = false, features = ["aws-lc-rs", "prefer-post-quantum", "std", "tls12"] }
+tokio = { version = "1.53", features = ["net", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false }
+
+[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+openssl-probe = "0.2.1"
+rustls-native-certs = "0.8.4"
+
+[target.'cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))'.dependencies]
+rustls-platform-verifier = "0.7.1"
+
+[dev-dependencies]
+tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+
+[lints]
+workspace = true

@@ -1,161 +1,26 @@
-//! Loopback HTTP tests for [`HttpTransport`]: one real server and one real client per test.
+//! Loopback tests of the provider rules over [`Client`]: one real server and one real client per test.
 
-use std::fmt::Write as _;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
+use tokio::time::Instant;
+use yuke_http::ClientOptions;
+use yuke_http::testing::{Seen, Server, listen};
 
 use super::*;
 use crate::encoder::Encoded;
 use crate::failure::{Failure, ProviderKind};
 use crate::request::{OriginRef, Protocol};
 use crate::stream::{Options, Stream};
-use crate::transport::Header;
-use crate::transport::next_chunk;
 
 const TEST_USER_AGENT: &str = "ai-test/0";
 
 const CANNED_SSE: &str = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n\
                           data: {\"type\":\"message_stop\"}\n\n";
 
-/// What one loopback server answers.
-#[derive(Default)]
-struct Server {
-    status: u16,
-    body: Vec<u8>,
-    /// Bypass framing to send malformed or truncated wire bytes.
-    raw_response: Option<&'static [u8]>,
-    /// A redirect target. The client must never follow it.
-    location: Option<&'static str>,
-    /// Sent after the content type, in order.
-    headers: Vec<(&'static str, &'static str)>,
-    /// Send the body, then hold the stream open until the client closes it.
-    stall: bool,
-    /// Read the request, then send no head until the client closes the connection.
-    silent: bool,
-    /// Send each body byte as its own chunk, with a pause before each one.
-    trickle: bool,
-}
-
-/// What the server saw of the request.
-#[derive(Debug, Default)]
-struct Seen {
-    user_agents: Vec<String>,
-    languages: Vec<String>,
-    notes: Vec<String>,
-    encodings: Vec<String>,
-    content_types: Vec<String>,
-    accepts: Vec<String>,
-    body: Vec<u8>,
-}
-
-/// Read one request head and its body.
-async fn read_request(stream: &mut TcpStream) -> Seen {
-    let mut bytes = Vec::new();
-    let mut buf = [0u8; 4096];
-    let head_end = loop {
-        let n = stream.read(&mut buf).await.unwrap();
-        assert_ne!(n, 0, "the client closed before its head");
-        bytes.extend_from_slice(&buf[..n]);
-        if let Some(at) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-            break at + 4;
-        }
-    };
-    let head = std::str::from_utf8(&bytes[..head_end]).unwrap();
-    let mut seen = Seen::default();
-    let mut length = 0;
-    for line in head.split("\r\n").skip(1).filter(|line| !line.is_empty()) {
-        let (name, value) = line.split_once(':').unwrap();
-        let value = value.trim().to_owned();
-        if name.eq_ignore_ascii_case("user-agent") {
-            seen.user_agents.push(value);
-        } else if name.eq_ignore_ascii_case("accept-language") {
-            seen.languages.push(value);
-        } else if name.eq_ignore_ascii_case("accept-encoding") {
-            seen.encodings.push(value);
-        } else if name.eq_ignore_ascii_case("x-note") {
-            seen.notes.push(value);
-        } else if name.eq_ignore_ascii_case("content-type") {
-            seen.content_types.push(value);
-        } else if name.eq_ignore_ascii_case("accept") {
-            seen.accepts.push(value);
-        } else if name.eq_ignore_ascii_case("content-length") {
-            length = value.parse().unwrap();
-        }
-    }
-    while bytes.len() < head_end + length {
-        let n = stream.read(&mut buf).await.unwrap();
-        bytes.extend_from_slice(&buf[..n]);
-    }
-    seen.body = bytes[head_end..].to_vec();
-    seen
-}
-
-/// Wait until the client closes the connection.
-async fn wait_for_close(stream: &mut TcpStream) {
-    let mut buf = [0u8; 64];
-    while matches!(stream.read(&mut buf).await, Ok(n) if n != 0) {}
-}
-
-/// Accept one connection and answer it as `server` says.
-async fn serve_once(listener: TcpListener, server: Server) -> Seen {
-    let (mut stream, _) = listener.accept().await.unwrap();
-    let seen = read_request(&mut stream).await;
-    if let Some(bytes) = server.raw_response {
-        stream.write_all(bytes).await.unwrap();
-        return seen;
-    }
-    if server.silent {
-        wait_for_close(&mut stream).await;
-        return seen;
-    }
-    let mut head = format!(
-        "HTTP/1.1 {} OK\r\nconnection: close\r\ncontent-type: text/event-stream\r\n",
-        server.status
-    );
-    if let Some(location) = server.location {
-        _ = write!(head, "location: {location}\r\n");
-    }
-    for (name, value) in &server.headers {
-        _ = write!(head, "{name}: {value}\r\n");
-    }
-    head.push_str("transfer-encoding: chunked\r\n\r\n");
-    let mut out = head.into_bytes();
-    if server.trickle {
-        if stream.write_all(&out).await.is_err() {
-            return seen;
-        }
-        for byte in &server.body {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-            if stream
-                .write_all(&[b'1', b'\r', b'\n', *byte, b'\r', b'\n'])
-                .await
-                .is_err()
-            {
-                return seen;
-            }
-        }
-        out.clear();
-    } else if !server.body.is_empty() {
-        out.extend_from_slice(format!("{:x}\r\n", server.body.len()).as_bytes());
-        out.extend_from_slice(&server.body);
-        out.extend_from_slice(b"\r\n");
-    }
-    // A failed write means the client already closed, which a stalled exchange expects.
-    if stream.write_all(&out).await.is_err() {
-        return seen;
-    }
-    if server.stall {
-        wait_for_close(&mut stream).await;
-        return seen;
-    }
-    _ = stream.write_all(b"0\r\n\r\n").await;
-    seen
-}
-
 /// Open an Anthropic stream with an empty request to the local server at `port`.
-async fn open_stream(transport: &HttpTransport, port: u16) -> Stream {
+async fn open_stream(client: &Client, port: u16) -> Stream {
     let url = format!("http://127.0.0.1:{port}/messages");
     let headers = source_headers();
     let encoded = Encoded {
@@ -166,10 +31,10 @@ async fn open_stream(transport: &HttpTransport, port: u16) -> Stream {
             base_url: "",
         },
     };
-    Stream::open(transport, &encoded, Options::default()).await
+    Stream::open(client, &encoded, Options::default()).await
 }
 
-/// The headers every exchange sends. Repeated lines of a list-valued header keep their order.
+/// The headers every request sends. Repeated lines of a list-valued header keep their order.
 fn source_headers() -> Vec<Header> {
     [
         ("x-api-key", "test-key"),
@@ -181,7 +46,7 @@ fn source_headers() -> Vec<Header> {
     .to_vec()
 }
 
-/// What the client observed of one exchange.
+/// What the client observed of one request.
 #[derive(Debug, Default)]
 struct ClientOut {
     head: Option<Head>,
@@ -190,14 +55,14 @@ struct ClientOut {
 }
 
 /// Open the request and read the whole body. The request input drops before the body is read.
-async fn run_client(transport: &HttpTransport, port: u16, deadline: Option<std::time::Instant>) -> ClientOut {
+async fn run_client(client: &Client, port: u16) -> ClientOut {
     let mut out = ClientOut::default();
     let opened = {
         let url = format!("http://127.0.0.1:{port}/messages");
         let headers = source_headers();
         let body = b"{}".to_vec();
         let request = Outgoing::new(&url, &headers, &body);
-        transport.open(&request, deadline).await
+        client.open(&request, None).await
     };
     let mut body = match opened {
         Ok((head, body)) => {
@@ -221,25 +86,19 @@ async fn run_client(transport: &HttpTransport, port: u16, deadline: Option<std::
     out
 }
 
-fn transport(idle_timeout: Option<Duration>) -> HttpTransport {
-    HttpTransport::new(HttpOptions {
-        idle_timeout,
+fn client() -> Client {
+    Client::new(ClientOptions {
+        idle_timeout: None,
         user_agent: TEST_USER_AGENT.to_owned(),
     })
     .unwrap()
 }
 
-/// Run one server and one client exchange on a private loopback port.
-async fn exchange(
-    server: Server,
-    transport: &HttpTransport,
-    deadline: Option<std::time::Instant>,
-) -> (Seen, ClientOut) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(serve_once(listener, server));
-    let out = run_client(transport, port, deadline).await;
-    (server.await.unwrap(), out)
+/// Run one server and one client request on a private loopback port.
+async fn exchange(server: Server, client: &Client) -> (Seen, ClientOut) {
+    let (port, served) = listen(server).await;
+    let out = run_client(client, port).await;
+    (served.await.unwrap(), out)
 }
 
 fn after(ms: u64) -> std::time::Instant {
@@ -248,32 +107,29 @@ fn after(ms: u64) -> std::time::Instant {
 
 #[tokio::test]
 async fn streams_sse_body() {
-    for transport in [
-        transport(None),
-        HttpTransport::new(HttpOptions::new(TEST_USER_AGENT)).unwrap(),
-    ] {
+    for client in [client(), Client::new(ClientOptions::new(TEST_USER_AGENT)).unwrap()] {
         let server = Server {
             status: 200,
             body: CANNED_SSE.into(),
             ..Server::default()
         };
-        let (seen, out) = exchange(server, &transport, None).await;
+        let (seen, out) = exchange(server, &client).await;
         assert_eq!(out.err, None);
         assert_eq!(out.head.unwrap().status, 200);
         assert_eq!(out.bytes, CANNED_SSE.as_bytes());
-        assert_eq!(seen.user_agents, [TEST_USER_AGENT]);
-        assert_eq!(seen.languages, ["en", "es"]);
-        assert_eq!(seen.notes, ["café"]);
-        assert_eq!(seen.content_types, ["application/json"]);
-        assert_eq!(seen.accepts, ["text/event-stream"]);
+        assert_eq!(seen.values("user-agent"), [TEST_USER_AGENT]);
+        assert_eq!(seen.values("accept-language"), ["en", "es"]);
+        assert_eq!(seen.values("x-note"), ["café"]);
+        assert_eq!(seen.values("content-type"), ["application/json"]);
+        assert_eq!(seen.values("accept"), ["text/event-stream"]);
+        assert_eq!(seen.values("accept-encoding"), ["identity"]);
+        assert_eq!(seen.method, "POST");
     }
 }
 
 /// Run one server and one exchange of a form `body` with an answer limit of `max_answer` bytes.
 async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen, Result<Answer, Fault>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(serve_once(listener, server));
+    let (port, served) = listen(server).await;
     let url = format!("http://127.0.0.1:{port}/oauth2/token");
     let request = ExchangeRequest {
         url: &url,
@@ -281,8 +137,8 @@ async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen,
         body,
         max_answer,
     };
-    let answer = transport(None).exchange(&request, None).await;
-    (server.await.unwrap(), answer)
+    let answer = client().exchange(&request, None).await;
+    (served.await.unwrap(), answer)
 }
 
 #[tokio::test]
@@ -301,8 +157,8 @@ async fn an_exchange_sends_its_type_and_body_and_reads_the_whole_answer() {
     assert_eq!(answer.head.status, 400);
     assert_eq!(answer.head.request_id.as_deref(), Some("req_1"));
     assert_eq!(answer.body, br#"{"error":"authorization_pending"}"#);
-    assert_eq!(seen.content_types, ["application/x-www-form-urlencoded"]);
-    assert_eq!(seen.accepts, ["application/json"]);
+    assert_eq!(seen.values("content-type"), ["application/x-www-form-urlencoded"]);
+    assert_eq!(seen.values("accept"), ["application/json"]);
     assert_eq!(seen.body, b"grant_type=refresh_token");
 }
 
@@ -333,7 +189,7 @@ async fn non_200_response_keeps_status_id_and_body() {
         headers: vec![("request-id", "req_123")],
         ..Server::default()
     };
-    let (_, out) = exchange(server, &transport(None), None).await;
+    let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.err, None);
     let head = out.head.unwrap();
     assert_eq!(head.status, 400);
@@ -380,7 +236,7 @@ async fn head_reads_request_id_and_retry_hints() {
             headers,
             ..Server::default()
         };
-        let (_, out) = exchange(server, &transport(None), None).await;
+        let (_, out) = exchange(server, &client()).await;
         assert_eq!(out.err, None);
         let head = out.head.unwrap();
         assert_eq!(head.request_id.as_deref(), request_id);
@@ -390,40 +246,24 @@ async fn head_reads_request_id_and_retry_hints() {
 }
 
 #[tokio::test]
-async fn stalled_body_hits_idle_timeout() {
-    // The server sends the head, then holds the stream open with no body until the client closes it.
-    let server = Server {
-        status: 200,
-        stall: true,
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &transport(Some(Duration::from_millis(50))), None).await;
-    assert_eq!(out.err, Some(Fault::IdleTimeout));
-    assert_eq!(out.head.unwrap().status, 200);
-}
-
-#[tokio::test]
-async fn silent_peer_hits_idle_timeout() {
-    let server = Server {
-        status: 200,
-        silent: true,
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &transport(Some(Duration::from_millis(50))), None).await;
-    assert_eq!(out.err, Some(Fault::IdleTimeout));
-}
-
-#[tokio::test]
 async fn redirect_is_refused() {
     // The client must reject a 302 response to another origin to keep the key private.
     let server = Server {
         status: 302,
-        location: Some("http://evil.example/steal"),
+        headers: vec![("location", "http://evil.example/steal")],
         ..Server::default()
     };
-    let (_, out) = exchange(server, &transport(None), None).await;
+    let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.err, Some(Fault::RedirectRefused));
     assert_eq!(out.bytes, b"");
+    // A 304 has no redirect target, so it is a response.
+    let server = Server {
+        status: 304,
+        ..Server::default()
+    };
+    let (_, out) = exchange(server, &client()).await;
+    assert_eq!(out.err, None);
+    assert_eq!(out.head.unwrap().status, 304);
 }
 
 // A real body returns a pending read between bytes, so a dropped `next` must keep every partial line.
@@ -445,11 +285,9 @@ async fn dropped_next_loses_no_event_over_http() {
         trickle: true,
         ..Server::default()
     };
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let served = tokio::spawn(serve_once(listener, server));
-    let transport = transport(None);
-    let mut stream = open_stream(&transport, port).await;
+    let (port, served) = listen(server).await;
+    let client = client();
+    let mut stream = open_stream(&client, port).await;
     let mut lines = Vec::new();
     let mut drops = 0;
     loop {
@@ -490,11 +328,9 @@ async fn error_status_and_error_event_fail_alike() {
             headers: vec![("request-id", "req-real-http")],
             ..Server::default()
         };
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let served = tokio::spawn(serve_once(listener, server));
-        let transport = transport(None);
-        let mut stream = open_stream(&transport, port).await;
+        let (port, served) = listen(server).await;
+        let client = client();
+        let mut stream = open_stream(&client, port).await;
         assert_eq!(stream.info().status, Some(status));
         assert_eq!(stream.info().request_id.as_deref(), Some("req-real-http"));
         let mut failure = None;
@@ -508,342 +344,6 @@ async fn error_status_and_error_event_fail_alike() {
         drop(stream);
         served.await.unwrap();
     }
-}
-
-#[tokio::test]
-async fn request_deadline_wins_over_longer_idle_timeout() {
-    for idle in [None, Some(Duration::from_secs(30))] {
-        let server = Server {
-            status: 200,
-            stall: true,
-            ..Server::default()
-        };
-        let (_, out) = exchange(server, &transport(idle), Some(after(50))).await;
-        assert_eq!(out.err, Some(Fault::RequestTimeout));
-        assert_eq!(out.head.unwrap().status, 200);
-    }
-}
-
-// No leg starts once the deadline passed, so the request never leaves. The fault names the deadline.
-#[tokio::test]
-async fn expired_deadline_fails_before_send() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let out = run_client(
-        &transport(Some(Duration::from_secs(300))),
-        port,
-        Some(std::time::Instant::now()),
-    )
-    .await;
-    assert_eq!(out.err, Some(Fault::RequestTimeout));
-    // An expired request opens no connection.
-    let accepted = tokio::time::timeout(Duration::from_millis(50), listener.accept()).await;
-    assert!(accepted.is_err(), "the client connected after its deadline");
-}
-
-// The handshake never ends, so the idle deadline passes before the request leaves.
-#[tokio::test]
-async fn stalled_handshake_is_a_connect_timeout() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let peer = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.unwrap();
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        drop(stream);
-    });
-    let url = format!("https://127.0.0.1:{port}/messages");
-    let request = Outgoing::new(&url, &[], b"{}");
-    let fault = transport(Some(Duration::from_millis(50)))
-        .open(&request, None)
-        .await
-        .err();
-    // The handshake never ended, so no request left.
-    assert_eq!(fault, Some(Fault::ConnectTimeout));
-    peer.abort();
-}
-
-#[tokio::test]
-async fn silent_peer_hits_request_deadline() {
-    let server = Server {
-        status: 200,
-        silent: true,
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &transport(None), Some(after(50))).await;
-    assert_eq!(out.err, Some(Fault::RequestTimeout));
-}
-
-#[tokio::test]
-async fn content_length_body_drains_after_request_drops() {
-    let server = Server {
-        raw_response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody"),
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &transport(None), None).await;
-    assert_eq!(out.err, None);
-    assert_eq!(out.head.unwrap().status, 200);
-    assert_eq!(out.bytes, b"body");
-}
-
-#[tokio::test]
-async fn malformed_or_truncated_body_fails() {
-    let cases: [(&'static [u8], Fault); 3] = [
-        (
-            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nx",
-            Fault::ConnectionLost,
-        ),
-        (
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\rX",
-            Fault::MalformedResponse,
-        ),
-        (
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nx",
-            Fault::ConnectionLost,
-        ),
-    ];
-    for (bytes, cause) in cases {
-        let server = Server {
-            raw_response: Some(bytes),
-            ..Server::default()
-        };
-        let (_, out) = exchange(server, &transport(None), None).await;
-        assert_eq!(out.err, Some(cause), "{}", String::from_utf8_lossy(bytes));
-        assert_eq!(out.head.unwrap().status, 200);
-    }
-}
-
-// A drop is the cancellation of Rust: the open future and the body each own the connection, so a drop closes it.
-#[tokio::test]
-async fn cancelled_open_and_read_release_connection() {
-    for body_wait in [false, true] {
-        let server = Server {
-            status: 200,
-            silent: !body_wait,
-            stall: body_wait,
-            ..Server::default()
-        };
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        // The server returns only once the client closed the connection.
-        let served = tokio::spawn(serve_once(listener, server));
-        let transport = transport(Some(Duration::from_secs(30)));
-        let url = format!("http://127.0.0.1:{port}/messages");
-        let body = b"{}".to_vec();
-        let headers = source_headers();
-        let request = Outgoing::new(&url, &headers, &body);
-        if body_wait {
-            let (head, mut body) = transport.open(&request, None).await.unwrap();
-            assert_eq!(head.status, 200);
-            let read = tokio::time::timeout(Duration::from_millis(50), next_chunk(&mut body)).await;
-            assert!(read.is_err(), "the stalled body returned a chunk");
-            drop(body);
-        } else {
-            let opened = tokio::time::timeout(Duration::from_millis(50), transport.open(&request, None)).await;
-            assert!(opened.is_err(), "the silent peer answered a head");
-        }
-        tokio::time::timeout(Duration::from_secs(5), served)
-            .await
-            .unwrap()
-            .unwrap();
-    }
-}
-
-#[tokio::test]
-async fn shared_transport_opens_concurrently() {
-    let transport = transport(Some(Duration::from_secs(5)));
-    let gate = Arc::new(tokio::sync::Barrier::new(8));
-    let mut ports = Vec::new();
-    let mut servers = tokio::task::JoinSet::new();
-    for _ in 0..8 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        ports.push(listener.local_addr().unwrap().port());
-        let gate = gate.clone();
-        servers.spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            read_request(&mut stream).await;
-            gate.wait().await;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{CANNED_SSE}",
-                CANNED_SSE.len()
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
-        });
-    }
-    let clients = futures_join(ports.iter().map(|&port| run_client(&transport, port, None)));
-    // No server answers until all eight requests arrive, so serialized exchanges cannot pass.
-    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
-        let outputs = clients.await;
-        let mut served = Vec::new();
-        while let Some(result) = servers.join_next().await {
-            served.push(result);
-        }
-        (outputs, served)
-    })
-    .await;
-    if outcome.is_err() {
-        servers.shutdown().await;
-    }
-    let (outputs, served) = outcome.expect("not every exchange finished before the bound");
-    for server in served {
-        server.unwrap();
-    }
-    for out in outputs {
-        assert_eq!(out.err, None);
-        assert_eq!(out.head.unwrap().status, 200);
-        assert_eq!(out.bytes, CANNED_SSE.as_bytes());
-    }
-}
-
-/// Poll every future on this task until all finish, so the opens share one thread as yuke's sessions do.
-async fn futures_join<F: Future>(futures: impl Iterator<Item = F>) -> Vec<F::Output> {
-    let mut pending: Vec<Pin<Box<F>>> = futures.map(Box::pin).collect();
-    let mut done: Vec<Option<F::Output>> = pending.iter().map(|_| None).collect();
-    std::future::poll_fn(|cx| {
-        let mut all = true;
-        for (future, slot) in pending.iter_mut().zip(done.iter_mut()) {
-            if slot.is_none() {
-                match future.as_mut().poll(cx) {
-                    Poll::Ready(output) => *slot = Some(output),
-                    Poll::Pending => all = false,
-                }
-            }
-        }
-        if all { Poll::Ready(()) } else { Poll::Pending }
-    })
-    .await;
-    done.into_iter().flatten().collect()
-}
-
-/// Open `url` with a short idle timeout, and return the fault.
-async fn open_fault(url: &str) -> Option<Fault> {
-    let transport = transport(Some(Duration::from_secs(5)));
-    let request = Outgoing::new(url, &[], b"{}");
-    transport.open(&request, None).await.err()
-}
-
-// Each case fails before the request leaves, and the fault names the step that failed.
-#[tokio::test]
-async fn a_failed_open_names_the_dns_or_the_connect() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let fault = open_fault(&format!("http://127.0.0.1:{port}/messages")).await;
-    assert_eq!(fault, Some(Fault::ConnectFailed));
-    // The `.invalid` top-level name never resolves (RFC 2606).
-    let fault = open_fault("http://host.invalid/messages").await;
-    assert_eq!(fault, Some(Fault::DnsFailed));
-
-    // A plain HTTP peer answers the TLS hello with bytes that are no handshake.
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let peer = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
-    });
-    let fault = open_fault(&format!("https://127.0.0.1:{port}/messages")).await;
-    assert_eq!(fault, Some(Fault::ConnectFailed));
-    peer.await.unwrap();
-}
-
-// The client offers the hybrid post-quantum group `X25519MLKEM768` first.
-#[test]
-fn tls_prefers_post_quantum_key_exchange() {
-    let transport = transport(None);
-    let first = transport
-        .tls()
-        .unwrap()
-        .crypto_provider()
-        .kx_groups
-        .first()
-        .map(|group| group.name());
-    assert_eq!(first, Some(rustls::NamedGroup::X25519MLKEM768));
-}
-
-// Linux reads certificate-file settings. macOS uses the system certificate store.
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn missing_root_certificates_fail_only_https() {
-    // A child process isolates the root-store settings from the other tests.
-    const NO_ROOTS_CHILD: &str = "AI_TEST_NO_ROOTS_CHILD";
-
-    if std::env::var_os(NO_ROOTS_CHILD).is_none() {
-        // A named file with no root and a named file that does not exist both leave no root, never the system roots.
-        for file in ["/dev/null", "/nonexistent/yuke-test-roots.pem"] {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "http::tests::missing_root_certificates_fail_only_https"])
-                .env(NO_ROOTS_CHILD, "1")
-                .env("SSL_CERT_FILE", file)
-                .env_remove("SSL_CERT_DIR")
-                .stdout(std::process::Stdio::null())
-                .status()
-                .unwrap();
-            assert!(status.success(), "{file}");
-        }
-        return;
-    }
-    let transport = transport(None);
-    for _ in 0..2 {
-        let request = Outgoing::new("https://127.0.0.1:9/messages", &[], b"{}");
-        let fault = transport.open(&request, None).await.err();
-        assert_eq!(fault, Some(Fault::TlsSetupFailed));
-    }
-    let server = Server {
-        status: 200,
-        body: CANNED_SSE.into(),
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &transport, None).await;
-    assert_eq!(out.err, None);
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn ssl_cert_dir_names_the_exact_roots() {
-    // A child process isolates the root-store settings from the other tests. Its variable holds the expected result.
-    const FOLDER_CHILD: &str = "AI_TEST_FOLDER_CHILD";
-
-    if let Ok(expected) = std::env::var(FOLDER_CHILD) {
-        assert_eq!(transport(None).tls().is_ok(), expected == "roots");
-        return;
-    }
-    let base = std::env::temp_dir().join(format!("yuke-ai-roots-{}", std::process::id()));
-    let (filled, empty) = (base.join("filled"), base.join("empty"));
-    std::fs::create_dir_all(&filled).unwrap();
-    std::fs::create_dir_all(&empty).unwrap();
-    let bundle = openssl_probe::probe().cert_file.unwrap();
-    std::fs::copy(bundle, filled.join("roots.pem")).unwrap();
-    // A folder with roots supplies them. An empty folder leaves no root, never the system roots.
-    for (folder, expected) in [(&filled, "roots"), (&empty, "none")] {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "http::tests::ssl_cert_dir_names_the_exact_roots"])
-            .env(FOLDER_CHILD, expected)
-            .env("SSL_CERT_DIR", folder)
-            .env_remove("SSL_CERT_FILE")
-            .stdout(std::process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(status.success(), "{expected}");
-    }
-    std::fs::remove_dir_all(&base).unwrap();
-}
-
-// The connector wraps the rustls error in the I/O error, and a rejected certificate gets a fault of its own.
-#[test]
-fn a_rejected_certificate_is_its_own_fault() {
-    let refused = io::Error::new(
-        io::ErrorKind::InvalidData,
-        rustls::Error::InvalidCertificate(rustls::CertificateError::Expired),
-    );
-    let other = io::Error::new(io::ErrorKind::InvalidData, rustls::Error::DecryptError);
-
-    assert_eq!(handshake_fault(&refused), Fault::CertificateRejected);
-    assert_eq!(handshake_fault(&other), Fault::ConnectFailed);
-}
-
-#[test]
-fn invalid_user_agent_is_rejected() {
-    let options = HttpOptions::new("bad\r\n");
-    assert!(matches!(HttpTransport::new(options), Err(InvalidUserAgent)));
 }
 
 #[test]
@@ -877,42 +377,6 @@ fn retry_after_reads_seconds_or_http_date() {
     }
 }
 
-#[test]
-fn url_parses_or_fails_as_bad_url() {
-    let target = Target::parse("https://api.example.test/v1/messages?x=1").unwrap();
-    assert!(target.tls);
-    assert_eq!((target.host.as_str(), target.port), ("api.example.test", 443));
-    assert_eq!(target.host_header, "api.example.test");
-    assert_eq!(target.path, "/v1/messages?x=1");
-    let local = Target::parse("http://[::1]:8080/chat").unwrap();
-    assert_eq!((local.host.as_str(), local.port), ("::1", 8080));
-    assert_eq!(local.host_header, "[::1]:8080");
-    let named = Target::parse("http://user@host:9/x").unwrap();
-    assert_eq!((named.host.as_str(), named.port), ("host", 9));
-    assert_eq!(named.host_header, "host:9");
-    for url in [
-        "ftp://host/x",
-        "/relative",
-        "http://",
-        "not a url",
-        "http://host:bad/x",
-        "http://host:/x",
-        "http://host:70000/x",
-    ] {
-        assert_eq!(Target::parse(url).map(|_| ()), Err(Fault::BadUrl), "{url}");
-    }
-}
-
-// A socket or TLS read failure is a lost connection. Other invalid bytes are a malformed answer.
-#[test]
-fn io_errors_map_to_faults() {
-    let tls = io::Error::new(io::ErrorKind::InvalidData, rustls::Error::DecryptError);
-    assert_eq!(io_fault(&tls), Fault::ConnectionLost);
-    let chunk = io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size");
-    assert_eq!(io_fault(&chunk), Fault::MalformedResponse);
-    assert_eq!(io_fault(&io::ErrorKind::ConnectionReset.into()), Fault::ConnectionLost);
-}
-
 // The request asks for no compression, so a compressed body never reaches the SSE parser.
 #[tokio::test]
 async fn compressed_response_is_malformed() {
@@ -929,8 +393,7 @@ async fn compressed_response_is_malformed() {
             headers: encoding.map(|value| ("content-encoding", value)).into_iter().collect(),
             ..Server::default()
         };
-        let (seen, out) = exchange(server, &transport(None), None).await;
-        assert_eq!(seen.encodings, ["identity"]);
+        let (_, out) = exchange(server, &client()).await;
         assert_eq!(out.err, fault, "{encoding:?}");
         if fault.is_none() {
             assert_eq!(out.head.unwrap().status, 200);
@@ -941,10 +404,12 @@ async fn compressed_response_is_malformed() {
     }
 }
 
-// A `HeaderMap` panics above its size limit, so the transport counts the headers and sends nothing.
+// A `HeaderMap` holds at most 32768 names, so more names fail the request, and it sends nothing.
 #[tokio::test]
 async fn too_many_headers_fail_before_send() {
-    let many = vec![Header::from_static("x-many", "1"); MAX_HEADERS + 1];
+    let many: Vec<Header> = (0..40_000)
+        .map(|index| Header::new(format!("x-{index}"), "1"))
+        .collect();
     let valid = [Header::from_static("x-note", "valid")];
     let ((fault, bytes), (valid_fault, valid_bytes)) =
         tokio::join!(observe_http_bytes(&many), observe_http_bytes(&valid));
@@ -986,12 +451,44 @@ async fn observe_http_bytes(headers: &[Header]) -> (Option<Fault>, usize) {
     });
     let url = format!("http://127.0.0.1:{port}/messages");
     let request = Outgoing::new(&url, headers, b"{}");
-    let transport = transport(None);
-    let opened = tokio::time::timeout(Duration::from_secs(5), transport.open(&request, Some(after(1000)))).await;
+    let client = client();
+    let opened = tokio::time::timeout(Duration::from_secs(5), client.open(&request, Some(after(1000)))).await;
     let observed = tokio::time::timeout(Duration::from_secs(5), &mut peer).await;
     if observed.is_err() {
         peer.abort();
         _ = peer.await;
     }
     (opened.unwrap().err(), observed.unwrap().unwrap())
+}
+
+// The retry policy reads the fault, so each client error becomes the fault of the same name.
+#[test]
+fn each_client_error_becomes_the_fault_of_its_name() {
+    for error in [
+        Error::InvalidRequest,
+        Error::BadUrl,
+        Error::DnsFailed,
+        Error::ConnectFailed,
+        Error::ConnectTimeout,
+        Error::CertificateRejected,
+        Error::TlsSetupFailed,
+        Error::IdleTimeout,
+        Error::RequestTimeout,
+        Error::ConnectionLost,
+        Error::MalformedResponse,
+    ] {
+        assert_eq!(format!("{:?}", fault_of(error)), format!("{error:?}"));
+    }
+}
+
+// A body error reaches the stream of the provider as its fault.
+#[tokio::test]
+async fn a_truncated_body_is_a_lost_connection() {
+    let server = Server {
+        raw_response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nx"),
+        ..Server::default()
+    };
+    let (_, out) = exchange(server, &client()).await;
+    assert_eq!(out.head.unwrap().status, 200);
+    assert_eq!(out.err, Some(Fault::ConnectionLost));
 }

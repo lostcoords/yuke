@@ -10,7 +10,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, HttpOptions, HttpTransport};
+use yuke_ai::Block;
 use yuke_engine::{CancellationToken, Driver, Observer, Outcome, Timer, TurnEvent};
 
 /// Print each piece of answer text when it arrives.
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source: std::sync::Arc::new(yuke_ai::route::Credential::ApiKey(key.into())),
         context_window: None,
     };
-    let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("engine-example"))?;
 
     let driver = Driver::new(&http, &model, &TokioTimer);
     let mut context = Vec::new();

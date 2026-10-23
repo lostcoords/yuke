@@ -23,7 +23,7 @@ Catalog generation script:
 
 | Feature | Default | Provides |
 | --- | --- | --- |
-| `http-tokio` | Enabled | `HttpTransport` and `HttpOptions`. HTTP/1.1 with Tokio, hyper, and rustls. |
+| `http` | Enabled | `Transport` and `Exchange` for the [`yuke-http`](../http) client. HTTP/1.1 with Tokio, hyper, and rustls. |
 | `ts` | Disabled | TypeScript declarations of the serde types through ts-rs. |
 
 All protocols work without default features. Supply a custom [`Transport`](src/transport.rs). The OAuth flows of
@@ -31,7 +31,7 @@ All protocols work without default features. Supply a custom [`Transport`](src/t
 
 ## Defaults
 
-The caller can change each default: [`HttpOptions::new`](src/http.rs), [`ResponseLimits::default`](src/response.rs),
+The caller can change each default: `yuke_http::ClientOptions::new`, [`ResponseLimits::default`](src/response.rs),
 and [`retry::Policy::default`](src/retry.rs).
 
 ## Examples

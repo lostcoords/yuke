@@ -257,7 +257,7 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 fn machine() -> Result<Machine, String> {
     let home = std::env::home_dir().filter(|home| home.is_absolute());
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
-    let http = yuke_ai::HttpTransport::new(yuke_ai::HttpOptions::new(concat!("yuke/", env!("YUKE_VERSION"))))
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new(concat!("yuke/", env!("YUKE_VERSION"))))
         .map_err(|error| chain_text(&error))?;
     let http = Arc::new(http);
     Ok(Machine {

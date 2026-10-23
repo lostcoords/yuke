@@ -7,23 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [features]
-default = ["http-tokio"]
+default = ["http"]
 # Derive the TypeScript declarations of the serde types through ts-rs. The binding test of yuke-protocol turns it on.
 ts = ["dep:ts-rs"]
-# The built-in transport uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider. On Unix outside Apple and
-# Android, the roots come from the system certificate paths. Elsewhere the platform verifier checks certificates.
-http-tokio = [
-    "dep:http",
-    "dep:http-body-util",
-    "dep:hyper",
-    "dep:hyper-util",
-    "dep:openssl-probe",
-    "dep:rustls",
-    "dep:rustls-native-certs",
-    "dep:rustls-platform-verifier",
-    "dep:tokio",
-    "dep:tokio-rustls",
-]
+# Implement `Transport` and `Exchange` for the `yuke-http` client. The client uses HTTP/1.1 with tokio and rustls.
+http = ["dep:yuke-http"]
 
 [dependencies]
 bytes = "1.12"
@@ -31,36 +19,23 @@ memchr = "2.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 ts-rs = { version = "12.0.1", optional = true }
-
-http = { version = "1.5", optional = true }
-http-body-util = { version = "0.1.5", optional = true }
-hyper = { version = "1.11", features = ["client", "http1"], optional = true }
-hyper-util = { version = "0.1.21", features = ["tokio"], optional = true }
-rustls = { version = "0.23.45", default-features = false, features = ["aws-lc-rs", "prefer-post-quantum", "std", "tls12"], optional = true }
-tokio = { version = "1.53", features = ["net", "time"], optional = true }
-tokio-rustls = { version = "0.26.6", default-features = false, optional = true }
-
-[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
-openssl-probe = { version = "0.2.1", optional = true }
-rustls-native-certs = { version = "0.8.4", optional = true }
-
-[target.'cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))'.dependencies]
-rustls-platform-verifier = { version = "0.7.1", optional = true }
+yuke-http = { path = "../http", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+yuke-http = { path = "../http", features = ["testing"] }
 
 [lints]
 workspace = true
 
 [[example]]
 name = "oneshot"
-required-features = ["http-tokio"]
+required-features = ["http"]
 
 [[example]]
 name = "chat"
-required-features = ["http-tokio"]
+required-features = ["http"]
 
 [[example]]
 name = "tools"
-required-features = ["http-tokio"]
+required-features = ["http"]

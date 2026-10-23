@@ -23,7 +23,8 @@ yuke-ai = { path = "../ai", default-features = false }
 [dev-dependencies]
 yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt", "signal", "time"] }
-yuke-ai = { path = "../ai", features = ["http-tokio"] }
+yuke-ai = { path = "../ai", features = ["http"] }
+yuke-http = { path = "../http" }
 
 [lints]
 workspace = true

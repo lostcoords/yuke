@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, HttpOptions, HttpTransport, ToolCall};
+use yuke_ai::{Block, FinishReason, ToolCall};
 use yuke_engine::{
     Driver, Hooks, Observer, Outcome, RoundDecision, Timer, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
     TurnEvent, parse_arguments,
@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source: std::sync::Arc::new(yuke_ai::route::Credential::ApiKey(key.into())),
         context_window: None,
     };
-    let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();
     toolset.add(
         yuke_ai::ToolDefinition {

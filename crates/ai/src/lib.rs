@@ -5,7 +5,7 @@ mod base64;
 pub mod catalog;
 mod encoder;
 mod failure;
-#[cfg(feature = "http-tokio")]
+#[cfg(feature = "http")]
 mod http;
 mod json;
 pub mod oauth;
@@ -25,8 +25,6 @@ mod testing;
 pub use base64::decode_base64;
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
-#[cfg(feature = "http-tokio")]
-pub use http::{HttpOptions, HttpTransport, InvalidUserAgent};
 pub use reply::Reply;
 pub use request::{
     AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Digest, Effort, MAX_MEDIA_BYTES, MaxTokensField,

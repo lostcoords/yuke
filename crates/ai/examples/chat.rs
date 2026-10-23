@@ -3,14 +3,14 @@
 
 use std::io::{BufRead, Write};
 
-use yuke_ai::{Block, Effort, Encoder, Event, HttpOptions, HttpTransport, Options, Reply, Request, Settings};
+use yuke_ai::{Block, Effort, Encoder, Event, Options, Reply, Request, Settings};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
     let target = yuke_ai::catalog::resolve("openai/gpt-6-astra")?;
     let credential = yuke_ai::route::Credential::ApiKey(key.into());
-    let http = HttpTransport::new(HttpOptions::new("ai-example"))?;
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
     // The encoder keeps the encoding of each request, so the next turn writes only what changed.
     let mut encoder = Encoder::new();
     let mut context: Vec<Block> = Vec::new();

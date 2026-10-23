@@ -6,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, HttpOptions, HttpTransport};
+use yuke_ai::Block;
 use yuke_engine::{
     Concurrency, Driver, Observer, Timer, Tool, ToolContent, ToolContext, Toolset, TurnEvent, parse_arguments,
 };
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         source: std::sync::Arc::new(yuke_ai::route::Credential::ApiKey(key.into())),
         context_window: None,
     };
-    let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
+    let http = yuke_http::Client::new(yuke_http::ClientOptions::new("engine-example"))?;
     let mut toolset = Toolset::new();
     toolset.add(
         yuke_ai::ToolDefinition {
