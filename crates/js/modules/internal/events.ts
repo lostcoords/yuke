@@ -542,6 +542,20 @@ export async function underSignal<T>(signal: AbortSignal | undefined, start: () 
   }
 }
 
+/**
+ * Await the operation of `start` under `signal`, as `underSignal` does. The native rejects with `{ cancelled: true }`
+ * only after a stop, and that rejection becomes the reason of `signal`. A failure before an abort keeps its error.
+ */
+export async function underStop<T>(signal: AbortSignal | undefined, start: () => Operation<T>): Promise<T> {
+  try {
+    return await underSignal(signal, start);
+  } catch (error) {
+    const cancelled = typeof error === "object" && error !== null && "cancelled" in error;
+    if (cancelled && signal !== undefined) throw signal.reason;
+    throw error;
+  }
+}
+
 /** Make `signal` a dependent of `source`. */
 function link(signal: AbortSignal, source: AbortSignal): void {
   const state = signalState(signal);

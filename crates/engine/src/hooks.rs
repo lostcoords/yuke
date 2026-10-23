@@ -4,7 +4,7 @@
 use std::error::Error;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolResult};
+use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolDefinition, ToolResult};
 
 use crate::model::{Model, RoundError};
 use crate::turn_state::Replaced;
@@ -75,10 +75,14 @@ pub trait Hooks: Send + Sync {
 pub struct RoundStart<'a> {
     /// The context, oldest first.
     pub context: &'a [Block],
+    /// The model of the round: the model of the driver, or the model of a plan for this round.
+    pub model: &'a Model,
     /// The settings of the round: the settings of the driver, or the settings of a plan for this round.
     pub settings: &'a Settings,
-    /// The context window of the model of the round in tokens, from [`Model::context_window`].
-    pub window: Option<u64>,
+    /// The system prompt of the round.
+    pub system: &'a str,
+    /// The tool definitions that the request of the round offers.
+    pub tools: &'a [ToolDefinition],
     /// The input tokens of the newest answer, or `None` before the first answer or when the provider sent no count. A
     /// replacement does not change the count, so after one the count describes the old context until the next answer.
     pub input_tokens: Option<u64>,

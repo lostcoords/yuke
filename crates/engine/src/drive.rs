@@ -16,7 +16,7 @@ use yuke_ai::retry;
 use yuke_ai::transport::Transport;
 use yuke_ai::{
     AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
-    ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolResult,
+    ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolDefinition, ToolResult,
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
@@ -431,6 +431,50 @@ impl<'a> Driver<'a> {
         }
     }
 
+    /// Send one request of `blocks` that offers `tools`. The request has the model, the system prompt, the settings,
+    /// the session id, and the blob store of the driver. The cache marker goes on the first `cached` blocks. No tool
+    /// runs, and no hook, journal, or observer sees the request. The retry policy of a turn applies. A cancel answers
+    /// `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of the last attempt.
+    pub async fn request(
+        &self,
+        blocks: &[Block],
+        cached: usize,
+        tools: &[ToolDefinition],
+        cancellation_token: &CancellationToken,
+    ) -> Result<Option<Response>, RoundError> {
+        let request = self.request_of(blocks, tools, self.settings).cached(cached);
+        let ignore = |_: &TurnEvent<'_>| {};
+        match self
+            .send(&mut Encoder::new(), request, self.model, &ignore, cancellation_token)
+            .await
+        {
+            Sent::Finished(result) => result.map(Some),
+            Sent::Cancelled(_) => Ok(None),
+        }
+    }
+
+    /// The request of `context` that offers `tools` with `settings`, and the system prompt and the session id of the
+    /// driver.
+    fn request_of<'r>(
+        &'r self,
+        context: &'r [Block],
+        tools: &'r [ToolDefinition],
+        settings: &'r Settings,
+    ) -> Request<'r> {
+        let request = Request::new(context)
+            .system(self.system)
+            .tools(tools)
+            .settings(settings);
+        match self.session_id {
+            Some(session_id) => request.session_id(session_id),
+            None => request,
+        }
+    }
+
     /// The turn of `input` on `context`. [`Turn::run`] runs it and adds the blocks of the turn to `context`.
     pub fn turn<'t>(&self, context: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
     where
@@ -460,8 +504,10 @@ impl<'a> Driver<'a> {
         let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &self.model.target));
         let round = RoundStart {
             context: turn_state.context(),
+            model: self.model,
             settings: self.settings,
-            window: self.model.context_window,
+            system: self.system,
+            tools: declared.tools(SearchMode::for_target(&self.model.target)),
             input_tokens: turn_state.input_tokens(),
         };
         let mut plan = match race(self.hooks.before_round(&round), cancellation_token.cancelled()).await {
@@ -476,13 +522,7 @@ impl<'a> Driver<'a> {
             let model = plan.model.as_ref().unwrap_or(self.model);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
             let tools = declared.tools(SearchMode::for_target(&model.target));
-            let mut request = Request::new(turn_state.context())
-                .system(self.system)
-                .tools(tools)
-                .settings(settings);
-            if let Some(session_id) = self.session_id {
-                request = request.session_id(session_id);
-            }
+            let request = self.request_of(turn_state.context(), tools, settings);
             let error = match self.send(encoder, request, model, observer, cancellation_token).await {
                 Sent::Finished(Err(error)) => error,
                 sent => return Ok(Round::new(sent, &model.target)),
@@ -490,8 +530,10 @@ impl<'a> Driver<'a> {
             observer.event(&TurnEvent::RoundFailed(&error));
             let failed_round = RoundStart {
                 context: turn_state.context(),
+                model,
                 settings,
-                window: model.context_window,
+                system: self.system,
+                tools,
                 input_tokens: turn_state.input_tokens(),
             };
             let retry = race(

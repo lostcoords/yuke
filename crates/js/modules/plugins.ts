@@ -10,10 +10,10 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
-import type { Block, FinishReason, ModelReference, Settings } from "yuke:protocol";
+import type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
-export type { Block, FinishReason, ModelReference, Settings } from "yuke:protocol";
+export type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
 
 /** The severity of a notice. */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
@@ -167,10 +167,41 @@ export interface RoundBeforeEvent {
   /** The blocks of the context, oldest first, after the replacements of the earlier handlers. Each call gives a copy. */
   readonly context: () => Block[];
   /**
+   * Send the request of this round with other blocks, and wait for the first answer.
+   * - The request has the model, the system prompt, the tools, and the settings of the round.
+   * - Its blocks are the first `blocks` blocks of `context()`, then `prompt` as a user block.
+   * - It repeats the bytes and the cache marker of the round, so it can reuse the prompt cache of the earlier rounds.
+   * - No tool runs, and the session keeps nothing of the request.
+   * - A failed request rejects with an `Error`.
+   */
+  readonly sideRequest: (options: SideRequestOptions) => Promise<SideRequestResult>;
+  /**
    * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
    * and it ignores the answer of the handler.
    */
   readonly signal: AbortSignal;
+}
+
+/** The options of `sideRequest`. */
+export interface SideRequestOptions {
+  /** The text of the last user block. The request offers the tools of the round, so tell the model to call none. */
+  readonly prompt: string;
+  /** The number of the oldest blocks of `context()` to send, from 0 to `event.blocks`. The default sends each block. */
+  readonly blocks?: number | undefined;
+  /** The output limit of the request in tokens. Without it, the request has the limit of the round. */
+  readonly maxOutputTokens?: number | undefined;
+  /** An abort stops the request, and the promise rejects with the reason of the signal. */
+  readonly abortSignal?: AbortSignal | undefined;
+}
+
+/** The answer of `sideRequest`. */
+export interface SideRequestResult {
+  /** The text of the answer. A call of a tool is not in it. */
+  readonly text: string;
+  /** Why the answer stopped. A call of a tool stops it with `tool_calls`. */
+  readonly finishReason: FinishReason;
+  /** The token counts of the request. */
+  readonly usage: Usage;
 }
 
 /**

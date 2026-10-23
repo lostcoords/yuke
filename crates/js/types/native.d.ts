@@ -162,6 +162,24 @@ declare module "yuke:internal/native" {
     readonly attachments: readonly ToolMedia[];
   }): Operation<Omit<import("yuke:ai").GenerateTextResult, "output">>;
 
+  /**
+   * The natives of the round of a `round.before` or `round.retry` request.
+   * - `context` gives a new copy of the blocks of the context before the round.
+   * - `sideRequest` sends the request of the round with the oldest `blocks` blocks of the view, then `prompt`. The view
+   *   is `head`, then the last `kept` blocks of the context. A head that is not a list of blocks throws a `TypeError`. A failed request
+   *   rejects with an `Error`, and a stop with `{ cancelled: true }`.
+   */
+  export interface RoundNatives {
+    readonly context: () => import("yuke:protocol").Block[];
+    readonly sideRequest: (options: {
+      readonly head: readonly unknown[];
+      readonly kept: number;
+      readonly blocks: number;
+      readonly prompt: string;
+      readonly maxOutputTokens: number | undefined;
+    }) => Operation<import("yuke:plugins").SideRequestResult>;
+  }
+
   /** One operation in flight: its promise, and the function that asks it to stop. */
   export interface Operation<T> {
     readonly promise: Promise<T>;

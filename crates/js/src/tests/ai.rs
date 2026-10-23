@@ -10,7 +10,7 @@ use yuke_protocol::ModelReference;
 
 use super::tools::{TestHost, Tools};
 use super::{evaluate, folder, load_entry, options, write};
-use crate::{Attachment, CompleteAnswer, CompleteRequest, Models, Processes, Runtime, SessionHost};
+use crate::{Attachment, CompleteAnswer, CompleteRequest, Models, Processes, Runtime, SessionHost, SideRequest};
 
 /// Records each request and the name of its thread. With `answer`, it returns that answer. Without one, it waits for
 /// the cancel.
@@ -38,6 +38,13 @@ impl Models for Recorded {
         cancel.cancelled().await;
         *self.cancelled.lock().unwrap() = true;
         Err("the request was cancelled".into())
+    }
+    async fn side_request(
+        &self,
+        _request: SideRequest,
+        _cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
+        Err("no side request".into())
     }
 }
 

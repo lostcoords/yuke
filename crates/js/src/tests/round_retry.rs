@@ -8,6 +8,7 @@ use yuke_engine::{CancellationToken, Hooks, RoundError, RoundPlan, RoundStart};
 
 use super::evaluate;
 use super::prompt::opened;
+use super::windowed;
 use crate::ScriptHooks;
 
 /// A failed attempt of `cause`.
@@ -25,8 +26,10 @@ async fn retry(hooks: &ScriptHooks, failure: &RoundError) -> Result<Option<Round
     let settings = Settings::new();
     let round = RoundStart {
         context: &context,
+        model: &windowed(Some(1000)),
         settings: &settings,
-        window: Some(1000),
+        system: "",
+        tools: &[],
         input_tokens: Some(900),
     };
     tokio::time::timeout(Duration::from_secs(5), hooks.retry_round(&round, failure))
@@ -60,8 +63,10 @@ async fn an_answer_sends_the_round_again_and_each_round_counts_its_retries_from_
     let settings = Settings::new();
     let round = RoundStart {
         context: &context,
+        model: &windowed(Some(1000)),
         settings: &settings,
-        window: Some(1000),
+        system: "",
+        tools: &[],
         input_tokens: None,
     };
     hooks.before_round(&round).await.unwrap();

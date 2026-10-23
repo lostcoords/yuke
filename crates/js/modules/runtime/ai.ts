@@ -3,7 +3,7 @@
 import type { GenerateTextOptions, GenerateTextResult, ObjectOutput } from "yuke:ai";
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
-import { signalOf, underSignal } from "yuke:internal/events";
+import { signalOf, underStop } from "yuke:internal/events";
 import { aiComplete } from "yuke:internal/native";
 import type { FinishReason, Usage } from "yuke:protocol";
 import type { Infer, ObjectSchema, Schema } from "yuke:tools";
@@ -102,15 +102,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     // The copy drops a missing setting. It refuses a number that is not finite, which JSON would make `null`.
     settings: jsonCopy(settings, "a setting"),
   };
-  let answer: Omit<GenerateTextResult, "output">;
-  try {
-    answer = await underSignal(stop, () => aiComplete(request));
-  } catch (error) {
-    // Only a stop of the request rejects with this record, so a failure before an abort keeps its error.
-    const cancelled = typeof error === "object" && error !== null && "cancelled" in error;
-    if (cancelled && stop !== undefined) throw stop.reason;
-    throw error;
-  }
+  const answer = await underStop(stop, () => aiComplete(request));
   return Object.freeze({ ...answer, output: schema === undefined ? undefined : objectOf(schema.checked, answer) });
 }
 

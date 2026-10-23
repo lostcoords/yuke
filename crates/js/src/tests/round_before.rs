@@ -7,6 +7,7 @@ use yuke_ai::{Block, Settings, ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, RoundPlan, RoundStart};
 
 use super::prompt::opened;
+use super::windowed;
 use super::{evaluate, wait_until};
 use crate::ScriptSession;
 
@@ -30,8 +31,10 @@ async fn plan(session: &ScriptSession) -> Result<RoundPlan, String> {
     let settings = Settings::new().temperature(0.5);
     let round = RoundStart {
         context: &context,
+        model: &windowed(Some(200_000)),
         settings: &settings,
-        window: Some(200_000),
+        system: "",
+        tools: &[],
         input_tokens: Some(1200),
     };
     let hooks = session.hooks(CancellationToken::new());
@@ -265,8 +268,10 @@ async fn a_cancel_aborts_the_signal_and_the_hook_keeps_the_round_at_once() {
     let settings = Settings::new();
     let round = RoundStart {
         context: &context,
+        model: &windowed(None),
         settings: &settings,
-        window: None,
+        system: "",
+        tools: &[],
         input_tokens: None,
     };
 

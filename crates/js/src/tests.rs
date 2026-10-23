@@ -10,6 +10,7 @@ mod round_after;
 mod round_before;
 mod round_retry;
 mod sessions;
+mod side_request;
 mod tool_after;
 mod tool_before;
 mod tools;
@@ -25,7 +26,10 @@ use yuke_engine::CancellationToken;
 
 use crate::error::caught;
 use crate::plugins::PluginError;
-use crate::{CompleteAnswer, CompleteRequest, Error, Models, Options, Plugin, Processes, Report, Runtime, ScriptError};
+use crate::{
+    CompleteAnswer, CompleteRequest, Error, Models, Options, Plugin, Processes, Report, Runtime, ScriptError,
+    SideRequest,
+};
 
 /// A new empty folder for the test `name`.
 fn folder(name: &str) -> PathBuf {
@@ -46,6 +50,14 @@ fn write(folder: &Path, files: &[(&str, &str)]) {
     }
 }
 
+/// The test model with the context window `window`.
+fn windowed(window: Option<u64>) -> yuke_engine::Model {
+    yuke_engine::Model {
+        context_window: window,
+        ..yuke_testing::model()
+    }
+}
+
 /// The models of a test runtime: none.
 struct NoModels;
 
@@ -57,6 +69,14 @@ impl Models for NoModels {
         _cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
         Err(format!("no model {}/{}", request.model.provider, request.model.model).into())
+    }
+
+    async fn side_request(
+        &self,
+        _request: SideRequest,
+        _cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
+        Err("no side request".into())
     }
 }
 

@@ -1,6 +1,6 @@
 import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
-import { addAbortStep, hostOperation, hostSignal, signalOf } from "yuke:internal/events";
-import { notify, type Operation, unregister } from "yuke:internal/native";
+import { addAbortStep, hostOperation, hostSignal, signalOf, underStop } from "yuke:internal/events";
+import { notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
 import type {
   AskOptions,
   Cleanup,
@@ -16,6 +16,8 @@ import type {
   Services,
   SessionContext,
   SessionHooks,
+  SideRequestOptions,
+  SideRequestResult,
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
@@ -277,8 +279,7 @@ interface RoundBeforeRequest {
   readonly window: number | undefined;
   readonly inputTokens: number | undefined;
   readonly blocks: number;
-  /** A new copy of the blocks of the context before the round. */
-  readonly context: () => Block[];
+  readonly round: RoundNatives;
 }
 
 /** What `startRoundRetry` gets: the facts of `startRoundBefore`, and why the round failed. */
@@ -306,6 +307,44 @@ interface RoundBeforePlan {
 /** The fields of a `round.before` or a `round.retry` answer. */
 const ROUND_BEFORE_FIELDS = ["replace", "model", "settings"];
 
+/** The names of the options of `sideRequest`. */
+const SIDE_OPTIONS = ["prompt", "blocks", "maxOutputTokens", "abortSignal"];
+
+/** The largest output limit that the host takes. */
+const MAX_OUTPUT_TOKENS = 2 ** 32 - 1;
+
+/** Send the side request of `round` for a handler that sees `head`, then the last `kept` blocks of the round. */
+async function sideRequest(
+  round: RoundNatives,
+  head: readonly Block[],
+  kept: number,
+  options: SideRequestOptions,
+): Promise<SideRequestResult> {
+  const {
+    prompt,
+    blocks = head.length + kept,
+    maxOutputTokens,
+    abortSignal,
+  } = fieldsOf(options, "the options", SIDE_OPTIONS);
+  if (typeof prompt !== "string") throw new TypeError("the option prompt is not a string");
+  const total = head.length + kept;
+  if (typeof blocks !== "number" || !Number.isSafeInteger(blocks) || blocks < 0 || blocks > total) {
+    throw new TypeError(`the option blocks is not a whole number from 0 to ${total}`);
+  }
+  if (
+    maxOutputTokens !== undefined &&
+    (typeof maxOutputTokens !== "number" ||
+      !Number.isSafeInteger(maxOutputTokens) ||
+      maxOutputTokens < 1 ||
+      maxOutputTokens > MAX_OUTPUT_TOKENS)
+  ) {
+    throw new TypeError(`the option maxOutputTokens is not a whole number from 1 to ${MAX_OUTPUT_TOKENS}`);
+  }
+  const stop = signalOf(abortSignal);
+  const request = { head: jsonCopy(head, "the answer"), kept, blocks, prompt, maxOutputTokens };
+  return Object.freeze(await underStop(stop, () => round.sideRequest(request)));
+}
+
 /** Start the `round.before` handlers of the open session `open` before one round, as `startRoundPlan` says. */
 export function startRoundBefore(request: RoundBeforeRequest): Operation<RoundBeforePlan | undefined> {
   return startRoundPlan("round.before", request, {});
@@ -327,7 +366,7 @@ export function startRoundRetry({
  */
 function startRoundPlan<K extends RoundPoint>(
   point: K,
-  { open, window, inputTokens, blocks, context }: RoundBeforeRequest,
+  { open, window, inputTokens, blocks, round }: RoundBeforeRequest,
   facts: Omit<EventOf<K>, keyof RoundBeforeEvent>,
 ): Operation<RoundBeforePlan | undefined> {
   return hostOperation(async (signal) => {
@@ -340,15 +379,18 @@ function startRoundPlan<K extends RoundPoint>(
       open,
       point,
       (handler) => {
+        // The event shows the context that this handler sees, also after the answers of the later handlers.
+        const seen = { head, kept };
         const event = Object.freeze({
           ...facts,
           window: window ?? null,
           inputTokens: inputTokens ?? null,
-          blocks: head.length + kept,
+          blocks: seen.head.length + seen.kept,
           context: () => {
-            const before = context();
-            return [...jsonCopy(head, "the answer"), ...before.slice(before.length - kept)];
+            const before = round.context();
+            return [...jsonCopy(seen.head, "the answer"), ...before.slice(before.length - seen.kept)];
           },
+          sideRequest: (options: SideRequestOptions) => sideRequest(round, seen.head, seen.kept, options),
           signal,
         }) as EventOf<K>;
         return (handler as (event: EventOf<K>) => unknown)(event);

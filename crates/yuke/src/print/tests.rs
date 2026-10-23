@@ -355,6 +355,40 @@ async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_rou
     );
 }
 
+// The prompt cache of a provider matches a prefix, so a side request must repeat the bytes of its round.
+#[tokio::test]
+async fn a_side_request_repeats_the_bytes_of_its_round_with_one_more_block() {
+    let place = Place::new("print", "side_request");
+    place.plugin(
+        "aside",
+        "export function session(s) {
+           let asked = false;
+           s.hook('round.before', async (event) => {
+             if (asked) return undefined;
+             asked = true;
+             await event.sideRequest({ prompt: 'Summarize.' });
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["aside"] }"#).unwrap();
+
+    let (finished, requests) = run_with(
+        &place,
+        &task("Hi.", SessionChoice::New),
+        &[text_reply("A summary."), text_reply("Done.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    let [side, round] = &requests[..] else {
+        panic!("{requests:?}")
+    };
+    let input = r#"{"type":"text","text":"Hi."}"#;
+    let expected = round.replacen(input, &format!(r#"{input},{{"type":"text","text":"Summarize."}}"#), 1);
+    assert_ne!(&expected, round, "the round has no input: {round}");
+    assert_eq!(side, &expected);
+}
+
 #[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");

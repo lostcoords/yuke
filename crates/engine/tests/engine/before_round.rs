@@ -225,7 +225,7 @@ impl Hooks for Starts {
         let line = format!(
             "{} {:?} {:?} {:?}",
             round.context.len(),
-            round.window,
+            round.model.context_window,
             round.input_tokens,
             round.settings.temperature
         );
@@ -292,7 +292,7 @@ impl Hooks for PlannedThenFailed {
         let line = format!(
             "{} {:?} {:?} {:?}",
             round.context.len(),
-            round.window,
+            round.model.context_window,
             round.input_tokens,
             round.settings.temperature
         );

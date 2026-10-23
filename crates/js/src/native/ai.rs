@@ -1,17 +1,18 @@
-//! The native of `yuke:ai`: `aiComplete` sends one request of a plugin to a model.
+//! The model requests of the plugins: `aiComplete` of `yuke:ai`, and `sideRequest` of a round event.
 
+use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
 
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
 use serde_json::{Map, Value};
-use yuke_ai::{Block, FinishReason, Settings, Usage};
-use yuke_engine::chain_text;
-use yuke_protocol::ModelReference;
+use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
+use yuke_engine::{CancellationToken, Model, chain_text};
+use yuke_protocol::{ModelReference, SessionId};
 
 use super::Operation;
 use crate::error::{ErrorClass, throw};
-use crate::models::{CompleteRequest, Models, merge_settings};
+use crate::models::{CompleteAnswer, CompleteRequest, Models, SideRequest, merge_settings};
 use crate::tools::{Json, MediaFile, read_media};
 
 /// The request of `aiComplete`, as `yuke:ai` builds it after its checks.
@@ -59,18 +60,95 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, models: &Arc<dyn Mo
                         () = stop.cancelled() => return Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?)),
                     };
                     request.attachments = read.map_err(|error| throw(&ctx, ErrorClass::Error, &error))?;
-                    match models.complete(request, stop.clone()).await {
-                        Ok(answer) => Ok(Completion {
-                            text: answer.text,
-                            finish_reason: Json(answer.finish_reason),
-                            usage: Json(answer.usage),
-                        }),
-                        Err(_) if stop.is_cancelled() => Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?)),
-                        Err(error) => Err(throw(&ctx, ErrorClass::Error, &chain_text(&*error))),
-                    }
+                    let answer = models.complete(request, stop.clone()).await;
+                    completion(&ctx, answer, &stop)
                 })
             },
         )?,
+    )
+}
+
+/// The answer of a model request for JavaScript. A failure after a stop rejects with the cancel record.
+fn completion(
+    ctx: &Ctx<'_>,
+    answer: Result<CompleteAnswer, Box<dyn Error + Send + Sync>>,
+    stop: &CancellationToken,
+) -> rquickjs::Result<Completion> {
+    match answer {
+        Ok(answer) => Ok(Completion {
+            text: answer.text,
+            finish_reason: Json(answer.finish_reason),
+            usage: Json(answer.usage),
+        }),
+        Err(_) if stop.is_cancelled() => Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?)),
+        Err(error) => Err(throw(ctx, ErrorClass::Error, &chain_text(&*error))),
+    }
+}
+
+/// What a side request of a round repeats: the request of the round and its context.
+#[derive(Debug)]
+pub(crate) struct Round {
+    pub(crate) model: Model,
+    pub(crate) system: String,
+    pub(crate) tools: Vec<ToolDefinition>,
+    pub(crate) settings: Settings,
+    pub(crate) session_id: SessionId,
+    pub(crate) context: Vec<Block>,
+}
+
+/// The request of `sideRequest`, as the round event builds it after its checks.
+#[derive(FromJs)]
+#[qjs(rename_all = "camelCase")]
+struct SideOptions {
+    /// The head of the replacements of the earlier handlers. It stays JSON until the check.
+    head: Json<Value>,
+    /// The number of blocks of the context of the round after `head`.
+    kept: usize,
+    /// The number of blocks to send, of `head` and the kept blocks.
+    blocks: usize,
+    prompt: String,
+    max_output_tokens: Option<u32>,
+}
+
+/// The native `sideRequest(options)` of a round event: the request of `round`, with the context as the handler sees
+/// it, cut to `blocks`, then `prompt`. A head that is not a list of blocks throws a `TypeError`.
+pub(crate) fn side_request<'js>(
+    ctx: &Ctx<'js>,
+    round: Arc<Round>,
+    models: Arc<dyn Models>,
+) -> rquickjs::Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, options: SideOptions| -> rquickjs::Result<Operation<'js>> {
+            let head: Vec<Block> = serde_json::from_value(options.head.0).map_err(|error| {
+                let message = format!("the head is not a list of blocks: {error}");
+                throw(&ctx, ErrorClass::TypeError, &message)
+            })?;
+            let kept = &round.context[round.context.len().saturating_sub(options.kept)..];
+            let blocks: Vec<Block> = head
+                .into_iter()
+                .chain(kept.iter().cloned())
+                .take(options.blocks)
+                .collect();
+            let settings = match options.max_output_tokens {
+                Some(limit) => round.settings.clone().max_output_tokens(limit),
+                None => round.settings.clone(),
+            };
+            let request = SideRequest {
+                model: round.model.clone(),
+                system: round.system.clone(),
+                tools: round.tools.clone(),
+                settings,
+                session_id: round.session_id,
+                blocks,
+                prompt: options.prompt,
+            };
+            let models = Arc::clone(&models);
+            Operation::start(&ctx, move |ctx, stop| async move {
+                let answer = models.side_request(request, stop.clone()).await;
+                completion(&ctx, answer, &stop)
+            })
+        },
     )
 }
 

@@ -894,6 +894,7 @@ pub struct Request<'a> {
     pub(crate) system: &'a str,
     pub(crate) settings: &'a Settings,
     pub(crate) session_id: Option<&'a str>,
+    pub(crate) cached: Option<usize>,
 }
 
 /// The settings of a request without [`Request::settings`]: each value at its endpoint default.
@@ -910,7 +911,23 @@ impl<'a> Request<'a> {
             system: "",
             settings: &DEFAULT_SETTINGS,
             session_id: None,
+            cached: None,
         }
+    }
+
+    /// Put the cache marker on the last block that the protocol can mark among the first `blocks` blocks. Without
+    /// it, the marker goes on the last such block of the whole context.
+    #[must_use]
+    pub fn cached(self, blocks: usize) -> Self {
+        Request {
+            cached: Some(blocks),
+            ..self
+        }
+    }
+
+    /// The blocks that the cache marker can go on.
+    pub(crate) fn cacheable_blocks(&self) -> &'a [Block] {
+        &self.blocks[..self.cached.unwrap_or(self.blocks.len()).min(self.blocks.len())]
     }
 
     /// The system prompt. With an empty prompt, the request carries no system prompt.

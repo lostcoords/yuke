@@ -20,8 +20,9 @@ use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReferen
 
 use crate::Runtime;
 use crate::error::{Error, caught};
-use crate::models::merge_settings;
+use crate::models::{Models, merge_settings};
 use crate::native::Operation;
+use crate::native::ai::{Round, side_request};
 use crate::plugins::loader;
 use crate::runtime::Caller;
 use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
@@ -34,6 +35,7 @@ pub struct ScriptSession {
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
     open: u64,
+    models: Arc<dyn Models>,
 }
 
 impl std::fmt::Debug for ScriptSession {
@@ -85,6 +87,7 @@ impl Runtime {
             caller: self.caller.clone(),
             host,
             open,
+            models: Arc::clone(&self.models),
         })
     }
 }
@@ -155,6 +158,7 @@ impl ScriptSession {
             token,
             continues: AtomicU64::new(0),
             retries: AtomicU64::new(0),
+            models: Arc::clone(&self.models),
         }
     }
 
@@ -197,6 +201,7 @@ pub struct ScriptHooks {
     continues: AtomicU64,
     /// The `round.retry` answers that sent the current round again.
     retries: AtomicU64,
+    models: Arc<dyn Models>,
 }
 
 impl std::fmt::Debug for ScriptHooks {
@@ -207,6 +212,24 @@ impl std::fmt::Debug for ScriptHooks {
     }
 }
 
+impl ScriptHooks {
+    /// The natives of a round event for `round`: one copy of the round serves `context` and `sideRequest`.
+    fn natives(&self, round: &RoundStart<'_>) -> RoundNatives {
+        let round = Round {
+            model: round.model.clone(),
+            system: round.system.to_owned(),
+            tools: round.tools.to_vec(),
+            settings: round.settings.clone(),
+            session_id: self.host.session_id(),
+            context: round.context.to_vec(),
+        };
+        RoundNatives {
+            round: Arc::new(round),
+            models: Arc::clone(&self.models),
+        }
+    }
+}
+
 #[async_trait]
 impl Hooks for ScriptHooks {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
@@ -214,10 +237,10 @@ impl Hooks for ScriptHooks {
         self.retries.store(0, Ordering::Relaxed);
         let request = RoundBeforeRequest {
             open: self.open,
-            window: round.window,
+            window: round.model.context_window,
             input_tokens: round.input_tokens,
             blocks: round.context.len(),
-            context: ContextBlocks(round.context.to_vec()),
+            round: self.natives(round),
         };
         let answer: Option<Option<PlannedRound>> =
             run_hook(&self.caller, "startRoundBefore", request, self.token.clone())
@@ -246,10 +269,10 @@ impl Hooks for ScriptHooks {
                 message: chain_text(failure),
             },
             retries: self.retries.load(Ordering::Relaxed),
-            window: round.window,
+            window: round.model.context_window,
             input_tokens: round.input_tokens,
             blocks: round.context.len(),
-            context: ContextBlocks(round.context.to_vec()),
+            round: self.natives(round),
         };
         let answer: Option<Option<PlannedRound>> =
             run_hook(&self.caller, "startRoundRetry", request, self.token.clone())
@@ -481,7 +504,7 @@ struct RoundRetryRequest {
     window: Option<u64>,
     input_tokens: Option<u64>,
     blocks: usize,
-    context: ContextBlocks,
+    round: RoundNatives,
 }
 
 /// Why a round failed, for `round.retry`.
@@ -527,17 +550,27 @@ struct RoundBeforeRequest {
     window: Option<u64>,
     input_tokens: Option<u64>,
     blocks: usize,
-    context: ContextBlocks,
+    round: RoundNatives,
 }
 
-/// A copy of the blocks of the context. `round.before` and `round.retry` make it, also without a handler. The copy crosses
-/// to JavaScript as the function `context`, which converts it at each call, so a round without a call converts nothing.
-struct ContextBlocks(Vec<Block>);
+/// A copy of the round. `round.before` and `round.retry` make it, also without a handler. It crosses to JavaScript as
+/// the functions `context` and `sideRequest`. `context` converts the blocks at each call, so a round without a call
+/// converts nothing.
+struct RoundNatives {
+    round: Arc<Round>,
+    models: Arc<dyn Models>,
+}
 
-impl<'js> IntoJs<'js> for ContextBlocks {
+impl<'js> IntoJs<'js> for RoundNatives {
     fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
-        let blocks = self.0;
-        Function::new(ctx.clone(), move || Json(blocks.clone()))?.into_js(ctx)
+        let object = Object::new(ctx.clone())?;
+        object.set("sideRequest", side_request(ctx, Arc::clone(&self.round), self.models)?)?;
+        let round = self.round;
+        object.set(
+            "context",
+            Function::new(ctx.clone(), move || Json(round.context.clone()))?,
+        )?;
+        object.into_js(ctx)
     }
 }
 

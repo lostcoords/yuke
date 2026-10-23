@@ -6,9 +6,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use tokio::runtime::Handle;
-use yuke_ai::{Block, FinishReason, Settings, Usage};
-use yuke_engine::CancellationToken;
-use yuke_protocol::ModelReference;
+use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
+use yuke_engine::{CancellationToken, Model};
+use yuke_protocol::{ModelReference, SessionId};
 
 /// One request of a plugin to a model.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,7 +34,27 @@ pub struct Attachment {
     pub mime_type: String,
 }
 
-/// The answer of a [`CompleteRequest`].
+/// One request of a round hook: the request of the round, with other blocks, then a prompt. It repeats the bytes and the
+/// cache marker of the round, so it can reuse the prompt cache of the earlier rounds.
+#[derive(Debug, Clone)]
+pub struct SideRequest {
+    /// The model of the round.
+    pub model: Model,
+    /// The system prompt of the round.
+    pub system: String,
+    /// The tool definitions of the round. The request offers them, and no tool runs.
+    pub tools: Vec<ToolDefinition>,
+    /// The settings of the round, with the output limit of the caller.
+    pub settings: Settings,
+    /// The session of the round. Its media store serves the media blocks, and its id is the cache key.
+    pub session_id: SessionId,
+    /// The blocks of the round, oldest first. The cache marker goes on them, as in the round.
+    pub blocks: Vec<Block>,
+    /// The text of the user block after `blocks`.
+    pub prompt: String,
+}
+
+/// The answer of a [`CompleteRequest`] or a [`SideRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteAnswer {
     /// The text blocks of the answer, one per line.
@@ -58,6 +78,17 @@ pub trait Models: Send + Sync {
         request: CompleteRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
+
+    /// Send `request`, and wait for the first answer. The token `cancel` stops the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed. A cancel also fails the request.
+    async fn side_request(
+        &self,
+        request: SideRequest,
+        cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
 }
 
 /// The models of the consumer on its own tokio runtime. The JavaScript thread has no I/O driver, so each request runs
@@ -67,6 +98,24 @@ pub(crate) struct OnConsumer {
     pub(crate) handle: Handle,
 }
 
+impl OnConsumer {
+    /// Run the request that `send` makes on the runtime of the consumer.
+    async fn run<F>(
+        &self,
+        cancel: CancellationToken,
+        send: impl FnOnce(CancellationToken) -> F + Send + 'static,
+    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>
+    where
+        F: Future<Output = Result<CompleteAnswer, Box<dyn Error + Send + Sync>>> + Send + 'static,
+    {
+        // A drop of the wait, as at a shutdown, cancels the token too.
+        let guard = cancel.clone().drop_guard();
+        let answer = self.handle.spawn(send(cancel)).await;
+        guard.disarm();
+        answer?
+    }
+}
+
 #[async_trait]
 impl Models for OnConsumer {
     async fn complete(
@@ -74,15 +123,19 @@ impl Models for OnConsumer {
         request: CompleteRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
-        // A drop of the wait, as at a shutdown, cancels the token too.
-        let guard = cancel.clone().drop_guard();
         let models = Arc::clone(&self.models);
-        let answer = self
-            .handle
-            .spawn(async move { models.complete(request, cancel).await })
-            .await;
-        guard.disarm();
-        answer?
+        self.run(cancel, async move |cancel| models.complete(request, cancel).await)
+            .await
+    }
+
+    async fn side_request(
+        &self,
+        request: SideRequest,
+        cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
+        let models = Arc::clone(&self.models);
+        self.run(cancel, async move |cancel| models.side_request(request, cancel).await)
+            .await
     }
 }
 

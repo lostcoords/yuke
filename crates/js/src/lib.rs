@@ -32,7 +32,7 @@ mod tools;
 mod typescript;
 
 pub use error::{Error, Report, ScriptError};
-pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models};
+pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Plugin, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Options, Runtime};

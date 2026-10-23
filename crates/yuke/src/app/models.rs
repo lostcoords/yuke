@@ -3,58 +3,95 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use yuke_agent::blob_of;
-use yuke_ai::{BlobStore, Block, Digest, FinishReason, Media};
-use yuke_engine::{Answer, CancellationToken, Commit, Driver, Hooks, Journal, Outcome, RoundDecision};
-use yuke_js::{CompleteAnswer, CompleteRequest, Models};
+use yuke_agent::{Store, blob_of};
+use yuke_ai::{BlobStore, Block, Digest, Media, ToolDefinition};
+use yuke_engine::{CancellationToken, Driver};
+use yuke_js::{CompleteAnswer, CompleteRequest, Models, SideRequest};
+use yuke_protocol::SessionId;
 
-use super::{Shared, TokioTimer, lock, model_of};
+use super::{Shared, TokioTimer, model_of};
 
-/// The models of the app for the plugins. A request is one round with no tools and no plugin hooks, and the store keeps
-/// nothing of it. The round reads only the media of its attachments, so a media block of the session fails it.
+/// The models of the app for the plugins. A request is one request to the model: no tool runs, no hook sees it, and
+/// the store keeps nothing of it.
 pub(super) struct PluginModels(pub(super) Arc<Shared>);
 
 #[async_trait]
 impl Models for PluginModels {
+    // The request reads only the media of its attachments, so a media block of the session fails it.
     async fn complete(
         &self,
         request: CompleteRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
         let model = model_of(&request.model, &self.0)?;
-        let first = FirstAnswer::default();
-        let mut input = request.blocks;
+        let mut blocks = request.blocks;
         let mut attachments = Attachments::default();
         for attachment in request.attachments {
             let blob = blob_of(&attachment.bytes);
-            input.push(Block::Media(Media::new(blob, attachment.mime_type)));
+            blocks.push(Block::Media(Media::new(blob, attachment.mime_type)));
             attachments.0.insert(blob.digest, attachment.bytes);
         }
         let driver = Driver::new(&*self.0.machine.transport, &model, &TokioTimer)
             .system(&request.system)
             .settings(&request.settings)
-            .hooks(&first)
-            .journal(&first)
             .blobs(&attachments);
-        let mut context = Vec::new();
-        let outcome = driver
-            .turn(&mut context, input)
-            .cancellation_token(cancel)
-            .run()
-            .await?;
-        if outcome == Outcome::Cancelled {
-            return Err("the model request was cancelled".into());
-        }
-        let answer = lock(&first.answer).take().ok_or("the model sent no answer")?;
-        Ok(CompleteAnswer {
-            text: yuke_ai::answer_text(&context),
-            finish_reason: answer.finish_reason,
-            usage: answer.usage,
-        })
+        send(&driver, &blocks, blocks.len(), &[], &cancel).await
     }
+
+    async fn side_request(
+        &self,
+        request: SideRequest,
+        cancel: CancellationToken,
+    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
+        let SideRequest {
+            model,
+            system,
+            tools,
+            settings,
+            session_id,
+            mut blocks,
+            prompt,
+        } = request;
+        // The marker stays on the blocks of the round, so the round after the request reads the same cache entry.
+        let cached = blocks.len();
+        blocks.push(Block::user_text(prompt));
+        // A session turn sends the same key, so the provider routes both to the same cache.
+        let key = session_id.to_string();
+        let media = SessionMedia {
+            store: &*self.0.store,
+            session_id,
+        };
+        let driver = Driver::new(&*self.0.machine.transport, &model, &TokioTimer)
+            .system(&system)
+            .settings(&settings)
+            .session_id(&key)
+            .blobs(&media);
+        send(&driver, &blocks, cached, &tools, &cancel).await
+    }
+}
+
+/// Send one request of `blocks` through `driver` that offers `tools`, with the cache marker on the first `cached`
+/// blocks. Answer with the text, the finish, and the usage of the answer.
+async fn send(
+    driver: &Driver<'_>,
+    blocks: &[Block],
+    cached: usize,
+    tools: &[ToolDefinition],
+    cancel: &CancellationToken,
+) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
+    let response = driver
+        .request(blocks, cached, tools, cancel)
+        .await?
+        .ok_or("the model request was cancelled")?;
+    let completion = response.completion;
+    Ok(CompleteAnswer {
+        finish_reason: completion.finish_reason,
+        usage: completion.usage,
+        text: yuke_ai::answer_text(&completion.into_blocks().collect::<Vec<_>>()),
+    })
 }
 
 /// The bytes of the attachments of one request, by digest.
@@ -67,31 +104,15 @@ impl BlobStore for Attachments {
     }
 }
 
-/// Ends a turn after its first answer, and keeps that answer.
-#[derive(Default)]
-struct FirstAnswer {
-    answer: Mutex<Option<Answer>>,
+/// The media of one session in the store.
+struct SessionMedia<'a> {
+    store: &'a dyn Store,
+    session_id: SessionId,
 }
 
-// The request offers no tools, but a model can still ask for a call. The stop keeps the turn at one request.
-#[async_trait]
-impl Hooks for FirstAnswer {
-    async fn after_round(
-        &self,
-        _context: &[Block],
-        _finish_reason: Option<FinishReason>,
-    ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
-        Ok(RoundDecision::Stop)
-    }
-}
-
-#[async_trait]
-impl Journal for FirstAnswer {
-    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
-        if let Some(answer) = &commit.answer {
-            *lock(&self.answer) = Some(answer.clone());
-        }
-        Ok(())
+impl BlobStore for SessionMedia<'_> {
+    fn read(&self, digest: &Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn Error + Send + Sync>> {
+        Ok(self.store.read_blob(self.session_id, digest)?.map(Cow::Owned))
     }
 }
 
@@ -99,8 +120,8 @@ impl Journal for FirstAnswer {
 mod tests {
     use std::time::Duration;
 
-    use yuke_ai::Usage;
     use yuke_ai::transport::Transport;
+    use yuke_ai::{FinishReason, Usage};
     use yuke_js::Attachment;
     use yuke_protocol::{ModelReference, ServerNotification};
     use yuke_testing::{ScriptedTransport, assert_in_order, counted, text_reply, tool_reply};
@@ -257,6 +278,100 @@ mod tests {
 
         assert_eq!(answer.unwrap_err().to_string(), "the model request was cancelled");
         assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_side_request_reads_the_media_of_its_session_and_offers_its_tools() {
+        let transport = ScriptedTransport::new([text_reply("A cat.")]);
+        let app = app(
+            "a_side_request_reads_the_media_of_its_session_and_offers_its_tools",
+            Box::new(transport.clone()),
+        )
+        .await;
+        let reference = request("MiniMax-M3").model;
+        let settings = yuke_protocol::SessionSettings {
+            model: reference.clone(),
+            settings: yuke_ai::Settings::new(),
+            cwd: std::env::temp_dir(),
+        };
+        let session = app.shared.store.create_session(&settings, &[]).await.unwrap();
+        let blob = app
+            .shared
+            .store
+            .put_blob(session.id, b"png bytes".to_vec())
+            .await
+            .unwrap();
+        let request = SideRequest {
+            model: model_of(&reference, &app.shared).unwrap(),
+            system: "Be brief.".to_owned(),
+            tools: vec![ToolDefinition {
+                name: "look".into(),
+                description: "Look.".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
+                defer_loading: false,
+            }],
+            settings: yuke_ai::Settings::new(),
+            session_id: session.id,
+            blocks: vec![Block::Media(Media::new(blob, "image/png".to_owned()))],
+            prompt: "Describe.".to_owned(),
+        };
+
+        let answer = PluginModels(Arc::clone(&app.shared))
+            .side_request(request, CancellationToken::new())
+            .await;
+        app.shutdown().await;
+
+        assert_eq!(answer.unwrap().text, "A cat.");
+        assert_in_order(
+            &transport.requests()[0],
+            &["Be brief.", "look", "cG5nIGJ5dGVz", "Describe."],
+        );
+    }
+
+    // A turn of the session sends the same key and marker, so the provider serves both requests from one cache entry.
+    #[tokio::test]
+    async fn a_side_request_keeps_the_cache_key_and_the_cache_marker_of_its_round() {
+        let reply =
+            yuke_testing::sse(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#]);
+        let transport = ScriptedTransport::new([reply]);
+        let app = app(
+            "a_side_request_keeps_the_cache_key_and_the_cache_marker_of_its_round",
+            Box::new(transport.clone()),
+        )
+        .await;
+        let session_id = SessionId::generate();
+        let target = yuke_ai::Target {
+            wire: yuke_ai::Wire::OpenaiResponses(yuke_ai::ResponsesWire {
+                cache: true,
+                ..yuke_ai::ResponsesWire::default()
+            }),
+            ..yuke_testing::target()
+        };
+        let request = SideRequest {
+            model: yuke_testing::model_of(target),
+            system: String::new(),
+            tools: Vec::new(),
+            settings: yuke_ai::Settings::new(),
+            session_id,
+            blocks: vec![Block::user_text("one")],
+            prompt: "Summarize.".to_owned(),
+        };
+
+        let answer = PluginModels(Arc::clone(&app.shared))
+            .side_request(request, CancellationToken::new())
+            .await;
+        app.shutdown().await;
+
+        answer.unwrap();
+        let request = &transport.requests()[0];
+        assert!(
+            request.contains(&format!(r#""prompt_cache_key":"{session_id}""#)),
+            "{request}"
+        );
+        assert!(
+            request.contains(r#"{"type":"input_text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"Summarize."}"#),
+            "{request}"
+        );
     }
 
     #[tokio::test]

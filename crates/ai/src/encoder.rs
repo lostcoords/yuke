@@ -243,7 +243,7 @@ impl Encoder {
     fn serialize(&mut self, target: &Target, request: &Request<'_>) -> Result<usize, EncodeError> {
         let blocks = request.blocks;
         let key = element_key(target, request);
-        let marker = wire::cache_index(target.wire, blocks);
+        let marker = wire::cache_index(target.wire, request.cacheable_blocks());
         let from = self.keep(key, blocks, marker);
         let hashed = self.hashes.len();
         self.hashes.extend(

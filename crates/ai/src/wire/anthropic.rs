@@ -505,6 +505,18 @@ mod tests {
         );
     }
 
+    // A side request adds a prompt after the context of its round, and the marker stays where the round puts it.
+    #[test]
+    fn a_cached_bound_keeps_the_marker_on_the_last_block_before_it() {
+        let blocks = [Block::user_text("one"), Block::user_text("two")];
+        expect_json(
+            r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"one","cache_control":{"type":"ephemeral"}},{"type":"text","text":"two"}]}]}"#,
+            "claude",
+            cached(8),
+            Request::new(&blocks).cached(1),
+        );
+    }
+
     #[test]
     fn cache_skips_trailing_thinking() {
         let blocks = [

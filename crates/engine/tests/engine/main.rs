@@ -10,5 +10,6 @@ mod deferred;
 mod drive;
 mod hook_errors;
 mod parallel;
+mod request;
 mod support;
 mod tool_api;

@@ -64,15 +64,24 @@ type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
 
 /// A QuickJS runtime on its own thread. Share it through an `Arc`. A drop asks the thread to end and does not wait;
 /// [`Runtime::shutdown`] waits.
-#[derive(Debug)]
 pub struct Runtime {
     pub(crate) caller: Caller,
+    /// The models of the plugins, on the runtime of the consumer.
+    pub(crate) models: Arc<dyn Models>,
     /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
     stop: oneshot::Sender<()>,
     /// Its drop stops the JavaScript that runs, so the thread can end even inside a loop without an `await`.
     stopping: Stopping,
     thread: JoinHandle<()>,
+}
+
+impl fmt::Debug for Runtime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Runtime")
+            .field("caller", &self.caller)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The flag of the interrupt handler. A drop sets it, and the engine then stops each stretch of JavaScript.
@@ -107,6 +116,7 @@ impl Runtime {
             }),
             ..options
         };
+        let models = Arc::clone(&options.models);
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
@@ -122,6 +132,7 @@ impl Runtime {
 
         let runtime = Self {
             caller: Caller { calls },
+            models,
             stop,
             stopping: Stopping(stopping),
             thread,
@@ -157,6 +168,7 @@ impl Runtime {
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
             caller,
+            models: _,
             stop,
             stopping,
             thread,
