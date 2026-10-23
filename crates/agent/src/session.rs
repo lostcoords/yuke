@@ -6,9 +6,11 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputSource, SessionEvent, SessionId, SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputSource, LiveUpdate, SessionEvent, SessionId, SessionSettings,
+    SessionUpdate, StoredEvent,
 };
 
+use crate::input_hook::{InputDecision, InputHook, NoInputHook};
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
 use crate::updates::{SessionObserver, Updates};
 use crate::{PromptSection, lock, prompt_text};
@@ -79,22 +81,85 @@ struct TurnJournal<'a> {
 struct TurnInputs<'a> {
     store: &'a dyn Store,
     id: SessionId,
+    hook: &'a dyn InputHook,
+    /// It gets the removal of each input that the hook removes.
+    observer: Option<&'a dyn SessionObserver>,
     /// The records of the inputs that the turn took and that no saved commit consumed. They are still pending.
     taken: Mutex<Vec<ConsumedInput>>,
 }
 
+/// Why a turn could not take its input.
+enum TakeError {
+    Store(StoreError),
+    Hook(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl From<StoreError> for TakeError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+
+impl From<TakeError> for SessionError {
+    fn from(error: TakeError) -> Self {
+        match error {
+            TakeError::Store(error) => Self::Store(error),
+            TakeError::Hook(error) => Self::InputHook(error),
+        }
+    }
+}
+
 impl TurnInputs<'_> {
-    /// Take each pending input that the turn did not take, and return their model blocks in input order.
-    async fn take(&self) -> Result<Vec<yuke_ai::Block>, StoreError> {
+    /// Take each pending input that the turn did not take, and return their model blocks in input order. The input
+    /// hook checks each input first. The notes of the session pass without the hook.
+    async fn take(&self) -> Result<Vec<yuke_ai::Block>, TakeError> {
         let pending = self.store.pending(self.id).await?;
-        let mut taken = lock(&self.taken);
         let mut blocks = Vec::new();
-        for input in pending {
-            if taken.iter().any(|known| known.id == input.id) {
+        for mut input in pending {
+            if lock(&self.taken).iter().any(|known| known.id == input.id) {
                 continue;
             }
+            let ours = matches!(input.input.source(), InputSource::Plugin { name } if name == SESSION_SOURCE);
+            let decision = if ours {
+                InputDecision::Keep
+            } else {
+                self.hook.before_input(&input).await.map_err(TakeError::Hook)?
+            };
+            // A client can remove the input while the hook waits, and a turn must not consume a removed input.
+            if decision != InputDecision::Remove
+                && !self
+                    .store
+                    .pending(self.id)
+                    .await?
+                    .iter()
+                    .any(|pending| pending.id == input.id)
+            {
+                continue;
+            }
+            match decision {
+                InputDecision::Keep => {}
+                InputDecision::Replace(model_content) => {
+                    input.input = input
+                        .input
+                        .with_model_content(model_content)
+                        .map_err(|error| TakeError::Hook(error.into()))?;
+                }
+                InputDecision::Remove => {
+                    match self.store.remove_input(self.id, input.id).await {
+                        Ok(()) => {
+                            if let Some(observer) = self.observer {
+                                observer.update(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: input.id }));
+                            }
+                        }
+                        // A client removed the input during the hook, and that removal sent its update.
+                        Err(StoreError::InputNotPending(_)) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    continue;
+                }
+            }
             let (consumed, model_blocks) = input.into_consumed();
-            taken.push(consumed);
+            lock(&self.taken).push(consumed);
             blocks.extend(model_blocks);
         }
         Ok(blocks)
@@ -104,7 +169,10 @@ impl TurnInputs<'_> {
 #[async_trait]
 impl Inbox for TurnJournal<'_> {
     async fn take(&self) -> Result<Vec<yuke_ai::Block>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(self.inputs.take().await?)
+        self.inputs.take().await.map_err(|error| match error {
+            TakeError::Store(error) => error.into(),
+            TakeError::Hook(error) => error,
+        })
     }
 }
 
@@ -113,7 +181,7 @@ impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
         // leave `taken` before the save. After a failed save, the next turn takes the pending inputs again.
-        let TurnInputs { store, id, taken } = &self.inputs;
+        let TurnInputs { store, id, taken, .. } = &self.inputs;
         let consumed = std::mem::take(&mut *lock(taken));
         let event_number = store.commit(*id, commit, &consumed).await?;
         if let Some(answer) = &commit.answer {
@@ -270,6 +338,7 @@ impl Session {
             observer: None,
             cancellation_token: CancellationToken::new(),
             prompt: None,
+            input_hook: &NoInputHook,
         }
     }
 }
@@ -331,6 +400,7 @@ pub struct SessionTurn<'s> {
     cancellation_token: CancellationToken,
     /// The prompt sections of this turn in place of the saved ones.
     prompt: Option<Vec<PromptSection>>,
+    input_hook: &'s dyn InputHook,
 }
 
 impl fmt::Debug for SessionTurn<'_> {
@@ -349,6 +419,11 @@ impl<'s> SessionTurn<'s> {
             observer: Some(observer),
             ..self
         }
+    }
+
+    /// Check each input with `input_hook` before the turn takes it.
+    pub fn input_hook(self, input_hook: &'s dyn InputHook) -> Self {
+        SessionTurn { input_hook, ..self }
     }
 
     /// Stop the turn when `cancellation_token` is cancelled.
@@ -381,6 +456,7 @@ impl<'s> SessionTurn<'s> {
             observer,
             cancellation_token,
             prompt,
+            input_hook,
         } = self;
         if session.is_stale() {
             return Err(SessionError::Stale);
@@ -388,6 +464,8 @@ impl<'s> SessionTurn<'s> {
         let inputs = TurnInputs {
             store: &*session.store,
             id: session.id,
+            hook: input_hook,
+            observer,
             taken: Mutex::default(),
         };
         let mut input = inputs.take().await?;
@@ -456,6 +534,8 @@ pub enum SessionError {
     Stale,
     /// No input waits, so no turn ran. A removal of the last input can come between a check and the turn.
     NoInput,
+    /// The input hook failed. No turn ran, and the input stays pending.
+    InputHook(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl From<StoreError> for SessionError {
@@ -471,6 +551,7 @@ impl fmt::Display for SessionError {
             Self::Store(error) => fmt::Display::fmt(error, f),
             Self::Stale => f.write_str("a failed write left the session behind its store"),
             Self::NoInput => f.write_str("no input waits"),
+            Self::InputHook(_) => f.write_str("the input hook failed"),
         }
     }
 }
@@ -481,6 +562,7 @@ impl std::error::Error for SessionError {
         match self {
             Self::Round(error) => error.source(),
             Self::Store(error) => error.source(),
+            Self::InputHook(error) => Some(&**error),
             Self::Stale | Self::NoInput => None,
         }
     }

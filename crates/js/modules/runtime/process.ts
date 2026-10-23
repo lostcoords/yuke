@@ -27,7 +27,12 @@ function requestOf(command: unknown, options: unknown): { request: ProcessReques
   if (typeof env !== "object" || env === null || Array.isArray(env))
     throw new TypeError("the option env is not an object");
   const variables = Object.entries(env);
-  if (!variables.every(([, value]) => typeof value === "string")) {
+  if (
+    !variables.every((variable) => {
+      const [, value] = variable;
+      return typeof value === "string";
+    })
+  ) {
     throw new TypeError("the option env has a value that is not a string");
   }
   if (typeof clearEnv !== "boolean") throw new TypeError("the option clearEnv is not a boolean");

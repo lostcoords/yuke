@@ -153,7 +153,12 @@ export async function readDir(
   const text = domString(path);
   const entries = await run(signal, () => fsReadDir(text, baseDir));
   return entries
-    .map(({ name, isFile, isDirectory, isSymlink }) => ({ name, isFile, isDirectory, isSymlink }))
+    .map((entry) => ({
+      name: entry.name,
+      isFile: entry.isFile,
+      isDirectory: entry.isDirectory,
+      isSymlink: entry.isSymlink,
+    }))
     .sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0));
 }
 

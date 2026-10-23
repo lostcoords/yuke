@@ -11,12 +11,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
-use yuke_agent::PromptSection;
+use yuke_agent::{InputDecision, InputHook, PromptSection};
 use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult, answer_text};
 use yuke_engine::{
     CancellationToken, Hooks, Replaced, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision, chain_text,
 };
-use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReference};
+use yuke_protocol::{
+    Input, InputKind, InputSource, InteractionRequest, InteractionResponse, ModelReference, PendingInput,
+};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
@@ -367,19 +369,28 @@ impl Hooks for ScriptHooks {
     }
 }
 
+/// One item of a list that hooks answer: an item that stays, or a new media item that the host stores.
+enum Answered<T> {
+    Kept(T),
+    New(MediaFile),
+}
+
 impl ScriptHooks {
-    /// `result` after the `tool.after` handlers. The text and `is_error` come from `changed`. Each media item is an
-    /// item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
-    async fn changed(&self, result: &ToolResult, changed: ChangedResult) -> Result<ToolResult, String> {
-        // Each item is a kept item, or `None` for the next new item.
-        let mut order = Vec::with_capacity(changed.media.len());
+    /// The items of `answered` in order. The host stores each new media item, and `item` makes it an item. A failed read
+    /// or store fails with a text that names `point`.
+    async fn stored<T>(
+        &self,
+        point: &str,
+        answered: Vec<Answered<T>>,
+        item: impl Fn(yuke_ai::Media) -> T,
+    ) -> Result<Vec<T>, String> {
+        // Each entry is a kept item, or `None` for the next new item.
+        let mut order = Vec::with_capacity(answered.len());
         let mut files = Vec::new();
-        for item in changed.media {
-            match item {
-                ChangedMedia::Kept(index) => order.push(Some(result.media.get(index).cloned().ok_or_else(|| {
-                    format!("the tool.after hooks kept media item {index}, which the result does not have")
-                })?)),
-                ChangedMedia::New(file) => {
+        for answer in answered {
+            match answer {
+                Answered::Kept(kept) => order.push(Some(kept)),
+                Answered::New(file) => {
                     files.push(file);
                     order.push(None);
                 }
@@ -387,18 +398,67 @@ impl ScriptHooks {
         }
         let mut stored = store_media(&*self.host, files, &self.host.folder())
             .await
-            .map_err(|error| format!("the tool.after hooks failed: {error}"))?
+            .map_err(|error| format!("the {point} hooks failed: {error}"))?
             .into_iter();
+        Ok(order
+            .into_iter()
+            .filter_map(|kept| kept.or_else(|| stored.next().map(&item)))
+            .collect())
+    }
+
+    /// `result` after the `tool.after` handlers. The text and `is_error` come from `changed`. Each media item is an
+    /// item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
+    async fn changed(&self, result: &ToolResult, changed: ChangedResult) -> Result<ToolResult, String> {
+        let mut answered = Vec::with_capacity(changed.media.len());
+        for item in changed.media {
+            answered.push(match item {
+                ChangedMedia::Kept(index) => Answered::Kept(result.media.get(index).cloned().ok_or_else(|| {
+                    format!("the tool.after hooks kept media item {index}, which the result does not have")
+                })?),
+                ChangedMedia::New(file) => Answered::New(file),
+            });
+        }
         Ok(ToolResult {
             call_id: result.call_id.clone(),
             content: changed.text,
             is_error: changed.is_error,
-            media: order
-                .into_iter()
-                .filter_map(|kept| kept.or_else(|| stored.next()))
-                .collect(),
+            media: self.stored("tool.after", answered, |media| media).await?,
             loaded: result.loaded.clone(),
         })
+    }
+}
+
+#[async_trait]
+impl InputHook for ScriptHooks {
+    async fn before_input(&self, input: &PendingInput) -> Result<InputDecision, Box<dyn StdError + Send + Sync>> {
+        let request = InputBeforeRequest {
+            open: self.open,
+            session_id: self.host.session_id().to_string(),
+            source: Json(input.input.source().clone()),
+            kind: Json(input.input.kind()),
+            blocks: Json(input.input.model_content().to_vec()),
+        };
+        let answer: Option<Option<PlannedInput>> =
+            run_hook(&self.caller, "startInputBefore", request, self.token.clone())
+                .await
+                .map_err(|error| failure_text("input.before", &error))?;
+        // A cancel ends the turn, so the input stays pending as it is.
+        let Some(Some(planned)) = answer else {
+            return Ok(InputDecision::Keep);
+        };
+        let Some(items) = planned.blocks else {
+            return Ok(InputDecision::Remove);
+        };
+        let answered = items
+            .into_iter()
+            .map(|item| match item {
+                InputItem::Block(Json(block)) => Answered::Kept(block),
+                InputItem::New(file) => Answered::New(file),
+            })
+            .collect();
+        Ok(InputDecision::Replace(
+            self.stored("input.before", answered, Block::Media).await?,
+        ))
     }
 }
 
@@ -687,6 +747,45 @@ struct ChangedResult {
     text: String,
     is_error: bool,
     media: Vec<ChangedMedia>,
+}
+
+/// What `startInputBefore` gets.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct InputBeforeRequest {
+    open: u64,
+    session_id: String,
+    source: Json<InputSource>,
+    kind: Json<InputKind>,
+    /// The blocks that the model reads.
+    blocks: Json<Vec<Block>>,
+}
+
+/// The plan of the `input.before` handlers: the new blocks of the input, or no blocks for a removal.
+#[derive(FromJs)]
+struct PlannedInput {
+    blocks: Option<Vec<InputItem>>,
+}
+
+/// One item of the new blocks of an input.
+enum InputItem {
+    /// A block, also a media block that the session holds. It crosses as its JSON.
+    Block(Json<Block>),
+    /// A new media item: a `ToolMedia`, with a `mimeType`.
+    New(MediaFile),
+}
+
+impl<'js> FromJs<'js> for InputItem {
+    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+        let media = value
+            .as_object()
+            .is_some_and(|object| object.contains_key("mimeType").unwrap_or(false));
+        if media {
+            MediaFile::from_js(ctx, value).map(Self::New)
+        } else {
+            Json::from_js(ctx, value).map(Self::Block)
+        }
+    }
 }
 
 /// A media item of a changed result.

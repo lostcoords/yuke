@@ -5,7 +5,9 @@ import type {
   AskOptions,
   Cleanup,
   FinishReason,
+  InputKind,
   InputOptions,
+  InputSource,
   NoticeLevel,
   PluginContext,
   PluginSession,
@@ -202,10 +204,9 @@ interface OpenRequest {
  * Start `session(s)` of each loaded plugin for the session of `request`. Each call starts before any of them settles.
  * The open does not wait for them; `ready(open)` does.
  */
-export function openSession({ open, sessionId, folder, ask, model }: OpenRequest): void {
-  const scopes = sessionExports.map(({ plugin, session }) =>
-    start(open, sessionId, folder, ask, model, plugin, session),
-  );
+export function openSession(request: OpenRequest): void {
+  const { open, sessionId, folder, ask, model } = request;
+  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, model, entry.plugin, entry.session));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
@@ -235,10 +236,11 @@ const TURN_CANCELLED = "the turn was cancelled";
  * answer before it. The answer is the sections after the last handler, and `sections` for a closed session. `cancel`
  * aborts the signal of the build.
  */
-export function startPromptBuild({ open, sections }: PromptBuildRequest): Operation<Section[]> {
+export function startPromptBuild(request: PromptBuildRequest): Operation<Section[]> {
+  const { open, sections } = request;
   return hostOperation(async (signal) => {
     let current: Readonly<Record<string, string>> = Object.freeze(
-      Object.fromEntries(sections.map(({ key, text }) => [key, text])),
+      Object.fromEntries(sections.map((section) => [section.key, section.text])),
     );
     await runHandlers(
       open,
@@ -249,7 +251,10 @@ export function startPromptBuild({ open, sections }: PromptBuildRequest): Operat
         return false;
       },
     );
-    return Object.entries(current).map(([key, text]) => ({ key, text }));
+    return Object.entries(current).map((entry) => {
+      const [key, text] = entry;
+      return { key, text };
+    });
   }, TURN_CANCELLED);
 }
 
@@ -264,7 +269,8 @@ interface ToolBeforeRequest {
  * or `undefined` when the call runs. A closed session blocks nothing. A failed handler throws. `cancel` aborts the
  * signal of the call.
  */
-export function startToolBefore({ open, call }: ToolBeforeRequest): Operation<string | undefined> {
+export function startToolBefore(request: ToolBeforeRequest): Operation<string | undefined> {
+  const { open, call } = request;
   return hostOperation(async (signal) => {
     const event = Object.freeze({ call: frozen(call), signal });
     let reason: string | undefined;
@@ -278,6 +284,74 @@ export function startToolBefore({ open, call }: ToolBeforeRequest): Operation<st
       },
     );
     return reason;
+  }, TURN_CANCELLED);
+}
+
+/** What `startInputBefore` gets. */
+interface InputBeforeRequest {
+  readonly open: number;
+  readonly sessionId: string;
+  readonly source: InputSource;
+  readonly kind: InputKind;
+  readonly blocks: readonly Block[];
+}
+
+/** The fields of an `input.before` answer. */
+const INPUT_BEFORE_FIELDS = ["block", "replace", "handled"];
+
+/**
+ * Start the `input.before` handlers of the open session `open` for one input. The answer is `undefined` for no change,
+ * `{ blocks }` for new blocks, or `{ blocks: undefined }` for a removal. A failed handler removes the input and sends a
+ * notice. `cancel` aborts the signal of the turn.
+ */
+export function startInputBefore(
+  request: InputBeforeRequest,
+): Operation<{ blocks: readonly (Block | ToolMedia)[] | undefined } | undefined> {
+  const { open, sessionId, source, kind, blocks } = request;
+  return hostOperation(async (signal) => {
+    let current: readonly (Block | ToolMedia)[] = blocks;
+    let replaced = false;
+    let removed = false;
+    try {
+      await runHandlers(
+        open,
+        "input.before",
+        (handler) => handler(Object.freeze({ source: frozen(source), kind, blocks: frozen(current), signal })),
+        (answer, plugin) => {
+          const fields = fieldsOf(answer, "the answer", INPUT_BEFORE_FIELDS);
+          if (fields.block !== undefined) {
+            if (typeof fields.block !== "string") throw new TypeError("the block of the answer is not a string");
+            notify(plugin, "warn", `the plugin blocked the input: ${fields.block}`, sessionId);
+            removed = true;
+            return true;
+          }
+          if (fields.handled !== undefined) {
+            if (fields.handled !== true) throw new TypeError("the handled of the answer is not true");
+            removed = true;
+            return true;
+          }
+          if (fields.replace !== undefined) {
+            const { blocks: given } = fieldsOf(fields.replace, "the replace of the answer", ["blocks"]);
+            if (!Array.isArray(given) || given.length === 0) {
+              throw new TypeError("the blocks of the replace are not a list with a block");
+            }
+            current = given.map((item: unknown, index) =>
+              typeof item === "object" && item !== null && "mimeType" in item
+                ? mediaOf(item, `blocks[${index}]`)
+                : jsonCopy(item as Block, "the answer"),
+            );
+            replaced = true;
+          }
+          return false;
+        },
+      );
+    } catch (error) {
+      // A failed check never lets the input through.
+      notify("host:plugins", "error", error instanceof Error ? error.message : textOf(error), sessionId);
+      return { blocks: undefined };
+    }
+    if (removed) return { blocks: undefined };
+    return replaced ? { blocks: current } : undefined;
   }, TURN_CANCELLED);
 }
 
@@ -359,12 +433,9 @@ export function startRoundBefore(request: RoundBeforeRequest): Operation<RoundBe
 }
 
 /** Start the `round.retry` handlers of the open session `open` after a failed round, as `startRoundPlan` says. */
-export function startRoundRetry({
-  failure,
-  retries,
-  ...request
-}: RoundRetryRequest): Operation<RoundBeforePlan | undefined> {
-  return startRoundPlan("round.retry", request, { failure: Object.freeze({ ...failure }), retries });
+export function startRoundRetry(request: RoundRetryRequest): Operation<RoundBeforePlan | undefined> {
+  const { failure, retries, ...facts } = request;
+  return startRoundPlan("round.retry", facts, { failure: Object.freeze({ ...failure }), retries });
 }
 
 /**
@@ -374,9 +445,10 @@ export function startRoundRetry({
  */
 function startRoundPlan<K extends RoundPoint>(
   point: K,
-  { open, window, inputTokens, blocks, round }: RoundBeforeRequest,
+  request: RoundBeforeRequest,
   facts: Omit<EventOf<K>, keyof RoundBeforeEvent>,
 ): Operation<RoundBeforePlan | undefined> {
+  const { open, window, inputTokens, blocks, round } = request;
   return hostOperation(async (signal) => {
     // The replacements so far make the context `head`, then the last `kept` blocks of the context before the round.
     let head: readonly Block[] = [];
@@ -455,12 +527,8 @@ interface RoundAfterRequest {
  * handler, with the plugin that sent a `continue`, or `undefined` when no handler answered. A closed session answers
  * nothing. A failed handler throws. `cancel` aborts the signal of the turn.
  */
-export function startRoundAfter({
-  open,
-  text,
-  finishReason,
-  continues,
-}: RoundAfterRequest): Operation<RoundDecision | undefined> {
+export function startRoundAfter(request: RoundAfterRequest): Operation<RoundDecision | undefined> {
+  const { open, text, finishReason, continues } = request;
   return hostOperation(async (signal) => {
     const event: RoundAfterEvent = Object.freeze({ text, finishReason: finishReason ?? null, continues, signal });
     let decision: RoundDecision | undefined;
@@ -524,12 +592,13 @@ interface ToolAfterRequest {
  * the last handler, or `undefined` when no handler answered. A closed session changes nothing. A failed handler throws.
  * `cancel` aborts the signal of the call.
  */
-export function startToolAfter({ open, call, result: given }: ToolAfterRequest): Operation<ChangedResult | undefined> {
+export function startToolAfter(request: ToolAfterRequest): Operation<ChangedResult | undefined> {
+  const { open, call, result: given } = request;
   return hostOperation(async (signal) => {
     frozen(call);
     // The index is the id, and a kept item crosses back to the host as its index.
-    const originals: readonly ResultMedia[] = given.media.map(({ mimeType, size }, index) =>
-      Object.freeze({ id: String(index), mimeType, size }),
+    const originals: readonly ResultMedia[] = given.media.map((item, index) =>
+      Object.freeze({ id: String(index), mimeType: item.mimeType, size: item.size }),
     );
     let result: ToolCallResult = Object.freeze({
       text: given.text,
@@ -667,7 +736,8 @@ function keptOf(value: unknown, place: string, originals: readonly ResultMedia[]
 
 /** `value` with each object in it frozen. A JSON value has no cycle. */
 function frozen<T>(value: T): T {
-  if (typeof value === "object" && value !== null) {
+  // A typed array with items cannot freeze, so the bytes of a `ToolMedia` stay as they are.
+  if (typeof value === "object" && value !== null && !ArrayBuffer.isView(value)) {
     for (const inner of Object.values(value)) frozen(inner);
     Object.freeze(value);
   }
@@ -751,6 +821,7 @@ function start(
     abort,
     tools: [],
     hooks: {
+      "input.before": [],
       "round.before": [],
       "round.retry": [],
       "prompt.build": [],

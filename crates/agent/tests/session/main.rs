@@ -2,6 +2,7 @@
 //! takes input during a turn, and recovers after a failed commit.
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
+mod input_hook;
 mod support;
 mod updates;
 

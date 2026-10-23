@@ -497,6 +497,50 @@ async fn disable_in_the_config_turns_the_compaction_off() {
 }
 
 #[tokio::test]
+async fn an_input_that_a_plugin_replaces_reaches_the_model_as_the_new_blocks() {
+    let place = Place::new("print", "input_before_replace");
+    place.plugin(
+        "skills",
+        "export function session(s) {
+           s.hook('input.before', (event) => {
+             const { blocks } = event;
+             if (blocks[0]?.user_text !== '/skill:pdf') return undefined;
+             return { replace: { blocks: [{ user_text: 'Read PDF files with care.' }] } };
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["skills"] }"#).unwrap();
+
+    let (finished, requests) = run_with(&place, &task("/skill:pdf", SessionChoice::New), &[text_reply("Done.")]).await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert!(
+        requests[0].contains("Read PDF files with care.") && !requests[0].contains("/skill:pdf"),
+        "{}",
+        requests[0]
+    );
+}
+
+#[tokio::test]
+async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
+    let place = Place::new("print", "input_before_handled");
+    place.plugin(
+        "commands",
+        "export function session(s) { s.hook('input.before', () => ({ handled: true })); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["commands"] }"#).unwrap();
+
+    let (finished, requests) = run_with(&place, &task("/compact", SessionChoice::New), &[]).await;
+
+    let finished = finished.unwrap();
+    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Stopped));
+    assert_eq!(finished.text, "");
+    assert_eq!(requests, Vec::<String>::new());
+    let pending = place.store().await.load(finished.session, None).await.unwrap().pending;
+    assert!(pending.is_empty(), "{pending:?}");
+}
+
+#[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])

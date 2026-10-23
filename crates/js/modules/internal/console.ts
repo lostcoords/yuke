@@ -87,7 +87,10 @@ function inspect(value: unknown, seen: Set<object>, depth: number): string {
     const nested = (item: unknown) => inspect(item, seen, depth + 1);
     if (Array.isArray(value)) return `[${value.map(nested).join(", ")}]`;
     if (value instanceof Map) {
-      const entries = [...value].map(([key, item]) => `${nested(key)} => ${nested(item)}`);
+      const entries = [...value].map((entry) => {
+        const [key, item] = entry;
+        return `${nested(key)} => ${nested(item)}`;
+      });
       return `Map(${value.size}) {${entries.length === 0 ? "" : ` ${entries.join(", ")} `}}`;
     }
     if (value instanceof Set) {
@@ -95,8 +98,14 @@ function inspect(value: unknown, seen: Set<object>, depth: number): string {
       return `Set(${value.size}) {${items.length === 0 ? "" : ` ${items.join(", ")} `}}`;
     }
     const fields = Object.entries(Object.getOwnPropertyDescriptors(value))
-      .filter(([, descriptor]) => descriptor.enumerable)
-      .map(([key, descriptor]) => `${key}: ${"value" in descriptor ? nested(descriptor.value) : "[Getter]"}`);
+      .filter((entry) => {
+        const [, descriptor] = entry;
+        return descriptor.enumerable;
+      })
+      .map((entry) => {
+        const [key, descriptor] = entry;
+        return `${key}: ${"value" in descriptor ? nested(descriptor.value) : "[Getter]"}`;
+      });
     const name = Object.getPrototypeOf(value)?.constructor?.name;
     const prefix = typeof name === "string" && name !== "Object" ? `${name} ` : "";
     return `${prefix}{${fields.length === 0 ? "" : ` ${fields.join(", ")} `}}`;
@@ -167,7 +176,8 @@ function table(data: unknown, properties?: readonly string[]): void {
     }
     const shown = properties === undefined ? columns : [...properties];
     const header = ["(index)", ...shown, ...(values && properties === undefined ? ["Values"] : [])];
-    const body = items.map(([index, item]) => {
+    const body = items.map((row) => {
+      const [index, item] = row;
       const record = typeof item === "object" && item !== null ? (item as Record<string, unknown>) : undefined;
       const cells = shown.map((key) => (record !== undefined && Object.hasOwn(record, key) ? view(record[key]) : ""));
       return [index, ...cells, ...(header.length > shown.length + 1 ? [record === undefined ? view(item) : ""] : [])];

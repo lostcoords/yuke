@@ -10,10 +10,10 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
-import type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
+import type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
-export type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
+export type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
 
 /** The severity of a notice. */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
@@ -264,6 +264,30 @@ export interface RoundRetryEvent extends RoundBeforeEvent {
 /** The answer of a `round.retry` handler: the plan of the next attempt of the round, as for `round.before`. */
 export type RoundRetryAnswer = RoundBeforeAnswer;
 
+/** What an `input.before` handler gets. */
+export interface InputBeforeEvent {
+  /** Who sent the input. The inputs of yuke itself have plugin names that start with `host:`. */
+  readonly source: InputSource;
+  /** A message of a person, or a notification, for example the end of a job. */
+  readonly kind: InputKind;
+  /** The blocks that the model reads, after the replacements of the earlier handlers. */
+  readonly blocks: readonly (Block | ToolMedia)[];
+  /** The host aborts this signal when the turn is cancelled. */
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The answer of an `input.before` handler. It has exactly one field.
+ * - `block` removes the input. A notice shows the reason to the user.
+ * - `replace` gives the model these blocks in place of the input. The user still sees the sent input. The list has at
+ *   least one item. A `ToolMedia` adds a media item, and its relative path starts in the workspace folder of the session.
+ * - `handled` removes the input with no notice, because the plugin acted on it.
+ */
+export type InputBeforeAnswer =
+  | { readonly block: string }
+  | { readonly replace: { readonly blocks: readonly [Block | ToolMedia, ...(Block | ToolMedia)[]] } }
+  | { readonly handled: true };
+
 /** What a `round.after` handler gets. */
 export interface RoundAfterEvent {
   /** The assistant text of the answer of this round. It can be empty, for example for an answer with calls only. */
@@ -300,6 +324,15 @@ export type RoundAfterAnswer =
  * - A throw, or an answer of another shape, is a failure of the handler. Its error names the point and the plugin.
  */
 export interface SessionHooks {
+  /**
+   * Check an input before a turn takes it: an input of the user, the end of a job, or a `continue` text.
+   * - The store saves the input first.
+   * - The handlers run when a turn takes the input. A turn takes it at its start, or after a round.
+   * - Each handler gets the blocks after the replacements of the handlers before it.
+   * - `block` and `handled` end the run. A removed input starts no turn.
+   * - A failed handler removes the input, and a notice names the plugin.
+   */
+  "input.before": (event: InputBeforeEvent) => undefined | InputBeforeAnswer | Promise<undefined | InputBeforeAnswer>;
   /**
    * Prepare the request of a round: replace the context, or change the model or the settings of the round.
    * - The handlers run once before each round, not before a retry of the round.

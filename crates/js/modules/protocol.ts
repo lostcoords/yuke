@@ -33,6 +33,20 @@ export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type FinishReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "pause" | "unknown";
 
 /**
+ * What an input is. A client shows a message in the conversation, and a notification as a notice.
+ */
+export type InputKind = "message" | "notification";
+
+/**
+ * Who sent an input. It records the sender only. It grants no permission and sets no visibility.
+ */
+export type InputSource = { "kind": "user" } | { "kind": "plugin", 
+/**
+ * The name of the plugin.
+ */
+name: string, };
+
+/**
  * One attachment. Its media type selects the block each protocol writes.
  */
 export type Media = { 

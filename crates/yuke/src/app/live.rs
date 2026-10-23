@@ -533,6 +533,7 @@ impl Parts {
                             .hooks(&hooks);
                         session
                             .turn(driver)
+                            .input_hook(&hooks)
                             .prompt(prompt)
                             .observer(&*output)
                             .cancellation_token(token)
@@ -556,8 +557,9 @@ impl Parts {
             };
             match ended {
                 Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
-                // A stale session recovers at the next wake, so a store failure does not repeat at once.
-                Ok(Err(error @ (SessionError::Store(_) | SessionError::Stale))) => {
+                // A stale session recovers at the next wake, so a store failure does not repeat at once. A failed input
+                // hook leaves its input pending for the next wake too.
+                Ok(Err(error @ (SessionError::Store(_) | SessionError::Stale | SessionError::InputHook(_)))) => {
                     output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
                 }

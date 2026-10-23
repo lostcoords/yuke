@@ -71,7 +71,7 @@ const signals = new WeakMap<AbortSignal, SignalState>();
 const collected = new FinalizationRegistry<{
   readonly dependents: Set<WeakRef<AbortSignal>>;
   readonly ref: WeakRef<AbortSignal>;
-}>(({ dependents, ref }) => dependents.delete(ref));
+}>((held) => held.dependents.delete(held.ref));
 
 /** The key that only the internal calls of the `AbortSignal` constructor give. */
 const CREATE = Symbol("create");

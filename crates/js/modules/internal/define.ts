@@ -23,8 +23,9 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
     deferLoading: tool.deferLoading === true,
     open,
   };
-  return register(description, ({ arguments: args, sessionId, callId, folder, output, call }) =>
+  return register(description, (request) =>
     hostOperation(async (signal, abort) => {
+      const { arguments: args, sessionId, callId, folder, output, call } = request;
       const context: ToolContext = { sessionId, callId, folder, signal, output };
       bindCall(context, call);
       try {

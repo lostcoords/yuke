@@ -47,7 +47,10 @@ function providerSchema(schema: Schema): Record<string, unknown> {
   if (schema.type === "array") sent.items = providerSchema(schema.items);
   if (schema.type === "object") {
     sent.properties = Object.fromEntries(
-      Object.entries(schema.properties).map(([name, property]) => [name, providerSchema(property)]),
+      Object.entries(schema.properties).map((entry) => {
+        const [name, property] = entry;
+        return [name, providerSchema(property)];
+      }),
     );
     sent.additionalProperties = false;
   }

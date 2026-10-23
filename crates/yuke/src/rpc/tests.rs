@@ -1050,6 +1050,42 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
     client.end().await;
 }
 
+// The hook runs in the session, not in the request, so the server reads the answer while the hook waits.
+#[tokio::test]
+async fn an_input_before_handler_asks_the_user_and_a_refusal_removes_the_input() {
+    let place = Place::new("rpc", "an_input_before_handler_asks_the_user");
+    place.plugin(
+        "guard",
+        "export function session(s) {
+           s.hook('input.before', async (event) => {
+             const sent = await s.confirm('Send this input?', '', { signal: event.signal });
+             return sent ? undefined : { block: 'the user refused' };
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["guard"] }"#).unwrap();
+    let transport = ScriptedTransport::new([]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    let sent = client
+        .call("session/input", input_params(&session, "rm -rf"))
+        .await
+        .unwrap();
+    client.until(is_question).await;
+
+    let answer = json!({ "sessionId": session, "interactionId": 1, "response": { "kind": "confirm", "value": false } });
+    client.call("interaction/respond", answer).await.unwrap();
+    let messages = client
+        .until(|message| message["params"]["update"]["sessionUpdate"] == "input_removed")
+        .await;
+    client.until(is_idle).await;
+
+    let removed = &messages[messages.len() - 1]["params"]["update"];
+    assert_eq!(removed["inputId"], sent["inputId"]);
+    assert_eq!(transport.requests(), Vec::<String>::new());
+    client.end().await;
+}
+
 // A load sends the open question again, and an answer after the load ends the wait.
 #[tokio::test]
 async fn a_load_sends_an_open_question_again() {

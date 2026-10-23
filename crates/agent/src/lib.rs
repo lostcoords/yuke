@@ -2,6 +2,7 @@
 //! [`Store`] before the turn goes on. [`MemoryStore`] keeps its sessions in memory. The `testing` feature gives the
 //! shared behavior tests of a store.
 
+mod input_hook;
 mod memory;
 mod prompt;
 mod session;
@@ -12,6 +13,7 @@ mod updates;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+pub use input_hook::{InputDecision, InputHook};
 pub use memory::MemoryStore;
 pub use prompt::{PromptSection, prompt_text};
 pub use session::{Session, SessionError, SessionTurn};

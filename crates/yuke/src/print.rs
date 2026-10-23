@@ -154,6 +154,8 @@ async fn run_turn(
         (Some(end), _) => end,
         (None, Some(failure)) => TurnEnd::Failed(failure),
         (None, None) if cancellation_token.is_cancelled() => TurnEnd::Outcome(Outcome::Cancelled),
+        // A plugin blocked or handled the input, so no turn ran.
+        (None, None) if watched.removed => TurnEnd::Outcome(Outcome::Stopped),
         (None, None) => TurnEnd::Failed("the turn saved no end".to_owned()),
     };
     Ok(Finished {
@@ -249,6 +251,8 @@ struct Watcher {
 struct Watched {
     /// Whether a turn started.
     ran: bool,
+    /// Whether an `input.before` hook removed the input.
+    removed: bool,
     blocks: Vec<Block>,
     end: Option<TurnEnd>,
     failure: Option<String>,
@@ -275,6 +279,7 @@ impl Observer for Watcher {
                 SessionUpdate::Live(LiveUpdate::State {
                     state: SessionState::Running,
                 }) => lock(&self.watched).ran = true,
+                SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => lock(&self.watched).removed = true,
                 SessionUpdate::Live(LiveUpdate::State {
                     state: SessionState::Idle,
                 }) => self.ended.notify_one(),

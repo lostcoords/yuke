@@ -4,6 +4,7 @@ mod compaction;
 mod exec;
 mod fs;
 mod globals;
+mod input_before;
 mod plugins;
 mod process;
 mod prompt;
