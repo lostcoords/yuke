@@ -12,7 +12,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
   `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`,
-  `mcp/list`.
+  `mcp/list`, `profile/reload`.
+- `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
+  stay open, and their jobs go on. It fails while a turn runs, and a failure keeps the old plugins and providers. The
+  next request of an open session can miss the prompt cache when the reload changes its tools.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
   then loads each session again.

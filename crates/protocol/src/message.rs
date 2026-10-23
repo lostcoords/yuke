@@ -107,11 +107,19 @@ pub enum ClientRequest {
     /// List the MCP servers of an open session. Result: [`crate::ListMcpServersResult`].
     #[serde(rename = "mcp/list")]
     ListMcpServers(SessionParams),
+    /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
+    /// its next turn takes the tools and hooks of the new plugins. Result: [`EmptyResult`].
+    /// - It fails while a turn runs. Then nothing changes.
+    /// - It fails when the server cannot read or check a file. Then the old plugins and providers stay.
+    /// - A plugin that does not load sends a notice, and the other plugins load.
+    /// - The next request of an open session can miss the prompt cache when the reload changes the tools of that session.
+    #[serde(rename = "profile/reload")]
+    ReloadProfile(EmptyParams),
 }
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 13] = [
+    pub const METHODS: [&str; 14] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -125,6 +133,7 @@ impl ClientRequest {
         "credential/update",
         "interaction/respond",
         "mcp/list",
+        "profile/reload",
     ];
 }
 
@@ -476,6 +485,15 @@ pub struct RemoveInputParams {
     /// The pending input to remove.
     pub input_id: InputId,
 }
+
+/// The params of a request with no data: an empty object.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[expect(
+    clippy::empty_structs_with_brackets,
+    reason = "serde reads a struct with braces from `{}`, and a unit struct from `null`"
+)]
+pub struct EmptyParams {}
 
 /// The result of a request with no data: an empty object.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

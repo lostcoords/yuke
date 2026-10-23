@@ -22,9 +22,9 @@ use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
 use yuke_protocol::{
-    ClientNotification, ClientRequest, EmptyResult, Implementation, InitializeResult, InputResult, InstanceId, JsonRpc,
-    ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, Request, RequestId, Response, ResponseError,
-    ResponseOutcome, ServerNotification, SessionResult,
+    ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, InputResult,
+    InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, Request, RequestId,
+    Response, ResponseError, ResponseOutcome, ServerNotification, SessionResult,
 };
 
 use crate::app::{App, AppError, Machine, Mode, Observer, lock, warn};
@@ -383,6 +383,10 @@ impl Server {
                 app.update_credential(params)?;
                 result(&EmptyResult {})
             }
+            ClientRequest::ReloadProfile(EmptyParams {}) => {
+                app.reload().await?;
+                result(&EmptyResult {})
+            }
         }
     }
 }
@@ -545,7 +549,7 @@ fn response_error(error: &AppError) -> ResponseError {
     let code = match error {
         AppError::NotOpen(_) => ResponseError::SESSION_NOT_FOUND,
         AppError::Invalid(_) => ResponseError::INVALID_PARAMS,
-        AppError::Busy | AppError::JobsRun(_) => ResponseError::INVALID_REQUEST,
+        AppError::Busy | AppError::TurnRuns | AppError::JobsRun(_) => ResponseError::INVALID_REQUEST,
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::Store(error) => match error {

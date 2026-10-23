@@ -115,7 +115,7 @@ async fn run_turn(
         SessionChoice::New => {
             let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
             let choice = task.reasoning.ok_or(NO_REASONING)?;
-            let settings = new_settings(app.providers(), selector, choice, cwd)?;
+            let settings = new_settings(&app.providers(), selector, choice, cwd)?;
             app.create(settings).await.map_err(|error| chain_text(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,

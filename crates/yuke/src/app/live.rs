@@ -39,8 +39,8 @@ struct Parts {
     /// The host of the tools. The jobs of the session belong to the host. The `closed` token of the host ends the task,
     /// and the token of each turn is a child of that token.
     host: Arc<Host>,
-    /// The session of the plugins. Each turn takes its tools.
-    script: ScriptSession,
+    /// The session of the plugins. Each turn takes its tools. A reload replaces it while it holds the session lock.
+    script: Mutex<Arc<ScriptSession>>,
     /// The MCP servers of the session. Each turn takes their tools.
     servers: Servers,
 }
@@ -78,7 +78,7 @@ impl LiveSession {
             session: Arc::new(tokio::sync::Mutex::new(session)),
             turn: Mutex::default(),
             host,
-            script,
+            script: Mutex::new(Arc::new(script)),
             servers,
         });
         Ok(LiveSession {
@@ -95,6 +95,31 @@ impl LiveSession {
     /// Each MCP server of the session and its state.
     pub(super) fn mcp_servers(&self) -> Vec<McpServer> {
         self.parts.servers.states()
+    }
+
+    /// The lock of the session, so no turn starts while the caller holds it. `None` while a turn runs or starts.
+    pub(super) fn hold(&self) -> Option<tokio::sync::OwnedMutexGuard<Session>> {
+        Arc::clone(&self.parts.session).try_lock_owned().ok()
+    }
+
+    /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
+    pub(super) async fn open_plugins(&self, runtime: &Runtime) -> Result<ScriptSession, AppError> {
+        runtime
+            .open_session(self.owner())
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))
+    }
+
+    /// Give the next turn the tools and hooks of `script`, and close the old plugins. The caller holds the guard of
+    /// [`LiveSession::hold`], so no turn uses the old plugins.
+    pub(super) async fn replace_plugins(&self, script: ScriptSession) {
+        let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
+        if let Err(error) = old.close().await {
+            warn(&format!(
+                "the plugins of a session did not close: {}",
+                chain_text(&error)
+            ));
+        }
     }
 
     /// Whether a turn runs.
@@ -192,7 +217,8 @@ impl LiveSession {
             warn(&format!("a session task failed: {error}"));
         }
         // After the task, so no turn takes the tools of the closed plugins.
-        if let Err(error) = self.parts.script.close().await {
+        let script = Arc::clone(&lock(&self.parts.script));
+        if let Err(error) = script.close().await {
             warn(&format!(
                 "the plugins of a session did not close: {}",
                 chain_text(&error)
@@ -457,10 +483,10 @@ impl Parts {
 
     /// The tools of the next turn: the tools of the plugins and of the MCP servers. The first turn waits for the plugins
     /// and the servers. A cancel or a close ends the wait, and the turn then ends as cancelled, so it needs no tool.
-    async fn toolset(&self, token: &CancellationToken) -> Result<Toolset, String> {
+    async fn toolset(&self, script: &ScriptSession, token: &CancellationToken) -> Result<Toolset, String> {
         tokio::select! {
             tools = async {
-                let tools = self.script.tools().await;
+                let tools = script.tools().await;
                 self.servers.ready().await;
                 tools
             } => toolset_of(tools, self.servers.tools()),
@@ -509,10 +535,11 @@ impl Parts {
             output.publish(SessionUpdate::Live(LiveUpdate::State {
                 state: SessionState::Running,
             }));
-            let toolset = self.toolset(&token).await;
+            // The session lock is held, so a reload cannot replace the plugins during this turn.
+            let script = Arc::clone(&lock(&self.script));
+            let toolset = self.toolset(&script, &token).await;
             let prepared = match toolset {
-                Ok(toolset) => self
-                    .script
+                Ok(toolset) => script
                     .build_prompt(session.prompt(), &token)
                     .await
                     .map(|prompt| (toolset, prompt))
@@ -522,7 +549,7 @@ impl Parts {
             let ended = match prepared {
                 // The turn runs in its own task, so a panic of the turn cannot leave the session running.
                 Ok((toolset, prompt)) => {
-                    let hooks = self.script.hooks(token.clone());
+                    let hooks = script.hooks(token.clone());
                     let shared = Arc::clone(&self.host.shared);
                     let output = Arc::clone(output);
                     // The session saves a round failure as the end of the turn.

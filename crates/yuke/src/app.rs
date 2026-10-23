@@ -15,7 +15,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -84,20 +84,60 @@ pub(crate) trait Observer: Send + Sync {
 /// The parts of the app that each open session uses.
 struct Shared {
     machine: Machine,
-    /// The providers of the profile, read once at the start.
-    providers: Providers,
+    /// The parts of the profile that a reload replaces.
+    profile: RwLock<Profile>,
     store: Arc<dyn Store>,
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
     mode: Mode,
     /// The MCP servers of the user, from `mcp.json` in the config folder.
     mcp: yuke_mcp::Config,
-    /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
-    plugin_folders: Vec<PathBuf>,
     /// The id of the last question of any session.
     last_question: Arc<AtomicU64>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
     logins: Mutex<HashMap<String, LoginSource>>,
+}
+
+/// The parts of the profile that a reload replaces. A reader takes a copy of an `Arc`, so it never holds the lock.
+struct Profile {
+    /// The providers of `providers.json` and of the catalog.
+    providers: Arc<Providers>,
+    /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
+    plugin_folders: Arc<[PathBuf]>,
+}
+
+impl Profile {
+    /// The profile of `providers` and the folders of `plugins`.
+    fn new(providers: Providers, plugins: &[yuke_js::Plugin]) -> Self {
+        Profile {
+            providers: Arc::new(providers),
+            plugin_folders: plugins
+                .iter()
+                .filter_map(|plugin| match &plugin.origin {
+                    Origin::Folder { root, .. } => Some(root.clone()),
+                    Origin::Bundled { .. } => None,
+                })
+                .collect(),
+        }
+    }
+}
+
+impl Shared {
+    /// The providers now.
+    fn providers(&self) -> Arc<Providers> {
+        Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).providers)
+    }
+
+    /// The plugin folders now.
+    fn plugin_folders(&self) -> Arc<[PathBuf]> {
+        Arc::clone(
+            &self
+                .profile
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .plugin_folders,
+        )
+    }
 }
 
 /// The open sessions of one client, and the parts that they share.
@@ -150,29 +190,16 @@ impl App {
         });
         let shared = Arc::new(Shared {
             machine,
-            providers,
+            profile: RwLock::new(Profile::new(providers, &plugins)),
             store,
             processes,
             observer,
             mode,
             mcp,
-            plugin_folders: plugins
-                .iter()
-                .filter_map(|plugin| match &plugin.origin {
-                    Origin::Folder { root, .. } => Some(root.clone()),
-                    Origin::Bundled { .. } => None,
-                })
-                .collect(),
             last_question: Arc::default(),
             logins: Mutex::default(),
         });
-        let (runtime, reports) = match Runtime::start(Options {
-            cache: shared.machine.paths.cache.join("js"),
-            processes: Arc::clone(&shared.processes),
-            models: Arc::new(PluginModels(Arc::clone(&shared))),
-        })
-        .await
-        {
+        let (runtime, reporter) = match start_runtime(&shared).await {
             Ok(started) => started,
             Err(error) => {
                 if let Err(shutdown) = shared.processes.shutdown().await {
@@ -181,7 +208,6 @@ impl App {
                 return Err(chain_text(&error));
             }
         };
-        let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));
         let app = App {
             shared,
             runtime,
@@ -189,20 +215,85 @@ impl App {
             processes_folder,
             sessions: HashMap::new(),
         };
-        if let Err(error) = app.runtime.import("yuke:internal/builtins").await {
-            app.shutdown().await;
-            return Err(chain_text(&error));
-        }
-        // A plugin that does not load is left out; the other plugins load.
-        for failure in app.runtime.load_plugins(&plugins).await {
-            app.shared.observer.notify(ServerNotification::Notice(NoticeParams {
+        app.report_failures(app.runtime.load_plugins(&plugins).await);
+        Ok(app)
+    }
+
+    /// Send a notice for each plugin that did not load. The other plugins load.
+    fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
+        for failure in failures {
+            self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
                 session_id: None,
                 level: NoticeLevel::Error,
                 source: SOURCE.to_owned(),
                 message: chain_text(&failure),
             }));
         }
-        Ok(app)
+    }
+
+    /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
+    /// its jobs go on. Its next turn takes the tools and hooks of the new plugins. A new session scans the skill folders
+    /// of the new plugin list.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`AppError::TurnRuns`] while a turn runs in an open session.
+    /// - Returns [`AppError::Invalid`] when yuke cannot read or check `config.json`, `providers.json`, or a plugin folder.
+    /// - Returns [`AppError::Internal`] when the new runtime does not start.
+    ///
+    /// Each error keeps the old plugins and providers.
+    pub(crate) async fn reload(&mut self) -> Result<(), AppError> {
+        // A turn starts only under the session lock, so no turn starts while the reload holds each one.
+        let mut held = Vec::with_capacity(self.sessions.len());
+        for live in self.sessions.values() {
+            held.push(live.hold().ok_or(AppError::TurnRuns)?);
+        }
+        let paths = &self.shared.machine.paths;
+        let providers = Providers::load(&paths.config).map_err(AppError::Invalid)?;
+        let config: Config = read_json(&paths.config.join("config.json"))
+            .map_err(AppError::Invalid)?
+            .unwrap_or_default();
+        let plugins = plugins::plugins(&paths.config, &config.plugins, &config.disable, &paths.data)
+            .map_err(AppError::Invalid)?;
+        // The new plugins use the new providers, for example in a model request of their `apply`.
+        let old_profile = std::mem::replace(
+            &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
+            Profile::new(providers, &plugins),
+        );
+        // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
+        let (runtime, reporter) = match start_runtime(&self.shared).await {
+            Ok(started) => started,
+            Err(error) => {
+                *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+                return Err(AppError::Internal(chain_text(&error)));
+            }
+        };
+        self.report_failures(runtime.load_plugins(&plugins).await);
+        let mut opened = Vec::with_capacity(self.sessions.len());
+        for live in self.sessions.values() {
+            match live.open_plugins(&runtime).await {
+                Ok(script) => opened.push((live, script)),
+                Err(error) => {
+                    // Each cleanup ends before the runtime stops.
+                    for (_, script) in opened {
+                        if let Err(error) = script.close().await {
+                            warn(&chain_text(&error));
+                        }
+                    }
+                    stop_runtime(runtime, reporter).await;
+                    *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+                    return Err(error);
+                }
+            }
+        }
+        for (live, script) in opened {
+            live.replace_plugins(script).await;
+        }
+        let old_runtime = std::mem::replace(&mut self.runtime, runtime);
+        let old_reporter = std::mem::replace(&mut self.reporter, reporter);
+        stop_runtime(old_runtime, old_reporter).await;
+        drop(held);
+        Ok(())
     }
 
     /// The store of the sessions.
@@ -210,9 +301,9 @@ impl App {
         &self.shared.store
     }
 
-    /// The providers of the profile.
-    pub(crate) fn providers(&self) -> &Providers {
-        &self.shared.providers
+    /// The providers of the profile now.
+    pub(crate) fn providers(&self) -> Arc<Providers> {
+        self.shared.providers()
     }
 
     /// Check that the model of `settings` can run: the catalog knows it, and its credential source exists. An API key
@@ -237,7 +328,7 @@ impl App {
         let prompt = system_prompt(
             settings.cwd.clone(),
             self.shared.machine.home.clone(),
-            self.shared.plugin_folders.clone(),
+            self.shared.plugin_folders().to_vec(),
         )
         .await?;
         self.check_model(&settings)?;
@@ -287,7 +378,7 @@ impl App {
         let mut session = Session::open(Arc::clone(&self.shared.store), id)
             .await
             .map_err(AppError::Store)?;
-        match change(session.settings(), &self.shared.providers)? {
+        match change(session.settings(), &self.shared.providers())? {
             Some(settings) => drop(save_settings(&mut session, settings, &self.shared).await?),
             None => self.check_model(session.settings())?,
         }
@@ -373,7 +464,8 @@ impl App {
     /// Returns [`AppError::Invalid`] for a provider without a login flow and for a bad field. A refused update changes
     /// nothing.
     pub(crate) fn update_credential(&self, params: UpdateCredentialParams) -> Result<(), AppError> {
-        let Ok((provider, flow)) = self.shared.providers.login(&params.provider) else {
+        let providers = self.shared.providers();
+        let Ok((provider, flow)) = providers.login(&params.provider) else {
             return Err(AppError::Invalid(format!(
                 "provider: {} has no login flow, so it takes no credential/update",
                 params.provider
@@ -446,18 +538,7 @@ impl App {
         for (_, live) in sessions.drain() {
             live.close().await;
         }
-        if let Err(error) = runtime.close_plugins().await {
-            warn(&chain_text(&error));
-        }
-        if let Err(error) = runtime.shutdown().await {
-            warn(&chain_text(&error));
-        }
-        // The shutdown of the runtime closes the channel of the reports, so the reporter ends.
-        if let Err(error) = reporter.await {
-            warn(&format!(
-                "yuke could not report the faults and notices of the JavaScript: {error}"
-            ));
-        }
+        stop_runtime(runtime, reporter).await;
         if let Err(error) = shared.processes.shutdown().await {
             warn(&format!("{}: {error}", processes_folder.display()));
         }
@@ -504,6 +585,8 @@ pub(crate) enum AppError {
     Invalid(String),
     /// A turn runs or input waits, so the settings cannot change.
     Busy,
+    /// A turn runs in an open session, so the plugins cannot reload.
+    TurnRuns,
     /// The session runs the jobs with these ids.
     JobsRun(Vec<String>),
     /// The session runs no job with this id.
@@ -522,6 +605,7 @@ impl fmt::Display for AppError {
             AppError::NotOpen(id) => write!(f, "the session {id} is not open: create, fork, or load it first"),
             AppError::Invalid(text) | AppError::Internal(text) => f.write_str(text),
             AppError::Busy => f.write_str("a turn runs or waits: change the settings after it ends"),
+            AppError::TurnRuns => f.write_str("a turn runs: reload after it ends"),
             AppError::JobsRun(ids) => write!(
                 f,
                 "the session runs the jobs {}: stop them, or close with stopJobs: true",
@@ -543,11 +627,45 @@ impl Error for AppError {
     }
 }
 
+/// Start a JavaScript runtime for `shared`, import the tools of yuke into it, and start the task that reports its faults
+/// and notices.
+async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
+    let (runtime, reports) = Runtime::start(Options {
+        cache: shared.machine.paths.cache.join("js"),
+        processes: Arc::clone(&shared.processes),
+        models: Arc::new(PluginModels(Arc::clone(shared))),
+    })
+    .await?;
+    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));
+    if let Err(error) = runtime.import("yuke:internal/builtins").await {
+        stop_runtime(runtime, reporter).await;
+        return Err(error);
+    }
+    Ok((runtime, reporter))
+}
+
+/// Close the plugins of `runtime`, and stop the runtime. Then wait for the end of `reporter`. The jobs go on, because
+/// they belong to the processes.
+async fn stop_runtime(runtime: Runtime, reporter: JoinHandle<()>) {
+    if let Err(error) = runtime.close_plugins().await {
+        warn(&chain_text(&error));
+    }
+    if let Err(error) = runtime.shutdown().await {
+        warn(&chain_text(&error));
+    }
+    // The shutdown of the runtime closes the channel of the reports, so the reporter ends.
+    if let Err(error) = reporter.await {
+        warn(&format!(
+            "yuke could not report the faults and notices of the JavaScript: {error}"
+        ));
+    }
+}
+
 /// The model of `reference`, with the credential source of its provider: an API key, or the login of `shared`.
 fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppError> {
     let selector = format!("{}/{}", reference.provider, reference.model);
-    let entry = shared
-        .providers
+    let providers = shared.providers();
+    let entry = providers
         .lookup(&selector)
         .map_err(|error| AppError::Invalid(format!("{selector}: {error}")))?;
     let provider = entry.provider;
