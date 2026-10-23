@@ -7,9 +7,9 @@ use yuke_engine::{
     CancellationToken, Concurrency, Driver, Hooks, Outcome, Tool, ToolContent, ToolContext, ToolDecision, Toolset,
     TurnEvent, parse_arguments,
 };
-use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, model, text_reply, tool_reply};
+use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, definition, model, text_reply, tool_reply};
 
-use crate::support::{block_on, definition, yield_once};
+use crate::support::{block_on, tool_results, yield_once};
 
 /// What the calls of a turn did, in order, and the most calls that ran at once.
 #[derive(Default)]
@@ -114,17 +114,6 @@ impl Hooks for LogHooks {
     }
 }
 
-/// The tool results in `context`, as call id and text.
-fn results(context: &[Block]) -> Vec<(String, String)> {
-    context
-        .iter()
-        .filter_map(|block| match block {
-            Block::ToolResult(ToolResult { call_id, content, .. }) => Some((call_id.clone(), content.clone())),
-            _ => None,
-        })
-        .collect()
-}
-
 #[test]
 fn two_parallel_calls_run_together_and_each_output_names_its_call() {
     let transport = ScriptedTransport::new([
@@ -218,10 +207,10 @@ fn results_go_back_in_call_order_when_the_finish_order_differs() {
     assert_eq!(*finished.lock().unwrap(), ["c2", "c1"]);
     assert_in_order(&transport.requests()[1], &["result c1", "result c2"]);
     assert_eq!(
-        results(&context),
+        tool_results(&context),
         [
-            ("c1".to_owned(), "result c1".to_owned()),
-            ("c2".to_owned(), "result c2".to_owned())
+            ToolResult::success("c1", "result c1"),
+            ToolResult::success("c2", "result c2")
         ]
     );
 }
@@ -280,13 +269,13 @@ fn cancel_during_a_group_keeps_the_results_of_the_running_calls_and_runs_no_late
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert!(!log.entries().contains(&"start c3".to_owned()), "{:?}", log.entries());
     assert_eq!(
-        results(&context),
+        tool_results(&context),
         [
-            ("c1".to_owned(), "stopped c1".to_owned()),
-            ("c2".to_owned(), "stopped c2".to_owned()),
-            (
-                "c3".to_owned(),
-                "Tool call \"edit\" was not executed: the user cancelled the turn.".to_owned()
+            ToolResult::success("c1", "stopped c1"),
+            ToolResult::success("c2", "stopped c2"),
+            ToolResult::error(
+                "c3",
+                "Tool call \"edit\" was not executed: the user cancelled the turn."
             ),
         ]
     );
@@ -320,10 +309,10 @@ fn cancel_during_the_hooks_of_a_group_starts_no_call_of_the_group() {
     assert_eq!(log.entries(), ["before c1", "before c2"]);
     let cancelled = |name: &str| format!("Tool call \"{name}\" was not executed: the user cancelled the turn.");
     assert_eq!(
-        results(&context),
+        tool_results(&context),
         [
-            ("c1".to_owned(), cancelled("read")),
-            ("c2".to_owned(), cancelled("read"))
+            ToolResult::error("c1", cancelled("read")),
+            ToolResult::error("c2", cancelled("read"))
         ]
     );
 }

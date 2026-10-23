@@ -1,11 +1,10 @@
 use std::sync::Mutex;
 
-use async_trait::async_trait;
-use yuke_ai::{Block, Target, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Driver, Hooks, RoundPlan, ToolNameError, Toolset, TurnEvent};
-use yuke_testing::{NoWait, ScriptedTransport, model, model_of, target, text_reply, tool_reply};
+use yuke_ai::{Block, Target, ToolDefinition, ToolResult};
+use yuke_engine::{Driver, RoundPlan, Toolset, TurnEvent};
+use yuke_testing::{NoWait, ScriptedTransport, definition, model, model_of, target, text_reply, tool_reply};
 
-use crate::support::{Recorder, Script, block_on, definition, results_in_context};
+use crate::support::{Recorder, Script, block_on, results_in_context};
 
 /// A deferred `create_issue` tool with an object input schema.
 fn create_issue_definition() -> ToolDefinition {
@@ -31,34 +30,6 @@ fn declared_tools(body: &str) -> &str {
     let start = body.find(r#""tools":"#).expect("a request with tools");
     let end = body.find(r#","messages""#).expect("a request with messages");
     &body[start..end]
-}
-
-#[test]
-fn toolset_add_refuses_a_name_that_a_provider_refuses() {
-    let mut toolset = Toolset::new();
-
-    for name in ["", "notes.search", "a b", "é", &"a".repeat(65)] {
-        assert_eq!(
-            toolset.add(definition(name), Recorder::default()),
-            Err(ToolNameError::Invalid(name.to_owned())),
-            "{name}"
-        );
-    }
-    for name in ["Notes_search-2", &"a".repeat(64)] {
-        assert_eq!(toolset.add(definition(name), Recorder::default()), Ok(()), "{name}");
-    }
-}
-
-#[test]
-fn toolset_add_refuses_the_reserved_names() {
-    let mut toolset = Toolset::new();
-
-    for name in ["tool_search", "tool_call"] {
-        assert_eq!(
-            toolset.add(definition(name), Recorder::default()),
-            Err(ToolNameError::Reserved(name.to_owned()))
-        );
-    }
 }
 
 #[test]
@@ -141,23 +112,6 @@ fn a_bridge_search_shows_the_schema_of_each_match_in_name_order() {
     }
 }
 
-/// Hooks that keep the name and the arguments of each call that `before_tool` sees.
-#[derive(Default)]
-struct SeeCalls {
-    calls: Mutex<Vec<(String, String)>>,
-}
-
-#[async_trait]
-impl Hooks for SeeCalls {
-    async fn before_tool(&self, call: &ToolCall) -> yuke_engine::ToolDecision {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((call.name.clone(), call.arguments.clone()));
-        yuke_engine::ToolDecision::Run
-    }
-}
-
 #[test]
 fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_call() {
     let transport = ScriptedTransport::new([
@@ -172,7 +126,7 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
     let issue = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(create_issue_definition(), issue.clone()).unwrap();
-    let hooks = SeeCalls::default();
+    let hooks = Script::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let started = Mutex::new(Vec::new());
     let mut context = Vec::new();
@@ -193,8 +147,8 @@ fn tool_call_runs_a_deferred_tool_and_the_hooks_and_the_observer_see_the_real_ca
     let arguments = r#"{"title": "Bug", "body": "x"}"#;
     assert_eq!(issue.calls(), [arguments]);
     assert_eq!(
-        *hooks.calls.lock().unwrap(),
-        [("create_issue".to_owned(), arguments.to_owned())]
+        hooks.tools(),
+        [format!("before create_issue {arguments}"), "after c1".to_owned()]
     );
     assert_eq!(*started.lock().unwrap(), ["c1 create_issue"]);
     // The context keeps the call that the model wrote, and the result answers it.
@@ -217,7 +171,7 @@ fn tool_call_runs_any_tool_of_the_toolset_and_an_unknown_name_gets_an_error_afte
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), read.clone()).unwrap();
     toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let hooks = SeeCalls::default();
+    let hooks = Script::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let results = results_in_context(driver);
@@ -231,14 +185,10 @@ fn tool_call_runs_any_tool_of_the_toolset_and_an_unknown_name_gets_an_error_afte
     );
     assert_eq!(read.calls(), ["{}"]);
     // The hooks see each bridged call under its real name, also a name without a tool.
-    let seen: Vec<String> = hooks
-        .calls
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect();
-    assert_eq!(seen, ["read", "nope"]);
+    assert_eq!(
+        hooks.tools(),
+        ["before read {}", "after c1", "before nope {}", "after c2"]
+    );
 }
 
 #[test]

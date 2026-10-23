@@ -1,11 +1,12 @@
 use std::sync::Mutex;
 
-use async_trait::async_trait;
 use yuke_ai::{Block, Settings, Target};
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Replaced, RoundPlan, RoundStart, Toolset, TurnEvent};
-use yuke_testing::{NoWait, ScriptedTransport, counted, failed_reply, model, model_of, target, text_reply, tool_reply};
+use yuke_engine::{CancellationToken, Driver, Outcome, Replaced, RoundPlan, Toolset, TurnEvent};
+use yuke_testing::{
+    NoWait, ScriptedTransport, counted, definition, failed_reply, model, model_of, target, text_reply, tool_reply,
+};
 
-use crate::support::{Recorder, Script, block_on, definition};
+use crate::support::{Recorder, Script, block_on};
 
 /// The test target under another model name.
 fn other_target(model: &'static str) -> Target {
@@ -183,23 +184,12 @@ fn a_failed_round_that_no_hook_retries_ends_the_turn() {
     assert_eq!(transport.requests().len(), 1);
 }
 
-/// Hooks that cancel the turn in `before_round`, then wait forever.
-struct CancelBeforeRound(CancellationToken);
-
-#[async_trait]
-impl Hooks for CancelBeforeRound {
-    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
-        self.0.cancel();
-        std::future::pending().await
-    }
-}
-
 #[test]
 fn a_cancel_during_before_round_sends_no_request() {
     let transport = ScriptedTransport::new([text_reply("unused")]);
     let model = model();
     let cancellation_token = CancellationToken::new();
-    let hooks = CancelBeforeRound(cancellation_token.clone());
+    let hooks = Script::default().cancel_at("before_round", cancellation_token.clone());
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
@@ -215,29 +205,6 @@ fn a_cancel_during_before_round_sends_no_request() {
     assert_eq!(context, [Block::user_text("go")]);
 }
 
-/// Hooks that keep the facts of each round start as one line: the blocks, the window, the input tokens, and the
-/// temperature.
-#[derive(Default)]
-struct Starts(Mutex<Vec<String>>);
-
-#[async_trait]
-impl Hooks for Starts {
-    async fn before_round(
-        &self,
-        round: &RoundStart<'_>,
-    ) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
-        let line = format!(
-            "{} {:?} {:?} {:?}",
-            round.context.len(),
-            round.model.context_window,
-            round.input_tokens,
-            round.settings.temperature
-        );
-        self.0.lock().unwrap().push(line);
-        Ok(RoundPlan::default())
-    }
-}
-
 #[test]
 fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_answer() {
     let transport = ScriptedTransport::new([counted(&tool_reply(&[("c1", "echo", "{}")]), 1200), text_reply("done")]);
@@ -248,7 +215,7 @@ fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let settings = temperature(0.25);
-    let hooks = Starts::default();
+    let hooks = Script::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     block_on(
@@ -262,57 +229,26 @@ fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_
 
     // The first round starts from the count of the turn. The second round has the count of the answer of the first.
     assert_eq!(
-        *hooks.0.lock().unwrap(),
+        hooks.rounds(),
         [
-            "1 Some(200000) Some(7) Some(0.25)",
-            "3 Some(200000) Some(1200) Some(0.25)"
+            "before 1 Some(200000) Some(7) Some(0.25)",
+            "before 3 Some(200000) Some(1200) Some(0.25)"
         ]
     );
-}
-
-/// Hooks that plan another model and other settings for each round, and keep the facts of each failed round.
-struct PlannedThenFailed {
-    model: yuke_engine::Model,
-    failed: Mutex<Vec<String>>,
-}
-
-#[async_trait]
-impl Hooks for PlannedThenFailed {
-    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(RoundPlan {
-            model: Some(self.model.clone()),
-            settings: Some(temperature(0.5)),
-            ..RoundPlan::default()
-        })
-    }
-
-    async fn retry_round(
-        &self,
-        round: &RoundStart<'_>,
-        _: &yuke_engine::RoundError,
-    ) -> Result<Option<RoundPlan>, Box<dyn std::error::Error + Send + Sync>> {
-        let line = format!(
-            "{} {:?} {:?} {:?}",
-            round.context.len(),
-            round.model.context_window,
-            round.input_tokens,
-            round.settings.temperature
-        );
-        self.failed.lock().unwrap().push(line);
-        Ok(None)
-    }
 }
 
 #[test]
 fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
     let transport = ScriptedTransport::new([failed_reply("half")]);
-    let hooks = PlannedThenFailed {
-        model: yuke_engine::Model {
+    let plan = RoundPlan {
+        model: Some(yuke_engine::Model {
             context_window: Some(1000),
             ..model_of(other_target("other-model"))
-        },
-        failed: Mutex::default(),
+        }),
+        settings: Some(temperature(0.5)),
+        ..RoundPlan::default()
     };
+    let hooks = Script::default().plans([plan]).retries([None]);
     let model = model();
     let settings = temperature(0.25);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
@@ -326,5 +262,11 @@ fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
     );
 
     assert!(ended.is_err(), "{ended:?}");
-    assert_eq!(*hooks.failed.lock().unwrap(), ["1 Some(1000) Some(7) Some(0.5)"]);
+    assert_eq!(
+        hooks.rounds(),
+        [
+            "before 1 None Some(7) Some(0.25)",
+            "retry 1 Some(1000) Some(7) Some(0.5)"
+        ]
+    );
 }

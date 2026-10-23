@@ -3,24 +3,39 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
-use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments};
-use yuke_testing::{NoWait, ScriptedTransport, model, text_reply, tool_reply};
+use yuke_ai::{Blob, BlobStore, Block, Media, ToolResult};
+use yuke_engine::{Driver, Tool, ToolContent, ToolContext, ToolNameError, Toolset, TurnEvent, parse_arguments};
+use yuke_testing::{NoWait, ScriptedTransport, definition, model, text_reply, tool_reply};
 
-use crate::support::{Recorder, block_on, definition, results_in_context, tool_results};
+use crate::support::{Fixed, Recorder, Script, block_on, results_in_context, tool_results};
 
-/// Hooks that count the calls of `before_tool`.
-#[derive(Default)]
-struct CountBeforeTool {
-    calls: AtomicUsize,
-}
-
-#[async_trait]
-impl Hooks for CountBeforeTool {
-    async fn before_tool(&self, _: &ToolCall) -> ToolDecision {
-        self.calls.fetch_add(1, Ordering::Relaxed);
-        ToolDecision::Run
+#[test]
+fn toolset_add_refuses_invalid_reserved_and_duplicate_names_and_keeps_the_toolset() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
+    let model = model();
+    let first = Recorder::default();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("echo"), first.clone()).unwrap();
+    for name in ["Notes_search-2", &"a".repeat(64)] {
+        assert_eq!(toolset.add(definition(name), Recorder::default()), Ok(()), "{name}");
     }
+
+    let long = "a".repeat(65);
+    let invalid = ["", "notes.search", "a b", "é", &long].map(|name| (name, ToolNameError::Invalid(name.to_owned())));
+    let refused = [
+        ("echo", ToolNameError::Duplicate("echo".to_owned())),
+        ("tool_search", ToolNameError::Reserved("tool_search".to_owned())),
+        ("tool_call", ToolNameError::Reserved("tool_call".to_owned())),
+    ];
+    for (name, error) in invalid.into_iter().chain(refused) {
+        assert_eq!(toolset.add(definition(name), Recorder::default()), Err(error), "{name}");
+    }
+
+    // A refused name leaves the toolset unchanged, so the first `echo` answers the call.
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
+    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    assert_eq!(first.calls(), ["{}"]);
+    assert_eq!(transport.requests()[0].matches(r#""name":"echo""#).count(), 1);
 }
 
 #[test]
@@ -30,7 +45,7 @@ fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
     let echo = Recorder::default();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), echo.clone()).unwrap();
-    let hooks = CountBeforeTool::default();
+    let hooks = Script::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let results = results_in_context(driver);
@@ -44,7 +59,7 @@ fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
         "{}",
         results[0].content
     );
-    assert_eq!(hooks.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(hooks.tools(), Vec::<String>::new());
     assert_eq!(echo.calls(), Vec::<String>::new());
 }
 
@@ -160,7 +175,7 @@ impl BlobStore for TwoBytes {
     }
 }
 
-/// The image that [`ReadsImage`] answers.
+/// The image of [`image_content`].
 fn image() -> Media {
     Media::new(
         Blob {
@@ -171,31 +186,12 @@ fn image() -> Media {
     )
 }
 
-/// A tool that answers an image beside its text.
-struct ReadsImage;
-
-#[async_trait]
-impl Tool for ReadsImage {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        Ok(ToolContent {
-            text: "a picture".to_owned(),
-            media: vec![image()],
-            is_error: false,
-        })
-    }
-}
-
-/// A tool that fails with an image beside its text, for example a screenshot of a failed render.
-struct FailsWithImage;
-
-#[async_trait]
-impl Tool for FailsWithImage {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        Ok(ToolContent {
-            text: "the render failed".to_owned(),
-            media: vec![image()],
-            is_error: true,
-        })
+/// The content of a tool that answers `text` and an image, for example a screenshot of a failed render.
+fn image_content(text: &str, is_error: bool) -> ToolContent {
+    ToolContent {
+        text: text.to_owned(),
+        media: vec![image()],
+        is_error,
     }
 }
 
@@ -204,7 +200,12 @@ fn an_error_result_of_a_tool_keeps_its_media() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "render", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
-    toolset.add(definition("render"), FailsWithImage).unwrap();
+    toolset
+        .add(
+            definition("render"),
+            Fixed(Ok(image_content("the render failed", true))),
+        )
+        .unwrap();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let mut context = Vec::new();
@@ -223,7 +224,9 @@ fn tool_media_reaches_the_result_and_the_next_request() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "read", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
-    toolset.add(definition("read"), ReadsImage).unwrap();
+    toolset
+        .add(definition("read"), Fixed(Ok(image_content("a picture", false))))
+        .unwrap();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     let mut context = Vec::new();

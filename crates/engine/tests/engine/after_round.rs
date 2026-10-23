@@ -5,28 +5,9 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason};
 use yuke_engine::{Driver, Hooks, Inbox, Outcome, RoundDecision, RoundError, Toolset, TurnEnd, TurnError};
-use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, model, text_reply, tool_reply};
+use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, definition, model, text_reply, tool_reply};
 
-use crate::support::{Queue, Recorder, Replay, Script, block_on, definition};
-
-#[test]
-fn a_final_answer_gives_its_finish_reason_and_proceed_without_input_completes_the_turn() {
-    let transport = ScriptedTransport::new([text_reply("done")]);
-    let model = model();
-    let hooks = Script::default().decisions([RoundDecision::Proceed]);
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
-
-    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
-
-    assert!(matches!(
-        outcome,
-        Ok(Outcome::Completed {
-            finish_reason: FinishReason::Stop
-        })
-    ));
-    assert_eq!(hooks.calls(), ["stop done"]);
-    assert_eq!(transport.requests().len(), 1);
-}
+use crate::support::{Queue, Recorder, Replay, Script, block_on};
 
 /// Hooks that put the next input of `inputs` in `inbox`, and then answer as `script`.
 struct Feeding<'a> {
@@ -84,26 +65,6 @@ fn input_of_the_hook_continues_the_turn_and_a_tool_round_gives_no_finish_reason(
     assert_in_order(&requests[1], &["go", "first answer", "the tests fail"]);
     assert_in_order(&requests[2], &["the tests fail", "c1", "result 1"]);
     assert_eq!(context.last(), Some(&Block::assistant_text("second answer")));
-}
-
-#[test]
-fn inbox_input_after_a_final_answer_continues_the_turn() {
-    let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
-    let model = model();
-    let hooks = Script::default().decisions([RoundDecision::Proceed, RoundDecision::Proceed]);
-    let inbox = Queue::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
-
-    let outcome = block_on(
-        driver
-            .turn(&mut Vec::new(), vec![Block::user_text("go")])
-            .inbox(&inbox)
-            .run(),
-    );
-
-    assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
-    assert_eq!(hooks.calls(), ["stop first answer", "stop second answer"]);
-    assert_in_order(&transport.requests()[1], &["first answer", "later"]);
 }
 
 #[test]

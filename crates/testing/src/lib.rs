@@ -20,7 +20,7 @@ use bytes::Bytes;
 use serde_json::{Value, json};
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
-use yuke_ai::{AnthropicWire, Target, Wire};
+use yuke_ai::{AnthropicWire, Origin, OriginRef, Target, ToolDefinition, Wire};
 use yuke_engine::{Model, Timer};
 
 /// An Anthropic target at a test host. Its route takes no credential.
@@ -36,6 +36,21 @@ pub fn target() -> Target {
             cache: false,
         }),
         tool_search: false,
+    }
+}
+
+/// The origin of [`target`].
+pub fn origin() -> Origin {
+    Origin::from(OriginRef::of(&target()))
+}
+
+/// A definition of `name` that takes any object.
+pub fn definition(name: &str) -> ToolDefinition {
+    ToolDefinition {
+        name: name.into(),
+        description: "A test tool.".to_owned(),
+        input_schema: r#"{"type":"object"}"#.to_owned(),
+        defer_loading: false,
     }
 }
 

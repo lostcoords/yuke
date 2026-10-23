@@ -4,34 +4,24 @@ use yuke_ai::ToolDefinition;
 
 use super::bm25;
 
+/// A tool `name` with `description` and the input schema `schema`.
+fn tool(name: &str, description: &str, schema: &str) -> ToolDefinition {
+    ToolDefinition {
+        name: name.to_owned(),
+        description: description.to_owned(),
+        input_schema: schema.to_owned(),
+        defer_loading: false,
+    }
+}
+
 // A plural folds to its singular, so a query word finds the other form.
 #[test]
 fn bm25_matches_the_singular_and_the_plural_of_a_word() {
     let tools = [
-        ToolDefinition {
-            name: "list_entries".to_owned(),
-            description: "List the entries.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "pack_box".to_owned(),
-            description: "Pack one box.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "teach_classes".to_owned(),
-            description: "Teach the classes.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "read_file".to_owned(),
-            description: "Read a file.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
+        tool("list_entries", "List the entries.", "{}"),
+        tool("pack_box", "Pack one box.", "{}"),
+        tool("teach_classes", "Teach the classes.", "{}"),
+        tool("read_file", "Read a file.", "{}"),
     ];
     let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
 
@@ -51,31 +41,14 @@ fn bm25_matches_the_singular_and_the_plural_of_a_word() {
 #[test]
 fn bm25_ranks_word_matches_and_drops_tools_without_one() {
     let tools = [
-        ToolDefinition {
-            name: "read_file".to_owned(),
-            description: "Read a file.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "list_issues".to_owned(),
-            description: "List the issues of a repository.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "createIssue".to_owned(),
-            description: "Create a GitHub issue.".to_owned(),
-            input_schema: "{}".to_owned(),
-            defer_loading: false,
-        },
-        ToolDefinition {
-            name: "comment".to_owned(),
-            description: "Add a comment.".to_owned(),
-            input_schema: r#"{"anyOf":[{"type":"object","properties":{"issue_number":{"type":"integer"}}}]}"#
-                .to_owned(),
-            defer_loading: false,
-        },
+        tool("read_file", "Read a file.", "{}"),
+        tool("list_issues", "List the issues of a repository.", "{}"),
+        tool("createIssue", "Create a GitHub issue.", "{}"),
+        tool(
+            "comment",
+            "Add a comment.",
+            r#"{"anyOf":[{"type":"object","properties":{"issue_number":{"type":"integer"}}}]}"#,
+        ),
     ];
     let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
 

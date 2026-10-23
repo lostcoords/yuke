@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
+use yuke_ai::{Block, FinishReason, Settings, Usage};
 use yuke_engine::{CancellationToken, Hooks, RoundStart};
+use yuke_testing::definition;
 
 use super::plugins::plugin;
 use super::tools::TestHost;
@@ -91,15 +92,6 @@ fn context() -> Vec<Block> {
         Block::assistant_text("two"),
         Block::user_text("three"),
     ]
-}
-
-fn definition(name: &str) -> ToolDefinition {
-    ToolDefinition {
-        name: name.into(),
-        description: "A test tool.".to_owned(),
-        input_schema: r#"{"type":"object"}"#.to_owned(),
-        defer_loading: false,
-    }
 }
 
 /// Run the `round.before` hooks of `session` for a round of [`context`] with the system prompt "Be brief.", the tool

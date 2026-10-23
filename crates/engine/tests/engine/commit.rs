@@ -10,9 +10,11 @@ use yuke_engine::{
     Answer, CancellationToken, Commit, Driver, Journal, Outcome, Replaced, RoundDecision, RoundPlan, Tool, ToolContent,
     ToolContext, Toolset, TurnEnd, TurnError, TurnEvent,
 };
-use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, model_of, target, text_reply, tool_reply};
+use yuke_testing::{
+    NoWait, ScriptedTransport, definition, failed_reply, model, model_of, origin, target, text_reply, tool_reply,
+};
 
-use crate::support::{Batches, Recorder, Replay, Script, block_on, definition, origin, yield_once};
+use crate::support::{Batches, Recorder, Replay, Script, block_on, yield_once};
 
 /// Return the end of a turn that the model ended with `stop`.
 fn completed() -> TurnEnd {

@@ -9,27 +9,11 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason};
+use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Commit, Driver, Hooks, Inbox, Journal, RoundDecision, RoundError, RoundPlan, RoundStart, Timer,
-    Tool, ToolContent, ToolContext, TurnEnd,
+    CancellationToken, Commit, Driver, Hooks, Inbox, Journal, Observer, RoundDecision, RoundError, RoundPlan,
+    RoundStart, Timer, Tool, ToolContent, ToolContext, ToolDecision, TurnEnd, TurnEvent,
 };
-use yuke_testing::target;
-
-/// The origin of the shared test target.
-pub(crate) fn origin() -> yuke_ai::Origin {
-    yuke_ai::Origin::from(yuke_ai::OriginRef::of(&target()))
-}
-
-/// A definition of `name` that takes any object.
-pub(crate) fn definition(name: &str) -> yuke_ai::ToolDefinition {
-    yuke_ai::ToolDefinition {
-        name: name.into(),
-        description: "A test tool.".to_owned(),
-        input_schema: r#"{"type":"object"}"#.to_owned(),
-        defer_loading: false,
-    }
-}
 
 /// A tool that records the arguments of each call, and answers the call with "result N", counted from 1.
 #[derive(Debug, Default, Clone)]
@@ -50,6 +34,16 @@ impl Tool for Recorder {
         let mut calls = self.calls.lock().unwrap();
         calls.push(arguments.to_owned());
         Ok(format!("result {}", calls.len()).into())
+    }
+}
+
+/// A tool that answers each call with the same result.
+pub(crate) struct Fixed(pub(crate) Result<ToolContent, String>);
+
+#[async_trait]
+impl Tool for Fixed {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+        self.0.clone()
     }
 }
 
@@ -108,6 +102,12 @@ pub(crate) struct Script {
     retries: Mutex<Option<VecDeque<Option<RoundPlan>>>>,
     decisions: Mutex<Option<VecDeque<RoundDecision>>>,
     calls: Mutex<Vec<String>>,
+    /// The name of the tool whose calls `before_tool` blocks.
+    blocked: Option<&'static str>,
+    tools: Mutex<Vec<String>>,
+    rounds: Mutex<Vec<String>>,
+    /// The hook that cancels the turn and then waits forever.
+    cancel: Option<(&'static str, CancellationToken)>,
 }
 
 impl Script {
@@ -135,10 +135,60 @@ impl Script {
         }
     }
 
+    /// Block each call of the tool `name`.
+    pub(crate) fn blocks(self, name: &'static str) -> Self {
+        Script {
+            blocked: Some(name),
+            ..self
+        }
+    }
+
+    /// Cancel the turn with `cancellation_token` in the hook `point`, such as `after_round`, and wait there forever.
+    pub(crate) fn cancel_at(self, point: &'static str, cancellation_token: CancellationToken) -> Self {
+        Script {
+            cancel: Some((point, cancellation_token)),
+            ..self
+        }
+    }
+
     /// Return one line for each `retry_round` and `after_round` call, in call order. A retry line holds "retry" and the
     /// failure. An `after_round` line holds the finish reason and the last text of the context.
     pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
+    }
+
+    /// Return one line for each `before_tool` call ("before", the name, the arguments) and each `after_tool` call
+    /// ("after" and the call id), in hook order.
+    pub(crate) fn tools(&self) -> Vec<String> {
+        self.tools.lock().unwrap().clone()
+    }
+
+    /// Return one line for each `before_round` and `retry_round` call: the hook, the number of context blocks, the
+    /// window, the input tokens, and the temperature.
+    pub(crate) fn rounds(&self) -> Vec<String> {
+        self.rounds.lock().unwrap().clone()
+    }
+
+    /// Keep the facts of `round` for `hook`.
+    fn round(&self, hook: &str, round: &RoundStart<'_>) {
+        let line = format!(
+            "{hook} {} {:?} {:?} {:?}",
+            round.context.len(),
+            round.model.context_window,
+            round.input_tokens,
+            round.settings.temperature
+        );
+        self.rounds.lock().unwrap().push(line);
+    }
+
+    /// Cancel the turn and wait forever when `point` is the cancel point.
+    async fn stop_at(&self, point: &str) {
+        if let Some((at, cancellation_token)) = &self.cancel
+            && *at == point
+        {
+            cancellation_token.cancel();
+            std::future::pending::<()>().await;
+        }
     }
 }
 
@@ -154,17 +204,37 @@ fn next<T>(script: &Mutex<Option<VecDeque<T>>>, default: impl FnOnce() -> T) -> 
 
 #[async_trait]
 impl Hooks for Script {
-    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+    async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
+        self.stop_at("before_round").await;
+        self.round("before", round);
         Ok(next(&self.plans, RoundPlan::default))
     }
 
     async fn retry_round(
         &self,
-        _: &RoundStart<'_>,
+        round: &RoundStart<'_>,
         failure: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
+        self.stop_at("retry_round").await;
+        self.round("retry", round);
         self.calls.lock().unwrap().push(format!("retry {failure}"));
         Ok(next(&self.retries, || None))
+    }
+
+    async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
+        self.stop_at("before_tool").await;
+        let line = format!("before {} {}", call.name, call.arguments);
+        self.tools.lock().unwrap().push(line);
+        if self.blocked == Some(call.name.as_str()) {
+            return ToolDecision::Block("The user blocked this call.".to_owned());
+        }
+        ToolDecision::Run
+    }
+
+    async fn after_tool(&self, call: &ToolCall, _: &ToolResult) -> Option<ToolResult> {
+        self.stop_at("after_tool").await;
+        self.tools.lock().unwrap().push(format!("after {}", call.call_id));
+        None
     }
 
     async fn after_round(
@@ -172,6 +242,7 @@ impl Hooks for Script {
         context: &[Block],
         finish_reason: Option<FinishReason>,
     ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
+        self.stop_at("after_round").await;
         let last = match context.last() {
             Some(Block::AssistantText(text)) => text.as_str(),
             Some(Block::ToolResult(result)) => result.content.as_str(),
@@ -268,15 +339,36 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// Run one turn, and return the tool results of the context.
-pub(crate) fn results_in_context(driver: Driver<'_>) -> Vec<yuke_ai::ToolResult> {
+/// Run one turn, and return the tool results of the context. The test fails unless the observer received the same
+/// results. A parallel group finishes in any order, so the check sorts both lists by call id.
+pub(crate) fn results_in_context(driver: Driver<'_>) -> Vec<ToolResult> {
     let mut context = Vec::new();
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-    tool_results(&context)
+    let finished = Mutex::new(Vec::new());
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .observer(&|event: &TurnEvent<'_>| {
+                if let TurnEvent::ToolFinished { result, .. } = event {
+                    finished.lock().unwrap().push((*result).clone());
+                }
+            })
+            .run(),
+    )
+    .unwrap();
+    let results = tool_results(&context);
+    let mut finished = finished.into_inner().unwrap();
+    let mut sorted = results.clone();
+    finished.sort_by(|left, right| left.call_id.cmp(&right.call_id));
+    sorted.sort_by(|left, right| left.call_id.cmp(&right.call_id));
+    assert_eq!(
+        finished, sorted,
+        "the observer receives the results that the model receives"
+    );
+    results
 }
 
 /// The tool results in `context`, in context order.
-pub(crate) fn tool_results(context: &[Block]) -> Vec<yuke_ai::ToolResult> {
+pub(crate) fn tool_results(context: &[Block]) -> Vec<ToolResult> {
     context
         .iter()
         .filter_map(|block| match block {
@@ -284,6 +376,49 @@ pub(crate) fn tool_results(context: &[Block]) -> Vec<yuke_ai::ToolResult> {
             _ => None,
         })
         .collect()
+}
+
+/// A short label for `event`, so a test can compare whole event lists.
+pub(crate) fn label(event: &TurnEvent<'_>) -> String {
+    match event {
+        TurnEvent::ResponseStarted => "response started".to_owned(),
+        TurnEvent::ResponseFailed(_) => "response failed".to_owned(),
+        TurnEvent::ResponseCancelled { blocks } => {
+            blocks.iter().fold("response cancelled".to_owned(), |label, block| {
+                format!("{label} {}", block.block)
+            })
+        }
+        TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
+            format!("start {} {:?}", started.block, started.kind)
+        }
+        TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
+        TurnEvent::Model(yuke_ai::Event::ReasoningDelta(delta)) => format!("reasoning {}", delta.text),
+        TurnEvent::Model(yuke_ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
+        TurnEvent::Model(yuke_ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
+        TurnEvent::Model(yuke_ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
+        TurnEvent::ToolStarted { call, .. } => format!("tool {}", call.call_id),
+        TurnEvent::ToolFinished { result, .. } => format!("result {} {}", result.call_id, result.content),
+        TurnEvent::RoundFailed(_) => "round failed".to_owned(),
+        TurnEvent::RetryScheduled { .. } => "retry".to_owned(),
+        other => format!("other {other:?}"),
+    }
+}
+
+/// An observer that keeps the [`label`] of each event.
+#[derive(Default)]
+pub(crate) struct Labels(Mutex<Vec<String>>);
+
+impl Labels {
+    /// The labels, in event order.
+    pub(crate) fn labels(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl Observer for Labels {
+    fn event(&self, event: &TurnEvent<'_>) {
+        self.0.lock().unwrap().push(label(event));
+    }
 }
 
 /// A waker that records a wake.

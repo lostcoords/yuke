@@ -9,7 +9,7 @@ use yuke_agent::{InputDecision, InputHook, MemoryStore, Session, SessionError, S
 use yuke_ai::Block;
 use yuke_engine::{CancellationToken, Driver, Outcome, Toolset, chain_text};
 use yuke_protocol::{LiveUpdate, PendingInput, SessionId, SessionUpdate};
-use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, model, text_reply, tool_reply};
+use yuke_testing::{NoWait, ScriptedTransport, Stalled, assert_in_order, definition, model, text_reply, tool_reply};
 
 use crate::support::{SendsInput, consumed_inputs, prompt, settings, user_input};
 
@@ -238,14 +238,4 @@ async fn a_removal_of_the_hook_after_a_removal_of_the_client_sends_no_second_upd
 
     assert!(matches!(ran, Err(SessionError::NoInput)), "{ran:?}");
     assert_eq!(*observer.0.lock().unwrap(), Vec::new());
-}
-
-/// A definition of `name` that takes any object.
-fn definition(name: &str) -> yuke_ai::ToolDefinition {
-    yuke_ai::ToolDefinition {
-        name: name.into(),
-        description: "A test tool.".to_owned(),
-        input_schema: r#"{"type":"object"}"#.to_owned(),
-        defer_loading: false,
-    }
 }

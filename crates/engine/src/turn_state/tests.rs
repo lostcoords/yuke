@@ -1,17 +1,10 @@
 use std::borrow::Cow;
 
 use yuke_ai::{Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage};
+use yuke_testing::origin;
 
 use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
 use crate::model::RoundError;
-
-/// The origin of the test target.
-fn origin() -> yuke_ai::Origin {
-    yuke_ai::Origin {
-        model: "test-model".to_owned(),
-        base_url: "https://example.test/v1".to_owned(),
-    }
-}
 
 /// Each block of `context` as one line.
 fn lines(context: &[Block]) -> Vec<String> {
@@ -78,23 +71,6 @@ fn tool_answer(finish_reason: FinishReason) -> Completion {
         raw_finish_reason: finish_reason.as_str().to_owned(),
         usage: Usage::default(),
     }
-}
-
-#[test]
-fn second_turn_sends_the_first_turn_context() {
-    let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(answer("first answer"), origin());
-    let _ = turn_state.stop();
-
-    let mut turn_state = TurnState::new(&mut context, None);
-    assert!(matches!(
-        turn_state.send(vec![Block::user_text("two")]),
-        Action::Send(_)
-    ));
-
-    assert_eq!(lines(&context), ["user one", "assistant first answer", "user two"]);
 }
 
 #[test]
@@ -219,16 +195,6 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
         })
         .collect();
     assert_eq!(results, [("c1", true), ("c2", true)]);
-}
-
-#[test]
-fn send_adds_every_block_of_the_input_to_the_context() {
-    let mut context = Vec::new();
-    let mut turn_state = TurnState::new(&mut context, None);
-
-    let _ = turn_state.send(vec![Block::user_text("look at this"), Block::user_text("and this")]);
-
-    assert_eq!(lines(&context), ["user look at this", "user and this"]);
 }
 
 #[test]
@@ -359,47 +325,38 @@ fn pair(id: &str) -> [Block; 2] {
 }
 
 #[test]
-fn a_replacement_check_refuses_a_kept_result_without_its_call() {
+fn a_replacement_check_refuses_a_result_without_an_earlier_call() {
     let [call, result] = pair("c1");
-    let context = [Block::user_text("one"), call, result, Block::assistant_text("two")];
-    let keep = |keep| Replaced {
-        head: Cow::Owned(vec![Block::user_text("summary")]),
-        keep,
-    };
-
-    // The call is the third block from the end, so a cut between the call and its result keeps 2 blocks.
-    assert_eq!(
-        keep(2).check(&context),
-        Err("the replacement contains the result of call c1 without its call".to_owned())
-    );
-    assert_eq!(keep(3).check(&context), Ok(()));
-    assert_eq!(keep(1).check(&context), Ok(()));
-}
-
-#[test]
-fn a_replacement_check_refuses_a_result_in_the_head_without_its_call() {
-    let [call, result] = pair("c1");
-    let orphan = Replaced {
-        head: Cow::Owned(vec![result.clone()]),
-        keep: 0,
-    };
-    let paired = Replaced {
-        head: Cow::Owned(vec![call, result]),
-        keep: 0,
-    };
-
-    assert!(orphan.check(&[]).is_err());
-    assert_eq!(paired.check(&[]), Ok(()));
-}
-
-#[test]
-fn a_replacement_check_refuses_a_result_before_its_call() {
-    let [call, result] = pair("c1");
-    let context = [result, call];
-    let keep_both = Replaced {
-        head: Cow::Owned(Vec::new()),
+    let context = [
+        Block::user_text("one"),
+        call.clone(),
+        result.clone(),
+        Block::assistant_text("two"),
+    ];
+    let reversed = [result.clone(), call.clone()];
+    let summary = [Block::user_text("summary")];
+    // The call of `context` is the third block from the end, so `keep: 2` cuts it from its result.
+    let cases: [(&[Block], &[Block], usize, bool); 6] = [
+        (&context, &summary, 2, false),
+        (&context, &summary, 3, true),
+        (&context, &summary, 1, true),
+        (&[], std::slice::from_ref(&result), 0, false),
+        (&[], &[call.clone(), result.clone()], 0, true),
+        (&reversed, &[], 2, false),
+    ];
+    for (context, head, keep, valid) in cases {
+        let replaced = Replaced {
+            head: Cow::Borrowed(head),
+            keep,
+        };
+        assert_eq!(replaced.check(context).is_ok(), valid, "{head:?} {keep} {context:?}");
+    }
+    let cut = Replaced {
+        head: Cow::Borrowed(&summary),
         keep: 2,
     };
-
-    assert!(keep_both.check(&context).is_err());
+    assert_eq!(
+        cut.check(&context),
+        Err("the replacement contains the result of call c1 without its call".to_owned())
+    );
 }

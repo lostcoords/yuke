@@ -3,9 +3,11 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Request, Settings, Target, ToolDefinition, Wire};
 use yuke_engine::{CancellationToken, Driver, Hooks, Model, RoundPlan, RoundStart, Toolset};
-use yuke_testing::{NoWait, ScriptedTransport, model, model_of, overloaded_reply, target, text_reply, tool_reply};
+use yuke_testing::{
+    NoWait, ScriptedTransport, definition, model, model_of, overloaded_reply, target, text_reply, tool_reply,
+};
 
-use crate::support::{Recorder, Script, block_on, definition};
+use crate::support::{Recorder, Script, block_on};
 
 /// The model, the settings, the system prompt, the tools, and the context of the newest round start.
 type Start = (Model, Settings, String, Vec<ToolDefinition>, Vec<Block>);
@@ -54,7 +56,6 @@ fn a_request_from_a_round_start_repeats_the_round_request_and_its_cache_marker_a
             .turn(&mut Vec::new(), vec![Block::user_text("go")])
             .system("Be brief.")
             .settings(&settings)
-            .session_id("s1")
             .run(),
     )
     .unwrap();
@@ -66,7 +67,6 @@ fn a_request_from_a_round_start_repeats_the_round_request_and_its_cache_marker_a
     let request = Request::new(&context)
         .system(&system)
         .settings(&settings)
-        .session_id("s1")
         .tools(&tools)
         .cached(cached);
     block_on(Driver::new(&side, &model, &NoWait).request(request, &CancellationToken::new())).unwrap();

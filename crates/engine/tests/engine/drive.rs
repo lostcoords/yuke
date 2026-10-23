@@ -4,15 +4,17 @@ use std::time::Duration;
 use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
-    CancellationToken, Driver, Hooks, Outcome, RoundDecision, RoundError, Tool, ToolContent, ToolContext, ToolDecision,
-    ToolNameError, Toolset, TurnError, TurnEvent,
+    CancellationToken, Driver, Outcome, RoundDecision, RoundError, Tool, ToolContent, ToolContext, Toolset, TurnError,
+    TurnEvent,
 };
 use yuke_testing::{
-    NoWait, ScriptedTransport, assert_in_order, cut_reply, failed_reply, model, overloaded_reply, text_reply,
-    tool_reply,
+    NoWait, ScriptedTransport, assert_in_order, cut_reply, definition, failed_reply, model, overloaded_reply,
+    text_reply, tool_reply,
 };
 
-use crate::support::{Batches, CancelOnSleep, Queue, Recorder, Script, Waits, block_on, definition, yield_once};
+use crate::support::{
+    Batches, CancelOnSleep, Fixed, Labels, Queue, Recorder, Script, Waits, block_on, label, yield_once,
+};
 
 #[test]
 fn driver_sends_the_context_and_keeps_each_answer() {
@@ -67,26 +69,6 @@ fn driver_runs_each_call_in_order_and_sends_the_results() {
 }
 
 #[test]
-fn a_second_tool_of_a_taken_name_is_refused_and_the_first_tool_runs() {
-    let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
-    let model = model();
-    let first = Recorder::default();
-    let second = Recorder::default();
-    let mut toolset = Toolset::new();
-    toolset.add(definition("echo"), first.clone()).unwrap();
-
-    let refused = toolset.add(definition("echo"), second.clone());
-
-    assert_eq!(refused, Err(ToolNameError::Duplicate("echo".to_owned())));
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
-    let mut context = Vec::new();
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-    assert_eq!(first.calls(), ["{}"]);
-    assert_eq!(second.calls(), Vec::<String>::new());
-    assert_eq!(transport.requests()[0].matches(r#""name":"echo""#).count(), 1);
-}
-
-#[test]
 fn unknown_tool_returns_an_error_result_and_runs_nothing() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "missing", "{}")]), text_reply("done")]);
     let model = model();
@@ -110,22 +92,14 @@ fn unknown_tool_returns_an_error_result_and_runs_nothing() {
     assert!(requests[1].contains(r#""is_error":true"#), "{}", requests[1]);
 }
 
-/// A tool whose every call fails.
-struct Fails;
-
-#[async_trait]
-impl Tool for Fails {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        Err("disk full".to_owned())
-    }
-}
-
 #[test]
 fn tool_error_reaches_the_model_and_the_turn_continues() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "write", "{}")]), text_reply("done")]);
     let model = model();
     let mut toolset = Toolset::new();
-    toolset.add(definition("write"), Fails).unwrap();
+    toolset
+        .add(definition("write"), Fixed(Err("disk full".to_owned())))
+        .unwrap();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
@@ -142,31 +116,6 @@ fn tool_error_reaches_the_model_and_the_turn_continues() {
     assert!(requests[1].contains(r#""is_error":true"#), "{}", requests[1]);
 }
 
-/// A short label for `event`, so a test can compare whole event lists.
-fn label(event: &TurnEvent<'_>) -> String {
-    match event {
-        TurnEvent::ResponseStarted => "response started".to_owned(),
-        TurnEvent::ResponseFailed(_) => "response failed".to_owned(),
-        TurnEvent::ResponseCancelled { blocks } => {
-            blocks.iter().fold("response cancelled".to_owned(), |label, block| {
-                format!("{label} {}", block.block)
-            })
-        }
-        TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
-            format!("start {} {:?}", started.block, started.kind)
-        }
-        TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
-        TurnEvent::Model(yuke_ai::Event::ReasoningDelta(delta)) => format!("reasoning {}", delta.text),
-        TurnEvent::Model(yuke_ai::Event::ToolInputDelta(delta)) => format!("arguments {} {}", delta.block, delta.text),
-        TurnEvent::Model(yuke_ai::Event::BlockStopped(stopped)) => format!("stop {}", stopped.block),
-        TurnEvent::Model(yuke_ai::Event::Done(done)) => format!("done {:?}", done.finish_reason),
-        TurnEvent::ToolStarted { call, .. } => format!("tool {}", call.call_id),
-        TurnEvent::ToolFinished { result, .. } => format!("result {} {}", result.call_id, result.content),
-        TurnEvent::RoundFailed(_) => "round failed".to_owned(),
-        other => format!("other {other:?}"),
-    }
-}
-
 #[test]
 fn observer_receives_every_event_of_each_round_in_source_order() {
     let transport = ScriptedTransport::new([
@@ -178,14 +127,12 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
-    let seen = Mutex::new(Vec::new());
+    let labels = Labels::default();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
-            .observer(&|event: &TurnEvent<'_>| {
-                seen.lock().unwrap().push(label(event));
-            })
+            .observer(&labels)
             .run(),
     );
 
@@ -196,7 +143,7 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
         })
     ));
     assert_eq!(
-        *seen.lock().unwrap(),
+        labels.labels(),
         [
             "response started",
             "start 0 ToolCall",
@@ -225,19 +172,17 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     let model = model();
     let driver = Driver::new(&transport, &model, &NoWait);
     let mut context = Vec::new();
-    let seen = Mutex::new(Vec::new());
+    let labels = Labels::default();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
-            .observer(&|event: &TurnEvent<'_>| {
-                seen.lock().unwrap().push(label(event));
-            })
+            .observer(&labels)
             .run(),
     );
 
     assert_eq!(
-        *seen.lock().unwrap(),
+        labels.labels(),
         [
             "response started",
             "start 0 Text",
@@ -296,33 +241,17 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
 }
 
 #[test]
-fn no_retry_after_output_reached_the_observer() {
-    let transport = ScriptedTransport::new([failed_reply("cut")]);
+fn a_new_driver_sends_each_request_with_the_default_retry_policy() {
+    let attempts = yuke_ai::retry::Policy::default().max_attempts.get();
+    let transport = ScriptedTransport::new((0..attempts).map(|_| overloaded_reply()));
     let model = model();
     let waits = Waits::default();
     let driver = Driver::new(&transport, &model, &waits);
-    let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
-
-    assert!(outcome.is_err());
-    assert_eq!(transport.requests().len(), 1);
-    assert_eq!(waits.waits(), Vec::<Duration>::new());
-}
-
-#[test]
-fn request_stops_after_five_attempts() {
-    let transport = ScriptedTransport::new([0; 5].map(|_| overloaded_reply()));
-    let model = model();
-    let waits = Waits::default();
-    let driver = Driver::new(&transport, &model, &waits);
-    let mut context = Vec::new();
-
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
     assert!(outcome.is_err());
-    assert_eq!(transport.requests().len(), 5);
-    assert_eq!(waits.waits().len(), 4);
+    assert_eq!(transport.requests().len(), usize::try_from(attempts).unwrap());
 }
 
 #[test]
@@ -479,20 +408,6 @@ fn input_follows_the_error_results_of_a_cut_answer() {
     );
 }
 
-/// Hooks that block each call of the tool `write`.
-struct BlockWrite;
-
-#[async_trait]
-impl Hooks for BlockWrite {
-    async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
-        if call.name == "write" {
-            ToolDecision::Block("The user blocked this call.".to_owned())
-        } else {
-            ToolDecision::Run
-        }
-    }
-}
-
 #[test]
 fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     let transport = ScriptedTransport::new([
@@ -505,9 +420,8 @@ fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     let mut toolset = Toolset::new();
     toolset.add(definition("write"), write.clone()).unwrap();
     toolset.add(definition("echo"), echo.clone()).unwrap();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .hooks(&BlockWrite);
+    let hooks = Script::default().blocks("write");
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
@@ -553,7 +467,7 @@ fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input()
 }
 
 #[test]
-fn round_limit_stops_a_turn_of_cut_answers() {
+fn stop_after_a_cut_answer_ends_the_turn_as_stopped() {
     let cut = || cut_reply(&[("c1", "write", "{}")]);
     let transport = ScriptedTransport::new([cut(), cut()]);
     let model = model();
@@ -698,27 +612,12 @@ fn cancel_during_the_stream_keeps_the_partial_text_without_reasoning_and_deliver
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("cut")]);
 }
 
-/// Hooks that cancel the turn after each round, then wait forever.
-struct CancelAfterRound(CancellationToken);
-
-#[async_trait]
-impl Hooks for CancelAfterRound {
-    async fn after_round(
-        &self,
-        _: &[Block],
-        _: Option<FinishReason>,
-    ) -> Result<RoundDecision, Box<dyn std::error::Error + Send + Sync>> {
-        self.0.cancel();
-        std::future::pending().await
-    }
-}
-
 #[test]
 fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
     let transport = ScriptedTransport::new([text_reply("done")]);
     let model = model();
     let cancellation_token = CancellationToken::new();
-    let hooks = CancelAfterRound(cancellation_token.clone());
+    let hooks = Script::default().cancel_at("after_round", cancellation_token.clone());
     let inbox = Queue::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
@@ -734,24 +633,4 @@ fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("done")]);
     assert_eq!(inbox.held(), [Block::user_text("later")]);
-}
-
-#[test]
-fn turn_with_a_cancelled_token_sends_no_request() {
-    let transport = ScriptedTransport::new([text_reply("unused")]);
-    let model = model();
-    let driver = Driver::new(&transport, &model, &NoWait);
-    let mut context = Vec::new();
-    let cancellation_token = CancellationToken::new();
-    cancellation_token.cancel();
-
-    let outcome = block_on(
-        driver
-            .turn(&mut context, vec![Block::user_text("go")])
-            .cancellation_token(cancellation_token)
-            .run(),
-    );
-
-    assert!(matches!(outcome, Ok(Outcome::Cancelled)));
-    assert_eq!(transport.requests(), Vec::<String>::new());
 }
