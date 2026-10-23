@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use yuke_ai::route::{Credential, CredentialHeader, Route};
 use yuke_ai::{Block, Target};
 use yuke_engine::{
-    CancellationToken, CredentialSource, Driver, Hooks, Model, Outcome, RoundError, RoundPlan, TurnError, TurnEvent,
+    CancellationToken, CredentialSource, Driver, Hooks, Model, Outcome, RoundError, RoundPlan, RoundStart, TurnError,
+    TurnEvent,
 };
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, overloaded_reply, target, text_reply};
 
@@ -198,7 +199,7 @@ struct Refreshed;
 impl Hooks for Refreshed {
     async fn retry_round(
         &self,
-        _: &[Block],
+        _: &RoundStart<'_>,
         failure: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         Ok(matches!(failure, RoundError::Credential(_)).then(|| RoundPlan {
@@ -228,7 +229,7 @@ struct CancelOnRetry(CancellationToken);
 impl Hooks for CancelOnRetry {
     async fn retry_round(
         &self,
-        _: &[Block],
+        _: &RoundStart<'_>,
         _: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         self.0.cancel();

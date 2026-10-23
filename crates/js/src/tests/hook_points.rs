@@ -7,7 +7,7 @@ use rquickjs::Ctx;
 
 use yuke_agent::PromptSection;
 use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolResult};
-use yuke_engine::{CancellationToken, Hooks, RoundDecision, RoundStart, ToolDecision};
+use yuke_engine::{CancellationToken, Hooks, RoundDecision, RoundError, RoundStart, ToolDecision};
 
 use super::prompt::opened;
 use super::{evaluate, wait_until};
@@ -46,6 +46,8 @@ async fn answers_at_once(runtime: &Runtime, session: &ScriptSession) -> bool {
     keep_busy(runtime);
     let limit = Duration::from_millis(300);
     let plan = tokio::time::timeout(limit, hooks.before_round(&round)).await;
+    let failure = RoundError::Credential("no login".into());
+    let retry = tokio::time::timeout(limit, hooks.retry_round(&round, &failure)).await;
     let decision = tokio::time::timeout(limit, hooks.before_tool(&call)).await;
     let changed = tokio::time::timeout(limit, hooks.after_tool(&call, &result)).await;
     let round_end = tokio::time::timeout(limit, hooks.after_round(&context, Some(FinishReason::Stop))).await;
@@ -53,6 +55,7 @@ async fn answers_at_once(runtime: &Runtime, session: &ScriptSession) -> bool {
     // The next test waits behind the busy script, so it starts with a free thread.
     wait_until(runtime, "return true;").await;
     plan.is_ok_and(|plan| plan.is_ok_and(|plan| plan.replace.is_none()))
+        && retry.is_ok_and(|retry| retry.is_ok_and(|retry| retry.is_none()))
         && decision.is_ok_and(|decision| decision == ToolDecision::Run)
         && changed.is_ok_and(|changed| changed.is_none())
         && round_end.is_ok_and(|end| end.is_ok_and(|end| end == RoundDecision::Proceed))

@@ -12,6 +12,7 @@ import type {
   ResultMedia,
   RoundAfterEvent,
   RoundBeforeEvent,
+  RoundFailure,
   Services,
   SessionContext,
   SessionHooks,
@@ -301,28 +302,55 @@ interface RoundBeforeRequest {
   readonly context: () => Block[];
 }
 
-/** The plan of the `round.before` handlers as the host reads it. Each part names the plugin of its last change. */
+/** What `startRoundRetry` gets: the facts of `startRoundBefore`, and why the round failed. */
+interface RoundRetryRequest extends RoundBeforeRequest {
+  readonly failure: RoundFailure;
+  readonly retries: number;
+}
+
+/** The hook points whose handlers plan a round. */
+type RoundPoint = "round.before" | "round.retry";
+
+/** The event of a handler of `K`. */
+type EventOf<K extends RoundPoint> = Parameters<SessionHooks[K]>[0];
+
+/**
+ * The plan of the `round.before` or the `round.retry` handlers as the host reads it. Each part names the plugin of its
+ * last change.
+ */
 interface RoundBeforePlan {
   replace?: { readonly plugin: string; readonly head: readonly Block[]; readonly keep: number };
   model?: { readonly plugin: string; readonly provider: string; readonly model: string };
   settings?: { readonly plugin: string; readonly changes: Readonly<Record<string, unknown>> };
 }
 
-/** The fields of a `round.before` answer. */
+/** The fields of a `round.before` or a `round.retry` answer. */
 const ROUND_BEFORE_FIELDS = ["replace", "model", "settings"];
 
+/** Start the `round.before` handlers of the open session `open` before one round, as `startRoundPlan` says. */
+export function startRoundBefore(request: RoundBeforeRequest): Operation<RoundBeforePlan | undefined> {
+  return startRoundPlan("round.before", request, {});
+}
+
+/** Start the `round.retry` handlers of the open session `open` after a failed round, as `startRoundPlan` says. */
+export function startRoundRetry({
+  failure,
+  retries,
+  ...request
+}: RoundRetryRequest): Operation<RoundBeforePlan | undefined> {
+  return startRoundPlan("round.retry", request, { failure: Object.freeze({ ...failure }), retries });
+}
+
 /**
- * Start the `round.before` handlers of the open session `open` before one round. Each handler gets the context after
- * the replacements before it. The answer is the plan of all handlers, or `undefined` when no handler answered. A
- * closed session answers nothing. A failed handler throws. `cancel` aborts the signal of the turn.
+ * Start the handlers of `point` of the open session `open`. Each handler gets the facts of the round, `facts`, and the
+ * context after the replacements before it. The answer is the plan of all handlers, or `undefined` when no handler
+ * answered. A closed session answers nothing. A failed handler throws. `cancel` aborts the signal of the turn.
  */
-export function startRoundBefore({
-  open,
-  window,
-  inputTokens,
-  blocks,
-  context,
-}: RoundBeforeRequest): Operation<RoundBeforePlan | undefined> {
+function startRoundPlan<K extends RoundPoint>(
+  point: K,
+  { open, window, inputTokens, blocks, context }: RoundBeforeRequest,
+  facts: Omit<EventOf<K>, keyof RoundBeforeEvent>,
+): Operation<RoundBeforePlan | undefined> {
   return hostOperation(async (signal) => {
     // The replacements so far make the context `head`, then the last `kept` blocks of the context before the round.
     let head: readonly Block[] = [];
@@ -331,9 +359,10 @@ export function startRoundBefore({
     let answered = false;
     await runHandlers(
       open,
-      "round.before",
+      point,
       (handler) => {
-        const event: RoundBeforeEvent = Object.freeze({
+        const event = Object.freeze({
+          ...facts,
           window: window ?? null,
           inputTokens: inputTokens ?? null,
           blocks: head.length + kept,
@@ -342,8 +371,8 @@ export function startRoundBefore({
             return [...jsonCopy(head, "the answer"), ...before.slice(before.length - kept)];
           },
           signal,
-        });
-        return handler(event);
+        }) as EventOf<K>;
+        return (handler as (event: EventOf<K>) => unknown)(event);
       },
       (answer, plugin) => {
         const fields = fieldsOf(answer, "the answer", ROUND_BEFORE_FIELDS);
@@ -695,7 +724,14 @@ function start(
     closed: false,
     abort,
     tools: [],
-    hooks: { "round.before": [], "prompt.build": [], "tool.before": [], "tool.after": [], "round.after": [] },
+    hooks: {
+      "round.before": [],
+      "round.retry": [],
+      "prompt.build": [],
+      "tool.before": [],
+      "tool.after": [],
+      "round.after": [],
+    },
     settled: Promise.resolve(undefined),
     clean,
   };

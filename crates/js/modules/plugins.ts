@@ -187,6 +187,52 @@ export interface RoundBeforeAnswer {
   readonly settings?: Partial<Settings> | undefined;
 }
 
+/**
+ * The kind of a failure of a round.
+ * - The provider kinds come from the status, the error code, or the error message of the provider. `context_overflow`
+ *   means that the input does not fit the context window of the model.
+ * - `transport`, `protocol`, `response_too_large`, and `incomplete_stream` are failures of the connection or the stream.
+ * - `encode` means that yuke could not build the request, for example for a media type that the provider refuses.
+ * - `credential` means that yuke could not get a credential, for example after a failed refresh of a login.
+ */
+export type RoundFailureKind =
+  | "context_overflow"
+  | "rate_limited"
+  | "rate_limit_unknown"
+  | "quota_exhausted"
+  | "server_error"
+  | "timeout"
+  | "conflict"
+  | "auth_failed"
+  | "permission_denied"
+  | "bad_status"
+  | "provider_failed"
+  | "transport"
+  | "protocol"
+  | "response_too_large"
+  | "incomplete_stream"
+  | "encode"
+  | "credential";
+
+/** Why a round failed. */
+export interface RoundFailure {
+  readonly kind: RoundFailureKind;
+  /** The text of the failure, as the user sees it. */
+  readonly message: string;
+}
+
+/** What a `round.retry` handler gets: the facts of `round.before` for the failed round, and the failure. */
+export interface RoundRetryEvent extends RoundBeforeEvent {
+  /** The context window of the model of the failed round in tokens, or `null` when the catalog names none. */
+  readonly window: number | null;
+  readonly failure: RoundFailure;
+  /** The `round.retry` answers that sent this round again. The host sets no limit, so guard a loop here. */
+  readonly retries: number;
+}
+
+/** The answer of a `round.retry` handler: the plan of the next attempt of the round, as for `round.before`. */
+export type RoundRetryAnswer = RoundBeforeAnswer;
+
 /** What a `round.after` handler gets. */
 export interface RoundAfterEvent {
   /** The assistant text of the answer of this round. It can be empty, for example for an answer with calls only. */
@@ -231,6 +277,15 @@ export interface SessionHooks {
    * - A failed handler ends the turn with its error, and the round sends no request.
    */
   "round.before": (event: RoundBeforeEvent) => undefined | RoundBeforeAnswer | Promise<undefined | RoundBeforeAnswer>;
+  /**
+   * Decide whether a failed round runs again.
+   * - The handlers run after the last attempt of the round fails. Before that, the host sends the request again after
+   *   an error that can go away by itself, such as an overload.
+   * - The handlers run as the handlers of `round.before`. Any answer sends the round again with the plan.
+   * - Without an answer, the turn ends with the failure, as without a handler.
+   * - A failed handler ends the turn with its error, and the error names the failure of the round.
+   */
+  "round.retry": (event: RoundRetryEvent) => undefined | RoundRetryAnswer | Promise<undefined | RoundRetryAnswer>;
   /**
    * Change the system prompt of a turn.
    * - The handlers run once before each turn, after `session` of each plugin settles.

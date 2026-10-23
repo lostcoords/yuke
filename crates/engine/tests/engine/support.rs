@@ -134,7 +134,7 @@ impl Hooks for Script {
 
     async fn retry_round(
         &self,
-        _: &[Block],
+        _: &RoundStart<'_>,
         failure: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         self.calls.lock().unwrap().push(format!("retry {failure}"));

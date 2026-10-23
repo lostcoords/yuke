@@ -64,7 +64,7 @@ impl Hooks for Failing {
 
     async fn retry_round(
         &self,
-        _: &[Block],
+        _: &RoundStart<'_>,
         _: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         self.retries.fetch_add(1, Ordering::Relaxed);

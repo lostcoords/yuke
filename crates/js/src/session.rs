@@ -12,8 +12,10 @@ use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::PromptSection;
-use yuke_ai::{Block, FinishReason, ToolCall, ToolResult, answer_text};
-use yuke_engine::{CancellationToken, Hooks, Replaced, RoundDecision, RoundPlan, RoundStart, ToolDecision};
+use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult, answer_text};
+use yuke_engine::{
+    CancellationToken, Hooks, Replaced, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision, chain_text,
+};
 use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReference};
 
 use crate::Runtime;
@@ -161,6 +163,7 @@ impl ScriptSession {
             open: self.open,
             token,
             continues: AtomicU64::new(0),
+            retries: AtomicU64::new(0),
             points: self.points.clone(),
         }
     }
@@ -202,6 +205,8 @@ pub struct ScriptHooks {
     token: CancellationToken,
     /// The `continue` answers of the `round.after` hooks in this turn.
     continues: AtomicU64,
+    /// The `round.retry` answers that sent the current round again.
+    retries: AtomicU64,
     points: HookPoints,
 }
 
@@ -216,6 +221,8 @@ impl std::fmt::Debug for ScriptHooks {
 #[async_trait]
 impl Hooks for ScriptHooks {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
+        // Each round starts here, so its count of retries starts at zero.
+        self.retries.store(0, Ordering::Relaxed);
         if !self.points.holds(HookPoint::RoundBefore) {
             return Ok(RoundPlan::default());
         }
@@ -234,7 +241,41 @@ impl Hooks for ScriptHooks {
         let Some(Some(planned)) = answer else {
             return Ok(RoundPlan::default());
         };
-        Ok(planned.plan(round, &*self.host)?)
+        Ok(planned.plan(round, &*self.host, "round.before")?)
+    }
+
+    async fn retry_round(
+        &self,
+        round: &RoundStart<'_>,
+        failure: &RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn StdError + Send + Sync>> {
+        // A failure of yuke itself has no kind for a plugin, so it ends the turn as without a handler.
+        let (true, Some(kind)) = (self.points.holds(HookPoint::RoundRetry), failure_kind(failure)) else {
+            return Ok(None);
+        };
+        let request = RoundRetryRequest {
+            open: self.open,
+            failure: RoundFailure {
+                kind,
+                message: chain_text(failure),
+            },
+            retries: self.retries.load(Ordering::Relaxed),
+            window: round.window,
+            input_tokens: round.input_tokens,
+            blocks: round.context.len(),
+            context: ContextBlocks(round.context.to_vec()),
+        };
+        let answer: Option<Option<PlannedRound>> =
+            run_hook(&self.caller, "startRoundRetry", request, self.token.clone())
+                .await
+                .map_err(|error| failure_text("round.retry", &error))?;
+        // No answer ends the turn with the failure. A cancel ends the turn, so the driver does not read the plan.
+        let Some(Some(planned)) = answer else {
+            return Ok(None);
+        };
+        let plan = planned.plan(round, &*self.host, "round.retry")?;
+        self.retries.fetch_add(1, Ordering::Relaxed);
+        Ok(Some(plan))
     }
 
     async fn after_round(
@@ -380,6 +421,7 @@ struct OpenRequest<'js> {
 #[derive(Clone, Copy)]
 enum HookPoint {
     RoundBefore,
+    RoundRetry,
     PromptBuild,
     ToolBefore,
     ToolAfter,
@@ -387,8 +429,9 @@ enum HookPoint {
 }
 
 impl HookPoint {
-    const ALL: [HookPoint; 5] = [
+    const ALL: [HookPoint; 6] = [
         HookPoint::RoundBefore,
+        HookPoint::RoundRetry,
         HookPoint::PromptBuild,
         HookPoint::ToolBefore,
         HookPoint::ToolAfter,
@@ -399,6 +442,7 @@ impl HookPoint {
     fn name(self) -> &'static str {
         match self {
             HookPoint::RoundBefore => "round.before",
+            HookPoint::RoundRetry => "round.retry",
             HookPoint::PromptBuild => "prompt.build",
             HookPoint::ToolBefore => "tool.before",
             HookPoint::ToolAfter => "tool.after",
@@ -532,6 +576,54 @@ struct HookMedia {
     size: usize,
 }
 
+/// What `startRoundRetry` gets: the facts of `startRoundBefore`, and why the round failed.
+#[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
+struct RoundRetryRequest {
+    open: u64,
+    failure: RoundFailure,
+    retries: u64,
+    window: Option<u64>,
+    input_tokens: Option<u64>,
+    blocks: usize,
+    context: ContextBlocks,
+}
+
+/// Why a round failed, for `round.retry`.
+#[derive(IntoJs)]
+struct RoundFailure {
+    kind: &'static str,
+    message: String,
+}
+
+/// The `kind` of `failure` for `round.retry`, or `None` for a failure of yuke itself.
+fn failure_kind(failure: &RoundError) -> Option<&'static str> {
+    Some(match failure {
+        RoundError::Credential(_) => "credential",
+        RoundError::Model(yuke_ai::Error::Encode(_)) => "encode",
+        RoundError::Model(yuke_ai::Error::Attempt(attempt)) => match attempt.cause {
+            Failure::Provider(kind) => match kind {
+                ProviderKind::ContextOverflow => "context_overflow",
+                ProviderKind::RateLimited => "rate_limited",
+                ProviderKind::RateLimitUnknown => "rate_limit_unknown",
+                ProviderKind::QuotaExhausted => "quota_exhausted",
+                ProviderKind::ServerError => "server_error",
+                ProviderKind::Timeout => "timeout",
+                ProviderKind::Conflict => "conflict",
+                ProviderKind::AuthFailed => "auth_failed",
+                ProviderKind::PermissionDenied => "permission_denied",
+                ProviderKind::BadStatus => "bad_status",
+                ProviderKind::ProviderFailed => "provider_failed",
+            },
+            Failure::Transport(_) => "transport",
+            Failure::Protocol => "protocol",
+            Failure::ResponseTooLarge => "response_too_large",
+            Failure::IncompleteStream => "incomplete_stream",
+        },
+        RoundError::Hook { .. } | RoundError::Inbox(_) => return None,
+    })
+}
+
 /// What `startRoundBefore` gets.
 #[derive(IntoJs)]
 #[qjs(rename_all = "camelCase")]
@@ -583,10 +675,11 @@ struct PlannedSettings {
 }
 
 impl PlannedRound {
-    /// The plan of the engine for `round`. Each failure names its plugin: a head that is no list of blocks, a
-    /// replacement with a result without its call, a model that `host` does not know, or settings of another shape.
-    fn plan(self, round: &RoundStart<'_>, host: &dyn SessionHost) -> Result<RoundPlan, String> {
-        let failed = |plugin: &str, error: &dyn Display| format!("round.before of plugin {plugin} failed: {error}");
+    /// The plan of the engine for `round`, from the handlers of `point`. Each failure names its plugin: a head that is
+    /// not a list of blocks, a replacement with a result without its call, a model that `host` does not know, or settings
+    /// of another shape.
+    fn plan(self, round: &RoundStart<'_>, host: &dyn SessionHost, point: &str) -> Result<RoundPlan, String> {
+        let failed = |plugin: &str, error: &dyn Display| format!("{point} of plugin {plugin} failed: {error}");
         let replace = match self.replace {
             Some(PlannedReplace { plugin, head, keep }) => {
                 let head: Vec<Block> = serde_json::from_value(head.0)

@@ -320,6 +320,41 @@ async fn a_plugin_summarizes_the_context_with_the_model_of_the_session_and_repla
     assert!(!requests[2].contains(r#""Hi.""#), "{}", requests[2]);
 }
 
+// The overflow error comes from the stream of the provider, so this test covers the way from its classification to a plugin.
+#[tokio::test]
+async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_round_goes_again() {
+    let place = Place::new("print", "round_retry_overflow");
+    place.plugin(
+        "shrink",
+        "export function session(s) {
+           s.hook('round.retry', ({ failure, retries }) => {
+             if (failure.kind !== 'context_overflow' || retries > 0) return undefined;
+             return { replace: { head: [{ user_text: 'Shorter.' }], keep: 0 } };
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["shrink"] }"#).unwrap();
+    let overflow = yuke_testing::sse(&[
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
+        r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 300000 tokens > 200000 maximum"}}"#,
+    ]);
+
+    let (finished, requests) = run_with(
+        &place,
+        &task("Hi.", SessionChoice::New),
+        &[overflow, text_reply("Done.")],
+    )
+    .await;
+
+    assert_eq!(finished.unwrap().text, "Done.");
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1].contains("Shorter.") && !requests[1].contains(r#""Hi.""#),
+        "{}",
+        requests[1]
+    );
+}
+
 #[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");

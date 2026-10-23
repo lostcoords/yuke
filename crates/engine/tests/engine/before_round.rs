@@ -267,3 +267,63 @@ fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_
         ]
     );
 }
+
+/// Hooks that plan another model and other settings for each round, and keep the facts of each failed round.
+struct PlannedThenFailed {
+    model: yuke_engine::Model,
+    failed: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl Hooks for PlannedThenFailed {
+    async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(RoundPlan {
+            model: Some(self.model.clone()),
+            settings: Some(temperature(0.5)),
+            ..RoundPlan::default()
+        })
+    }
+
+    async fn retry_round(
+        &self,
+        round: &RoundStart<'_>,
+        _: &yuke_engine::RoundError,
+    ) -> Result<Option<RoundPlan>, Box<dyn std::error::Error + Send + Sync>> {
+        let line = format!(
+            "{} {:?} {:?} {:?}",
+            round.context.len(),
+            round.window,
+            round.input_tokens,
+            round.settings.temperature
+        );
+        self.failed.lock().unwrap().push(line);
+        Ok(None)
+    }
+}
+
+#[test]
+fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
+    let transport = ScriptedTransport::new([failed_reply("half")]);
+    let hooks = PlannedThenFailed {
+        model: yuke_engine::Model {
+            context_window: Some(1000),
+            ..model_of(other_target("other-model"))
+        },
+        failed: Mutex::default(),
+    };
+    let model = model();
+    let settings = temperature(0.25);
+    let driver = Driver::new(&transport, &model, &NoWait)
+        .settings(&settings)
+        .hooks(&hooks);
+
+    let ended = block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .input_tokens(Some(7))
+            .run(),
+    );
+
+    assert!(ended.is_err(), "{ended:?}");
+    assert_eq!(*hooks.failed.lock().unwrap(), ["1 Some(1000) Some(7) Some(0.5)"]);
+}

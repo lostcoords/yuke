@@ -9,6 +9,7 @@ mod process;
 mod prompt;
 mod round_after;
 mod round_before;
+mod round_retry;
 mod sessions;
 mod tool_after;
 mod tool_before;

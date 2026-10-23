@@ -81,6 +81,10 @@ pub fn decide(policy: Policy, attempt_error: &AttemptError, number: NonZeroU32, 
     if info.output_seen {
         return None;
     }
+    // The same input never fits the window, so not even `x-should-retry` repeats it. A hook can shrink it instead.
+    if attempt_error.cause == Failure::Provider(ProviderKind::ContextOverflow) {
+        return None;
+    }
     // The provider's own `x-should-retry` decides first, as both SDKs obey it.
     if info.should_retry == Some(false) {
         return None;
@@ -215,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn should_retry_header_overrides_the_kind_of_the_failure() {
+    fn should_retry_header_overrides_the_kind_of_the_failure_except_an_overflow() {
         assert_eq!(None, failed(Failure::Provider(ProviderKind::AuthFailed), 1));
         let vetoed = AttemptInfo {
             should_retry: Some(false),
@@ -232,6 +236,10 @@ mod tests {
         assert_eq!(
             Some(500),
             decide_with(&asked, Failure::Provider(ProviderKind::AuthFailed), 1)
+        );
+        assert_eq!(
+            None,
+            decide_with(&asked, Failure::Provider(ProviderKind::ContextOverflow), 1)
         );
     }
 

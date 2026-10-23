@@ -24,14 +24,15 @@ pub trait Hooks: Send + Sync {
     }
 
     /// Decide whether a failed round runs again in the same turn. The driver asks after the last attempt of the round
-    /// fails, but not after a failed hook. A plan sends the round again. `None` ends the turn with the `failure`.
+    /// fails, but not after a failed hook. `round` holds the context, the settings, and the model window of the failed
+    /// round. A plan sends the round again. `None` ends the turn with the `failure`.
     ///
     /// # Errors
     ///
     /// Returns why the hook failed. The turn then ends with [`RoundError::Hook`], and its text ends with the `failure`.
     async fn retry_round(
         &self,
-        _context: &[Block],
+        _round: &RoundStart<'_>,
         _failure: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn Error + Send + Sync>> {
         Ok(None)
@@ -69,14 +70,14 @@ pub trait Hooks: Send + Sync {
     }
 }
 
-/// What [`Hooks::before_round`] knows about the round.
+/// What [`Hooks::before_round`] and [`Hooks::retry_round`] know about the round.
 #[derive(Debug, Clone, Copy)]
 pub struct RoundStart<'a> {
     /// The context, oldest first.
     pub context: &'a [Block],
-    /// The settings of the driver.
+    /// The settings of the round: the settings of the driver, or the settings of a plan for this round.
     pub settings: &'a Settings,
-    /// The context window of the model of the driver in tokens, from [`Model::context_window`].
+    /// The context window of the model of the round in tokens, from [`Model::context_window`].
     pub window: Option<u64>,
     /// The input tokens of the newest answer, or `None` before the first answer or when the provider sent no count. A
     /// replacement does not change the count, so after one the count describes the old context until the next answer.

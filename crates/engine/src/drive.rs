@@ -488,8 +488,14 @@ impl<'a> Driver<'a> {
                 sent => return Ok(Round::new(sent, &model.target)),
             };
             observer.event(&TurnEvent::RoundFailed(&error));
+            let failed_round = RoundStart {
+                context: turn_state.context(),
+                settings,
+                window: model.context_window,
+                input_tokens: turn_state.input_tokens(),
+            };
             let retry = race(
-                self.hooks.retry_round(turn_state.context(), &error),
+                self.hooks.retry_round(&failed_round, &error),
                 cancellation_token.cancelled(),
             )
             .await;
