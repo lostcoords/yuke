@@ -16,12 +16,12 @@ use yuke_ai::retry;
 use yuke_ai::transport::Transport;
 use yuke_ai::{
     AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
-    ResponseLimits, SEARCH_TOOL_NAME, Settings, Target, ToolCall, ToolDefinition, ToolResult,
+    ResponseLimits, SEARCH_TOOL_NAME, Settings, ToolCall, ToolDefinition, ToolResult,
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
 use crate::model::{Model, RoundError};
-use crate::search::{self, Declared, SearchMode};
+use crate::search::{self, Declared};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
 use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
 
@@ -240,7 +240,8 @@ impl<'a> Driver<'a> {
             )
             .await
         {
-            Sent::Finished(result) => result.map(Some),
+            Sent::Answered { response, .. } => Ok(Some(response)),
+            Sent::Failed(error) => Err(error),
             Sent::Cancelled(_) => Ok(None),
         }
     }
@@ -327,13 +328,13 @@ impl<'a> Driver<'a> {
         loop {
             let credential = match race(model.source.credential(), cancelled.as_mut()).await {
                 Raced::Done(Ok(credential)) => credential,
-                Raced::Done(Err(error)) => return Sent::Finished(Err(RoundError::Credential(error))),
+                Raced::Done(Err(error)) => return Sent::Failed(RoundError::Credential(error)),
                 Raced::Cancelled => return Sent::Cancelled(Vec::new()),
             };
             // A retry encodes again with its own credential. The context is unchanged, so no element encodes again.
             let encoded = match encoder.encode(&model.target, &credential, request) {
                 Ok(encoded) => encoded,
-                Err(error) => return Sent::Finished(Err(yuke_ai::Error::from(error).into())),
+                Err(error) => return Sent::Failed(yuke_ai::Error::from(error).into()),
             };
             observer.event(&TurnEvent::ResponseStarted);
             let opened = race(
@@ -368,13 +369,19 @@ impl<'a> Driver<'a> {
             }
 
             let error = match reply.finish().await {
-                Ok(response) => return Sent::Finished(Ok(response)),
+                Ok(response) => {
+                    return Sent::Answered {
+                        response,
+                        origin: Origin::from(OriginRef::of(&model.target)),
+                        native_search: model.target.tool_search,
+                    };
+                }
                 Err(error) => error,
             };
             observer.event(&TurnEvent::ResponseFailed(&error));
             // The reply sets `output_seen` when it yields a showable event, and the observer gets that event at once.
             let Some(delay) = retry::decide(self.retry_policy, &error, number, fastrand::f64()) else {
-                return Sent::Finished(Err(yuke_ai::Error::from(error).into()));
+                return Sent::Failed(yuke_ai::Error::from(error).into());
             };
 
             observer.event(&TurnEvent::RetryScheduled {
@@ -496,8 +503,8 @@ impl<'a> Turn<'a> {
         let driver = parts.driver;
         let mut turn_state = TurnState::new(context, input_tokens);
         let declared = Declared::new(driver.toolset);
-        // The calls of a round use the kind of search of the target of that round.
-        let mut search_mode = SearchMode::Bridge;
+        // The calls of a round use the kind of search of the target that answered.
+        let mut native_search = false;
         // The encoder lives for one turn. Its first request encodes the whole context, and each later request of the
         // turn encodes only the changed elements.
         let mut encoder = Encoder::new();
@@ -509,42 +516,23 @@ impl<'a> Turn<'a> {
                     if let Some(commit) = commit {
                         parts.save(&commit).await?;
                     }
-                    let round = parts.send_round(&mut turn_state, &mut encoder, &declared).await?;
-                    search_mode = round.search_mode;
-                    action = match round.sent {
-                        Sent::Finished(Ok(response)) => turn_state.model_finished(response.completion, round.origin),
-                        Sent::Finished(Err(error)) => turn_state.fail(error),
+                    action = match parts.send_round(&mut turn_state, &mut encoder, &declared).await? {
+                        Sent::Answered {
+                            response,
+                            origin,
+                            native_search: native,
+                        } => {
+                            native_search = native;
+                            turn_state.model_finished(response.completion, origin)
+                        }
+                        Sent::Failed(error) => turn_state.fail(error),
                         Sent::Cancelled(partial) => turn_state.model_cancelled(partial),
                     };
                 }
 
                 Action::CallTools(commit) => {
                     parts.save(&commit).await?;
-                    // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
-                    let resolved: Vec<Resolved<'_>> = commit
-                        .blocks
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(block_index, block)| match block {
-                            Block::ToolCall(call) => Some(driver.resolve(block_index, call)),
-                            _ => None,
-                        })
-                        .collect();
-                    let mut resolved = resolved.into_iter().peekable();
-                    let mut results = Vec::new();
-                    // Consecutive parallel calls form one group. A serial call forms a group of its own.
-                    while let Some(first) = resolved.next() {
-                        let parallel = driver.concurrency(&first) == Concurrency::Parallel;
-                        let mut group = vec![first];
-                        while parallel
-                            && let Some(next) =
-                                resolved.next_if(|next| driver.concurrency(next) == Concurrency::Parallel)
-                        {
-                            group.push(next);
-                        }
-                        results.extend(parts.call_group(group, search_mode).await);
-                    }
-
+                    let results = parts.call_tools(&commit.blocks, native_search).await;
                     action = if parts.cancellation_token.is_cancelled() {
                         turn_state.tools_cancelled(results)
                     } else {
@@ -617,23 +605,21 @@ impl TurnParts<'_> {
         turn_state: &mut TurnState<'_>,
         encoder: &mut Encoder,
         declared: &Declared<'_>,
-    ) -> Result<Round, TurnError> {
+    ) -> Result<Sent, TurnError> {
         let driver = &self.driver;
         let cancellation_token = &self.cancellation_token;
-        let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &driver.model.target));
-        let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &driver.model.target));
         let round = RoundStart {
             context: turn_state.context(),
             model: driver.model,
             settings: self.settings,
             system: self.system,
-            tools: declared.tools(SearchMode::for_target(&driver.model.target)),
+            tools: declared.tools(driver.model.target.tool_search),
             input_tokens: turn_state.input_tokens(),
         };
         let mut plan = match race(driver.hooks.before_round(&round), cancellation_token.cancelled()).await {
             Raced::Done(Ok(plan)) => plan,
-            Raced::Done(Err(error)) => return failed(RoundError::Hook { error, after: None }),
-            Raced::Cancelled => return cancelled(),
+            Raced::Done(Err(error)) => return Ok(Sent::Failed(RoundError::Hook { error, after: None })),
+            Raced::Cancelled => return Ok(Sent::Cancelled(Vec::new())),
         };
         loop {
             if let Some(replace) = plan.replace.take() {
@@ -641,14 +627,14 @@ impl TurnParts<'_> {
             }
             let model = plan.model.as_ref().unwrap_or(driver.model);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
-            let tools = declared.tools(SearchMode::for_target(&model.target));
+            let tools = declared.tools(model.target.tool_search);
             let request = self.request_of(turn_state.context(), tools, settings);
             let error = match driver
                 .send(encoder, request, model, self.observer, cancellation_token)
                 .await
             {
-                Sent::Finished(Err(error)) => error,
-                sent => return Ok(Round::new(sent, &model.target)),
+                Sent::Failed(error) => error,
+                sent => return Ok(sent),
             };
             self.observer.event(&TurnEvent::RoundFailed(&error));
             let failed_round = RoundStart {
@@ -666,21 +652,49 @@ impl TurnParts<'_> {
             .await;
             plan = match retry {
                 Raced::Done(Ok(Some(plan))) => plan,
-                Raced::Done(Ok(None)) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
+                Raced::Done(Ok(None)) => return Ok(Sent::Failed(error)),
                 Raced::Done(Err(hook)) => {
-                    return failed(RoundError::Hook {
+                    return Ok(Sent::Failed(RoundError::Hook {
                         error: hook,
                         after: Some(Box::new(error)),
-                    });
+                    }));
                 }
-                Raced::Cancelled => return cancelled(),
+                Raced::Cancelled => return Ok(Sent::Cancelled(Vec::new())),
             };
         }
     }
 
+    /// Run the calls in `blocks`, the blocks of an answer commit, and return their results in call order. Consecutive
+    /// parallel calls form one group. A serial call forms a group of its own.
+    async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<ToolResult> {
+        let driver = &self.driver;
+        // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
+        let resolved: Vec<Resolved<'_>> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(block_index, block)| match block {
+                Block::ToolCall(call) => Some(driver.resolve(block_index, call)),
+                _ => None,
+            })
+            .collect();
+        let mut resolved = resolved.into_iter().peekable();
+        let mut results = Vec::new();
+        while let Some(first) = resolved.next() {
+            let parallel = driver.concurrency(&first) == Concurrency::Parallel;
+            let mut group = vec![first];
+            while parallel
+                && let Some(next) = resolved.next_if(|next| driver.concurrency(next) == Concurrency::Parallel)
+            {
+                group.push(next);
+            }
+            results.extend(self.call_group(group, native_search).await);
+        }
+        results
+    }
+
     /// Run the calls of one group, and return their results in call order. The driver asks [`Hooks::before_tool`] for
     /// each call in call order first. Then the approved calls run together.
-    async fn call_group(&self, mut group: Vec<Resolved<'_>>, search_mode: SearchMode) -> Vec<ToolResult> {
+    async fn call_group(&self, mut group: Vec<Resolved<'_>>, native_search: bool) -> Vec<ToolResult> {
         // After this loop, a call without a result is a call that the hooks let run.
         for Resolved {
             block_index,
@@ -715,7 +729,7 @@ impl TurnParts<'_> {
              }| async move {
                 match result {
                     Some(result) => result,
-                    None => self.run_call(block_index, &call, search_mode).await,
+                    None => self.run_call(block_index, &call, native_search).await,
                 }
             },
         );
@@ -724,13 +738,13 @@ impl TurnParts<'_> {
 
     /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its result. A cancel before the start runs
     /// nothing.
-    async fn run_call(&self, block_index: usize, call: &ToolCall, search_mode: SearchMode) -> ToolResult {
+    async fn run_call(&self, block_index: usize, call: &ToolCall, native_search: bool) -> ToolResult {
         let driver = &self.driver;
         // A cancel during the hooks of the group comes before this call starts, so the call does not start.
         let result = if self.cancellation_token.is_cancelled() {
             not_executed(call, CANCELLED_REASON)
         } else if driver.is_search(call) {
-            let result = search::search(driver.toolset, call, search_mode);
+            let result = search::search(driver.toolset, call, native_search);
             self.after_tool(call, result).await
         } else {
             let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
@@ -806,30 +820,19 @@ impl Error for TurnError {
     }
 }
 
-/// The request of one round, and its target.
-struct Round {
-    /// How the request ended.
-    sent: Sent,
-    /// The search mode for deferred tools.
-    search_mode: SearchMode,
-    /// The model and host of the target.
-    origin: Origin,
-}
-
-impl Round {
-    fn new(sent: Sent, target: &Target) -> Self {
-        Round {
-            sent,
-            search_mode: SearchMode::for_target(target),
-            origin: Origin::from(OriginRef::of(target)),
-        }
-    }
-}
-
 /// How a request ended.
 enum Sent {
-    /// The request finished with this result.
-    Finished(Result<Response, RoundError>),
+    /// The model answered.
+    Answered {
+        /// The answer.
+        response: Response,
+        /// The model and host of the target that answered.
+        origin: Origin,
+        /// Whether the target that answered has a native tool search, so a search result loads its matches.
+        native_search: bool,
+    },
+    /// The request or a round hook failed.
+    Failed(RoundError),
     /// A cancel stopped the request. The output that the reply kept is here.
     Cancelled(Vec<Partial>),
 }

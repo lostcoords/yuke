@@ -210,23 +210,6 @@ static BRIDGE_CALL: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
     defer_loading: false,
 });
 
-/// The search mode for deferred tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SearchMode {
-    Native,
-    Bridge,
-}
-
-impl SearchMode {
-    pub(crate) fn for_target(target: &yuke_ai::Target) -> Self {
-        if target.tool_search {
-            SearchMode::Native
-        } else {
-            SearchMode::Bridge
-        }
-    }
-}
-
 /// The definitions that the requests of one turn declare, built once for each kind of target. Without a deferred
 /// tool, they are the toolset's. On a native target, they add the search tool. On another target, they leave out each
 /// deferred tool and add the two bridge tools, so a search never changes them.
@@ -245,13 +228,13 @@ impl<'a> Declared<'a> {
         }
     }
 
-    /// The definitions for a target with a native search, or for another target.
-    pub(crate) fn tools(&self, mode: SearchMode) -> &[ToolDefinition] {
+    /// The definitions for a target with a native search when `native` is true, or for another target.
+    pub(crate) fn tools(&self, native: bool) -> &[ToolDefinition] {
         let definitions = self.toolset.definitions();
         if !self.toolset.has_deferred() {
             return definitions;
         }
-        if mode == SearchMode::Native {
+        if native {
             return self.native.get_or_init(|| {
                 let mut declared = definitions.to_vec();
                 declared.push(NATIVE_SEARCH.clone());
@@ -278,9 +261,9 @@ struct SearchArguments {
     limit: Option<usize>,
 }
 
-/// Run the search `call` over the deferred tools of `toolset`. On a native target, the result loads the matches.
+/// Run the search `call` over the deferred tools of `toolset`. On a `native` target, the result loads the matches.
 /// On another target, it shows them with their input schemas.
-pub(crate) fn search(toolset: &Toolset, call: &ToolCall, mode: SearchMode) -> ToolResult {
+pub(crate) fn search(toolset: &Toolset, call: &ToolCall, native: bool) -> ToolResult {
     let arguments: SearchArguments = match parse_arguments(&call.arguments) {
         Ok(arguments) => arguments,
         Err(error) => return ToolResult::error(&call.call_id, error),
@@ -298,7 +281,7 @@ pub(crate) fn search(toolset: &Toolset, call: &ToolCall, mode: SearchMode) -> To
         );
     }
 
-    if mode == SearchMode::Native {
+    if native {
         let lines: Vec<String> = found
             .iter()
             .map(|tool| format!("- {}: {}", tool.name, tool.description))
