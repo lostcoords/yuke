@@ -131,7 +131,7 @@ pub trait Journal: Send + Sync {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>>;
 }
 
-/// The inbox of a driver without an inbox. It never holds input.
+/// The inbox of a turn without an inbox. It never holds input.
 struct NoInput;
 
 #[async_trait]
@@ -141,8 +141,15 @@ impl Inbox for NoInput {
     }
 }
 
-/// The settings of the turns against one target. A driver borrows each value and keeps no state. Make a new driver
-/// when a setting changes.
+/// The observer of a turn without an observer. It drops each event.
+struct NoObserver;
+
+impl Observer for NoObserver {
+    fn event(&self, _event: &TurnEvent<'_>) {}
+}
+
+/// The model, the tools, and the hooks of the turns against one target. A driver keeps no state between turns. Make a
+/// new driver when a value changes. Each [`Turn`] sets its own prompt, settings, journal, inbox, and blob store.
 #[derive(Clone, Copy)]
 pub struct Driver<'a> {
     transport: &'a dyn Transport,
@@ -150,12 +157,6 @@ pub struct Driver<'a> {
     timer: &'a dyn Timer,
     toolset: &'a Toolset,
     hooks: &'a dyn Hooks,
-    inbox: &'a dyn Inbox,
-    journal: Option<&'a dyn Journal>,
-    system: &'a str,
-    settings: &'a Settings,
-    session_id: Option<&'a str>,
-    blob_store: Option<&'a dyn BlobStore>,
     retry_policy: retry::Policy,
     response_limits: ResponseLimits,
 }
@@ -163,7 +164,7 @@ pub struct Driver<'a> {
 /// The toolset of a driver without tools.
 static NO_TOOLS: Toolset = Toolset::new();
 
-/// The settings of a driver without settings. Each value stays at its endpoint default.
+/// The settings of a turn without settings. Each value stays at its endpoint default.
 static NO_SETTINGS: Settings = Settings::new();
 
 impl fmt::Debug for Driver<'_> {
@@ -177,8 +178,7 @@ impl fmt::Debug for Driver<'_> {
 
 impl<'a> Driver<'a> {
     /// A driver that sends to `model` through `transport`, and waits with `timer` before it sends an attempt again. It
-    /// offers no tools, and it takes no input during a turn. Its hooks run each call and continue each round. They end
-    /// each turn when the model ends it.
+    /// offers no tools. Its hooks run each call and continue each round. They end each turn when the model ends it.
     pub fn new(transport: &'a dyn Transport, model: &'a Model, timer: &'a dyn Timer) -> Self {
         Driver {
             transport,
@@ -186,12 +186,6 @@ impl<'a> Driver<'a> {
             timer,
             toolset: &NO_TOOLS,
             hooks: &NoHooks,
-            inbox: &NoInput,
-            journal: None,
-            system: "",
-            settings: &NO_SETTINGS,
-            session_id: None,
-            blob_store: None,
             retry_policy: retry::Policy::default(),
             response_limits: ResponseLimits::default(),
         }
@@ -207,52 +201,6 @@ impl<'a> Driver<'a> {
     #[must_use]
     pub fn hooks(self, hooks: &'a dyn Hooks) -> Self {
         Driver { hooks, ..self }
-    }
-
-    /// Take new input from `inbox` after a round when the turn continues.
-    #[must_use]
-    pub fn inbox(self, inbox: &'a dyn Inbox) -> Self {
-        Driver { inbox, ..self }
-    }
-
-    /// Give each commit of a turn to `journal`, and await the result of each save.
-    #[must_use]
-    pub fn journal(self, journal: &'a dyn Journal) -> Self {
-        Driver {
-            journal: Some(journal),
-            ..self
-        }
-    }
-
-    /// Send each request with the system prompt `system`. With an empty prompt, a request carries no system prompt.
-    #[must_use]
-    pub fn system(self, system: &'a str) -> Self {
-        Driver { system, ..self }
-    }
-
-    /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
-    #[must_use]
-    pub fn settings(self, settings: &'a Settings) -> Self {
-        Driver { settings, ..self }
-    }
-
-    /// Send the session id `session_id` with each request, for routing and the Responses cache key. See
-    /// [`Request::session_id`].
-    #[must_use]
-    pub fn session_id(self, session_id: &'a str) -> Self {
-        Driver {
-            session_id: Some(session_id),
-            ..self
-        }
-    }
-
-    /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
-    #[must_use]
-    pub fn blobs(self, blob_store: &'a dyn BlobStore) -> Self {
-        Driver {
-            blob_store: Some(blob_store),
-            ..self
-        }
     }
 
     /// Set the attempt and delay bounds of each request. The default is [`retry::Policy::default`].
@@ -271,11 +219,52 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// Save `commit` in the journal. The save does not race the cancel. A failed save ends the turn.
-    async fn save(&self, commit: &Commit<'_>) -> Result<(), TurnError> {
-        match self.journal {
-            Some(journal) => journal.commit(commit).await.map_err(TurnError::Commit),
-            None => Ok(()),
+    /// Send `request` to the model of the driver. No tool runs, and no hook, journal, or observer sees the request. The
+    /// retry policy and the response limits of the driver apply. A cancel answers `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of the last attempt.
+    pub async fn request(
+        &self,
+        request: Request<'_>,
+        cancellation_token: &CancellationToken,
+    ) -> Result<Option<Response>, RoundError> {
+        match self
+            .send(
+                &mut Encoder::new(),
+                request,
+                self.model,
+                &NoObserver,
+                cancellation_token,
+            )
+            .await
+        {
+            Sent::Finished(result) => result.map(Some),
+            Sent::Cancelled(_) => Ok(None),
+        }
+    }
+
+    /// The turn of `input` on `context`. [`Turn::run`] runs it and adds the blocks of the turn to `context`.
+    pub fn turn<'t>(&self, context: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
+    where
+        'a: 't,
+    {
+        Turn {
+            context,
+            input,
+            input_tokens: None,
+            parts: TurnParts {
+                driver: *self,
+                inbox: &NoInput,
+                journal: None,
+                system: "",
+                settings: &NO_SETTINGS,
+                session_id: None,
+                blob_store: None,
+                observer: &NoObserver,
+                cancellation_token: CancellationToken::new(),
+            },
         }
     }
 
@@ -319,231 +308,6 @@ impl<'a> Driver<'a> {
             Concurrency::Parallel
         } else {
             self.toolset.concurrency(&resolved.call.name)
-        }
-    }
-
-    /// Run the calls of one group, and return their results in call order. The driver asks [`Hooks::before_tool`] for
-    /// each call in call order first. Then the approved calls run together.
-    async fn call_group(
-        &self,
-        mut group: Vec<Resolved<'_>>,
-        search_mode: SearchMode,
-        observer: &dyn Observer,
-        cancellation_token: &CancellationToken,
-    ) -> Vec<ToolResult> {
-        // After this loop, a call without a result is a call that the hooks let run.
-        for Resolved {
-            block_index,
-            call,
-            result,
-        } in &mut group
-        {
-            observer.event(&TurnEvent::ToolStarted {
-                block_index: *block_index,
-                call,
-            });
-            if result.is_none() {
-                *result = match race(self.hooks.before_tool(call), cancellation_token.cancelled()).await {
-                    Raced::Done(ToolDecision::Run) => None,
-                    Raced::Done(ToolDecision::Block(reason)) => Some(ToolResult::error(&call.call_id, reason)),
-                    Raced::Cancelled => Some(not_executed(call, CANCELLED_REASON)),
-                };
-            }
-            if let Some(result) = result {
-                observer.event(&TurnEvent::ToolFinished {
-                    block_index: *block_index,
-                    result,
-                });
-            }
-        }
-
-        let calls = group.into_iter().map(
-            |Resolved {
-                 block_index,
-                 call,
-                 result,
-             }| async move {
-                match result {
-                    Some(result) => result,
-                    None => {
-                        self.run_call(block_index, &call, search_mode, observer, cancellation_token)
-                            .await
-                    }
-                }
-            },
-        );
-        join_all(calls).await
-    }
-
-    /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its result. A cancel before the start runs
-    /// nothing.
-    async fn run_call(
-        &self,
-        block_index: usize,
-        call: &ToolCall,
-        search_mode: SearchMode,
-        observer: &dyn Observer,
-        cancellation_token: &CancellationToken,
-    ) -> ToolResult {
-        // A cancel during the hooks of the group comes before this call starts, so the call does not start.
-        let result = if cancellation_token.is_cancelled() {
-            not_executed(call, CANCELLED_REASON)
-        } else if self.is_search(call) {
-            let result = search::search(self.toolset, call, search_mode);
-            self.after_tool(call, result, cancellation_token).await
-        } else {
-            let context = ToolContext::new(block_index, call, cancellation_token, observer);
-            let result = self.toolset.call(call, &context).await;
-            self.after_tool(call, result, cancellation_token).await
-        };
-        observer.event(&TurnEvent::ToolFinished {
-            block_index,
-            result: &result,
-        });
-        result
-    }
-
-    /// Ask [`Hooks::after_tool`] for a replacement of `result`. A cancel keeps `result`.
-    async fn after_tool(
-        &self,
-        call: &ToolCall,
-        result: ToolResult,
-        cancellation_token: &CancellationToken,
-    ) -> ToolResult {
-        match race(self.hooks.after_tool(call, &result), cancellation_token.cancelled()).await {
-            // The result answers this call, so a replacement keeps its call id.
-            Raced::Done(Some(replacement)) => ToolResult {
-                call_id: result.call_id,
-                ..replacement
-            },
-            Raced::Done(None) | Raced::Cancelled => result,
-        }
-    }
-
-    /// Send one request of `blocks` that offers `tools`. The request has the model, the system prompt, the settings,
-    /// the session id, and the blob store of the driver. The cache marker goes on the first `cached` blocks. No tool
-    /// runs, and no hook, journal, or observer sees the request. The retry policy of a turn applies. A cancel answers
-    /// `None`.
-    ///
-    /// # Errors
-    ///
-    /// Returns the failure of the last attempt.
-    pub async fn request(
-        &self,
-        blocks: &[Block],
-        cached: usize,
-        tools: &[ToolDefinition],
-        cancellation_token: &CancellationToken,
-    ) -> Result<Option<Response>, RoundError> {
-        let request = self.request_of(blocks, tools, self.settings).cached(cached);
-        let ignore = |_: &TurnEvent<'_>| {};
-        match self
-            .send(&mut Encoder::new(), request, self.model, &ignore, cancellation_token)
-            .await
-        {
-            Sent::Finished(result) => result.map(Some),
-            Sent::Cancelled(_) => Ok(None),
-        }
-    }
-
-    /// The request of `context` that offers `tools` with `settings`, and the system prompt, the session id, and the
-    /// blob store of the driver.
-    fn request_of<'r>(
-        &'r self,
-        context: &'r [Block],
-        tools: &'r [ToolDefinition],
-        settings: &'r Settings,
-    ) -> Request<'r> {
-        let mut request = Request::new(context)
-            .system(self.system)
-            .tools(tools)
-            .settings(settings);
-        if let Some(session_id) = self.session_id {
-            request = request.session_id(session_id);
-        }
-        if let Some(blob_store) = self.blob_store {
-            request = request.blobs(blob_store);
-        }
-        request
-    }
-
-    /// The turn of `input` on `context`. [`Turn::run`] runs it and adds the blocks of the turn to `context`.
-    pub fn turn<'t>(&self, context: &'t mut Vec<Block>, input: Vec<Block>) -> Turn<'t>
-    where
-        'a: 't,
-    {
-        Turn {
-            driver: *self,
-            context,
-            input,
-            observer: None,
-            cancellation_token: CancellationToken::new(),
-            input_tokens: None,
-        }
-    }
-
-    /// Send the request of one round with the plan of [`Hooks::before_round`]. After a failure, [`Hooks::retry_round`]
-    /// decides whether the round runs again.
-    async fn send_round(
-        &self,
-        turn_state: &mut TurnState<'_>,
-        encoder: &mut Encoder,
-        declared: &Declared<'_>,
-        observer: &dyn Observer,
-        cancellation_token: &CancellationToken,
-    ) -> Result<Round, TurnError> {
-        let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &self.model.target));
-        let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &self.model.target));
-        let round = RoundStart {
-            context: turn_state.context(),
-            model: self.model,
-            settings: self.settings,
-            system: self.system,
-            tools: declared.tools(SearchMode::for_target(&self.model.target)),
-            input_tokens: turn_state.input_tokens(),
-        };
-        let mut plan = match race(self.hooks.before_round(&round), cancellation_token.cancelled()).await {
-            Raced::Done(Ok(plan)) => plan,
-            Raced::Done(Err(error)) => return failed(RoundError::Hook { error, after: None }),
-            Raced::Cancelled => return cancelled(),
-        };
-        loop {
-            if let Some(replace) = plan.replace.take() {
-                self.save(&turn_state.replace(replace)).await?;
-            }
-            let model = plan.model.as_ref().unwrap_or(self.model);
-            let settings = plan.settings.as_ref().unwrap_or(self.settings);
-            let tools = declared.tools(SearchMode::for_target(&model.target));
-            let request = self.request_of(turn_state.context(), tools, settings);
-            let error = match self.send(encoder, request, model, observer, cancellation_token).await {
-                Sent::Finished(Err(error)) => error,
-                sent => return Ok(Round::new(sent, &model.target)),
-            };
-            observer.event(&TurnEvent::RoundFailed(&error));
-            let failed_round = RoundStart {
-                context: turn_state.context(),
-                model,
-                settings,
-                system: self.system,
-                tools,
-                input_tokens: turn_state.input_tokens(),
-            };
-            let retry = race(
-                self.hooks.retry_round(&failed_round, &error),
-                cancellation_token.cancelled(),
-            )
-            .await;
-            plan = match retry {
-                Raced::Done(Ok(Some(plan))) => plan,
-                Raced::Done(Ok(None)) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
-                Raced::Done(Err(hook)) => {
-                    return failed(RoundError::Hook {
-                        error: hook,
-                        after: Some(Box::new(error)),
-                    });
-                }
-                Raced::Cancelled => return cancelled(),
-            };
         }
     }
 
@@ -628,45 +392,90 @@ impl<'a> Driver<'a> {
 /// One assistant turn. It does nothing until [`Turn::run`].
 #[must_use = "a turn does nothing until the caller runs it"]
 pub struct Turn<'a> {
-    driver: Driver<'a>,
     context: &'a mut Vec<Block>,
     input: Vec<Block>,
-    observer: Option<&'a dyn Observer>,
-    cancellation_token: CancellationToken,
     input_tokens: Option<u64>,
+    parts: TurnParts<'a>,
+}
+
+/// The parts of a turn that its steps read: the driver, and the values that the caller sets on the turn.
+struct TurnParts<'a> {
+    driver: Driver<'a>,
+    inbox: &'a dyn Inbox,
+    journal: Option<&'a dyn Journal>,
+    system: &'a str,
+    settings: &'a Settings,
+    session_id: Option<&'a str>,
+    blob_store: Option<&'a dyn BlobStore>,
+    observer: &'a dyn Observer,
+    cancellation_token: CancellationToken,
 }
 
 impl fmt::Debug for Turn<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Turn")
-            .field("driver", &self.driver)
+            .field("driver", &self.parts.driver)
             .field("input", &self.input)
             .finish_non_exhaustive()
     }
 }
 
 impl<'a> Turn<'a> {
+    /// Take new input from `inbox` after a round when the turn continues.
+    pub fn inbox(mut self, inbox: &'a dyn Inbox) -> Self {
+        self.parts.inbox = inbox;
+        self
+    }
+
+    /// Give each commit of the turn to `journal`, and await the result of each save.
+    pub fn journal(mut self, journal: &'a dyn Journal) -> Self {
+        self.parts.journal = Some(journal);
+        self
+    }
+
+    /// Send each request with the system prompt `system`. With an empty prompt, a request carries no system prompt.
+    pub fn system(mut self, system: &'a str) -> Self {
+        self.parts.system = system;
+        self
+    }
+
+    /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
+    pub fn settings(mut self, settings: &'a Settings) -> Self {
+        self.parts.settings = settings;
+        self
+    }
+
+    /// Send the session id `session_id` with each request, for routing and the Responses cache key. See
+    /// [`Request::session_id`].
+    pub fn session_id(mut self, session_id: &'a str) -> Self {
+        self.parts.session_id = Some(session_id);
+        self
+    }
+
+    /// Read the media of each request from `blob_store`. Without a store, a request with media fails to encode.
+    pub fn blobs(mut self, blob_store: &'a dyn BlobStore) -> Self {
+        self.parts.blob_store = Some(blob_store);
+        self
+    }
+
     /// Give each event of the turn to `observer`. A turn without an observer drops its events.
-    pub fn observer(self, observer: &'a dyn Observer) -> Self {
-        Turn {
-            observer: Some(observer),
-            ..self
-        }
+    pub fn observer(mut self, observer: &'a dyn Observer) -> Self {
+        self.parts.observer = observer;
+        self
     }
 
     /// Start the turn with `input_tokens`, the input tokens of the newest answer before it. The first round gives it to
     /// [`Hooks::before_round`].
-    pub fn input_tokens(self, input_tokens: Option<u64>) -> Self {
-        Turn { input_tokens, ..self }
+    pub fn input_tokens(mut self, input_tokens: Option<u64>) -> Self {
+        self.input_tokens = input_tokens;
+        self
     }
 
     /// Stop the turn when `cancellation_token` is cancelled. A cancelled token cannot be reset, so use a new token for
     /// each turn. A turn without a token runs until it ends.
-    pub fn cancellation_token(self, cancellation_token: CancellationToken) -> Self {
-        Turn {
-            cancellation_token,
-            ..self
-        }
+    pub fn cancellation_token(mut self, cancellation_token: CancellationToken) -> Self {
+        self.parts.cancellation_token = cancellation_token;
+        self
     }
 
     /// Run the turn until it ends. A cancel interrupts each wait that the driver owns. A tool that runs gets the token,
@@ -679,19 +488,13 @@ impl<'a> Turn<'a> {
     /// [`TurnError::Commit`] when the journal fails to save a commit.
     pub async fn run(self) -> Result<Outcome, TurnError> {
         let Turn {
-            driver,
             context,
             input,
-            observer,
-            cancellation_token,
             input_tokens,
+            parts,
         } = self;
+        let driver = parts.driver;
         let mut turn_state = TurnState::new(context, input_tokens);
-        let ignore = |_: &TurnEvent<'_>| {};
-        let observer: &dyn Observer = match observer {
-            Some(observer) => observer,
-            None => &ignore,
-        };
         let declared = Declared::new(driver.toolset);
         // The calls of a round use the kind of search of the target of that round.
         let mut search_mode = SearchMode::Bridge;
@@ -704,11 +507,9 @@ impl<'a> Turn<'a> {
             match action {
                 Action::Send(commit) => {
                     if let Some(commit) = commit {
-                        driver.save(&commit).await?;
+                        parts.save(&commit).await?;
                     }
-                    let round = driver
-                        .send_round(&mut turn_state, &mut encoder, &declared, observer, &cancellation_token)
-                        .await?;
+                    let round = parts.send_round(&mut turn_state, &mut encoder, &declared).await?;
                     search_mode = round.search_mode;
                     action = match round.sent {
                         Sent::Finished(Ok(response)) => turn_state.model_finished(response.completion, round.origin),
@@ -718,7 +519,7 @@ impl<'a> Turn<'a> {
                 }
 
                 Action::CallTools(commit) => {
-                    driver.save(&commit).await?;
+                    parts.save(&commit).await?;
                     // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
                     let resolved: Vec<Resolved<'_>> = commit
                         .blocks
@@ -741,14 +542,10 @@ impl<'a> Turn<'a> {
                         {
                             group.push(next);
                         }
-                        results.extend(
-                            driver
-                                .call_group(group, search_mode, observer, &cancellation_token)
-                                .await,
-                        );
+                        results.extend(parts.call_group(group, search_mode).await);
                     }
 
-                    action = if cancellation_token.is_cancelled() {
+                    action = if parts.cancellation_token.is_cancelled() {
                         turn_state.tools_cancelled(results)
                     } else {
                         turn_state.tools_finished(results)
@@ -760,11 +557,11 @@ impl<'a> Turn<'a> {
                     finish_reason,
                     commit,
                 } => {
-                    driver.save(&commit).await?;
+                    parts.save(&commit).await?;
                     let decided = driver.hooks.after_round(context, finish_reason);
-                    action = match race(decided, cancellation_token.cancelled()).await {
+                    action = match race(decided, parts.cancellation_token.cancelled()).await {
                         // The driver takes the input only when the turn goes on, so a stop or a cancel leaves it.
-                        Raced::Done(Ok(RoundDecision::Proceed)) => match driver.inbox.take().await {
+                        Raced::Done(Ok(RoundDecision::Proceed)) => match parts.inbox.take().await {
                             Ok(input) => turn_state.proceed(input),
                             Err(error) => turn_state.fail(RoundError::Inbox(error)),
                         },
@@ -775,10 +572,192 @@ impl<'a> Turn<'a> {
                 }
 
                 Action::Done { tail, result } => {
-                    driver.save(&Commit::end(tail, result.as_ref())).await?;
+                    parts.save(&Commit::end(tail, result.as_ref())).await?;
                     return result.map_err(TurnError::Round);
                 }
             }
+        }
+    }
+}
+
+impl TurnParts<'_> {
+    /// Save `commit` in the journal. The save does not race the cancel. A failed save ends the turn.
+    async fn save(&self, commit: &Commit<'_>) -> Result<(), TurnError> {
+        match self.journal {
+            Some(journal) => journal.commit(commit).await.map_err(TurnError::Commit),
+            None => Ok(()),
+        }
+    }
+
+    /// The request of `context` that offers `tools` with `settings`, and the system prompt, the session id, and the
+    /// blob store of the turn.
+    fn request_of<'r>(
+        &'r self,
+        context: &'r [Block],
+        tools: &'r [ToolDefinition],
+        settings: &'r Settings,
+    ) -> Request<'r> {
+        let mut request = Request::new(context)
+            .system(self.system)
+            .tools(tools)
+            .settings(settings);
+        if let Some(session_id) = self.session_id {
+            request = request.session_id(session_id);
+        }
+        if let Some(blob_store) = self.blob_store {
+            request = request.blobs(blob_store);
+        }
+        request
+    }
+
+    /// Send the request of one round with the plan of [`Hooks::before_round`]. After a failure, [`Hooks::retry_round`]
+    /// decides whether the round runs again.
+    async fn send_round(
+        &self,
+        turn_state: &mut TurnState<'_>,
+        encoder: &mut Encoder,
+        declared: &Declared<'_>,
+    ) -> Result<Round, TurnError> {
+        let driver = &self.driver;
+        let cancellation_token = &self.cancellation_token;
+        let cancelled = || Ok(Round::new(Sent::Cancelled(Vec::new()), &driver.model.target));
+        let failed = |error| Ok(Round::new(Sent::Finished(Err(error)), &driver.model.target));
+        let round = RoundStart {
+            context: turn_state.context(),
+            model: driver.model,
+            settings: self.settings,
+            system: self.system,
+            tools: declared.tools(SearchMode::for_target(&driver.model.target)),
+            input_tokens: turn_state.input_tokens(),
+        };
+        let mut plan = match race(driver.hooks.before_round(&round), cancellation_token.cancelled()).await {
+            Raced::Done(Ok(plan)) => plan,
+            Raced::Done(Err(error)) => return failed(RoundError::Hook { error, after: None }),
+            Raced::Cancelled => return cancelled(),
+        };
+        loop {
+            if let Some(replace) = plan.replace.take() {
+                self.save(&turn_state.replace(replace)).await?;
+            }
+            let model = plan.model.as_ref().unwrap_or(driver.model);
+            let settings = plan.settings.as_ref().unwrap_or(self.settings);
+            let tools = declared.tools(SearchMode::for_target(&model.target));
+            let request = self.request_of(turn_state.context(), tools, settings);
+            let error = match driver
+                .send(encoder, request, model, self.observer, cancellation_token)
+                .await
+            {
+                Sent::Finished(Err(error)) => error,
+                sent => return Ok(Round::new(sent, &model.target)),
+            };
+            self.observer.event(&TurnEvent::RoundFailed(&error));
+            let failed_round = RoundStart {
+                context: turn_state.context(),
+                model,
+                settings,
+                system: self.system,
+                tools,
+                input_tokens: turn_state.input_tokens(),
+            };
+            let retry = race(
+                driver.hooks.retry_round(&failed_round, &error),
+                cancellation_token.cancelled(),
+            )
+            .await;
+            plan = match retry {
+                Raced::Done(Ok(Some(plan))) => plan,
+                Raced::Done(Ok(None)) => return Ok(Round::new(Sent::Finished(Err(error)), &model.target)),
+                Raced::Done(Err(hook)) => {
+                    return failed(RoundError::Hook {
+                        error: hook,
+                        after: Some(Box::new(error)),
+                    });
+                }
+                Raced::Cancelled => return cancelled(),
+            };
+        }
+    }
+
+    /// Run the calls of one group, and return their results in call order. The driver asks [`Hooks::before_tool`] for
+    /// each call in call order first. Then the approved calls run together.
+    async fn call_group(&self, mut group: Vec<Resolved<'_>>, search_mode: SearchMode) -> Vec<ToolResult> {
+        // After this loop, a call without a result is a call that the hooks let run.
+        for Resolved {
+            block_index,
+            call,
+            result,
+        } in &mut group
+        {
+            self.observer.event(&TurnEvent::ToolStarted {
+                block_index: *block_index,
+                call,
+            });
+            if result.is_none() {
+                *result = match race(self.driver.hooks.before_tool(call), self.cancellation_token.cancelled()).await {
+                    Raced::Done(ToolDecision::Run) => None,
+                    Raced::Done(ToolDecision::Block(reason)) => Some(ToolResult::error(&call.call_id, reason)),
+                    Raced::Cancelled => Some(not_executed(call, CANCELLED_REASON)),
+                };
+            }
+            if let Some(result) = result {
+                self.observer.event(&TurnEvent::ToolFinished {
+                    block_index: *block_index,
+                    result,
+                });
+            }
+        }
+
+        let calls = group.into_iter().map(
+            |Resolved {
+                 block_index,
+                 call,
+                 result,
+             }| async move {
+                match result {
+                    Some(result) => result,
+                    None => self.run_call(block_index, &call, search_mode).await,
+                }
+            },
+        );
+        join_all(calls).await
+    }
+
+    /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its result. A cancel before the start runs
+    /// nothing.
+    async fn run_call(&self, block_index: usize, call: &ToolCall, search_mode: SearchMode) -> ToolResult {
+        let driver = &self.driver;
+        // A cancel during the hooks of the group comes before this call starts, so the call does not start.
+        let result = if self.cancellation_token.is_cancelled() {
+            not_executed(call, CANCELLED_REASON)
+        } else if driver.is_search(call) {
+            let result = search::search(driver.toolset, call, search_mode);
+            self.after_tool(call, result).await
+        } else {
+            let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
+            let result = driver.toolset.call(call, &context).await;
+            self.after_tool(call, result).await
+        };
+        self.observer.event(&TurnEvent::ToolFinished {
+            block_index,
+            result: &result,
+        });
+        result
+    }
+
+    /// Ask [`Hooks::after_tool`] for a replacement of `result`. A cancel keeps `result`.
+    async fn after_tool(&self, call: &ToolCall, result: ToolResult) -> ToolResult {
+        match race(
+            self.driver.hooks.after_tool(call, &result),
+            self.cancellation_token.cancelled(),
+        )
+        .await
+        {
+            // The result answers this call, so a replacement keeps its call id.
+            Raced::Done(Some(replacement)) => ToolResult {
+                call_id: result.call_id,
+                ..replacement
+            },
+            Raced::Done(None) | Raced::Cancelled => result,
         }
     }
 }

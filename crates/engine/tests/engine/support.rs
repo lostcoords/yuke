@@ -272,6 +272,11 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
 pub(crate) fn results_in_context(driver: Driver<'_>) -> Vec<yuke_ai::ToolResult> {
     let mut context = Vec::new();
     block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
+    tool_results(&context)
+}
+
+/// The tool results in `context`, in context order.
+pub(crate) fn tool_results(context: &[Block]) -> Vec<yuke_ai::ToolResult> {
     context
         .iter()
         .filter_map(|block| match block {

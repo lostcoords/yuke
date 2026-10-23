@@ -7,7 +7,7 @@ use yuke_ai::{Blob, BlobStore, Block, Media, ToolCall, ToolResult};
 use yuke_engine::{Driver, Hooks, Tool, ToolContent, ToolContext, ToolDecision, Toolset, TurnEvent, parse_arguments};
 use yuke_testing::{NoWait, ScriptedTransport, model, text_reply, tool_reply};
 
-use crate::support::{Recorder, block_on, definition, results_in_context};
+use crate::support::{Recorder, block_on, definition, results_in_context, tool_results};
 
 /// Hooks that count the calls of `before_tool`.
 #[derive(Default)]
@@ -205,11 +205,12 @@ fn an_error_result_of_a_tool_keeps_its_media() {
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("render"), FailsWithImage).unwrap();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .blobs(&TwoBytes);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-    let results = results_in_context(driver);
+    let mut context = Vec::new();
+    let turn = driver.turn(&mut context, vec![Block::user_text("go")]).blobs(&TwoBytes);
+    block_on(turn.run()).unwrap();
+    let results = tool_results(&context);
 
     assert_eq!(
         results,
@@ -223,11 +224,12 @@ fn tool_media_reaches_the_result_and_the_next_request() {
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("read"), ReadsImage).unwrap();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .blobs(&TwoBytes);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-    let results = results_in_context(driver);
+    let mut context = Vec::new();
+    let turn = driver.turn(&mut context, vec![Block::user_text("go")]).blobs(&TwoBytes);
+    block_on(turn.run()).unwrap();
+    let results = tool_results(&context);
 
     assert_eq!(
         results,

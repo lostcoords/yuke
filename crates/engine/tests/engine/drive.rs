@@ -381,10 +381,15 @@ fn input_taken_between_rounds_follows_the_tool_results_and_a_retry_keeps_its_byt
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Batches::new([vec![Block::user_text("steer")], vec![Block::user_text("late")]]);
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(
         outcome,
@@ -411,10 +416,15 @@ fn input_during_the_final_answer_continues_the_turn_until_its_next_final_answer(
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Queue::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(
         outcome,
@@ -441,10 +451,15 @@ fn input_follows_the_error_results_of_a_cut_answer() {
     let write = Recorder::default();
     toolset.add(definition("write"), write.clone()).unwrap();
     let inbox = Queue::new(vec![Block::user_text("steer")]);
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(
         outcome,
@@ -518,13 +533,15 @@ fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input()
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = Script::default().decisions([RoundDecision::Stop]);
     let inbox = Queue::new(vec![Block::user_text("steer")]);
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks)
-        .inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
     assert_eq!(transport.requests().len(), 1);
@@ -596,12 +613,13 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
         .unwrap();
     toolset.add(definition("echo"), echo.clone()).unwrap();
     let inbox = Queue::new(vec![Block::user_text("steer")]);
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -702,12 +720,13 @@ fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
     let cancellation_token = CancellationToken::new();
     let hooks = CancelAfterRound(cancellation_token.clone());
     let inbox = Queue::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
             .cancellation_token(cancellation_token)
             .run(),
     );

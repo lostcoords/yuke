@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use yuke_agent::{Store, blob_of};
-use yuke_ai::{BlobStore, Block, Digest, Media, ToolDefinition};
-use yuke_engine::{CancellationToken, Driver};
+use yuke_ai::{BlobStore, Block, Digest, Media, Request};
+use yuke_engine::{CancellationToken, Driver, Model};
 use yuke_js::{CompleteAnswer, CompleteRequest, Models, SideRequest};
 use yuke_protocol::SessionId;
 
@@ -34,11 +34,11 @@ impl Models for PluginModels {
             blocks.push(Block::Media(Media::new(blob, attachment.mime_type)));
             attachments.0.insert(blob.digest, attachment.bytes);
         }
-        let driver = Driver::new(&*self.0.machine.transport, &model, &TokioTimer)
+        let request = Request::new(&blocks)
             .system(&request.system)
             .settings(&request.settings)
             .blobs(&attachments);
-        send(&driver, &blocks, blocks.len(), &[], &cancel).await
+        send(&model, request, &self.0, &cancel).await
     }
 
     async fn side_request(
@@ -64,26 +64,27 @@ impl Models for PluginModels {
             store: &*self.0.store,
             session_id,
         };
-        let driver = Driver::new(&*self.0.machine.transport, &model, &TokioTimer)
+        let request = Request::new(&blocks)
             .system(&system)
             .settings(&settings)
             .session_id(&key)
-            .blobs(&media);
-        send(&driver, &blocks, cached, &tools, &cancel).await
+            .tools(&tools)
+            .blobs(&media)
+            .cached(cached);
+        send(&model, request, &self.0, &cancel).await
     }
 }
 
-/// Send one request of `blocks` through `driver` that offers `tools`, with the cache marker on the first `cached`
-/// blocks. Answer with the text, the finish, and the usage of the answer.
+/// Send `request` to `model` through the transport of `shared`. Answer with the text, the finish, and the usage of the
+/// answer.
 async fn send(
-    driver: &Driver<'_>,
-    blocks: &[Block],
-    cached: usize,
-    tools: &[ToolDefinition],
+    model: &Model,
+    request: Request<'_>,
+    shared: &Shared,
     cancel: &CancellationToken,
 ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
-    let response = driver
-        .request(blocks, cached, tools, cancel)
+    let response = Driver::new(&*shared.machine.transport, model, &TokioTimer)
+        .request(request, cancel)
         .await?
         .ok_or("the model request was cancelled")?;
     let completion = response.completion;
@@ -121,7 +122,7 @@ mod tests {
     use std::time::Duration;
 
     use yuke_ai::transport::Transport;
-    use yuke_ai::{FinishReason, Usage};
+    use yuke_ai::{FinishReason, ToolDefinition, Usage};
     use yuke_js::Attachment;
     use yuke_protocol::{ModelReference, ServerNotification};
     use yuke_testing::{ScriptedTransport, assert_in_order, counted, text_reply, tool_reply};

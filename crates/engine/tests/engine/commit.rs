@@ -56,14 +56,25 @@ fn the_commits_of_two_turns_replay_to_the_context_and_input_commits_before_its_r
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Batches::new([vec![Block::user_text("steer")]]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .inbox(&inbox)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
-    block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run()).unwrap();
-    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("two")])
+            .inbox(&inbox)
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
 
     assert_eq!(journal.context(), context);
     assert_eq!(
@@ -90,13 +101,15 @@ fn a_stopped_turn_ends_with_a_stopped_commit() {
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = Script::default().decisions([RoundDecision::Stop]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
+            .run(),
+    );
 
     assert!(matches!(outcome, Ok(Outcome::Stopped)));
     assert_eq!(journal.context(), context);
@@ -108,10 +121,15 @@ fn a_failed_request_commits_an_end_after_its_input() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let model = model();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
+            .run(),
+    );
 
     assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
@@ -129,13 +147,16 @@ fn inbox_input_before_a_failed_request_commits_before_the_request() {
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let inbox = Batches::new([vec![Block::user_text("steer")]]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .inbox(&inbox)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .journal(&journal)
+            .run(),
+    );
 
     assert!(matches!(outcome, Err(TurnError::Round(_))));
     assert_eq!(
@@ -157,13 +178,14 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
     let transport = ScriptedTransport::new([]).then_stall(partial);
     let model = model();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait);
     let mut context = Vec::new();
     let cancellation_token = CancellationToken::new();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
             .observer(&|event: &TurnEvent<'_>| {
                 if matches!(event, TurnEvent::Model(yuke_ai::Event::TextDelta(_))) {
                     cancellation_token.cancel();
@@ -208,14 +230,13 @@ fn a_cancel_during_a_tool_commits_the_results_with_the_end() {
         .unwrap();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let mut context = Vec::new();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -255,11 +276,15 @@ fn the_answer_is_saved_before_its_tool_runs() {
     };
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), tool).unwrap();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .journal(journal.as_ref());
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .journal(journal.as_ref())
+            .run(),
+    )
+    .unwrap();
 
     assert_eq!(*saw.lock().unwrap(), Some(true));
 }
@@ -282,12 +307,15 @@ fn each_answer_commit_names_the_target_of_its_round_with_usage_and_finish_reason
         },
     ]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
-    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
 
     // The reply reports `input_tokens: 0` and leaves out the other counts.
     let usage = Usage {
@@ -345,11 +373,14 @@ fn a_failed_commit_ends_the_turn_before_the_next_step() {
             saves,
             count: AtomicUsize::new(0),
         };
-        let driver = Driver::new(&transport, &model, &NoWait)
-            .toolset(&toolset)
-            .journal(&journal);
+        let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-        let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
+        let outcome = block_on(
+            driver
+                .turn(&mut Vec::new(), vec![Block::user_text("go")])
+                .journal(&journal)
+                .run(),
+        );
 
         let Err(TurnError::Commit(error)) = outcome else {
             panic!("expected a failed commit, got {outcome:?}");
@@ -384,12 +415,13 @@ fn a_cancel_during_a_commit_lets_the_commit_finish() {
         cancellation_token: cancellation_token.clone(),
         replay: Replay::default(),
     };
-    let driver = Driver::new(&transport, &model, &NoWait).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait);
     let mut context = Vec::new();
 
     let outcome = block_on(
         driver
             .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
             .cancellation_token(cancellation_token)
             .run(),
     );
@@ -418,11 +450,23 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         let model = model();
         let hooks = Script::default().plans([RoundPlan::default(), summary(head, keep)]);
         let journal = Replay::default();
-        let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
+        let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
         let mut context = Vec::new();
 
-        block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
-        block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
+        block_on(
+            driver
+                .turn(&mut context, vec![Block::user_text("one")])
+                .journal(&journal)
+                .run(),
+        )
+        .unwrap();
+        block_on(
+            driver
+                .turn(&mut context, vec![Block::user_text("two")])
+                .journal(&journal)
+                .run(),
+        )
+        .unwrap();
 
         let texts: Vec<&str> = context
             .iter()
@@ -474,11 +518,23 @@ fn a_replacement_before_a_retried_round_replays_to_the_new_context() {
         .plans([RoundPlan::default(), summary(&["s1"], 2)])
         .retries([Some(summary(&["s2"], 3))]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
-    block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
-    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("one")])
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("two")])
+            .journal(&journal)
+            .run(),
+    )
+    .unwrap();
 
     assert_eq!(
         context,
@@ -521,13 +577,23 @@ fn each_request_opens_after_the_journal_saved_its_input_and_replacement() {
     };
     let model = model();
     let hooks = Script::default().plans([RoundPlan::default(), summary(&["summary"], 1)]);
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .hooks(&hooks)
-        .journal(journal.as_ref());
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
-    block_on(driver.turn(&mut context, vec![Block::user_text("one")]).run()).unwrap();
-    block_on(driver.turn(&mut context, vec![Block::user_text("two")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("one")])
+            .journal(journal.as_ref())
+            .run(),
+    )
+    .unwrap();
+    block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("two")])
+            .journal(journal.as_ref())
+            .run(),
+    )
+    .unwrap();
 
     assert_eq!(
         *transport.seen.lock().unwrap(),

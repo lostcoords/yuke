@@ -329,8 +329,7 @@ impl Session {
     }
 
     /// The next turn with `driver`. The turn takes each pending input as its input. When the turn runs, the session
-    /// gives the driver its session settings, session id, journal, inbox, and blob store. These replace the values that
-    /// the caller set on the driver.
+    /// sets the system prompt, the settings, the session id, the journal, the inbox, and the blob store of the turn.
     pub fn turn<'s>(&'s mut self, driver: Driver<'s>) -> SessionTurn<'s> {
         SessionTurn {
             session: self,
@@ -492,13 +491,13 @@ impl<'s> SessionTurn<'s> {
         let session_id = session.id.to_string();
         let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
         let turn = driver
+            .turn(&mut session.context, input)
             .system(&system)
             .settings(&session.settings.settings)
             .session_id(&session_id)
             .journal(&turn_journal)
             .inbox(&turn_journal)
             .blobs(&turn_journal)
-            .turn(&mut session.context, input)
             .input_tokens(session.input_tokens)
             .cancellation_token(cancellation_token)
             .observer(&updates);

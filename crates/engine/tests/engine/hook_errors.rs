@@ -85,10 +85,15 @@ fn a_failed_before_round_hook_ends_the_turn_before_any_request() {
     let model = model();
     let hooks = Failing::at(RoundHook::Before);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .journal(&journal)
+            .run(),
+    );
 
     let Err(TurnError::Round(error)) = outcome else {
         panic!("expected a round error, got {outcome:?}");
@@ -142,13 +147,16 @@ fn a_failed_after_round_hook_ends_the_turn_and_keeps_the_answer_and_the_input() 
     let hooks = Failing::at(RoundHook::After);
     let inbox = Queue::new(vec![Block::user_text("steer")]);
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .hooks(&hooks)
-        .inbox(&inbox)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .journal(&journal)
+            .run(),
+    );
 
     let Err(TurnError::Round(error)) = outcome else {
         panic!("expected a round error, got {outcome:?}");

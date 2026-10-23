@@ -27,12 +27,16 @@ fn the_driver_system_prompt_and_settings_reach_each_request() {
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let settings = temperature(0.25);
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .system("Be brief.")
-        .settings(&settings);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
-    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .system("Be brief.")
+            .settings(&settings)
+            .run(),
+    )
+    .unwrap();
 
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
@@ -245,14 +249,12 @@ fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let settings = temperature(0.25);
     let hooks = Starts::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .settings(&settings)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     block_on(
         driver
             .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .settings(&settings)
             .input_tokens(Some(7))
             .run(),
     )
@@ -313,13 +315,12 @@ fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
     };
     let model = model();
     let settings = temperature(0.25);
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .settings(&settings)
-        .hooks(&hooks);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
     let ended = block_on(
         driver
             .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .settings(&settings)
             .input_tokens(Some(7))
             .run(),
     );

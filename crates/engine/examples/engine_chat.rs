@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let http = HttpTransport::new(HttpOptions::new("engine-example"))?;
 
-    let driver = Driver::new(&http, &model, &TokioTimer).system(SYSTEM);
+    let driver = Driver::new(&http, &model, &TokioTimer);
     let mut context = Vec::new();
     let observer = PrintText;
 
@@ -99,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         input.push(Block::user_text(line.trim_end_matches(['\r', '\n'])));
         let outcome = driver
             .turn(&mut context, input)
+            .system(SYSTEM)
             .observer(&observer)
             .cancellation_token(cancellation_token)
             .run()

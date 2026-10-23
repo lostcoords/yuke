@@ -176,12 +176,11 @@ async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_r
         text_reply("done"),
     ]);
     let model = model_of(native_target());
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .blobs(&*media);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
 
     driver
         .turn(&mut Vec::new(), vec![Block::user_text("go")])
+        .blobs(&*media)
         .run()
         .await
         .unwrap();

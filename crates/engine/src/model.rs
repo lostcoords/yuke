@@ -63,7 +63,7 @@ pub enum RoundError {
         /// The round failure that [`crate::Hooks::retry_round`] received. `None` for the other hooks.
         after: Option<Box<RoundError>>,
     },
-    /// The inbox of the driver failed to give its input. The input stays in the inbox.
+    /// The inbox of the turn failed to give its input. The input stays in the inbox.
     Inbox(Box<dyn Error + Send + Sync>),
 }
 

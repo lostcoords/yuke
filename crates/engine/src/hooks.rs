@@ -77,7 +77,7 @@ pub struct RoundStart<'a> {
     pub context: &'a [Block],
     /// The model of the round: the model of the driver, or the model of a plan for this round.
     pub model: &'a Model,
-    /// The settings of the round: the settings of the driver, or the settings of a plan for this round.
+    /// The settings of the round: the settings of the turn, or the settings of a plan for this round.
     pub settings: &'a Settings,
     /// The system prompt of the round.
     pub system: &'a str,
@@ -89,7 +89,7 @@ pub struct RoundStart<'a> {
 }
 
 /// The plan of a round, from [`Hooks::before_round`] or [`Hooks::retry_round`]. A `None` replacement keeps the
-/// context. A `None` model or settings keeps the driver's value.
+/// context. A `None` model keeps the driver's model, and `None` settings keep the turn's settings.
 #[derive(Debug, Clone, Default)]
 pub struct RoundPlan {
     /// A new first part of the context and the number of old blocks that stay after it, for example a summary and the
@@ -97,7 +97,7 @@ pub struct RoundPlan {
     pub replace: Option<Replaced<'static>>,
     /// The model of this round. The next round uses the driver's model again.
     pub model: Option<Model>,
-    /// The settings of this round. The next round uses the driver's settings again.
+    /// The settings of this round. The next round uses the turn's settings again.
     pub settings: Option<Settings>,
 }
 

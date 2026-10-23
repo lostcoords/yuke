@@ -64,13 +64,15 @@ fn input_of_the_hook_continues_the_turn_and_a_tool_round_gives_no_finish_reason(
         inbox: &inbox,
         inputs: Mutex::new(VecDeque::from([vec![Block::user_text("the tests fail")]])),
     };
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .hooks(&hooks)
-        .inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
-    let outcome = block_on(driver.turn(&mut context, vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut context, vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
     assert_eq!(
@@ -90,9 +92,14 @@ fn inbox_input_after_a_final_answer_continues_the_turn() {
     let model = model();
     let hooks = Script::default().decisions([RoundDecision::Proceed, RoundDecision::Proceed]);
     let inbox = Queue::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
-    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
     assert_eq!(hooks.calls(), ["stop first answer", "stop second answer"]);
@@ -109,9 +116,15 @@ fn input_of_the_user_and_of_the_hook_reach_the_same_request_and_the_hook_is_aske
         inbox: &inbox,
         inputs: Mutex::new(VecDeque::from([vec![Block::user_text("from the hook")]])),
     };
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
-    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    )
+    .unwrap();
 
     let requests = transport.requests();
     assert_eq!(requests.len(), 2);
@@ -134,11 +147,15 @@ fn a_failed_take_of_the_inbox_ends_the_turn_and_saves_the_failure() {
     let transport = ScriptedTransport::new([text_reply("done")]);
     let model = model();
     let journal = Replay::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .inbox(&Broken)
-        .journal(&journal);
+    let driver = Driver::new(&transport, &model, &NoWait);
 
-    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .inbox(&Broken)
+            .journal(&journal)
+            .run(),
+    );
 
     assert!(
         matches!(&outcome, Err(TurnError::Round(RoundError::Inbox(error))) if error.to_string() == "the store is gone"),
@@ -156,9 +173,14 @@ fn stop_after_the_final_answer_completes_the_turn() {
     let model = model();
     let hooks = Script::default().decisions([RoundDecision::Stop]);
     let inbox = Queue::new(vec![Block::user_text("later")]);
-    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
 
-    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
+    let outcome = block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .inbox(&inbox)
+            .run(),
+    );
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
     assert_eq!(inbox.held(), [Block::user_text("later")]);

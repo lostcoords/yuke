@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Settings, Target, ToolDefinition, Wire};
+use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Request, Settings, Target, ToolDefinition, Wire};
 use yuke_engine::{CancellationToken, Driver, Hooks, Model, RoundPlan, RoundStart, Toolset};
 use yuke_testing::{NoWait, ScriptedTransport, model, model_of, overloaded_reply, target, text_reply, tool_reply};
 
@@ -48,23 +48,28 @@ fn a_request_from_a_round_start_repeats_the_round_request_and_its_cache_marker_a
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let settings = Settings::new().temperature(0.25);
     let hooks = Newest::default();
-    let driver = Driver::new(&transport, &model, &NoWait)
-        .toolset(&toolset)
-        .system("Be brief.")
-        .settings(&settings)
-        .session_id("s1")
-        .hooks(&hooks);
-    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
+    block_on(
+        driver
+            .turn(&mut Vec::new(), vec![Block::user_text("go")])
+            .system("Be brief.")
+            .settings(&settings)
+            .session_id("s1")
+            .run(),
+    )
+    .unwrap();
 
     let (model, settings, system, tools, mut context) = hooks.0.lock().unwrap().take().unwrap();
     let cached = context.len();
     context.push(Block::user_text("Summarize."));
     let side = ScriptedTransport::new([text_reply("summary")]);
-    let side_driver = Driver::new(&side, &model, &NoWait)
+    let request = Request::new(&context)
         .system(&system)
         .settings(&settings)
-        .session_id("s1");
-    block_on(side_driver.request(&context, cached, &tools, &CancellationToken::new())).unwrap();
+        .session_id("s1")
+        .tools(&tools)
+        .cached(cached);
+    block_on(Driver::new(&side, &model, &NoWait).request(request, &CancellationToken::new())).unwrap();
 
     let round = transport.requests()[1].clone();
     let result = r#"{"type":"tool_result","tool_use_id":"c1","content":"result 1","is_error":false,"cache_control":{"type":"ephemeral"}}"#;
@@ -83,14 +88,12 @@ fn a_request_offers_its_tools_and_runs_no_tool_and_no_hook() {
     let hooks = Script::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
-    let response = block_on(driver.request(
-        &[Block::user_text("go")],
-        1,
-        &[definition("look")],
-        &CancellationToken::new(),
-    ))
-    .unwrap()
-    .unwrap();
+    let blocks = [Block::user_text("go")];
+    let tools = [definition("look")];
+    let request = Request::new(&blocks).tools(&tools);
+    let response = block_on(driver.request(request, &CancellationToken::new()))
+        .unwrap()
+        .unwrap();
 
     assert_eq!(response.completion.finish_reason, FinishReason::ToolCalls);
     assert!(matches!(&response.completion.content[..], [Content::ToolCall(call)] if call.name == "echo"));
@@ -107,7 +110,8 @@ fn a_request_sends_again_after_an_overload() {
     let model = model();
     let driver = Driver::new(&transport, &model, &NoWait);
 
-    let response = block_on(driver.request(&[Block::user_text("go")], 1, &[], &CancellationToken::new()))
+    let blocks = [Block::user_text("go")];
+    let response = block_on(driver.request(Request::new(&blocks), &CancellationToken::new()))
         .unwrap()
         .unwrap();
 
@@ -123,7 +127,8 @@ fn a_cancelled_request_answers_none_and_sends_nothing() {
     let token = CancellationToken::new();
     token.cancel();
 
-    let response = block_on(driver.request(&[Block::user_text("go")], 1, &[], &token)).unwrap();
+    let blocks = [Block::user_text("go")];
+    let response = block_on(driver.request(Request::new(&blocks), &token)).unwrap();
 
     assert!(response.is_none());
     assert_eq!(transport.requests(), Vec::<String>::new());
