@@ -21,14 +21,14 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use yuke_agent::{PromptSection, Session, SessionError, Store, StoreError};
+use yuke_agent::{Session, SessionError, Store, StoreError};
 use yuke_ai::Block;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
-use yuke_js::{Options, Processes, Report, Runtime};
+use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ModelReference,
     NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent,
@@ -42,7 +42,7 @@ use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
 use crate::plugins;
-use crate::prompt::{self, Environment};
+use crate::prompt::{self, Environment, Prompt};
 use crate::providers::Providers;
 
 /// The source of the notices of yuke. A plugin name has no `:`, so no plugin notice has this source.
@@ -92,6 +92,8 @@ struct Shared {
     mode: Mode,
     /// The MCP servers of the user, from `mcp.json` in the config folder.
     mcp: yuke_mcp::Config,
+    /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
+    plugin_folders: Vec<PathBuf>,
     /// The id of the last question of any session.
     last_question: Arc<AtomicU64>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
@@ -154,6 +156,13 @@ impl App {
             observer,
             mode,
             mcp,
+            plugin_folders: plugins
+                .iter()
+                .filter_map(|plugin| match &plugin.origin {
+                    Origin::Folder { root, .. } => Some(root.clone()),
+                    Origin::Bundled { .. } => None,
+                })
+                .collect(),
             last_question: Arc::default(),
             logins: Mutex::default(),
         });
@@ -225,12 +234,26 @@ impl App {
     /// [`AppError::Store`] when the store fails.
     pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
         settings.cwd = canonical(settings.cwd).await?;
-        let prompt = system_prompt(settings.cwd.clone(), self.shared.machine.home.clone()).await?;
+        let prompt = system_prompt(
+            settings.cwd.clone(),
+            self.shared.machine.home.clone(),
+            self.shared.plugin_folders.clone(),
+        )
+        .await?;
         self.check_model(&settings)?;
-        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt)
+        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt.sections)
             .await
             .map_err(AppError::Store)?;
-        self.start_new(session).await
+        let id = self.start_new(session).await?;
+        for warning in prompt.warnings {
+            self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
+                session_id: Some(id),
+                level: NoticeLevel::Warn,
+                source: SOURCE.to_owned(),
+                message: warning,
+            }));
+        }
+        Ok(id)
     }
 
     /// Fork session `id` through event `through`, and open the fork.
@@ -605,12 +628,13 @@ async fn canonical(folder: PathBuf) -> Result<PathBuf, AppError> {
     .await
 }
 
-/// The sections of the system prompt of a session in `workspace`.
-async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>) -> Result<Vec<PromptSection>, AppError> {
+/// The system prompt of a session in `workspace`, with the skills of the plugin folders `plugins`.
+async fn system_prompt(workspace: PathBuf, home: Option<PathBuf>, plugins: Vec<PathBuf>) -> Result<Prompt, AppError> {
     blocking(move || {
         prompt::system_prompt(&Environment {
             workspace: &workspace,
             home: home.as_deref(),
+            plugins: &plugins,
             shell: yuke_js::shell(),
             now: SystemTime::now(),
         })

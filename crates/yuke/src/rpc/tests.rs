@@ -1086,6 +1086,34 @@ async fn an_input_before_handler_asks_the_user_and_a_refusal_removes_the_input()
     client.end().await;
 }
 
+#[tokio::test]
+async fn a_skipped_skill_reaches_the_client_as_a_warning_of_the_new_session() {
+    let place = Place::new("rpc", "a_skipped_skill_reaches_the_client");
+    let skill = place.work.join(".agents/skills/broken");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"), "No frontmatter.").unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
+
+    let id = client.request("session/new", settings(&place)).await;
+    let messages = client.until(|message| message["id"] == json!(id)).await;
+
+    let session = &messages[messages.len() - 1]["result"]["sessionId"];
+    let notice = &messages
+        .iter()
+        .find(|message| message["method"] == "notice")
+        .expect("a notice comes before the answer")["params"];
+    assert_eq!(&notice["sessionId"], session);
+    assert_eq!(notice["level"], "warn");
+    assert_eq!(
+        notice["message"],
+        format!(
+            "yuke skipped the skill at {}: the file has no frontmatter",
+            skill.join("SKILL.md").display()
+        )
+    );
+    client.end().await;
+}
+
 // A load sends the open question again, and an answer after the load ends the wait.
 #[tokio::test]
 async fn a_load_sends_an_open_question_again() {

@@ -541,6 +541,39 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
 }
 
 #[tokio::test]
+async fn the_skills_of_the_workspace_and_of_a_plugin_folder_reach_the_system_prompt() {
+    let place = Place::new("print", "skills");
+    place.plugin("helper", "export function session(s) {}");
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["helper"] }"#).unwrap();
+    let plugin_skill = place.paths.config.join("helper/skills/charts");
+    std::fs::create_dir_all(&plugin_skill).unwrap();
+    std::fs::write(
+        plugin_skill.join("SKILL.md"),
+        "---\nname: charts\ndescription: Draw charts.\n---\n",
+    )
+    .unwrap();
+    let workspace_skill = place.work.join(".agents/skills/pdf");
+    std::fs::create_dir_all(&workspace_skill).unwrap();
+    std::fs::write(
+        workspace_skill.join("SKILL.md"),
+        "---\nname: pdf\ndescription: Read PDF files.\n---\n",
+    )
+    .unwrap();
+
+    let (finished, requests) = run_with(&place, &task("Hi.", SessionChoice::New), &[text_reply("Hello.")]).await;
+
+    finished.unwrap();
+    let request = &requests[0];
+    let at = |text: &str| {
+        request
+            .find(text)
+            .unwrap_or_else(|| panic!("{text} is not in {request}"))
+    };
+    assert!(at("<name>charts</name>") < at("Draw charts.") && at("Draw charts.") < at("<name>pdf</name>"));
+    assert!(at("Read PDF files.") < at("<environment>"));
+}
+
+#[tokio::test]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])

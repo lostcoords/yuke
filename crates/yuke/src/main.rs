@@ -12,6 +12,7 @@ mod print;
 mod prompt;
 mod providers;
 mod rpc;
+mod skills;
 #[cfg(test)]
 mod testing;
 
