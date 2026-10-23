@@ -6,7 +6,7 @@ use std::error::Error as StdError;
 use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
@@ -19,7 +19,7 @@ use yuke_engine::{
 use yuke_protocol::{Input, InteractionRequest, InteractionResponse, ModelReference};
 
 use crate::Runtime;
-use crate::error::{Error, ErrorClass, caught, throw};
+use crate::error::{Error, caught};
 use crate::models::merge_settings;
 use crate::native::Operation;
 use crate::plugins::loader;
@@ -34,7 +34,6 @@ pub struct ScriptSession {
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
     open: u64,
-    points: HookPoints,
 }
 
 impl std::fmt::Debug for ScriptSession {
@@ -60,8 +59,6 @@ impl Runtime {
         let session_id = host.session_id().to_string();
         let ask_host = Arc::clone(&host);
         let model_host = Arc::clone(&host);
-        let points = HookPoints::default();
-        let published = points.clone();
         let open = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
@@ -76,7 +73,6 @@ impl Runtime {
                         &ctx,
                         Function::new(ctx.clone(), move || Json(model_host.model_reference())),
                     )?,
-                    points: caught(&ctx, published.function(&ctx))?,
                 };
                 if let Err(error) = caught(&ctx, open_session.call::<_, ()>((request,))) {
                     registry.close(open);
@@ -89,7 +85,6 @@ impl Runtime {
             caller: self.caller.clone(),
             host,
             open,
-            points,
         })
     }
 }
@@ -130,8 +125,7 @@ impl ScriptSession {
 
     /// Run the `prompt.build` handlers of the plugins on `sections`, after `session(s)` of each plugin settles. Each
     /// handler gets the sections of the answer before it. When `token` is cancelled, the call aborts the signal of the
-    /// build and returns `sections` at once. A closed session, and a session whose plugins are ready without a
-    /// `prompt.build` handler, also return `sections` at once.
+    /// build and returns `sections` at once. A closed session also returns `sections`.
     ///
     /// # Errors
     ///
@@ -142,9 +136,6 @@ impl ScriptSession {
         sections: &[PromptSection],
         token: &CancellationToken,
     ) -> Result<Vec<PromptSection>, Error> {
-        if !self.points.holds(HookPoint::PromptBuild) {
-            return Ok(sections.to_vec());
-        }
         let request = PromptBuildRequest {
             open: self.open,
             sections: Json(sections.to_vec()),
@@ -164,7 +155,6 @@ impl ScriptSession {
             token,
             continues: AtomicU64::new(0),
             retries: AtomicU64::new(0),
-            points: self.points.clone(),
         }
     }
 
@@ -196,8 +186,8 @@ impl Drop for ScriptSession {
     }
 }
 
-/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them, and each hook that
-/// they do not handle keeps its default.
+/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them. While the JavaScript
+/// thread runs, each hook that they do not handle keeps its default.
 pub struct ScriptHooks {
     caller: Caller,
     host: Arc<dyn SessionHost>,
@@ -207,7 +197,6 @@ pub struct ScriptHooks {
     continues: AtomicU64,
     /// The `round.retry` answers that sent the current round again.
     retries: AtomicU64,
-    points: HookPoints,
 }
 
 impl std::fmt::Debug for ScriptHooks {
@@ -223,9 +212,6 @@ impl Hooks for ScriptHooks {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
         // Each round starts here, so its count of retries starts at zero.
         self.retries.store(0, Ordering::Relaxed);
-        if !self.points.holds(HookPoint::RoundBefore) {
-            return Ok(RoundPlan::default());
-        }
         let request = RoundBeforeRequest {
             open: self.open,
             window: round.window,
@@ -250,7 +236,7 @@ impl Hooks for ScriptHooks {
         failure: &RoundError,
     ) -> Result<Option<RoundPlan>, Box<dyn StdError + Send + Sync>> {
         // A failure of yuke itself has no kind for a plugin, so it ends the turn as without a handler.
-        let (true, Some(kind)) = (self.points.holds(HookPoint::RoundRetry), failure_kind(failure)) else {
+        let Some(kind) = failure_kind(failure) else {
             return Ok(None);
         };
         let request = RoundRetryRequest {
@@ -283,9 +269,6 @@ impl Hooks for ScriptHooks {
         context: &[Block],
         finish_reason: Option<FinishReason>,
     ) -> Result<RoundDecision, Box<dyn StdError + Send + Sync>> {
-        if !self.points.holds(HookPoint::RoundAfter) {
-            return Ok(RoundDecision::Proceed);
-        }
         let request = RoundAfterRequest {
             open: self.open,
             text: answer_text(context),
@@ -311,9 +294,6 @@ impl Hooks for ScriptHooks {
     }
 
     async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
-        if !self.points.holds(HookPoint::ToolBefore) {
-            return ToolDecision::Run;
-        }
         let request = ToolBeforeRequest {
             open: self.open,
             call: HookCall::of(call),
@@ -330,9 +310,6 @@ impl Hooks for ScriptHooks {
     }
 
     async fn after_tool(&self, call: &ToolCall, result: &ToolResult) -> Option<ToolResult> {
-        if !self.points.holds(HookPoint::ToolAfter) {
-            return None;
-        }
         let request = ToolAfterRequest {
             open: self.open,
             call: HookCall::of(call),
@@ -413,88 +390,6 @@ struct OpenRequest<'js> {
     ask: Function<'js>,
     /// The native `model()` of the session, which gives the model that the settings name now.
     model: Function<'js>,
-    /// The native `points(names)` of the session, which gives the hook points that hold a handler.
-    points: Function<'js>,
-}
-
-/// A hook point of a session.
-#[derive(Clone, Copy)]
-enum HookPoint {
-    RoundBefore,
-    RoundRetry,
-    PromptBuild,
-    ToolBefore,
-    ToolAfter,
-    RoundAfter,
-}
-
-impl HookPoint {
-    const ALL: [HookPoint; 6] = [
-        HookPoint::RoundBefore,
-        HookPoint::RoundRetry,
-        HookPoint::PromptBuild,
-        HookPoint::ToolBefore,
-        HookPoint::ToolAfter,
-        HookPoint::RoundAfter,
-    ];
-
-    /// The name of the point in `s.hook`.
-    fn name(self) -> &'static str {
-        match self {
-            HookPoint::RoundBefore => "round.before",
-            HookPoint::RoundRetry => "round.retry",
-            HookPoint::PromptBuild => "prompt.build",
-            HookPoint::ToolBefore => "tool.before",
-            HookPoint::ToolAfter => "tool.after",
-            HookPoint::RoundAfter => "round.after",
-        }
-    }
-
-    fn bit(self) -> u8 {
-        1 << self as u8
-    }
-}
-
-/// The hook points of a session that hold a handler. A hook of another point answers at once: it copies nothing and
-/// enters no JavaScript. Each point counts as held until the plugins of the session are ready, so a hook waits for them.
-/// A handler that a plugin adds while a hook reads the set counts from the next hook, as a run of handlers does.
-#[derive(Debug, Clone)]
-struct HookPoints(Arc<AtomicU8>);
-
-impl Default for HookPoints {
-    fn default() -> Self {
-        HookPoints(Arc::new(AtomicU8::new(u8::MAX)))
-    }
-}
-
-impl HookPoints {
-    fn holds(&self, point: HookPoint) -> bool {
-        self.0.load(Ordering::Acquire) & point.bit() != 0
-    }
-
-    /// The native `points(names)`: the points of `names` hold a handler, and the other points hold none. An unknown
-    /// name throws a `TypeError`.
-    fn function<'js>(&self, ctx: &Ctx<'js>) -> rquickjs::Result<Function<'js>> {
-        let points = self.clone();
-        Function::new(
-            ctx.clone(),
-            move |ctx: Ctx<'js>, names: Vec<String>| -> rquickjs::Result<()> {
-                let mut mask = 0;
-                for name in names {
-                    let Some(point) = HookPoint::ALL.into_iter().find(|point| point.name() == name) else {
-                        return Err(throw(
-                            &ctx,
-                            ErrorClass::TypeError,
-                            &format!("points: '{name}' is no hook point"),
-                        ));
-                    };
-                    mask |= point.bit();
-                }
-                points.0.store(mask, Ordering::Release);
-                Ok(())
-            },
-        )
-    }
 }
 
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answer:
@@ -635,8 +530,8 @@ struct RoundBeforeRequest {
     context: ContextBlocks,
 }
 
-/// A copy of the blocks of the context, which each round with a `round.before` handler makes. They cross to JavaScript as
-/// the function `context`, which converts them at each call, so a round without a call converts nothing.
+/// A copy of the blocks of the context. `round.before` and `round.retry` make it, also without a handler. The copy crosses
+/// to JavaScript as the function `context`, which converts it at each call, so a round without a call converts nothing.
 struct ContextBlocks(Vec<Block>);
 
 impl<'js> IntoJs<'js> for ContextBlocks {

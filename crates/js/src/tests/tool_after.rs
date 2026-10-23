@@ -459,11 +459,7 @@ async fn a_removed_handler_and_the_handler_of_a_failed_session_do_not_run() {
 async fn the_result_is_an_error_when_the_javascript_thread_has_ended() {
     let (runtime, session, _reports) = opened(
         "the_result_is_an_error_when_the_javascript_thread_has_ended",
-        // A handler makes the point held, so the hook needs the JavaScript thread.
-        &[(
-            "quiet",
-            "export function session(s) { s.hook('tool.after', () => undefined); }",
-        )],
+        &[("quiet", "export function session(s) {}")],
     )
     .await;
     let hooks = session.hooks(CancellationToken::new());

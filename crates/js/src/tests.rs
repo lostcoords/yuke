@@ -3,7 +3,6 @@ mod ask;
 mod exec;
 mod fs;
 mod globals;
-mod hook_points;
 mod plugins;
 mod process;
 mod prompt;

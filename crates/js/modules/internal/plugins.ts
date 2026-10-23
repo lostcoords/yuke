@@ -69,10 +69,7 @@ interface Scope {
 }
 
 /** The scopes of each open session, by the open number of the host. */
-const opens = new Map<
-  number,
-  { readonly scopes: readonly Scope[]; readonly ready: Promise<void>; readonly points: (names: string[]) => void }
->();
+const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
 
 /**
  * Load the plugin `spec`: import its entry, check its exports, and await `apply(ctx)`. A failure aborts the signal of
@@ -189,36 +186,16 @@ interface OpenRequest {
   readonly ask: Ask;
   /** The model that the settings of the session name now. */
   readonly model: () => ModelReference;
-  /** Tell the host the hook points that hold a handler. The host skips each other point. */
-  readonly points: (names: string[]) => void;
 }
 
 /**
  * Start `session(s)` of each loaded plugin for the session of `request`. Each call starts before any of them settles.
  * The open does not wait for them; `ready(open)` does.
  */
-export function openSession({ open, sessionId, folder, ask, model, points }: OpenRequest): void {
-  // Until each `session` settles, the host counts each point as held, and a hook waits for `ready`. A failed `session`
-  // settles too, so the first publish already leaves out its handlers.
-  let settled = false;
-  let scopes: readonly Scope[] = [];
-  const publish = (): void => {
-    if (!settled) return;
-    const names = new Set<string>();
-    for (const scope of scopes) {
-      if (scope.closed) continue;
-      for (const [point, handlers] of Object.entries(scope.hooks)) if (handlers.length > 0) names.add(point);
-    }
-    points([...names]);
-  };
-  scopes = sessionExports.map(({ plugin, session }) =>
-    start(open, sessionId, folder, ask, model, plugin, session, publish),
-  );
-  const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => {
-    settled = true;
-    publish();
-  });
-  opens.set(open, { scopes, ready, points });
+export function openSession({ open, sessionId, folder, ask, model }: OpenRequest): void {
+  const scopes = sessionExports.map(({ plugin, session }) => start(open, sessionId, folder, ask, model, plugin, session));
+  const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
+  opens.set(open, { scopes, ready });
 }
 
 /** Settles when `session` of each plugin of the open session `open` settles. It never rejects. */
@@ -672,8 +649,6 @@ export async function closeSession(open: number): Promise<void> {
   if (state === undefined) return;
   opens.delete(open);
   for (const scope of state.scopes) scope.closed = true;
-  // A closed session holds no handler, so a hook of a turn that outlives the close enters no JavaScript.
-  state.points([]);
   for (const scope of state.scopes) scope.abort("the session closed");
   await Promise.all(
     state.scopes.map(async (scope) => {
@@ -692,7 +667,6 @@ function start(
   model: () => ModelReference,
   plugin: string,
   session: PluginSession,
-  publish: () => void,
 ): Scope {
   const { signal, abort } = hostSignal();
   // The end of the scope and an abort of `stop` close the question, and it answers `undefined`.
@@ -757,14 +731,12 @@ function start(
       if (typeof handler !== "function") throw new TypeError("hook: the handler is no function");
       const handlers: SessionHooks[K][] = scope.hooks[point];
       handlers.push(handler);
-      publish();
       let added = true;
       // A handler can be in the list twice, so each remover removes one entry once.
       return () => {
         if (!added) return;
         added = false;
         handlers.splice(handlers.indexOf(handler), 1);
-        publish();
       };
     },
     notify(level: NoticeLevel, message: string): void {
