@@ -110,6 +110,7 @@ fn descriptor(
         name: name.to_owned(),
         origin: Origin::Folder { root, entry },
         data_dir,
+        options: serde_json::Map::new(),
         uses: uses.iter().map(|&service| service.to_owned()).collect(),
         provides: provides.iter().map(|&service| service.to_owned()).collect(),
     }

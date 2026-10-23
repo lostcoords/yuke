@@ -85,7 +85,7 @@ function checkObject(schema: ObjectSchema, value: Record<string, unknown>, prefi
     // An own property only, so a name such as `toString` does not find a function of the prototype.
     const property = Object.hasOwn(schema.properties, name) ? schema.properties[name] : undefined;
     if (property === undefined) {
-      throw new Error(`Remove ${prefix}${name}. The arguments are: ${names.join(", ")}.`);
+      throw new Error(`Remove ${prefix}${name}. The fields are: ${names.join(", ")}.`);
     }
     if (field === null && !required.includes(name)) continue;
     // An assignment to `__proto__` would set the prototype, so each field becomes an own property.

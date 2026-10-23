@@ -614,6 +614,7 @@ async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
             module: folder.join("bundled.ts").to_str().unwrap().to_owned(),
         },
         data_dir: data_dir.clone(),
+        options: serde_json::Map::new(),
         uses: Vec::new(),
         provides: Vec::new(),
     };
@@ -632,5 +633,158 @@ async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
             "false".to_owned(),
             data_dir.to_string_lossy().into_owned()
         ]
+    );
+}
+
+/// `plugin` with `options`, a JSON object.
+fn with_options(plugin: Plugin, options: serde_json::Value) -> Plugin {
+    let serde_json::Value::Object(options) = options else {
+        panic!("the options are not a JSON object: {options}");
+    };
+    Plugin { options, ..plugin }
+}
+
+/// The options schema of the test plugins: one required string and two optional fields.
+const NOTES_SCHEMA: &str = "export const optionsSchema = {
+       type: 'object',
+       properties: {
+         folder: { type: 'string' },
+         depth: { type: 'integer', minimum: 1 },
+         tags: { type: 'array', items: { type: 'string' } },
+       },
+       required: ['folder'],
+     };";
+
+#[tokio::test]
+async fn the_checked_options_reach_apply_and_each_session_as_one_frozen_object() {
+    let folder = folder("the_checked_options_reach_apply_and_each_session_as_one_frozen_object");
+    let (runtime, _reports) = start(&folder).await;
+    let notes = plugin(
+        &folder,
+        "notes",
+        Some(&format!(
+            "{NOTES_SCHEMA}
+             export function apply(ctx) {{ globalThis.applied = ctx.options; }}
+             export function session(s) {{ globalThis.sessions = [...(globalThis.sessions ?? []), s.options]; }}"
+        )),
+        &[],
+        &[],
+    );
+    let notes = with_options(
+        notes,
+        serde_json::json!({ "folder": "~/notes", "depth": null, "tags": ["a"] }),
+    );
+    let plain = plugin(
+        &folder,
+        "plain",
+        Some("export function session(s) { globalThis.plain = s.options; }"),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[notes, plain]).await;
+    tool_names(&runtime, &folder.join("a")).await;
+    tool_names(&runtime, &folder.join("b")).await;
+
+    assert!(failures.is_empty(), "{failures:?}");
+    let seen = evaluate::<Vec<String>>(
+        &runtime,
+        "const { applied, sessions, plain } = globalThis;
+         return [
+           JSON.stringify(applied),
+           String(sessions.length === 2 && sessions.every((options) => options === applied)),
+           String(Object.isFrozen(applied) && Object.isFrozen(applied.tags)),
+           JSON.stringify(plain),
+           String(Object.isFrozen(plain)),
+         ];",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        seen,
+        [r#"{"folder":"~/notes","tags":["a"]}"#, "true", "true", "{}", "true"]
+    );
+}
+
+#[tokio::test]
+async fn options_that_fail_the_check_fail_the_load_of_that_plugin_before_its_apply() {
+    let folder = folder("options_that_fail_the_check_fail_the_load_of_that_plugin_before_its_apply");
+    let (runtime, _reports) = start(&folder).await;
+    let checked = |name: &str| {
+        plugin(
+            &folder,
+            name,
+            Some(&format!(
+                "{NOTES_SCHEMA}
+                 export function apply() {{ globalThis.applied = [...(globalThis.applied ?? []), '{name}']; }}"
+            )),
+            &[],
+            &[],
+        )
+    };
+    let missing = checked("missing");
+    let wrong = with_options(checked("wrong"), serde_json::json!({ "folder": "x", "depth": 0 }));
+    let extra = with_options(checked("extra"), serde_json::json!({ "folder": "x", "colour": "red" }));
+    let unasked = with_options(
+        plugin(&folder, "unasked", Some("export function apply() {}"), &[], &[]),
+        serde_json::json!({ "a": 1 }),
+    );
+    let codeless = with_options(
+        plugin(&folder, "codeless", None, &[], &[]),
+        serde_json::json!({ "a": 1 }),
+    );
+    let unchecked = plugin(
+        &folder,
+        "unchecked",
+        Some(
+            "export const optionsSchema = { type: 'object', properties: { a: { type: 'string', default: 'b' } } };
+             export function apply() {}",
+        ),
+        &[],
+        &[],
+    );
+    let good = with_options(checked("good"), serde_json::json!({ "folder": "x" }));
+
+    let failures = runtime
+        .load_plugins(&[missing, wrong, extra, unasked, codeless, unchecked, good])
+        .await;
+
+    let failure = |name: &str, text: &str| {
+        (
+            name.to_owned(),
+            format!("plugin {name} did not load: TypeError: {text}"),
+        )
+    };
+    assert_eq!(
+        texts(&failures),
+        [
+            failure("missing", "the options of config.json: Set folder to a string."),
+            failure(
+                "wrong",
+                "the options of config.json: Set depth to an integer of at least 1."
+            ),
+            failure(
+                "extra",
+                "the options of config.json: Remove colour. The fields are: folder, depth, tags."
+            ),
+            failure(
+                "unasked",
+                "config.json gives options, and the plugin exports no optionsSchema"
+            ),
+            failure(
+                "codeless",
+                "config.json gives options, and the plugin exports no optionsSchema"
+            ),
+            failure(
+                "unchecked",
+                "optionsSchema.properties.a: yuke does not check the keyword 'default'"
+            ),
+        ]
+    );
+    assert_eq!(
+        evaluate::<Vec<String>>(&runtime, "return globalThis.applied;")
+            .await
+            .unwrap(),
+        ["good"]
     );
 }

@@ -1,3 +1,4 @@
+import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { addAbortStep, hostOperation, hostSignal, signalOf, underStop } from "yuke:internal/events";
 import { notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
@@ -32,6 +33,8 @@ interface PluginSpec {
   /** The folder of the plugin, or `undefined` for a bundled plugin. */
   readonly root: string | undefined;
   readonly dataDir: string;
+  /** The options of `config.json`. They are `{}` when the user gives none. */
+  readonly options: Readonly<Record<string, unknown>>;
   /** The absolute path or the `yuke:` name of the entry module, or `undefined` for a plugin without code. */
   readonly entry: string | undefined;
   readonly uses: readonly string[];
@@ -42,7 +45,30 @@ interface PluginSpec {
  * The context of a bundled plugin: a `PluginContext` without `root`, because a bundled plugin has no folder. Only yuke
  * writes bundled plugins, so the public `PluginContext` keeps `root` a string.
  */
-export type BundledContext = Omit<PluginContext, "root">;
+export type BundledContext = Omit<PluginContext<Options>, "root">;
+
+/** The type of the options in the loader. */
+type Options = Readonly<Record<string, unknown>>;
+
+/**
+ * Check the options `given` against `schema`, the `optionsSchema` export, and return them frozen. A plugin without a
+ * schema takes no options.
+ */
+function optionsOf(given: Options, schema: unknown): Options {
+  if (schema === undefined) {
+    if (Object.keys(given).length > 0) {
+      throw new TypeError("config.json gives options, and the plugin exports no optionsSchema");
+    }
+    return Object.freeze({});
+  }
+  checkParameters(schema, "optionsSchema");
+  try {
+    return frozen(checkArguments(schema, given));
+  } catch (error) {
+    // The check throws an `Error` whose message says what to change.
+    throw new TypeError(`the options of config.json: ${(error as Error).message}`);
+  }
+}
 
 /** The services of the loaded plugins. A service enters only after its provider's `apply` succeeds. */
 const services = new Map<string, unknown>();
@@ -54,7 +80,11 @@ let closing = false;
 const loaded: { readonly plugin: string; readonly abort: (reason: string) => void; readonly cleanup?: Cleanup }[] = [];
 
 /** The `session` export of each loaded plugin, in load order. */
-const sessionExports: { readonly plugin: string; readonly session: PluginSession }[] = [];
+const sessionExports: {
+  readonly plugin: string;
+  readonly session: PluginSession<Options>;
+  readonly options: Options;
+}[] = [];
 
 /** The form of a prompt section key. */
 const sectionKey = /^[a-z][a-z0-9_-]*$/;
@@ -91,48 +121,58 @@ export async function load(spec: PluginSpec): Promise<void> {
   const { signal, abort } = hostSignal();
   const pending = new Map<string, unknown>();
   let applying = true;
-  // A bundled plugin has no folder, so its context has no `root`.
-  const ctx: BundledContext & { readonly root?: string } = Object.freeze({
-    name: spec.name,
-    ...(spec.root === undefined ? {} : { root: spec.root }),
-    dataDir: spec.dataDir,
-    signal,
-    provide(name: string, value: unknown): void {
-      if (!spec.provides.includes(name))
-        throw new TypeError(`provide: plugin ${spec.name} has no '${name}' in provides`);
-      if (!applying) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' after its apply`);
-      if (pending.has(name)) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' twice`);
-      if (value === undefined || value === null)
-        throw new TypeError(`provide: plugin ${spec.name} cannot provide '${name}' as null or undefined`);
-      pending.set(name, value);
-    },
-    get<K extends keyof Services & string>(name: K): NonNullable<Services[K]> {
-      if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
-      if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
-      return services.get(name) as NonNullable<Services[K]>;
-    },
-    notify(level: NoticeLevel, message: string): void {
-      notify(spec.name, level, String(message), undefined);
-    },
-  });
-
   let cleanup: Cleanup | undefined;
   try {
-    let session: PluginSession | undefined;
+    let apply: unknown;
+    let session: PluginSession<Options> | undefined;
+    let optionsSchema: unknown;
     if (spec.entry !== undefined) {
-      const { apply, session: exported } = (await import(spec.entry)) as {
+      const exports = (await import(spec.entry)) as {
         readonly apply?: unknown;
         readonly session?: unknown;
+        readonly optionsSchema?: unknown;
       };
-      if (apply === undefined && exported === undefined) {
+      if (exports.apply === undefined && exports.session === undefined) {
         throw new TypeError(`${spec.entry} exports neither apply nor session: a plugin entry exports one or both`);
       }
-      if (apply !== undefined && typeof apply !== "function") throw new TypeError("the apply export is no function");
-      if (exported !== undefined && typeof exported !== "function") {
+      if (exports.apply !== undefined && typeof exports.apply !== "function") {
+        throw new TypeError("the apply export is no function");
+      }
+      if (exports.session !== undefined && typeof exports.session !== "function") {
         throw new TypeError("the session export is no function");
       }
-      session = exported as PluginSession | undefined;
-      const result: unknown = apply === undefined ? undefined : await apply(ctx);
+      apply = exports.apply;
+      session = exports.session as PluginSession<Options> | undefined;
+      optionsSchema = exports.optionsSchema;
+    }
+    const options = optionsOf(spec.options, optionsSchema);
+    // A bundled plugin has no folder, so its context has no `root`.
+    const ctx: BundledContext & { readonly root?: string } = Object.freeze({
+      name: spec.name,
+      ...(spec.root === undefined ? {} : { root: spec.root }),
+      dataDir: spec.dataDir,
+      options,
+      signal,
+      provide(name: string, value: unknown): void {
+        if (!spec.provides.includes(name))
+          throw new TypeError(`provide: plugin ${spec.name} has no '${name}' in provides`);
+        if (!applying) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' after its apply`);
+        if (pending.has(name)) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' twice`);
+        if (value === undefined || value === null)
+          throw new TypeError(`provide: plugin ${spec.name} cannot provide '${name}' as null or undefined`);
+        pending.set(name, value);
+      },
+      get<K extends keyof Services & string>(name: K): NonNullable<Services[K]> {
+        if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
+        if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
+        return services.get(name) as NonNullable<Services[K]>;
+      },
+      notify(level: NoticeLevel, message: string): void {
+        notify(spec.name, level, String(message), undefined);
+      },
+    });
+    if (typeof apply === "function") {
+      const result: unknown = await apply(ctx);
       if (result !== undefined && typeof result !== "function") {
         throw new TypeError("apply must return nothing or a cleanup function");
       }
@@ -143,7 +183,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     const missing = spec.provides.filter((name) => !pending.has(name));
     if (missing.length > 0) throw new TypeError(`apply did not provide ${missing.join(", ")} of provides`);
     for (const [name, value] of pending) services.set(name, value);
-    if (session !== undefined) sessionExports.push({ plugin: spec.name, session });
+    if (session !== undefined) sessionExports.push({ plugin: spec.name, session, options });
     loaded.push(cleanup === undefined ? { plugin: spec.name, abort } : { plugin: spec.name, abort, cleanup });
   } catch (error) {
     applying = false;
@@ -206,7 +246,7 @@ interface OpenRequest {
  */
 export function openSession(request: OpenRequest): void {
   const { open, sessionId, folder, ask, model } = request;
-  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, model, entry.plugin, entry.session));
+  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, model, entry));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
@@ -780,16 +820,16 @@ export async function closeSession(open: number): Promise<void> {
   );
 }
 
-/** Run `session(s)` of `plugin` in its own scope. */
+/** Run `session(s)` of the plugin of `entry` in its own scope. */
 function start(
   open: number,
   sessionId: string,
   folder: string,
   ask: Ask,
   model: () => ModelReference,
-  plugin: string,
-  session: PluginSession,
+  entry: (typeof sessionExports)[number],
 ): Scope {
+  const { plugin, session, options } = entry;
   const { signal, abort } = hostSignal();
   // The end of the scope and an abort of `stop` close the question, and it answers `undefined`.
   const question = async <T extends boolean | string>(
@@ -832,12 +872,13 @@ function start(
     settled: Promise.resolve(undefined),
     clean,
   };
-  const s: SessionContext = Object.freeze({
+  const s: SessionContext<Options> = Object.freeze({
     sessionId,
     folder,
     get model(): ModelReference {
       return Object.freeze(model());
     },
+    options,
     signal,
     tools: Object.freeze({
       define<const S extends ObjectSchema>(tool: Tool<S>): () => void {

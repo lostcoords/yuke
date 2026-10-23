@@ -2,6 +2,8 @@
  * The plugin API. The entry module of a plugin exports `apply`, `session`, or both.
  * - `apply(ctx)` runs once per runtime, for the parts that every session shares.
  * - `session(s)` runs once per session, for the tools and hooks of that session.
+ * - `optionsSchema` is the `ObjectSchema` of the options that the user gives in `config.json`. Without it, the plugin
+ *   takes no options. Type the contexts with `PluginContext<Infer<typeof optionsSchema>>`.
  * - The declarations need TypeScript 5.4 or later.
  *
  * Errors:
@@ -26,14 +28,31 @@ export type NoticeLevel = "debug" | "info" | "warn" | "error";
 // biome-ignore lint/suspicious/noEmptyInterface: each provider adds its service to this interface.
 export interface Services {}
 
-/** What `apply` of a plugin gets. */
-export interface PluginContext {
+/** `T` with each field read-only at each depth, as the host freezes it. */
+export type Frozen<T> = T extends readonly (infer U)[]
+  ? readonly Frozen<U>[]
+  : T extends object
+    ? { readonly [K in keyof T]: Frozen<T[K]> }
+    : T;
+
+/**
+ * What `apply` of a plugin gets. `O` is the type of the options. A plugin without options keeps the default type,
+ * `Record<string, never>`.
+ */
+export interface PluginContext<O = Record<string, never>> {
   /** The name of the plugin, from its `plugin.json`, or the name of a bundled plugin of yuke. */
   readonly name: string;
   /** The absolute folder of the plugin. A bundled plugin of yuke has no folder, and its context has no `root`. */
   readonly root: string;
   /** The absolute data folder of the plugin. It exists, and it stays across reloads. */
   readonly dataDir: string;
+  /**
+   * The options of `config.json` after the check against `optionsSchema`. They are `{}` when `config.json` gives none.
+   * - A field that the schema does not require can be absent. The plugin then picks its value.
+   * - A `null` field that the schema does not require counts as absent.
+   * - A reload reads the options again.
+   */
+  readonly options: Frozen<O>;
   /**
    * The host aborts this signal when the plugin fails to load, and when the runtime closes, before the cleanup of
    * `apply`. The plugin must then clear its timers, because the host does not clear them.
@@ -399,14 +418,16 @@ export interface InputOptions extends AskOptions {
   readonly secret?: boolean | undefined;
 }
 
-/** What `session` of a plugin gets for one session. */
-export interface SessionContext {
+/** What `session` of a plugin gets for one session. `O` is the type of the options, as in `PluginContext`. */
+export interface SessionContext<O = Record<string, never>> {
   /** The id of the session. */
   readonly sessionId: string;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
   readonly folder: string;
   /** The model of the session now. A change of the settings changes it at once. */
   readonly model: ModelReference;
+  /** The options of the plugin. They are the same object as `options` of `PluginContext`. */
+  readonly options: Frozen<O>;
   /** The host aborts this signal when the session closes or `session` of this plugin fails. The plugin then stops. */
   readonly signal: AbortSignal;
   /** The tools of the plugin in this session. They stay until their removal or the close of the session. */
@@ -448,7 +469,9 @@ export interface SessionContext {
  * - The close of the runtime awaits its cleanup after each session closed, newest plugin first, with no time limit.
  * - A plugin that fails to load after its `apply` returned still runs the cleanup.
  */
-export type PluginApply = (ctx: PluginContext) => undefined | Cleanup | Promise<undefined | Cleanup>;
+export type PluginApply<O = Record<string, never>> = (
+  ctx: PluginContext<O>,
+) => undefined | Cleanup | Promise<undefined | Cleanup>;
 
 /** What `apply` or `session` can return: the work that the close awaits. A throw is a notice. */
 export type Cleanup = () => void | Promise<void>;
@@ -459,4 +482,6 @@ export type Cleanup = () => void | Promise<void>;
  * - A throw removes its tools and aborts its signal.
  * - The close of the session waits for it to settle, so it must end when its signal aborts.
  */
-export type PluginSession = (s: SessionContext) => undefined | Cleanup | Promise<undefined | Cleanup>;
+export type PluginSession<O = Record<string, never>> = (
+  s: SessionContext<O>,
+) => undefined | Cleanup | Promise<undefined | Cleanup>;

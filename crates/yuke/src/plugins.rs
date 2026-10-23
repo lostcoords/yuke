@@ -5,10 +5,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path};
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use yuke_js::{Origin, Plugin};
 
-use crate::config::read_json;
+use crate::config::{ConfigPlugin, read_json};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -21,7 +21,7 @@ const EXTENSION: &str = "sh.yuke";
 struct Manifest {
     name: String,
     #[serde(default)]
-    extensions: serde_json::Map<String, Value>,
+    extensions: Map<String, Value>,
 }
 
 /// The fields of yuke in `extensions["sh.yuke"]`. Another field, such as `activation`, is an error.
@@ -40,8 +40,8 @@ struct YukeFields {
 /// plugin uses and provides no service.
 const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:bundled/compaction")];
 
-/// The bundled plugins that `disable` does not name, then the plugins of the folders `list`, in its order. A relative
-/// folder starts in `config_folder`. The function makes the data folder `<data>/plugins/<name>` of each plugin.
+/// The bundled plugins that `disable` does not name, then the plugins of `list`, in its order. A relative folder starts
+/// in `config_folder`. A bundled plugin has no options. The function makes the data folder `<data>/plugins/<name>` of each plugin.
 ///
 /// # Errors
 ///
@@ -50,7 +50,7 @@ const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:bundled/compaction")];
 /// plugin has.
 pub(crate) fn plugins(
     config_folder: &Path,
-    list: &[String],
+    list: &[ConfigPlugin],
     disable: &[String],
     data: &Path,
 ) -> Result<Vec<Plugin>, String> {
@@ -61,7 +61,7 @@ pub(crate) fn plugins(
 fn with_bundled(
     bundled: &[(&str, &str)],
     config_folder: &Path,
-    list: &[String],
+    list: &[ConfigPlugin],
     disable: &[String],
     data: &Path,
 ) -> Result<Vec<Plugin>, String> {
@@ -82,12 +82,13 @@ fn with_bundled(
                 module: module.to_owned(),
             },
             data_dir: data.join("plugins").join(name),
+            options: Map::new(),
             uses: Vec::new(),
             provides: Vec::new(),
         })
         .collect();
     let mut roots = HashSet::new();
-    for folder in list {
+    for ConfigPlugin { path: folder, options } in list {
         let fail = |message: String| format!("plugin folder {folder}: {message}");
         let root = config_folder
             .join(folder)
@@ -96,7 +97,7 @@ fn with_bundled(
         if !roots.insert(root.clone()) {
             return Err(fail("the list names this folder twice".to_owned()));
         }
-        plugins.push(manifest_plugin(&root, data).map_err(fail)?);
+        plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
     }
 
     // The order of the list is the load order, so each provider must come before each plugin that uses it.
@@ -141,8 +142,8 @@ fn with_bundled(
     Ok(plugins)
 }
 
-/// The plugin of the folder `root`, from its manifest.
-fn manifest_plugin(root: &Path, data: &Path) -> Result<Plugin, String> {
+/// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.
+fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
     let path = root.join(MANIFEST);
     let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
     valid_name(&manifest.name)?;
@@ -198,6 +199,7 @@ fn manifest_plugin(root: &Path, data: &Path) -> Result<Plugin, String> {
             root: root.to_owned(),
             entry,
         },
+        options,
         uses: fields.uses,
         provides: fields.provides,
     })

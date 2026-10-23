@@ -35,6 +35,7 @@ async fn opened(name: &str, models: &Arc<Recorded>) -> (Runtime, ScriptSession, 
             module: "yuke:bundled/compaction".to_owned(),
         },
         data_dir,
+        options: serde_json::Map::new(),
         uses: Vec::new(),
         provides: Vec::new(),
     };

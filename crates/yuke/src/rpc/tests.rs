@@ -2058,6 +2058,47 @@ async fn after_a_reload_the_next_turn_of_an_open_session_has_the_tools_of_the_ch
 }
 
 #[tokio::test]
+async fn a_plugin_gets_the_options_of_its_config_item_and_a_reload_reads_them_again() {
+    let place = Place::new("rpc", "reload_options");
+    place.plugin(
+        "tools",
+        "export const optionsSchema = {
+           type: 'object', properties: { name: { type: 'string' } }, required: ['name'],
+         };
+         export function session(s) {
+           s.tools.define({
+             name: s.options.name, description: 'A tool.', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute: async () => 'done',
+           });
+         }",
+    );
+    let config = |name: &str| {
+        let config = json!({ "plugins": [{ "path": "tools", "options": { "name": name } }] });
+        std::fs::write(place.paths.config.join("config.json"), config.to_string()).unwrap();
+    };
+    config("alpha");
+    let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    turn(&mut client, &session, "first").await;
+    config("beta");
+
+    let reloaded = client.call("profile/reload", json!({})).await;
+    turn(&mut client, &session, "second").await;
+
+    assert_eq!(reloaded, Ok(json!({})));
+    let requests = transport.requests();
+    assert!(requests[0].contains(r#""name":"alpha""#), "{}", requests[0]);
+    assert!(
+        requests[1].contains(r#""name":"beta""#) && !requests[1].contains(r#""name":"alpha""#),
+        "{}",
+        requests[1]
+    );
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_job_of_an_open_session_still_runs_after_a_reload() {
     let place = Place::new("rpc", "reload_job");
     let (mut client, session, _transport) = session_with_a_job(&place).await;

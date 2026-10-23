@@ -489,7 +489,7 @@ async fn arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs() {
     assert_eq!(error_of(write_tool, "[]").await, "Pass the arguments as a JSON object.");
     assert_eq!(
         error_of(write_tool, r#"{"path": "a.txt", "content": "x", "mode": 1}"#).await,
-        "Remove mode. The arguments are: path, content."
+        "Remove mode. The fields are: path, content."
     );
     assert_eq!(
         error_of(write_tool, r#"{"path": 1, "content": "x"}"#).await,
@@ -501,7 +501,7 @@ async fn arguments_that_do_not_fit_the_schema_fail_before_the_tool_runs() {
     );
     assert_eq!(
         error_of(write_tool, r#"{"path": "a.txt", "content": "x", "toString": 1}"#).await,
-        "Remove toString. The arguments are: path, content."
+        "Remove toString. The fields are: path, content."
     );
     assert_eq!(
         error_of(&tools["read"], r#"{"path": "a.txt", "offset": 0}"#).await,

@@ -34,14 +34,15 @@ fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
 
 /// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
 fn load_with(bundled: &[(&str, &str)], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
-    let strings = |names: &[&str]| -> Vec<String> { names.iter().map(|&name| name.to_owned()).collect() };
-    with_bundled(
-        bundled,
-        &root.join("config"),
-        &strings(list),
-        &strings(disable),
-        &root.join("data"),
-    )
+    let list: Vec<ConfigPlugin> = list
+        .iter()
+        .map(|&path| ConfigPlugin {
+            path: path.to_owned(),
+            options: Map::new(),
+        })
+        .collect();
+    let disable: Vec<String> = disable.iter().map(|&name| name.to_owned()).collect();
+    with_bundled(bundled, &root.join("config"), &list, &disable, &root.join("data"))
 }
 
 #[test]
@@ -79,6 +80,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
                     entry: Some(root.join("config/notes/./index.ts")),
                 },
                 data_dir: root.join("data/plugins/notes"),
+                options: Map::new(),
                 uses: Vec::new(),
                 provides: vec!["notes".to_owned()],
             },
@@ -89,6 +91,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
                     entry: None,
                 },
                 data_dir: root.join("data/plugins/reader"),
+                options: Map::new(),
                 uses: vec!["notes".to_owned()],
                 provides: Vec::new(),
             },
@@ -227,6 +230,7 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
                 module: "yuke:bundled/second".to_owned(),
             },
             data_dir: root.join("data/plugins/second"),
+            options: Map::new(),
             uses: Vec::new(),
             provides: Vec::new(),
         }

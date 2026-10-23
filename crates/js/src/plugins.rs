@@ -8,6 +8,7 @@ use rquickjs::{Ctx, Function, IntoJs, Module, Object, Promise};
 
 use crate::Runtime;
 use crate::error::{Error, caught};
+use crate::tools::Json;
 
 /// The name of the internal module that loads a plugin.
 const LOADER: &str = "yuke:internal/plugins";
@@ -21,6 +22,9 @@ pub struct Plugin {
     pub origin: Origin,
     /// The data folder of the plugin. It must exist.
     pub data_dir: PathBuf,
+    /// The options of the plugin. They are empty when the user gives none. The loader checks them against the
+    /// `optionsSchema` export of the plugin.
+    pub options: serde_json::Map<String, serde_json::Value>,
     /// The services that the plugin gets from earlier plugins.
     pub uses: Vec<String>,
     /// The services that the plugin publishes.
@@ -155,6 +159,7 @@ impl Runtime {
                     name: plugin.name,
                     root,
                     data_dir: path(&plugin.data_dir),
+                    options: Json(plugin.options),
                     entry,
                     uses: plugin.uses,
                     provides: plugin.provides,
@@ -174,6 +179,7 @@ struct PluginSpec {
     /// The folder of the plugin, or `None` for a bundled plugin.
     root: Option<String>,
     data_dir: String,
+    options: Json<serde_json::Map<String, serde_json::Value>>,
     entry: Option<String>,
     uses: Vec<String>,
     provides: Vec<String>,

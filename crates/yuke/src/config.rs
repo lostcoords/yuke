@@ -3,19 +3,55 @@
 use std::io;
 use std::path::Path;
 
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Error as _};
+use serde::{Deserialize, Deserializer};
+use serde_json::{Map, Value};
 
 /// The settings of `config.json`. A missing key keeps its default, and an unknown key is an error.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
-    /// The folders of the plugins, in load order. A relative folder starts in the folder of `config.json`.
+    /// The plugins of the profile, in load order.
     #[serde(default)]
-    pub(crate) plugins: Vec<String>,
+    pub(crate) plugins: Vec<ConfigPlugin>,
     /// The bundled plugins that do not load, by name.
     #[serde(default)]
     pub(crate) disable: Vec<String>,
+}
+
+/// One item of `plugins`: a folder path, or an object with `path` and `options`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfigPlugin {
+    /// The folder of the plugin. A relative folder starts in the folder of `config.json`.
+    pub(crate) path: String,
+    /// The options of the plugin. They are empty when the item gives none.
+    pub(crate) options: Map<String, Value>,
+}
+
+impl<'de> Deserialize<'de> for ConfigPlugin {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Full {
+            path: String,
+            #[serde(default)]
+            options: Map<String, Value>,
+        }
+        match Value::deserialize(deserializer)? {
+            Value::String(path) => Ok(Self {
+                path,
+                options: Map::new(),
+            }),
+            // The error of serde names the bad field or the unknown field.
+            value @ Value::Object(_) => {
+                let Full { path, options } = Full::deserialize(value).map_err(D::Error::custom)?;
+                Ok(Self { path, options })
+            }
+            _ => Err(D::Error::custom(
+                "a plugin is a folder path or an object with \"path\" and \"options\"",
+            )),
+        }
+    }
 }
 
 /// Read the JSON file `path`, with `//` and `/* */` comments. A missing file gives `Ok(None)`. An error names the path.
@@ -101,7 +137,57 @@ pub(crate) fn without_comments(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+
+    #[test]
+    fn a_plugin_item_is_a_folder_path_or_an_object_with_options() {
+        let config: Config = serde_json::from_value(json!({
+            "plugins": ["./plain", { "path": "./notes", "options": { "folder": "~/notes" } }, { "path": "./bare" }]
+        }))
+        .unwrap();
+
+        let folder = |path: &str, options: Value| ConfigPlugin {
+            path: path.to_owned(),
+            options: options.as_object().unwrap().clone(),
+        };
+        assert_eq!(
+            config.plugins,
+            [
+                folder("./plain", json!({})),
+                folder("./notes", json!({ "folder": "~/notes" })),
+                folder("./bare", json!({})),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plugin_item_of_another_form_fails_with_the_reason() {
+        let error = |plugin: Value| {
+            serde_json::from_value::<Config>(json!({ "plugins": [plugin] }))
+                .unwrap_err()
+                .to_string()
+        };
+
+        assert_eq!(
+            error(json!(1)),
+            "a plugin is a folder path or an object with \"path\" and \"options\""
+        );
+        assert_eq!(
+            error(json!({ "path": "./a", "options": null })),
+            "invalid type: null, expected a map"
+        );
+        assert_eq!(
+            error(json!({ "path": "./a", "option": {} })),
+            "unknown field `option`, expected `path` or `options`"
+        );
+        assert_eq!(
+            error(json!({ "path": "./a", "options": [] })),
+            "invalid type: sequence, expected a map"
+        );
+        assert_eq!(error(json!({ "options": {} })), "missing field `path`");
+    }
 
     #[test]
     fn comments_become_spaces_and_strings_keep_their_slashes() {

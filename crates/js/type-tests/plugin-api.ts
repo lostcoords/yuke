@@ -2,6 +2,7 @@
 import type {
   Block,
   FinishReason,
+  Frozen,
   PluginApply,
   PluginContext,
   PluginSession,
@@ -356,3 +357,30 @@ assert<Equal<typeof Event.AT_TARGET, 2>>();
 new TextDecoder("utf8");
 // @ts-expect-error: the decoder decodes UTF-8 only.
 new TextDecoder("utf-16le");
+
+// The options of a plugin have the type of its `optionsSchema`, and both contexts read them.
+export const optionsSchema = {
+  type: "object",
+  properties: {
+    folder: { type: "string" },
+    depth: { type: "integer" },
+    tags: { type: "array", items: { type: "string" } },
+  },
+  required: ["folder"],
+} as const satisfies ObjectSchema;
+type Options = Infer<typeof optionsSchema>;
+export const applyWithOptions: PluginApply<Options> = (context) => {
+  assert<Equal<typeof context.options.folder, string>>();
+  assert<Equal<typeof context.options.depth, number | undefined>>();
+  // @ts-expect-error: the options are read-only.
+  context.options.folder = "x";
+  // @ts-expect-error: the nested values of the options are read-only too.
+  context.options.tags?.push("x");
+  return undefined;
+};
+export const sessionWithOptions: PluginSession<Options> = (session) => {
+  assert<Equal<typeof session.options, Frozen<Options>>>();
+  return undefined;
+};
+// @ts-expect-error: a plugin without options has no option field.
+export const noOption: string = ctx.options.folder;
