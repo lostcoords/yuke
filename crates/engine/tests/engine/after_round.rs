@@ -7,7 +7,7 @@ use yuke_ai::{Block, FinishReason};
 use yuke_engine::{Driver, Hooks, Inbox, Outcome, RoundDecision, RoundError, Toolset, TurnEnd, TurnError};
 use yuke_testing::{NoWait, ScriptedTransport, assert_in_order, model, text_reply, tool_reply};
 
-use crate::support::{Recorder, Replay, Script, block_on, definition};
+use crate::support::{Queue, Recorder, Replay, Script, block_on, definition};
 
 #[test]
 fn a_final_answer_gives_its_finish_reason_and_proceed_without_input_completes_the_turn() {
@@ -31,7 +31,7 @@ fn a_final_answer_gives_its_finish_reason_and_proceed_without_input_completes_th
 /// Hooks that put the next input of `inputs` in `inbox`, and then answer as `script`.
 struct Feeding<'a> {
     script: Script,
-    inbox: &'a Mutex<Vec<Block>>,
+    inbox: &'a Queue,
     inputs: Mutex<VecDeque<Vec<Block>>>,
 }
 
@@ -43,7 +43,7 @@ impl Hooks for Feeding<'_> {
         finish_reason: Option<FinishReason>,
     ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
         let input = self.inputs.lock().unwrap().pop_front().unwrap_or_default();
-        self.inbox.lock().unwrap().extend(input);
+        self.inbox.extend(input);
         self.script.after_round(context, finish_reason).await
     }
 }
@@ -58,7 +58,7 @@ fn input_of_the_hook_continues_the_turn_and_a_tool_round_gives_no_finish_reason(
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let inbox = Mutex::new(Vec::new());
+    let inbox = Queue::new(Vec::new());
     let hooks = Feeding {
         script: Script::default(),
         inbox: &inbox,
@@ -89,7 +89,7 @@ fn inbox_input_after_a_final_answer_continues_the_turn() {
     let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
     let model = model();
     let hooks = Script::default().decisions([RoundDecision::Proceed, RoundDecision::Proceed]);
-    let inbox = Mutex::new(vec![Block::user_text("later")]);
+    let inbox = Queue::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
@@ -103,7 +103,7 @@ fn inbox_input_after_a_final_answer_continues_the_turn() {
 fn input_of_the_user_and_of_the_hook_reach_the_same_request_and_the_hook_is_asked_again() {
     let transport = ScriptedTransport::new([text_reply("first answer"), text_reply("second answer")]);
     let model = model();
-    let inbox = Mutex::new(vec![Block::user_text("from the user")]);
+    let inbox = Queue::new(vec![Block::user_text("from the user")]);
     let hooks = Feeding {
         script: Script::default(),
         inbox: &inbox,
@@ -155,11 +155,11 @@ fn stop_after_the_final_answer_completes_the_turn() {
     let transport = ScriptedTransport::new([text_reply("done")]);
     let model = model();
     let hooks = Script::default().decisions([RoundDecision::Stop]);
-    let inbox = Mutex::new(vec![Block::user_text("later")]);
+    let inbox = Queue::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
 
     let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
 
     assert!(matches!(outcome, Ok(Outcome::Completed { .. })));
-    assert_eq!(*inbox.lock().unwrap(), [Block::user_text("later")]);
+    assert_eq!(inbox.held(), [Block::user_text("later")]);
 }

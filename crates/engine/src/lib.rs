@@ -18,7 +18,7 @@ pub use hooks::{Hooks, RoundDecision, RoundPlan, RoundStart, ToolDecision};
 pub use model::{CredentialSource, Model, RoundError};
 pub use tokio_util::sync::CancellationToken;
 pub use tool::{
-    Concurrency, MediaStore, TOOL_CALL_NAME, TOOL_NAME_MAX, Tool, ToolContent, ToolContext, ToolNameError, Toolset,
-    check_tool_name, parse_arguments, tool_name_character,
+    Concurrency, MediaStore, TOOL_NAME_MAX, Tool, ToolContent, ToolContext, ToolNameError, Toolset, check_tool_name,
+    parse_arguments, tool_name_character,
 };
 pub use turn_state::{Answer, Commit, Outcome, Replaced, TurnEnd, chain_text};

@@ -43,7 +43,7 @@ fn bm25_matches_the_singular_and_the_plural_of_a_word() {
     ] {
         let found = bm25(query, &borrowed, 5);
 
-        let names: Vec<&str> = found.iter().map(|&index| tools[index].name.as_str()).collect();
+        let names: Vec<&str> = found.iter().map(|tool| tool.name.as_str()).collect();
         assert_eq!(names, [expected], "{query}");
     }
 }
@@ -82,6 +82,6 @@ fn bm25_ranks_word_matches_and_drops_tools_without_one() {
     let found = bm25("github issue", &borrowed, 5);
 
     // camelCase splits `createIssue`, and a property under `anyOf` gives `comment` the word `issue`.
-    let names: Vec<&str> = found.iter().map(|&index| tools[index].name.as_str()).collect();
+    let names: Vec<&str> = found.iter().map(|tool| tool.name.as_str()).collect();
     assert_eq!(names, ["createIssue", "list_issues", "comment"]);
 }

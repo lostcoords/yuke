@@ -1,5 +1,8 @@
 //! Client tools. A [`Toolset`] keeps each definition beside its handler. A call runs the handler of its name.
 
+use std::error::Error;
+use std::fmt;
+
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
@@ -53,8 +56,8 @@ pub struct ToolContext<'a> {
     observer: &'a dyn Observer,
 }
 
-impl std::fmt::Debug for ToolContext<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for ToolContext<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ToolContext")
             .field("call", &self.call)
             .finish_non_exhaustive()
@@ -147,7 +150,7 @@ pub trait MediaStore: Send + Sync {
 /// # Errors
 ///
 /// Returns [`ToolNameError::Invalid`] for another form, and [`ToolNameError::Reserved`] for
-/// [`yuke_ai::SEARCH_TOOL_NAME`] and [`TOOL_CALL_NAME`].
+/// [`yuke_ai::SEARCH_TOOL_NAME`] and `tool_call`.
 pub fn check_tool_name(name: &str) -> Result<(), ToolNameError> {
     let valid = (1..=TOOL_NAME_MAX).contains(&name.len()) && name.chars().all(tool_name_character);
     if !valid {
@@ -164,14 +167,14 @@ pub fn check_tool_name(name: &str) -> Result<(), ToolNameError> {
 pub enum ToolNameError {
     /// Another tool already has the name. One name can select only one handler.
     Duplicate(String),
-    /// The engine owns the name: [`yuke_ai::SEARCH_TOOL_NAME`] or [`TOOL_CALL_NAME`].
+    /// The engine owns the name: [`yuke_ai::SEARCH_TOOL_NAME`] or `tool_call`.
     Reserved(String),
     /// The name does not match `^[a-zA-Z0-9_-]{1,64}$`.
     Invalid(String),
 }
 
-impl std::fmt::Display for ToolNameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for ToolNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ToolNameError::Duplicate(name) => write!(f, "another tool already has the name \"{name}\""),
             ToolNameError::Reserved(name) => write!(f, "the engine reserves the tool name \"{name}\""),
@@ -182,10 +185,10 @@ impl std::fmt::Display for ToolNameError {
     }
 }
 
-impl std::error::Error for ToolNameError {}
+impl Error for ToolNameError {}
 
 /// The name of the bridge tool that calls a deferred tool, on a target without a native tool search.
-pub const TOOL_CALL_NAME: &str = "tool_call";
+pub(crate) const TOOL_CALL_NAME: &str = "tool_call";
 
 /// The tools that a driver offers to the model.
 #[derive(Default)]
@@ -196,8 +199,8 @@ pub struct Toolset {
     handlers: Vec<Box<dyn Tool>>,
 }
 
-impl std::fmt::Debug for Toolset {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Toolset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Toolset")
             .field("definitions", &self.definitions)
             .finish_non_exhaustive()
@@ -235,9 +238,14 @@ impl Toolset {
     }
 
     /// The definitions that stay out of the model's context until a search finds them, in the order of
-    /// [`Toolset::add`]. The search tool names no tool, so a caller can list these in its system prompt.
-    pub fn deferred(&self) -> impl Iterator<Item = &yuke_ai::ToolDefinition> {
+    /// [`Toolset::add`].
+    pub(crate) fn deferred(&self) -> impl Iterator<Item = &yuke_ai::ToolDefinition> {
         self.definitions.iter().filter(|definition| definition.defer_loading)
+    }
+
+    /// Whether a tool is deferred. Without one, the requests declare no search and no bridge.
+    pub(crate) fn has_deferred(&self) -> bool {
+        self.deferred().next().is_some()
     }
 
     /// The concurrency of the tool of `name`. A name without a tool runs nothing, so it does not wait for other calls.

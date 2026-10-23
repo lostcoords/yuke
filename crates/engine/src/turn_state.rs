@@ -94,10 +94,8 @@ impl<'a> Commit<'a> {
     /// Replay this commit on `context`, a copy of the context: apply `replaced`, then append `blocks`.
     pub fn apply(&self, context: &mut Vec<Block>) {
         if let Some(replaced) = &self.replaced {
-            let kept = context.split_off(context.len().saturating_sub(replaced.keep));
-            context.clear();
-            context.extend_from_slice(&replaced.head);
-            context.extend(kept);
+            let cut = context.len().saturating_sub(replaced.keep);
+            context.splice(..cut, replaced.head.iter().cloned());
         }
         context.extend_from_slice(&self.blocks);
     }
@@ -169,7 +167,7 @@ impl Replaced<'_> {
     ///
     /// Returns a text that names the call of the first result without its call.
     pub fn check(&self, context: &[Block]) -> Result<(), String> {
-        let kept = &context[context.len() - self.keep.min(context.len())..];
+        let kept = &context[context.len().saturating_sub(self.keep)..];
         let mut calls = std::collections::HashSet::new();
         for block in self.head.iter().chain(kept) {
             match block {
@@ -252,17 +250,14 @@ impl<'c> TurnState<'c> {
     /// driver saves the returned commit before the next request.
     pub(crate) fn replace(&mut self, replace: Replaced<'_>) -> Commit<'_> {
         let Replaced { head, keep } = replace;
-        let keep = keep.min(self.context.len());
+        let cut = self.context.len().saturating_sub(keep);
         let head_len = head.len();
-        let kept = self.context.len() - keep;
-        let mut context = head.into_owned();
-        context.extend(self.context.drain(kept..));
-        *self.context = context;
+        self.context.splice(..cut, head.into_owned());
         self.saved = self.context.len();
         Commit {
             replaced: Some(Replaced {
                 head: Cow::Borrowed(&self.context[..head_len]),
-                keep,
+                keep: self.context.len() - head_len,
             }),
             ..Commit::blocks(&[])
         }

@@ -74,6 +74,32 @@ impl Inbox for Batches {
     }
 }
 
+/// An inbox of blocks that a test or a hook adds, and that the driver takes all at once.
+pub(crate) struct Queue(Mutex<Vec<Block>>);
+
+impl Queue {
+    pub(crate) fn new(blocks: Vec<Block>) -> Self {
+        Queue(Mutex::new(blocks))
+    }
+
+    /// Append `blocks` after the blocks that the queue holds.
+    pub(crate) fn extend(&self, blocks: Vec<Block>) {
+        self.0.lock().unwrap().extend(blocks);
+    }
+
+    /// A copy of the blocks that the driver did not take.
+    pub(crate) fn held(&self) -> Vec<Block> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl Inbox for Queue {
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
+        Ok(std::mem::take(&mut *self.0.lock().unwrap()))
+    }
+}
+
 /// Hooks that give scripted answers in order. A hook without a script gives its default answer. A hook that runs
 /// out of answers fails the test, so an extra call shows.
 #[derive(Default)]

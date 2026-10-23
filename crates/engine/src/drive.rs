@@ -1,11 +1,11 @@
 //! The standard driver. It carries out each [`Action`] of a [`TurnState`] over a caller's transport.
 
 use std::borrow::Cow;
+use std::error::Error;
 use std::fmt;
 use std::future::poll_fn;
 use std::num::NonZeroU32;
 use std::pin::pin;
-use std::sync::{Mutex, PoisonError};
 use std::task::Poll;
 use std::time::Duration;
 
@@ -115,18 +115,7 @@ pub trait Inbox: Send + Sync {
     /// # Errors
     ///
     /// Returns why the inbox cannot give its input. The turn then ends with [`RoundError::Inbox`].
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>>;
-}
-
-// A locked `Vec` is the simplest inbox: one task pushes, and the driver takes.
-#[async_trait]
-impl Inbox for Mutex<Vec<Block>> {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
-        // A panic of another holder leaves a valid `Vec`, so its input stays usable.
-        Ok(std::mem::take(
-            &mut *self.lock().unwrap_or_else(PoisonError::into_inner),
-        ))
-    }
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>>;
 }
 
 /// Saves the commits of each turn. The driver awaits each commit before the turn goes on, and a cancel does not
@@ -139,7 +128,7 @@ pub trait Journal: Send + Sync {
     /// # Errors
     ///
     /// Returns the error of the save. The turn then ends with [`TurnError::Commit`].
-    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>>;
 }
 
 /// The inbox of a driver without an inbox. It never holds input.
@@ -147,7 +136,7 @@ struct NoInput;
 
 #[async_trait]
 impl Inbox for NoInput {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
         Ok(Vec::new())
     }
 }
@@ -293,7 +282,7 @@ impl<'a> Driver<'a> {
     /// The call that `call` runs, and its result when it runs nothing. The model calls a deferred tool through the
     /// bridge, but the hooks and the observer see the real call.
     fn resolve<'c>(&self, block_index: usize, call: &'c ToolCall) -> Resolved<'c> {
-        let call = if call.name == TOOL_CALL_NAME && self.toolset.deferred().next().is_some() {
+        let call = if call.name == TOOL_CALL_NAME && self.toolset.has_deferred() {
             match search::unwrap_call(call) {
                 Ok(real) => Cow::Owned(real),
                 Err(refused) => {
@@ -320,7 +309,7 @@ impl<'a> Driver<'a> {
 
     /// Whether `call` runs the built-in search of the deferred tools.
     fn is_search(&self, call: &ToolCall) -> bool {
-        call.name == SEARCH_TOOL_NAME && self.toolset.deferred().next().is_some()
+        call.name == SEARCH_TOOL_NAME && self.toolset.has_deferred()
     }
 
     /// The concurrency of a resolved call. A call that runs nothing, and the search that only reads the toolset, do
@@ -457,22 +446,25 @@ impl<'a> Driver<'a> {
         }
     }
 
-    /// The request of `context` that offers `tools` with `settings`, and the system prompt and the session id of the
-    /// driver.
+    /// The request of `context` that offers `tools` with `settings`, and the system prompt, the session id, and the
+    /// blob store of the driver.
     fn request_of<'r>(
         &'r self,
         context: &'r [Block],
         tools: &'r [ToolDefinition],
         settings: &'r Settings,
     ) -> Request<'r> {
-        let request = Request::new(context)
+        let mut request = Request::new(context)
             .system(self.system)
             .tools(tools)
             .settings(settings);
-        match self.session_id {
-            Some(session_id) => request.session_id(session_id),
-            None => request,
+        if let Some(session_id) = self.session_id {
+            request = request.session_id(session_id);
         }
+        if let Some(blob_store) = self.blob_store {
+            request = request.blobs(blob_store);
+        }
+        request
     }
 
     /// The turn of `input` on `context`. [`Turn::run`] runs it and adds the blocks of the turn to `context`.
@@ -560,14 +552,11 @@ impl<'a> Driver<'a> {
     async fn send(
         &self,
         encoder: &mut Encoder,
-        mut request: Request<'_>,
+        request: Request<'_>,
         model: &Model,
         observer: &dyn Observer,
         cancellation_token: &CancellationToken,
     ) -> Sent {
-        if let Some(blob_store) = self.blob_store {
-            request = request.blobs(blob_store);
-        }
         // One waiter serves the whole request, so a stream event costs no new registration.
         let mut cancelled = pin!(cancellation_token.cancelled());
         let mut number = NonZeroU32::MIN;
@@ -815,7 +804,7 @@ pub enum TurnError {
 
     /// The journal did not confirm a commit. It can still have saved the commit. The context can hold blocks after the
     /// last confirmed commit, so the caller loads the context again from its store.
-    Commit(Box<dyn std::error::Error + Send + Sync>),
+    Commit(Box<dyn Error + Send + Sync>),
 }
 
 impl fmt::Display for TurnError {
@@ -828,8 +817,8 @@ impl fmt::Display for TurnError {
     }
 }
 
-impl std::error::Error for TurnError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for TurnError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Round(error) => error.source(),

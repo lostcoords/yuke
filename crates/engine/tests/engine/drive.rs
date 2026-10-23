@@ -12,7 +12,7 @@ use yuke_testing::{
     tool_reply,
 };
 
-use crate::support::{Batches, CancelOnSleep, Recorder, Script, Waits, block_on, definition, yield_once};
+use crate::support::{Batches, CancelOnSleep, Queue, Recorder, Script, Waits, block_on, definition, yield_once};
 
 #[test]
 fn driver_sends_the_context_and_keeps_each_answer() {
@@ -410,7 +410,7 @@ fn input_during_the_final_answer_continues_the_turn_until_its_next_final_answer(
     let model = model();
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let inbox = Mutex::new(vec![Block::user_text("later")]);
+    let inbox = Queue::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
     let mut context = Vec::new();
 
@@ -427,7 +427,7 @@ fn input_during_the_final_answer_continues_the_turn_until_its_next_final_answer(
     assert!(!requests[0].contains("later"), "{}", requests[0]);
     assert_in_order(&requests[1], &["go", "first answer", "later"]);
     assert_in_order(&requests[2], &["later", "c1", "result 1"]);
-    assert_eq!(*inbox.lock().unwrap(), Vec::<Block>::new());
+    assert_eq!(inbox.held(), Vec::<Block>::new());
 }
 
 #[test]
@@ -440,7 +440,7 @@ fn input_follows_the_error_results_of_a_cut_answer() {
     let mut toolset = Toolset::new();
     let write = Recorder::default();
     toolset.add(definition("write"), write.clone()).unwrap();
-    let inbox = Mutex::new(vec![Block::user_text("steer")]);
+    let inbox = Queue::new(vec![Block::user_text("steer")]);
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
     let mut context = Vec::new();
 
@@ -517,7 +517,7 @@ fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input()
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
     let hooks = Script::default().decisions([RoundDecision::Stop]);
-    let inbox = Mutex::new(vec![Block::user_text("steer")]);
+    let inbox = Queue::new(vec![Block::user_text("steer")]);
     let driver = Driver::new(&transport, &model, &NoWait)
         .toolset(&toolset)
         .hooks(&hooks)
@@ -532,7 +532,7 @@ fn stop_after_a_round_ends_the_turn_with_its_tool_results_and_leaves_the_input()
         context.last(),
         Some(&Block::ToolResult(ToolResult::success("c1", "result 1")))
     );
-    assert_eq!(*inbox.lock().unwrap(), [Block::user_text("steer")]);
+    assert_eq!(inbox.held(), [Block::user_text("steer")]);
 }
 
 #[test]
@@ -595,7 +595,7 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
         .add(definition("build"), CancelDuringCall(cancellation_token.clone()))
         .unwrap();
     toolset.add(definition("echo"), echo.clone()).unwrap();
-    let inbox = Mutex::new(vec![Block::user_text("steer")]);
+    let inbox = Queue::new(vec![Block::user_text("steer")]);
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).inbox(&inbox);
     let mut context = Vec::new();
 
@@ -630,7 +630,7 @@ fn cancel_during_a_tool_keeps_its_own_result_and_runs_no_later_call() {
             )),
         ]
     );
-    assert_eq!(*inbox.lock().unwrap(), [Block::user_text("steer")]);
+    assert_eq!(inbox.held(), [Block::user_text("steer")]);
 }
 
 #[test]
@@ -701,7 +701,7 @@ fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
     let model = model();
     let cancellation_token = CancellationToken::new();
     let hooks = CancelAfterRound(cancellation_token.clone());
-    let inbox = Mutex::new(vec![Block::user_text("later")]);
+    let inbox = Queue::new(vec![Block::user_text("later")]);
     let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks).inbox(&inbox);
     let mut context = Vec::new();
 
@@ -714,7 +714,7 @@ fn cancel_while_the_after_round_hook_waits_keeps_the_answer_and_the_input() {
 
     assert!(matches!(outcome, Ok(Outcome::Cancelled)));
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("done")]);
-    assert_eq!(*inbox.lock().unwrap(), [Block::user_text("later")]);
+    assert_eq!(inbox.held(), [Block::user_text("later")]);
 }
 
 #[test]

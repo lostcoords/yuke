@@ -14,10 +14,10 @@ const K1: f64 = 1.2;
 /// The document length normalization of BM25: a long document counts its words less.
 const B: f64 = 0.75;
 
-/// The indices of the tools in `tools` that match `query`, best first, at most `limit`. BM25 ranks the words of the
+/// The tools in `tools` that match `query`, best first, at most `limit`. BM25 ranks the words of the
 /// name, the description, and the schema properties of each tool. A tool that shares no word with the query does not
 /// match. Equal scores sort by name.
-fn bm25(query: &str, tools: &[&ToolDefinition], limit: usize) -> Vec<usize> {
+fn bm25<'t>(query: &str, tools: &[&'t ToolDefinition], limit: usize) -> Vec<&'t ToolDefinition> {
     let documents: Vec<Vec<String>> = tools.iter().map(|tool| tool_words(tool)).collect();
     let mut terms = Vec::new();
     words(query, &mut terms);
@@ -78,7 +78,7 @@ fn bm25(query: &str, tools: &[&ToolDefinition], limit: usize) -> Vec<usize> {
             .total_cmp(&left.1)
             .then_with(|| tools[left.0].name.cmp(&tools[right.0].name))
     });
-    scored.into_iter().take(limit).map(|(index, _)| index).collect()
+    scored.into_iter().take(limit).map(|(index, _)| tools[index]).collect()
 }
 
 /// The words of `tool` for the index. The name counts twice, because a name match says the most.
@@ -248,7 +248,7 @@ impl<'a> Declared<'a> {
     /// The definitions for a target with a native search, or for another target.
     pub(crate) fn tools(&self, mode: SearchMode) -> &[ToolDefinition] {
         let definitions = self.toolset.definitions();
-        if !definitions.iter().any(|definition| definition.defer_loading) {
+        if !self.toolset.has_deferred() {
             return definitions;
         }
         if mode == SearchMode::Native {
@@ -290,10 +290,7 @@ pub(crate) fn search(toolset: &Toolset, call: &ToolCall, mode: SearchMode) -> To
         return ToolResult::error(&call.call_id, format!("The limit must be 1 to {MAX_LIMIT}."));
     }
     let deferred: Vec<&ToolDefinition> = toolset.deferred().collect();
-    let found: Vec<&ToolDefinition> = bm25(&arguments.query, &deferred, limit)
-        .into_iter()
-        .map(|index| deferred[index])
-        .collect();
+    let found = bm25(&arguments.query, &deferred, limit);
     if found.is_empty() {
         return ToolResult::success(
             &call.call_id,

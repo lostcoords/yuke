@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
@@ -8,7 +7,7 @@ use yuke_ai::{Block, FinishReason};
 use yuke_engine::{Driver, Hooks, RoundDecision, RoundError, RoundPlan, RoundStart, TurnEnd, TurnError, chain_text};
 use yuke_testing::{NoWait, ScriptedTransport, failed_reply, model, text_reply};
 
-use crate::support::{Replay, block_on};
+use crate::support::{Queue, Replay, block_on};
 
 /// A hook error. Its text names no cause, so only `source` gives the cause.
 #[derive(Debug)]
@@ -141,7 +140,7 @@ fn a_failed_after_round_hook_ends_the_turn_and_keeps_the_answer_and_the_input() 
     let transport = ScriptedTransport::new([text_reply("done"), text_reply("unused")]);
     let model = model();
     let hooks = Failing::at(RoundHook::After);
-    let inbox = Mutex::new(vec![Block::user_text("steer")]);
+    let inbox = Queue::new(vec![Block::user_text("steer")]);
     let journal = Replay::default();
     let driver = Driver::new(&transport, &model, &NoWait)
         .hooks(&hooks)
@@ -159,7 +158,7 @@ fn a_failed_after_round_hook_ends_the_turn_and_keeps_the_answer_and_the_input() 
     assert_eq!(chain_text(&error), "the test hook failed: the cause");
     assert_eq!(transport.requests().len(), 1);
     assert_eq!(context, [Block::user_text("go"), Block::assistant_text("done")]);
-    assert_eq!(*inbox.lock().unwrap(), [Block::user_text("steer")]);
+    assert_eq!(inbox.held(), [Block::user_text("steer")]);
     // The answer commit comes before the hook, so the failed end holds no block.
     assert_eq!(
         journal.shapes(),
