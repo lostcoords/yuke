@@ -3,13 +3,17 @@
 use std::fs::File;
 use std::io::{self, PipeReader, PipeWriter, Read as _};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
 
 use crate::event::Event;
 use crate::parser::{Parsed, Parser};
+
+/// The longest wait for the rest of a cut sequence, from its first byte, as the default `ttimeoutlen` of Neovim. Kitty
+/// sends the escape key as a whole sequence, so a kitty escape key does not wait, and a legacy one waits this long.
+const ASSEMBLY_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// The thread that passes each event of the terminal to a callback. It ends at a stop, at the end of the input, or
 /// at a read error. [`Terminal`](crate::Terminal) owns it and stops it.
@@ -75,9 +79,36 @@ fn read_events(
     events: &mut impl FnMut(Event),
 ) -> io::Result<End> {
     let mut buffer = [0; 4096];
+    // The time when the kept bytes of the parser stop waiting for the rest of their sequence.
+    let mut deadline = None;
+    let mut parsed = Vec::new();
     loop {
+        // A cut sequence keeps the deadline of its first byte, so later bytes cannot hold it back for ever. A signal
+        // can end the wait early, so only the deadline flushes.
+        if parser.waits() {
+            let now = Instant::now();
+            match deadline {
+                None => deadline = Some(now + ASSEMBLY_TIMEOUT),
+                Some(at) if at <= now => {
+                    parsed.extend(parser.flush());
+                    deadline = None;
+                }
+                Some(_) => {}
+            }
+        } else {
+            deadline = None;
+        }
+        for result in parsed.drain(..) {
+            // An answer that comes after the probe has no reader.
+            if let Parsed::Event(event) = result {
+                events(event);
+            }
+        }
         let mut fds = [PollFd::new(&input, PollFlags::IN), PollFd::new(stopped, PollFlags::IN)];
-        wait(&mut fds, None)?;
+        wait(
+            &mut fds,
+            deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())),
+        )?;
         // The close of the write end wakes the poll with a hang-up.
         if !fds[1].revents().is_empty() {
             return Ok(End::Stop);
@@ -88,11 +119,11 @@ fn read_events(
         let Some(read) = read_input(input, &mut buffer)? else {
             return Ok(End::Input);
         };
-        for parsed in parser.feed(&buffer[..read]) {
-            // An answer that comes after the probe has no reader.
-            if let Parsed::Event(event) = parsed {
-                events(event);
-            }
+        let kept = parser.kept();
+        parsed = parser.feed(&buffer[..read]);
+        // A read that ends the cut sequence also ends its deadline, so a new cut sequence gets its own.
+        if parser.kept() != kept + read {
+            deadline = None;
         }
     }
 }

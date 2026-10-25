@@ -9,7 +9,7 @@ use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::termios::{LocalModes, Winsize, tcsetwinsize};
 
 use super::*;
-use crate::event::{Code, Key};
+use crate::event::{Code, Key, Modifiers};
 
 /// A spawn waits while a test opens a controller, so a child process gets no controller of another test. It would keep
 /// the controller open after the close of the test.
@@ -295,4 +295,58 @@ fn a_child_process_does_not_keep_the_reader_from_its_stop() {
     child.wait().unwrap();
     // A child that holds the write end of the stop pipe makes the stop wait for the child.
     assert!(waited < Duration::from_secs(2), "the stop waited {waited:?}");
+}
+
+#[test]
+fn a_lone_escape_byte_becomes_the_escape_key_after_the_assembly_timeout() {
+    let (mut controller, device) = pty();
+    let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
+    let (send, events) = mpsc::channel();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
+    controller.write_all(b"\x1b").unwrap();
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(1)).unwrap(),
+        Event::Key(Key::new(Code::Escape))
+    );
+}
+
+#[test]
+fn more_bytes_of_a_cut_sequence_do_not_hold_back_its_flush() {
+    let (mut controller, device) = pty();
+    let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
+    let (send, events) = mpsc::channel();
+    terminal
+        .start_reader(move |event| send.send((event, Instant::now())).unwrap(), || {})
+        .unwrap();
+    // A CSI that never ends: a byte each 20 ms for 400 ms. A busy wait, because a macOS sleep overshoots.
+    controller.write_all(b"\x1b[").unwrap();
+    let started = Instant::now();
+    let mut last = started;
+    while started.elapsed() < Duration::from_millis(400) {
+        if last.elapsed() >= Duration::from_millis(20) {
+            controller.write_all(b"1").unwrap();
+            last = Instant::now();
+        }
+    }
+    let (first, at) = events.recv_timeout(Duration::from_secs(1)).unwrap();
+    let mut alt = Key::new(Code::Char('['));
+    alt.modifiers = Modifiers::ALT;
+    assert_eq!(first, Event::Key(alt));
+    assert!(at < last, "the flush came {:?} after the last byte", at - last);
+}
+
+#[test]
+fn a_lone_escape_byte_of_the_probe_input_reaches_the_first_reader() {
+    let (mut controller, device) = pty();
+    let mut terminal = open(&mut controller, device, b"\x1b[?62c\x1b");
+    let (send, events) = mpsc::channel();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(1)).unwrap(),
+        Event::Key(Key::new(Code::Escape))
+    );
 }

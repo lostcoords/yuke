@@ -121,7 +121,7 @@ fn probe_answers_read_as_answers_also_when_a_read_cuts_them() {
         (b"\x1b[?62;22c", Answer::DeviceAttributes),
     ];
     for (bytes, answer) in cases {
-        for cut in 2..=bytes.len() {
+        for cut in 1..=bytes.len() {
             let mut parser = Parser::new();
             let mut read = parser.feed(&bytes[..cut]);
             read.extend(parser.feed(&bytes[cut..]));
@@ -137,10 +137,9 @@ fn probe_answers_read_as_answers_also_when_a_read_cuts_them() {
 
 #[test]
 fn sequences_read_as_their_events_also_when_a_read_cuts_them() {
-    // A cut after the first escape byte reads as the escape key, as in libvaxis, so each cut starts later. The last
-    // cut feeds the whole sequence.
+    // The last cut feeds the whole sequence.
     for (bytes, events) in sequences() {
-        for cut in 2..=bytes.len() {
+        for cut in 1..=bytes.len() {
             let mut parser = Parser::new();
             let mut read = only_events(parser.feed(&bytes[..cut]));
             read.extend(only_events(parser.feed(&bytes[cut..])));
@@ -152,7 +151,7 @@ fn sequences_read_as_their_events_also_when_a_read_cuts_them() {
 #[test]
 fn ground_bytes_read_as_keys() {
     let ctrl = Modifiers::CTRL;
-    let cases: [(&[u8], Event); 10] = [
+    let cases: [(&[u8], Event); 9] = [
         (b"a", char_key('a')),
         (b"G", char_key('G')),
         (b"\x01", key(Code::Char('a'), ctrl, "")),
@@ -161,7 +160,6 @@ fn ground_bytes_read_as_keys() {
         (b"\r", key(Code::Enter, Modifiers::NONE, "")),
         (b"\t", key(Code::Tab, Modifiers::NONE, "")),
         (b"\x7f", key(Code::Backspace, Modifiers::NONE, "")),
-        (b"\x1b", key(Code::Escape, Modifiers::NONE, "")),
         (b"\x1ba", key(Code::Char('a'), Modifiers::ALT, "")),
     ];
     for (bytes, event) in cases {
@@ -181,6 +179,66 @@ fn typed_text_reads_one_code_point_per_key() {
     read.extend(only_events(parser.feed("\u{301}x".as_bytes())));
     assert_eq!(read, accent);
     assert_eq!(parse_all("👋🏿".as_bytes()), [char_key('👋'), char_key('🏿')]);
+}
+
+#[test]
+fn a_flush_reads_the_kept_bytes_as_keys() {
+    let none = Modifiers::NONE;
+    let alt = Modifiers::ALT;
+    let cases: [(&[u8], Vec<Event>); 10] = [
+        (b"\x1b", vec![key(Code::Escape, none, "")]),
+        // A legacy alt+[ and alt+O start a CSI and an SS3 sequence.
+        (b"\x1b[", vec![key(Code::Char('['), alt, "")]),
+        (b"\x1bO", vec![key(Code::Char('O'), alt, "")]),
+        (
+            b"\x1b[1;",
+            vec![key(Code::Char('['), alt, ""), char_key('1'), char_key(';')],
+        ),
+        (b"\x1b]", vec![key(Code::Char(']'), alt, "")]),
+        // Alt+] and 1 start the header of a background answer, but only the whole header waits for the end.
+        (b"\x1b]1", vec![key(Code::Char(']'), alt, ""), char_key('1')]),
+        (b"\x1bPq", vec![key(Code::Char('P'), alt, ""), char_key('q')]),
+        // A cut X10 mouse report.
+        (
+            b"\x1b[M a",
+            vec![
+                key(Code::Char('['), alt, ""),
+                char_key('M'),
+                char_key(' '),
+                char_key('a'),
+            ],
+        ),
+        (b"\x1b\xc3", vec![]),
+        (b"\xe4\xb8", vec![]),
+    ];
+    for (bytes, events) in cases {
+        let mut parser = Parser::new();
+        assert_eq!(only_events(parser.feed(bytes)), [], "{bytes:?}");
+        assert!(parser.waits(), "{bytes:?}");
+        assert_eq!(only_events(parser.flush()), events, "{bytes:?}");
+        assert!(!parser.waits(), "{bytes:?}");
+        // The parser goes on after the flush.
+        assert_eq!(only_events(parser.feed(b"x")), [char_key('x')], "{bytes:?}");
+    }
+}
+
+#[test]
+fn a_cut_background_answer_and_a_paste_wait_for_their_end() {
+    for (start, rest) in [
+        (&b"\x1b]11;"[..], &b"rgb:ff/80/00\x07"[..]),
+        (b"\x1b]11;rgb:ff/8", b"0/00\x1b\\"),
+    ] {
+        let mut parser = Parser::new();
+        assert_eq!(only_events(parser.feed(start)), []);
+        assert!(!parser.waits(), "{start:?}");
+        assert_eq!(only_events(parser.flush()), []);
+        assert_eq!(only_events(parser.feed(rest)), [Event::Background(rgb(0xff, 0x80, 0))]);
+    }
+    let mut parser = Parser::new();
+    assert_eq!(only_events(parser.feed(b"\x1b[200~a\x1b")), []);
+    assert!(!parser.waits());
+    assert_eq!(only_events(parser.flush()), []);
+    assert_eq!(only_events(parser.feed(b"[201~")), [Event::Paste("a".to_owned())]);
 }
 
 #[test]

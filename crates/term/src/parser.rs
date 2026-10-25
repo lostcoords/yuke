@@ -6,8 +6,11 @@ use crate::event::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb};
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
 const PASTE_END: &[u8] = b"\x1b[201~";
+/// The header of the answer to the background query, the one string sequence that yuke asks for.
+const BACKGROUND_ANSWER: &[u8] = b"\x1b]11;";
 
-/// Turns the bytes of the terminal into events. A sequence that a read cuts waits for the next read.
+/// Turns the bytes of the terminal into events. A sequence that a read cuts waits for the next read, or for
+/// [`Parser::flush`] when no more bytes come.
 #[derive(Debug, Default)]
 pub(crate) struct Parser {
     pending: Vec<u8>,
@@ -21,9 +24,33 @@ impl Parser {
         Self::default()
     }
 
-    /// Read the events and answers in the kept bytes and `bytes`. A lone escape byte at the end is the escape key.
+    /// Read the events and answers in the kept bytes and `bytes`. The bytes of a cut sequence stay.
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Vec<Parsed> {
         self.pending.extend_from_slice(bytes);
+        self.read(false)
+    }
+
+    /// True when the kept bytes can be a cut sequence or the start of a key, so [`Parser::flush`] would read them. A
+    /// paste and a background answer after its whole header wait for their end instead.
+    pub(crate) fn waits(&self) -> bool {
+        self.paste.is_none() && !self.pending.is_empty() && !self.pending.starts_with(BACKGROUND_ANSWER)
+    }
+
+    /// The count of kept bytes. It grows by the count of fed bytes while a cut sequence waits for its end.
+    pub(crate) fn kept(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Read the kept bytes as no more bytes will come: a lone escape byte is the escape key, and an escape byte before
+    /// a cut sequence is alt with the next byte. A cut code point gives no key.
+    pub(crate) fn flush(&mut self) -> Vec<Parsed> {
+        if !self.waits() {
+            return Vec::new();
+        }
+        self.read(true)
+    }
+
+    fn read(&mut self, flush: bool) -> Vec<Parsed> {
         let mut events = Vec::new();
         let mut at = 0;
         while at < self.pending.len() {
@@ -43,7 +70,11 @@ impl Parser {
                 at += take;
                 break;
             }
-            match parse(rest) {
+            let step = match parse(rest) {
+                Step::Incomplete if flush => cut(rest),
+                step => step,
+            };
+            match step {
                 Step::Incomplete => break,
                 Step::Skip(n) => at += n,
                 Step::Event(event, n) => {
@@ -100,8 +131,9 @@ fn parse(input: &[u8]) -> Step {
     if input[0] != ESC {
         return parse_ground(input);
     }
+    // A lone escape byte can start a sequence that the next read completes, so it waits.
     let Some(&next) = input.get(1) else {
-        return Step::Event(Event::Key(Key::new(Code::Escape)), 1);
+        return Step::Incomplete;
     };
     match next {
         b'O' => parse_ss3(input),
@@ -114,6 +146,19 @@ fn parse(input: &[u8]) -> Step {
             Step::Incomplete => Step::Incomplete,
             _ => Step::Skip(1),
         },
+    }
+}
+
+/// The step of a flush for `input`, the start of a cut sequence: an escape byte alone is the escape key, and an escape
+/// byte before a byte that is a key is alt with that key. Other bytes give no key.
+fn cut(input: &[u8]) -> Step {
+    match input {
+        [ESC] => Step::Event(Event::Key(Key::new(Code::Escape)), 1),
+        [ESC, next, ..] => match parse_ground(&[*next]) {
+            Step::Event(Event::Key(key), _) => Step::Event(Event::Key(with_alt(key)), 2),
+            _ => Step::Skip(1),
+        },
+        _ => Step::Skip(1),
     }
 }
 
