@@ -12,8 +12,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
   `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
-  `auth/cancel_login`, `catalog/list`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`,
-  `profile/reload`.
+  `auth/cancel_login`, `auth/logout`, `catalog/list`, `job/list`, `job/stop`, `credential/update`,
+  `interaction/respond`, `mcp/list`, `profile/reload`.
 - `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
@@ -27,6 +27,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `auth/cancel_login { loginId }` asks a login in progress to stop. A poll that got the approval still saves the
   login, so the outcome tells what happened. A client that missed the notification, for example after a reconnect,
   reads the state with `catalog/list`. No answer and no notification holds a token.
+- `auth/logout { provider }` removes what yuke stored for a provider: its login in `auth.json` and the token of
+  `credential/update`. A login in progress of the provider ends first, and the removal comes after it. yuke revokes
+  no token at the provider. `yuke logout PROVIDER` removes the login from `auth.json` only: a running server keeps a
+  token of `credential/update`.
 - `catalog/list` gives the providers that are ready now, or every provider with `all: true`. Each provider has its
   state (`ready`, `needs_api_key` with the variable, or `needs_login`) and its models: limits, prices, tool support,
   input kinds, and the reasoning choices with the reasoning settings that a session sends for each. A provider is

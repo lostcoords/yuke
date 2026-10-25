@@ -287,13 +287,19 @@ struct LockedFiles {
 }
 
 impl LockedFiles {
-    /// Set the login of `provider` to `login`, or remove it.
+    /// Set the login of `provider` to `login`, or remove it. A removal of a missing login writes nothing.
     fn set(&self, provider: &str, login: Option<StoredLogin>) -> Result<(), AuthError> {
         let mut logins = self.files.read()?;
         match login {
-            Some(login) => logins.insert(provider.to_owned(), login),
-            None => logins.remove(provider),
-        };
+            Some(login) => {
+                logins.insert(provider.to_owned(), login);
+            }
+            None => {
+                if logins.remove(provider).is_none() {
+                    return Ok(());
+                }
+            }
+        }
         self.write(&logins)
     }
 
@@ -323,6 +329,24 @@ impl LockedFiles {
             .and_then(|folder| folder.sync_all())
             .map_err(files.file_error(""))
     }
+}
+
+/// Remove the stored login of `provider` from `auth.json` in the data folder `folder`. Without a login of `provider`,
+/// `auth.json` stays as it is.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] when the lock waits too long, or the file does not read or write.
+pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), AuthError> {
+    let files = Files { folder };
+    let provider = provider.to_owned();
+    blocking(move || {
+        let Some(locked) = files.lock(LOCK_LIMIT)? else {
+            return Err(AuthError::Locked(files.path(LOCK)));
+        };
+        locked.set(&provider, None)
+    })
+    .await
 }
 
 /// The provider ids of the entries of `auth.json` in the data folder `folder`.
@@ -390,6 +414,11 @@ impl LoginSource {
     /// Use `pushed` for each attempt from now on, in place of the stored login.
     pub(crate) fn push(&self, pushed: Pushed) {
         *lock(&self.0.pushed) = Some(pushed);
+    }
+
+    /// Forget the token of `credential/update`, so the next attempt reads `auth.json` again.
+    pub(crate) fn clear_push(&self) {
+        *lock(&self.0.pushed) = None;
     }
 
     /// Whether a `credential/update` gave a token.

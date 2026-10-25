@@ -2620,3 +2620,57 @@ async fn a_login_of_a_provider_without_a_flow_or_a_refused_start_fails() {
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INTERNAL_ERROR));
 }
+
+#[tokio::test]
+async fn a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_login_in_progress() {
+    let place = Place::new(
+        "rpc",
+        "a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_login_in_progress",
+    );
+    std::fs::create_dir_all(&place.paths.data).unwrap();
+    let logins = json!({
+        "xai-grok": { "access_token": "a", "refresh_token": "r", "expires_at": 0 },
+        "openai-codex": { "access_token": "b", "refresh_token": "s", "expires_at": 0 },
+    });
+    std::fs::write(place.paths.data.join("auth.json"), logins.to_string()).unwrap();
+    let answers = Answers::default();
+    answers.push(200, LOGIN_START);
+    let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
+    client.initialize().await;
+    // A session of the provider makes its credential source, which keeps the pushed token.
+    let mut settings = settings(&place);
+    settings["model"] = json!({ "provider": "openai-codex", "model": "gpt-5.5" });
+    client.call("session/new", settings).await.unwrap();
+    let token = json!({ "provider": "openai-codex", "accessToken": "pushed", "expiresAt": u64::MAX / 2 });
+    client.call("credential/update", token).await.unwrap();
+
+    let login = client
+        .call("auth/login", json!({ "provider": "xai-grok" }))
+        .await
+        .unwrap()["loginId"]
+        .clone();
+    let logout = client.request("auth/logout", json!({ "provider": "xai-grok" })).await;
+    let mut messages = client.until(|message| finished(message, &login)).await;
+    if !messages.iter().any(|message| message["id"] == json!(logout)) {
+        messages.extend(client.until(|message| message["id"] == json!(logout)).await);
+    }
+    let removed = messages.iter().find(|message| message["id"] == json!(logout)).unwrap()["result"].clone();
+    let cancelled = messages.iter().find(|message| finished(message, &login)).unwrap()["params"]["outcome"].clone();
+    let pushed = client.call("auth/logout", json!({ "provider": "openai-codex" })).await;
+    let nothing = client.call("auth/logout", json!({ "provider": "xai-grok" })).await;
+    let unknown = client.call("auth/logout", json!({ "provider": "nobody" })).await;
+    let catalog = client.call("catalog/list", json!({ "all": true })).await.unwrap();
+    client.end().await;
+
+    assert_eq!(
+        (removed, pushed.unwrap(), nothing.unwrap()),
+        (json!({}), json!({}), json!({}))
+    );
+    assert_eq!(cancelled, json!({ "kind": "cancelled" }));
+    assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
+    let states = provider_states(&catalog);
+    assert_eq!(states["xai-grok"], json!({ "kind": "needs_login" }));
+    assert_eq!(states["openai-codex"], json!({ "kind": "needs_login" }));
+    let saved: Value = serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap();
+    assert_eq!(saved, json!({}));
+}

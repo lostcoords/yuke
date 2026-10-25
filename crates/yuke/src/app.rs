@@ -106,10 +106,11 @@ struct Shared {
     last_login: AtomicU64,
 }
 
-/// A login in progress: its id, and the token that stops it.
+/// A login in progress: its id, the token that stops its polls, and its task.
 struct InProgress {
     id: LoginId,
     stop: CancellationToken,
+    task: JoinHandle<()>,
 }
 
 /// The parts of the profile that a reload replaces. A reader takes a copy of an `Arc`, so it never holds the lock.
@@ -447,18 +448,16 @@ impl App {
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
         let login_id = LoginId(self.shared.last_login.fetch_add(1, Ordering::Relaxed) + 1);
         let stop = CancellationToken::new();
-        let in_progress = InProgress {
-            id: login_id,
-            stop: stop.clone(),
-        };
-        lock(&self.shared.pending_logins).insert(provider.clone(), in_progress);
         let result = LoginResult {
             login_id,
             verification_url: pending.verification_url.clone(),
             user_code: pending.user_code.clone(),
         };
         let shared = Arc::clone(&self.shared);
-        tokio::spawn(async move {
+        let task_provider = provider.clone();
+        let task_stop = stop.clone();
+        let task = tokio::spawn(async move {
+            let (provider, stop) = (task_provider, task_stop);
             let exchange = Arc::clone(&shared.machine.exchange);
             // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
             let polled = tokio::select! {
@@ -497,6 +496,13 @@ impl App {
                     outcome,
                 }));
         });
+        // The first poll waits one interval, so the task cannot end before its entry is there.
+        let in_progress = InProgress {
+            id: login_id,
+            stop,
+            task,
+        };
+        lock(&self.shared.pending_logins).insert(provider, in_progress);
         Ok(result)
     }
 
@@ -513,6 +519,34 @@ impl App {
             .ok_or(AppError::NoLogin(id))?;
         in_progress.stop.cancel();
         Ok(())
+    }
+
+    /// Remove what yuke stored for `provider`: its login in `auth.json`, and the token of `credential/update`. A login
+    /// in progress of the provider ends first, and the removal comes after its task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for an unknown provider, and [`AppError::Internal`] when yuke cannot update
+    /// `auth.json`.
+    pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
+        if !self.shared.providers().iter().any(|known| known.id == provider) {
+            return Err(AppError::Invalid(format!("yuke has no provider {provider}")));
+        }
+        let earlier = lock(&self.shared.pending_logins).remove(provider);
+        if let Some(earlier) = earlier {
+            earlier.stop.cancel();
+            // A save that started still ends, so the removal waits for the task and comes after the save.
+            earlier
+                .task
+                .await
+                .map_err(|error| AppError::Internal(format!("the login task failed: {error}")))?;
+        }
+        if let Some(source) = lock(&self.shared.logins).get(provider) {
+            source.clear_push();
+        }
+        crate::auth::logout(provider, self.shared.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))
     }
 
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.

@@ -541,3 +541,21 @@ async fn a_push_during_the_refresh_of_the_login_serves_that_attempt() {
     assert_eq!(attempt.await.unwrap(), Ok("pushed".to_owned()));
     assert_eq!(saved(&folder), Some(("refreshed".to_owned(), "rt2".to_owned())));
 }
+
+#[tokio::test]
+async fn a_logout_removes_one_login_and_without_a_login_writes_nothing() {
+    let folder = folder("a_logout_removes_one_login_and_without_a_login_writes_nothing");
+    let empty = folder.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    let logins = json!({
+        PROVIDER: {"access_token": "a", "refresh_token": "r", "expires_at": 1},
+        "other": {"access_token": "b", "refresh_token": "s", "expires_at": 1},
+    });
+    fs::write(folder.join(FILE), logins.to_string()).unwrap();
+
+    logout(PROVIDER, folder.clone()).await.unwrap();
+    logout(PROVIDER, empty.clone()).await.unwrap();
+
+    assert_eq!(file(&folder), json!({ "other": logins["other"] }));
+    assert!(!empty.join(FILE).exists());
+}

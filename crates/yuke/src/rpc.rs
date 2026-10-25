@@ -361,6 +361,10 @@ impl Server {
                 app.cancel_login(params.login_id)?;
                 result(&EmptyResult {})
             }
+            ClientRequest::Logout(params) => {
+                app.logout(&params.provider).await?;
+                result(&EmptyResult {})
+            }
             ClientRequest::ListCatalog(params) => result(&app.catalog(params.all.unwrap_or(false)).await?),
             ClientRequest::RemoveSession(params) => {
                 app.remove(params.session_id).await?;

@@ -14,7 +14,7 @@ mod message;
 mod session;
 mod update;
 
-pub use auth::{CancelLoginParams, LoginFinishedParams, LoginOutcome, LoginParams, LoginResult};
+pub use auth::{CancelLoginParams, LoginFinishedParams, LoginOutcome, LoginParams, LoginResult, LogoutParams};
 pub use catalog::{
     ListCatalogParams, ListCatalogResult, Modality, ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice,
     ReasoningLevel,

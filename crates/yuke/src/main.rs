@@ -1,7 +1,8 @@
 //! The `yuke` program. It has three modes: the terminal interface (no mode flag), the protocol server (`--rpc`), and
 //! one task with no view (`-p`). The terminal interface does not exist yet. `--rpc` serves stdin and stdout.
 //! `--rpc --listen` serves a Unix socket. `--rpc --connect` joins stdin and stdout to such a socket. `-p` writes the
-//! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider.
+//! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider, and
+//! `yuke logout` removes the login.
 
 mod app;
 mod auth;
@@ -95,6 +96,12 @@ enum Command {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
     },
+    /// Remove the stored login of PROVIDER from auth.json. yuke revokes no token at the provider, and a running server
+    /// keeps a token of credential/update.
+    Logout {
+        /// The provider id, the first part of --model, such as xai-grok.
+        provider: String,
+    },
 }
 
 /// What the program runs.
@@ -110,6 +117,8 @@ enum Mode {
     Print { task: Task, json: bool },
     /// A login to a provider.
     Login(String),
+    /// A removal of the saved login of a provider.
+    Logout(String),
 }
 
 /// The path of a `unix://PATH` value.
@@ -123,8 +132,10 @@ fn socket_path(value: &str) -> Result<PathBuf, String> {
 impl Cli {
     /// The mode that the flags name.
     fn into_mode(self) -> Mode {
-        if let Some(Command::Login { provider }) = self.command {
-            return Mode::Login(provider);
+        match self.command {
+            Some(Command::Login { provider }) => return Mode::Login(provider),
+            Some(Command::Logout { provider }) => return Mode::Logout(provider),
+            None => {}
         }
         if self.rpc {
             return match self.connect {
@@ -171,6 +182,7 @@ fn main() -> ExitCode {
                 .map(|()| ExitCode::SUCCESS),
             Mode::Print { task, json } => print_task(&task, json).await,
             Mode::Login(provider) => login(&provider).await,
+            Mode::Logout(provider) => logout(&provider).await,
         };
         ran.unwrap_or_else(|error| {
             warn(&error);
@@ -221,6 +233,22 @@ async fn login(id: &str) -> Result<ExitCode, String> {
         }
         number = signals.next() => Ok(signal_exit(number)),
     }
+}
+
+/// Remove the stored login of the provider `id` from `auth.json`. A running server keeps the token of
+/// `credential/update` and finishes its logins.
+async fn logout(id: &str) -> Result<ExitCode, String> {
+    let machine = machine()?;
+    let providers = Providers::load(&machine.paths.config)?;
+    let provider = providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .ok_or_else(|| format!("yuke has no provider {id}"))?;
+    auth::logout(id, machine.paths.data.clone())
+        .await
+        .map_err(|error| chain_text(&error))?;
+    warn(&format!("logged out of {}", provider.name));
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Serve the protocol on the Unix socket at `listen`, or else on stdin and stdout. A signal ends each server, and the
@@ -467,6 +495,13 @@ mod tests {
             mode(&["-p", "Hi.", "login", "xai-grok"]),
             Err(ErrorKind::ArgumentConflict)
         );
+    }
+
+    #[test]
+    fn logout_takes_one_provider_and_no_mode_flag() {
+        assert_eq!(mode(&["logout", "xai-grok"]), Ok(Mode::Logout("xai-grok".to_owned())));
+        assert_eq!(mode(&["logout"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(mode(&["--rpc", "logout", "xai-grok"]), Err(ErrorKind::ArgumentConflict));
     }
 
     #[test]

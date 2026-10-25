@@ -26,6 +26,15 @@ pub struct LoginResult {
     pub user_code: String,
 }
 
+/// The params of `auth/logout`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct LogoutParams {
+    /// The id of a provider, as `catalog/list` gives it.
+    pub provider: String,
+}
+
 /// The params of `auth/cancel_login`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

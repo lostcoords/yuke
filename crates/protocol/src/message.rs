@@ -106,6 +106,10 @@ pub enum ClientRequest {
     /// still saves the login. Result: [`EmptyResult`].
     #[serde(rename = "auth/cancel_login")]
     CancelLogin(crate::CancelLoginParams),
+    /// Remove what yuke stored for a provider: its login in `auth.json`, and the token of `credential/update`. A login
+    /// in progress of the provider ends first. yuke revokes no token at the provider. Result: [`EmptyResult`].
+    #[serde(rename = "auth/logout")]
+    Logout(crate::LogoutParams),
     /// List the providers and their models. Result: [`ListCatalogResult`](crate::ListCatalogResult).
     #[serde(rename = "catalog/list")]
     ListCatalog(crate::ListCatalogParams),
@@ -141,7 +145,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 20] = [
+    pub const METHODS: [&str; 21] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -155,6 +159,7 @@ impl ClientRequest {
         "session/remove",
         "auth/login",
         "auth/cancel_login",
+        "auth/logout",
         "catalog/list",
         "job/list",
         "job/stop",
