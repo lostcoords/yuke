@@ -97,6 +97,15 @@ pub enum ClientRequest {
     /// session: close it first with `session/close`. Result: [`EmptyResult`].
     #[serde(rename = "session/remove")]
     RemoveSession(RemoveSessionParams),
+    /// Start a device login of a provider, and give its code at once. A login in progress of the provider ends as
+    /// cancelled first. The server polls the provider, saves the login, and sends `auth/login_finished`. Result:
+    /// [`LoginResult`](crate::LoginResult).
+    #[serde(rename = "auth/login")]
+    Login(crate::LoginParams),
+    /// Ask a login in progress to stop. Its `auth/login_finished` tells how it ended: a poll that got the approval
+    /// still saves the login. Result: [`EmptyResult`].
+    #[serde(rename = "auth/cancel_login")]
+    CancelLogin(crate::CancelLoginParams),
     /// List the providers and their models. Result: [`ListCatalogResult`](crate::ListCatalogResult).
     #[serde(rename = "catalog/list")]
     ListCatalog(crate::ListCatalogParams),
@@ -132,7 +141,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 18] = [
+    pub const METHODS: [&str; 20] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -144,6 +153,8 @@ impl ClientRequest {
         "session/list",
         "session/get",
         "session/remove",
+        "auth/login",
+        "auth/cancel_login",
         "catalog/list",
         "job/list",
         "job/stop",
@@ -187,6 +198,9 @@ pub enum ServerNotification {
     /// A message for the user. It is not part of session history.
     #[serde(rename = "notice")]
     Notice(NoticeParams),
+    /// The end of a login of `auth/login`.
+    #[serde(rename = "auth/login_finished")]
+    LoginFinished(crate::LoginFinishedParams),
 }
 
 /// The params of `notice`.
@@ -280,6 +294,8 @@ impl ResponseError {
     pub const JOB_NOT_FOUND: i32 = -32_004;
     /// The session has no open question with this id: the id is unknown, or the question has ended.
     pub const INTERACTION_NOT_FOUND: i32 = -32_005;
+    /// The server has no login in progress with this id: the id is unknown, or the login has ended.
+    pub const LOGIN_NOT_FOUND: i32 = -32_006;
 }
 
 /// The name, an optional title, and the version of a client or a server.

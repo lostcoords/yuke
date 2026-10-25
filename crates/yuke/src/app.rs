@@ -15,7 +15,7 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
@@ -28,13 +28,13 @@ use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
 use yuke_ai::transport::{Exchange, Transport};
-use yuke_engine::{CredentialSource, Model, Timer, chain_text};
+use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
     EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult,
-    ListSessionsParams, ListSessionsResult, ModelReference, NoticeLevel, NoticeParams, ProviderState,
-    ServerNotification, SessionActivity, SessionEvent, SessionId, SessionRow, SessionSettings, SessionState,
-    SessionSummary, StoredEvent, UpdateCredentialParams,
+    ListSessionsParams, ListSessionsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference,
+    NoticeLevel, NoticeParams, ProviderState, ServerNotification, SessionActivity, SessionEvent, SessionId, SessionRow,
+    SessionSettings, SessionState, SessionSummary, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -100,6 +100,16 @@ struct Shared {
     last_question: Arc<AtomicU64>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
     logins: Mutex<HashMap<String, LoginSource>>,
+    /// The login in progress of each provider, from `auth/login`.
+    pending_logins: Mutex<HashMap<String, InProgress>>,
+    /// The id of the last login of `auth/login`.
+    last_login: AtomicU64,
+}
+
+/// A login in progress: its id, and the token that stops it.
+struct InProgress {
+    id: LoginId,
+    stop: CancellationToken,
 }
 
 /// The parts of the profile that a reload replaces. A reader takes a copy of an `Arc`, so it never holds the lock.
@@ -202,6 +212,8 @@ impl App {
             mcp,
             last_question: Arc::default(),
             logins: Mutex::default(),
+            pending_logins: Mutex::default(),
+            last_login: AtomicU64::new(0),
         });
         let (runtime, reporter) = match start_runtime(&shared).await {
             Ok(started) => started,
@@ -415,6 +427,92 @@ impl App {
             return Err(AppError::Open(id));
         }
         self.shared.store.delete_session(id).await.map_err(AppError::Store)
+    }
+
+    /// Start a device login of `provider`, and give its code. A login in progress of the provider ends as cancelled
+    /// first. A task polls the provider, saves the login in `auth.json`, and sends `auth/login_finished`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a provider without a login flow, and [`AppError::Internal`] when the provider
+    /// does not start the login.
+    pub(crate) async fn login(&self, provider: String) -> Result<LoginResult, AppError> {
+        let flow = self.shared.providers().login(&provider).map_err(AppError::Invalid)?.1;
+        if let Some(earlier) = lock(&self.shared.pending_logins).remove(&provider) {
+            earlier.stop.cancel();
+        }
+        let started = tokio::time::Instant::now();
+        let pending = crate::auth::start_login(flow, &*self.shared.machine.exchange)
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+        let login_id = LoginId(self.shared.last_login.fetch_add(1, Ordering::Relaxed) + 1);
+        let stop = CancellationToken::new();
+        let in_progress = InProgress {
+            id: login_id,
+            stop: stop.clone(),
+        };
+        lock(&self.shared.pending_logins).insert(provider.clone(), in_progress);
+        let result = LoginResult {
+            login_id,
+            verification_url: pending.verification_url.clone(),
+            user_code: pending.user_code.clone(),
+        };
+        let shared = Arc::clone(&self.shared);
+        tokio::spawn(async move {
+            let exchange = Arc::clone(&shared.machine.exchange);
+            // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
+            let polled = tokio::select! {
+                polled = crate::auth::poll_login(&pending, started, &*exchange) => Some(polled),
+                () = stop.cancelled() => None,
+            };
+            let outcome = match polled {
+                None => LoginOutcome::Cancelled,
+                Some(Err(error)) => LoginOutcome::Failed {
+                    message: chain_text(&error),
+                },
+                Some(Ok(grant)) => {
+                    match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
+                        Ok(()) => LoginOutcome::Succeeded,
+                        Err(error) => LoginOutcome::Failed {
+                            message: chain_text(&error),
+                        },
+                    }
+                }
+            };
+            {
+                let mut pending = lock(&shared.pending_logins);
+                // A newer login of the provider keeps its entry.
+                if pending
+                    .get(&provider)
+                    .is_some_and(|in_progress| in_progress.id == login_id)
+                {
+                    pending.remove(&provider);
+                }
+            }
+            shared
+                .observer
+                .notify(ServerNotification::LoginFinished(LoginFinishedParams {
+                    login_id,
+                    provider,
+                    outcome,
+                }));
+        });
+        Ok(result)
+    }
+
+    /// Ask the login `id` in progress to stop. Its `auth/login_finished` tells how it ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoLogin`] when no login with this id is in progress.
+    pub(crate) fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
+        let pending = lock(&self.shared.pending_logins);
+        let in_progress = pending
+            .values()
+            .find(|in_progress| in_progress.id == id)
+            .ok_or(AppError::NoLogin(id))?;
+        in_progress.stop.cancel();
+        Ok(())
     }
 
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
@@ -731,6 +829,8 @@ pub(crate) enum AppError {
     NoJob(String),
     /// The session has no open question with this id.
     NoInteraction(InteractionId),
+    /// No login with this id is in progress.
+    NoLogin(LoginId),
     /// The store failed.
     Store(StoreError),
     /// A part of yuke failed. The text tells why.
@@ -752,6 +852,7 @@ impl fmt::Display for AppError {
             ),
             AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
             AppError::NoInteraction(id) => write!(f, "the session has no open question {}", id.0),
+            AppError::NoLogin(id) => write!(f, "no login {} is in progress", id.0),
             AppError::Store(error) => fmt::Display::fmt(error, f),
         }
     }
@@ -1023,7 +1124,9 @@ mod tests {
             .iter()
             .map(|notification| match notification {
                 ServerNotification::Notice(notice) => notice.message.clone(),
-                other @ ServerNotification::SessionUpdate(_) => panic!("expected a notice, got {other:?}"),
+                other @ (ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_)) => {
+                    panic!("expected a notice, got {other:?}")
+                }
             })
             .collect();
         assert_eq!(messages, ["a script failed: lost"]);

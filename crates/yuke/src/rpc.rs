@@ -356,6 +356,11 @@ impl Server {
             }
             ClientRequest::ListSessions(params) => result(&app.list(params).await?),
             ClientRequest::GetSession(params) => result(&app.get(params.session_id).await?),
+            ClientRequest::Login(params) => result(&app.login(params.provider).await?),
+            ClientRequest::CancelLogin(params) => {
+                app.cancel_login(params.login_id)?;
+                result(&EmptyResult {})
+            }
             ClientRequest::ListCatalog(params) => result(&app.catalog(params.all.unwrap_or(false)).await?),
             ClientRequest::RemoveSession(params) => {
                 app.remove(params.session_id).await?;
@@ -460,7 +465,8 @@ impl Connection {
 }
 
 /// Sends the notifications of the app to the active client. With no active client, a notice goes to stderr, and a
-/// session update is dropped. The store keeps the saved events, and `session/load` sends them again.
+/// session update or a login end is dropped. `session/load` sends the saved events again, and `catalog/list` gives the
+/// state of a login.
 #[derive(Default)]
 struct Outbox {
     writer: Mutex<Option<Writer>>,
@@ -485,7 +491,7 @@ impl Observer for Outbox {
                 message: notification,
             }),
             (None, ServerNotification::Notice(notice)) => warn(&format!("{}: {}", notice.source, notice.message)),
-            (None, ServerNotification::SessionUpdate(_)) => {}
+            (None, ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_)) => {}
         }
     }
 }
@@ -561,6 +567,7 @@ fn response_error(error: &AppError) -> ResponseError {
         }
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
+        AppError::NoLogin(_) => ResponseError::LOGIN_NOT_FOUND,
         AppError::Store(error) => match error {
             StoreError::NotFound => ResponseError::SESSION_NOT_FOUND,
             StoreError::Owned => ResponseError::SESSION_OWNED,

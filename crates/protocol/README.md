@@ -11,14 +11,22 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `catalog/list`,
-  `job/list`, `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`.
+  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
+  `auth/cancel_login`, `catalog/list`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`,
+  `profile/reload`.
 - `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
 - `session/remove` deletes a saved session with its events, pending inputs, and blobs. Its forks stay. It fails for an
   open session, so a client closes it first with `session/close`. That method stops the turn and needs
   `stopJobs: true` when jobs run. It fails with -32003 while another writer holds the session.
+- `auth/login { provider }` starts the device login of a provider with a login flow, and answers its `loginId`,
+  `verificationUrl`, and `userCode` at once. A login in progress of the provider ends as `cancelled` first. The
+  client shows the page and the code. The server polls the provider, saves the login in `auth.json`, and sends
+  `auth/login_finished { loginId, provider, outcome }`: `succeeded`, `cancelled`, or `failed { message }`.
+- `auth/cancel_login { loginId }` asks a login in progress to stop. A poll that got the approval still saves the
+  login, so the outcome tells what happened. A client that missed the notification, for example after a reconnect,
+  reads the state with `catalog/list`. No answer and no notification holds a token.
 - `catalog/list` gives the providers that are ready now, or every provider with `all: true`. Each provider has its
   state (`ready`, `needs_api_key` with the variable, or `needs_login`) and its models: limits, prices, tool support,
   input kinds, and the reasoning choices with the reasoning settings that a session sends for each. A provider is
@@ -43,7 +51,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
   from `host:jobs`, after its `job` update.
-- Notifications: `session/cancel` from a client. `session/update` and `notice` from the server.
+- Notifications: `session/cancel` from a client. `session/update`, `notice`, and `auth/login_finished` from the
+  server.
 - `notice` is a message for the user, for the whole process or one session. It is not part of session history.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved

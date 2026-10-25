@@ -16,8 +16,9 @@ use yuke_protocol::{Input, InputKind, InputSource, ModelReference, SessionId, Se
 use super::*;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
+use crate::app::Machine;
 use crate::providers::Providers;
-use crate::testing::{PanicsOnce, Place, with_key};
+use crate::testing::{Answers, PanicsOnce, Place, with_key};
 
 /// Settings of a session in the work folder of `place`.
 fn settings(place: &Place) -> Value {
@@ -58,10 +59,19 @@ impl Client {
 
     /// The only client of a server, as on stdin and stdout.
     fn start(place: &Place, transport: Box<dyn Transport>) -> Client {
+        Client::start_with(place, transport, Answers::default())
+    }
+
+    /// The only client of a server whose logins and refreshes get `exchange`.
+    fn start_with(place: &Place, transport: Box<dyn Transport>, exchange: Answers) -> Client {
         let (input, server_input) = tokio::io::duplex(1 << 16);
         let (server_output, output) = tokio::io::duplex(1 << 16);
+        let machine = Machine {
+            exchange: Arc::new(exchange),
+            ..place.machine(Box::new(with_key), transport)
+        };
         let server = tokio::spawn(serve(
-            place.machine(Box::new(with_key), transport),
+            machine,
             Duration::from_secs(10),
             Clients::One(Stream::new(server_input, server_output)),
             std::future::pending(),
@@ -2518,4 +2528,95 @@ async fn each_reasoning_choice_of_the_catalog_gives_the_settings_of_its_level() 
         }
     }
     assert!(checked > offs && offs > 0, "{checked} choices, {offs} off");
+}
+
+/// The `xai-grok` answer that starts a device login.
+const LOGIN_START: &str =
+    r#"{"device_code":"dc","user_code":"UC","verification_uri_complete":"https://x.ai/d?c=UC","interval":1}"#;
+
+/// Whether `message` has the method `auth/login_finished` and the login id `id`.
+fn finished(message: &Value, id: &Value) -> bool {
+    message["method"] == "auth/login_finished" && message["params"]["loginId"] == *id
+}
+
+#[tokio::test]
+async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
+    let place = Place::new("rpc", "a_login_gives_its_code_at_once_and_its_end_saves_the_login");
+    let answers = Answers::default();
+    answers.push(200, LOGIN_START);
+    answers.push(200, r#"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#);
+    let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
+    client.initialize().await;
+
+    let started = client
+        .call("auth/login", json!({ "provider": "xai-grok" }))
+        .await
+        .unwrap();
+    let id = started["loginId"].clone();
+    let end = client.until(|message| finished(message, &id)).await.pop().unwrap();
+    let catalog = client.call("catalog/list", json!({})).await.unwrap();
+    client.end().await;
+
+    assert_eq!(started["userCode"], "UC");
+    assert_eq!(started["verificationUrl"], "https://x.ai/d?c=UC");
+    assert_eq!(end["params"]["provider"], "xai-grok");
+    assert_eq!(end["params"]["outcome"], json!({ "kind": "succeeded" }));
+    assert_eq!(provider_states(&catalog)["xai-grok"], json!({ "kind": "ready" }));
+    let saved: Value = serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap();
+    assert_eq!(saved["xai-grok"]["access_token"], "at");
+}
+
+#[tokio::test]
+async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
+    let place = Place::new("rpc", "a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once");
+    let answers = Answers::default();
+    answers.push(200, LOGIN_START);
+    answers.push(200, LOGIN_START);
+    let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
+    client.initialize().await;
+
+    let first = client.request("auth/login", json!({ "provider": "xai-grok" })).await;
+    let second = client.request("auth/login", json!({ "provider": "xai-grok" })).await;
+    let mut messages = client.until(|message| message["id"] == json!(second)).await;
+    let first_id = messages.iter().find(|message| message["id"] == json!(first)).unwrap()["result"]["loginId"].clone();
+    let second_id = messages.last().unwrap()["result"]["loginId"].clone();
+    if !messages.iter().any(|message| finished(message, &first_id)) {
+        messages.extend(client.until(|message| finished(message, &first_id)).await);
+    }
+    let cancel = client
+        .request("auth/cancel_login", json!({ "loginId": second_id }))
+        .await;
+    let mut after = client.until(|message| finished(message, &second_id)).await;
+    if !after.iter().any(|message| message["id"] == json!(cancel)) {
+        after.extend(client.until(|message| message["id"] == json!(cancel)).await);
+    }
+    let again = client.call("auth/cancel_login", json!({ "loginId": second_id })).await;
+    client.end().await;
+
+    let outcome = |messages: &[Value], id: &Value| {
+        messages.iter().find(|message| finished(message, id)).unwrap()["params"]["outcome"].clone()
+    };
+    assert_ne!(first_id, second_id);
+    assert_eq!(outcome(&messages, &first_id), json!({ "kind": "cancelled" }));
+    assert_eq!(outcome(&after, &second_id), json!({ "kind": "cancelled" }));
+    assert_eq!(again.unwrap_err()["code"], json!(ResponseError::LOGIN_NOT_FOUND));
+    assert!(!place.paths.data.join("auth.json").exists());
+}
+
+#[tokio::test]
+async fn a_login_of_a_provider_without_a_flow_or_a_refused_start_fails() {
+    let place = Place::new("rpc", "a_login_of_a_provider_without_a_flow_or_a_refused_start_fails");
+    let answers = Answers::default();
+    answers.push(400, r#"{"error":"invalid_client"}"#);
+    let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
+    client.initialize().await;
+
+    let key = client.call("auth/login", json!({ "provider": "anthropic" })).await;
+    let unknown = client.call("auth/login", json!({ "provider": "nobody" })).await;
+    let refused = client.call("auth/login", json!({ "provider": "xai-grok" })).await;
+    client.end().await;
+
+    assert_eq!(key.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
+    assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
+    assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INTERNAL_ERROR));
 }

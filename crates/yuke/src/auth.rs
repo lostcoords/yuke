@@ -502,7 +502,7 @@ impl CredentialSource for LoginSource {
 }
 
 /// Log in to `provider` with `flow`, and save the login in the data folder `folder`. `show` gets the code and the
-/// page of the approval. The login ends after [`LOGIN_LIMIT`] without an approval.
+/// page of the approval. The polls stop after [`LOGIN_LIMIT`] without an approval.
 ///
 /// # Errors
 ///
@@ -514,10 +514,34 @@ pub(crate) async fn login(
     exchange: &dyn Exchange,
     show: impl FnOnce(&PendingLogin),
 ) -> Result<(), AuthError> {
-    // The clock counts the waits and the requests, so a slow provider cannot outlast the limit.
     let started = tokio::time::Instant::now();
-    let pending = flow.start(exchange).await.map_err(AuthError::NotStarted)?;
+    let pending = start_login(flow, exchange).await?;
     show(&pending);
+    let grant = poll_login(&pending, started, exchange).await?;
+    save_login(provider, grant, folder).await
+}
+
+/// Start a device login of `flow`: the provider gives the code and the page of the approval.
+///
+/// # Errors
+///
+/// Returns [`AuthError::NotStarted`] when the provider does not start the login.
+pub(crate) async fn start_login(flow: Flow, exchange: &dyn Exchange) -> Result<PendingLogin, AuthError> {
+    flow.start(exchange).await.map_err(AuthError::NotStarted)
+}
+
+/// Poll the provider until the user approves `pending`, and give the grant. Before each wait, the function checks
+/// [`LOGIN_LIMIT`] from `started`, the time before the start of the login.
+///
+/// # Errors
+///
+/// Returns [`AuthError`] when the provider refuses or the login expires.
+pub(crate) async fn poll_login(
+    pending: &PendingLogin,
+    started: tokio::time::Instant,
+    exchange: &dyn Exchange,
+) -> Result<Grant, AuthError> {
+    // The check counts the waits and the polls before it, so a slow provider cannot outlast the limit by much.
     let mut interval = pending.interval.max(MIN_INTERVAL);
     let mut backoff = Duration::ZERO;
     // RFC 8628 section 3.5 asks for one whole interval before the first poll.
@@ -528,7 +552,7 @@ pub(crate) async fn login(
         }
         tokio::time::sleep(delay).await;
         match pending.poll(exchange, SystemTime::now()).await {
-            Ok(Poll::Approved(grant)) => return save_login(provider, grant, folder).await,
+            Ok(Poll::Approved(grant)) => return Ok(grant),
             Ok(Poll::Pending) => {
                 backoff = Duration::ZERO;
                 delay = interval;
@@ -547,8 +571,12 @@ pub(crate) async fn login(
     }
 }
 
-/// Save the grant of a new login of `provider` under the lock.
-async fn save_login(provider: &str, mut grant: Grant, folder: PathBuf) -> Result<(), AuthError> {
+/// Save `grant`, the grant of a new login of `provider`, in the data folder `folder` under the lock.
+///
+/// # Errors
+///
+/// Returns [`AuthError`] when the grant has no refresh token or the save fails.
+pub(crate) async fn save_login(provider: &str, mut grant: Grant, folder: PathBuf) -> Result<(), AuthError> {
     let refresh_token = grant.refresh_token.take().ok_or(AuthError::NoRefreshToken)?;
     let login = StoredLogin::from_grant(grant, refresh_token, None);
     let files = Files { folder };

@@ -296,6 +296,8 @@ impl Observer for Watcher {
                 self.ended.notify_one();
             }
             ServerNotification::Notice(notice) => warn(&notice.message),
+            // A run starts no login of `auth/login`.
+            ServerNotification::LoginFinished(_) => {}
         }
     }
 }

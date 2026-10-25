@@ -70,6 +70,12 @@ pub struct EventNumber(pub u64);
 #[serde(transparent)]
 pub struct InputId(pub u64);
 
+/// The id of a login of `auth/login`. A server process gives each login a larger id than the logins before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(transparent)]
+pub struct LoginId(pub u64);
+
 /// The id of a question. The server gives each question a larger id than the questions before it, in each session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
