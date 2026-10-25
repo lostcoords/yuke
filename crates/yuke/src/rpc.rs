@@ -356,6 +356,10 @@ impl Server {
             }
             ClientRequest::ListSessions(params) => result(&app.list(params).await?),
             ClientRequest::GetSession(params) => result(&app.get(params.session_id).await?),
+            ClientRequest::RemoveSession(params) => {
+                app.remove(params.session_id).await?;
+                result(&EmptyResult {})
+            }
             ClientRequest::ListJobs(params) => result(&ListJobsResult {
                 jobs: app.jobs(params.session_id)?,
             }),
@@ -551,7 +555,9 @@ fn response_error(error: &AppError) -> ResponseError {
     let code = match error {
         AppError::NotOpen(_) => ResponseError::SESSION_NOT_FOUND,
         AppError::Invalid(_) => ResponseError::INVALID_PARAMS,
-        AppError::Busy | AppError::TurnRuns | AppError::JobsRun(_) => ResponseError::INVALID_REQUEST,
+        AppError::Open(_) | AppError::Busy | AppError::TurnRuns | AppError::JobsRun(_) => {
+            ResponseError::INVALID_REQUEST
+        }
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::Store(error) => match error {

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use yuke_agent::{PromptSection, Session, Store};
+use yuke_agent::{Access, PromptSection, Session, Store};
 use yuke_ai::transport::Transport;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, InputKind, InputSource, ModelReference, SessionId, SessionSettings};
@@ -374,13 +374,7 @@ async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
 
     let id: SessionId = serde_json::from_value(session).unwrap();
-    let prompt = place
-        .store()
-        .await
-        .open(id, yuke_agent::Access::Read)
-        .await
-        .unwrap()
-        .prompt;
+    let prompt = place.store().await.open(id, Access::Read).await.unwrap().prompt;
     let prompt = yuke_agent::prompt_text(&prompt);
     assert!(prompt.starts_with("You are yuke"), "{prompt}");
     assert!(prompt.contains(place.work.to_str().unwrap()), "{prompt}");
@@ -792,13 +786,7 @@ async fn the_prompt_hook_edits_the_request_of_each_turn_and_the_session_keeps_it
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
     let id: SessionId = serde_json::from_value(session.clone()).unwrap();
-    let created = place
-        .store()
-        .await
-        .open(id, yuke_agent::Access::Read)
-        .await
-        .unwrap()
-        .prompt;
+    let created = place.store().await.open(id, Access::Read).await.unwrap().prompt;
 
     client.request("session/input", input_params(&session, "first")).await;
     client.until(is_idle).await;
@@ -809,13 +797,7 @@ async fn the_prompt_hook_edits_the_request_of_each_turn_and_the_session_keeps_it
     assert!(requests[0].contains(r"<turn>\nnumber 1\n</turn>"), "{}", requests[0]);
     assert!(requests[1].contains(r"<turn>\nnumber 2\n</turn>"), "{}", requests[1]);
     assert!(!requests[1].contains("number 1"), "{}", requests[1]);
-    let saved = place
-        .store()
-        .await
-        .open(id, yuke_agent::Access::Read)
-        .await
-        .unwrap()
-        .prompt;
+    let saved = place.store().await.open(id, Access::Read).await.unwrap().prompt;
     assert_eq!(saved, created);
     client.end().await;
 }
@@ -2383,4 +2365,46 @@ async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit(
     assert_eq!(ids.len(), 3);
     assert_eq!(elsewhere["sessions"], json!([]));
     assert_eq!(refused, vec![json!(ResponseError::INVALID_PARAMS); 5]);
+}
+
+#[tokio::test]
+async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or_held_one() {
+    let place = Place::new(
+        "rpc",
+        "a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or_held_one",
+    );
+    let source = saved_session(&place, "minimax", "MiniMax-M3").await;
+    let held = saved_session(&place, "minimax", "MiniMax-M3").await;
+    let store = place.store().await;
+    let fork = store.fork_session(source, None).await.unwrap().id;
+    // This lease stands for another process that writes the session.
+    let lease = store.open(held, Access::Write).await.unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let open = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    let removed = client.call("session/remove", json!({ "sessionId": source })).await;
+    let again = client.call("session/remove", json!({ "sessionId": source })).await;
+    let refused_open = client.call("session/remove", json!({ "sessionId": open })).await;
+    let refused_held = client.call("session/remove", json!({ "sessionId": held })).await;
+    client
+        .call("session/close", json!({ "sessionId": open, "stopJobs": false }))
+        .await
+        .unwrap();
+    let closed = client.call("session/remove", json!({ "sessionId": open })).await;
+    let listed = client.call("session/list", json!({})).await.unwrap();
+    let fork_row = client.call("session/get", json!({ "sessionId": fork })).await.unwrap();
+    client.end().await;
+    drop(lease);
+
+    assert_eq!(removed.unwrap(), json!({}));
+    assert_eq!(again.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
+    assert_eq!(refused_open.unwrap_err()["code"], json!(ResponseError::INVALID_REQUEST));
+    assert_eq!(refused_held.unwrap_err()["code"], json!(ResponseError::SESSION_OWNED));
+    assert_eq!(closed.unwrap(), json!({}));
+    let expected = BTreeMap::from([
+        (fork.to_string(), "closed".to_owned()),
+        (held.to_string(), "closed".to_owned()),
+    ]);
+    assert_eq!(activities(&listed), expected);
+    assert_eq!(fork_row["session"]["forkOf"], json!(source));
 }

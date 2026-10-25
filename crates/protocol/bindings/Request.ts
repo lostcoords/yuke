@@ -9,6 +9,7 @@ import type { InteractionRespondParams } from "./InteractionRespondParams";
 import type { ListSessionsParams } from "./ListSessionsParams";
 import type { LoadSessionParams } from "./LoadSessionParams";
 import type { RemoveInputParams } from "./RemoveInputParams";
+import type { RemoveSessionParams } from "./RemoveSessionParams";
 import type { RequestId } from "./RequestId";
 import type { SessionParams } from "./SessionParams";
 import type { SessionSettings } from "./SessionSettings";
@@ -27,4 +28,4 @@ jsonrpc: "2.0",
 /**
  * The id that the response repeats.
  */
-id: RequestId, } & ({ "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "session/list", "params": ListSessionsParams } | { "method": "session/get", "params": GetSessionParams } | { "method": "job/list", "params": SessionParams } | { "method": "job/stop", "params": StopJobParams } | { "method": "credential/update", "params": UpdateCredentialParams } | { "method": "interaction/respond", "params": InteractionRespondParams } | { "method": "mcp/list", "params": SessionParams } | { "method": "profile/reload", "params": EmptyParams });
+id: RequestId, } & ({ "method": "initialize", "params": InitializeParams } | { "method": "session/new", "params": SessionSettings } | { "method": "session/fork", "params": ForkSessionParams } | { "method": "session/load", "params": LoadSessionParams } | { "method": "session/close", "params": CloseSessionParams } | { "method": "session/input", "params": InputParams } | { "method": "session/set_settings", "params": SetSettingsParams } | { "method": "session/remove_input", "params": RemoveInputParams } | { "method": "session/list", "params": ListSessionsParams } | { "method": "session/get", "params": GetSessionParams } | { "method": "session/remove", "params": RemoveSessionParams } | { "method": "job/list", "params": SessionParams } | { "method": "job/stop", "params": StopJobParams } | { "method": "credential/update", "params": UpdateCredentialParams } | { "method": "interaction/respond", "params": InteractionRespondParams } | { "method": "mcp/list", "params": SessionParams } | { "method": "profile/reload", "params": EmptyParams });

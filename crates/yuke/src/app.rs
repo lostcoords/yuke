@@ -402,6 +402,19 @@ impl App {
         Ok(self.row(session))
     }
 
+    /// Delete the saved session `id` with its events, its pending inputs, and its blobs. Its forks stay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Open`] for an open session, and [`AppError::Store`] for an unknown session, a session that
+    /// another process holds, or a failed delete.
+    pub(crate) async fn remove(&self, id: SessionId) -> Result<(), AppError> {
+        if self.sessions.contains_key(&id) {
+            return Err(AppError::Open(id));
+        }
+        self.shared.store.delete_session(id).await.map_err(AppError::Store)
+    }
+
     /// The row of `session` with its activity in this app now.
     fn row(&self, session: SessionSummary) -> SessionRow {
         let activity = match self.sessions.get(&session.session_id).map(LiveSession::state) {
@@ -665,6 +678,8 @@ fn position_of(cursor: &str, cwd: Option<&Path>) -> Result<ListPosition, AppErro
 pub(crate) enum AppError {
     /// The session is not open.
     NotOpen(SessionId),
+    /// The session is open, so the app cannot remove it.
+    Open(SessionId),
     /// A value of the request cannot work: a model, a folder, or an input. The text tells why.
     Invalid(String),
     /// A turn runs or input waits, so the settings cannot change.
@@ -687,6 +702,7 @@ impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AppError::NotOpen(id) => write!(f, "the session {id} is not open: create, fork, or load it first"),
+            AppError::Open(id) => write!(f, "the session {id} is open: close it with session/close first"),
             AppError::Invalid(text) | AppError::Internal(text) => f.write_str(text),
             AppError::Busy => f.write_str("a turn runs or waits: change the settings after it ends"),
             AppError::TurnRuns => f.write_str("a turn runs: reload after it ends"),

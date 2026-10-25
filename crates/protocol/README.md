@@ -11,11 +11,14 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `job/list`, `job/stop`,
-  `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`.
+  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `job/list`,
+  `job/stop`, `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`.
 - `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
+- `session/remove` deletes a saved session with its events, pending inputs, and blobs. Its forks stay. It fails for an
+  open session, so a client closes it first with `session/close`. That method stops the turn and needs
+  `stopJobs: true` when jobs run. It fails with -32003 while another writer holds the session.
 - A row holds the saved facts (model, folder, preview, times, fork source) and the activity now: `closed`, `idle`, or
   `running`. The preview is the trimmed user text of the first message input with text, at most 200 characters.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions

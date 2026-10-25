@@ -93,6 +93,10 @@ pub enum ClientRequest {
     /// The row of one saved session. Result: [`SessionRow`](crate::SessionRow).
     #[serde(rename = "session/get")]
     GetSession(GetSessionParams),
+    /// Delete a saved session with its events, its pending inputs, and its blobs. Its forks stay. It fails for an open
+    /// session: close it first with `session/close`. Result: [`EmptyResult`].
+    #[serde(rename = "session/remove")]
+    RemoveSession(RemoveSessionParams),
     /// List the running background jobs of an open session. Result: [`ListJobsResult`].
     #[serde(rename = "job/list")]
     ListJobs(SessionParams),
@@ -125,7 +129,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 16] = [
+    pub const METHODS: [&str; 17] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -136,6 +140,7 @@ impl ClientRequest {
         "session/remove_input",
         "session/list",
         "session/get",
+        "session/remove",
         "job/list",
         "job/stop",
         "credential/update",
@@ -393,6 +398,15 @@ pub struct ListSessionsResult {
 #[serde(rename_all = "camelCase")]
 pub struct GetSessionParams {
     /// The id of the saved session. The session can be closed.
+    pub session_id: SessionId,
+}
+
+/// The params of `session/remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveSessionParams {
+    /// The id of the saved session. The session must be closed.
     pub session_id: SessionId,
 }
 
