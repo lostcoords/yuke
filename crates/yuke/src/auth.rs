@@ -325,6 +325,15 @@ impl LockedFiles {
     }
 }
 
+/// The provider ids of the entries of `auth.json` in the data folder `folder`.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] when the file does not read or holds no valid content.
+pub(crate) async fn logged_in(folder: PathBuf) -> Result<HashSet<String>, AuthError> {
+    blocking(move || Ok(Files { folder }.read()?.into_keys().collect())).await
+}
+
 /// Run `f` on a blocking thread of tokio, because the file calls block.
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, AuthError> + Send + 'static,
@@ -381,6 +390,11 @@ impl LoginSource {
     /// Use `pushed` for each attempt from now on, in place of the stored login.
     pub(crate) fn push(&self, pushed: Pushed) {
         *lock(&self.0.pushed) = Some(pushed);
+    }
+
+    /// Whether a `credential/update` gave a token.
+    pub(crate) fn has_pushed(&self) -> bool {
+        lock(&self.0.pushed).is_some()
     }
 }
 

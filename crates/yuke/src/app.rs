@@ -2,6 +2,7 @@
 //! and `yuke --rpc` drive their sessions through an [`App`], and the app tells them what happens with the notifications
 //! of the protocol.
 
+mod catalog;
 mod live;
 mod models;
 mod trust;
@@ -30,9 +31,10 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListSessionsParams,
-    ListSessionsResult, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionEvent,
-    SessionId, SessionRow, SessionSettings, SessionState, SessionSummary, StoredEvent, UpdateCredentialParams,
+    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult,
+    ListSessionsParams, ListSessionsResult, ModelReference, NoticeLevel, NoticeParams, ProviderState,
+    ServerNotification, SessionActivity, SessionEvent, SessionId, SessionRow, SessionSettings, SessionState,
+    SessionSummary, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -415,6 +417,43 @@ impl App {
         self.shared.store.delete_session(id).await.map_err(AppError::Store)
     }
 
+    /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
+    pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
+        let logged_in = crate::auth::logged_in(self.shared.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+        let providers = self.shared.providers();
+        let logins = lock(&self.shared.logins);
+        let providers = providers
+            .iter()
+            .filter_map(|provider| {
+                let state = match &provider.auth {
+                    Auth::ApiKey(None) => ProviderState::Ready,
+                    Auth::ApiKey(Some(name)) => match api_key(&self.shared, name) {
+                        Some(_) => ProviderState::Ready,
+                        None => ProviderState::NeedsApiKey {
+                            variable: name.to_string(),
+                        },
+                    },
+                    Auth::OAuth(_) => {
+                        let pushed = logins.get(provider.id.as_ref()).is_some_and(LoginSource::has_pushed);
+                        if pushed || logged_in.contains(provider.id.as_ref()) {
+                            ProviderState::Ready
+                        } else {
+                            ProviderState::NeedsLogin
+                        }
+                    }
+                };
+                (all || state == ProviderState::Ready).then(|| catalog::provider_info(provider, state))
+            })
+            .collect();
+        Ok(ListCatalogResult { providers })
+    }
+
     /// The row of `session` with its activity in this app now.
     fn row(&self, session: SessionSummary) -> SessionRow {
         let activity = match self.sessions.get(&session.session_id).map(LiveSession::state) {
@@ -772,9 +811,7 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let provider = entry.provider;
     let source: Arc<dyn CredentialSource> = match &provider.auth {
         Auth::ApiKey(Some(name)) => {
-            let key = (shared.machine.variable)(name)
-                .and_then(|key| key.into_string().ok())
-                .filter(|key| !key.is_empty())
+            let key = api_key(shared, name)
                 .ok_or_else(|| AppError::Invalid(format!("no API key: set {name} for {}", provider.name)))?;
             Arc::new(Credential::ApiKey(key.into()))
         }
@@ -813,6 +850,13 @@ async fn save_settings(
         event_number,
         event: SessionEvent::Settings(settings),
     })
+}
+
+/// The API key in the environment variable `name`, when it is set, UTF-8, and not empty.
+fn api_key(shared: &Shared, name: &str) -> Option<String> {
+    (shared.machine.variable)(name)
+        .and_then(|key| key.into_string().ok())
+        .filter(|key| !key.is_empty())
 }
 
 /// The credential source of the provider `id` with the login `flow`. Each session of the provider shares it, so one

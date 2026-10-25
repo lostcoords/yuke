@@ -97,6 +97,9 @@ pub enum ClientRequest {
     /// session: close it first with `session/close`. Result: [`EmptyResult`].
     #[serde(rename = "session/remove")]
     RemoveSession(RemoveSessionParams),
+    /// List the providers and their models. Result: [`ListCatalogResult`](crate::ListCatalogResult).
+    #[serde(rename = "catalog/list")]
+    ListCatalog(crate::ListCatalogParams),
     /// List the running background jobs of an open session. Result: [`ListJobsResult`].
     #[serde(rename = "job/list")]
     ListJobs(SessionParams),
@@ -129,7 +132,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 17] = [
+    pub const METHODS: [&str; 18] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -141,6 +144,7 @@ impl ClientRequest {
         "session/list",
         "session/get",
         "session/remove",
+        "catalog/list",
         "job/list",
         "job/stop",
         "credential/update",

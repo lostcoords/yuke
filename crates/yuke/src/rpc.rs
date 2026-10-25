@@ -356,6 +356,7 @@ impl Server {
             }
             ClientRequest::ListSessions(params) => result(&app.list(params).await?),
             ClientRequest::GetSession(params) => result(&app.get(params.session_id).await?),
+            ClientRequest::ListCatalog(params) => result(&app.catalog(params.all.unwrap_or(false)).await?),
             ClientRequest::RemoveSession(params) => {
                 app.remove(params.session_id).await?;
                 result(&EmptyResult {})

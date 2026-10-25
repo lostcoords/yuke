@@ -16,6 +16,7 @@ use yuke_protocol::{Input, InputKind, InputSource, ModelReference, SessionId, Se
 use super::*;
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
+use crate::providers::Providers;
 use crate::testing::{PanicsOnce, Place, with_key};
 
 /// Settings of a session in the work folder of `place`.
@@ -2407,4 +2408,114 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
     ]);
     assert_eq!(activities(&listed), expected);
     assert_eq!(fork_row["session"]["forkOf"], json!(source));
+}
+
+/// The state of each provider of `listed`, a `catalog/list` result, by provider id.
+fn provider_states(listed: &Value) -> BTreeMap<String, Value> {
+    listed["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|provider| (provider["id"].as_str().unwrap().to_owned(), provider["state"].clone()))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state() {
+    let place = Place::new(
+        "rpc",
+        "the_catalog_gives_the_ready_providers_or_each_provider_with_its_state",
+    );
+    std::fs::create_dir_all(&place.paths.data).unwrap();
+    let login = json!({ "openai-codex": { "access_token": "a", "refresh_token": "r", "expires_at": 0 } });
+    std::fs::write(place.paths.data.join("auth.json"), login.to_string()).unwrap();
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    let providers = r#"{ "providers": [{
+        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "endpoints": [{ "protocol": "anthropic_messages" }],
+        "models": [{ "id": "small", "upstream_id": "vendor/small", "limits": { "max_output_tokens": 4096 },
+                     "reasoning_levels": ["high", "high"] }]
+    }] }"#;
+    std::fs::write(place.paths.config.join("providers.json"), providers).unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+
+    let ready = client.call("catalog/list", json!({})).await.unwrap();
+    let all = client.call("catalog/list", json!({ "all": true })).await.unwrap();
+    let refused = client.call("catalog/list", json!({ "all": "yes" })).await;
+    client.end().await;
+
+    let ready_state = json!({ "kind": "ready" });
+    let ready_states = provider_states(&ready);
+    assert!(
+        ready_states.values().all(|state| *state == ready_state),
+        "{ready_states:?}"
+    );
+    assert_eq!(
+        ready_states.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["local", "minimax", "openai-codex"]
+    );
+    let all_states = provider_states(&all);
+    assert_eq!(
+        all_states["anthropic"],
+        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
+    );
+    assert_eq!(all_states["xai-grok"], json!({ "kind": "needs_login" }));
+    assert_eq!(all_states["openai-codex"], ready_state);
+    assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
+
+    let local = &all["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|provider| provider["id"] == "local")
+        .unwrap();
+    let small = &local["models"][0];
+    assert_eq!(small["id"], "small");
+    assert_eq!(small["maxOutputTokens"], 4096);
+    assert_eq!(
+        small["reasoning"][0],
+        json!({ "level": "default", "settings": { "thinking": null, "effort": null } })
+    );
+    let levels: Vec<&str> = small["reasoning"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|choice| choice["level"].as_str().unwrap())
+        .collect();
+    assert_eq!(levels, ["default", "off", "high"]);
+}
+
+#[tokio::test]
+async fn each_reasoning_choice_of_the_catalog_gives_the_settings_of_its_level() {
+    let place = Place::new(
+        "rpc",
+        "each_reasoning_choice_of_the_catalog_gives_the_settings_of_its_level",
+    );
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+
+    let all = client.call("catalog/list", json!({ "all": true })).await.unwrap();
+    client.end().await;
+
+    let providers = Providers::load(&place.paths.config).unwrap();
+    let mut checked = 0;
+    let mut offs = 0;
+    for provider in all["providers"].as_array().unwrap() {
+        for model in provider["models"].as_array().unwrap() {
+            let selector = format!("{}/{}", provider["id"].as_str().unwrap(), model["id"].as_str().unwrap());
+            let entry = providers.lookup(&selector).unwrap();
+            for choice in model["reasoning"].as_array().unwrap().iter().skip(1) {
+                let level = match choice["level"].as_str().unwrap() {
+                    "off" => {
+                        offs += 1;
+                        yuke_ai::catalog::ReasoningLevel::Off
+                    }
+                    effort => yuke_ai::catalog::ReasoningLevel::Effort(serde_json::from_value(json!(effort)).unwrap()),
+                };
+                let expected = serde_json::to_value(entry.model.reasoning(level).unwrap()).unwrap();
+                assert_eq!(choice["settings"], expected, "{selector} {level:?}");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > offs && offs > 0, "{checked} choices, {offs} off");
 }

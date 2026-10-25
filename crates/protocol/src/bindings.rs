@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::{
-    ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListJobsResult,
+    ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult,
     ListMcpServersResult, ListSessionsResult, Notification, Request, Response, ServerNotification, SessionResult,
     SessionRow,
 };
@@ -70,6 +70,7 @@ fn export(folder: &Path) {
     InputResult::export_all(&config).unwrap();
     ListJobsResult::export_all(&config).unwrap();
     ListSessionsResult::export_all(&config).unwrap();
+    ListCatalogResult::export_all(&config).unwrap();
     SessionRow::export_all(&config).unwrap();
     ListMcpServersResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();

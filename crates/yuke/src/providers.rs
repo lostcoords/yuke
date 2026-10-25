@@ -53,6 +53,11 @@ impl Providers {
         Ok(Providers(providers))
     }
 
+    /// The providers in catalog order: the built-in ones, then the additions of the file.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Provider> {
+        self.0.iter()
+    }
+
     /// Find the model that a `provider/model` selector names.
     ///
     /// # Errors

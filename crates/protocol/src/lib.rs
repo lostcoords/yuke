@@ -3,6 +3,7 @@
 
 #[cfg(test)]
 mod bindings;
+mod catalog;
 mod event;
 mod id;
 mod input;
@@ -12,6 +13,10 @@ mod message;
 mod session;
 mod update;
 
+pub use catalog::{
+    ListCatalogParams, ListCatalogResult, Modality, ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice,
+    ReasoningLevel,
+};
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
