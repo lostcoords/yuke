@@ -27,6 +27,7 @@
   --yuke-ink: #3b7535;
   --yuke-terminal: #0c0d0c;
   --yuke-terminal-line: #262a26;
+  --yuke-bg-mark: rgba(12, 13, 12, 0.16);
 
   --vp-c-bg: var(--yuke-white);
   --vp-c-bg-alt: #eeebe2;
@@ -53,6 +54,7 @@
   --yuke-line: #262a26;
   --yuke-panel: #111311;
   --yuke-ink: var(--yuke-green);
+  --yuke-bg-mark: rgba(244, 242, 235, 0.13);
 
   --vp-c-bg: var(--yuke-black);
   --vp-c-bg-alt: #090a09;
@@ -116,7 +118,10 @@ html {
 }
 
 /* The home page is wider than a docs page, and its sections share these edges. */
+/* The grid background sits behind everything on the home page. */
 .VPHome {
+  position: relative;
+  z-index: 0;
   display: flex;
   flex-direction: column;
 }
@@ -126,6 +131,7 @@ html {
   padding-bottom: 0;
 }
 
+/* The same edges as parcela.run: 1280 px wide, with 24, 48 or 64 px of gutter. */
 .yuke-section {
   box-sizing: border-box;
   width: 100%;
@@ -134,9 +140,15 @@ html {
   padding: 0 24px;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 640px) {
   .yuke-section {
     padding: 0 48px;
+  }
+}
+
+@media (min-width: 960px) {
+  .yuke-section {
+    padding: 0 64px;
   }
 }
 
@@ -150,14 +162,7 @@ html {
 /* The Markdown steps read as one more panel: the container keeps the section edges, and its
    Markdown root draws the frame. */
 .VPHome > .vp-doc.container {
-  margin-top: 48px;
-  padding: 0 24px;
-}
-
-@media (min-width: 768px) {
-  .VPHome > .vp-doc.container {
-    padding: 0 48px;
-  }
+  margin-top: 128px;
 }
 
 .VPHome > .vp-doc > div {
