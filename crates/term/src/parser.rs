@@ -1,6 +1,8 @@
 //! Terminal bytes to [`Event`]s, a port of the libvaxis parser. It reads legacy keys, the kitty keyboard protocol,
 //! xterm modifyOtherKeys, SGR mouse reports, bracketed paste, focus, and the probe answers.
 
+use std::borrow::Cow;
+
 use crate::event::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb};
 
 const ESC: u8 = 0x1b;
@@ -569,10 +571,14 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
 
-/// The paste text with each line end as `\n` and no control character except `\t`, because a control character in a
-/// cell can break the screen.
+/// The paste text with CR and CRLF as LF, the tabs, and no other control character.
 fn clean_paste(bytes: &[u8]) -> String {
-    let text = String::from_utf8_lossy(bytes);
+    let decoded = if bytes.contains(&ESC) {
+        Cow::Owned(decode_control_keys(bytes))
+    } else {
+        Cow::Borrowed(bytes)
+    };
+    let text = String::from_utf8_lossy(&decoded);
     let mut clean = String::with_capacity(text.len());
     let mut characters = text.chars().peekable();
     while let Some(character) = characters.next() {
@@ -587,6 +593,43 @@ fn clean_paste(bytes: &[u8]) -> String {
         }
     }
     clean
+}
+
+/// `bytes` with each ctrl key `CSI code ; 5 u` as its control byte. With extended keys in the csi-u format, tmux 3.7
+/// sends the control bytes of a paste in this form: a line feed comes as `CSI 106 ; 5 u`. A paste of the same text
+/// as literal bytes reads as the control byte too.
+fn decode_control_keys(bytes: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if let Some((byte, n)) = control_key(&bytes[at..]) {
+            decoded.push(byte);
+            at += n;
+        } else {
+            decoded.push(bytes[at]);
+            at += 1;
+        }
+    }
+    decoded
+}
+
+/// The control byte and the length of a ctrl key `CSI code ; 5 u` at the start of `input`. A code from 0 to 31 is its
+/// own byte, ctrl+space is 0, ctrl+? is 127, ctrl+@ to ctrl+_ are 0 to 31, and ctrl+a to ctrl+z are 1 to 26.
+fn control_key(input: &[u8]) -> Option<(u8, usize)> {
+    let body = input.strip_prefix(b"\x1b[")?;
+    let digits = body.iter().position(|byte| !byte.is_ascii_digit())?;
+    if !body[digits..].starts_with(b";5u") {
+        return None;
+    }
+    let byte = match number(&body[..digits])? {
+        code @ 0..=31 => code,
+        32 => 0,
+        63 => 127,
+        code @ 64..=95 => code - 64,
+        code @ 97..=122 => code - 96,
+        _ => return None,
+    };
+    Some((to_u8(byte), 2 + digits + 3))
 }
 
 #[cfg(test)]

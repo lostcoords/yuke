@@ -332,6 +332,20 @@ fn a_paste_keeps_escape_sequences_as_text() {
 }
 
 #[test]
+fn a_paste_reads_the_control_keys_of_tmux_as_their_bytes() {
+    // Ctrl+j, ctrl+i, ctrl+m, and ctrl+J give a line feed, a tab, and two line ends.
+    let mut bytes = b"\x1b[200~a\x1b[106;5ub\x1b[105;5uc\x1b[109;5ud\x1b[74;5ue".to_vec();
+    // Code 8, ctrl+space, ctrl+?, ctrl+@, and ctrl+\\ give control bytes, and the filter drops them.
+    bytes.extend_from_slice(b"\x1b[8;5u\x1b[32;5u\x1b[63;5u\x1b[64;5u\x1b[92;5uf");
+    // Ctrl+1 gives no control byte, and alt+j is no ctrl key. Their escape bytes drop, and their tails stay.
+    bytes.extend_from_slice(b"\x1b[49;5u\x1b[106;3u\x1b[201~");
+    assert_eq!(
+        parse_all(&bytes),
+        [Event::Paste("a\nb\tc\nd\nef[49;5u[106;3u".to_owned())]
+    );
+}
+
+#[test]
 fn a_paste_that_reads_cut_waits_for_its_end_marker() {
     let mut parser = Parser::new();
     assert_eq!(only_events(parser.feed(b"\x1b[200~one")), []);
