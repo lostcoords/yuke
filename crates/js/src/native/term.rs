@@ -11,9 +11,9 @@ use rquickjs::function::Opt;
 use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
-use yuke_term::{Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, MouseKind, Rgb, Scheme, Style, graphemes};
+use yuke_term::{Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, MouseKind, Rgb, Style, graphemes};
 
-use crate::display::{Display, Frame, Input, Request, scheme_of};
+use crate::display::{Display, Frame, Input, Request, Scheme, scheme_of};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
 
 /// The shortest time between two asked frames: at most 120 frames each second, as in Codex. A frame after input does
@@ -263,24 +263,6 @@ fn add_text<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     )?;
 
     set(
-        "termStepGrapheme",
-        Function::new(
-            ctx.clone(),
-            |ctx: Ctx<'js>, text: String, at: f64, before: bool| -> rquickjs::Result<_> {
-                let length = text.encode_utf16().count();
-                let at = count(at).filter(|&at| at <= length).ok_or_else(|| {
-                    throw(
-                        &ctx,
-                        ErrorClass::TypeError,
-                        "the offset is no integer from 0 to the length of the text",
-                    )
-                })?;
-                Ok(step(&text, at, before))
-            },
-        )?,
-    )?;
-
-    set(
         "termFit",
         Function::new(ctx.clone(), |text: String, cells: f64| {
             fit(&text, whole(cells).unwrap_or(0))
@@ -291,18 +273,11 @@ fn add_text<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
         "termWrap",
         Function::new(
             ctx.clone(),
-            |ctx: Ctx<'js>, text: String, width: f64, head: f64, tail: f64| -> rquickjs::Result<_> {
-                let (Some(head), Some(tail)) = (count(head), count(tail)) else {
-                    return Err(throw(&ctx, ErrorClass::TypeError, "head and tail are integers from 0"));
+            |ctx: Ctx<'js>, text: String, width: f64, head: f64| -> rquickjs::Result<_> {
+                let Some(head) = count(head) else {
+                    return Err(throw(&ctx, ErrorClass::TypeError, "head is an integer from 0"));
                 };
-                if tail > 0 && head == 0 {
-                    return Err(throw(&ctx, ErrorClass::TypeError, "a tail needs a head"));
-                }
-                let wrapped = wrap(&text, whole(width).filter(|&width| width > 0), head, tail);
-                let result = Object::new(ctx.clone())?;
-                result.set("rows", TypedArray::<i32>::new(ctx, wrapped.rows)?)?;
-                result.set("omitted", wrapped.omitted)?;
-                Ok(result)
+                TypedArray::<i32>::new(ctx, wrap(&text, whole(width).filter(|&width| width > 0), head))
             },
         )?,
     )
@@ -336,15 +311,20 @@ pub(crate) async fn drive(ctx: Ctx<'_>, frames: Rc<Frames>, faults: mpsc::Unboun
         }
         let inputs = display.take_inputs();
         redraw |= !inputs.is_empty();
-        for value in events(&ctx, &display, inputs) {
-            dispatch(&ctx, &event, value, &faults);
+        // Each input changes the display state when its event comes, so a handler reads the state of its own event.
+        for input in inputs {
+            if let Some(value) = event_object(&ctx, &display, input) {
+                dispatch(&ctx, &event, value, &faults);
+            }
         }
-        if frames.due().is_some_and(|due| due <= Instant::now()) {
-            frames.deadline.set(None);
-            redraw = true;
-        }
+        let now = Instant::now();
+        redraw |= frames.due().is_some_and(|due| due <= now);
         if redraw {
-            frames.last.set(Some(Instant::now()));
+            // The frame answers each ask that is due now, also one that the rate limit holds back.
+            if frames.deadline.get().is_some_and(|deadline| deadline <= now) {
+                frames.deadline.set(None);
+            }
+            frames.last.set(Some(now));
             paint(&ctx, &display, &draw, &faults);
         }
     }
@@ -405,52 +385,6 @@ fn report(ctx: &Ctx<'_>, result: rquickjs::Result<()>, faults: &mpsc::UnboundedS
     }
 }
 
-/// The JavaScript events of `inputs`. A run of wheel turns of one button at one cell becomes one event with a count.
-fn events<'js>(
-    ctx: &Ctx<'js>,
-    display: &Display,
-    inputs: impl IntoIterator<Item = Input>,
-) -> Vec<rquickjs::Result<Object<'js>>> {
-    let mut values = Vec::new();
-    let mut wheel: Option<(yuke_term::Mouse, u32)> = None;
-    for input in inputs {
-        if let Input::Event(Event::Mouse(mouse)) = &input
-            && is_wheel(mouse.button)
-        {
-            match &mut wheel {
-                Some((last, count))
-                    if last.button == mouse.button && (last.column, last.row) == (mouse.column, mouse.row) =>
-                {
-                    *count += 1;
-                }
-                _ => {
-                    if let Some((last, count)) = wheel.replace((*mouse, 1)) {
-                        values.push(mouse_object(ctx, last, count));
-                    }
-                }
-            }
-            continue;
-        }
-        if let Some((last, count)) = wheel.take() {
-            values.push(mouse_object(ctx, last, count));
-        }
-        if let Some(value) = event_object(ctx, display, input) {
-            values.push(value);
-        }
-    }
-    if let Some((last, count)) = wheel {
-        values.push(mouse_object(ctx, last, count));
-    }
-    values
-}
-
-fn is_wheel(button: Button) -> bool {
-    matches!(
-        button,
-        Button::WheelUp | Button::WheelDown | Button::WheelLeft | Button::WheelRight
-    )
-}
-
 /// The JavaScript event of `input`, or `None` for an input that gives none, such as an unchanged background.
 fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<rquickjs::Result<Object<'js>>> {
     let value = match input {
@@ -463,13 +397,11 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             })
         }
         Input::Event(Event::Key(key)) => kind(ctx, "key").and_then(|object| {
-            let (code, character) = match key.code {
-                Code::Char(character) => ("char", character.to_string()),
-                Code::Cluster => ("char", key.text.clone()),
-                other => (code_name(other), String::new()),
+            let character = match key.code {
+                Code::Char(character) => character.to_string(),
+                _ => String::new(),
             };
-            object.set("code", code)?;
-            object.set("event", "press")?;
+            object.set("code", code_name(key.code))?;
             object.set("char", character)?;
             object.set("shifted", key.shifted.map(String::from).unwrap_or_default())?;
             object.set("baseLayout", key.base_layout.map(String::from).unwrap_or_default())?;
@@ -478,7 +410,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             object.set("mods", key.modifiers.bits() & 0x3f)?;
             Ok(object)
         }),
-        Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse, 1),
+        Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
         Input::Event(Event::Paste(text)) => kind(ctx, "paste").and_then(|object| {
             object.set("text", text)?;
             Ok(object)
@@ -497,7 +429,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
                 Ok(object)
             })
         }
-        Input::Event(Event::Scheme(_)) => {
+        Input::Event(Event::SchemeChanged) => {
             let mut frame = display.frame();
             if frame
                 .output
@@ -513,7 +445,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
     Some(value)
 }
 
-fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse, count: u32) -> rquickjs::Result<Object<'js>> {
+fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse) -> rquickjs::Result<Object<'js>> {
     let object = kind(ctx, "mouse")?;
     object.set("col", mouse.column)?;
     object.set("row", mouse.row)?;
@@ -537,7 +469,6 @@ fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse, count: u32) -> rqu
     };
     object.set("event", event)?;
     object.set("mods", mouse.modifiers.bits() & 0x7)?;
-    object.set("count", count)?;
     Ok(object)
 }
 
@@ -547,7 +478,8 @@ fn kind<'js>(ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Object<'js>> {
     Ok(object)
 }
 
-/// The name of a key that is no character, as the Zig yuke names it. A key that it does not name is `unknown`.
+/// The name of a key, as the Zig yuke names it: `char` for a key of one code point. A function key past 35 is
+/// `unknown`.
 fn code_name(code: Code) -> &'static str {
     const FUNCTION_KEYS: [&str; 35] = [
         "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17",
@@ -574,7 +506,7 @@ fn code_name(code: Code) -> &'static str {
             .get(usize::from(number).wrapping_sub(1))
             .copied()
             .unwrap_or("unknown"),
-        _ => "unknown",
+        Code::Char(_) => "char",
     }
 }
 
@@ -655,29 +587,8 @@ fn style_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<
     })
 }
 
-/// A color: a palette index from 0 to 255, `#rrggbb`, an ANSI name, or `reset`.
+/// A color: a palette index from 0 to 255, `#rrggbb`, or `reset`.
 fn color_of<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> rquickjs::Result<Color> {
-    const NAMES: [(&str, u8); 19] = [
-        ("black", 0),
-        ("red", 1),
-        ("green", 2),
-        ("yellow", 3),
-        ("blue", 4),
-        ("magenta", 5),
-        ("cyan", 6),
-        ("gray", 7),
-        ("grey", 7),
-        ("dark_gray", 8),
-        ("dark_grey", 8),
-        ("light_red", 9),
-        ("light_green", 10),
-        ("light_yellow", 11),
-        ("light_blue", 12),
-        ("light_magenta", 13),
-        ("light_cyan", 14),
-        ("white", 15),
-        ("bright_white", 15),
-    ];
     if value.is_undefined() {
         return Ok(Color::Default);
     }
@@ -697,21 +608,19 @@ fn color_of<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> rquickjs::Result<Color> 
         if let Some(rgb) = hex(&text) {
             return Ok(Color::Rgb(rgb));
         }
-        if let Some(&(_, index)) = NAMES.iter().find(|(name, _)| *name == text) {
-            return Ok(Color::Index(index));
-        }
     }
     Err(throw(
         ctx,
         ErrorClass::TypeError,
-        "a color is an index from 0 to 255, #rrggbb, an ANSI name, or reset",
+        "a color is an index from 0 to 255, #rrggbb, or reset",
     ))
 }
 
 fn hex(text: &str) -> Option<Rgb> {
     let digits = text
         .strip_prefix('#')
-        .filter(|digits| digits.len() == 6 && digits.is_ascii())?;
+        // `from_str_radix` takes a sign too, so each byte must be a hex digit.
+        .filter(|digits| digits.len() == 6 && digits.bytes().all(|byte| byte.is_ascii_hexdigit()))?;
     let channel = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
     Some(Rgb {
         red: channel(0)?,
@@ -735,22 +644,6 @@ fn copy_bytes(text: &str, tmux: bool) -> Vec<u8> {
     bytes
 }
 
-/// The previous (`before`) or next grapheme boundary from the UTF-16 offset `at`: 0 or the length at the ends.
-fn step(text: &str, at: usize, before: bool) -> i32 {
-    let mut boundary = 0;
-    for (grapheme, _) in graphemes(text) {
-        let next = boundary + grapheme.encode_utf16().count();
-        if before && next >= at {
-            return small(boundary);
-        }
-        if !before && next > at {
-            return small(next);
-        }
-        boundary = next;
-    }
-    small(boundary)
-}
-
 /// The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`.
 fn fit(text: &str, cells: usize) -> i32 {
     let mut used = 0;
@@ -765,36 +658,25 @@ fn fit(text: &str, cells: usize) -> i32 {
     length
 }
 
-/// The rows of a wrap, as `[start, end, soft]` triples of UTF-16 offsets.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Wrapped {
-    rows: Vec<i32>,
-    omitted: bool,
-}
-
-/// Wrap `text` at `width` cells, as the Zig yuke does. A line feed ends a row (soft 0). A soft break (soft 1) comes
-/// before a grapheme that is no space and does not fit, after the last space of the row, else at the grapheme.
-/// Spaces never break, so a row can be wider than `width`. Without a width, the text is one row. A zero `head` keeps
-/// every row; else the first `head` rows stay, and the last `tail` rows too.
-fn wrap(text: &str, width: Option<usize>, head: usize, tail: usize) -> Wrapped {
-    let mut rows = Rows {
-        wrapped: Wrapped::default(),
-        head,
-        tail,
-        count: 0,
-        ring: 0,
-    };
+/// Wrap `text` at `width` cells, as `[start, end, soft]` triples of UTF-16 offsets. A line end (`\n` or `\r\n`) ends
+/// a row (soft 0). A soft break (soft 1) comes before a grapheme that is no space and does not fit. The break goes
+/// after the last space when the text from that space to the grapheme fits, else before the grapheme. Spaces never
+/// break, and one wide grapheme can exceed `width`. Without a width, the text is one row. A nonzero `head` keeps
+/// only the first `head` rows.
+fn wrap(text: &str, width: Option<usize>, head: usize) -> Vec<i32> {
     let Some(width) = width else {
-        rows.emit([0, units(text), 0]);
-        return rows.finish();
+        return vec![0, units(text), 0];
     };
+    let mut rows = Vec::new();
+    let full = |rows: &Vec<i32>| head > 0 && rows.len() == head * 3;
     let (mut start, mut offset) = (0, 0);
     let (mut cells, mut break_at, mut break_cells) = (0, None, 0);
     for (grapheme, grapheme_cells) in graphemes(text) {
         let length = units(grapheme);
-        if grapheme == "\n" {
-            if !rows.emit([start, offset, 0]) {
-                return rows.finish();
+        if grapheme == "\n" || grapheme == "\r\n" {
+            rows.extend([start, offset, 0]);
+            if full(&rows) {
+                return rows;
             }
             start = offset + length;
             cells = 0;
@@ -802,10 +684,11 @@ fn wrap(text: &str, width: Option<usize>, head: usize, tail: usize) -> Wrapped {
         } else {
             let space = grapheme == " ";
             if !space && cells + grapheme_cells > width && offset > start {
-                let broke = break_at.filter(|&at| at > start);
+                let broke = break_at.filter(|&at| at > start && cells - break_cells + grapheme_cells <= width);
                 let end = broke.unwrap_or(offset);
-                if !rows.emit([start, end, 1]) {
-                    return rows.finish();
+                rows.extend([start, end, 1]);
+                if full(&rows) {
+                    return rows;
                 }
                 cells = if broke.is_some() { cells - break_cells } else { 0 };
                 start = end;
@@ -819,45 +702,8 @@ fn wrap(text: &str, width: Option<usize>, head: usize, tail: usize) -> Wrapped {
         }
         offset += length;
     }
-    rows.emit([start, offset, 0]);
-    rows.finish()
-}
-
-/// The rows that a wrap keeps: all with a zero head, else the head and a ring of the last `tail` rows.
-struct Rows {
-    wrapped: Wrapped,
-    head: usize,
-    tail: usize,
-    count: usize,
-    ring: usize,
-}
-
-impl Rows {
-    /// Keep `row` or drop it. `false` ends the wrap: the head is full and no tail keeps a later row.
-    fn emit(&mut self, row: [i32; 3]) -> bool {
-        if self.head == 0 || self.count < self.head + self.tail {
-            self.wrapped.rows.extend(row);
-            self.count += 1;
-            return true;
-        }
-        self.wrapped.omitted = true;
-        if self.tail == 0 {
-            return false;
-        }
-        let at = (self.head + self.ring) * 3;
-        self.wrapped.rows[at..at + 3].copy_from_slice(&row);
-        self.ring = (self.ring + 1) % self.tail;
-        true
-    }
-
-    fn finish(mut self) -> Wrapped {
-        // The ring holds the tail from its oldest row at `ring`, so a rotation puts the rows in order. A ring in use
-        // follows a full head.
-        if self.ring > 0 {
-            self.wrapped.rows[self.head * 3..].rotate_left(self.ring * 3);
-        }
-        self.wrapped
-    }
+    rows.extend([start, offset, 0]);
+    rows
 }
 
 #[cfg(test)]

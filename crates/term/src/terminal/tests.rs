@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 use std::io::Read as _;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -11,9 +11,16 @@ use rustix::termios::{LocalModes, Winsize, tcsetwinsize};
 use super::*;
 use crate::event::{Code, Key};
 
+/// A spawn waits while a test opens a controller, so a child process gets no controller of another test. It would keep
+/// the controller open after the close of the test.
+static SPAWN: Mutex<()> = Mutex::new(());
+
 /// A pseudo-terminal: the controller side, and the device that a program reads as its terminal.
 fn pty() -> (File, File) {
+    let spawn = SPAWN.lock().unwrap();
     let controller = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+    rustix::io::fcntl_setfd(&controller, rustix::io::FdFlags::CLOEXEC).unwrap();
+    drop(spawn);
     grantpt(&controller).unwrap();
     unlockpt(&controller).unwrap();
     let name = ptsname(&controller, Vec::new()).unwrap();
@@ -70,7 +77,7 @@ fn raw_mode_and_the_screen_modes_last_until_the_drop() {
 
     let opening = thread::spawn(move || Terminal::from_file(device).unwrap());
     let output = read_until(&mut controller, b"\x1b[c");
-    let expected = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[>5u\x1b]11;?\x1b\\\x1b[?2031$p\x1b[?u\x1b[c";
+    let expected = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[?2031h\x1b[>5u\x1b]11;?\x1b\\\x1b[?u\x1b[c";
     assert_eq!(output, expected);
     controller.write_all(b"\x1b[?5u\x1b[?62c").unwrap();
     let terminal = opening.join().unwrap();
@@ -78,10 +85,10 @@ fn raw_mode_and_the_screen_modes_last_until_the_drop() {
 
     drop(terminal);
     assert!(canonical(&probe));
-    // Kitty keys need no modifyOtherKeys, and the terminal has no scheme reports, so the drop resets neither.
+    // Kitty keys need no modifyOtherKeys, so the drop does not reset it.
     assert_eq!(
         read_until(&mut controller, b"\x1b[?1049l"),
-        b"\x1b[<u\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l"
+        b"\x1b[<u\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l"
     );
 }
 
@@ -91,7 +98,7 @@ fn the_probe_turns_on_the_modes_that_the_answers_allow_and_the_drop_turns_them_o
     // A second handle keeps the device open after the drop, so its output stays readable.
     let _open = device.try_clone().unwrap();
     // A late kitty answer after the last answer changes nothing.
-    let answers = b"\x1b]11;rgb:1e1e/1e1e/2e2e\x07\x1b[?2031;2$y\x1b[?0u\x1b[?62c\x1b[?5u";
+    let answers = b"\x1b]11;rgb:1e1e/1e1e/2e2e\x07\x1b[?0u\x1b[?62c\x1b[?5u";
     let terminal = open(&mut controller, device, answers);
     assert_eq!(
         terminal.background(),
@@ -103,7 +110,7 @@ fn the_probe_turns_on_the_modes_that_the_answers_allow_and_the_drop_turns_them_o
     );
     terminal.write_all(b"|").unwrap();
     // Kitty flags 0 mean no kitty keys, so modifyOtherKeys comes on.
-    assert_eq!(read_until(&mut controller, b"|"), b"\x1b[?2031h\x1b[>4;2m|");
+    assert_eq!(read_until(&mut controller, b"|"), b"\x1b[>4;2m|");
 
     drop(terminal);
     let output = read_until(&mut controller, b"\x1b[?1049l");
@@ -125,7 +132,9 @@ fn input_during_the_probe_reaches_the_first_reader() {
     // A key, the last answer, and the start of an arrow key that the next read completes.
     let mut terminal = open(&mut controller, device, b"h\x1b[?62c\x1b[");
     let (send, events) = mpsc::channel();
-    terminal.start_reader(move |event| send.send(event).unwrap()).unwrap();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
     controller.write_all(b"A").unwrap();
 
     let second = Duration::from_secs(1);
@@ -167,7 +176,9 @@ fn the_reader_passes_events_until_the_stop() {
     let (mut controller, device) = pty();
     let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
     let (send, events) = mpsc::channel();
-    terminal.start_reader(move |event| send.send(event).unwrap()).unwrap();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
 
     // A key, a later background answer, a late probe answer that no one reads, and a key.
     controller
@@ -194,13 +205,15 @@ fn the_reader_passes_events_until_the_stop() {
 fn a_second_reader_fails_until_the_first_stops() {
     let (mut controller, device) = pty();
     let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
-    terminal.start_reader(|_| {}).unwrap();
-    let error = terminal.start_reader(|_| {}).unwrap_err();
+    terminal.start_reader(|_| {}, || {}).unwrap();
+    let error = terminal.start_reader(|_| {}, || {}).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
 
     terminal.stop_reader().unwrap();
     let (send, events) = mpsc::channel();
-    terminal.start_reader(move |event| send.send(event).unwrap()).unwrap();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
     controller.write_all(b"\x1b[A").unwrap();
     assert_eq!(
         events.recv_timeout(Duration::from_secs(1)).unwrap(),
@@ -213,7 +226,9 @@ fn the_drop_stops_the_reader() {
     let (mut controller, device) = pty();
     let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
     let (send, events) = mpsc::channel();
-    terminal.start_reader(move |event| send.send(event).unwrap()).unwrap();
+    terminal
+        .start_reader(move |event| send.send(event).unwrap(), || {})
+        .unwrap();
     drop(terminal);
     // The stopped thread dropped its callback, so the channel ends.
     assert_eq!(
@@ -230,15 +245,54 @@ fn the_drop_stops_the_reader_before_it_restores_the_device() {
     let (entered, entry) = mpsc::channel();
     let (send, modes) = mpsc::channel();
     terminal
-        .start_reader(move |_| {
-            entered.send(()).unwrap();
-            // The drop runs now. It must wait for this call before it restores the device.
-            thread::sleep(Duration::from_millis(100));
-            send.send(canonical(&probe)).unwrap();
-        })
+        .start_reader(
+            move |_| {
+                entered.send(()).unwrap();
+                // The drop runs now. It must wait for this call before it restores the device.
+                thread::sleep(Duration::from_millis(100));
+                send.send(canonical(&probe)).unwrap();
+            },
+            || {},
+        )
         .unwrap();
     controller.write_all(b"a").unwrap();
     entry.recv_timeout(Duration::from_secs(1)).unwrap();
     drop(terminal);
     assert_eq!(modes.recv_timeout(Duration::from_secs(1)), Ok(false));
+}
+
+#[test]
+fn a_stop_does_not_call_ended_and_the_end_of_the_input_does() {
+    let (mut controller, device) = pty();
+    let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
+    let (send, ends) = mpsc::channel();
+    let stop_end = send.clone();
+    terminal
+        .start_reader(|_| {}, move || stop_end.send(()).unwrap())
+        .unwrap();
+    terminal.stop_reader().unwrap();
+    assert_eq!(ends.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+    terminal.start_reader(|_| {}, move || send.send(()).unwrap()).unwrap();
+    // The close of the controller ends the input of the device.
+    drop(controller);
+    // A busy macOS gives the hang-up after more than a second.
+    assert_eq!(ends.recv_timeout(Duration::from_secs(5)), Ok(()));
+}
+
+#[test]
+fn a_child_process_does_not_keep_the_reader_from_its_stop() {
+    let (mut controller, device) = pty();
+    let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
+    terminal.start_reader(|_| {}, || {}).unwrap();
+    let spawn = SPAWN.lock().unwrap();
+    let mut child = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+    drop(spawn);
+    let started = Instant::now();
+    terminal.stop_reader().unwrap();
+    let waited = started.elapsed();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    // A child that holds the write end of the stop pipe makes the stop wait for the child.
+    assert!(waited < Duration::from_secs(2), "the stop waited {waited:?}");
 }

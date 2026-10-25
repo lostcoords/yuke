@@ -57,12 +57,6 @@ fn sequences() -> Vec<(&'static [u8], Vec<Event>)> {
         (b"\x1b[13;2u", vec![key(Code::Enter, Modifiers::SHIFT, "")]),
         (b"\x1b[97;5u", vec![key(Code::Char('a'), Modifiers::CTRL, "")]),
         (b"\x1b[97;5:2u", vec![key(Code::Char('a'), Modifiers::CTRL, "")]),
-        (b"\x1b[97;;97u", vec![key(Code::Char('a'), none, "a")]),
-        (
-            b"\x1b[57441;2u",
-            vec![key(Code::Modifier(Modifier::LeftShift), Modifiers::SHIFT, "")],
-        ),
-        (b"\x1b[57430u", vec![key(Code::Media(Media::PlayPause), none, "")]),
         (b"\x1b[57375u", vec![key(Code::F(12), none, "")]),
         (b"\x1b[27;2;13~", vec![key(Code::Enter, Modifiers::SHIFT, "")]),
         (b"\x1b[27;5;105~", vec![key(Code::Char('i'), Modifiers::CTRL, "")]),
@@ -111,8 +105,8 @@ fn sequences() -> Vec<(&'static [u8], Vec<Event>)> {
         ),
         (b"\x1b]11;rgb:ff/80/00\x07", vec![Event::Background(rgb(0xff, 0x80, 0))]),
         (b"\x1b]11;rgba:f/0/0/f\x07", vec![Event::Background(rgb(0xff, 0, 0))]),
-        (b"\x1b[?997;1n", vec![Event::Scheme(Scheme::Dark)]),
-        (b"\x1b[?997;2n", vec![Event::Scheme(Scheme::Light)]),
+        (b"\x1b[?997;1n", vec![Event::SchemeChanged]),
+        (b"\x1b[?997;2n", vec![Event::SchemeChanged]),
         (
             b"\x1b[200~one\r\ntwo\x1b[201~",
             vec![Event::Paste("one\ntwo".to_owned())],
@@ -122,8 +116,7 @@ fn sequences() -> Vec<(&'static [u8], Vec<Event>)> {
 
 #[test]
 fn probe_answers_read_as_answers_also_when_a_read_cuts_them() {
-    let cases: [(&[u8], Answer); 3] = [
-        (b"\x1b[?2031;2$y", Answer::SchemeReports),
+    let cases: [(&[u8], Answer); 2] = [
         (b"\x1b[?5u", Answer::KittyKeyboard(5)),
         (b"\x1b[?62;22c", Answer::DeviceAttributes),
     ];
@@ -177,14 +170,26 @@ fn ground_bytes_read_as_keys() {
 }
 
 #[test]
-fn typed_text_reads_one_grapheme_per_key() {
+fn typed_text_reads_one_code_point_per_key() {
     assert_eq!(parse_all("ab".as_bytes()), [char_key('a'), char_key('b')]);
     assert_eq!(parse_all("é".as_bytes()), [char_key('é')]);
+    // A grapheme of two code points gives two keys in one read and in two reads.
+    let accent = [char_key('e'), char_key('\u{301}'), char_key('x')];
+    assert_eq!(parse_all("e\u{301}x".as_bytes()), accent);
+    let mut parser = Parser::new();
+    let mut read = only_events(parser.feed(b"e"));
+    read.extend(only_events(parser.feed("\u{301}x".as_bytes())));
+    assert_eq!(read, accent);
+    assert_eq!(parse_all("👋🏿".as_bytes()), [char_key('👋'), char_key('🏿')]);
+}
+
+#[test]
+fn a_cut_utf8_character_before_a_control_byte_reads_as_no_key() {
+    assert_eq!(parse_all(b"\xc3\x1b[A"), [key(Code::Up, Modifiers::NONE, "")]);
     assert_eq!(
-        parse_all("e\u{301}x".as_bytes()),
-        [key(Code::Cluster, Modifiers::NONE, "e\u{301}"), char_key('x')]
+        parse_all(b"\xe4\xb8\ra"),
+        [key(Code::Enter, Modifiers::NONE, ""), char_key('a')]
     );
-    assert_eq!(parse_all("👋🏿".as_bytes()), [key(Code::Cluster, Modifiers::NONE, "👋🏿")]);
 }
 
 #[test]
@@ -226,30 +231,32 @@ fn shift_alone_types_the_shifted_character() {
 }
 
 #[test]
-fn keypad_keys_read_as_their_keys_on_the_keypad() {
-    let mut zero = Key::new(Code::Char('0'));
-    zero.keypad = true;
-    let mut enter = Key::new(Code::Enter);
-    enter.keypad = true;
-    let mut begin = Key::new(Code::Begin);
-    begin.keypad = true;
+fn keypad_keys_read_as_the_keys_that_they_type() {
+    let none = Modifiers::NONE;
     assert_eq!(
-        parse_all(b"\x1b[57399u\x1b[57414u\x1b[57427~"),
-        [Event::Key(zero), Event::Key(enter), Event::Key(begin)]
+        parse_all(b"\x1b[57399u\x1b[57411;129u\x1b[57414u\x1b[57399;5u"),
+        [
+            key(Code::Char('0'), none, "0"),
+            // Num lock is on, and a lock types the character too.
+            key(Code::Char('*'), Modifiers::NUM_LOCK, "*"),
+            key(Code::Enter, none, ""),
+            key(Code::Char('0'), Modifiers::CTRL, ""),
+        ]
     );
 }
 
 #[test]
 fn sequences_with_no_event_read_as_no_key() {
-    // A DCS answer, an OSC 52 answer, an unknown CSI, a DECRPM for a mode that the terminal lacks, and an APC.
+    // A DCS answer, an OSC 52 answer, an unknown CSI, a DECRPM, and an APC.
     let answers = b"\x1bP>|kitty\x1b\\\x1b]52;c;eA==\x07\x1b[?1;2;3X\x1b[?2031;0$y\x1b_Gi=1;OK\x1b\\x";
     assert_eq!(parse_all(answers), [char_key('x')]);
     // A DCS with a BEL inside, and a DCS with the payload of a background answer. Only an OSC ends at BEL or
     // gives a color.
     let strings = b"\x1bPa\x07b\x1b\\\x1bP11;rgb:ffff/ffff/ffff\x1b\\x";
     assert_eq!(parse_all(strings), [char_key('x')]);
-    // Two key releases, a kitty report of text with no key, and a kitty report of an unknown event.
-    let keys = b"\x1b[97;5:3u\x1b[1;1:3A\x1b[0;;233u\x1b[97;1:4ux";
+    // Two key releases, a kitty report of text with no key, a kitty report of an unknown event, a modifier key alone,
+    // a lock key, a media key, and the middle key of the keypad.
+    let keys = b"\x1b[97;5:3u\x1b[1;1:3A\x1b[0;;233u\x1b[97;1:4u\x1b[57441;2u\x1b[57358u\x1b[57430u\x1b[E\x1b[57427~x";
     assert_eq!(parse_all(keys), [char_key('x')]);
 }
 

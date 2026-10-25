@@ -1,9 +1,7 @@
 //! Terminal bytes to [`Event`]s, a port of the libvaxis parser. It reads legacy keys, the kitty keyboard protocol,
 //! xterm modifyOtherKeys, SGR mouse reports, bracketed paste, focus, and the probe answers.
 
-use unicode_segmentation::UnicodeSegmentation;
-
-use crate::event::{Button, Code, Event, Key, Media, Modifier, Modifiers, Mouse, MouseKind, Rgb, Scheme};
+use crate::event::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb};
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
@@ -77,8 +75,6 @@ pub(crate) enum Parsed {
 /// An answer to the probe of [`Terminal`](crate::Terminal). Only the terminal reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Answer {
-    /// The terminal reports scheme changes: its DECRPM answer for mode 2031.
-    SchemeReports,
     /// The kitty keyboard flags that are on: the answer to `CSI ? u`.
     KittyKeyboard(u8),
     /// The primary device attributes. A terminal answers the queries in order, so this answer ends a probe.
@@ -150,31 +146,21 @@ fn ctrl(character: char) -> Key {
     key
 }
 
-/// One typed grapheme from the UTF-8 text before the next control byte.
+/// One typed code point. A code point that the end of the input cuts waits for the next read.
 fn parse_text(input: &[u8]) -> Step {
-    let end = input
-        .iter()
-        .position(|&byte| byte < 0x20 || byte == 0x7f)
-        .unwrap_or(input.len());
-    let text = match std::str::from_utf8(&input[..end]) {
+    // A code point has at most 4 bytes. A cut one at the end of the input waits, and an invalid byte skips it.
+    let head = &input[..input.len().min(4)];
+    let text = match std::str::from_utf8(head) {
         Ok(text) => text,
-        Err(error) if error.valid_up_to() > 0 => match std::str::from_utf8(&input[..error.valid_up_to()]) {
-            Ok(text) => text,
-            Err(_) => return Step::Skip(1),
-        },
+        Err(error) if error.valid_up_to() > 0 => std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or_default(),
         Err(error) => return error.error_len().map_or(Step::Incomplete, Step::Skip),
     };
-    let Some(grapheme) = text.graphemes(true).next() else {
+    let Some(character) = text.chars().next() else {
         return Step::Skip(1);
     };
-    let mut characters = grapheme.chars();
-    let code = match (characters.next(), characters.next()) {
-        (Some(character), None) => Code::Char(character),
-        _ => Code::Cluster,
-    };
-    let mut key = Key::new(code);
-    grapheme.clone_into(&mut key.text);
-    Step::Event(Event::Key(key), grapheme.len())
+    let mut key = Key::new(Code::Char(character));
+    key.text.push(character);
+    Step::Event(Event::Key(key), character.len_utf8())
 }
 
 fn parse_ss3(input: &[u8]) -> Step {
@@ -194,7 +180,6 @@ fn letter_code(byte: u8) -> Option<Code> {
         b'B' => Code::Down,
         b'C' => Code::Right,
         b'D' => Code::Left,
-        b'E' => Code::Begin,
         b'F' => Code::End,
         b'H' => Code::Home,
         b'P' => Code::F(1),
@@ -297,8 +282,7 @@ fn parse_csi(input: &[u8]) -> Step {
         },
         b'c' if params.starts_with(b"?") => Step::Answer(Answer::DeviceAttributes, n),
         b'n' => match params {
-            b"?997;1" => Step::Event(Event::Scheme(Scheme::Dark), n),
-            b"?997;2" => Step::Event(Event::Scheme(Scheme::Light), n),
+            b"?997;1" | b"?997;2" => Step::Event(Event::SchemeChanged, n),
             _ => Step::Skip(n),
         },
         b'u' if params.starts_with(b"?") => match number(&params[1..]).and_then(|flags| u8::try_from(flags).ok()) {
@@ -306,19 +290,18 @@ fn parse_csi(input: &[u8]) -> Step {
             None => Step::Skip(n),
         },
         b'u' => kitty_key(params, n),
-        b'y' => mode_report(params, n),
         _ => Step::Skip(n),
     }
 }
 
-/// `CSI 1 ; modifiers[:event] ; text {ABCDEFHPQRS}`.
+/// `CSI 1 ; modifiers[:event] {ABCDEFHPQRS}`.
 fn legacy_key(code: Code, params: &[u8], n: usize) -> Step {
     let mut fields = fields(params);
     fields.next();
     finish_key(Key::new(code), fields, n)
 }
 
-/// `CSI number ; modifiers[:event] ; text ~`.
+/// `CSI number ; modifiers[:event] ~`.
 fn tilde_key(params: &[u8], n: usize) -> Step {
     let mut fields = fields(params);
     let Some(first) = fields.next().and_then(number) else {
@@ -336,17 +319,14 @@ fn tilde_key(params: &[u8], n: usize) -> Step {
         23..=26 => Code::F(to_u8(first - 12)),
         27 => return modify_other_keys(fields, n),
         200 => return Step::PasteStart(n),
-        57427 => Code::Begin,
         _ => return Step::Skip(n),
     };
-    let mut key = Key::new(code);
-    key.keypad = first == 57427;
-    finish_key(key, fields, n)
+    finish_key(Key::new(code), fields, n)
 }
 
 /// xterm modifyOtherKeys: `CSI 27 ; modifiers ; code ~`, with a code as in the kitty protocol.
 fn modify_other_keys<'a>(mut fields: impl Iterator<Item = &'a [u8]>, n: usize) -> Step {
-    let (Some(Some((modifiers, false))), Some(Some((code, keypad)))) = (
+    let (Some(Some(modifiers)), Some(Some(code))) = (
         fields.next().map(parse_modifiers),
         fields.next().and_then(number).map(kitty_code),
     ) else {
@@ -354,165 +334,109 @@ fn modify_other_keys<'a>(mut fields: impl Iterator<Item = &'a [u8]>, n: usize) -
     };
     let mut key = Key::new(code);
     key.modifiers = modifiers;
-    key.keypad = keypad;
-    shift_text(&mut key);
+    typed_text(&mut key);
     Step::Event(Event::Key(key), n)
 }
 
-/// `CSI code[:shifted[:base]] ; modifiers[:event] ; text u`, the kitty keyboard protocol.
+/// `CSI code[:shifted[:base]] ; modifiers[:event] u`, the kitty keyboard protocol. yuke asks for no text field.
 fn kitty_key(params: &[u8], n: usize) -> Step {
     let mut fields = fields(params);
     let mut codes = fields.next().unwrap_or_default().split(|&byte| byte == b':');
-    let Some(Some((code, keypad))) = codes.next().and_then(number).map(kitty_code) else {
+    let Some(Some(code)) = codes.next().and_then(number).map(kitty_code) else {
         return Step::Skip(n);
     };
     let mut key = Key::new(code);
-    key.keypad = keypad;
     key.shifted = codes.next().and_then(number).and_then(char::from_u32);
     key.base_layout = codes.next().and_then(number).and_then(char::from_u32);
     match finish_key(key, fields, n) {
         Step::Event(Event::Key(mut key), n) => {
-            shift_text(&mut key);
+            typed_text(&mut key);
             Step::Event(Event::Key(key), n)
         }
         step => step,
     }
 }
 
-/// Read the modifier field and the text field of a key. A release gives no event.
+/// Read the modifier field of a key. A release gives no event.
 fn finish_key<'a>(mut key: Key, mut fields: impl Iterator<Item = &'a [u8]>, n: usize) -> Step {
     if let Some(field) = fields.next() {
         match parse_modifiers(field) {
-            Some((modifiers, false)) => key.modifiers = modifiers,
-            _ => return Step::Skip(n),
+            Some(modifiers) => key.modifiers = modifiers,
+            None => return Step::Skip(n),
         }
-    }
-    if let Some(field) = fields.next() {
-        let mut text = String::new();
-        for codepoint in field.split(|&byte| byte == b':') {
-            match number(codepoint).and_then(char::from_u32) {
-                Some(character) => text.push(character),
-                None => return Step::Skip(n),
-            }
-        }
-        key.text = text;
     }
     Step::Event(Event::Key(key), n)
 }
 
-/// A key with shift alone and no text, such as shift+space as `CSI 32 ; 2 u`, types its shifted character.
-fn shift_text(key: &mut Key) {
+/// A key with no modifier, such as a keypad digit, types its character. A key with shift alone, such as shift+space as
+/// `CSI 32 ; 2 u`, types its shifted character.
+fn typed_text(key: &mut Key) {
     let locks = Modifiers::CAPS_LOCK | Modifiers::NUM_LOCK;
-    if let Code::Char(character) = key.code
-        && key.text.is_empty()
-        && key.modifiers.without(locks) == Modifiers::SHIFT
-        && (character.is_ascii_graphic() || character == ' ')
-    {
-        let upper = character.to_ascii_uppercase();
-        key.text.push(upper);
-        key.shifted.get_or_insert(upper);
+    let Code::Char(character) = key.code else {
+        return;
+    };
+    if !key.text.is_empty() || !(character.is_ascii_graphic() || character == ' ') {
+        return;
+    }
+    match key.modifiers.without(locks) {
+        Modifiers::NONE => key.text.push(character),
+        Modifiers::SHIFT => {
+            let upper = character.to_ascii_uppercase();
+            key.text.push(upper);
+            key.shifted.get_or_insert(upper);
+        }
+        _ => {}
     }
 }
 
-/// `modifiers[:event]`: the bits are the field minus one. Event 1 is a press, 2 a repeat, and 3 a release.
-fn parse_modifiers(field: &[u8]) -> Option<(Modifiers, bool)> {
+/// `modifiers[:event]`: the bits are the field minus one. Event 1 is a press and 2 a repeat. A release (3) or another
+/// event gives `None`.
+fn parse_modifiers(field: &[u8]) -> Option<Modifiers> {
     let mut parts = field.split(|&byte| byte == b':');
     let mask = match parts.next() {
         Some([]) | None => 1,
         Some(digits) => number(digits)?,
     };
     let bits = u8::try_from(mask.saturating_sub(1)).ok()?;
-    let release = match parts.next() {
-        None | Some(b"1" | b"2") => false,
-        Some(b"3") => true,
-        Some(_) => return None,
-    };
-    Some((Modifiers(bits), release))
+    match parts.next() {
+        None | Some(b"1" | b"2") => Some(Modifiers(bits)),
+        Some(_) => None,
+    }
 }
 
-/// The key of a kitty key number, and whether it is on the keypad.
-fn kitty_code(number: u32) -> Option<(Code, bool)> {
-    const MEDIA: [Media; 13] = [
-        Media::Play,
-        Media::Pause,
-        Media::PlayPause,
-        Media::Reverse,
-        Media::Stop,
-        Media::FastForward,
-        Media::Rewind,
-        Media::TrackNext,
-        Media::TrackPrevious,
-        Media::Record,
-        Media::LowerVolume,
-        Media::RaiseVolume,
-        Media::MuteVolume,
-    ];
-    const MODIFIERS: [Modifier; 14] = [
-        Modifier::LeftShift,
-        Modifier::LeftControl,
-        Modifier::LeftAlt,
-        Modifier::LeftSuper,
-        Modifier::LeftHyper,
-        Modifier::LeftMeta,
-        Modifier::RightShift,
-        Modifier::RightControl,
-        Modifier::RightAlt,
-        Modifier::RightSuper,
-        Modifier::RightHyper,
-        Modifier::RightMeta,
-        Modifier::IsoLevel3Shift,
-        Modifier::IsoLevel5Shift,
-    ];
-    let keypad = |code| Some((code, true));
-    let code = match number {
-        // Code 0 is text with no key, and yuke asks for no text reports.
-        0 => return None,
+/// The key of a kitty key number. A keypad key is the key that it types. A key with no name in JavaScript, such as
+/// a lock key, a media key, or the middle key of the keypad, gives `None`.
+fn kitty_code(number: u32) -> Option<Code> {
+    Some(match number {
+        // Code 0 is text with no key, and yuke asks for no text reports. Modifier keys alone come only with flag 8.
+        0 | 57358..=57362 | 57427..=57454 => return None,
         8 | 127 => Code::Backspace,
         9 => Code::Tab,
-        13 => Code::Enter,
+        // The second number of each pair is the key on the keypad.
+        13 | 57414 => Code::Enter,
         27 => Code::Escape,
-        57348 => Code::Insert,
-        57349 => Code::Delete,
-        57350 => Code::Left,
-        57351 => Code::Right,
-        57352 => Code::Up,
-        57353 => Code::Down,
-        57354 => Code::PageUp,
-        57355 => Code::PageDown,
-        57356 => Code::Home,
-        57357 => Code::End,
-        57358 => Code::CapsLock,
-        57359 => Code::ScrollLock,
-        57360 => Code::NumLock,
-        57361 => Code::PrintScreen,
-        57362 => Code::Pause,
+        57348 | 57425 => Code::Insert,
+        57349 | 57426 => Code::Delete,
+        57350 | 57417 => Code::Left,
+        57351 | 57418 => Code::Right,
+        57352 | 57419 => Code::Up,
+        57353 | 57420 => Code::Down,
+        57354 | 57421 => Code::PageUp,
+        57355 | 57422 => Code::PageDown,
+        57356 | 57423 => Code::Home,
+        57357 | 57424 => Code::End,
         57363 => Code::Menu,
         57364..=57398 => Code::F(to_u8(number - 57363)),
-        57399..=57408 => return keypad(Code::Char(char::from_digit(number - 57399, 10)?)),
-        57409 => return keypad(Code::Char('.')),
-        57410 => return keypad(Code::Char('/')),
-        57411 => return keypad(Code::Char('*')),
-        57412 => return keypad(Code::Char('-')),
-        57413 => return keypad(Code::Char('+')),
-        57414 => return keypad(Code::Enter),
-        57415 => return keypad(Code::Char('=')),
-        57416 => return keypad(Code::Char(',')),
-        57417 => return keypad(Code::Left),
-        57418 => return keypad(Code::Right),
-        57419 => return keypad(Code::Up),
-        57420 => return keypad(Code::Down),
-        57421 => return keypad(Code::PageUp),
-        57422 => return keypad(Code::PageDown),
-        57423 => return keypad(Code::Home),
-        57424 => return keypad(Code::End),
-        57425 => return keypad(Code::Insert),
-        57426 => return keypad(Code::Delete),
-        57427 => return keypad(Code::Begin),
-        57428..=57440 => Code::Media(*MEDIA.get(usize::try_from(number - 57428).ok()?)?),
-        57441..=57454 => Code::Modifier(*MODIFIERS.get(usize::try_from(number - 57441).ok()?)?),
+        57399..=57408 => Code::Char(char::from_digit(number - 57399, 10)?),
+        57409 => Code::Char('.'),
+        57410 => Code::Char('/'),
+        57411 => Code::Char('*'),
+        57412 => Code::Char('-'),
+        57413 => Code::Char('+'),
+        57415 => Code::Char('='),
+        57416 => Code::Char(','),
         _ => Code::Char(char::from_u32(number)?),
-    };
-    Some((code, false))
+    })
 }
 
 /// A key or button number that the caller took from a small range.
@@ -579,18 +503,6 @@ fn mouse(mask: u32, column: u32, row: u32, release: Option<bool>) -> Option<Mous
         kind,
         modifiers,
     })
-}
-
-/// DECRPM `CSI ? mode ; value $ y`. Values 1 to 3 mean that mode 2031 is usable. Other values give no answer.
-fn mode_report(params: &[u8], n: usize) -> Step {
-    let Some(body) = params.strip_prefix(b"?").and_then(|body| body.strip_suffix(b"$")) else {
-        return Step::Skip(n);
-    };
-    let mut fields = fields(body);
-    match (fields.next().and_then(number), fields.next().and_then(number)) {
-        (Some(2031), Some(1..=3)) => Step::Answer(Answer::SchemeReports, n),
-        _ => Step::Skip(n),
-    }
 }
 
 fn fields(params: &[u8]) -> impl Iterator<Item = &[u8]> {

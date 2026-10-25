@@ -10,11 +10,14 @@ use yuke_term::{Attributes, Code, Event, Modifiers, Screen, Style, Terminal};
 fn main() -> io::Result<()> {
     let mut terminal = Terminal::open()?;
     let (send, events) = mpsc::channel();
-    terminal.start_reader(move |event| {
-        if send.send(event).is_err() {
-            // The main loop ended, so no one shows the event.
-        }
-    })?;
+    terminal.start_reader(
+        move |event| {
+            if send.send(event).is_err() {
+                // The main loop ended, so no one shows the event.
+            }
+        },
+        || {},
+    )?;
     let mut screen = Screen::new(terminal.size()?);
     let mut background = terminal.background();
     let mut lines: Vec<String> = Vec::new();
@@ -41,7 +44,7 @@ fn main() -> io::Result<()> {
             Ok(Event::Key(key)) if key.code == Code::Char('c') && key.modifiers.contains(Modifiers::CTRL) => break,
             Ok(event) => {
                 match event {
-                    Event::Scheme(_) => terminal.query_background()?,
+                    Event::SchemeChanged => terminal.query_background()?,
                     Event::Background(color) => background = Some(color),
                     _ => {}
                 }

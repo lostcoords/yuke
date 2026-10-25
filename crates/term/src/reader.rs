@@ -1,8 +1,7 @@
 //! The thread that reads the terminal and parses its bytes, and the poll and read steps that the probe shares.
 
 use std::fs::File;
-use std::io::{self, Read as _};
-use std::os::fd::OwnedFd;
+use std::io::{self, PipeReader, PipeWriter, Read as _};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -13,26 +12,29 @@ use crate::event::Event;
 use crate::parser::{Parsed, Parser};
 
 /// The thread that passes each event of the terminal to a callback. It ends at a stop, at the end of the input, or
-/// at a read error. [`Terminal`](crate::Terminal) owns it.
+/// at a read error. [`Terminal`](crate::Terminal) owns it and stops it.
 #[derive(Debug)]
 pub(crate) struct Reader {
     /// The write end of a pipe that the thread polls. Its close stops the thread.
-    stop: Option<OwnedFd>,
-    thread: Option<JoinHandle<io::Result<()>>>,
+    stop: PipeWriter,
+    thread: JoinHandle<io::Result<()>>,
 }
 
 impl Reader {
     /// Start a thread that reads `input` with `parser`, and calls `events` first with `early` and then with each
-    /// event. The thread polls the read end of `pipe`, and a close of its write end stops the thread.
-    pub(crate) fn spawn<F>(
+    /// event. The thread polls the read end of `pipe`, and a close of its write end stops the thread. The thread calls
+    /// `ended` when it ends for another reason. A stop and an end of the input at the same time give no call.
+    pub(crate) fn spawn<F, G>(
         input: File,
-        (stopped, stop): (OwnedFd, OwnedFd),
+        (stopped, stop): (PipeReader, PipeWriter),
         parser: Parser,
         early: Vec<Event>,
         mut events: F,
+        ended: G,
     ) -> io::Result<Self>
     where
         F: FnMut(Event) + Send + 'static,
+        G: FnOnce() + Send + 'static,
     {
         let thread = thread::Builder::new()
             .name("yuke-term input".to_owned())
@@ -40,51 +42,51 @@ impl Reader {
                 for event in early {
                     events(event);
                 }
-                read_events(&input, &stopped, parser, &mut events)
+                let result = read_events(&input, &stopped, parser, &mut events);
+                if !matches!(result, Ok(End::Stop)) {
+                    ended();
+                }
+                result.map(drop)
             })?;
-        Ok(Self {
-            stop: Some(stop),
-            thread: Some(thread),
-        })
+        Ok(Self { stop, thread })
     }
 
     /// Stop the thread, wait for it, and return the error that ended it, if one did.
-    pub(crate) fn stop(mut self) -> io::Result<()> {
-        self.finish()
-    }
-
-    fn finish(&mut self) -> io::Result<()> {
-        drop(self.stop.take());
-        match self.thread.take().map(JoinHandle::join) {
-            Some(Ok(result)) => result,
-            Some(Err(_)) => Err(io::Error::other("the input thread panicked")),
-            None => Ok(()),
-        }
+    pub(crate) fn stop(self) -> io::Result<()> {
+        drop(self.stop);
+        self.thread
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("the input thread panicked")))
     }
 }
 
-impl Drop for Reader {
-    fn drop(&mut self) {
-        if self.finish().is_err() {
-            // The owner dropped the reader without asking how the thread ended.
-        }
-    }
+/// Why the reading ended without an error.
+enum End {
+    /// The write end of the stop pipe closed.
+    Stop,
+    /// The input ended.
+    Input,
 }
 
-fn read_events(input: &File, stopped: &OwnedFd, mut parser: Parser, events: &mut impl FnMut(Event)) -> io::Result<()> {
+fn read_events(
+    input: &File,
+    stopped: &PipeReader,
+    mut parser: Parser,
+    events: &mut impl FnMut(Event),
+) -> io::Result<End> {
     let mut buffer = [0; 4096];
     loop {
         let mut fds = [PollFd::new(&input, PollFlags::IN), PollFd::new(stopped, PollFlags::IN)];
         wait(&mut fds, None)?;
         // The close of the write end wakes the poll with a hang-up.
         if !fds[1].revents().is_empty() {
-            return Ok(());
+            return Ok(End::Stop);
         }
         if fds[0].revents().is_empty() {
             continue;
         }
         let Some(read) = read_input(input, &mut buffer)? else {
-            return Ok(());
+            return Ok(End::Input);
         };
         for parsed in parser.feed(&buffer[..read]) {
             // An answer that comes after the probe has no reader.

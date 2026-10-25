@@ -306,12 +306,14 @@ declare module "yuke:internal/native" {
     maxBytes: number,
   ): Promise<Lines>;
 
-  /** A style of the terminal grid. A color is a palette index from 0 to 255, `#rrggbb`, an ANSI name, or `reset`. */
+  /** A color of the terminal grid: a palette index from 0 to 255, `#` and six hex digits, or `reset`. */
+  export type TermColor = number | `#${string}` | "reset";
+  /** A style of the terminal grid. */
   export interface TermStyle {
-    readonly fg?: number | string;
-    readonly bg?: number | string;
+    readonly fg?: TermColor;
+    readonly bg?: TermColor;
     /** The underline color. It does not turn the underline on. */
-    readonly ul?: number | string;
+    readonly ul?: TermColor;
     readonly bold?: boolean;
     readonly dim?: boolean;
     readonly italic?: boolean;
@@ -328,7 +330,7 @@ declare module "yuke:internal/native" {
   export function termText(x: number, y: number, text: string, style: TermStyle | undefined): number;
   /** Show the cursor at a cell of the next frame, or hide it. */
   export function termCursor(x: number, y: number, visible: boolean): void;
-  /** Put `text`, a well-formed string, on the clipboard of the terminal (OSC 52). */
+  /** Send `text`, a well-formed string, to the clipboard of the terminal with OSC 52. */
   export function termCopy(text: string): void;
   /** Ask the host to quit. */
   export function termQuit(): void;
@@ -344,15 +346,8 @@ declare module "yuke:internal/native" {
   export function termMeasure(text: string): number;
   /** The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`. */
   export function termGraphemes(text: string): Int32Array;
-  /** The grapheme boundary before or after the UTF-16 offset `at`. */
-  export function termStepGrapheme(text: string, at: number, before: boolean): number;
   /** The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`. */
   export function termFit(text: string, cells: number): number;
-  /** The rows of `text` at `width` cells, as `[start, end, soft]` UTF-16 triples, and whether rows were dropped. */
-  export function termWrap(
-    text: string,
-    width: number,
-    head: number,
-    tail: number,
-  ): { readonly rows: Int32Array; readonly omitted: boolean };
+  /** The rows of `text` at `width` cells, as `[start, end, soft]` UTF-16 triples: all, or the first `head` rows. */
+  export function termWrap(text: string, width: number, head: number): Int32Array;
 }

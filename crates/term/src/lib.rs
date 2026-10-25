@@ -10,7 +10,7 @@ mod screen;
 mod terminal;
 mod width;
 
-pub use event::{Button, Code, Event, Key, Media, Modifier, Modifiers, Mouse, MouseKind, Rgb, Scheme};
+pub use event::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb};
 pub use screen::{Attributes, Color, Screen, Size, Style};
 pub use terminal::{BACKGROUND_QUERY, Terminal};
 pub use width::graphemes;

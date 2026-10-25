@@ -17,7 +17,6 @@ import {
   termRequestFrame,
   termRun,
   termSize,
-  termStepGrapheme,
   termSuspend,
   termText,
   termTruecolor,
@@ -35,7 +34,6 @@ export type TermEvent =
       readonly type: "key";
       /** `char` for a key that types, else a name such as `enter`, `esc`, `up`, `page_down`, or `f5`. */
       readonly code: string;
-      readonly event: "press";
       /** The character of a `char` key, else "". */
       readonly char: string;
       /** The key with shift on the current layout, from a kitty terminal, else "". */
@@ -53,8 +51,6 @@ export type TermEvent =
       readonly button: string;
       readonly event: "press" | "release" | "motion" | "drag";
       readonly mods: number;
-      /** The turns of a wheel run at one cell, else 1. */
-      readonly count: number;
     }
   | { readonly type: "paste"; readonly text: string }
   | { readonly type: "resize"; readonly w: number; readonly h: number }
@@ -100,22 +96,19 @@ export const term = {
   graphemes(text: string): Int32Array {
     return termGraphemes(text.toWellFormed());
   },
-  /** The grapheme boundary before (`before`) or after the offset `at`. */
-  stepGrapheme(text: string, at: number, before: boolean): number {
-    return termStepGrapheme(text.toWellFormed(), at, before);
-  },
   /** The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`. */
   fit(text: string, cells: number): number {
     return termFit(text.toWellFormed(), cells);
   },
   /**
-   * The rows of `text` at `width` cells, as `[start, end, soft]` triples. A line feed ends a row (soft 0); a soft break
-   * (soft 1) comes after the last space. With `head`, only the first `head` rows stay, and the last `tail` rows too.
+   * The rows of `text` at `width` cells, as `[start, end, soft]` triples. A line end ends a row (soft 0). A soft break
+   * (soft 1) comes after the last space when the text from that space fits, else before the grapheme that does not
+   * fit. With `head`, only the first `head` rows stay.
    */
-  wrap(text: string, width: number, head = 0, tail = 0): { readonly rows: Int32Array; readonly omitted: boolean } {
-    return termWrap(text.toWellFormed(), width, head, tail);
+  wrap(text: string, width: number, head = 0): Int32Array {
+    return termWrap(text.toWellFormed(), width, head);
   },
-  /** Put `text` on the clipboard of the terminal. */
+  /** Send `text` to the clipboard of the terminal with OSC 52. */
   copy(text: string): void {
     termCopy(text.toWellFormed());
   },

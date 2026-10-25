@@ -6,8 +6,8 @@ use std::fmt;
 use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use tokio::sync::Notify;
-use yuke_term::{Event, Rgb, Scheme, Screen, Size};
+use tokio::sync::{Notify, mpsc};
+use yuke_term::{Event, Rgb, Screen, Size};
 
 /// What the host gives the display.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,15 +27,23 @@ pub enum Request {
     Suspend,
 }
 
-/// The cell grid of the terminal interface, its output, and the queues of [`Input`] and [`Request`]. Give it to the
-/// runtimes in [`Options::display`](crate::Options::display).
+/// The cell grid of the terminal interface, its output, the queue of [`Input`], and the sender of [`Request`]. Give it
+/// to the runtimes in [`Options::display`](crate::Options::display).
 pub struct Display {
     frame: Mutex<Frame>,
     inputs: Mutex<VecDeque<Input>>,
     /// A new input wakes the frame loop of the runtime.
     pub(crate) arrived: Notify,
-    requests: Mutex<VecDeque<Request>>,
-    asked: Notify,
+    requests: mpsc::UnboundedSender<Request>,
+}
+
+/// The light or dark class of a terminal background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scheme {
+    /// Light text on a dark background.
+    Dark,
+    /// Dark text on a light background.
+    Light,
 }
 
 /// The state that each frame reads and draws.
@@ -56,17 +64,18 @@ impl fmt::Debug for Display {
 }
 
 impl Display {
-    /// A display of `size` that writes its frames to `output`. `background` is the color of the probe; without one,
-    /// the scheme is dark, as in the Zig yuke. `truecolor` says that the terminal draws 24-bit color, and `tmux` that a
-    /// copy also needs the tmux passthrough.
+    /// A display of `size` that writes its frames to `output`, and the one receiver of the requests of the
+    /// JavaScript. `background` is the color of the probe; without one, the scheme is dark, as in the Zig yuke.
+    /// `truecolor` says that the terminal draws 24-bit color, and `tmux` that a copy also needs the tmux passthrough.
     pub fn new(
         size: Size,
         output: Box<dyn Write + Send>,
         background: Option<Rgb>,
         truecolor: bool,
         tmux: bool,
-    ) -> Arc<Self> {
-        Arc::new(Self {
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<Request>) {
+        let (requests, received) = mpsc::unbounded_channel();
+        let display = Arc::new(Self {
             frame: Mutex::new(Frame {
                 screen: Screen::new(size),
                 output,
@@ -77,26 +86,15 @@ impl Display {
             }),
             inputs: Mutex::default(),
             arrived: Notify::new(),
-            requests: Mutex::default(),
-            asked: Notify::new(),
-        })
+            requests,
+        });
+        (display, received)
     }
 
     /// Give `input` to the frame loop. A call from any thread works.
     pub fn send(&self, input: Input) {
         lock(&self.inputs).push_back(input);
         self.arrived.notify_one();
-    }
-
-    /// Wait for the next request of the JavaScript.
-    pub async fn request(&self) -> Request {
-        loop {
-            if let Some(request) = lock(&self.requests).pop_front() {
-                return request;
-            }
-            // A request between the pop and the wait leaves a permit, so the wait ends at once.
-            self.asked.notified().await;
-        }
     }
 
     /// Run `f` while no frame and no copy writes, such as a write of the host to the terminal. A frame waits for `f`,
@@ -107,8 +105,9 @@ impl Display {
     }
 
     pub(crate) fn ask(&self, request: Request) {
-        lock(&self.requests).push_back(request);
-        self.asked.notify_one();
+        if self.requests.send(request).is_err() {
+            // The host dropped the receiver, so it answers no request.
+        }
     }
 
     pub(crate) fn take_inputs(&self) -> VecDeque<Input> {

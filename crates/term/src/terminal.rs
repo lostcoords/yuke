@@ -15,16 +15,17 @@ use crate::parser::{Answer, Parsed, Parser};
 use crate::reader::{Reader, read_input, wait};
 use crate::screen::Size;
 
-/// The alternate screen, bracketed paste, button and motion mouse reports in SGR form, focus reports, and kitty keys
-/// with the disambiguate and alternate-key flags. A terminal ignores each mode that it does not know.
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[>5u";
+/// The alternate screen, bracketed paste, button and motion mouse reports in SGR form, focus reports, color scheme
+/// reports, and kitty keys with the disambiguate and alternate-key flags. A terminal ignores each mode that it does
+/// not know.
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[?2031h\x1b[>5u";
 
 /// The OSC 11 query of the background color. The answer is an [`Event::Background`].
 pub const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
 
-/// After the background query: mode 2031, the kitty keyboard flags, and the primary device attributes. A terminal
-/// answers in order, so the device attributes end the probe.
-const PROBE: &[u8] = b"\x1b[?2031$p\x1b[?u\x1b[c";
+/// After the background query: the kitty keyboard flags and the primary device attributes. A terminal answers in
+/// order, so the device attributes end the probe.
+const PROBE: &[u8] = b"\x1b[?u\x1b[c";
 
 /// The longest wait for the probe answers, as in the Zig yuke. A real terminal answers in a few milliseconds.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -37,7 +38,6 @@ pub struct Terminal {
     file: File,
     saved: Termios,
     background: Option<Rgb>,
-    scheme_reports: bool,
     modify_other_keys: bool,
     /// The parser of the probe and the input that came during the probe, for the first reader.
     early: Option<(Parser, Vec<Event>)>,
@@ -55,8 +55,8 @@ impl Terminal {
     }
 
     /// Take `file`, a terminal device: enter raw mode and the alternate screen, and probe the terminal. The wait for
-    /// the answers ends 100 ms after the probe, and a busy system can add to it. Then the call turns on scheme reports
-    /// when the terminal has them, and xterm modifyOtherKeys unless the terminal reports kitty flags.
+    /// the answers ends 100 ms after the probe, and a busy system can add to it. Then the call turns on xterm
+    /// modifyOtherKeys unless the terminal reports kitty flags.
     ///
     /// # Errors
     ///
@@ -67,7 +67,6 @@ impl Terminal {
             file,
             saved,
             background: None,
-            scheme_reports: false,
             modify_other_keys: false,
             early: None,
             reader: None,
@@ -107,7 +106,7 @@ impl Terminal {
         (&self.file).write_all(bytes)
     }
 
-    /// Ask for the background color again, such as after a [`Event::Scheme`]. The reader gives the answer as an
+    /// Ask for the background color again, such as after an [`Event::SchemeChanged`]. The reader gives the answer as an
     /// [`Event::Background`]. Without a reader, no callback gets it.
     ///
     /// # Errors
@@ -123,7 +122,7 @@ impl Terminal {
         let deadline = Instant::now() + PROBE_TIMEOUT;
         let mut parser = Parser::new();
         let mut early = Vec::new();
-        let (mut scheme_reports, mut kitty_keyboard, mut complete) = (false, false, false);
+        let (mut kitty_keyboard, mut complete) = (false, false);
         let mut buffer = [0; 4096];
         while !complete {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -144,15 +143,10 @@ impl Terminal {
                     Parsed::Answer(_) if complete => {}
                     Parsed::Event(Event::Background(color)) => self.background = Some(color),
                     Parsed::Event(event) => early.push(event),
-                    Parsed::Answer(Answer::SchemeReports) => scheme_reports = true,
                     Parsed::Answer(Answer::KittyKeyboard(flags)) => kitty_keyboard = flags != 0,
                     Parsed::Answer(Answer::DeviceAttributes) => complete = true,
                 }
             }
-        }
-        if scheme_reports {
-            self.write_all(b"\x1b[?2031h")?;
-            self.scheme_reports = true;
         }
         if !kitty_keyboard {
             self.write_all(b"\x1b[>4;2m")?;
@@ -190,15 +184,12 @@ impl Terminal {
         self.query_background()
     }
 
-    /// Enter raw mode and turn on the modes: the screen modes, and those that the probe found.
+    /// Enter raw mode and turn on the modes: the screen modes, and modifyOtherKeys when the probe turned it on.
     fn enter(&self) -> io::Result<()> {
         let mut raw = self.saved.clone();
         raw.make_raw();
         set(&self.file, &raw)?;
         self.write_all(ENTER)?;
-        if self.scheme_reports {
-            self.write_all(b"\x1b[?2031h")?;
-        }
         if self.modify_other_keys {
             self.write_all(b"\x1b[>4;2m")?;
         }
@@ -212,25 +203,27 @@ impl Terminal {
             // No value resets modifyOtherKeys to the initial value of the terminal.
             leave.extend_from_slice(b"\x1b[>4m");
         }
-        if self.scheme_reports {
-            leave.extend_from_slice(b"\x1b[?2031l");
-        }
-        leave.extend_from_slice(b"\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
-        self.write_all(&leave)?;
-        set(&self.file, &self.saved)
+        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
+        let written = self.write_all(&leave);
+        // The settings come back also after a failed write, so the shell does not stay raw.
+        let restored = set(&self.file, &self.saved);
+        written.and(restored)
     }
 
     /// Start a thread that reads the terminal and calls `events` with each event. The first events are the input that
-    /// came during the probe. A later reader starts with a new parser. The thread sees a stop only between two calls,
-    /// so a call that blocks for ever blocks [`Terminal::stop_reader`] and the drop too.
+    /// came during the probe. A later reader starts with a new parser. The thread calls `ended` when the input ends or
+    /// a read fails; then [`Terminal::stop_reader`] gives the error. A stop that the thread sees first gives no call,
+    /// but a stop during the last read can. The thread sees a stop only between two calls, so a call that blocks for
+    /// ever blocks [`Terminal::stop_reader`] and the drop too.
     ///
     /// # Errors
     ///
     /// Returns an error of kind [`io::ErrorKind::AlreadyExists`] while the terminal has a reader, also one whose
-    /// thread ended. Then [`Terminal::stop_reader`] gives how it ended. Other errors come from the system.
-    pub fn start_reader<F>(&mut self, events: F) -> io::Result<()>
+    /// thread ended. Other errors come from the system.
+    pub fn start_reader<F, G>(&mut self, events: F, ended: G) -> io::Result<()>
     where
         F: FnMut(Event) + Send + 'static,
+        G: FnOnce() + Send + 'static,
     {
         // Two readers would split the bytes of one key between them.
         if self.reader.is_some() {
@@ -240,9 +233,10 @@ impl Terminal {
             ));
         }
         let input = self.file.try_clone()?;
-        let pipe = rustix::pipe::pipe()?;
+        // The pipe of the standard library closes on exec, so a child process does not keep the stop open.
+        let pipe = io::pipe()?;
         let (parser, early) = self.early.take().unwrap_or_default();
-        self.reader = Some(Reader::spawn(input, pipe, parser, early, events)?);
+        self.reader = Some(Reader::spawn(input, pipe, parser, early, events, ended)?);
         Ok(())
     }
 
@@ -271,9 +265,9 @@ impl Drop for Terminal {
 /// Drop the input that waits, such as a late probe answer, and apply `settings` at once. A wait for the output to
 /// drain could block on a reader that never reads.
 fn set(file: &File, settings: &Termios) -> io::Result<()> {
-    termios::tcflush(file, QueueSelector::IFlush)?;
-    termios::tcsetattr(file, OptionalActions::Now, settings)?;
-    Ok(())
+    let flushed = termios::tcflush(file, QueueSelector::IFlush);
+    let applied = termios::tcsetattr(file, OptionalActions::Now, settings);
+    Ok(flushed.and(applied)?)
 }
 
 /// The device of the first standard stream that is a terminal, else `/dev/tty`. macOS `poll` refuses `/dev/tty`, so

@@ -180,6 +180,22 @@ impl App {
     ///
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn start(machine: Machine, mode: Mode, observer: Arc<dyn Observer>) -> Result<App, String> {
+        let (app, plugins) = Self::prepare(machine, mode, observer).await?;
+        app.load_plugins(&plugins).await;
+        Ok(app)
+    }
+
+    /// [`App::start`] without the plugin load: the app, and the plugins for [`App::load_plugins`]. A caller that drops
+    /// the load can still shut the app down.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when a part does not start.
+    pub(crate) async fn prepare(
+        machine: Machine,
+        mode: Mode,
+        observer: Arc<dyn Observer>,
+    ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
         let providers = Providers::load(&machine.paths.config)?;
         let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
@@ -234,8 +250,12 @@ impl App {
             processes_folder,
             sessions: HashMap::new(),
         };
-        app.report_failures(app.runtime.load_plugins(&plugins).await);
-        Ok(app)
+        Ok((app, plugins))
+    }
+
+    /// Load `plugins`. Each plugin that does not load gives a notice, and the other plugins load.
+    pub(crate) async fn load_plugins(&self, plugins: &[yuke_js::Plugin]) {
+        self.report_failures(self.runtime.load_plugins(plugins).await);
     }
 
     /// Send a notice for each plugin that did not load. The other plugins load.

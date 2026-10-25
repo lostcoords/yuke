@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use rquickjs::{Ctx, Module, Object, Value};
 use tokio::sync::mpsc;
-use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Scheme, Size};
+use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size};
 
 use super::{NAMES, evaluate, folder, next_fault, options, start, wait_until};
 use crate::error::caught;
@@ -54,13 +54,22 @@ async fn run_without_display(name: &str, body: &str) -> String {
     evaluate::<String>(&runtime, body).await.unwrap()
 }
 
+/// The runtime, its reports, its display, the output of the display, and the requests of the JavaScript.
+type Started = (
+    Runtime,
+    mpsc::UnboundedReceiver<Report>,
+    Arc<Display>,
+    Output,
+    mpsc::UnboundedReceiver<Request>,
+);
+
 /// Start a runtime on a 20×3 display. Its handler keeps each event in `seen` and counts the frames in `frames`. The
 /// call returns after the start frame.
-async fn started(name: &str) -> (Runtime, mpsc::UnboundedReceiver<Report>, Arc<Display>, Output) {
+async fn started(name: &str) -> Started {
     let folder = folder(name);
     let output = Output::default();
     let size = Size { columns: 20, rows: 3 };
-    let display = Display::new(size, Box::new(output.clone()), None, true, false);
+    let (display, requests) = Display::new(size, Box::new(output.clone()), None, true, false);
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
     options.display = Some(Arc::clone(&display));
     let (runtime, reports) = Runtime::start(options).await.unwrap();
@@ -77,7 +86,7 @@ async fn started(name: &str) -> (Runtime, mpsc::UnboundedReceiver<Report>, Arc<D
     .await
     .unwrap();
     wait_until(&runtime, "return frames === 1;").await;
-    (runtime, reports, display, output)
+    (runtime, reports, display, output, requests)
 }
 
 fn key(character: char) -> Input {
@@ -98,7 +107,8 @@ fn wheel(button: Button, column: u16) -> Input {
 
 #[tokio::test]
 async fn the_start_frame_writes_its_cells_to_the_output() {
-    let (runtime, _reports, _display, output) = started("the_start_frame_writes_its_cells_to_the_output").await;
+    let (runtime, _reports, _display, output, _requests) =
+        started("the_start_frame_writes_its_cells_to_the_output").await;
     let first = evaluate::<String>(&runtime, "return JSON.stringify(seen[0]);")
         .await
         .unwrap();
@@ -108,7 +118,7 @@ async fn the_start_frame_writes_its_cells_to_the_output() {
 
 #[tokio::test]
 async fn a_batch_of_inputs_draws_one_frame() {
-    let (runtime, _reports, display, _output) = started("a_batch_of_inputs_draws_one_frame").await;
+    let (runtime, _reports, display, _output, _requests) = started("a_batch_of_inputs_draws_one_frame").await;
     for character in ['a', 'b', 'c'] {
         display.send(key(character));
     }
@@ -125,7 +135,7 @@ async fn a_batch_of_inputs_draws_one_frame() {
 
 #[tokio::test]
 async fn asks_for_frames_give_one_frame() {
-    let (runtime, _reports, _display, _output) = started("asks_for_frames_give_one_frame").await;
+    let (runtime, _reports, _display, _output, _requests) = started("asks_for_frames_give_one_frame").await;
     evaluate::<()>(&runtime, "term.requestFrame(); term.requestFrame(5);")
         .await
         .unwrap();
@@ -135,8 +145,39 @@ async fn asks_for_frames_give_one_frame() {
 }
 
 #[tokio::test]
+async fn the_frame_of_an_input_answers_an_ask_of_its_handler() {
+    let (runtime, _reports, display, _output, _requests) = started("the_frame_of_an_input_answers_an_ask").await;
+    evaluate::<()>(
+        &runtime,
+        "const keep = seen.push.bind(seen); seen.push = (event) => { term.requestFrame(); return keep(event); };",
+    )
+    .await
+    .unwrap();
+    display.send(key('a'));
+    wait_until(&runtime, "return frames === 2;").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
+}
+
+#[tokio::test]
+async fn an_ask_of_the_draw_gives_the_next_frame() {
+    let (runtime, _reports, _display, _output, _requests) = started("an_ask_of_the_draw_gives_the_next_frame").await;
+    evaluate::<()>(
+        &runtime,
+        "globalThis.drawn = 0;
+         const keep = term.text;
+         term.text = (...args) => { drawn += 1; if (drawn < 3) term.requestFrame(); return keep(...args); };
+         term.requestFrame();",
+    )
+    .await
+    .unwrap();
+    wait_until(&runtime, "return frames === 4;").await;
+}
+
+#[tokio::test]
 async fn a_throwing_handler_reports_and_the_next_event_runs() {
-    let (runtime, mut reports, display, _output) = started("a_throwing_handler_reports_and_the_next_event_runs").await;
+    let (runtime, mut reports, display, _output, _requests) =
+        started("a_throwing_handler_reports_and_the_next_event_runs").await;
     evaluate::<()>(
         &runtime,
         "const keep = seen.push.bind(seen);
@@ -154,33 +195,43 @@ async fn a_throwing_handler_reports_and_the_next_event_runs() {
 }
 
 #[tokio::test]
-async fn wheel_turns_at_one_cell_give_one_event_with_a_count() {
-    let (runtime, _reports, display, _output) = started("wheel_turns_at_one_cell_give_one_event_with_a_count").await;
+async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
+    let folder = folder("each_event_of_a_batch_comes_alone_with_the_state_of_its_time");
+    let (display, _requests) = Display::new(
+        Size { columns: 20, rows: 3 },
+        Box::new(Output::default()),
+        None,
+        true,
+        false,
+    );
+    let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
+    options.display = Some(Arc::clone(&display));
+    let (runtime, _reports) = Runtime::start(options).await.unwrap();
+    global_term(&runtime).await;
+    // The inputs wait for `term.run`, so they come in one batch after the start event.
     for input in [
         wheel(Button::WheelUp, 1),
         wheel(Button::WheelUp, 1),
-        wheel(Button::WheelUp, 1),
-        wheel(Button::WheelUp, 2),
-        wheel(Button::WheelDown, 2),
-        key('x'),
-        wheel(Button::WheelDown, 2),
+        Input::Resize(Size { columns: 30, rows: 4 }),
+        Input::Resize(Size { columns: 40, rows: 5 }),
     ] {
         display.send(input);
     }
-    wait_until(&runtime, "return seen.length === 6;").await;
-    let text = evaluate::<String>(
+    evaluate::<()>(
         &runtime,
-        "return seen.slice(1).map((event) => event.type === 'mouse' ? `${event.button}@${event.col}x${event.count}` : event.char)
-           .join(' ');",
+        "globalThis.seen = [];
+         term.run({ event: (event) => { seen.push(`${event.type}@${term.width}`); }, draw() {} });",
     )
     .await
     .unwrap();
-    assert_eq!(text, "wheel_up@1x3 wheel_up@2x1 wheel_down@2x1 x wheel_down@2x1");
+    wait_until(&runtime, "return seen.length === 5;").await;
+    let text = evaluate::<String>(&runtime, "return seen.join(' ');").await.unwrap();
+    assert_eq!(text, "start@20 mouse@20 mouse@20 resize@30 resize@40");
 }
 
 #[tokio::test]
 async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
-    let (runtime, _reports, display, output) = started("a_resize_sets_the_size_before_its_event").await;
+    let (runtime, _reports, display, output, _requests) = started("a_resize_sets_the_size_before_its_event").await;
     evaluate::<()>(&runtime, "globalThis.widths = []; const keep = seen.push.bind(seen); seen.push = (event) => { widths.push(term.width); return keep(event); };")
         .await
         .unwrap();
@@ -202,12 +253,12 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
 
 #[tokio::test]
 async fn quit_and_suspend_reach_the_host_and_a_scheme_change_asks_for_the_background() {
-    let (runtime, _reports, display, output) = started("quit_and_suspend_reach_the_host").await;
+    let (runtime, _reports, display, output, mut requests) = started("quit_and_suspend_reach_the_host").await;
     evaluate::<()>(&runtime, "term.quit(); term.suspend();").await.unwrap();
-    assert_eq!(display.request().await, Request::Quit);
-    assert_eq!(display.request().await, Request::Suspend);
+    assert_eq!(requests.recv().await, Some(Request::Quit));
+    assert_eq!(requests.recv().await, Some(Request::Suspend));
     output.0.lock().unwrap().clear();
-    display.send(Input::Event(Event::Scheme(Scheme::Light)));
+    display.send(Input::Event(Event::SchemeChanged));
     // The scheme change gives the handler no event, so the key is the next event.
     display.send(key('x'));
     wait_until(&runtime, "return seen.length === 2;").await;
@@ -220,7 +271,8 @@ async fn quit_and_suspend_reach_the_host_and_a_scheme_change_asks_for_the_backgr
 
 #[tokio::test]
 async fn a_background_event_comes_only_when_the_class_changes() {
-    let (runtime, _reports, display, _output) = started("a_background_event_comes_only_when_the_class_changes").await;
+    let (runtime, _reports, display, _output, _requests) =
+        started("a_background_event_comes_only_when_the_class_changes").await;
     let black = Rgb {
         red: 0,
         green: 0,
@@ -248,7 +300,7 @@ async fn a_background_event_comes_only_when_the_class_changes() {
 #[tokio::test]
 async fn a_frame_asked_before_the_run_waits_for_it() {
     let folder = folder("a_frame_asked_before_the_run_waits_for_it");
-    let display = Display::new(
+    let (display, _requests) = Display::new(
         Size { columns: 20, rows: 3 },
         Box::new(Output::default()),
         None,
@@ -272,7 +324,7 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
 
 #[tokio::test]
 async fn term_run_runs_once_and_draws_need_a_display() {
-    let (runtime, _reports, _display, _output) = started("term_run_runs_once").await;
+    let (runtime, _reports, _display, _output, _requests) = started("term_run_runs_once").await;
     let second = evaluate::<String>(
         &runtime,
         &format!("{NAMES} return names([() => term.run({{ event() {{}}, draw() {{}} }})]);"),
@@ -304,36 +356,40 @@ async fn text_functions_count_utf16_units_and_cells() {
              return [
                term.measure(''), term.measure('a\\tb'), term.measure('\\u4e2d'), term.measure('\\ud834'),
                triples,
-               term.fit(s, 3), term.stepGrapheme(s, 4, true), term.stepGrapheme(s, 2, false),
-               Array.from(term.wrap('hello world', 5).rows).join(','),
-               names([() => term.wrap(s, 2, -1), () => term.wrap(s, 2, 0, 1), () => term.wrap(s, 2, 1.5),
-                 () => term.stepGrapheme(s, 7, true)]),
+               term.fit(s, 3),
+               Array.from(term.wrap('hello world', 5)).join(','),
+               names([() => term.wrap(s, 2, -1), () => term.wrap(s, 2, 1.5)]),
              ].join(' ');"
         ),
     )
     .await;
     assert_eq!(
         text,
-        "0 2 2 1 0,1,1,1,1,2,2,2,1,4,2,1 2 2 4 0,6,1,6,11,0 TypeError TypeError TypeError TypeError"
+        "0 2 2 1 0,1,1,1,1,2,2,2,1,4,2,1 2 0,6,1,6,11,0 TypeError TypeError"
     );
 }
 
 #[tokio::test]
-async fn styles_take_indices_hex_colors_and_names() {
-    let (runtime, _reports, _display, _output) = started("styles_take_indices_hex_colors_and_names").await;
+async fn styles_take_indices_hex_colors_and_reset() {
+    let (runtime, _reports, _display, _output, _requests) = started("styles_take_indices_hex_colors_and_reset").await;
     let names = evaluate::<String>(
         &runtime,
         &format!(
             "{NAMES}
              return names([
                () => term.text(0, 0, 'a', {{ fg: 256 }}), () => term.text(0, 0, 'a', {{ fg: '#12345' }}),
-               () => term.text(0, 0, 'a', {{ fg: 'teal' }}), () => term.text(0, 0, 'a', {{ bold: 1 }}),
-               () => term.text(0, 0, 'a', {{ fg: 3, bg: '#102030', ul: 'light_red', bold: true }}),
-               () => term.text(0, 0, 'a', null), () => term.text(0, 0, '\\ud800'),
+               () => term.text(0, 0, 'a', {{ fg: '#12+456' }}), () => term.text(0, 0, 'a', {{ fg: 'red' }}),
+               () => term.text(0, 0, 'a', {{ bold: 1 }}),
+               () => term.text(0, 0, 'a', {{ fg: 3, bg: '#102030', ul: 9, bold: true }}),
+               () => term.text(0, 0, 'a', {{ bg: 'reset' }}), () => term.text(0, 0, 'a', null),
+               () => term.text(0, 0, '\\ud800'),
              ]);"
         ),
     )
     .await
     .unwrap();
-    assert_eq!(names, "TypeError TypeError TypeError TypeError none none none");
+    assert_eq!(
+        names,
+        "TypeError TypeError TypeError TypeError TypeError none none none none"
+    );
 }

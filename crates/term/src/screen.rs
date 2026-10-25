@@ -1,5 +1,5 @@
-//! A cell grid that writes only its changes. The caller draws the next frame into the grid, and [`Screen::render`]
-//! writes the escape bytes that turn the last frame into it.
+//! A cell grid that writes only its changes. The caller clears the next frame, draws it, and [`Screen::render`] writes
+//! the escape bytes that turn the last frame into it.
 
 use std::io::Write as _;
 use std::ops::BitOr;
@@ -238,7 +238,7 @@ impl Screen {
     }
 
     /// Append to `out` the bytes that turn the shown frame into the next frame, inside a synchronized update. An
-    /// unchanged frame appends nothing.
+    /// unchanged frame appends nothing. After the call the next frame holds an old frame, so clear it before a draw.
     pub fn render(&mut self, out: &mut Vec<u8>) {
         if !self.repaint && self.cursor == self.shown_cursor && self.next == self.shown {
             return;
@@ -269,7 +269,8 @@ impl Screen {
             out.extend_from_slice(b"\x1b[?25h");
         }
         out.extend_from_slice(b"\x1b[?2026l");
-        self.shown.clone_from(&self.next);
+        // A swap needs no copy of the cells, and the caller clears the next frame anyway.
+        std::mem::swap(&mut self.shown, &mut self.next);
         self.shown_cursor = self.cursor;
         self.repaint = false;
     }

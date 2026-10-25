@@ -201,6 +201,8 @@ fn a_changed_cell_writes_only_that_cell() {
     model.replay(&render(&mut screen));
     model.drawn.clear();
 
+    screen.clear();
+    screen.text(0, 0, "abcdefghij", Style::default());
     screen.text(4, 0, "X", red());
     model.replay(&render(&mut screen));
     assert_eq!(model.drawn, "X");
@@ -225,7 +227,8 @@ fn frames_on_the_terminal_match_the_grid() {
         underline_color: Color::Index(9),
         attributes: Attributes::UNDERLINE,
     };
-    let frames: [&dyn Fn(&mut Screen); 7] = [
+    // Each frame draws the steps up to its own, so a step draws over the cells of the steps before it.
+    let steps: [&dyn Fn(&mut Screen); 7] = [
         &|screen| {
             screen.text(0, 0, "中文字", Style::default());
             screen.text(0, 1, "abcdef", bold);
@@ -256,8 +259,11 @@ fn frames_on_the_terminal_match_the_grid() {
             screen.cursor(None);
         },
     ];
-    for frame in frames {
-        frame(&mut screen);
+    for count in 1..=steps.len() {
+        screen.clear();
+        for step in &steps[..count] {
+            step(&mut screen);
+        }
         model.replay(&render(&mut screen));
         model.assert_shows(&screen);
     }
@@ -308,6 +314,8 @@ fn a_repaint_writes_every_cell_of_the_same_frame() {
     let mut screen = Screen::new(size(3, 1));
     screen.text(0, 0, "abc", Style::default());
     render(&mut screen);
+    screen.clear();
+    screen.text(0, 0, "abc", Style::default());
     screen.repaint();
     let mut model = Model::new(size(3, 1), "#");
     model.replay(&render(&mut screen));
@@ -321,6 +329,8 @@ fn a_moved_cursor_writes_no_cell() {
     let mut model = Model::new(size(4, 2), "#");
     model.replay(&render(&mut screen));
     model.drawn.clear();
+    screen.clear();
+    screen.text(0, 0, "ab", Style::default());
     screen.cursor(Some((3, 1)));
     model.replay(&render(&mut screen));
     assert_eq!(model.drawn, "");

@@ -15,8 +15,8 @@ pub enum Event {
     Paste(String),
     /// The background color: the answer to [`Terminal::query_background`](crate::Terminal::query_background).
     Background(Rgb),
-    /// The color scheme of the terminal changed (a mode 2031 report).
-    Scheme(Scheme),
+    /// The color scheme of the terminal changed (a mode 2031 report). Ask for the background again.
+    SchemeChanged,
 }
 
 /// A key and the modifiers that the terminal reports with it.
@@ -32,8 +32,6 @@ pub struct Key {
     pub shifted: Option<char>,
     /// The key at the same place on a US layout, from a kitty terminal.
     pub base_layout: Option<char>,
-    /// The key is on the keypad.
-    pub keypad: bool,
 }
 
 impl Key {
@@ -45,7 +43,6 @@ impl Key {
             text: String::new(),
             shifted: None,
             base_layout: None,
-            keypad: false,
         }
     }
 }
@@ -53,10 +50,9 @@ impl Key {
 /// The identity of a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Code {
-    /// A key that types one code point, also with modifiers. Space is `Char(' ')`.
+    /// A key of one code point, also with modifiers: [`Key::text`] holds what it types. Space is `Char(' ')`. A typed
+    /// grapheme of more code points, such as an emoji with a skin tone, comes as one key for each code point.
     Char(char),
-    /// A typed grapheme of more than one code point, such as an emoji with a skin tone. [`Key::text`] holds it.
-    Cluster,
     /// Enter.
     Enter,
     /// Tab. Shift+tab is `Tab` with shift.
@@ -85,65 +81,10 @@ pub enum Code {
     Home,
     /// End.
     End,
-    /// The middle key of the keypad without num lock.
-    Begin,
-    /// Caps lock.
-    CapsLock,
-    /// Scroll lock.
-    ScrollLock,
-    /// Num lock.
-    NumLock,
-    /// Print screen.
-    PrintScreen,
-    /// Pause.
-    Pause,
     /// Menu.
     Menu,
     /// A function key from 1 to 35.
     F(u8),
-    /// A media key.
-    Media(Media),
-    /// A modifier key alone.
-    Modifier(Modifier),
-}
-
-/// A media key of the kitty keyboard protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[expect(missing_docs, reason = "each name is the key")]
-pub enum Media {
-    Play,
-    Pause,
-    PlayPause,
-    Reverse,
-    Stop,
-    FastForward,
-    Rewind,
-    TrackNext,
-    TrackPrevious,
-    Record,
-    LowerVolume,
-    RaiseVolume,
-    MuteVolume,
-}
-
-/// A modifier key of the kitty keyboard protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[expect(missing_docs, reason = "each name is the key")]
-pub enum Modifier {
-    LeftShift,
-    LeftControl,
-    LeftAlt,
-    LeftSuper,
-    LeftHyper,
-    LeftMeta,
-    RightShift,
-    RightControl,
-    RightAlt,
-    RightSuper,
-    RightHyper,
-    RightMeta,
-    IsoLevel3Shift,
-    IsoLevel5Shift,
 }
 
 /// A set of modifiers, in the bit order of the kitty keyboard protocol.
@@ -255,13 +196,4 @@ pub struct Rgb {
     pub green: u8,
     /// The blue channel.
     pub blue: u8,
-}
-
-/// The light or dark class of a terminal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Scheme {
-    /// Light text on a dark background.
-    Dark,
-    /// Dark text on a light background.
-    Light,
 }
