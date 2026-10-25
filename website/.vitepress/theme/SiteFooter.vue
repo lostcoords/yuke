@@ -36,10 +36,16 @@ const columns = [
 </template>
 
 <style scoped>
+/* It continues the black band above it. */
 .footer {
-  border-top: 1px solid var(--vp-c-divider);
-  background: var(--vp-c-bg-alt);
-  color: var(--vp-c-text-2);
+  border-top: 1px solid var(--yuke-terminal-line);
+  background: var(--yuke-black);
+  color: #b8bbb4;
+  --vp-c-text-1: var(--yuke-white);
+  --vp-c-text-2: #b8bbb4;
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-divider: var(--yuke-terminal-line);
+  --vp-c-brand-1: var(--yuke-green);
   font-size: 14px;
 }
 
@@ -88,10 +94,11 @@ const columns = [
 
 h3 {
   margin: 0 0 4px;
-  color: var(--vp-c-text-1);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  color: var(--vp-c-text-3);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
 }
 
@@ -107,6 +114,7 @@ h3 {
 
 .bottom p {
   margin: 0;
+  font-family: var(--vp-font-family-mono);
   padding: 20px 0 32px;
   border-top: 1px solid var(--vp-c-divider);
   color: var(--vp-c-text-3);

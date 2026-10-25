@@ -19,13 +19,14 @@ export default defineConfig({
   cacheDir: resolve(root, 'target/site-cache'),
   cleanUrls: true,
   lang: 'en',
+  // The brand is yuke black first; the switch still offers warm white.
+  appearance: 'dark',
   title: 'yuke',
-  description: 'A terminal coding agent you can reshape: plugins, hooks, any model.',
+  description: 'A local, hackable harness for LLM agents.',
   sitemap: { hostname: site },
   head: [
     ['link', { rel: 'icon', href: `${base}logo.svg` }],
-    ['meta', { name: 'theme-color', content: '#ffffff', media: '(prefers-color-scheme: light)' }],
-    ['meta', { name: 'theme-color', content: '#14181a', media: '(prefers-color-scheme: dark)' }],
+    ['meta', { name: 'theme-color', content: '#0c0d0c' }],
   ],
   transformHead({ pageData, title, description }) {
     const url = `${site}${base}${pageData.relativePath.replace(/index\.md$/, '')}`;
@@ -50,7 +51,7 @@ export default defineConfig({
     attrs: { disable: true },
   },
   themeConfig: {
-    logo: '/logo.svg',
+    logo: { light: '/logo-light.svg', dark: '/logo-dark.svg', alt: 'yuke' },
     siteTitle: 'yuke',
     socialLinks: [{ icon: 'github', link: repository }],
   },

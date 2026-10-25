@@ -127,7 +127,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="demo" aria-label="A yuke session: a prompt, tool calls, a blocked command, a subagent, a queued question, and a plugin command">
+  <section class="demo yuke-section yuke-reveal" aria-label="A yuke session: a prompt, tool calls, a blocked command, a subagent, a queued question, and a plugin command">
+    <header class="head">
+      <div>
+        <p class="yuke-label">The TUI</p>
+        <h2 class="yuke-heading">Watch it work.</h2>
+      </div>
+      <p class="feature" aria-live="polite"><span class="dot"></span>{{ feature }}</p>
+    </header>
     <div class="window">
       <div class="bar">
         <span class="lights"><i></i><i></i><i></i></span>
@@ -149,27 +156,35 @@ onBeforeUnmount(() => {
         </span>
       </div>
     </div>
-    <p class="feature" aria-live="polite"><span class="dot"></span>{{ feature }}</p>
   </section>
 </template>
 
 <style scoped>
 .demo {
-  box-sizing: border-box;
-  width: 100%;
-  margin: 48px auto 0;
-  padding: 0 24px;
-  max-width: 880px;
+  padding-top: 24px;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+h2 {
+  margin-top: 12px;
+  font-size: clamp(36px, 5vw, 56px);
 }
 
 /* The terminal stays dark in both themes, like a real one. */
 .window {
   overflow: hidden;
-  border: 1px solid #2c3530;
-  border-radius: 18px;
-  background: #101412;
-  box-shadow: 0 30px 60px -20px rgba(20, 40, 25, 0.45), 0 0 0 1px rgba(92, 201, 107, 0.08);
-  color: #d9e4dc;
+  border: 1px solid var(--yuke-terminal-line);
+  border-radius: 8px;
+  background: var(--yuke-terminal);
+  color: #e4e6df;
   font-family: var(--vp-font-family-mono);
   font-size: 13.5px;
   text-align: left;
@@ -180,8 +195,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 11px 14px;
-  border-bottom: 1px solid #1f2723;
-  background: #161b18;
+  border-bottom: 1px solid var(--yuke-terminal-line);
 }
 
 .lights {
@@ -190,30 +204,22 @@ onBeforeUnmount(() => {
 }
 
 .lights i {
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: #ff5f57;
-}
-
-.lights i:nth-child(2) {
-  background: #febc2e;
-}
-
-.lights i:nth-child(3) {
-  background: #28c840;
+  background: #3a3e39;
 }
 
 .title {
   flex: 1;
   margin-right: 46px;
-  color: #7c8a80;
+  color: #858a84;
   font-size: 12px;
   text-align: center;
 }
 
 .screen {
-  height: 300px;
+  height: 320px;
   overflow: hidden;
   padding: 16px 18px 4px;
 }
@@ -233,11 +239,11 @@ pre {
   from { opacity: 0; transform: translateY(4px); }
 }
 
-.b { color: #f2f7f3; font-weight: 600; }
-.dim { color: #6f7d73; }
-.you { color: #8fe39b; font-weight: 600; }
-.tool { color: #5cc96b; }
-.ok { color: #5fd68a; }
+.b { color: #f4f2eb; font-weight: 600; }
+.dim { color: #858a84; }
+.you { color: #a8cfa0; font-weight: 600; }
+.tool { color: #a8cfa0; }
+.ok { color: #a8cfa0; }
 .bad { color: #ff6b6b; }
 .warn { color: #f4c25b; }
 .agent { color: #b48cff; }
@@ -248,8 +254,8 @@ pre {
   position: relative;
   margin: 8px 14px 10px;
   padding: 10px 12px;
-  border: 1px solid #2e3a32;
-  border-radius: 10px;
+  border: 1px solid var(--yuke-terminal-line);
+  border-radius: 6px;
   min-height: 20px;
 }
 
@@ -259,7 +265,7 @@ pre {
   height: 16px;
   margin-left: 1px;
   vertical-align: -3px;
-  background: #8fe39b;
+  background: #a8cfa0;
   animation: blink 1s steps(1) infinite;
 }
 
@@ -273,8 +279,8 @@ pre {
   top: 50%;
   padding: 3px 10px;
   border-radius: 999px;
-  background: #1f3a26;
-  color: #8fe39b;
+  background: rgba(168, 207, 160, 0.16);
+  color: #a8cfa0;
   font-size: 12px;
   transform: translateY(-50%);
   animation: line-in 0.3s ease both;
@@ -285,8 +291,7 @@ pre {
   align-items: center;
   gap: 14px;
   padding: 7px 14px;
-  border-top: 1px solid #1f2723;
-  background: #161b18;
+  border-top: 1px solid var(--yuke-terminal-line);
   font-size: 12px;
 }
 
@@ -294,18 +299,18 @@ pre {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #8fe39b;
+  color: #a8cfa0;
 }
 
 .spin {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3a4a3f;
+  background: #3a3e39;
 }
 
 .spin.busy {
-  background: #5cc96b;
+  background: #a8cfa0;
   animation: pulse 1s ease-in-out infinite;
 }
 
@@ -329,26 +334,21 @@ pre {
 .feature {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 8px;
-  margin: 16px 0 0;
+  margin: 0;
   color: var(--vp-c-text-2);
-  font-size: 15px;
-  font-weight: 700;
+  font-family: var(--vp-font-family-mono);
+  font-size: 13px;
 }
 
 .feature .dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--yuke-green);
 }
 
 @media (max-width: 640px) {
-  .demo {
-    padding: 0 12px;
-  }
-
   .window {
     font-size: 11.5px;
   }
