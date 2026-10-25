@@ -13,6 +13,7 @@ mod round_before;
 mod round_retry;
 mod sessions;
 mod side_request;
+mod streams;
 mod tool_after;
 mod tool_before;
 mod tools;

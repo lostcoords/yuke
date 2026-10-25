@@ -244,6 +244,82 @@ declare class URLSearchParams {
   [Symbol.iterator](): URLSearchParamsIterator<[string, string]>;
 }
 
+/** The source of the chunks of a `ReadableStream`. Each method runs with the source as `this`. */
+interface UnderlyingDefaultSource<R = unknown> {
+  /** Run once at the start. The first pull waits for the promise of the result. A rejection errors the stream. */
+  start?: (controller: ReadableStreamDefaultController<R>) => unknown;
+  /** Run when the queue has space or a read waits, at most one at a time. Return a promise to wait. */
+  pull?: (controller: ReadableStreamDefaultController<R>) => unknown;
+  /** Run when the consumer cancels a stream that is not closed or errored. */
+  cancel?: (reason: unknown) => unknown;
+  /** yuke has no byte streams, so a type throws a `TypeError`. */
+  type?: undefined;
+}
+
+/** The size of the queue at which a stream stops its pulls: the sum of the sizes of the queued chunks. */
+interface QueuingStrategy<R = unknown> {
+  /** The size of the queue at which `desiredSize` is 0. The default is 1. */
+  highWaterMark?: number;
+  /** The size of one chunk. The default is 1 for each chunk. */
+  size?: (chunk: R) => number;
+}
+
+/** The result of a read: a chunk, or `done` after the last chunk. */
+type ReadableStreamReadResult<T> = { done: false; value: T } | { done: true; value: undefined };
+
+/** An async iterator of the chunks of a stream. A `return` cancels the stream, unless `preventCancel` is true. */
+interface ReadableStreamAsyncIterator<T> extends AsyncIteratorObject<T, undefined, unknown> {
+  [Symbol.asyncIterator]: () => ReadableStreamAsyncIterator<T>;
+}
+
+/**
+ * A stream of chunks of the Streams Standard. yuke has default streams only: no byte stream, no BYOB reader, no
+ * `tee`, no pipe, and no `ReadableStream.from`.
+ */
+declare class ReadableStream<R = unknown> {
+  /** A `start` that throws makes the constructor throw. A `start` or `pull` that rejects errors the stream. */
+  constructor(underlyingSource?: UnderlyingDefaultSource<R>, strategy?: QueuingStrategy<R>);
+  /** Whether a reader holds the stream. */
+  readonly locked: boolean;
+  /** Cancel the stream with `reason`. A locked stream rejects with a `TypeError`. */
+  cancel(reason?: unknown): Promise<undefined>;
+  /** A reader that holds the stream until `releaseLock`. A locked stream or a `mode` throws a `TypeError`. */
+  getReader(options?: { mode?: undefined }): ReadableStreamDefaultReader<R>;
+  /**
+   * An async iterator of the chunks that holds the stream. A `break` or a `return` cancels the stream, unless
+   * `preventCancel` is true.
+   */
+  values(options?: { preventCancel?: boolean | undefined }): ReadableStreamAsyncIterator<R>;
+  [Symbol.asyncIterator](options?: { preventCancel?: boolean | undefined }): ReadableStreamAsyncIterator<R>;
+}
+
+/** The controller that a `ReadableStream` gives to its source. It has no public constructor. */
+declare class ReadableStreamDefaultController<R = unknown> {
+  private constructor();
+  /** The high water mark less the queued size. It can be negative, it is 0 when closed, and `null` when errored. */
+  readonly desiredSize: number | null;
+  /** Close the stream after the queued chunks. A closed or errored stream, or a second close, throws a `TypeError`. */
+  close(): void;
+  /** Give `chunk` to a waiting read, or add it to the queue. After a close or an error, it throws a `TypeError`. */
+  enqueue(chunk?: R): void;
+  /** Error the stream with `error`. Each waiting read rejects with `error`. */
+  error(error?: unknown): void;
+}
+
+/** A reader that holds a `ReadableStream`. */
+declare class ReadableStreamDefaultReader<R = unknown> {
+  /** A locked stream throws a `TypeError`. */
+  constructor(stream: ReadableStream<R>);
+  /** A promise that fulfills when the stream closes, and rejects when it errors or the reader releases it. */
+  readonly closed: Promise<undefined>;
+  /** The next chunk, or `done` after the last chunk. An errored stream rejects with its error. */
+  read(): Promise<ReadableStreamReadResult<R>>;
+  /** Release the stream. Each waiting read rejects with a `TypeError`. */
+  releaseLock(): void;
+  /** Cancel the stream with `reason`. */
+  cancel(reason?: unknown): Promise<undefined>;
+}
+
 /** The flags of a new event. Each flag is `false` when it is missing. */
 interface EventInit {
   bubbles?: boolean | undefined;

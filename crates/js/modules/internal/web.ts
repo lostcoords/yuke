@@ -1,6 +1,7 @@
 import { console } from "yuke:internal/console";
 import * as encoding from "yuke:internal/encoding";
 import * as events from "yuke:internal/events";
+import * as streams from "yuke:internal/streams";
 import * as url from "yuke:internal/url";
 
 const {
@@ -39,6 +40,9 @@ const classes = {
   Event: events.Event,
   EventTarget: events.EventTarget,
   FinalizationRegistry: ReportingFinalizationRegistry,
+  ReadableStream: streams.ReadableStream,
+  ReadableStreamDefaultController: streams.ReadableStreamDefaultController,
+  ReadableStreamDefaultReader: streams.ReadableStreamDefaultReader,
   TextDecoder: encoding.TextDecoder,
   TextEncoder: encoding.TextEncoder,
   URL: url.URL,
@@ -50,6 +54,9 @@ const classes = {
   Event: typeof Event;
   EventTarget: typeof EventTarget;
   FinalizationRegistry: typeof FinalizationRegistry;
+  ReadableStream: typeof ReadableStream;
+  ReadableStreamDefaultController: typeof ReadableStreamDefaultController;
+  ReadableStreamDefaultReader: typeof ReadableStreamDefaultReader;
   TextDecoder: typeof TextDecoder;
   TextEncoder: typeof TextEncoder;
   URL: typeof URL;
