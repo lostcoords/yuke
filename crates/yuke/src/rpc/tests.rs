@@ -2149,6 +2149,52 @@ async fn a_bad_config_fails_the_reload_and_keeps_the_old_plugins() {
 }
 
 #[tokio::test]
+async fn a_plugin_that_does_not_load_fails_the_reload_and_keeps_the_old_plugins() {
+    let place = Place::new("rpc", "reload_broken_plugin");
+    place.plugin("tools", &tool_plugin("alpha"));
+    place.plugin("other", &tool_plugin("beta"));
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "plugins": ["tools", "other"] }"#,
+    )
+    .unwrap();
+    let transport = ScriptedTransport::new([text_reply("one")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    // The edits make both plugins fail to load. The same reload also adds a provider.
+    place.plugin("tools", "export function session(s) {");
+    place.plugin("other", "export function session(s) {");
+    std::fs::write(
+        place.paths.config.join("providers.json"),
+        r#"{ "providers": [{
+            "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+            "endpoints": [{ "protocol": "anthropic_messages" }],
+            "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
+        }] }"#,
+    )
+    .unwrap();
+
+    let refused = client.call("profile/reload", json!({})).await.unwrap_err();
+    turn(&mut client, &session, "first").await;
+    // The old profile is back, so it has no new provider.
+    let mut local = settings(&place);
+    local["model"] = json!({ "provider": "local", "model": "small" });
+    let new_provider = client.call("session/new", local).await;
+
+    assert_eq!(refused["code"], ResponseError::INVALID_PARAMS);
+    let message = refused["message"].as_str().unwrap();
+    assert!(message.starts_with("the reload keeps the old plugins"), "{message}");
+    // Each failure has its own text.
+    assert!(
+        message.contains("plugin tools") && message.contains("plugin other"),
+        "{message}"
+    );
+    assert!(transport.requests()[0].contains(r#""name":"alpha""#));
+    assert!(new_provider.is_err(), "{new_provider:?}");
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_session_after_a_reload_has_a_new_provider_and_the_skills_of_a_new_plugin_folder() {
     let place = Place::new("rpc", "reload_profile");
     std::fs::create_dir_all(&place.paths.config).unwrap();
@@ -2183,6 +2229,39 @@ async fn a_session_after_a_reload_has_a_new_provider_and_the_skills_of_a_new_plu
     assert!(before.is_err(), "{before:?}");
     assert_eq!(transport.urls(), ["http://127.0.0.1:8080/v1/messages"]);
     assert!(transport.requests()[0].contains("<name>charts</name>"));
+    client.end().await;
+}
+
+// A rejected reload closes the plugins of its new runtime and keeps the old ones open.
+#[tokio::test]
+async fn a_rejected_reload_runs_the_cleanups_of_its_new_plugins_only() {
+    let place = Place::new("rpc", "reload_rejected_cleanups");
+    let marks = place.work.join("marks");
+    let source = format!(
+        "import {{ writeTextFile, readTextFile }} from 'yuke:fs';
+         export function apply(ctx) {{
+           return async () => {{
+             const before = await readTextFile('{marks}').catch(() => '');
+             await writeTextFile('{marks}', before + 'apply ended\\n');
+           }};
+         }}",
+        marks = marks.display()
+    );
+    place.plugin("marker", &source);
+    place.plugin("broken", "export function session(s) {}");
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "plugins": ["marker", "broken"] }"#,
+    )
+    .unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
+    client.call("session/new", settings(&place)).await.unwrap();
+    place.plugin("broken", "export function session(s) {");
+
+    client.call("profile/reload", json!({})).await.unwrap_err();
+
+    // Only the marker of the new runtime closed: the old one still runs.
+    assert_eq!(std::fs::read_to_string(&marks).unwrap(), "apply ended\n");
     client.end().await;
 }
 

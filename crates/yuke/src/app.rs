@@ -278,6 +278,7 @@ impl App {
     ///
     /// - Returns [`AppError::TurnRuns`] while a turn runs in an open session.
     /// - Returns [`AppError::Invalid`] when yuke cannot read or check `config.json`, `providers.json`, or a plugin folder.
+    /// - Returns [`AppError::Invalid`] when a plugin does not load.
     /// - Returns [`AppError::Internal`] when the new runtime does not start.
     ///
     /// Each error keeps the old plugins and providers.
@@ -307,7 +308,17 @@ impl App {
                 return Err(AppError::Internal(chain_text(&error)));
             }
         };
-        self.report_failures(runtime.load_plugins(&plugins).await);
+        let failures = runtime.load_plugins(&plugins).await;
+        if !failures.is_empty() {
+            // A plugin load failure rejects the reload. An edit with a fault keeps the old runtime.
+            stop_runtime(runtime, reporter).await;
+            *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+            let texts: Vec<String> = failures.iter().map(|failure| chain_text(failure)).collect();
+            return Err(AppError::Invalid(format!(
+                "the reload keeps the old plugins, because a plugin did not load: {}",
+                texts.join("; ")
+            )));
+        }
         let mut opened = Vec::with_capacity(self.sessions.len());
         for live in self.sessions.values() {
             match live.open_plugins(&runtime).await {
