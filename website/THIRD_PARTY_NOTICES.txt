@@ -34,21 +34,6 @@ This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
 http://scripts.sil.org/OFL
 
-Simple Icons (agent, framework, language, and tool marks)
-https://github.com/simple-icons/simple-icons
-Documentation marks use version 16.0.0.
-
-Released under CC0 1.0. Each mark is a trademark of its owner and is used
-only to name the tool it stands for.
-
-M PLUS Rounded 1c font (Medium, Bold, ExtraBold), subset to Latin as WOFF2
-https://github.com/google/fonts/tree/main/ofl/mplusrounded1c
-
-Copyright 2016 The Rounded M+ Project Authors.
-
-This Font Software is licensed under the SIL Open Font License, Version 1.1.
-This license is copied below.
-
 JetBrains Mono font (Regular, SemiBold), subset to Latin as WOFF2
 https://github.com/JetBrains/JetBrainsMono
 

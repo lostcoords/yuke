@@ -2,17 +2,9 @@
 layout: home
 title: Unleash your harness
 titleTemplate: 'yuke: :title'
-description: yuke is a terminal coding agent that you can reshape. Plugins add commands, keys, tools and hooks, and every provider and local model works from one TUI.
-hero:
-  text: Unleash your harness
-  tagline: A terminal coding agent that you can reshape. Plugins add commands, keys, tools and hooks. Every model plugs into the same fast TUI.
-  actions:
-    - theme: brand
-      text: Install yuke
-      link: '#run-yuke'
-    - theme: alt
-      text: GitHub
-      link: https://github.com/lostcoords/yuke
+description: yuke is a local, hackable harness for LLM agents. Plugins add commands, keys, tools and hooks to a fast TUI, and every provider and local model plugs in.
+kicker: Local / Open / Hackable
+tagline: yuke is a local, hackable harness for LLM agents. A fast terminal UI that you reshape with plugins, with any model behind it.
 ---
 
 ## Run yuke

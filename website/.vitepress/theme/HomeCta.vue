@@ -29,39 +29,47 @@ onBeforeUnmount(() => {
   <section ref="root" class="cta" :class="{ shown }">
     <div class="inner">
       <div class="pitch">
-        <h2>Unleash your harness</h2>
-        <p>Install yuke, connect a model, and shape the TUI to the way you work.</p>
+        <p class="yuke-label">Small tools, big possibilities</p>
+        <h2 class="yuke-heading">Unleash your harness.</h2>
+        <p class="lead">Install yuke, connect a model, and shape the TUI to the way you work.</p>
         <InstallCommand class="install" />
         <a class="go" :href="repository">Star on GitHub</a>
       </div>
-      <img class="mascot" :src="withBase('/logo.svg')" alt="" width="200" height="200" aria-hidden="true" />
+      <img class="mascot" :src="withBase('/logo-dark.svg')" alt="" width="220" height="220" aria-hidden="true" />
     </div>
   </section>
 </template>
 
 <style scoped>
-/* A full-width green band that runs straight into the footer. */
+/* A full-width yuke-black band that runs straight into the footer, in both themes. */
 .cta {
   order: 1;
-  margin-top: 112px;
-  background: var(--yuke-band);
-  color: #ffffff;
+  margin-top: 96px;
+  border-top: 1px solid var(--yuke-terminal-line);
+  background: var(--yuke-black);
+  color: var(--yuke-white);
+  --vp-c-bg: var(--yuke-black);
+  --vp-c-text-1: var(--yuke-white);
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-brand-1: var(--yuke-green);
+  --vp-c-brand-soft: rgba(168, 207, 160, 0.14);
+  --yuke-line: var(--yuke-terminal-line);
 }
 
 .inner {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 32px;
+  gap: 40px;
   align-items: center;
   box-sizing: border-box;
   margin: 0 auto;
-  padding: 64px 24px;
+  padding: 72px 24px;
   max-width: 1280px;
 }
 
-@media (min-width: 640px) {
+@media (min-width: 768px) {
   .inner {
-    padding: 72px 48px;
+    padding: 88px 48px;
   }
 }
 
@@ -69,61 +77,52 @@ onBeforeUnmount(() => {
   .inner {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 64px;
-    padding: 80px 64px;
   }
 }
 
 h2 {
-  margin: 0;
-  font-size: 32px;
-  font-weight: 800;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-  text-wrap: balance;
+  margin-top: 14px;
+  color: var(--yuke-white);
+  font-size: clamp(40px, 5.5vw, 64px);
 }
 
-@media (min-width: 960px) {
-  h2 {
-    font-size: 44px;
-  }
-}
-
-p {
-  margin: 14px 0 0;
-  max-width: 560px;
-  color: rgba(255, 255, 255, 0.86);
+.lead {
+  margin: 18px 0 0;
+  max-width: 520px;
+  color: #b8bbb4;
   font-size: 18px;
   line-height: 1.55;
 }
 
 .install {
-  margin-top: 24px;
-  max-width: 600px;
+  margin-top: 28px;
+  max-width: 560px;
 }
 
 .go {
   display: inline-block;
-  margin-top: 24px;
-  padding: 0 28px;
-  border-radius: 999px;
-  background: #ffffff;
-  color: var(--yuke-band);
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 48px;
+  margin-top: 20px;
+  padding: 0 22px;
+  border: 1px solid var(--yuke-green);
+  border-radius: 6px;
+  color: var(--yuke-green);
+  font-family: var(--vp-font-family-mono);
+  font-size: 14px;
+  line-height: 42px;
   text-decoration: none;
-  transition: box-shadow 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .go:hover {
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.3);
+  background: var(--yuke-green);
+  color: var(--yuke-black);
 }
 
 .mascot {
   justify-self: center;
-  width: 200px;
-  height: 200px;
-  transform-origin: 50% 90%;
+  width: 220px;
+  height: 220px;
+  transform-origin: 50% 85%;
 }
 
 .shown .mascot {
