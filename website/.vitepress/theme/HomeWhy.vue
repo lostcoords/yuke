@@ -49,9 +49,9 @@ const cards = [
 
 <template>
   <section class="why yuke-section">
-    <div class="frame yuke-panel yuke-reveal">
+    <div class="yuke-reveal">
       <header class="head">
-        <p class="yuke-label">Customization</p>
+        <p class="yuke-label">Plugins</p>
         <h2 class="yuke-heading">Make it yours.</h2>
         <p class="lead">Most coding agents give you their workflow. yuke gives you the parts: change any surface of the TUI and any step of the run, in JavaScript with full types.</p>
       </header>
@@ -68,7 +68,7 @@ const cards = [
   </section>
 
   <section class="models yuke-section">
-    <div class="frame yuke-panel yuke-reveal">
+    <div class="yuke-reveal">
       <header class="head">
         <p class="yuke-label">Providers</p>
         <h2 class="yuke-heading">Bring any model.</h2>
@@ -85,33 +85,26 @@ const cards = [
 <style scoped>
 .why,
 .models {
-  margin-top: 48px;
-}
-
-.frame {
-  padding: 32px 24px;
-}
-
-@media (min-width: 768px) {
-  .frame {
-    padding: 44px 40px;
-  }
+  margin-top: 128px;
 }
 
 .head {
+  margin: 0 auto;
   max-width: 680px;
+  text-align: center;
 }
 
 h2 {
-  margin-top: 12px;
-  font-size: clamp(36px, 5vw, 56px);
+  margin-top: 14px;
+  font-size: clamp(40px, 6vw, 72px);
 }
 
 .lead {
-  margin: 16px 0 0;
+  margin: 20px 0 0;
   color: var(--vp-c-text-2);
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1.6;
+  text-wrap: balance;
 }
 
 .lead code {
@@ -127,7 +120,7 @@ h2 {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 1px;
-  margin-top: 40px;
+  margin-top: 48px;
   overflow: hidden;
   border: 1px solid var(--yuke-line);
   border-radius: 6px;
@@ -197,8 +190,10 @@ h3 {
 .providers {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
-  margin: 32px 0 0;
+  margin: 40px auto 0;
+  max-width: 900px;
   padding: 0;
   list-style: none;
 }
