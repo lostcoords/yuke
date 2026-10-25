@@ -1,6 +1,9 @@
 # Build output can exist in the workspace or in a crate.
 **/target/
 
+# npm installs the site dependencies here.
+website/node_modules/
+
 # rustfmt can create backup files.
 **/*.rs.bk
 
