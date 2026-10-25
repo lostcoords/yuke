@@ -257,15 +257,20 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 fn machine() -> Result<Machine, String> {
     let home = std::env::home_dir().filter(|home| home.is_absolute());
     let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
-    let http = yuke_http::Client::new(yuke_http::ClientOptions::new(concat!("yuke/", env!("YUKE_VERSION"))))
-        .map_err(|error| chain_text(&error))?;
-    let http = Arc::new(http);
+    let options = yuke_http::ClientOptions::new(concat!("yuke/", env!("YUKE_VERSION")));
+    let http = Arc::new(yuke_http::Client::new(options.clone()).map_err(|error| chain_text(&error))?);
+    let fetch = yuke_http::Client::new(yuke_http::ClientOptions {
+        idle_timeout: None,
+        ..options
+    })
+    .map_err(|error| chain_text(&error))?;
     Ok(Machine {
         paths,
         home,
         variable: Box::new(|name| std::env::var_os(name)),
         transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
         exchange: http,
+        fetch: Arc::new(fetch),
     })
 }
 

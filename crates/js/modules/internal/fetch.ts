@@ -1,11 +1,12 @@
 /**
- * The web classes `Request` and `Response` of the Fetch Standard, and their body methods. A body comes from a string,
- * bytes, or a `URLSearchParams`, and the body of a `Response` also from a `ReadableStream`. yuke has no `Blob` and no
- * `FormData`, and no `clone` because it has no `tee`. `yuke:internal/web` installs the classes as globals.
+ * The web classes `Request` and `Response` of the Fetch Standard, their body methods, and `fetch`. A body comes from a
+ * string, bytes, or a `URLSearchParams`, and the body of a `Response` also from a `ReadableStream`. yuke has no `Blob`,
+ * no `FormData`, and no `clone`. `yuke:internal/web` installs the globals.
  */
 import { TextDecoder, TextEncoder } from "yuke:internal/encoding";
-import { AbortController, AbortSignal, signalOf } from "yuke:internal/events";
+import { AbortController, AbortSignal, addAbortStep, signalOf, underSignal } from "yuke:internal/events";
 import { Headers, headerList, headersOf, isHeaders, isToken } from "yuke:internal/headers";
+import { type HttpBody, type HttpHead, httpClose, httpRead, httpSend } from "yuke:internal/native";
 import { isDisturbed, isReadableStream, ReadableStream } from "yuke:internal/streams";
 import { queryOf, URL } from "yuke:internal/url";
 import { byteString, bytesOf, dictionary, needs, usvString, webClass } from "yuke:internal/webidl";
@@ -406,6 +407,192 @@ export class Response {
   declare bytes: () => Promise<Uint8Array>;
   declare json: () => Promise<unknown>;
   declare text: () => Promise<string>;
+}
+
+/** The headers that a redirect removes with the body of the request. */
+const BODY_HEADERS = ["content-encoding", "content-language", "content-length", "content-location", "content-type"];
+
+/** The most redirects of one fetch, as the Fetch Standard counts them. */
+const MOST_REDIRECTS = 20;
+
+/** The `TypeError` of a network failure. The cause names the failure, as in Deno and Node. */
+function networkError(message: string, code: string): TypeError {
+  return new TypeError("fetch failed", { cause: Object.assign(new Error(message), { code }) });
+}
+
+/** The error of a native that rejects: the reason of an aborted signal, or the `TypeError` of the failure record. */
+function failureOf(signal: AbortSignal, error: unknown): unknown {
+  if (signal.aborted) return signal.reason;
+  if (typeof error === "object" && error !== null && "code" in error && "message" in error) {
+    return networkError(String(error.message), String(error.code));
+  }
+  return error;
+}
+
+/** `url` without its fragment, as the URL of a response is. */
+function withoutFragment(url: string): string {
+  const parsed = new URL(url);
+  parsed.hash = "";
+  return parsed.href;
+}
+
+/** The parts of a fetched body that an abort reaches: the native body, the controller, and the read in flight. */
+interface BodyWork {
+  readonly native: HttpBody;
+  controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+  stopRead: (() => void) | undefined;
+}
+
+/** Remove the abort step of a body that the collector freed, so a long-lived signal keeps no step of it. */
+const freedBodies = new FinalizationRegistry<() => void>((remove) => remove());
+
+/**
+ * The stream of a fetched body. Each read pulls one chunk from the connection, so nothing waits in a queue. An abort of
+ * `signal` stops the read, closes the connection, and errors the stream with the reason. A cancel stops the read and
+ * closes the connection.
+ */
+function bodyStream(native: HttpBody, signal: AbortSignal): ReadableStream<Uint8Array> {
+  const work: BodyWork = { native, controller: undefined, stopRead: undefined };
+  // The step holds the body weakly, so a signal that outlives an unread response does not keep its connection.
+  const weak = new WeakRef(work);
+  const remove = addAbortStep(signal, () => {
+    const held = weak.deref();
+    if (held === undefined) return;
+    held.stopRead?.();
+    httpClose(held.native);
+    held.controller?.error(signal.reason);
+  });
+  // QuickJS keeps an unregister token alive, so the token is its own object and not the body.
+  const token = {};
+  freedBodies.register(work, remove, token);
+  const end = (): void => {
+    freedBodies.unregister(token);
+    remove();
+  };
+  return new ReadableStream<Uint8Array>(
+    {
+      start(start: ReadableStreamDefaultController<Uint8Array>) {
+        work.controller = start;
+      },
+      async pull(pull: ReadableStreamDefaultController<Uint8Array>) {
+        const { promise, cancel } = httpRead(work.native);
+        work.stopRead = cancel;
+        let chunk: Uint8Array | undefined;
+        try {
+          chunk = await promise;
+        } catch (error) {
+          end();
+          throw failureOf(signal, error);
+        } finally {
+          work.stopRead = undefined;
+        }
+        if (chunk !== undefined) pull.enqueue(chunk);
+        else {
+          end();
+          pull.close();
+        }
+      },
+      cancel() {
+        work.stopRead?.();
+        end();
+        httpClose(work.native);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
+/** The response of `head` for the last request of a fetch. */
+function fetchedResponse(
+  head: HttpHead,
+  method: string,
+  url: string,
+  redirected: boolean,
+  signal: AbortSignal,
+): Response {
+  // A response to `HEAD` and a response with a null body status have no body.
+  const empty = method === "HEAD" || NULL_BODY_STATUSES.includes(head.status);
+  if (empty) httpClose(head.body);
+  return responseOf({
+    type: "basic",
+    url: withoutFragment(url),
+    redirected,
+    status: head.status,
+    statusText: head.statusText,
+    headers: headersOf(head.headers, true),
+    body: empty ? noBody() : { stream: bodyStream(head.body, signal), bytes: null, taken: false },
+  });
+}
+
+/**
+ * Fetch `input` with `init`, as `new Request(input, init)` describes it. A network failure rejects with a `TypeError`
+ * whose cause names the failure, and an abort rejects with the reason of the signal.
+ */
+export function fetch(...args: [input: RequestInfo | URL, init?: RequestInit]): Promise<Response> {
+  let state: RequestState;
+  try {
+    needs(args, 1, "fetch");
+    state = requestState(new Request(args[0], args[1]));
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  return run(state);
+}
+
+async function run(state: RequestState): Promise<Response> {
+  const signal = state.signal;
+  signal.throwIfAborted();
+  let { method, url } = state;
+  let headers = headerList(state.headers).map(([name, value]): [string, string] => [name, value]);
+  let body = state.body.bytes ?? new Uint8Array(0);
+  if (!state.headers.has("accept")) headers.push(["accept", "*/*"]);
+  // yuke decodes no content encoding, so it asks for none.
+  if (!state.headers.has("accept-encoding")) headers.push(["accept-encoding", "identity"]);
+  let redirected = false;
+  for (let redirects = 0; ; redirects++) {
+    let head: HttpHead;
+    try {
+      // The client sends the path and the query, so the fragment never leaves.
+      head = await underSignal(signal, () => httpSend(method, url, headers, body));
+    } catch (error) {
+      throw failureOf(signal, error);
+    }
+    if (!REDIRECT_STATUSES.includes(head.status) || state.redirect === "manual") {
+      return fetchedResponse(head, method, url, redirected, signal);
+    }
+    if (state.redirect === "error") {
+      httpClose(head.body);
+      throw networkError("the server redirected, and the redirect mode is error", "redirect");
+    }
+    const locations = head.headers.filter((pair) => pair[0] === "location").map((pair) => pair[1]);
+    if (locations.length === 0) return fetchedResponse(head, method, url, redirected, signal);
+    httpClose(head.body);
+    if (locations.length > 1) throw networkError("the server sent more than one location", "redirect");
+    const location = locations[0] as string;
+    if (redirects === MOST_REDIRECTS) {
+      throw networkError(`the server redirected more than ${MOST_REDIRECTS} times`, "redirect");
+    }
+    const next = URL.parse(location, url);
+    if (next === null || (next.protocol !== "http:" && next.protocol !== "https:")) {
+      throw networkError(`the redirect location '${location}' is not an http or https URL`, "redirect");
+    }
+    // A 303 changes each method except GET and HEAD to GET. A 301 or a 302 changes POST to GET. Each change drops the
+    // body.
+    if (
+      (head.status === 303 && method !== "GET" && method !== "HEAD") ||
+      ((head.status === 301 || head.status === 302) && method === "POST")
+    ) {
+      method = "GET";
+      body = new Uint8Array(0);
+      headers = headers.filter((pair) => !BODY_HEADERS.includes(pair[0].toLowerCase()));
+    }
+    // A redirect to another origin drops the `authorization` header.
+    if (new URL(url).origin !== next.origin) {
+      headers = headers.filter((pair) => pair[0].toLowerCase() !== "authorization");
+    }
+    url = next.href;
+    redirected = true;
+  }
 }
 
 webClass(Request, "Request");

@@ -144,6 +144,13 @@ impl Place {
             variable,
             transport: transport.into(),
             exchange: Arc::new(Answers::default()),
+            fetch: Arc::new(
+                yuke_http::Client::new(yuke_http::ClientOptions {
+                    idle_timeout: None,
+                    user_agent: "yuke-test".to_owned(),
+                })
+                .unwrap(),
+            ),
         }
     }
 

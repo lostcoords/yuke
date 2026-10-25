@@ -136,6 +136,32 @@ declare module "yuke:internal/native" {
   /** The `application/x-www-form-urlencoded` string of `pairs`. */
   export function serializeQuery(pairs: readonly (readonly [name: string, value: string])[]): string;
 
+  /** The body of a fetched response. When QuickJS frees it, the connection closes. */
+  export interface HttpBody {
+    readonly __httpBody: never;
+  }
+  /** The head of a fetched response, and its body. Each header string holds one character for each byte. */
+  export interface HttpHead {
+    readonly status: number;
+    readonly statusText: string;
+    readonly headers: [name: string, value: string][];
+    readonly body: HttpBody;
+  }
+  /**
+   * Send one request and give its head. It follows no redirect. A failure rejects with `{ code, message }`, and a stop
+   * with `{ cancelled: true }`.
+   */
+  export function httpSend(
+    method: string,
+    url: string,
+    headers: readonly (readonly [name: string, value: string])[],
+    body: Uint8Array,
+  ): Operation<HttpHead>;
+  /** The next chunk of `body`, or `undefined` at the end. It rejects as `httpSend` does. */
+  export function httpRead(body: HttpBody): Operation<Uint8Array | undefined>;
+  /** Close `body` and its connection. */
+  export function httpClose(body: HttpBody): void;
+
   /** Write a line of `console` for the operator. */
   export function writeConsole(level: NoticeLevel, text: string): void;
 

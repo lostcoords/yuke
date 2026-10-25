@@ -63,6 +63,8 @@ pub(crate) struct Machine {
     pub(crate) transport: Arc<dyn Transport>,
     /// Sends the requests of the logins.
     pub(crate) exchange: Arc<dyn Exchange>,
+    /// Sends the requests of `fetch` in the plugins. It has no idle timeout, so only the signal stops a slow fetch.
+    pub(crate) fetch: Arc<yuke_http::Client>,
 }
 
 /// How the app runs: as a server that clients come to (`yuke --rpc`), or for one task with no client (`yuke -p`).
@@ -634,6 +636,7 @@ async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>)
         cache: shared.machine.paths.cache.join("js"),
         processes: Arc::clone(&shared.processes),
         models: Arc::new(PluginModels(Arc::clone(shared))),
+        http: Arc::clone(&shared.machine.fetch),
     })
     .await?;
     let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));

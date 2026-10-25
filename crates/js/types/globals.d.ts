@@ -461,6 +461,35 @@ declare class Response {
   text(): Promise<string>;
 }
 
+/** The code of a `FetchFailure`. `redirect` names a refused redirect; each other code names a fault of the network. */
+type FetchFailureCode =
+  | "invalid_request"
+  | "bad_url"
+  | "dns_failed"
+  | "connect_failed"
+  | "connect_timeout"
+  | "certificate_rejected"
+  | "tls_setup_failed"
+  | "idle_timeout"
+  | "request_timeout"
+  | "connection_lost"
+  | "malformed_response"
+  | "redirect";
+
+/** The `cause` of the `TypeError` of a failed `fetch`: `(error.cause as FetchFailure).code`. */
+interface FetchFailure extends Error {
+  readonly code: FetchFailureCode;
+}
+
+/**
+ * Fetch `input` with `init`, as `new Request(input, init)` describes the request. A redirect follows up to 20 times,
+ * unless `redirect` is `manual` or `error`. A network failure rejects with a `TypeError("fetch failed")` whose `cause`
+ * is a `FetchFailure`. An abort before the response rejects with the reason of the signal. An abort after it errors the
+ * body with the reason. yuke sends `accept-encoding: identity` unless the request sets it, and it decodes no content
+ * encoding. `fetch` sets no deadline: use `AbortSignal.timeout`.
+ */
+declare function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+
 /** The flags of a new event. Each flag is `false` when it is missing. */
 interface EventInit {
   bubbles?: boolean | undefined;

@@ -92,8 +92,9 @@ function queueMicrotask(callback: () => void): void {
   });
 }
 
-const objects = { console, performance, queueMicrotask } satisfies {
+const objects = { console, fetch: fetch.fetch, performance, queueMicrotask } satisfies {
   console: typeof globalThis.console;
+  fetch: typeof globalThis.fetch;
   performance: typeof globalThis.performance;
   queueMicrotask: typeof globalThis.queueMicrotask;
 };

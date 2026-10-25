@@ -15,7 +15,7 @@ oxc_parser = "=0.153.0"
 oxc_semantic = "=0.153.0"
 oxc_span = "=0.153.0"
 oxc_transformer = "=0.153.0"
-rquickjs = { version = "0.14.0", default-features = false, features = ["std", "futures", "loader", "macro"] }
+rquickjs = { version = "0.14.0", default-features = false, features = ["std", "classes", "futures", "loader", "macro"] }
 sha2 = { version = "0.11.0", default-features = false }
 # rustix sends the signals to the process group of a command. It is a safe wrapper of the system call.
 rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
@@ -27,6 +27,7 @@ url = "2.5.8"
 yuke-agent = { path = "../agent" }
 yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
+yuke-http = { path = "../http" }
 yuke-protocol = { path = "../protocol" }
 
 [build-dependencies]
@@ -42,6 +43,7 @@ rquickjs = { version = "0.14.0", default-features = false, features = ["std", "l
 [dev-dependencies]
 # A test calls the runtime from the worker threads of a multi-thread tokio runtime.
 tokio = { version = "1.53", features = ["rt-multi-thread"] }
+yuke-http = { path = "../http", features = ["testing"] }
 yuke-testing = { path = "../testing" }
 
 [lints]

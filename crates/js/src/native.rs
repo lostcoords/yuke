@@ -7,6 +7,7 @@ mod console;
 mod encoding;
 mod exec;
 mod fs;
+mod http;
 mod lines;
 mod process;
 mod tools;
@@ -98,11 +99,13 @@ pub(crate) fn install(
     registry: &Rc<Registry>,
     processes: &Arc<Processes>,
     models: &Arc<dyn Models>,
+    client: &Arc<yuke_http::Client>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
     ai::add(ctx, &object, models)?;
     fs::add(ctx, &object)?;
+    http::add(ctx, &object, client)?;
     process::add(ctx, &object, processes)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;

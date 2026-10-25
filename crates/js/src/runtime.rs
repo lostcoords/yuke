@@ -48,6 +48,9 @@ pub struct Options {
 
     /// The models that the plugins call.
     pub models: Arc<dyn Models>,
+
+    /// The client of `fetch`. The consumer chooses its idle timeout. With none, only the signal stops a slow fetch.
+    pub http: Arc<yuke_http::Client>,
 }
 
 impl fmt::Debug for Options {
@@ -55,6 +58,7 @@ impl fmt::Debug for Options {
         f.debug_struct("Options")
             .field("cache", &self.cache)
             .field("processes", &self.processes)
+            .field("http", &self.http)
             .finish_non_exhaustive()
     }
 }
@@ -239,7 +243,8 @@ fn serve(
     faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let tokio_runtime = match tokio::runtime::Builder::new_current_thread().enable_time().build() {
+    // `fetch` runs its sockets on this thread, so the runtime has the IO driver too.
+    let tokio_runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(tokio_runtime) => tokio_runtime,
         Err(error) => {
             if ready.send(Err(Error::Thread(error))).is_err() {
@@ -341,7 +346,14 @@ impl Engine {
                 crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, faults.clone())?;
                 crate::error::install_report_error(&ctx, faults.clone())?;
-                native::install(&ctx, &registry, &options.processes, &options.models, faults)
+                native::install(
+                    &ctx,
+                    &registry,
+                    &options.processes,
+                    &options.models,
+                    &options.http,
+                    faults,
+                )
             })
             .await
             .map_err(engine_error)?;

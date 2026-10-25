@@ -7,6 +7,7 @@ mod fs;
 mod globals;
 mod headers;
 mod input_before;
+mod network;
 mod plugins;
 mod process;
 mod prompt;
@@ -92,6 +93,13 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
         cache: folder.join("cache"),
         processes,
         models: Arc::new(NoModels),
+        http: Arc::new(
+            yuke_http::Client::new(yuke_http::ClientOptions {
+                idle_timeout: None,
+                user_agent: "yuke-js-test".to_owned(),
+            })
+            .unwrap(),
+        ),
     }
 }
 

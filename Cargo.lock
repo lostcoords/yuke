@@ -2782,6 +2782,7 @@ dependencies = [
  "yuke-agent",
  "yuke-ai",
  "yuke-engine",
+ "yuke-http",
  "yuke-protocol",
  "yuke-testing",
 ]
