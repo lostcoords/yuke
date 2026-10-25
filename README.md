@@ -1,6 +1,6 @@
 # yuke
 
-Unleash you harness.
+Unleash your harness.
 
 ## Development
 
