@@ -2850,6 +2850,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yuke-term"
+version = "0.0.1-dev"
+dependencies = [
+ "rustix",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "yuke-testing"
 version = "0.0.1-dev"
 dependencies = [

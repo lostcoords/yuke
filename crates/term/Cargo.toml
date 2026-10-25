@@ -1,0 +1,19 @@
+[package]
+name = "yuke-term"
+version = "0.0.1-dev"
+description = "The terminal of yuke: raw mode, an input parser, and a cell grid that writes only its changes."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+rustix = { version = "1.1", default-features = false, features = ["std", "event", "fs", "pipe", "termios"] }
+unicode-segmentation = "1.13"
+unicode-width = { version = "0.2.2", default-features = false }
+
+[dev-dependencies]
+# The tests open a pseudo-terminal pair.
+rustix = { version = "1.1", default-features = false, features = ["pty"] }
+
+[lints]
+workspace = true
