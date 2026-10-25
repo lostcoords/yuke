@@ -18,13 +18,13 @@ pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, Pendin
 pub use interaction::{InteractionRequest, InteractionRespondParams, InteractionResponse};
 pub use mcp::{ListMcpServersResult, McpServer, McpServerSource, McpServerState};
 pub use message::{
-    ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ForkSessionParams, Implementation,
-    InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState, JsonRpc, ListJobsResult,
-    LoadSessionParams, NoticeLevel, NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, Request,
-    RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionParams, SessionResult,
-    SetSettingsParams, StopJobParams, UpdateCredentialParams,
+    ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ForkSessionParams,
+    GetSessionParams, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState,
+    JsonRpc, ListJobsResult, ListSessionsParams, ListSessionsResult, LoadSessionParams, NoticeLevel, NoticeParams,
+    Notification, PROTOCOL_VERSION, RemoveInputParams, Request, RequestId, Response, ResponseError, ResponseOutcome,
+    ServerNotification, SessionParams, SessionResult, SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
-pub use session::{ModelReference, SessionSettings};
+pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
 pub use update::{
     BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionState, SessionUpdate, SessionUpdateParams,
 };

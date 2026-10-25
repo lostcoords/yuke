@@ -9,7 +9,8 @@ use ts_rs::{Config, TS};
 
 use crate::{
     ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListJobsResult,
-    ListMcpServersResult, Notification, Request, Response, ServerNotification, SessionResult,
+    ListMcpServersResult, ListSessionsResult, Notification, Request, Response, ServerNotification, SessionResult,
+    SessionRow,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
@@ -68,6 +69,8 @@ fn export(folder: &Path) {
     SessionResult::export_all(&config).unwrap();
     InputResult::export_all(&config).unwrap();
     ListJobsResult::export_all(&config).unwrap();
+    ListSessionsResult::export_all(&config).unwrap();
+    SessionRow::export_all(&config).unwrap();
     ListMcpServersResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
 }

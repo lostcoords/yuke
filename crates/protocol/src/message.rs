@@ -87,6 +87,12 @@ pub enum ClientRequest {
     /// fails. Result: [`EmptyResult`].
     #[serde(rename = "session/remove_input")]
     RemoveInput(RemoveInputParams),
+    /// List the saved sessions, newest first, in pages. Result: [`ListSessionsResult`].
+    #[serde(rename = "session/list")]
+    ListSessions(ListSessionsParams),
+    /// The row of one saved session. Result: [`SessionRow`](crate::SessionRow).
+    #[serde(rename = "session/get")]
+    GetSession(GetSessionParams),
     /// List the running background jobs of an open session. Result: [`ListJobsResult`].
     #[serde(rename = "job/list")]
     ListJobs(SessionParams),
@@ -119,7 +125,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 14] = [
+    pub const METHODS: [&str; 16] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -128,6 +134,8 @@ impl ClientRequest {
         "session/input",
         "session/set_settings",
         "session/remove_input",
+        "session/list",
+        "session/get",
         "job/list",
         "job/stop",
         "credential/update",
@@ -348,6 +356,44 @@ pub struct CloseSessionParams {
     /// Whether to stop the running background jobs of the session. With `false`, a session with running jobs does not
     /// close.
     pub stop_jobs: bool,
+}
+
+/// The params of `session/list`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ListSessionsParams {
+    /// Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    /// The most rows of the page, from 1 to 100. None gives 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// The `nextCursor` of the page before, with the same `cwd`. None starts at the newest session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// The result of `session/list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ListSessionsResult {
+    /// The sessions of the page, newest first by their newest event. The pages are no snapshot: a session that a new
+    /// event moves to the front between two pages comes only in a new list.
+    pub sessions: Vec<crate::SessionRow>,
+    /// The cursor of the next page. None when no older session exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// The params of `session/get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GetSessionParams {
+    /// The id of the saved session. The session can be closed.
+    pub session_id: SessionId,
 }
 
 /// The params of a message that names only an open session: `job/list`, `mcp/list`, and `session/cancel`.

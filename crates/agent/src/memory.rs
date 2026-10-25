@@ -3,16 +3,21 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use yuke_engine::{Commit, Outcome, TurnEnd};
 
 use crate::{PromptSection, lock};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, SessionSummary,
+    StoredEvent,
 };
 
-use crate::store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
+use crate::store::{
+    Access, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
+    check_consumed_blocks, preview_of,
+};
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
 /// writer of a session, as a store with a file lock does.
@@ -52,6 +57,22 @@ struct Saved {
     blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
     /// The order number of the newest event write of the session.
     newest_write: u64,
+    /// The trimmed user text of the first message input with text.
+    preview: Option<String>,
+    /// The source of a fork.
+    fork_of: Option<SessionId>,
+    /// The creation time, in milliseconds since the Unix epoch.
+    created_at: u64,
+    /// The time of the newest event, in milliseconds since the Unix epoch.
+    updated_at: u64,
+}
+
+/// The time now, in milliseconds since the Unix epoch.
+fn now_ms() -> u64 {
+    // A clock before 1970 gives 0, as the times of a store need no more.
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
 impl Saved {
@@ -60,7 +81,23 @@ impl Saved {
         let event_number = EventNumber(self.events.len() as u64 + 1);
         self.events.push(StoredEvent { event_number, event });
         self.newest_write = write;
+        self.updated_at = now_ms();
         event_number
+    }
+
+    /// The saved facts of the session `id`.
+    #[expect(clippy::expect_used, reason = "a create and a fork each save a settings event first")]
+    fn summary(&self, id: SessionId) -> SessionSummary {
+        let settings = self.settings().expect("the session has a settings event");
+        SessionSummary {
+            session_id: id,
+            model: settings.model.clone(),
+            cwd: settings.cwd.clone(),
+            preview: self.preview.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            fork_of: self.fork_of,
+        }
     }
 
     /// The settings of the newest settings event.
@@ -168,12 +205,17 @@ impl Store for MemoryStore {
     async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
+        let now = now_ms();
         let mut saved = Saved {
             prompt: prompt.to_vec(),
             events: Vec::new(),
             pending: Vec::new(),
             blobs: HashMap::new(),
             newest_write: 0,
+            preview: None,
+            fork_of: None,
+            created_at: now,
+            updated_at: now,
         };
         saved.push_event(SessionEvent::Settings(settings.clone()), state.next_write());
         let opened = saved.to_opened(id, Some(self.take_writer(id)?));
@@ -186,12 +228,17 @@ impl Store for MemoryStore {
         let mut state = lock(&self.state);
         let write = state.next_write();
         let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
+        let now = now_ms();
         let fork = Saved {
             prompt: saved.prompt.clone(),
             events: saved.events[..fork_cut(&saved.events, through)?].to_vec(),
             pending: Vec::new(),
             blobs: saved.blobs.clone(),
             newest_write: write,
+            preview: saved.preview.clone(),
+            fork_of: Some(source),
+            created_at: now,
+            updated_at: now,
         };
         let opened = fork.to_opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, fork);
@@ -209,6 +256,9 @@ impl Store for MemoryStore {
         let mut state = lock(&self.state);
         let input_id = InputId(state.newest_input + 1);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
+        if saved.preview.is_none() {
+            saved.preview = preview_of(&input);
+        }
         saved.pending.push(PendingInput { id: input_id, input });
         state.newest_input = input_id.0;
         Ok(input_id)
@@ -226,14 +276,44 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        after: Option<ListPosition>,
+        limit: usize,
+    ) -> Result<SessionPage, StoreError> {
+        // The SQLite store saves a folder as UTF-8 JSON text, so a folder that is not UTF-8 lists no session.
+        if cwd.is_some_and(|cwd| cwd.to_str().is_none()) {
+            return Ok(SessionPage {
+                sessions: Vec::new(),
+                next: None,
+            });
+        }
         let state = lock(&self.state);
-        Ok(state
+        let mut listed: Vec<(&SessionId, &Saved)> = state
             .sessions
             .iter()
-            .filter(|(_, saved)| saved.settings().is_some_and(|settings| settings.cwd == cwd))
-            .max_by_key(|(_, saved)| saved.newest_write)
-            .map(|(id, _)| *id))
+            .filter(|(_, saved)| after.is_none_or(|ListPosition(before)| saved.newest_write < before))
+            .filter(|(_, saved)| cwd.is_none_or(|cwd| saved.settings().is_some_and(|settings| settings.cwd == cwd)))
+            .collect();
+        listed.sort_by_key(|(_, saved)| std::cmp::Reverse(saved.newest_write));
+        let next = (listed.len() > limit)
+            .then(|| limit.checked_sub(1).and_then(|last| listed.get(last)))
+            .flatten()
+            .map(|(_, saved)| ListPosition(saved.newest_write));
+        Ok(SessionPage {
+            sessions: listed
+                .into_iter()
+                .take(limit)
+                .map(|(id, saved)| saved.summary(*id))
+                .collect(),
+            next,
+        })
+    }
+
+    async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
+        let state = lock(&self.state);
+        Ok(state.sessions.get(&id).ok_or(StoreError::NotFound)?.summary(id))
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -334,4 +414,25 @@ mod tests {
     }
 
     crate::store_tests!(make_store);
+
+    /// A session of a folder that is not UTF-8 lists in no folder, as in the SQLite store, which cannot save one.
+    #[tokio::test]
+    async fn a_session_in_a_folder_that_is_not_utf8_lists_in_no_folder() {
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::{Path, PathBuf};
+
+        use crate::Store;
+
+        let store = MemoryStore::new();
+        let folder = Path::new(std::ffi::OsStr::from_bytes(b"/work\xff"));
+        let settings = yuke_protocol::SessionSettings {
+            cwd: PathBuf::from(folder),
+            ..crate::testing::settings("one")
+        };
+        store.create_session(&settings, &[]).await.unwrap();
+
+        let page = store.list_sessions(Some(folder), None, 10).await.unwrap();
+
+        assert_eq!(page.sessions, []);
+    }
 }

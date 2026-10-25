@@ -11,8 +11,13 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `job/list`, `job/stop`, `credential/update`, `interaction/respond`,
-  `mcp/list`, `profile/reload`.
+  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `job/list`, `job/stop`,
+  `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`.
+- `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
+  50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
+  that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
+- A row holds the saved facts (model, folder, preview, times, fork source) and the activity now: `closed`, `idle`, or
+  `running`. The preview is the trimmed user text of the first message input with text, at most 200 characters.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
   stay open, and their jobs go on. It fails while a turn runs, and a failure keeps the old plugins and providers. The
   next request of an open session can miss the prompt cache when the reload changes its tools.
@@ -24,7 +29,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   token from the next model request on, also in a running turn. After the first update, the server never uses the
   stored login of the provider.
 - A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the shutdown
-  of the server. The other session requests need an open session. Many sessions can be open at once.
+  of the server. Many sessions can be open at once. The requests that use a live session need an open session, and
+  `session/load` opens a closed one.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input

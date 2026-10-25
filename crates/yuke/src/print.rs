@@ -120,11 +120,15 @@ async fn run_turn(
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
         SessionChoice::Newest => {
-            let id = app
+            let page = app
                 .store()
-                .newest_session(cwd)
+                .list_sessions(Some(cwd), None, 1)
                 .await
-                .map_err(|error| chain_text(&error))?
+                .map_err(|error| chain_text(&error))?;
+            let id = page
+                .sessions
+                .first()
+                .map(|session| session.session_id)
                 .ok_or_else(|| format!("no session works in {}", cwd.display()))?;
             existing_session(task, id, app).await?
         }

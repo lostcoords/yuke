@@ -354,6 +354,8 @@ impl Server {
                 app.close(params.session_id, params.stop_jobs).await?;
                 result(&EmptyResult {})
             }
+            ClientRequest::ListSessions(params) => result(&app.list(params).await?),
+            ClientRequest::GetSession(params) => result(&app.get(params.session_id).await?),
             ClientRequest::ListJobs(params) => result(&ListJobsResult {
                 jobs: app.jobs(params.session_id)?,
             }),

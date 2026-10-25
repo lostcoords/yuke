@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Loaded, MemoryStore, Opened, PromptSection, Store, StoreError};
+use yuke_agent::{Access, ListPosition, Loaded, MemoryStore, Opened, PromptSection, SessionPage, Store, StoreError};
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
-    SessionId, SessionSettings,
+    SessionId, SessionSettings, SessionSummary,
 };
 
 /// A system prompt of one section.
@@ -132,8 +132,17 @@ impl Store for FailingStore {
         self.store.remove_input(id, input).await
     }
 
-    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
-        self.store.newest_session(cwd).await
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        after: Option<ListPosition>,
+        limit: usize,
+    ) -> Result<SessionPage, StoreError> {
+        self.store.list_sessions(cwd, after, limit).await
+    }
+
+    async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
+        self.store.session_summary(id).await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {

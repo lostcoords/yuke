@@ -1,5 +1,6 @@
 //! The protocol server against a scripted provider, through a pair of pipes.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -667,7 +668,9 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
 
     assert_eq!(forked.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     let store = place.store().await;
-    assert_eq!(store.newest_session(&place.work).await.unwrap(), Some(source));
+    let page = store.list_sessions(None, None, 10).await.unwrap();
+    let ids: Vec<_> = page.sessions.iter().map(|session| session.session_id).collect();
+    assert_eq!(ids, [source]);
 }
 
 /// Send the request `method`, keep each message up to its response in `messages`, and return the response. The
@@ -2285,4 +2288,99 @@ async fn the_apply_of_a_new_plugin_can_call_a_model_of_the_new_providers() {
     assert_eq!(std::fs::read_to_string(&answer).unwrap(), "from apply");
     assert_eq!(transport.urls(), ["http://127.0.0.1:8080/v1/messages"]);
     client.end().await;
+}
+
+/// The activity of each row of `listed`, a `session/list` result, by session id.
+fn activities(listed: &Value) -> BTreeMap<String, String> {
+    listed["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let id = row["session"]["sessionId"].as_str().unwrap().to_owned();
+            (id, row["activity"].as_str().unwrap().to_owned())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
+    let place = Place::new("rpc", "the_list_and_a_get_give_each_saved_session_with_its_activity");
+    let saved = saved_session(&place, "minimax", "MiniMax-M3").await;
+    let mut client = Client::initialized(&place, Box::new(Stalled)).await;
+    let running = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    client.request("session/input", input_params(&running, "hi")).await;
+    client
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+    let idle = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    let listed = client.call("session/list", json!({})).await.unwrap();
+    let row = client.call("session/get", json!({ "sessionId": saved })).await.unwrap();
+    let unknown = client
+        .call("session/get", json!({ "sessionId": SessionId::generate() }))
+        .await;
+    client.notify("session/cancel", json!({ "sessionId": running })).await;
+    client.until(is_idle).await;
+    client.end().await;
+
+    let expected = BTreeMap::from([
+        (saved.to_string(), "closed".to_owned()),
+        (running.as_str().unwrap().to_owned(), "running".to_owned()),
+        (idle.as_str().unwrap().to_owned(), "idle".to_owned()),
+    ]);
+    assert_eq!(activities(&listed), expected);
+    assert_eq!(row["activity"], "closed");
+    assert_eq!(row["session"]["preview"], "waiting");
+    assert_eq!(row["session"]["cwd"], json!(place.work));
+    assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
+}
+
+#[tokio::test]
+async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit() {
+    let place = Place::new(
+        "rpc",
+        "a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit",
+    );
+    for _ in 0..3 {
+        saved_session(&place, "minimax", "MiniMax-M3").await;
+    }
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let work = json!(place.work);
+
+    let first = client
+        .call("session/list", json!({ "cwd": work, "limit": 2 }))
+        .await
+        .unwrap();
+    let cursor = first["nextCursor"].clone();
+    let second = client
+        .call("session/list", json!({ "cwd": work, "limit": 2, "cursor": cursor }))
+        .await
+        .unwrap();
+    let elsewhere = client
+        .call("session/list", json!({ "cwd": "/elsewhere" }))
+        .await
+        .unwrap();
+    let mut refused = Vec::new();
+    for params in [
+        json!({ "cursor": cursor }),
+        json!({ "cwd": work, "cursor": "not a cursor" }),
+        json!({ "cursor": "18446744073709551615." }),
+        json!({ "limit": 0 }),
+        json!({ "limit": 101 }),
+    ] {
+        refused.push(client.call("session/list", params).await.unwrap_err()["code"].clone());
+    }
+    client.end().await;
+
+    let ids: BTreeSet<String> = activities(&first)
+        .into_keys()
+        .chain(activities(&second).into_keys())
+        .collect();
+    assert_eq!(first["sessions"].as_array().unwrap().len(), 2);
+    assert_eq!(second["sessions"].as_array().unwrap().len(), 1);
+    assert_eq!(second.get("nextCursor"), None);
+    assert_eq!(ids.len(), 3);
+    assert_eq!(elsewhere["sessions"], json!([]));
+    assert_eq!(refused, vec![json!(ResponseError::INVALID_PARAMS); 5]);
 }

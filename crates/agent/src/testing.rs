@@ -71,9 +71,14 @@ macro_rules! store_tests {
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
             each_session_numbers_its_own_events,
             the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
-            the_newest_session_of_a_folder_has_the_newest_event,
-            a_session_works_in_the_folder_of_its_newest_settings,
-            a_fork_is_the_newest_session_of_its_folder,
+            the_list_gives_the_session_with_the_newest_event_first,
+            the_pages_of_a_list_follow_each_other,
+            a_new_session_after_a_delete_does_not_come_after_an_older_cursor,
+            a_session_lists_in_the_folder_of_its_newest_settings,
+            a_folder_that_is_not_utf8_lists_no_session,
+            a_fork_is_the_newest_session_and_names_its_source,
+            the_first_message_with_text_gives_the_preview,
+            a_summary_gives_the_saved_times_and_an_unknown_session_gets_not_found,
         );
     };
     (@behaviors $make_store:path; $($behavior:ident),* $(,)?) => {
@@ -1228,9 +1233,14 @@ fn settings_in(cwd: &str) -> SessionSettings {
     }
 }
 
-/// The newest session of a folder is the session of that folder with the newest event. A session of another folder
-/// does not count.
-pub async fn the_newest_session_of_a_folder_has_the_newest_event(store: &dyn Store) {
+/// The ids of the sessions of `page`, in page order.
+fn listed(page: &crate::SessionPage) -> Vec<SessionId> {
+    page.sessions.iter().map(|summary| summary.session_id).collect()
+}
+
+/// The list gives the newest event first. A commit moves its session to the front, and a folder filter keeps only the
+/// sessions of that folder.
+pub async fn the_list_gives_the_session_with_the_newest_event_first(store: &dyn Store) {
     let first = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
     let second = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
     let other = store
@@ -1239,32 +1249,139 @@ pub async fn the_newest_session_of_a_folder_has_the_newest_event(store: &dyn Sto
         .unwrap()
         .id;
 
-    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(second));
+    let all = store.list_sessions(None, None, 10).await.unwrap();
+    assert_eq!(listed(&all), [other, second, first]);
     store.commit(first, &step(&[]), &[]).await.unwrap();
-    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(first));
-    assert_eq!(store.newest_session(Path::new("/other")).await.unwrap(), Some(other));
-    assert_eq!(store.newest_session(Path::new("/none")).await.unwrap(), None);
+    let work = store.list_sessions(Some(Path::new("/work")), None, 10).await.unwrap();
+    assert_eq!(listed(&work), [first, second]);
+    let none = store.list_sessions(Some(Path::new("/none")), None, 10).await.unwrap();
+    assert_eq!(listed(&none), []);
 }
 
-/// A session works in the folder of its newest settings, not in the folder of earlier settings.
-pub async fn a_session_works_in_the_folder_of_its_newest_settings(store: &dyn Store) {
+/// Pages follow each other with no gap and no repeat. A full last page gives no next position.
+pub async fn the_pages_of_a_list_follow_each_other(store: &dyn Store) {
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        ids.push(store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id);
+    }
+    ids.reverse();
+
+    let first = store.list_sessions(None, None, 2).await.unwrap();
+    let second = store.list_sessions(None, first.next, 2).await.unwrap();
+    let exact = store.list_sessions(None, None, 3).await.unwrap();
+
+    assert_eq!(listed(&first), ids[..2]);
+    assert_eq!(listed(&second), ids[2..]);
+    assert_eq!(second.next, None);
+    assert_eq!(listed(&exact), ids);
+    assert_eq!(exact.next, None);
+}
+
+/// A cursor keeps its meaning after the newest sessions go: a new session comes before it, never after it.
+pub async fn a_new_session_after_a_delete_does_not_come_after_an_older_cursor(store: &dyn Store) {
+    let first = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let second = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let third = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let page = store.list_sessions(None, None, 1).await.unwrap();
+    store.delete_session(third).await.unwrap();
+    store.delete_session(second).await.unwrap();
+    let new = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+
+    let older = store.list_sessions(None, page.next, 10).await.unwrap();
+
+    assert_eq!(listed(&page), [third]);
+    assert_eq!(listed(&older), [first]);
+    assert_eq!(
+        listed(&store.list_sessions(None, None, 10).await.unwrap()),
+        [new, first]
+    );
+}
+
+/// A session lists in the folder of its newest settings, not in the folder of earlier settings.
+pub async fn a_session_lists_in_the_folder_of_its_newest_settings(store: &dyn Store) {
     let id = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
     store.create_session(&settings_in("/other"), &prompt()).await.unwrap();
 
     store.set_settings(id, &settings_in("/other")).await.unwrap();
 
-    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), None);
-    assert_eq!(store.newest_session(Path::new("/other")).await.unwrap(), Some(id));
+    let work = store.list_sessions(Some(Path::new("/work")), None, 10).await.unwrap();
+    let other = store.list_sessions(Some(Path::new("/other")), None, 10).await.unwrap();
+    assert_eq!(listed(&work), []);
+    assert_eq!(listed(&other)[0], id);
+    assert_eq!(store.session_summary(id).await.unwrap().cwd, Path::new("/other"));
 }
 
-/// A fork is newer than its source and than the other sessions of its folder.
-pub async fn a_fork_is_the_newest_session_of_its_folder(store: &dyn Store) {
+/// A folder that is not UTF-8 lists no session, because a saved folder is UTF-8.
+pub async fn a_folder_that_is_not_utf8_lists_no_session(store: &dyn Store) {
+    use std::os::unix::ffi::OsStrExt;
+    store.create_session(&settings_in("/work"), &prompt()).await.unwrap();
+
+    let folder = Path::new(std::ffi::OsStr::from_bytes(b"/work\xff"));
+    let page = store.list_sessions(Some(folder), None, 10).await.unwrap();
+
+    assert_eq!(listed(&page), []);
+    assert_eq!(page.next, None);
+}
+
+/// A fork is the newest session. It names its source, keeps the preview of the source, and has the settings of its cut.
+pub async fn a_fork_is_the_newest_session_and_names_its_source(store: &dyn Store) {
     let source = store.create_session(&settings_in("/work"), &prompt()).await.unwrap().id;
+    store.accept_input(source, user_input("first task")).await.unwrap();
+    store.commit(source, &end(&[]), &[]).await.unwrap();
+    store.set_settings(source, &settings_in("/later")).await.unwrap();
     store.create_session(&settings_in("/work"), &prompt()).await.unwrap();
 
     let fork = store.fork_session(source, None).await.unwrap().id;
 
-    assert_eq!(store.newest_session(Path::new("/work")).await.unwrap(), Some(fork));
+    let summary = store.session_summary(fork).await.unwrap();
+    assert_eq!(listed(&store.list_sessions(None, None, 1).await.unwrap()), [fork]);
+    assert_eq!(summary.fork_of, Some(source));
+    assert_eq!(summary.preview.as_deref(), Some("first task"));
+    assert_eq!(summary.cwd, Path::new("/work"));
+    assert_eq!(store.session_summary(source).await.unwrap().fork_of, None);
+}
+
+/// The first message input with text gives the preview: its text without the outer whitespace, cut to 200
+/// characters. A notification, a later message, and an input with no text change nothing.
+pub async fn the_first_message_with_text_gives_the_preview(store: &dyn Store) {
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let notification = Input::new(
+        InputSource::User,
+        InputKind::Notification,
+        vec![yuke_ai::Block::user_text("a job ended")],
+    )
+    .unwrap();
+    store.accept_input(id, notification).await.unwrap();
+    assert_eq!(store.session_summary(id).await.unwrap().preview, None);
+
+    store
+        .accept_input(id, user_input(&format!("  {}  ", "é".repeat(300))))
+        .await
+        .unwrap();
+    store.accept_input(id, user_input("later")).await.unwrap();
+
+    assert_eq!(store.session_summary(id).await.unwrap().preview, Some("é".repeat(200)));
+}
+
+/// A summary gives the saved times: the creation time, and the time of the newest event, which a commit moves on. An
+/// unknown session gets not found.
+pub async fn a_summary_gives_the_saved_times_and_an_unknown_session_gets_not_found(store: &dyn Store) {
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    let created = store.session_summary(id).await.unwrap();
+    // The times count milliseconds, so the commit comes in a later millisecond.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    store.commit(id, &step(&[]), &[]).await.unwrap();
+
+    let committed = store.session_summary(id).await.unwrap();
+    assert_eq!(committed.created_at, created.created_at);
+    assert!(
+        committed.updated_at > created.updated_at,
+        "{committed:?} after {created:?}"
+    );
+    assert!(matches!(
+        store.session_summary(SessionId::generate()).await,
+        Err(StoreError::NotFound)
+    ));
 }
 
 /// A receipt gives the saved commit's session-local event number after settings changes, other-session writes, and a fork.

@@ -90,15 +90,3 @@ ORDER BY seq DESC LIMIT 1;
 SELECT blocks, end_kind, end_finish_reason, end_message FROM events
 WHERE session_id = :session_id AND kind = 'commit' AND seq >= :first
 ORDER BY seq;
-
---! newest_session_in (cwd: &str) : (id: [u8; 16])
---- The session whose newest settings event names the folder `cwd` and that has the newest event of those sessions. A
---- new event row gets a rowid above each rowid in the table, so a larger rowid is a newer event.
-SELECT settings_event.session_id AS id FROM events AS settings_event
-WHERE settings_event.kind = 'settings'
-    AND settings_event.seq = (
-        SELECT max(seq) FROM events WHERE session_id = settings_event.session_id AND kind = 'settings'
-    )
-    AND json_extract(settings_event.settings, '$.cwd') = :cwd
-ORDER BY (SELECT max(rowid) FROM events WHERE session_id = settings_event.session_id) DESC
-LIMIT 1;

@@ -13,7 +13,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -21,7 +21,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use yuke_agent::{Session, SessionError, Store, StoreError};
+use yuke_agent::{ListPosition, Session, SessionError, Store, StoreError};
 use yuke_ai::Block;
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
@@ -30,9 +30,9 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ModelReference,
-    NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent,
-    UpdateCredentialParams,
+    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListSessionsParams,
+    ListSessionsResult, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionEvent,
+    SessionId, SessionRow, SessionSettings, SessionState, SessionSummary, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -361,6 +361,57 @@ impl App {
         self.start_new(session).await
     }
 
+    /// A page of the saved sessions, newest first, with the activity of each one. `params.cursor` continues the list
+    /// with the same `params.cwd`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a limit outside 1 to 100 or an invalid cursor, and [`AppError::Store`] when
+    /// the store fails.
+    pub(crate) async fn list(&self, params: ListSessionsParams) -> Result<ListSessionsResult, AppError> {
+        let ListSessionsParams { cwd, limit, cursor } = params;
+        let limit = limit.unwrap_or(PAGE_ROWS);
+        if !(1..=MOST_PAGE_ROWS).contains(&limit) {
+            return Err(AppError::Invalid(format!(
+                "the limit {limit} must be between 1 and {MOST_PAGE_ROWS}"
+            )));
+        }
+        let after = cursor
+            .as_deref()
+            .map(|cursor| position_of(cursor, cwd.as_deref()))
+            .transpose()?;
+        let page = self
+            .shared
+            .store
+            .list_sessions(cwd.as_deref(), after, limit as usize)
+            .await
+            .map_err(AppError::Store)?;
+        Ok(ListSessionsResult {
+            sessions: page.sessions.into_iter().map(|session| self.row(session)).collect(),
+            next_cursor: page.next.map(|next| cursor_of(next, cwd.as_deref())),
+        })
+    }
+
+    /// The row of the saved session `id`, which can be closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] for an unknown session or when the store fails.
+    pub(crate) async fn get(&self, id: SessionId) -> Result<SessionRow, AppError> {
+        let session = self.shared.store.session_summary(id).await.map_err(AppError::Store)?;
+        Ok(self.row(session))
+    }
+
+    /// The row of `session` with its activity in this app now.
+    fn row(&self, session: SessionSummary) -> SessionRow {
+        let activity = match self.sessions.get(&session.session_id).map(LiveSession::state) {
+            None => SessionActivity::Closed,
+            Some(SessionState::Idle) => SessionActivity::Idle,
+            Some(SessionState::Running) => SessionActivity::Running,
+        };
+        SessionRow { session, activity }
+    }
+
     /// Open session `id`, which is not open. `change` gets the saved settings and the providers, and it can return new
     /// settings. The app saves them before the session starts, so a waiting input runs with them. An open runs no turn
     /// and sends no update. [`App::load`] sends the saved events.
@@ -575,6 +626,37 @@ impl App {
     /// The open session `id`.
     fn live(&self, id: SessionId) -> Result<&LiveSession, AppError> {
         self.sessions.get(&id).ok_or(AppError::NotOpen(id))
+    }
+}
+
+/// The rows of a `session/list` page without a limit, and the most rows of one page.
+const PAGE_ROWS: u32 = 50;
+const MOST_PAGE_ROWS: u32 = 100;
+
+/// The cursor of the page after `next` in the list of `cwd`. It holds the folder, so a cursor of another list does not
+/// read.
+fn cursor_of(next: ListPosition, cwd: Option<&Path>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut cursor = format!("{}.", next.0);
+    for byte in cwd.map_or(&[][..], |cwd| cwd.as_os_str().as_encoded_bytes()) {
+        cursor.push(char::from(HEX[usize::from(byte >> 4)]));
+        cursor.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    cursor
+}
+
+/// The position that `cursor`, a cursor of the list of `cwd`, names.
+fn position_of(cursor: &str, cwd: Option<&Path>) -> Result<ListPosition, AppError> {
+    let invalid = || AppError::Invalid(format!("the cursor '{cursor}' is invalid for this list"));
+    let (position, _) = cursor.split_once('.').ok_or_else(invalid)?;
+    // A store gives no position above `i64::MAX`, the largest SQLite integer.
+    let position: i64 = position.parse().map_err(|_| invalid())?;
+    let position = ListPosition(position.unsigned_abs());
+    // A cursor of this list encodes to the same text again.
+    if cursor_of(position, cwd) == cursor {
+        Ok(position)
+    } else {
+        Err(invalid())
     }
 }
 

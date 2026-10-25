@@ -6,9 +6,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, Lease, Loaded, NewestTurn, Opened, PromptSection, Store, StoreError, check_consumed_blocks};
+use yuke_agent::{
+    Access, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
+    check_consumed_blocks, preview_of,
+};
 use yuke_engine::{Commit, Outcome, TurnEnd};
-use yuke_protocol::{ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings};
+use yuke_protocol::{
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, SessionSummary,
+};
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
 use crate::context;
@@ -143,6 +148,7 @@ impl Store for SqliteStore {
         let params = sessions::InsertSessionParams {
             id: session,
             prompt: serde_json::to_string(prompt).map_err(failed)?,
+            settings: settings_json.clone(),
         };
 
         let lock = self
@@ -232,12 +238,25 @@ impl Store for SqliteStore {
             session_id: *id.as_bytes(),
             input: serde_json::to_string(&input).map_err(failed)?,
         };
+        let preview = preview_of(&input);
 
         self.call(move |connection| {
-            let id = pending_inputs::insert_pending_input(connection, &params)
-                .opt()
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(failed)?;
-            id.map(InputId).ok_or(StoreError::NotFound)
+            let id = pending_inputs::insert_pending_input(&transaction, &params)
+                .opt()
+                .map_err(failed)?
+                .ok_or(StoreError::NotFound)?;
+            if let Some(preview) = &preview {
+                let preview = sessions::SetPreviewParams {
+                    id: params.session_id,
+                    preview,
+                };
+                sessions::set_preview(&transaction, &preview).map_err(failed)?;
+            }
+            transaction.commit().map_err(failed)?;
+            Ok(InputId(id))
         })
         .await
     }
@@ -262,15 +281,105 @@ impl Store for SqliteStore {
         .await
     }
 
-    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError> {
-        // The settings save `cwd` as JSON text, which holds only UTF-8, so no session works in another folder.
-        let Some(cwd) = cwd.to_str().map(str::to_owned) else {
-            return Ok(None);
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        after: Option<ListPosition>,
+        limit: usize,
+    ) -> Result<SessionPage, StoreError> {
+        let cwd = match cwd.map(Path::to_str) {
+            None => None,
+            Some(Some(cwd)) => Some(cwd.to_owned()),
+            // The settings save `cwd` as JSON text, which holds only UTF-8, so no session works in another folder.
+            Some(None) => {
+                return Ok(SessionPage {
+                    sessions: Vec::new(),
+                    next: None,
+                });
+            }
         };
-        let id = self
-            .call(move |connection| events::newest_session_in(connection, &cwd).opt().map_err(failed))
+        // No event id reaches `i64::MAX`, so a larger position starts at the newest session too.
+        let before = after.map_or(i64::MAX, |ListPosition(position)| {
+            i64::try_from(position).unwrap_or(i64::MAX)
+        });
+        // One row more than the page tells whether an older session exists.
+        let rows = limit.saturating_add(1);
+
+        let mut listed = self
+            .call(move |connection| {
+                let listed: Vec<(SessionSummary, i64)> = match &cwd {
+                    None => sessions::list_sessions(connection, &sessions::ListSessionsParams { before, limit: rows })
+                        .all()
+                        .map_err(failed)?
+                        .into_iter()
+                        .map(|row| {
+                            let summary = summary_of(
+                                row.id,
+                                row.settings,
+                                row.preview,
+                                row.fork_of,
+                                row.created_at,
+                                row.updated_at,
+                            );
+                            (summary, row.newest_event)
+                        })
+                        .collect(),
+                    Some(cwd) => {
+                        let params = sessions::ListSessionsInParams {
+                            cwd,
+                            before,
+                            limit: rows,
+                        };
+                        sessions::list_sessions_in(connection, &params)
+                            .all()
+                            .map_err(failed)?
+                            .into_iter()
+                            .map(|row| {
+                                let summary = summary_of(
+                                    row.id,
+                                    row.settings,
+                                    row.preview,
+                                    row.fork_of,
+                                    row.created_at,
+                                    row.updated_at,
+                                );
+                                (summary, row.newest_event)
+                            })
+                            .collect()
+                    }
+                };
+                Ok(listed)
+            })
             .await?;
-        Ok(id.map(SessionId::from_bytes))
+
+        let next = if listed.len() > limit {
+            listed.truncate(limit);
+            listed
+                .last()
+                .map(|(_, newest_event)| ListPosition(newest_event.unsigned_abs()))
+        } else {
+            None
+        };
+        Ok(SessionPage {
+            sessions: listed.into_iter().map(|(summary, _)| summary).collect(),
+            next,
+        })
+    }
+
+    async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
+        let session = *id.as_bytes();
+        let row = self
+            .call(move |connection| sessions::session_summary(connection, session).opt().map_err(failed))
+            .await?
+            .ok_or(StoreError::NotFound)?;
+        Ok(summary_of(
+            row.id,
+            row.settings,
+            row.preview,
+            row.fork_of,
+            row.created_at,
+            row.updated_at,
+        ))
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -438,6 +547,7 @@ fn insert_session(
         settings,
     };
     events::insert_settings(&transaction, &params).one()?;
+    sessions::touch_session(&transaction, session.id)?;
     transaction.commit()
 }
 
@@ -446,14 +556,19 @@ fn save_settings(connection: &mut Connection, session: [u8; 16], settings: Strin
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
-    let params = events::InsertSettingsParams {
-        session_id: session,
-        settings,
-    };
-    let seq = events::insert_settings(&transaction, &params)
-        .opt()
-        .map_err(failed)?
-        .ok_or(StoreError::NotFound)?;
+    let seq = events::insert_settings(
+        &transaction,
+        &events::InsertSettingsParams {
+            session_id: session,
+            settings: settings.clone(),
+        },
+    )
+    .opt()
+    .map_err(failed)?
+    .ok_or(StoreError::NotFound)?;
+    let params = sessions::SetSessionSettingsParams { id: session, settings };
+    sessions::set_session_settings(&transaction, &params).map_err(failed)?;
+    sessions::touch_session(&transaction, session).map_err(failed)?;
     transaction.commit().map_err(failed)?;
     Ok(EventNumber(seq))
 }
@@ -485,6 +600,7 @@ fn save_commit(
         }
     }
 
+    sessions::touch_session(&transaction, params.session_id).map_err(failed)?;
     transaction.commit().map_err(failed)?;
     Ok(EventNumber(seq))
 }
@@ -530,10 +646,33 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
     let session = sessions::CopySessionParams {
         source: rows.source,
         id: rows.session_id,
+        cut: rows.cut,
     };
     sessions::copy_session(&transaction, &session).map_err(failed)?;
     events::copy_events(&transaction, rows).map_err(failed)?;
+    sessions::place_fork(&transaction, rows.session_id).map_err(failed)?;
     transaction.commit().map_err(failed)
+}
+
+/// The saved facts of a session row.
+fn summary_of(
+    id: [u8; 16],
+    settings: crate::Json<SessionSettings>,
+    preview: Option<String>,
+    fork_of: Option<[u8; 16]>,
+    created_at: u64,
+    updated_at: u64,
+) -> SessionSummary {
+    let SessionSettings { model, cwd, .. } = settings.0;
+    SessionSummary {
+        session_id: SessionId::from_bytes(id),
+        model,
+        cwd,
+        preview,
+        created_at,
+        updated_at,
+        fork_of: fork_of.map(SessionId::from_bytes),
+    }
 }
 
 /// Delete the rows and the folder of a new session whose creation or fork failed. Its lock is already free. An error

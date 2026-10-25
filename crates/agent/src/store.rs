@@ -6,7 +6,8 @@ use std::path::Path;
 use async_trait::async_trait;
 use yuke_engine::{Commit, TurnEnd};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, StoredEvent,
+    ConsumedInput, EventNumber, Input, InputId, InputKind, PendingInput, SessionId, SessionSettings, SessionSummary,
+    StoredEvent,
 };
 
 use crate::PromptSection;
@@ -49,7 +50,8 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError>;
 
-    /// Save `input` as a pending input of session `id`. The input stays pending until a commit consumes it.
+    /// Save `input` as a pending input of session `id`. The input stays pending until a commit consumes it. The first
+    /// message input with text gives the session its [`preview_of`].
     ///
     /// # Errors
     ///
@@ -65,13 +67,26 @@ pub trait Store: Send + Sync {
     /// not pending, for example because a commit consumed it. Returns [`StoreError::Failed`] when the save fails.
     async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError>;
 
-    /// The session that works in the folder `cwd` and has the newest event of those sessions. The newest settings of a
-    /// session name its folder. `None` when no session works in `cwd`. A fork counts as a new event.
+    /// The saved facts of at most `limit` sessions after `after`, newest first: the newest event orders them. A fork
+    /// saves its copied events anew, so it comes first. With `cwd`, only the sessions whose newest settings name that folder count, and a
+    /// folder that is not UTF-8 lists none. `None` for `after` starts at the newest session.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::Failed`] when the load fails.
-    async fn newest_session(&self, cwd: &Path) -> Result<Option<SessionId>, StoreError>;
+    async fn list_sessions(
+        &self,
+        cwd: Option<&Path>,
+        after: Option<ListPosition>,
+        limit: usize,
+    ) -> Result<SessionPage, StoreError>;
+
+    /// The saved facts of session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
+    async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError>;
 
     /// Load session `id`. [`Access::Write`] also takes the owner lock.
     ///
@@ -137,6 +152,41 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, [`StoreError::Owned`] while a writer holds the
     /// session, and [`StoreError::Failed`] when the delete fails.
     async fn delete_session(&self, id: SessionId) -> Result<(), StoreError>;
+}
+
+/// The position in [`Store::list_sessions`] after which a page starts. A store gives it, and a caller passes it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ListPosition(pub u64);
+
+/// A page of [`Store::list_sessions`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionPage {
+    /// The saved facts of the sessions, newest first.
+    pub sessions: Vec<SessionSummary>,
+    /// The position after the last session of the page. `None` when no older session exists.
+    pub next: Option<ListPosition>,
+}
+
+/// The maximum number of characters in a preview.
+const PREVIEW_CHARACTERS: usize = 200;
+
+/// The preview of the message `input`: its user text without the outer whitespace, cut to 200 characters. `None` for a
+/// notification or an input with no text.
+pub fn preview_of(input: &Input) -> Option<String> {
+    if input.kind() != InputKind::Message {
+        return None;
+    }
+    let text: Vec<&str> = input
+        .content()
+        .iter()
+        .filter_map(|block| match block {
+            yuke_ai::Block::UserText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let text = text.join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.chars().take(PREVIEW_CHARACTERS).collect())
 }
 
 /// The blob of `bytes`: their SHA-256 and their length. Each store finds a blob by this digest.

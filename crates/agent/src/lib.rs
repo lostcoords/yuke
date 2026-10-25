@@ -17,7 +17,10 @@ pub use input_hook::{InputDecision, InputHook};
 pub use memory::MemoryStore;
 pub use prompt::{PromptSection, prompt_text};
 pub use session::{Session, SessionError, SessionTurn};
-pub use store::{Access, Lease, Loaded, NewestTurn, Opened, Store, StoreError, blob_of, check_consumed_blocks};
+pub use store::{
+    Access, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
+    check_consumed_blocks, preview_of,
+};
 pub use updates::SessionObserver;
 
 // Each change of a guarded value is complete before the next statement, so a panic of another holder leaves a valid
