@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img">
+  <title>yuke</title>
+  <style>
+    .antenna { stroke: #0c0d0c; }
+    .outline { stroke: none; }
+  </style>
+  <g fill="none" stroke-width="3.4" stroke-linecap="round" class="antenna">
+    <path d="M45 41 C40 24 30 14 15 9" />
+    <path d="M55 41 C60 24 70 14 85 9" />
+  </g>
+  <path class="outline" stroke-width="3" stroke-linejoin="round" fill="#a8cfa0" d="M50 87 L22 60 C12 50 14 35 27 34 C34 33 40 36 43 40 L57 40 C60 36 66 33 73 34 C86 35 88 50 78 60 Z" />
+  <path fill="#0c0d0c" d="M36 73.5 L22 60 C12 50 14 35 27 34 C37 33 43 42 42 52 C41 61 38 67 36 73.5 Z" />
+  <path fill="#0c0d0c" d="M64 73.5 L78 60 C88 50 86 35 73 34 C63 33 57 42 58 52 C59 61 62 67 64 73.5 Z" />
+  <path fill="#0c0d0c" d="M50 87 L36 73.5 L37.5 72 L50 84.2 L62.5 72 L64 73.5 Z" />
+  <ellipse cx="24.5" cy="45" rx="3" ry="4.5" fill="#f4f2eb" />
+  <ellipse cx="75.5" cy="45" rx="3" ry="4.5" fill="#f4f2eb" />
+  <g stroke="#0c0d0c" stroke-width="2.6" stroke-linecap="round">
+    <path d="M45.5 41 V47" />
+    <path d="M54.5 41 V47" />
+  </g>
+</svg>
