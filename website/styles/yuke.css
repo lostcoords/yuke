@@ -1,28 +1,4 @@
 @font-face {
-  font-family: 'Yuke Rounded';
-  font-weight: 400 500;
-  font-display: swap;
-  src: url('./fonts/MPLUSRounded1c-Medium.woff2') format('woff2');
-  unicode-range: U+0020-007E, U+00A0-00FF, U+2013-2014, U+2018-201D, U+2022, U+2026;
-}
-
-@font-face {
-  font-family: 'Yuke Rounded';
-  font-weight: 600 700;
-  font-display: swap;
-  src: url('./fonts/MPLUSRounded1c-Bold.woff2') format('woff2');
-  unicode-range: U+0020-007E, U+00A0-00FF, U+2013-2014, U+2018-201D, U+2022, U+2026;
-}
-
-@font-face {
-  font-family: 'Yuke Rounded';
-  font-weight: 800 900;
-  font-display: swap;
-  src: url('./fonts/MPLUSRounded1c-ExtraBold.woff2') format('woff2');
-  unicode-range: U+0020-007E, U+00A0-00FF, U+2013-2014, U+2018-201D, U+2022, U+2026;
-}
-
-@font-face {
   font-family: 'Yuke Mono';
   font-weight: 400 500;
   font-display: swap;
@@ -36,109 +12,212 @@
   src: url('./fonts/JetBrainsMono-SemiBold.woff2') format('woff2');
 }
 
-/* Mantis green until the brand palette arrives. */
+/* The brand palette: mantis green, yuke black, warm white, muted. */
 :root {
-  --vp-font-family-base: 'Yuke Rounded', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --yuke-green: #a8cfa0;
+  --yuke-black: #0c0d0c;
+  --yuke-white: #f4f2eb;
+  --yuke-muted: #858a84;
+
+  --vp-font-family-base: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --vp-font-family-mono: 'Yuke Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
-  --yuke-green: #5cc96b;
-  --yuke-green-deep: #2f9a43;
-  --yuke-band: #237a35;
-  --yuke-frame: #cfd8d1;
-  --yuke-slot: #eef3ef;
-  --yuke-glow: 0 0 0 3px rgba(92, 201, 107, 0.3), 0 6px 18px rgba(47, 154, 67, 0.18);
-  --yuke-card: 0 1px 2px rgba(70, 84, 74, 0.04), 0 4px 12px rgba(70, 84, 74, 0.05);
-  --yuke-page: linear-gradient(180deg, #ffffff 0%, #eef3ef 100%);
-  --yuke-bg-mark: rgba(70, 84, 74, 0.22);
-  --yuke-hero: linear-gradient(120deg, #237a35 0%, #3aa34b 55%, #8cc63f 100%);
+  --yuke-line: #dcd8cc;
+  --yuke-panel: #efece3;
+  --yuke-ink: #3b7535;
+  --yuke-terminal: #0c0d0c;
+  --yuke-terminal-line: #262a26;
 
-  --vp-c-bg: #ffffff;
-  --vp-c-bg-alt: #f5f8f5;
-  --vp-c-bg-soft: var(--yuke-slot);
-  --vp-c-bg-elv: #ffffff;
-  --vp-c-text-1: #464f49;
-  --vp-c-text-2: #66706a;
-  --vp-c-text-3: #879089;
-  --vp-c-divider: #e1e8e3;
-  --vp-c-gutter: #e1e8e3;
-  --vp-c-border: var(--yuke-frame);
-  --vp-c-brand-1: #237a35;
-  --vp-c-brand-2: #2f9a43;
-  --vp-c-brand-3: #237a35;
-  --vp-c-brand-soft: rgba(92, 201, 107, 0.14);
-  --vp-code-color: #237a35;
-  --vp-code-bg: #eaf6ec;
-  --vp-code-block-bg: #ffffff;
-  --vp-code-copy-code-bg: #ffffff;
-
-  --vp-button-brand-bg: #ffffff;
-  --vp-button-brand-border: var(--yuke-green);
-  --vp-button-brand-text: #237a35;
-  --vp-button-brand-hover-bg: #ffffff;
-  --vp-button-brand-hover-border: var(--yuke-green);
-  --vp-button-brand-hover-text: #237a35;
-  --vp-button-brand-active-bg: #eaf6ec;
-  --vp-button-brand-active-border: var(--yuke-green-deep);
-  --vp-button-brand-active-text: #237a35;
-  --vp-button-alt-bg: #ffffff;
-  --vp-button-alt-border: var(--yuke-frame);
-  --vp-button-alt-text: #464f49;
-  --vp-button-alt-hover-bg: #ffffff;
-  --vp-button-alt-hover-border: var(--yuke-green);
-  --vp-button-alt-hover-text: #464f49;
-  --vp-button-alt-active-bg: var(--yuke-slot);
-  --vp-button-alt-active-border: var(--yuke-green-deep);
-  --vp-button-alt-active-text: #464f49;
+  --vp-c-bg: var(--yuke-white);
+  --vp-c-bg-alt: #eeebe2;
+  --vp-c-bg-soft: var(--yuke-panel);
+  --vp-c-bg-elv: var(--yuke-white);
+  --vp-c-text-1: var(--yuke-black);
+  --vp-c-text-2: #4a4e49;
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-divider: var(--yuke-line);
+  --vp-c-gutter: var(--yuke-line);
+  --vp-c-border: var(--yuke-line);
+  --vp-c-brand-1: var(--yuke-ink);
+  --vp-c-brand-2: #4c8a45;
+  --vp-c-brand-3: var(--yuke-ink);
+  --vp-c-brand-soft: rgba(168, 207, 160, 0.3);
+  --vp-code-color: var(--yuke-ink);
+  --vp-code-bg: rgba(168, 207, 160, 0.28);
+  --vp-code-block-bg: var(--yuke-panel);
+  --vp-code-copy-code-bg: var(--yuke-panel);
+  --vp-nav-bg-color: var(--yuke-white);
 }
 
 :root.dark {
-  --yuke-frame: #37413a;
-  --yuke-slot: #1d2420;
-  --yuke-glow: 0 0 0 3px rgba(92, 201, 107, 0.35), 0 6px 18px rgba(92, 201, 107, 0.15);
-  --yuke-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 12px rgba(0, 0, 0, 0.15);
-  --yuke-page: linear-gradient(180deg, #14181a 0%, #101312 100%);
-  --yuke-bg-mark: rgba(220, 236, 224, 0.14);
-  --yuke-hero: linear-gradient(120deg, #5cc96b 0%, #a6e07a 100%);
+  --yuke-line: #262a26;
+  --yuke-panel: #111311;
+  --yuke-ink: var(--yuke-green);
 
-  --vp-c-bg: #14181a;
-  --vp-c-bg-alt: #111517;
-  --vp-c-bg-soft: var(--yuke-slot);
-  --vp-c-bg-elv: #1d2420;
-  --vp-c-text-1: #e3ebe5;
-  --vp-c-text-2: #a7b2aa;
-  --vp-c-text-3: #7d8880;
-  --vp-c-divider: #27302a;
-  --vp-c-gutter: #0e1110;
-  --vp-c-brand-1: #7ddc8a;
-  --vp-c-brand-2: #5cc96b;
-  --vp-c-brand-3: #2f9a43;
-  --vp-c-brand-soft: rgba(92, 201, 107, 0.16);
-  --vp-code-color: #8fe39b;
-  --vp-code-bg: #1c2a20;
-  --vp-code-block-bg: #1d2420;
-  --vp-code-copy-code-bg: #242c27;
-
-  --vp-button-brand-bg: #1d2420;
-  --vp-button-brand-text: #8fe39b;
-  --vp-button-brand-hover-bg: #1d2420;
-  --vp-button-brand-hover-text: #8fe39b;
-  --vp-button-brand-active-bg: #1c2a20;
-  --vp-button-brand-active-text: #8fe39b;
-  --vp-button-alt-bg: #1d2420;
-  --vp-button-alt-text: #e3ebe5;
-  --vp-button-alt-hover-bg: #1d2420;
-  --vp-button-alt-hover-text: #e3ebe5;
-  --vp-button-alt-active-bg: #242c27;
-  --vp-button-alt-active-text: #e3ebe5;
+  --vp-c-bg: var(--yuke-black);
+  --vp-c-bg-alt: #090a09;
+  --vp-c-bg-elv: #111311;
+  --vp-c-text-1: var(--yuke-white);
+  --vp-c-text-2: #b8bbb4;
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-brand-2: #c2e0bb;
+  --vp-c-brand-soft: rgba(168, 207, 160, 0.14);
+  --vp-code-bg: rgba(168, 207, 160, 0.12);
+  --vp-nav-bg-color: var(--yuke-black);
 }
 
-/* The root gets the page color too, so pulling past the top or bottom shows no other color. */
 html {
   background-color: var(--vp-c-bg);
 }
 
-body {
-  background: var(--yuke-page) fixed;
+::selection {
+  background: var(--yuke-green);
+  color: var(--yuke-black);
+}
+
+:focus-visible {
+  outline: 2px solid var(--yuke-green);
+  outline-offset: 3px;
+}
+
+/* A small, spaced, uppercase mono label above a heading or beside a panel. */
+.yuke-label {
+  margin: 0;
+  color: var(--vp-c-text-3);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Heavy, tight headings, as in the brand sheet. */
+.yuke-heading {
+  margin: 0;
+  color: var(--vp-c-text-1);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.VPNav .title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.VPNavBar .divider-line {
+  background-color: var(--yuke-line) !important;
+}
+
+.VPNavBar .appearance::before,
+.VPNavBar .social-links::before {
+  display: none;
+}
+
+/* The home page is wider than a docs page, and its sections share these edges. */
+.VPHome {
+  display: flex;
+  flex-direction: column;
+}
+
+.VPContent.is-home .VPHome {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.yuke-section {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+@media (min-width: 768px) {
+  .yuke-section {
+    padding: 0 48px;
+  }
+}
+
+/* A bordered panel: the frame of every home page section. */
+.yuke-panel {
+  border: 1px solid var(--yuke-line);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+}
+
+/* The Markdown steps read as one more panel: the container keeps the section edges, and its
+   Markdown root draws the frame. */
+.VPHome > .vp-doc.container {
+  margin-top: 48px;
+  padding: 0 24px;
+}
+
+@media (min-width: 768px) {
+  .VPHome > .vp-doc.container {
+    padding: 0 48px;
+  }
+}
+
+.VPHome > .vp-doc > div {
+  counter-reset: step;
+  padding: 40px 24px 48px;
+  border: 1px solid var(--yuke-line);
+  border-radius: 8px;
+}
+
+@media (min-width: 768px) {
+  .VPHome > .vp-doc > div {
+    padding: 44px 40px 56px;
+  }
+}
+
+.VPHome .vp-doc h2 {
+  margin: 0 0 36px;
+  padding: 0;
+  border: 0;
+  color: var(--vp-c-text-1);
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.VPHome .vp-doc h2::before {
+  content: 'Quick start';
+  display: block;
+  margin-bottom: 14px;
+  color: var(--vp-c-text-3);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.VPHome .vp-doc h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 32px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.VPHome .vp-doc h3:first-of-type {
+  margin-top: 0;
+}
+
+.VPHome .vp-doc h3::before {
+  counter-increment: step;
+  content: counter(step) '.';
+  flex: none;
+  color: var(--vp-c-brand-1);
+  font-family: var(--vp-font-family-mono);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .vp-doc p,
@@ -146,46 +225,53 @@ body {
   line-height: 1.7;
 }
 
-.vp-doc h1,
-.vp-doc h2,
-.vp-doc h3 {
-  font-weight: 800;
-}
-
 .vp-doc a {
   text-underline-offset: 3px;
 }
 
-:focus-visible {
-  outline: 3px solid var(--yuke-green);
-  outline-offset: 3px;
+.vp-doc :not(pre) > code {
+  border-radius: 4px;
 }
 
-.VPNavBar .title {
-  font-weight: 800;
-  letter-spacing: -0.01em;
+/* Code sits in thin frames that light up green on hover. */
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--yuke-line);
+  border-radius: 6px;
+  transition: border-color 0.2s ease;
 }
 
-/* White pills that light up green on hover. */
-.VPButton {
-  border-width: 1px;
-  font-weight: 700;
-  box-shadow: var(--yuke-card);
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+.vp-doc div[class*='language-']:hover {
+  border-color: var(--yuke-green);
 }
 
-.VPButton:hover {
-  box-shadow: var(--yuke-glow);
+.vp-doc [class*='language-'] > span.lang {
+  display: none;
 }
 
-/* Landing page sections rise into place as they scroll in. */
+.vp-doc [class*='language-'] pre,
+.vp-doc [class*='language-'] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (hover: none) {
+  .vp-doc [class*='language-'] > button.copy {
+    opacity: 1;
+  }
+}
+
+/* Each theme shows its own variant of a light/dark image pair. */
+html:not(.dark) .yuke-dark,
+html.dark .yuke-light {
+  display: none;
+}
+
+/* Home sections rise into place as they scroll in. */
 @supports (animation-timeline: view()) {
-  .VPHome > .vp-doc > div > *,
-  .VPHome .cta .pitch > *,
-  .footer .inner > * {
+  .yuke-reveal {
     animation: reveal linear both;
     animation-timeline: view();
-    animation-range: entry 0% entry 45%;
+    animation-range: entry 0% entry 40%;
   }
 }
 
@@ -203,200 +289,4 @@ body {
     animation: none !important;
     transition: none !important;
   }
-}
-
-/* No divider under the nav on the home page, even after scrolling. */
-.VPNavBar.home .divider,
-.VPNavBar.home .divider-line {
-  background-color: transparent !important;
-}
-
-.VPNavBar .appearance::before,
-.VPNavBar .social-links::before {
-  display: none;
-}
-
-/* Code sits in squircle slots with a gray frame that lights up green on hover. */
-.vp-doc div[class*='language-'] {
-  border: 1px solid var(--yuke-frame);
-  border-radius: 18px;
-  box-shadow: var(--yuke-card);
-  transition: border-color 0.2s ease, box-shadow 0.25s ease;
-}
-
-.vp-doc div[class*='language-']:hover {
-  border-color: var(--yuke-green);
-  box-shadow: var(--yuke-glow);
-}
-
-@media (max-width: 639px) {
-  .vp-doc div[class*='language-'] {
-    margin: 16px 0;
-    border-radius: 14px;
-  }
-}
-
-/* After a copy, the button widens and its icon fades into "Copied!". */
-.vp-doc [class*='language-'] > button.copy {
-  transition: width 0.25s ease, background-size 0.2s ease, border-color 0.25s, background-color 0.25s, opacity 0.25s;
-}
-
-.vp-doc [class*='language-'] > button.copy::after {
-  content: 'Copied!';
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--vp-c-brand-1);
-  font-size: 12px;
-  font-weight: 700;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.vp-doc [class*='language-'] > button.copy.copied,
-.vp-doc [class*='language-'] > button.copy:hover.copied {
-  width: 80px;
-  border-radius: 4px;
-  background-size: 0;
-  opacity: 1;
-}
-
-.vp-doc [class*='language-'] > button.copy.copied::after {
-  opacity: 1;
-  transition-delay: 0.1s;
-}
-
-.vp-doc [class*='language-'] > button.copy.copied::before,
-.vp-doc [class*='language-'] > button.copy:hover.copied::before {
-  display: none;
-}
-
-/* Code blocks show no language label. Touch screens cannot hover, so the copy button always shows. */
-.vp-doc [class*='language-'] > span.lang {
-  display: none;
-}
-
-@media (hover: none) {
-  .vp-doc [class*='language-'] > button.copy {
-    opacity: 1;
-  }
-}
-
-.vp-doc :not(pre) > code {
-  border-radius: 8px;
-}
-
-.vp-doc [class*='language-'] pre,
-.vp-doc [class*='language-'] code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: normal;
-}
-
-.vp-doc [class*='language-'] code {
-  width: 100%;
-  min-width: 0;
-  tab-size: 2;
-}
-
-.vp-doc [class*='language-'] code .line {
-  white-space: inherit;
-}
-
-.VPHero .name,
-.VPHero .text {
-  font-weight: 800;
-}
-
-/* The hero is one big centered statement; the TUI demo sits under it. */
-.VPContent .VPHome .VPHero {
-  padding-top: calc(var(--vp-nav-height) + 56px);
-}
-
-.VPHero .container {
-  text-align: center;
-}
-
-.VPHero .container .main {
-  width: 100%;
-}
-
-.VPHero .main .tagline {
-  margin: 0 auto;
-  max-width: 720px;
-  padding-top: 20px;
-  color: var(--vp-c-text-2);
-  font-size: 18px;
-  font-weight: 500;
-  line-height: 1.5;
-  text-wrap: balance;
-}
-
-@media (min-width: 960px) {
-  .VPHero .container .main .tagline {
-    font-size: 21px;
-  }
-}
-
-.VPHero .main .actions {
-  align-items: center;
-  justify-content: center;
-  padding-top: 28px;
-}
-
-/* The one call to action: solid green and larger than the rest. */
-.VPHero .actions .VPButton.brand {
-  padding: 0 30px;
-  border-color: var(--yuke-band);
-  border-radius: 999px;
-  background: var(--yuke-band);
-  color: #ffffff;
-  font-size: 19px;
-  line-height: 50px;
-}
-
-.VPHero .actions .VPButton.brand:hover {
-  border-color: var(--yuke-green-deep);
-  background: var(--yuke-green-deep);
-  color: #ffffff;
-}
-
-.VPHome {
-  position: relative;
-  z-index: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* The closing band meets the footer with no gap. */
-.VPContent.is-home .VPHome {
-  margin-bottom: 0;
-}
-
-.VPHome .vp-doc {
-  counter-reset: step;
-}
-
-.VPHome .vp-doc h2 {
-  border-top: 0;
-  margin-top: 56px;
-  font-size: 28px;
-}
-
-.VPHome .vp-doc h3 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 36px;
-}
-
-.VPHome .vp-doc h3::before {
-  counter-increment: step;
-  content: counter(step, decimal-leading-zero);
-  flex: none;
-  color: var(--vp-c-text-3);
-  font-family: var(--vp-font-family-mono);
-  font-size: 14px;
-  font-weight: 600;
 }
