@@ -22,10 +22,16 @@ export function dictionary(value: unknown, name: string): Readonly<Record<string
   return value as Record<string, unknown>;
 }
 
-/** Give `type` the class string `name`, and make its members enumerable, as Web IDL does for an interface. */
+/** The own keys of each class that are not static members. */
+const FUNCTION_KEYS: readonly PropertyKey[] = ["length", "name", "prototype"];
+
+/** Give `type` the class string `name`, and make its members and static members enumerable, as Web IDL does. */
 export function webClass(type: { readonly prototype: object }, name: string): void {
   for (const key of Reflect.ownKeys(type.prototype)) {
     if (key !== "constructor") Object.defineProperty(type.prototype, key, { enumerable: true });
+  }
+  for (const key of Reflect.ownKeys(type)) {
+    if (!FUNCTION_KEYS.includes(key)) Object.defineProperty(type, key, { enumerable: true });
   }
   Object.defineProperty(type.prototype, Symbol.toStringTag, { value: name, configurable: true });
 }

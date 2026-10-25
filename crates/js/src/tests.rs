@@ -16,6 +16,7 @@ mod side_request;
 mod tool_after;
 mod tool_before;
 mod tools;
+mod url;
 mod web;
 
 use std::path::{Path, PathBuf};

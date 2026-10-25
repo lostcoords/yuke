@@ -1,6 +1,7 @@
 import { console } from "yuke:internal/console";
-import { TextDecoder, TextEncoder } from "yuke:internal/encoding";
+import * as encoding from "yuke:internal/encoding";
 import * as events from "yuke:internal/events";
+import * as url from "yuke:internal/url";
 
 const {
   FinalizationRegistry: EngineFinalizationRegistry,
@@ -38,8 +39,10 @@ const classes = {
   Event: events.Event,
   EventTarget: events.EventTarget,
   FinalizationRegistry: ReportingFinalizationRegistry,
-  TextDecoder,
-  TextEncoder,
+  TextDecoder: encoding.TextDecoder,
+  TextEncoder: encoding.TextEncoder,
+  URL: url.URL,
+  URLSearchParams: url.URLSearchParams,
 } satisfies {
   AbortController: typeof AbortController;
   AbortSignal: typeof AbortSignal;
@@ -49,6 +52,8 @@ const classes = {
   FinalizationRegistry: typeof FinalizationRegistry;
   TextDecoder: typeof TextDecoder;
   TextEncoder: typeof TextEncoder;
+  URL: typeof URL;
+  URLSearchParams: typeof URLSearchParams;
 };
 
 // The engine gives a monotonic `now`, and the web needs `timeOrigin` as epoch time, so this object adapts the clock.

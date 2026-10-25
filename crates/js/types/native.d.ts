@@ -101,6 +101,41 @@ declare module "yuke:internal/native" {
     fatal: boolean,
     stream: boolean,
   ): { readonly text: string; readonly rest: number };
+
+  /** The values of the getters of a `URL`. */
+  export interface UrlParts {
+    readonly href: string;
+    readonly origin: string;
+    readonly protocol: string;
+    readonly username: string;
+    readonly password: string;
+    readonly host: string;
+    readonly hostname: string;
+    readonly port: string;
+    readonly pathname: string;
+    readonly search: string;
+    readonly hash: string;
+  }
+  /** The components of a `URL` that `updateUrl` sets. */
+  export type UrlComponent =
+    | "protocol"
+    | "username"
+    | "password"
+    | "host"
+    | "hostname"
+    | "port"
+    | "pathname"
+    | "search"
+    | "hash";
+  /** The URL of `input` against `base`, or `undefined` when `input` or `base` is not valid. */
+  export function parseUrl(input: string, base: string | undefined): UrlParts | undefined;
+  /** The URL `href` after the setter of `component` with `value`, or `undefined` when the setter refuses `value`. */
+  export function updateUrl(href: string, component: UrlComponent, value: string): UrlParts | undefined;
+  /** The name-value pairs of `text`, an `application/x-www-form-urlencoded` string. */
+  export function parseQuery(text: string): [name: string, value: string][];
+  /** The `application/x-www-form-urlencoded` string of `pairs`. */
+  export function serializeQuery(pairs: readonly (readonly [name: string, value: string])[]): string;
+
   /** Write a line of `console` for the operator. */
   export function writeConsole(level: NoticeLevel, text: string): void;
 

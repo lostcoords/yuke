@@ -1,4 +1,5 @@
-//! The globals of `yuke:internal/web` besides the events: `TextEncoder`, `TextDecoder`, `console`, and `performance`.
+//! The globals of `yuke:internal/web` besides the events and the URL classes: `TextEncoder`, `TextDecoder`, `console`,
+//! and `performance`.
 
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ async fn next_line(reports: &mut mpsc::UnboundedReceiver<Report>) -> (NoticeLeve
 async fn the_globals_are_properties_that_a_script_can_replace() {
     let text = run::<String>(
         "the_globals_are_properties_that_a_script_can_replace",
-        "return ['TextEncoder', 'TextDecoder', 'console', 'performance'].map((name) => {
+        "return ['TextEncoder', 'TextDecoder', 'URL', 'URLSearchParams', 'console', 'performance'].map((name) => {
            const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(globalThis, name);
            return `${name}:${writable}${enumerable}${configurable}`;
          }).join(' ');",
@@ -33,7 +34,8 @@ async fn the_globals_are_properties_that_a_script_can_replace() {
 
     assert_eq!(
         text,
-        "TextEncoder:truefalsetrue TextDecoder:truefalsetrue console:truefalsetrue performance:truefalsetrue"
+        "TextEncoder:truefalsetrue TextDecoder:truefalsetrue URL:truefalsetrue URLSearchParams:truefalsetrue \
+         console:truefalsetrue performance:truefalsetrue"
     );
 }
 

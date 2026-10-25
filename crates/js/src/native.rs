@@ -10,6 +10,7 @@ mod fs;
 mod lines;
 mod process;
 mod tools;
+mod url;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -105,6 +106,7 @@ pub(crate) fn install(
     process::add(ctx, &object, processes)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
+    url::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
     match ctx.store_userdata(object) {

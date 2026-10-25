@@ -170,6 +170,80 @@ declare class TextDecoder {
   decode(input?: ArrayBuffer | SharedArrayBuffer | ArrayBufferView, options?: { stream?: boolean | undefined }): string;
 }
 
+/** A URL of the WHATWG URL Standard. Each setter parses its component. A refused value leaves the URL unchanged. */
+declare class URL {
+  /** The URL of `url` against `base`. A `url` or `base` that is not valid throws a `TypeError`. */
+  constructor(url: string | URL, base?: string | URL);
+  /** The URL of `url` against `base`, or `null` when either one is not valid. */
+  static parse(url: string | URL, base?: string | URL): URL | null;
+  /** Whether `url` against `base` is a valid URL. */
+  static canParse(url: string | URL, base?: string | URL): boolean;
+  /** The whole URL. A value that is not a valid URL throws a `TypeError`. */
+  href: string;
+  /** The serialized origin, for example `https://example.com:8080`, or the string `null` for an opaque origin. */
+  readonly origin: string;
+  /** The scheme and `:`, for example `https:`. */
+  protocol: string;
+  username: string;
+  password: string;
+  /** The host and the port, for example `example.com:8080`. */
+  host: string;
+  /** The host without the port. */
+  hostname: string;
+  /** The port, or an empty string for the default port of the scheme. */
+  port: string;
+  pathname: string;
+  /** The query and its `?`, or an empty string for no query or an empty query. */
+  search: string;
+  /** The pairs of the query. A change of the pairs sets the query, and a change of the query sets the pairs. */
+  readonly searchParams: URLSearchParams;
+  /** The fragment and its `#`, or an empty string for no fragment or an empty fragment. */
+  hash: string;
+  toString(): string;
+  toJSON(): string;
+}
+
+/** An iterator of the pairs of a `URLSearchParams`. It sees each change of the pairs. */
+interface URLSearchParamsIterator<T> extends IteratorObject<T, BuiltinIteratorReturn, unknown> {
+  [Symbol.iterator]: () => URLSearchParamsIterator<T>;
+}
+
+/** The name-value pairs of an `application/x-www-form-urlencoded` string, for example the query of a URL. */
+declare class URLSearchParams {
+  /**
+   * The pairs of `init`: an iterable of pairs, the properties of an object, or a query string with an optional `?`.
+   * A pair that does not have exactly two values throws a `TypeError`.
+   */
+  constructor(init?: Iterable<Iterable<string>> | Record<string, string> | string);
+  /** The count of pairs. */
+  readonly size: number;
+  /** Add a pair at the end. */
+  append(name: string, value: string): void;
+  /** Remove each pair with `name`, and with `value` when it is given. */
+  delete(name: string, value?: string): void;
+  /** The value of the first pair with `name`, or `null`. */
+  get(name: string): string | null;
+  /** The values of the pairs with `name`, in order. */
+  getAll(name: string): string[];
+  /** Whether a pair has `name`, and `value` when it is given. */
+  has(name: string, value?: string): boolean;
+  /**
+   * Give the first pair with `name` the value `value`, and remove the other pairs with `name`. Without a pair with
+   * `name`, add a pair at the end.
+   */
+  set(name: string, value: string): void;
+  /** Sort the pairs by name in UTF-16 code unit order. Pairs with equal names keep their order. */
+  sort(): void;
+  /** The `application/x-www-form-urlencoded` string of the pairs, without a `?`. */
+  toString(): string;
+  /** Call `callback` with the value, the name, and this object for each pair, in order. */
+  forEach(callback: (value: string, name: string, parent: URLSearchParams) => void, thisArg?: unknown): void;
+  entries(): URLSearchParamsIterator<[string, string]>;
+  keys(): URLSearchParamsIterator<string>;
+  values(): URLSearchParamsIterator<string>;
+  [Symbol.iterator](): URLSearchParamsIterator<[string, string]>;
+}
+
 /** The flags of a new event. Each flag is `false` when it is missing. */
 interface EventInit {
   bubbles?: boolean | undefined;
