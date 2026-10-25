@@ -151,6 +151,7 @@ impl Place {
                 })
                 .unwrap(),
             ),
+            display: None,
         }
     }
 

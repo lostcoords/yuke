@@ -17,6 +17,7 @@ mod round_retry;
 mod sessions;
 mod side_request;
 mod streams;
+mod term;
 mod tool_after;
 mod tool_before;
 mod tools;
@@ -100,6 +101,7 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
             })
             .unwrap(),
         ),
+        display: None,
     }
 }
 

@@ -22,7 +22,7 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
-pub use base64::decode_base64;
+pub use base64::{decode_base64, encode_base64_into};
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
 pub use reply::Reply;

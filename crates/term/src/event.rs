@@ -170,6 +170,11 @@ impl Modifiers {
     /// Num lock is on.
     pub const NUM_LOCK: Self = Self(1 << 7);
 
+    /// The bits of the set, in the order of the kitty keyboard protocol.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
     /// True when the set holds each modifier of `other`.
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0

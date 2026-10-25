@@ -13,8 +13,8 @@ static PAIRS: [[u8; 2]; 4096] = {
     pairs
 };
 
-/// Append the standard padded base64 of `data`.
-pub(crate) fn encode_into(out: &mut Vec<u8>, data: &[u8]) {
+/// Append the standard padded base64 of `data` (RFC 4648, section 4) to `out`.
+pub fn encode_base64_into(out: &mut Vec<u8>, data: &[u8]) {
     let start = out.len();
     // The output grows once, so the loop writes each group of 4 characters in place.
     out.resize(start + data.len().div_ceil(3) * 4, 0);
@@ -90,7 +90,7 @@ mod tests {
 
     fn encoded(data: &[u8]) -> String {
         let mut out = Vec::new();
-        encode_into(&mut out, data);
+        encode_base64_into(&mut out, data);
         String::from_utf8(out).unwrap()
     }
 

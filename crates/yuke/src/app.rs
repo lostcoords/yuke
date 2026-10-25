@@ -67,6 +67,8 @@ pub(crate) struct Machine {
     pub(crate) exchange: Arc<dyn Exchange>,
     /// Sends the requests of `fetch` in the plugins. It has no idle timeout, so only the signal stops a slow fetch.
     pub(crate) fetch: Arc<yuke_http::Client>,
+    /// The display of the terminal interface, or `None` with no view. Each runtime of a reload draws on it.
+    pub(crate) display: Option<Arc<yuke_js::Display>>,
 }
 
 /// How the app runs: as a server that clients come to (`yuke --rpc`), or for one task with no client (`yuke -p`).
@@ -909,10 +911,18 @@ async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>)
         processes: Arc::clone(&shared.processes),
         models: Arc::new(PluginModels(Arc::clone(shared))),
         http: Arc::clone(&shared.machine.fetch),
+        display: shared.machine.display.clone(),
     })
     .await?;
     let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));
     if let Err(error) = runtime.import("yuke:internal/builtins").await {
+        stop_runtime(runtime, reporter).await;
+        return Err(error);
+    }
+    // The interface runs in the plugin runtime, so a plugin reaches it, and each reload draws it again.
+    if shared.machine.display.is_some()
+        && let Err(error) = runtime.import("yuke:internal/tui").await
+    {
         stop_runtime(runtime, reporter).await;
         return Err(error);
     }

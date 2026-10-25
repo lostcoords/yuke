@@ -17,6 +17,7 @@ yuke-ai = { path = "../ai" }
 yuke-engine = { path = "../engine" }
 yuke-http = { path = "../http" }
 yuke-js = { path = "../js" }
+yuke-term = { path = "../term" }
 yuke-mcp = { path = "../mcp" }
 yuke-protocol = { path = "../protocol" }
 yuke-store = { path = "../store" }

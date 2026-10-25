@@ -10,6 +10,7 @@ mod fs;
 mod http;
 mod lines;
 mod process;
+pub(crate) mod term;
 mod tools;
 mod url;
 
@@ -100,9 +101,11 @@ pub(crate) fn install(
     processes: &Arc<Processes>,
     models: &Arc<dyn Models>,
     client: &Arc<yuke_http::Client>,
+    frames: &Rc<term::Frames>,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
+    term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, models)?;
     fs::add(ctx, &object)?;
     http::add(ctx, &object, client)?;

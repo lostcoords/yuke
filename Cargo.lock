@@ -2697,6 +2697,7 @@ dependencies = [
  "yuke-mcp",
  "yuke-protocol",
  "yuke-store",
+ "yuke-term",
  "yuke-testing",
 ]
 
@@ -2784,6 +2785,7 @@ dependencies = [
  "yuke-engine",
  "yuke-http",
  "yuke-protocol",
+ "yuke-term",
  "yuke-testing",
 ]
 

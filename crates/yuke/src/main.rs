@@ -16,6 +16,7 @@ mod rpc;
 mod skills;
 #[cfg(test)]
 mod testing;
+mod tui;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -173,9 +174,7 @@ fn main() -> ExitCode {
     };
     let code = runtime.block_on(async {
         let ran = match Cli::parse().into_mode() {
-            Mode::Tui => {
-                Err("the terminal interface is not implemented yet. Run one task with -p <prompt>.".to_owned())
-            }
+            Mode::Tui => run_tui().await,
             Mode::Rpc { listen } => serve_rpc(listen).await,
             Mode::Connect(path) => rpc::connect(&path, tokio::io::stdin(), tokio::io::stdout())
                 .await
@@ -272,6 +271,18 @@ async fn serve_rpc(listen: Option<PathBuf>) -> Result<ExitCode, String> {
     }
 }
 
+/// Run the terminal interface until a quit or a signal.
+async fn run_tui() -> Result<ExitCode, String> {
+    let shutdown = CancellationToken::new();
+    match run_until_signal(tui::run(machine()?, shutdown.clone()), &shutdown).await? {
+        Signaled::Ended(ended, signal_number) => {
+            ended?;
+            Ok(signal_number.map_or(ExitCode::SUCCESS, signal_exit))
+        }
+        Signaled::Stopped(number) => Ok(signal_exit(number)),
+    }
+}
+
 /// Run `task` on this machine, in the current folder.
 async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<Finished, String> {
     let machine = machine()?;
@@ -299,6 +310,7 @@ fn machine() -> Result<Machine, String> {
         transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
         exchange: http,
         fetch: Arc::new(fetch),
+        display: None,
     })
 }
 

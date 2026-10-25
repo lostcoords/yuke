@@ -1,4 +1,7 @@
+use unicode_segmentation::UnicodeSegmentation;
+
 use super::*;
+use crate::width::grapheme_width;
 
 /// A model terminal: it replays the bytes of a render into cells, as a terminal does.
 struct Model {

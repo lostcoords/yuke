@@ -16,10 +16,12 @@ use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::display::Display;
 use crate::error::{Error, Report, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
 use crate::models::{Models, OnConsumer};
 use crate::native;
+use crate::native::term::{Frames, drive};
 use crate::processes::Processes;
 use crate::strip::Cache;
 use crate::timers::{self, Timers};
@@ -51,6 +53,10 @@ pub struct Options {
 
     /// The client of `fetch`. The consumer chooses its idle timeout. With none, only the signal stops a slow fetch.
     pub http: Arc<yuke_http::Client>,
+
+    /// The display of the terminal interface, or `None` for a runtime with no view, such as `yuke -p`. The runtime
+    /// draws its frames on it; give each runtime of a reload the same display.
+    pub display: Option<Arc<Display>>,
 }
 
 impl fmt::Debug for Options {
@@ -59,6 +65,7 @@ impl fmt::Debug for Options {
             .field("cache", &self.cache)
             .field("processes", &self.processes)
             .field("http", &self.http)
+            .field("display", &self.display)
             .finish_non_exhaustive()
     }
 }
@@ -310,6 +317,7 @@ struct Engine {
     rejections: Rc<Rejections>,
     timers: Rc<Timers>,
     registry: Rc<Registry>,
+    frames: Rc<Frames>,
 }
 
 impl Engine {
@@ -340,6 +348,7 @@ impl Engine {
         let context = AsyncContext::full(&runtime).await.map_err(engine_error)?;
         let timers = Rc::new(Timers::default());
         let registry = Rc::new(Registry::new(Arc::clone(&options.processes)));
+        let frames = Rc::new(Frames::new(options.display.clone()));
         context
             .with(|ctx| {
                 // The error constructors come before the natives, so each native throws with the constructors of the start.
@@ -352,8 +361,11 @@ impl Engine {
                     &options.processes,
                     &options.models,
                     &options.http,
-                    faults,
-                )
+                    &frames,
+                    faults.clone(),
+                )?;
+                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), faults));
+                Ok(())
             })
             .await
             .map_err(engine_error)?;
@@ -370,6 +382,7 @@ impl Engine {
             rejections,
             timers,
             registry,
+            frames,
         })
     }
 }
@@ -380,6 +393,7 @@ impl Drop for Engine {
     fn drop(&mut self) {
         self.timers.clear();
         self.registry.clear();
+        self.frames.clear();
         self.rejections.pending.borrow_mut().clear();
     }
 }

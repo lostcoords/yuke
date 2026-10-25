@@ -4,10 +4,8 @@
 use std::io::Write as _;
 use std::ops::BitOr;
 
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::event::Rgb;
-use crate::width::grapheme_width;
+use crate::width::graphemes;
 
 /// The size of a terminal in cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -205,8 +203,8 @@ impl Screen {
         if y >= self.size.rows {
             return column;
         }
-        for grapheme in text.graphemes(true) {
-            let wide = match grapheme_width(grapheme) {
+        for (grapheme, cells) in graphemes(text) {
+            let wide = match cells {
                 0 => continue,
                 1 => false,
                 _ => true,

@@ -1,0 +1,137 @@
+//! The display of the terminal interface: the cell grid, its output, and the queues between the host and the
+//! JavaScript. The host owns it, so it outlives a reload: each new runtime draws on the same display.
+
+use std::collections::VecDeque;
+use std::fmt;
+use std::io::Write;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use tokio::sync::Notify;
+use yuke_term::{Event, Rgb, Scheme, Screen, Size};
+
+/// What the host gives the display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Input {
+    /// An event of the terminal.
+    Event(Event),
+    /// The terminal has this size, or its content is unknown, as after a suspend. The next frame writes every cell.
+    Resize(Size),
+}
+
+/// What the JavaScript asks of the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Request {
+    /// `term.quit()` ran.
+    Quit,
+    /// `term.suspend()` ran: give the terminal to the shell until the shell resumes yuke.
+    Suspend,
+}
+
+/// The cell grid of the terminal interface, its output, and the queues of [`Input`] and [`Request`]. Give it to the
+/// runtimes in [`Options::display`](crate::Options::display).
+pub struct Display {
+    frame: Mutex<Frame>,
+    inputs: Mutex<VecDeque<Input>>,
+    /// A new input wakes the frame loop of the runtime.
+    pub(crate) arrived: Notify,
+    requests: Mutex<VecDeque<Request>>,
+    asked: Notify,
+}
+
+/// The state that each frame reads and draws.
+pub(crate) struct Frame {
+    pub(crate) screen: Screen,
+    pub(crate) output: Box<dyn Write + Send>,
+    /// The buffer of a render, kept from frame to frame.
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) scheme: Scheme,
+    pub(crate) truecolor: bool,
+    pub(crate) tmux: bool,
+}
+
+impl fmt::Debug for Display {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Display").finish_non_exhaustive()
+    }
+}
+
+impl Display {
+    /// A display of `size` that writes its frames to `output`. `background` is the color of the probe; without one,
+    /// the scheme is dark, as in the Zig yuke. `truecolor` says that the terminal draws 24-bit color, and `tmux` that a
+    /// copy also needs the tmux passthrough.
+    pub fn new(
+        size: Size,
+        output: Box<dyn Write + Send>,
+        background: Option<Rgb>,
+        truecolor: bool,
+        tmux: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            frame: Mutex::new(Frame {
+                screen: Screen::new(size),
+                output,
+                bytes: Vec::new(),
+                scheme: background.map_or(Scheme::Dark, scheme_of),
+                truecolor,
+                tmux,
+            }),
+            inputs: Mutex::default(),
+            arrived: Notify::new(),
+            requests: Mutex::default(),
+            asked: Notify::new(),
+        })
+    }
+
+    /// Give `input` to the frame loop. A call from any thread works.
+    pub fn send(&self, input: Input) {
+        lock(&self.inputs).push_back(input);
+        self.arrived.notify_one();
+    }
+
+    /// Wait for the next request of the JavaScript.
+    pub async fn request(&self) -> Request {
+        loop {
+            if let Some(request) = lock(&self.requests).pop_front() {
+                return request;
+            }
+            // A request between the pop and the wait leaves a permit, so the wait ends at once.
+            self.asked.notified().await;
+        }
+    }
+
+    /// Run `f` while no frame and no copy writes, such as a write of the host to the terminal. A frame waits for `f`,
+    /// so its escape sequences do not mix with those of `f`.
+    pub fn hold<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _frame = self.frame();
+        f()
+    }
+
+    pub(crate) fn ask(&self, request: Request) {
+        lock(&self.requests).push_back(request);
+        self.asked.notify_one();
+    }
+
+    pub(crate) fn take_inputs(&self) -> VecDeque<Input> {
+        std::mem::take(&mut *lock(&self.inputs))
+    }
+
+    pub(crate) fn frame(&self) -> MutexGuard<'_, Frame> {
+        lock(&self.frame)
+    }
+}
+
+/// The class of a background color. A color below half of the full BT.601 luma is dark, as in Neovim and the Zig
+/// yuke.
+pub(crate) fn scheme_of(color: Rgb) -> Scheme {
+    let luma = 299 * u32::from(color.red) + 587 * u32::from(color.green) + 114 * u32::from(color.blue);
+    if luma * 2 < 1000 * 255 {
+        Scheme::Dark
+    } else {
+        Scheme::Light
+    }
+}
+
+/// Lock `mutex`. A panic of another holder leaves state that a frame can still read, so a poisoned lock goes on.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}

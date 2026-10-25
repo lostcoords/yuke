@@ -137,6 +137,15 @@ fn input_during_the_probe_reaches_the_first_reader() {
 }
 
 #[test]
+fn the_writer_writes_to_the_device() {
+    let (mut controller, device) = pty();
+    let terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
+    let mut writer = terminal.writer().unwrap();
+    writer.write_all(b"|frame|").unwrap();
+    assert!(read_until(&mut controller, b"|frame|").ends_with(b"|frame|"));
+}
+
+#[test]
 fn the_size_is_the_size_of_the_device() {
     let (mut controller, device) = pty();
     tcsetwinsize(

@@ -19,8 +19,8 @@ use crate::screen::Size;
 /// with the disambiguate and alternate-key flags. A terminal ignores each mode that it does not know.
 const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[>5u";
 
-/// The OSC 11 query of the background color.
-const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
+/// The OSC 11 query of the background color. The answer is an [`Event::Background`].
+pub const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
 
 /// After the background query: mode 2031, the kitty keyboard flags, and the primary device attributes. A terminal
 /// answers in order, so the device attributes end the probe.
@@ -63,9 +63,6 @@ impl Terminal {
     /// Returns the error of the system when `file` is no terminal, a setting fails, or a write fails.
     pub fn from_file(file: File) -> io::Result<Self> {
         let saved = termios::tcgetattr(&file)?;
-        let mut raw = saved.clone();
-        raw.make_raw();
-        set(&file, &raw)?;
         let mut terminal = Self {
             file,
             saved,
@@ -75,7 +72,7 @@ impl Terminal {
             early: None,
             reader: None,
         };
-        terminal.write_all(ENTER)?;
+        terminal.enter()?;
         terminal.query_background()?;
         terminal.write_all(PROBE)?;
         terminal.probe()?;
@@ -165,6 +162,64 @@ impl Terminal {
         Ok(())
     }
 
+    /// A second handle of the device, for writes from another thread, such as the frames of a
+    /// [`Screen`](crate::Screen).
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the system when the handle does not open.
+    pub fn writer(&self) -> io::Result<File> {
+        self.file.try_clone()
+    }
+
+    /// Give the device back to the shell and stop the process group, as ctrl+z does in a shell. The call returns when
+    /// the shell resumes the process: then the device is raw again, the modes are on, and the background query is
+    /// out. The call stops the reader, so start a new one after it. The shell does not see the screen of the
+    /// terminal while it waits, so redraw every cell after the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error that ended the reader, or the error of the system when a setting, a write, or the signal
+    /// fails.
+    pub fn suspend(&mut self) -> io::Result<()> {
+        self.stop_reader()?;
+        self.leave()?;
+        // The group stops, so a wrapper such as `mise exec` stops too, and the shell gets the terminal back.
+        rustix::process::kill_current_process_group(rustix::process::Signal::TSTP)?;
+        self.enter()?;
+        self.query_background()
+    }
+
+    /// Enter raw mode and turn on the modes: the screen modes, and those that the probe found.
+    fn enter(&self) -> io::Result<()> {
+        let mut raw = self.saved.clone();
+        raw.make_raw();
+        set(&self.file, &raw)?;
+        self.write_all(ENTER)?;
+        if self.scheme_reports {
+            self.write_all(b"\x1b[?2031h")?;
+        }
+        if self.modify_other_keys {
+            self.write_all(b"\x1b[>4;2m")?;
+        }
+        Ok(())
+    }
+
+    /// Turn off each mode that the terminal turned on, and restore the saved settings.
+    fn leave(&self) -> io::Result<()> {
+        let mut leave = b"\x1b[<u".to_vec();
+        if self.modify_other_keys {
+            // No value resets modifyOtherKeys to the initial value of the terminal.
+            leave.extend_from_slice(b"\x1b[>4m");
+        }
+        if self.scheme_reports {
+            leave.extend_from_slice(b"\x1b[?2031l");
+        }
+        leave.extend_from_slice(b"\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
+        self.write_all(&leave)?;
+        set(&self.file, &self.saved)
+    }
+
     /// Start a thread that reads the terminal and calls `events` with each event. The first events are the input that
     /// came during the probe. A later reader starts with a new parser. The thread sees a stop only between two calls,
     /// so a call that blocks for ever blocks [`Terminal::stop_reader`] and the drop too.
@@ -207,20 +262,8 @@ impl Drop for Terminal {
         if self.stop_reader().is_err() {
             // The drop cannot report how the thread ended.
         }
-        let mut leave = b"\x1b[<u".to_vec();
-        if self.modify_other_keys {
-            // No value resets modifyOtherKeys to the initial value of the terminal.
-            leave.extend_from_slice(b"\x1b[>4m");
-        }
-        if self.scheme_reports {
-            leave.extend_from_slice(b"\x1b[?2031l");
-        }
-        leave.extend_from_slice(b"\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
-        if self.write_all(&leave).is_err() {
-            // The drop cannot report the failure, and a terminal that refuses the write keeps the modes.
-        }
-        if set(&self.file, &self.saved).is_err() {
-            // The drop cannot report the failure, and a terminal that refuses the settings stays raw.
+        if self.leave().is_err() {
+            // The drop cannot report the failure, and a terminal that refuses the write or the settings stays raw.
         }
     }
 }

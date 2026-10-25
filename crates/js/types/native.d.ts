@@ -305,4 +305,54 @@ declare module "yuke:internal/native" {
     limit: number,
     maxBytes: number,
   ): Promise<Lines>;
+
+  /** A style of the terminal grid. A color is a palette index from 0 to 255, `#rrggbb`, an ANSI name, or `reset`. */
+  export interface TermStyle {
+    readonly fg?: number | string;
+    readonly bg?: number | string;
+    /** The underline color. It does not turn the underline on. */
+    readonly ul?: number | string;
+    readonly bold?: boolean;
+    readonly dim?: boolean;
+    readonly italic?: boolean;
+    readonly reverse?: boolean;
+    readonly underline?: boolean;
+  }
+  /** Start the frame loop with `event` and `draw`. A second call throws. Without a display, it and the grid calls throw. */
+  export function termRun(event: (event: object) => void, draw: () => void): void;
+  /** Ask for a frame in `delay` milliseconds. The earliest ask wins. */
+  export function termRequestFrame(delay: number): void;
+  /** Blank a rectangle of the next frame with `style`. */
+  export function termFill(x: number, y: number, width: number, height: number, style: TermStyle | undefined): void;
+  /** Write `text`, a well-formed string, on one row of the next frame, and return the column after it. */
+  export function termText(x: number, y: number, text: string, style: TermStyle | undefined): number;
+  /** Show the cursor at a cell of the next frame, or hide it. */
+  export function termCursor(x: number, y: number, visible: boolean): void;
+  /** Put `text`, a well-formed string, on the clipboard of the terminal (OSC 52). */
+  export function termCopy(text: string): void;
+  /** Ask the host to quit. */
+  export function termQuit(): void;
+  /** Ask the host to give the terminal to the shell until it resumes yuke. */
+  export function termSuspend(): void;
+  /** The columns and the rows of the grid. */
+  export function termSize(): [columns: number, rows: number];
+  /** The light or dark class of the terminal background. */
+  export function termBackground(): "dark" | "light";
+  /** True when the terminal draws 24-bit color. */
+  export function termTruecolor(): boolean;
+  /** The cells of `text`, a well-formed string. */
+  export function termMeasure(text: string): number;
+  /** The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`. */
+  export function termGraphemes(text: string): Int32Array;
+  /** The grapheme boundary before or after the UTF-16 offset `at`. */
+  export function termStepGrapheme(text: string, at: number, before: boolean): number;
+  /** The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`. */
+  export function termFit(text: string, cells: number): number;
+  /** The rows of `text` at `width` cells, as `[start, end, soft]` UTF-16 triples, and whether rows were dropped. */
+  export function termWrap(
+    text: string,
+    width: number,
+    head: number,
+    tail: number,
+  ): { readonly rows: Int32Array; readonly omitted: boolean };
 }

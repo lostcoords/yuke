@@ -157,7 +157,7 @@ impl<'b> JsonWriter<'b> {
             escape_into(self.out, mime.as_bytes());
             self.out.extend_from_slice(b";base64,");
         }
-        crate::base64::encode_into(self.out, data);
+        crate::base64::encode_base64_into(self.out, data);
         self.out.push(b'"');
         self.value_done();
     }

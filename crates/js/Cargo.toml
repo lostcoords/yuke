@@ -29,6 +29,7 @@ yuke-ai = { path = "../ai", default-features = false }
 yuke-engine = { path = "../engine" }
 yuke-http = { path = "../http" }
 yuke-protocol = { path = "../protocol" }
+yuke-term = { path = "../term" }
 
 [build-dependencies]
 # build.rs strips and compiles the built-in modules with the same versions as the runtime.

@@ -18,6 +18,7 @@
 
 mod baked;
 mod bytes;
+mod display;
 mod error;
 mod loader;
 mod models;
@@ -33,6 +34,7 @@ mod timers;
 mod tools;
 mod typescript;
 
+pub use display::{Display, Input, Request};
 pub use error::{Error, Report, ScriptError};
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
