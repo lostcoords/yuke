@@ -320,6 +320,147 @@ declare class ReadableStreamDefaultReader<R = unknown> {
   cancel(reason?: unknown): Promise<undefined>;
 }
 
+/** The headers of a new `Headers`: a `Headers`, pairs of a name and a value, or a record of names and values. */
+type HeadersInit = Headers | Iterable<Iterable<string>> | Record<string, string>;
+
+/** An iterator of the pairs of a `Headers`. It sees each change of the headers. */
+interface HeadersIterator<T> extends IteratorObject<T, BuiltinIteratorReturn, unknown> {
+  [Symbol.iterator]: () => HeadersIterator<T>;
+}
+
+/**
+ * The headers of a request or a response. A name ignores case. An invalid name or value throws a `TypeError`, and so
+ * does a change of immutable headers, such as the headers of `Response.error()`.
+ */
+declare class Headers {
+  constructor(init?: HeadersInit);
+  /** Add a value of `name`. */
+  append(name: string, value: string): void;
+  /** Remove each value of `name`. */
+  delete(name: string): void;
+  /** The values of `name` joined with `, `, or `null`. */
+  get(name: string): string | null;
+  /** The values of each `set-cookie` header, in order. */
+  getSetCookie(): string[];
+  /** Whether a header has `name`. */
+  has(name: string): boolean;
+  /** Give `name` the one value `value`: replace the first value, and remove the others. */
+  set(name: string, value: string): void;
+  /**
+   * Call `callback` for each name in lower case and in order, with the values joined. Each `set-cookie` value is its
+   * own call.
+   */
+  forEach(callback: (value: string, name: string, parent: Headers) => void, thisArg?: unknown): void;
+  /** The pairs that `forEach` gives. */
+  entries(): HeadersIterator<[string, string]>;
+  keys(): HeadersIterator<string>;
+  values(): HeadersIterator<string>;
+  [Symbol.iterator](): HeadersIterator<[string, string]>;
+}
+
+/** The body of a request or a response. Only a `Response` takes a `ReadableStream`. */
+type BodyInit =
+  | string
+  | ArrayBuffer
+  | SharedArrayBuffer
+  | ArrayBufferView
+  | URLSearchParams
+  | ReadableStream<Uint8Array>;
+
+/** The input of a `Request` and of `fetch`: an absolute URL, or a `Request`. */
+type RequestInfo = Request | string;
+
+/** What `fetch` does with a redirect: follow it, reject, or give the redirect response. */
+type RequestRedirect = "follow" | "error" | "manual";
+
+/** The options of a request. */
+interface RequestInit {
+  /** A string, bytes, or a `URLSearchParams`. A `GET` or a `HEAD` request with a body throws a `TypeError`. */
+  body?: string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView | URLSearchParams | null;
+  /** Only `half` is valid. yuke sends the whole body, so the value has no effect. */
+  duplex?: "half";
+  /** A `Headers` gives its header list as it is. Another init gives its pairs. */
+  headers?: HeadersInit;
+  /**
+   * The default is `GET`. The standard methods go to upper case. `CONNECT`, `TRACE`, and `TRACK` throw a
+   * `TypeError`.
+   */
+  method?: string;
+  /** The default is `follow`. */
+  redirect?: RequestRedirect;
+  /** A signal that aborts the request. */
+  signal?: AbortSignal | null;
+}
+
+/** An HTTP request. */
+declare class Request {
+  /** A URL that is not valid or that holds a user name or a password throws a `TypeError`. */
+  constructor(input: RequestInfo | URL, init?: RequestInit);
+  readonly method: string;
+  readonly url: string;
+  readonly headers: Headers;
+  readonly redirect: RequestRedirect;
+  /** A signal that aborts when the signal of the init or of the input request aborts. */
+  readonly signal: AbortSignal;
+  /** The body as a stream, or `null`. */
+  readonly body: ReadableStream<Uint8Array> | null;
+  /** Whether a read, a cancel, or a new request used the body. */
+  readonly bodyUsed: boolean;
+  /** The body as an `ArrayBuffer`. A used or locked body rejects with a `TypeError`. */
+  arrayBuffer(): Promise<ArrayBuffer>;
+  /** The body as a `Uint8Array`. A used or locked body rejects with a `TypeError`. */
+  bytes(): Promise<Uint8Array>;
+  /** The body parsed as JSON. Text that is not JSON rejects with a `SyntaxError`. */
+  json(): Promise<unknown>;
+  /** The body as UTF-8 text without a byte order mark. */
+  text(): Promise<string>;
+}
+
+/** The kind of a response: `basic` for a fetch, `default` for a constructed one, `error` for a network error. */
+type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
+
+/** The options of a new response. */
+interface ResponseInit {
+  headers?: HeadersInit;
+  /** The default is 200. A status outside 200 to 599 throws a `RangeError`. */
+  status?: number;
+  statusText?: string;
+}
+
+/** An HTTP response. */
+declare class Response {
+  /** A body with the status 101, 103, 204, 205, or 304 throws a `TypeError`. */
+  constructor(body?: BodyInit | null, init?: ResponseInit);
+  /** A network error: the type `error`, the status 0, and no body. */
+  static error(): Response;
+  /** A redirect to `url`. The status is 302, or one of 301, 303, 307, and 308. */
+  static redirect(url: string | URL, status?: number): Response;
+  /** A response with the JSON text of `data`. It adds `application/json` when `init` has no `content-type`. */
+  static json(data: unknown, init?: ResponseInit): Response;
+  readonly type: ResponseType;
+  /** The URL of the last request of a fetch, or an empty string. */
+  readonly url: string;
+  /** Whether the fetch followed a redirect. */
+  readonly redirected: boolean;
+  readonly status: number;
+  /** Whether the status is in the range 200 to 299. */
+  readonly ok: boolean;
+  readonly statusText: string;
+  readonly headers: Headers;
+  /** The body as a stream, or `null`. */
+  readonly body: ReadableStream<Uint8Array> | null;
+  /** Whether a read or a cancel used the body. */
+  readonly bodyUsed: boolean;
+  /** The body as an `ArrayBuffer`. A used or locked body rejects with a `TypeError`. */
+  arrayBuffer(): Promise<ArrayBuffer>;
+  /** The body as a `Uint8Array`. A used or locked body rejects with a `TypeError`. */
+  bytes(): Promise<Uint8Array>;
+  /** The body parsed as JSON. Text that is not JSON rejects with a `SyntaxError`. */
+  json(): Promise<unknown>;
+  /** The body as UTF-8 text without a byte order mark. */
+  text(): Promise<string>;
+}
+
 /** The flags of a new event. Each flag is `false` when it is missing. */
 interface EventInit {
   bubbles?: boolean | undefined;

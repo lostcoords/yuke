@@ -10,7 +10,7 @@ import {
   type UrlParts,
   updateUrl,
 } from "yuke:internal/native";
-import { needs, usvString, webClass } from "yuke:internal/webidl";
+import { needs, pairIterable, pairsOf, usvString, webClass } from "yuke:internal/webidl";
 
 type Pair = [name: string, value: string];
 
@@ -210,12 +210,9 @@ export class URL {
   }
 }
 
-/** The kind of the values of a `URLSearchParams` iterator. */
-type IteratorKind = "entries" | "keys" | "values";
-
 export class URLSearchParams {
   constructor(init: unknown = "") {
-    queries.set(this, { list: pairsOf(init), url: undefined });
+    queries.set(this, { list: initPairs(init), url: undefined });
   }
 
   /** The count of pairs. */
@@ -296,112 +293,29 @@ export class URLSearchParams {
     return serializeQuery(queryState(this).list);
   }
 
-  /** Call `callback` with the value, the name, and this object for each pair, in order. */
-  forEach(
-    ...args: [callback: (value: string, name: string, parent: URLSearchParams) => void, thisArg?: unknown]
-  ): void {
-    const state = queryState(this);
-    needs(args, 1, "forEach");
-    const [callback, thisArg] = args;
-    if (typeof callback !== "function") throw new TypeError("the callback is not a function");
-    // The callback can change the list, so each step reads the list again, as Web IDL does.
-    for (let index = 0; index < state.list.length; index++) {
-      const [name, value] = state.list[index] as Pair;
-      callback.call(thisArg, value, name, this);
-    }
-  }
-
-  entries(): URLSearchParamsIterator<[string, string]> {
-    return iterate(this, "entries");
-  }
-
-  keys(): URLSearchParamsIterator<string> {
-    return iterate(this, "keys");
-  }
-
-  values(): URLSearchParamsIterator<string> {
-    return iterate(this, "values");
-  }
-
+  declare forEach: (
+    callback: (value: string, name: string, parent: URLSearchParams) => void,
+    thisArg?: unknown,
+  ) => void;
+  declare entries: () => URLSearchParamsIterator<[string, string]>;
+  declare keys: () => URLSearchParamsIterator<string>;
+  declare values: () => URLSearchParamsIterator<string>;
   declare [Symbol.iterator]: () => URLSearchParamsIterator<[string, string]>;
 }
 
-/** An iterator of the pairs of a `URLSearchParams`. It reads the list at each step, so it sees each change. */
-class PairIterator extends Iterator<unknown> {
-  readonly #params: URLSearchParams;
-  readonly #kind: IteratorKind;
-  #index = 0;
-
-  constructor(params: URLSearchParams, kind: IteratorKind) {
-    super();
-    this.#params = params;
-    this.#kind = kind;
-  }
-
-  next(): IteratorResult<unknown, undefined> {
-    if (!(#index in this)) throw new TypeError("the value is not a URLSearchParams iterator");
-    const pair = queryState(this.#params).list[this.#index];
-    if (pair === undefined) return { done: true, value: undefined };
-    this.#index++;
-    switch (this.#kind) {
-      case "entries":
-        return { done: false, value: [pair[0], pair[1]] };
-      case "keys":
-        return { done: false, value: pair[0] };
-      case "values":
-        return { done: false, value: pair[1] };
-    }
-  }
-}
-
-/** A new iterator of `kind` on the pairs of `params`. A value of another class throws a `TypeError`. */
-function iterate<T>(params: URLSearchParams, kind: IteratorKind): URLSearchParamsIterator<T> {
-  queryState(params);
-  return new PairIterator(params, kind) as URLSearchParamsIterator<T>;
-}
-
 /** The pairs of `init`: pairs of an iterable, the properties of an object, or a query string with an optional `?`. */
-function pairsOf(init: unknown): Pair[] {
-  if ((typeof init !== "object" && typeof init !== "function") || init === null) {
-    const text = usvString(init);
-    return parseQuery(text.startsWith("?") ? text.slice(1) : text);
-  }
-  const iterator = iteratorOf(init);
-  if (iterator !== undefined) return Array.from({ [Symbol.iterator]: iterator }, pairOf);
-  // Web IDL converts an object to a record: each own enumerable key, in order. A later equal key replaces the value.
-  const record = new Map<string, string>();
-  for (const key of Reflect.ownKeys(init)) {
-    if (Reflect.getOwnPropertyDescriptor(init, key)?.enumerable !== true) continue;
-    record.set(usvString(key), usvString((init as Record<PropertyKey, unknown>)[key]));
-  }
-  return [...record];
+function initPairs(init: unknown): Pair[] {
+  if ((typeof init === "object" || typeof init === "function") && init !== null) return pairsOf(init, usvString);
+  const text = usvString(init);
+  return parseQuery(text.startsWith("?") ? text.slice(1) : text);
 }
 
-/** The pair of `item`, an iterable of exactly two values. */
-function pairOf(item: unknown): Pair {
-  const iterator =
-    (typeof item === "object" || typeof item === "function") && item !== null ? iteratorOf(item) : undefined;
-  if (iterator === undefined) throw new TypeError("a pair of the init is not an iterable object");
-  const values = Array.from({ [Symbol.iterator]: iterator }, (value) => usvString(value));
-  if (values.length !== 2) throw new TypeError(`a pair of the init has ${values.length} values, not 2`);
-  return values as Pair;
-}
-
-/** The iterator method of `value` bound to `value`, or `undefined` when it has none, as the Web IDL `GetMethod`. */
-function iteratorOf(value: object): (() => Iterator<unknown>) | undefined {
-  const method: unknown = (value as { [Symbol.iterator]?: unknown })[Symbol.iterator];
-  if (method === undefined || method === null) return undefined;
-  if (typeof method !== "function") throw new TypeError("the iterator method is not a function");
-  return () => method.call(value) as Iterator<unknown>;
+/** The `application/x-www-form-urlencoded` string of `value` when it is a `URLSearchParams`, or `undefined`. */
+export function queryOf(value: unknown): string | undefined {
+  const state = queries.get(value as URLSearchParams);
+  return state === undefined ? undefined : serializeQuery(state.list);
 }
 
 webClass(URL, "URL");
 webClass(URLSearchParams, "URLSearchParams");
-webClass(PairIterator, "URLSearchParams Iterator");
-// Web IDL gives the iterator of an iterable the function of `entries`, and the property is not enumerable.
-Object.defineProperty(URLSearchParams.prototype, Symbol.iterator, {
-  value: URLSearchParams.prototype.entries,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+pairIterable(URLSearchParams, "URLSearchParams", (target) => queryState(target).list);

@@ -26,7 +26,7 @@ async fn the_globals_are_properties_that_a_script_can_replace() {
     let text = run::<String>(
         "the_globals_are_properties_that_a_script_can_replace",
         "return ['TextEncoder', 'TextDecoder', 'URL', 'URLSearchParams', 'ReadableStream', 'ReadableStreamDefaultReader',
-           'ReadableStreamDefaultController', 'console', 'performance'].map((name) => {
+           'ReadableStreamDefaultController', 'Headers', 'Request', 'Response', 'console', 'performance'].map((name) => {
            const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(globalThis, name);
            return `${name}:${writable}${enumerable}${configurable}`;
          }).join(' ');",
@@ -37,7 +37,8 @@ async fn the_globals_are_properties_that_a_script_can_replace() {
         text,
         "TextEncoder:truefalsetrue TextDecoder:truefalsetrue URL:truefalsetrue URLSearchParams:truefalsetrue \
          ReadableStream:truefalsetrue ReadableStreamDefaultReader:truefalsetrue \
-         ReadableStreamDefaultController:truefalsetrue console:truefalsetrue performance:truefalsetrue"
+         ReadableStreamDefaultController:truefalsetrue Headers:truefalsetrue Request:truefalsetrue Response:truefalsetrue \
+         console:truefalsetrue performance:truefalsetrue"
     );
 }
 

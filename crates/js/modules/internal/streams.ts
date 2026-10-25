@@ -487,6 +487,16 @@ function errorStream(stream: StreamState, error: unknown): void {
   for (const request of requests) request.error(error);
 }
 
+/** Whether `value` is a `ReadableStream`. */
+export function isReadableStream(value: unknown): value is ReadableStream {
+  return streams.has(value as ReadableStream);
+}
+
+/** Whether a read or a cancel disturbed `stream`. */
+export function isDisturbed(stream: ReadableStream): boolean {
+  return streamState(stream).disturbed;
+}
+
 webClass(ReadableStream, "ReadableStream");
 webClass(ReadableStreamDefaultController, "ReadableStreamDefaultController");
 webClass(ReadableStreamDefaultReader, "ReadableStreamDefaultReader");
