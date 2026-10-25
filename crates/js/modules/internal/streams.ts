@@ -349,7 +349,7 @@ export class ReadableStreamDefaultReader<R = unknown> {
     stream.disturbed = true;
     if (stream.state === "closed") request.close();
     else if (stream.state === "errored") request.error(stream.storedError);
-    else pullSteps(stream.controller, request);
+    else pullSteps(stream.controller, state, request);
     return promise;
   }
 
@@ -408,7 +408,8 @@ function clearAlgorithms(state: ControllerState): void {
 function callPullIfNeeded(state: ControllerState): void {
   if (!canCloseOrEnqueue(state) || !state.started) return;
   const waiting = (state.stream.reader?.readRequests.length ?? 0) > 0;
-  if (!waiting && (desiredSize(state) ?? 0) <= 0) return;
+  // The stream is readable here, so the size is the space left in the queue.
+  if (!waiting && state.highWaterMark - state.queueTotalSize <= 0) return;
   if (state.pulling) {
     state.pullAgain = true;
     return;
@@ -436,10 +437,11 @@ function errorController(state: ControllerState, error: unknown): void {
   errorStream(state.stream, error);
 }
 
-function pullSteps(state: ControllerState, request: ReadRequest): void {
+/** Answer `request` for `reader` from the queue of `state`, or wait for a chunk. */
+function pullSteps(state: ControllerState, reader: ReaderState, request: ReadRequest): void {
   const head = state.queue.shift();
   if (head === undefined) {
-    state.stream.reader?.readRequests.push(request);
+    reader.readRequests.push(request);
     callPullIfNeeded(state);
     return;
   }

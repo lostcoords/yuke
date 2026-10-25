@@ -649,6 +649,8 @@ async fn the_native_module_declares_the_names_that_it_exports() {
         .map(|line| line.split('(').next().unwrap_or_default().to_owned())
         .collect();
     declared.sort_unstable();
+    // Each overload declares its name again.
+    declared.dedup();
 
     let mut exported = runtime
         .caller

@@ -209,7 +209,7 @@ async function clean(plugin: string, cleanup: Cleanup): Promise<void> {
   try {
     await cleanup();
   } catch (error) {
-    notify(plugin, "error", `the cleanup of the plugin failed: ${textOf(error)}`, undefined);
+    notify(plugin, "error", `the cleanup of the plugin failed: ${failureOf(error)}`, undefined);
   }
 }
 
@@ -359,18 +359,21 @@ export function startInputBefore(
         (handler) => handler(Object.freeze({ source: frozen(source), kind, blocks: frozen(current), signal })),
         (answer, plugin) => {
           const fields = fieldsOf(answer, "the answer", INPUT_BEFORE_FIELDS);
-          if (fields.block !== undefined) {
+          if (INPUT_BEFORE_FIELDS.filter((name) => Object.hasOwn(fields, name)).length !== 1) {
+            throw new TypeError("the answer needs exactly one of block, replace, and handled");
+          }
+          if (Object.hasOwn(fields, "block")) {
             if (typeof fields.block !== "string") throw new TypeError("the block of the answer is not a string");
             notify(plugin, "warn", `the plugin blocked the input: ${fields.block}`, sessionId);
             removed = true;
             return true;
           }
-          if (fields.handled !== undefined) {
+          if (Object.hasOwn(fields, "handled")) {
             if (fields.handled !== true) throw new TypeError("the handled of the answer is not true");
             removed = true;
             return true;
           }
-          if (fields.replace !== undefined) {
+          if (Object.hasOwn(fields, "replace")) {
             const { blocks: given } = fieldsOf(fields.replace, "the replace of the answer", ["blocks"]);
             if (!Array.isArray(given) || given.length === 0) {
               throw new TypeError("the blocks of the replace are not a list with a block");
@@ -793,11 +796,33 @@ function textOf(error: unknown): string {
   }
 }
 
+/** The text form of the thrown `error` for its author: an `Error` adds the frames of the plugin on the next lines. */
+function failureOf(error: unknown): string {
+  const text = textOf(error);
+  const stack = stackOf(error);
+  if (stack === undefined) return text;
+  // The frames of the host code tell the author nothing.
+  const frames = stack.split("\n").filter((line) => line.trim() !== "" && !/\((yuke:[^()]*|native)\)$/.test(line));
+  return frames.length === 0 ? text : `${text}\n${frames.join("\n")}`;
+}
+
+/** The stack of the thrown `error`, or `undefined` for a value with no stack or with a `stack` getter that throws. */
+function stackOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  try {
+    const stack: unknown = error.stack;
+    return typeof stack === "string" ? stack : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The error of a `point` handler of `plugin` that failed with `error`. It keeps the stack of `error`. */
 function hookFailure(point: string, plugin: string, error: unknown): Error {
   const failure = new Error(`${point} of plugin ${plugin} failed: ${textOf(error)}`);
   // The stack of the host code tells the author nothing.
-  if (error instanceof Error && error.stack !== undefined) failure.stack = error.stack;
+  const stack = stackOf(error);
+  if (stack !== undefined) failure.stack = stack;
   else delete failure.stack;
   return failure;
 }
@@ -852,7 +877,7 @@ function start(
     try {
       await cleanup();
     } catch (error) {
-      report(`the cleanup of the session failed: ${textOf(error)}`);
+      report(`the cleanup of the session failed: ${failureOf(error)}`);
     }
   };
   const scope: Scope = {
@@ -934,7 +959,7 @@ function start(
       scope.closed = true;
       unregister(scope.tools);
       abort(`session of plugin ${plugin} failed`);
-      report(`the session setup failed, and its tools and hooks are gone: ${textOf(error)}`);
+      report(`the session setup failed, and its tools and hooks are gone: ${failureOf(error)}`);
       return undefined;
     }
   })();

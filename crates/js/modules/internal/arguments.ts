@@ -97,7 +97,11 @@ function checkObject(schema: ObjectSchema, value: Record<string, unknown>, prefi
     });
   }
   for (const name of required) {
-    if (!Object.hasOwn(checked, name)) throw new Error(`Set ${prefix}${name} to ${expected(schema.properties[name])}.`);
+    // The schema check makes each required name a property.
+    const property = schema.properties[name];
+    if (property !== undefined && !Object.hasOwn(checked, name)) {
+      throw new Error(`Set ${prefix}${name} to ${expected(property)}.`);
+    }
   }
   return checked;
 }
@@ -135,11 +139,11 @@ function inEnum<T>(values: readonly T[] | undefined, value: T): boolean {
 }
 
 /** The words for what a field must hold, for example "an integer from 1 to 10" or "one of "asc", "desc"". */
-function expected(schema: Schema | undefined): string {
-  if (schema !== undefined && "enum" in schema && schema.enum !== undefined) {
+function expected(schema: Schema): string {
+  if ("enum" in schema && schema.enum !== undefined) {
     return `one of ${schema.enum.map((value) => JSON.stringify(value)).join(", ")}`;
   }
-  switch (schema?.type) {
+  switch (schema.type) {
     case "string":
       return "a string";
     case "boolean":
@@ -158,8 +162,6 @@ function expected(schema: Schema | undefined): string {
       return "an array";
     case "object":
       return "an object";
-    case undefined:
-      return "a value";
   }
 }
 

@@ -38,7 +38,7 @@ struct YukeFields {
 
 /// The plugins of the binary, in load order: the name of each one and the `yuke:` name of its entry module. A bundled
 /// plugin uses and provides no service.
-const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:bundled/compaction")];
+const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:internal/bundled/compaction")];
 
 /// The bundled plugins that `disable` does not name, then the plugins of `list`, in its order. A relative folder starts
 /// in `config_folder`. A bundled plugin has no options. The function makes the data folder `<data>/plugins/<name>` of each plugin.

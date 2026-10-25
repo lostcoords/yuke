@@ -100,6 +100,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
            reasoning: { thinking: 'off', effort: 'high' },
          });
          const bare = await ai.generateText({ model, prompt: 'the question', temperature: null, topP: undefined });
+         await ai.generateText({ model, prompt: 'the effort', reasoning: { effort: 'low' } });
          return [JSON.stringify(full), String(Object.isFrozen(full)), JSON.stringify(bare.usage)];",
     )
     .await
@@ -139,6 +140,20 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
                 system: String::new(),
                 blocks: vec![Block::user_text("the question")],
                 settings: Settings::new(),
+                attachments: Vec::new(),
+            },
+            // A missing reasoning field keeps the default of the endpoint.
+            CompleteRequest {
+                model: reference("p", "m"),
+                system: String::new(),
+                blocks: vec![Block::user_text("the effort")],
+                settings: Settings {
+                    reasoning: ReasoningSettings {
+                        thinking: None,
+                        effort: Some(Effort::Low),
+                    },
+                    ..Settings::new()
+                },
                 attachments: Vec::new(),
             },
         ]

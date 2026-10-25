@@ -13,7 +13,7 @@
  *   setting that JSON cannot hold.
  */
 declare module "yuke:ai" {
-  import type { Block, FinishReason, ModelReference, Settings, Usage } from "yuke:protocol";
+  import type { Block, FinishReason, ModelReference, ReasoningSettings, Settings, Usage } from "yuke:protocol";
   import type { Infer, ObjectSchema, ToolMedia } from "yuke:tools";
 
   /** The key of the brand that carries the object type of an `ObjectOutput`. Only TypeScript sees it. */
@@ -78,8 +78,8 @@ declare module "yuke:ai" {
     temperature?: Settings["temperature"] | undefined;
     /** The nucleus sampling mass. */
     topP?: Settings["topP"] | undefined;
-    /** Whether and how hard the model thinks. */
-    reasoning?: Settings["reasoning"] | undefined;
+    /** Whether and how hard the model thinks. A missing field keeps the default of the endpoint. */
+    reasoning?: Partial<ReasoningSettings> | undefined;
     /**
      * A request for a JSON object, from `Output.object`. The provider gets the schema, and yuke checks the answer
      * against it. An answer that does not match throws a `NoObjectGeneratedError`.
@@ -101,9 +101,15 @@ declare module "yuke:ai" {
     readonly output: T;
   }
 
-  /** Send one request to a model, and wait for its answer. A failure of the request rejects with an `Error`. */
+  /**
+   * Send one request to a model, and wait for its answer. A failure of the request rejects with an `Error`. An
+   * `output` gives the type of the checked object. Options of the wide type `GenerateTextOptions` give `unknown`.
+   */
   export function generateText<T>(
     options: GenerateTextOptions & { output: ObjectOutput<T> },
   ): Promise<GenerateTextResult<T>>;
-  export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
+  export function generateText(
+    options: GenerateTextOptions & { output?: undefined },
+  ): Promise<GenerateTextResult<undefined>>;
+  export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult<unknown>>;
 }

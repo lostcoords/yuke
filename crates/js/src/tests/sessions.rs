@@ -150,8 +150,9 @@ async fn a_name_that_an_earlier_plugin_holds_fails_only_the_later_plugin() {
 
     assert_eq!(tools.names(), ["shared"]);
     assert_eq!(notice.source, "second");
+    // The first line holds the error. The next lines hold the frames of the plugin.
     assert_eq!(
-        notice.message,
+        notice.message.lines().next().unwrap(),
         "the session setup failed, and its tools and hooks are gone: TypeError: the session already has a tool with the name 'shared'"
     );
 }
@@ -343,8 +344,18 @@ async fn a_failed_session_drops_only_its_tools_aborts_its_signal_and_sends_one_n
             session_id: Some(host.session),
             level: NoticeLevel::Error,
             source: "bad".to_owned(),
-            message: "the session setup failed, and its tools and hooks are gone: Error: broken".to_owned(),
+            message: notice.message.clone(),
         }
+    );
+    // The message ends with the frame of the plugin, so the author finds the line.
+    let (message, frames) = notice.message.split_once('\n').unwrap();
+    assert_eq!(
+        message,
+        "the session setup failed, and its tools and hooks are gone: Error: broken"
+    );
+    assert!(
+        frames.trim_start().starts_with("at session (") && frames.contains("bad/index.ts:"),
+        "{frames}"
     );
     assert!(reports.try_recv().is_err(), "a second report came");
     let after = evaluate::<String>(
@@ -415,6 +426,27 @@ async fn a_session_that_returns_a_value_that_is_no_cleanup_fails() {
 }
 
 #[tokio::test]
+async fn a_session_error_whose_stack_throws_still_sends_its_notice() {
+    let (folder, runtime, mut reports) = loaded(
+        "a_session_error_whose_stack_throws_still_sends_its_notice",
+        "export function session() {
+           const error = new Error('broken');
+           Object.defineProperty(error, 'stack', { get() { throw new Error('read'); } });
+           throw error;
+         }",
+    )
+    .await;
+
+    let _tools = Tools::open(&runtime, host(&folder)).await;
+    let notice = next_notice(&mut reports).await;
+
+    assert_eq!(
+        notice.message,
+        "the session setup failed, and its tools and hooks are gone: Error: broken"
+    );
+}
+
+#[tokio::test]
 async fn a_tool_of_a_session_with_the_name_of_a_tool_of_yuke_fails_its_session() {
     let (folder, runtime, mut reports) = loaded(
         "a_tool_of_a_session_with_the_name_of_a_tool_of_yuke_fails_its_session",
@@ -427,8 +459,9 @@ async fn a_tool_of_a_session_with_the_name_of_a_tool_of_yuke_fails_its_session()
     let notice = next_notice(&mut reports).await;
 
     assert_eq!(tools.names(), ["read", "write", "edit", "exec", "stop"]);
+    // The first line holds the error. The next lines hold the frames of the plugin.
     assert_eq!(
-        notice.message,
+        notice.message.lines().next().unwrap(),
         "the session setup failed, and its tools and hooks are gone: TypeError: the session already has a tool with the name 'read'"
     );
 }

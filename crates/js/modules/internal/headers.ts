@@ -138,12 +138,13 @@ export class Headers {
     checkMutable(state);
     const lower = name.toLowerCase();
     const first = state.list.findIndex((pair) => pair[0].toLowerCase() === lower);
-    if (first < 0) {
+    const pair = state.list[first];
+    if (pair === undefined) {
       state.list.push([name, value]);
       return;
     }
     // The first header keeps the case of its name.
-    state.list[first] = [state.list[first]?.[0] as string, value];
+    state.list[first] = [pair[0], value];
     state.list = state.list.filter((pair, index) => index <= first || pair[0].toLowerCase() !== lower);
   }
 

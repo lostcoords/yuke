@@ -303,9 +303,13 @@ export interface InputBeforeEvent {
  * - `handled` removes the input with no notice, because the plugin acted on it.
  */
 export type InputBeforeAnswer =
-  | { readonly block: string }
-  | { readonly replace: { readonly blocks: readonly [Block | ToolMedia, ...(Block | ToolMedia)[]] } }
-  | { readonly handled: true };
+  | { readonly block: string; readonly replace?: never; readonly handled?: never }
+  | {
+      readonly replace: { readonly blocks: readonly [Block | ToolMedia, ...(Block | ToolMedia)[]] };
+      readonly block?: never;
+      readonly handled?: never;
+    }
+  | { readonly handled: true; readonly block?: never; readonly replace?: never };
 
 /** What a `round.after` handler gets. */
 export interface RoundAfterEvent {

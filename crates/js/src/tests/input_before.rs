@@ -164,6 +164,51 @@ async fn a_failed_handler_removes_the_input_and_the_notice_names_the_plugin() {
 }
 
 #[tokio::test]
+async fn an_answer_with_two_decisions_fails_and_removes_the_input() {
+    let (_runtime, session, _host, mut reports) = opened_with_host(
+        "an_answer_with_two_decisions_fails",
+        &[(
+            "both",
+            "export function session(s) {
+               s.hook('input.before', () => ({ block: undefined, handled: true }));
+             }",
+        )],
+    )
+    .await;
+
+    let decision = decide(&session, &typed("hi")).await;
+    let (_, level, message) = notice(&mut reports).await;
+
+    assert_eq!(decision, InputDecision::Remove);
+    assert_eq!(level, NoticeLevel::Error);
+    assert!(
+        message.contains("exactly one of block, replace, and handled"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn an_empty_answer_fails_and_removes_the_input() {
+    let (_runtime, session, _host, mut reports) = opened_with_host(
+        "an_empty_answer_fails",
+        &[(
+            "empty",
+            "export function session(s) { s.hook('input.before', () => ({})); }",
+        )],
+    )
+    .await;
+
+    let decision = decide(&session, &typed("hi")).await;
+    let (_, _, message) = notice(&mut reports).await;
+
+    assert_eq!(decision, InputDecision::Remove);
+    assert!(
+        message.contains("exactly one of block, replace, and handled"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
 async fn an_empty_replace_removes_the_input() {
     let (_runtime, session, _host, mut reports) = opened_with_host(
         "an_empty_replace_removes_the_input",

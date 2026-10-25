@@ -1,4 +1,6 @@
 // Type checks of the author API. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
+
+import type { GenerateTextOptions } from "yuke:ai";
 import type {
   Block,
   FinishReason,
@@ -213,6 +215,7 @@ async function models(): Promise<void> {
   const prompt: Block[] = [{ user_text: "Hi." }];
   const answer = await generateText({ model: s.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
   await generateText({ model: s.model, instructions: "Be brief.", prompt: "Hi." });
+  await generateText({ model: s.model, prompt: "Hi.", reasoning: { effort: "high" } });
   await generateText({
     model: s.model,
     prompt: "Describe.",
@@ -239,6 +242,10 @@ async function models(): Promise<void> {
   } as const;
   const shaped = await generateText({ model: s.model, prompt, output: Output.object({ schema }) });
   assert<Equal<typeof shaped.output, { summary: string; count?: number }>>();
+  // Options of the wide type can hold an output, so the checked object has no known type.
+  const wide: GenerateTextOptions = { model: s.model, prompt, output: Output.object({ schema }) };
+  const unknownOutput = await generateText(wide);
+  assert<Equal<typeof unknownOutput.output, unknown>>();
   // @ts-expect-error: an output schema is an object schema.
   Output.object({ schema: { type: "string" } });
   // @ts-expect-error: only `Output.object` gives the type of `output`.
@@ -273,6 +280,8 @@ s.hook("prompt.build", async ({ sections }): Promise<PromptBuildAnswer> => {
 });
 // @ts-expect-error: an answer is an object.
 s.hook("prompt.build", () => "done");
+// @ts-expect-error: an input answer has one decision.
+s.hook("input.before", () => ({ handled: true as const, block: "no" }));
 // @ts-expect-error: no hook has this point.
 s.hook("turn.start", () => undefined);
 

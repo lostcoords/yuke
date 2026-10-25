@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rquickjs::{Ctx, FromJs, Function, Object, TypedArray};
+use rquickjs::{Ctx, FromJs, Function, Object, TypedArray, Value};
 
 use super::Operation;
 use crate::error::{ErrorClass, throw};
@@ -53,7 +53,11 @@ fn output<'js>(ctx: &Ctx<'js>, processes: Arc<Processes>, program: Program) -> r
             Ok(end) => {
                 let object = Object::new(ctx.clone())?;
                 object.set("code", end.code)?;
-                object.set("signal", end.signal)?;
+                // `null` as the type says: a `None` alone would be `undefined`.
+                match end.signal {
+                    Some(name) => object.set("signal", name)?,
+                    None => object.set("signal", Value::new_null(ctx.clone()))?,
+                }
                 object.set("stdout", TypedArray::<u8>::new(ctx.clone(), end.stdout)?)?;
                 object.set("stderr", TypedArray::<u8>::new(ctx.clone(), end.stderr)?)?;
                 Ok(object)

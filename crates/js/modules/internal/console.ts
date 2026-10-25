@@ -182,19 +182,19 @@ function table(data: unknown, properties?: readonly string[]): void {
       const cells = shown.map((key) => (record !== undefined && Object.hasOwn(record, key) ? view(record[key]) : ""));
       return [index, ...cells, ...(header.length > shown.length + 1 ? [record === undefined ? view(item) : ""] : [])];
     });
-    return renderTable([header, ...body]);
+    return renderTable(header, body);
   });
   write("debug", rows);
 }
 
-/** `rows` with box lines; the first row is the header. */
-function renderTable(rows: readonly (readonly string[])[]): string {
-  const widths = rows[0]?.map((_, column) => Math.max(...rows.map((row) => row[column]?.length ?? 0))) ?? [];
+/** Render `header` and `body` as a box table. */
+function renderTable(header: readonly string[], body: readonly (readonly string[])[]): string {
+  const rows = [header, ...body];
+  const widths = header.map((_, column) => Math.max(...rows.map((row) => row[column]?.length ?? 0)));
   const line = (left: string, middle: string, right: string) =>
     `${left}${widths.map((width) => "─".repeat(width + 2)).join(middle)}${right}`;
   const row = (cells: readonly string[]) =>
     `│${widths.map((width, column) => ` ${(cells[column] ?? "").padEnd(width)} `).join("│")}│`;
-  const [header = [], ...body] = rows;
   return [line("┌", "┬", "┐"), row(header), line("├", "┼", "┤"), ...body.map(row), line("└", "┴", "┘")].join("\n");
 }
 

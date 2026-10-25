@@ -55,11 +55,12 @@ async fn each_argument_reaches_the_program_as_it_is_and_the_streams_stay_apart()
              args: ["-c", 'printf "%s|" "$1" "$2"; echo err >&2; exit 3', "sh", "a b", "$HOME"],
              cwd: base,
            }).output();
-           return JSON.stringify([text(out.stdout), text(out.stderr), out.code, out.success, out.signal]);"#,
+           return JSON.stringify([text(out.stdout), text(out.stderr), out.code, out.success, out.signal === null]);"#,
     )
     .await;
 
-    assert_eq!(value, r#"["a b|$HOME|","err\n",3,false,null]"#);
+    // JSON gives `null` also for `undefined`, so the test compares the value itself.
+    assert_eq!(value, r#"["a b|$HOME|","err\n",3,false,true]"#);
 }
 
 #[tokio::test]

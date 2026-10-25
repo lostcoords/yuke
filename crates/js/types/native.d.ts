@@ -129,6 +129,8 @@ declare module "yuke:internal/native" {
     | "hash";
   /** The URL of `input` against `base`, or `undefined` when `input` or `base` is not valid. */
   export function parseUrl(input: string, base: string | undefined): UrlParts | undefined;
+  /** The URL `href` after the setter of `component` with `value`. These setters take each value. */
+  export function updateUrl(href: string, component: "pathname" | "search" | "hash", value: string): UrlParts;
   /** The URL `href` after the setter of `component` with `value`, or `undefined` when the setter refuses `value`. */
   export function updateUrl(href: string, component: UrlComponent, value: string): UrlParts | undefined;
   /** The name-value pairs of `text`, an `application/x-www-form-urlencoded` string. */

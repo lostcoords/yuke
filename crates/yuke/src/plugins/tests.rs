@@ -211,7 +211,10 @@ fn the_order_of_the_list_is_the_load_order_so_a_provider_comes_first() {
 }
 
 /// Two bundled plugins of a test.
-const BUNDLED_PAIR: &[(&str, &str)] = &[("first", "yuke:bundled/first"), ("second", "yuke:bundled/second")];
+const BUNDLED_PAIR: &[(&str, &str)] = &[
+    ("first", "yuke:internal/bundled/first"),
+    ("second", "yuke:internal/bundled/second"),
+];
 
 #[test]
 fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
@@ -227,7 +230,7 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
         Plugin {
             name: "second".to_owned(),
             origin: Origin::Bundled {
-                module: "yuke:bundled/second".to_owned(),
+                module: "yuke:internal/bundled/second".to_owned(),
             },
             data_dir: root.join("data/plugins/second"),
             options: Map::new(),

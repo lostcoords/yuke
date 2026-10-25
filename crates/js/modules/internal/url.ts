@@ -71,8 +71,7 @@ function refreshQuery(state: UrlState): void {
 function updateQuery(state: QueryState): void {
   if (state.url === undefined) return;
   const url = urlState(state.url);
-  const parts = updateUrl(url.parts.href, "search", serializeQuery(state.list));
-  if (parts !== undefined) url.parts = parts;
+  url.parts = updateUrl(url.parts.href, "search", serializeQuery(state.list));
 }
 
 export class URL {

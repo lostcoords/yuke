@@ -1,4 +1,4 @@
-//! These tests cover the bundled plugin `compaction` from its baked module `yuke:bundled/compaction`.
+//! These tests cover the bundled plugin `compaction` from its baked module `yuke:internal/bundled/compaction`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +32,7 @@ async fn opened(name: &str, models: &Arc<Recorded>) -> (Runtime, ScriptSession, 
     let compaction = Plugin {
         name: "compaction".to_owned(),
         origin: Origin::Bundled {
-            module: "yuke:bundled/compaction".to_owned(),
+            module: "yuke:internal/bundled/compaction".to_owned(),
         },
         data_dir,
         options: serde_json::Map::new(),
