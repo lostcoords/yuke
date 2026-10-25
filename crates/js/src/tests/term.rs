@@ -175,6 +175,21 @@ async fn an_ask_of_the_draw_gives_the_next_frame() {
 }
 
 #[tokio::test]
+async fn a_focus_event_says_whether_the_window_has_the_focus() {
+    let (runtime, _reports, display, _output, _requests) = started("a_focus_event_says_whether").await;
+    display.send(Input::Event(Event::FocusLost));
+    display.send(Input::Event(Event::FocusGained));
+    wait_until(&runtime, "return seen.length === 3;").await;
+    let text = evaluate::<String>(
+        &runtime,
+        "return seen.slice(1).map((event) => `${event.type}:${event.focused}`).join(' ');",
+    )
+    .await
+    .unwrap();
+    assert_eq!(text, "focus:false focus:true");
+}
+
+#[tokio::test]
 async fn a_throwing_handler_reports_and_the_next_event_runs() {
     let (runtime, mut reports, display, _output, _requests) =
         started("a_throwing_handler_reports_and_the_next_event_runs").await;

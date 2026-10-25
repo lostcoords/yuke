@@ -45,23 +45,19 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Open the terminal of the process. See [`Terminal::from_file`].
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of the system when no terminal device opens or a setting fails.
-    pub fn open() -> io::Result<Self> {
-        Self::from_file(device()?)
-    }
-
-    /// Take `file`, a terminal device: enter raw mode and the alternate screen, and probe the terminal. The wait for
+    /// Open the terminal of the process: enter raw mode and the alternate screen, and probe the terminal. The wait for
     /// the answers ends 100 ms after the probe, and a busy system can add to it. Then the call turns on xterm
     /// modifyOtherKeys unless the terminal reports kitty flags.
     ///
     /// # Errors
     ///
-    /// Returns the error of the system when `file` is no terminal, a setting fails, or a write fails.
-    pub fn from_file(file: File) -> io::Result<Self> {
+    /// Returns the error of the system when no terminal device opens, a setting fails, or a write fails.
+    pub fn open() -> io::Result<Self> {
+        Self::from_file(device()?)
+    }
+
+    /// [`Terminal::open`] on `file`, a terminal device.
+    fn from_file(file: File) -> io::Result<Self> {
         let saved = termios::tcgetattr(&file)?;
         let mut terminal = Self {
             file,
@@ -72,14 +68,14 @@ impl Terminal {
             reader: None,
         };
         terminal.enter()?;
-        terminal.query_background()?;
+        terminal.write_all(BACKGROUND_QUERY)?;
         terminal.write_all(PROBE)?;
         terminal.probe()?;
         Ok(terminal)
     }
 
     /// The background color that the probe found. It is `None` when the terminal did not answer in time. A later
-    /// answer to [`Terminal::query_background`] comes as an [`Event::Background`] and does not change this value.
+    /// answer to [`BACKGROUND_QUERY`] comes as an [`Event::Background`] and does not change this value.
     pub fn background(&self) -> Option<Rgb> {
         self.background
     }
@@ -104,16 +100,6 @@ impl Terminal {
     /// Returns the error of the write.
     pub fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
         (&self.file).write_all(bytes)
-    }
-
-    /// Ask for the background color again, such as after an [`Event::SchemeChanged`]. The reader gives the answer as an
-    /// [`Event::Background`]. Without a reader, no callback gets it.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error of the write.
-    pub fn query_background(&self) -> io::Result<()> {
-        self.write_all(BACKGROUND_QUERY)
     }
 
     /// Read the answers until the device attributes come or the timeout ends, and turn on the modes that they allow.
@@ -181,7 +167,7 @@ impl Terminal {
         // The group stops, so a wrapper such as `mise exec` stops too, and the shell gets the terminal back.
         rustix::process::kill_current_process_group(rustix::process::Signal::TSTP)?;
         self.enter()?;
-        self.query_background()
+        self.write_all(BACKGROUND_QUERY)
     }
 
     /// Enter raw mode and turn on the modes: the screen modes, and modifyOtherKeys when the probe turned it on.

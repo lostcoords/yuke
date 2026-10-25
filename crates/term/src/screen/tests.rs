@@ -89,11 +89,11 @@ impl Model {
             };
             match number {
                 0 => self.style = Style::default(),
-                1 => self.style.attributes = self.style.attributes | Attributes::BOLD,
-                2 => self.style.attributes = self.style.attributes | Attributes::DIM,
-                3 => self.style.attributes = self.style.attributes | Attributes::ITALIC,
-                4 => self.style.attributes = self.style.attributes | Attributes::UNDERLINE,
-                7 => self.style.attributes = self.style.attributes | Attributes::REVERSE,
+                1 => self.style.attributes |= Attributes::BOLD,
+                2 => self.style.attributes |= Attributes::DIM,
+                3 => self.style.attributes |= Attributes::ITALIC,
+                4 => self.style.attributes |= Attributes::UNDERLINE,
+                7 => self.style.attributes |= Attributes::REVERSE,
                 30..=37 => self.style.fg = Color::Index(number - 30),
                 90..=97 => self.style.fg = Color::Index(number - 82),
                 40..=47 => self.style.bg = Color::Index(number - 40),

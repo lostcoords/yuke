@@ -415,8 +415,8 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             object.set("text", text)?;
             Ok(object)
         }),
-        Input::Event(Event::Focus(focused)) => kind(ctx, "focus").and_then(|object| {
-            object.set("focused", focused)?;
+        Input::Event(event @ (Event::FocusGained | Event::FocusLost)) => kind(ctx, "focus").and_then(|object| {
+            object.set("focused", event == Event::FocusGained)?;
             Ok(object)
         }),
         Input::Event(Event::Background(color)) => {
@@ -567,7 +567,7 @@ fn style_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<
     ] {
         let flag: Value<'js> = object.get(name)?;
         match flag.as_bool() {
-            Some(true) => attributes = attributes | attribute,
+            Some(true) => attributes |= attribute,
             Some(false) => {}
             None if flag.is_undefined() => {}
             None => {

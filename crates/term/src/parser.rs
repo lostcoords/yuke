@@ -166,7 +166,7 @@ fn cut(input: &[u8]) -> Step {
 
 /// A key that comes after an escape byte. Alt+key types no text.
 fn with_alt(mut key: Key) -> Key {
-    key.modifiers = key.modifiers | Modifiers::ALT;
+    key.modifiers |= Modifiers::ALT;
     key.text.clear();
     key
 }
@@ -321,8 +321,8 @@ fn parse_csi(input: &[u8]) -> Step {
             Step::Event(Event::Key(key), n)
         }
         b'~' => tilde_key(params, n),
-        b'I' => Step::Event(Event::Focus(true), n),
-        b'O' => Step::Event(Event::Focus(false), n),
+        b'I' => Step::Event(Event::FocusGained, n),
+        b'O' => Step::Event(Event::FocusLost, n),
         b'M' | b'm' => match params.strip_prefix(b"<") {
             Some(body) => sgr_mouse(body, input[last] == b'm', n),
             None => Step::Skip(n),

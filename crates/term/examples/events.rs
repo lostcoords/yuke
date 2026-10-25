@@ -5,7 +5,7 @@ use std::io;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
-use yuke_term::{Attributes, Code, Event, Modifiers, Screen, Style, Terminal};
+use yuke_term::{Attributes, BACKGROUND_QUERY, Code, Event, Modifiers, Screen, Style, Terminal};
 
 fn main() -> io::Result<()> {
     let mut terminal = Terminal::open()?;
@@ -44,7 +44,7 @@ fn main() -> io::Result<()> {
             Ok(Event::Key(key)) if key.code == Code::Char('c') && key.modifiers.contains(Modifiers::CTRL) => break,
             Ok(event) => {
                 match event {
-                    Event::SchemeChanged => terminal.query_background()?,
+                    Event::SchemeChanged => terminal.write_all(BACKGROUND_QUERY)?,
                     Event::Background(color) => background = Some(color),
                     _ => {}
                 }

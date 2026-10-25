@@ -60,8 +60,8 @@ fn sequences() -> Vec<(&'static [u8], Vec<Event>)> {
         (b"\x1b[57375u", vec![key(Code::F(12), none, "")]),
         (b"\x1b[27;2;13~", vec![key(Code::Enter, Modifiers::SHIFT, "")]),
         (b"\x1b[27;5;105~", vec![key(Code::Char('i'), Modifiers::CTRL, "")]),
-        (b"\x1b[I", vec![Event::Focus(true)]),
-        (b"\x1b[O", vec![Event::Focus(false)]),
+        (b"\x1b[I", vec![Event::FocusGained]),
+        (b"\x1b[O", vec![Event::FocusLost]),
         (
             b"\x1b[<0;10;5M",
             vec![mouse(9, 4, Button::Left, MouseKind::Press, none)],

@@ -1,6 +1,6 @@
 //! The events that the parser reads from the terminal.
 
-use std::ops::BitOr;
+use std::ops::{BitOr, BitOrAssign};
 
 /// One input event of the terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,11 +9,13 @@ pub enum Event {
     Key(Key),
     /// A mouse button, wheel, or motion report.
     Mouse(Mouse),
-    /// The window gained the focus (`true`) or lost it.
-    Focus(bool),
+    /// The window gained the focus.
+    FocusGained,
+    /// The window lost the focus.
+    FocusLost,
     /// The text of a bracketed paste, with each line end as `\n` and no other control character except `\t`.
     Paste(String),
-    /// The background color: the answer to [`Terminal::query_background`](crate::Terminal::query_background).
+    /// The background color: the answer to [`BACKGROUND_QUERY`](crate::BACKGROUND_QUERY).
     Background(Rgb),
     /// The color scheme of the terminal changed (a mode 2031 report). Ask for the background again.
     SchemeChanged,
@@ -123,7 +125,7 @@ impl Modifiers {
 
     /// The set without the modifiers of `other`.
     #[must_use]
-    pub const fn without(self, other: Self) -> Self {
+    pub(crate) const fn without(self, other: Self) -> Self {
         Self(self.0 & !other.0)
     }
 }
@@ -133,6 +135,12 @@ impl BitOr for Modifiers {
 
     fn bitor(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+}
+
+impl BitOrAssign for Modifiers {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
     }
 }
 

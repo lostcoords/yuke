@@ -2,7 +2,7 @@
 //! the escape bytes that turn the last frame into it.
 
 use std::io::Write as _;
-use std::ops::BitOr;
+use std::ops::{BitOr, BitOrAssign};
 
 use crate::event::Rgb;
 use crate::width::graphemes;
@@ -57,6 +57,12 @@ impl BitOr for Attributes {
 
     fn bitor(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+}
+
+impl BitOrAssign for Attributes {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
     }
 }
 
@@ -138,7 +144,7 @@ impl Cell {
 }
 
 /// The next frame and the frame on the terminal.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Screen {
     size: Size,
     next: Vec<Cell>,
@@ -185,22 +191,21 @@ impl Screen {
         self.cursor = None;
     }
 
-    /// Blank the cells of a rectangle with `style`. The grid clips the rectangle.
-    pub fn fill(&mut self, x: u16, y: u16, width: u16, height: u16, style: Style) {
-        let right = x.saturating_add(width).min(self.size.columns);
-        let bottom = y.saturating_add(height).min(self.size.rows);
-        for row in y..bottom {
-            for column in x..right {
-                self.put(column, row, Cell::blank(style));
+    /// Blank the cells of a rectangle from `column` and `row` with `style`. The grid clips the rectangle.
+    pub fn fill(&mut self, column: u16, row: u16, width: u16, height: u16, style: Style) {
+        let right = column.saturating_add(width).min(self.size.columns);
+        let bottom = row.saturating_add(height).min(self.size.rows);
+        for line in row..bottom {
+            for at in column..right {
+                self.put(at, line, Cell::blank(style));
             }
         }
     }
 
-    /// Write `text` on one row from column `x`, and return the column after it. The grid drops control characters
-    /// and clips at the right edge; a wide grapheme that does not fit leaves a blank cell.
-    pub fn text(&mut self, x: u16, y: u16, text: &str, style: Style) -> u16 {
-        let mut column = x;
-        if y >= self.size.rows {
+    /// Write `text` on `row` from `column`, and return the column after it. The grid drops control characters and
+    /// clips at the right edge; a wide grapheme that does not fit leaves a blank cell.
+    pub fn text(&mut self, mut column: u16, row: u16, text: &str, style: Style) -> u16 {
+        if row >= self.size.rows {
             return column;
         }
         for (grapheme, cells) in graphemes(text) {
@@ -214,13 +219,13 @@ impl Screen {
                 break;
             }
             if u32::from(column) + u32::from(width) > u32::from(self.size.columns) {
-                self.put(column, y, Cell::blank(style));
+                self.put(column, row, Cell::blank(style));
                 column = self.size.columns;
                 break;
             }
             self.put(
                 column,
-                y,
+                row,
                 Cell {
                     glyph: Glyph::new(grapheme),
                     width: if wide { 2 } else { 1 },
