@@ -127,14 +127,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="demo yuke-section yuke-reveal" aria-label="A yuke session: a prompt, tool calls, a blocked command, a subagent, a queued question, and a plugin command">
-    <header class="head">
-      <div>
-        <p class="yuke-label">The TUI</p>
-        <h2 class="yuke-heading">Watch it work.</h2>
-      </div>
-      <p class="feature" aria-live="polite"><span class="dot"></span>{{ feature }}</p>
-    </header>
+  <section class="demo yuke-section" aria-label="A yuke session: a prompt, tool calls, a blocked command, a subagent, a queued question, and a plugin command">
     <div class="window">
       <div class="bar">
         <span class="lights"><i></i><i></i><i></i></span>
@@ -156,26 +149,13 @@ onBeforeUnmount(() => {
         </span>
       </div>
     </div>
+    <p class="feature" aria-live="polite"><span class="dot"></span>{{ feature }}</p>
   </section>
 </template>
 
 <style scoped>
 .demo {
-  padding-top: 24px;
-}
-
-.head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-h2 {
-  margin-top: 12px;
-  font-size: clamp(36px, 5vw, 56px);
+  margin-top: 64px;
 }
 
 /* The terminal stays dark in both themes, like a real one. */
@@ -186,8 +166,9 @@ h2 {
   background: var(--yuke-terminal);
   color: #e4e6df;
   font-family: var(--vp-font-family-mono);
-  font-size: 13.5px;
+  font-size: 14.5px;
   text-align: left;
+  box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.55);
 }
 
 .bar {
@@ -219,9 +200,9 @@ h2 {
 }
 
 .screen {
-  height: 320px;
+  height: 440px;
   overflow: hidden;
-  padding: 16px 18px 4px;
+  padding: 20px 24px 4px;
 }
 
 pre {
@@ -334,8 +315,9 @@ pre {
 .feature {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  margin: 0;
+  margin: 18px 0 0;
   color: var(--vp-c-text-2);
   font-family: var(--vp-font-family-mono);
   font-size: 13px;
@@ -354,7 +336,7 @@ pre {
   }
 
   .screen {
-    height: 260px;
+    height: 320px;
   }
 }
 </style>
