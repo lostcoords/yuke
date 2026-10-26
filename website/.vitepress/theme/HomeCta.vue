@@ -35,7 +35,7 @@ onBeforeUnmount(() => {
         <InstallCommand class="install" />
         <a class="go" :href="repository">Star on GitHub</a>
       </div>
-      <img class="mascot" :src="withBase('/logo-dark.svg')" alt="" width="220" height="220" aria-hidden="true" />
+      <img class="mascot" :src="withBase('/mascot/full.png')" alt="" width="246" height="205" aria-hidden="true" />
     </div>
   </section>
 </template>
@@ -120,8 +120,8 @@ h2 {
 
 .mascot {
   justify-self: center;
-  width: 220px;
-  height: 220px;
+  width: 246px;
+  height: 205px;
   transform-origin: 50% 85%;
 }
 

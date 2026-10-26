@@ -6,17 +6,20 @@ const { frontmatter } = useData();
 
 const columns = [
   { title: 'Start', links: [
-    { text: 'Install', href: withBase('/#install-it') },
-    { text: 'Connect a model', href: withBase('/#connect-a-model') },
-    { text: 'Your first command', href: withBase('/#add-your-first-command') },
+    { text: 'Get started', href: withBase('/docs/get-started') },
+    { text: 'Your first plugin', href: withBase('/docs/first-plugin') },
+    { text: 'Providers', href: withBase('/docs/providers') },
+    { text: 'Benchmarks', href: withBase('/docs/benchmarks') },
   ] },
   { title: 'Plugins', links: [
+    { text: 'Customize yuke', href: withBase('/docs/customize') },
     { text: 'Plugin collection', href: plugins },
     { text: 'Vim mode', href: `${plugins}/tree/main/plugins/vim-mode` },
   ] },
   { title: 'Project', links: [
     { text: 'GitHub', href: repository },
     { text: 'Releases', href: `${repository}/releases` },
+    { text: 'Status', href: 'https://status.yuke.sh' },
   ] },
 ];
 </script>

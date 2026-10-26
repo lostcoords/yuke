@@ -1,4 +1,5 @@
 <script setup>
+import Mascot from './Mascot.vue';
 // The strengths of the TUI. Each card states one and shows the line of code or the screen
 // detail that proves it.
 const providers = ['Anthropic', 'OpenAI', 'OpenRouter', 'DeepSeek', 'Groq', 'xAI', 'Mistral', 'Together', 'Cerebras', 'Fireworks', 'MiniMax', 'OpenCode'];
@@ -51,6 +52,7 @@ const cards = [
   <section class="why yuke-section">
     <div class="yuke-reveal">
       <header class="head">
+        <Mascot pose="coding" class="mascot" />
         <p class="yuke-label">Plugins</p>
         <h2 class="yuke-heading">Make it yours.</h2>
         <p class="lead">Most coding agents give you their workflow. yuke gives you the parts: change any surface of the TUI and any step of the run, in JavaScript with full types.</p>
@@ -70,6 +72,7 @@ const cards = [
   <section class="models yuke-section">
     <div class="yuke-reveal">
       <header class="head">
+        <Mascot pose="cool" class="mascot" />
         <p class="yuke-label">Providers</p>
         <h2 class="yuke-heading">Bring any model.</h2>
         <p class="lead">Set a key, or log in with a ChatGPT or Grok account. Point <code>providers.json</code> at a local server, and switch models from the TUI.</p>
@@ -86,6 +89,10 @@ const cards = [
 .why,
 .models {
   margin-top: 128px;
+}
+
+.mascot {
+  margin-bottom: 24px;
 }
 
 .head {

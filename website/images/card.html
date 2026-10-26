@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- The 1200x630 social card. render.sh turns it into public/og.png. -->
+<meta charset="utf-8">
+<style>
+  @font-face { font-family: Inter; font-weight: 100 900; src: url('../node_modules/vitepress/dist/client/theme-default/fonts/inter-roman-latin.woff2'); }
+  @font-face { font-family: Mono; src: url('../styles/fonts/JetBrainsMono-Regular.woff2'); }
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #0c0d0c;
+    background-image:
+      linear-gradient(rgba(244, 242, 235, 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(244, 242, 235, 0.07) 1px, transparent 1px);
+    background-size: 150px 150px;
+    background-position: 75px 15px;
+    color: #f4f2eb;
+    font-family: Inter, sans-serif;
+  }
+  .text { position: absolute; left: 80px; top: 120px; width: 720px; }
+  .label { margin: 0; color: #858a84; font: 20px Mono, monospace; letter-spacing: 0.18em; text-transform: uppercase; }
+  h1 { margin: 26px 0 0; font-size: 104px; font-weight: 800; letter-spacing: -0.045em; line-height: 0.98; }
+  h1 span { color: #a8cfa0; }
+  p.lead { margin: 30px 0 0; color: #b8bbb4; font-size: 30px; line-height: 1.4; }
+  .site { position: absolute; left: 80px; bottom: 64px; color: #a8cfa0; font: 26px Mono, monospace; }
+  img { position: absolute; right: 70px; top: 135px; width: 330px; height: 330px; }
+</style>
+<div class="text">
+  <p class="label">Local / Open / Hackable</p>
+  <h1>Unleash your <span>harness</span></h1>
+  <p class="lead">A local, hackable harness for LLM agents.</p>
+</div>
+<div class="site">yuke.sh</div>
+<img src="../public/logo-dark.svg" alt="">
