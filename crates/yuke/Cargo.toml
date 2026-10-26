@@ -1,6 +1,6 @@
 [package]
 name = "yuke"
-version = "0.0.1-dev"
+version = "0.0.1-alpha.20261026.1"
 description = "The yuke coding agent."
 edition.workspace = true
 rust-version.workspace = true
