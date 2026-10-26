@@ -170,6 +170,12 @@ declare module "yuke:internal/native" {
   /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
   export function notify(source: string, level: NoticeLevel, message: string, sessionId: string | undefined): void;
 
+  /**
+   * Send the event `event` of the plugin `extension` to the clients. `data` is the JSON text of the data. A `sessionId`
+   * that is not a session id throws a `TypeError`.
+   */
+  export function emit(extension: string, event: string, data: string, sessionId: string | undefined): void;
+
   /** Numbered lines, or an image. */
   export type Lines =
     | {

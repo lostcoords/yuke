@@ -2,7 +2,7 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { addAbortStep, hostOperation, hostSignal, signalOf, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
-import { notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
+import { emit, notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
 import { surfaceOf } from "yuke:internal/tui/host";
 import type {
   AskOptions,
@@ -179,6 +179,9 @@ export async function load(spec: PluginSpec): Promise<void> {
       },
       notify(level: NoticeLevel, message: string): void {
         notify(spec.name, level, String(message), undefined);
+      },
+      emit(event: string, data?: unknown): void {
+        emit(spec.name, String(event), JSON.stringify(data) ?? "null", undefined);
       },
     });
     if (typeof apply === "function") {
@@ -917,6 +920,9 @@ function start(
     },
     notify(level: NoticeLevel, message: string): void {
       notify(plugin, level, String(message), sessionId);
+    },
+    emit(event: string, data?: unknown): void {
+      emit(plugin, String(event), JSON.stringify(data) ?? "null", sessionId);
     },
     confirm(title: string, message?: string, options?: AskOptions): Promise<boolean | undefined> {
       return question<boolean>({ kind: "confirm", title, message: message ?? "" }, options?.signal);

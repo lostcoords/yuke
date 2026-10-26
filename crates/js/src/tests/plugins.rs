@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use yuke_protocol::{NoticeLevel, NoticeParams};
+use yuke_protocol::{ExtensionEventParams, NoticeLevel, NoticeParams};
 
 use super::tools::{TestHost, Tools};
 use super::{descriptor, evaluate, folder, module, script_error, start, write};
@@ -587,6 +587,51 @@ async fn notify_sends_a_notice_of_the_plugin_and_refuses_an_unknown_level() {
             .await
             .unwrap(),
         "notify: 'loud' is not debug, info, warn, or error"
+    );
+}
+
+#[tokio::test]
+async fn emit_sends_an_event_with_the_plugin_as_its_extension_and_data_as_json() {
+    let folder = folder("emit_sends_an_event_with_the_plugin_as_its_extension_and_data_as_json");
+    let (runtime, mut reports) = start(&folder).await;
+    let todo = plugin(
+        &folder,
+        "todo",
+        Some(
+            "export function apply(ctx) {
+               ctx.emit('changed', { version: 1, items: ['milk'] });
+               ctx.emit('cleared');
+             }",
+        ),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[todo]).await;
+    let mut events = Vec::new();
+    for _ in 0..2 {
+        let report = tokio::time::timeout(Duration::from_secs(5), reports.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        events.push(report);
+    }
+
+    assert!(failures.is_empty(), "{failures:?}");
+    let event = |event: &str, data| {
+        Report::Event(ExtensionEventParams {
+            session_id: None,
+            extension: "todo".to_owned(),
+            event: event.to_owned(),
+            data,
+        })
+    };
+    assert_eq!(
+        events,
+        [
+            event("changed", serde_json::json!({ "version": 1, "items": ["milk"] })),
+            event("cleared", serde_json::Value::Null),
+        ]
     );
 }
 

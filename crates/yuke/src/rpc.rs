@@ -476,9 +476,9 @@ impl Connection {
     }
 }
 
-/// Sends the notifications of the app to the active client. With no active client, a notice goes to stderr, and a
-/// session update or a login end is dropped. `session/load` sends the saved events again, and `catalog/list` gives the
-/// state of a login.
+/// Sends the notifications of the app to the active client. With no active client, a notice goes to stderr. A session
+/// update, an extension event, or a login end is dropped. `session/load` sends the saved events again, and
+/// `catalog/list` gives the state of a login.
 #[derive(Default)]
 struct Outbox {
     writer: Mutex<Option<Writer>>,
@@ -503,7 +503,12 @@ impl Observer for Outbox {
                 message: notification,
             }),
             (None, ServerNotification::Notice(notice)) => warn(&format!("{}: {}", notice.source, notice.message)),
-            (None, ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_)) => {}
+            (
+                None,
+                ServerNotification::SessionUpdate(_)
+                | ServerNotification::ExtensionEvent(_)
+                | ServerNotification::LoginFinished(_),
+            ) => {}
         }
     }
 }

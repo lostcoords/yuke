@@ -9,10 +9,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
-    ClientNotification, ClientRequest, ConsumedInput, EventNumber, Input, InputError, InputId, InputKind, InputSource,
-    JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference,
-    NoticeLevel, NoticeParams, Notification, Request, Response, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
+    InputKind, InputSource, JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState,
+    ModelReference, NoticeLevel, NoticeParams, Notification, Request, Response, ServerNotification, SessionEvent,
+    SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -460,6 +460,38 @@ fn a_notice_notification_reads_and_writes_its_json() {
             level: NoticeLevel::Warn,
             source: "host:jobs".to_owned(),
             message: "job-1 stopped".to_owned(),
+        })),
+    );
+}
+
+#[test]
+fn an_extension_event_notification_reads_and_writes_its_json() {
+    let notification = |message| Notification {
+        jsonrpc: yuke_protocol::JsonRpc::V2,
+        message,
+    };
+
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "extension/event", "params": {
+            "sessionId": SESSION, "extension": "todo", "event": "changed",
+            "data": { "version": 2, "items": [{ "text": "ship it", "done": true }] }
+        } }),
+        &notification(ServerNotification::ExtensionEvent(ExtensionEventParams {
+            session_id: Some(session()),
+            extension: "todo".to_owned(),
+            event: "changed".to_owned(),
+            data: json!({ "version": 2, "items": [{ "text": "ship it", "done": true }] }),
+        })),
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "extension/event", "params": {
+            "extension": "todo", "event": "cleared", "data": null
+        } }),
+        &notification(ServerNotification::ExtensionEvent(ExtensionEventParams {
+            session_id: None,
+            extension: "todo".to_owned(),
+            event: "cleared".to_owned(),
+            data: Value::Null,
         })),
     );
 }

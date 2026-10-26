@@ -57,9 +57,14 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
   from `host:jobs`, after its `job` update.
-- Notifications: `session/cancel` from a client. `session/update`, `notice`, and `auth/login_finished` from the
-  server.
+- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`, and
+  `auth/login_finished` from the server.
 - `notice` is a message for the user, for the whole process or one session. It is not part of session history.
+- `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
+  host gives the plugin. The plugin chooses `event` and `data`, and it puts a version in `data` when the shape
+  changes. A client ignores an extension that it does not know. The event is not part of session history, and
+  `session/load` does not send it again. The events and notices of the plugins keep their order, but they have no
+  order against the session updates.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
   commit names it in `consumed`, or when `input_removed` names it.
@@ -75,8 +80,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   in order. It drops a saved event that it has (by `seq`), an `input_accepted` that it has (by `inputId`), and an
   `interaction_requested` that it has (by `interactionId`). The server disconnects a client that falls behind. On
   stdin and stdout, that ends the server. On a socket, the client connects and loads again.
-- A notice that comes while no client is connected goes to stderr. The server drops the session updates of that
-  interval. The store keeps the saved events, and `session/load` sends them again.
+- A notice that comes while no client is connected goes to stderr. The server drops the session updates and the
+  extension events of that interval. The store keeps the saved events, and `session/load` sends them again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
 - `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.

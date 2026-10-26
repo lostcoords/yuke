@@ -27,10 +27,10 @@ pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, Pendin
 pub use interaction::{InteractionRequest, InteractionRespondParams, InteractionResponse};
 pub use mcp::{ListMcpServersResult, McpServer, McpServerSource, McpServerState};
 pub use message::{
-    ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ForkSessionParams,
-    GetSessionParams, Implementation, InitializeParams, InitializeResult, InputParams, InputResult, Job, JobState,
-    JsonRpc, ListJobsResult, ListSessionsParams, ListSessionsResult, LoadSessionParams, NoticeLevel, NoticeParams,
-    Notification, PROTOCOL_VERSION, RemoveInputParams, RemoveSessionParams, Request, RequestId, Response,
+    ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ExtensionEventParams,
+    ForkSessionParams, GetSessionParams, Implementation, InitializeParams, InitializeResult, InputParams, InputResult,
+    Job, JobState, JsonRpc, ListJobsResult, ListSessionsParams, ListSessionsResult, LoadSessionParams, NoticeLevel,
+    NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, RemoveSessionParams, Request, RequestId, Response,
     ResponseError, ResponseOutcome, ServerNotification, SessionParams, SessionResult, SetSettingsParams, StopJobParams,
     UpdateCredentialParams,
 };

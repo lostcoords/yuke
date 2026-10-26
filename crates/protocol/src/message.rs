@@ -209,6 +209,9 @@ pub enum ServerNotification {
     /// A message for the user. It is not part of session history.
     #[serde(rename = "notice")]
     Notice(NoticeParams),
+    /// An event of a plugin. It is not part of session history. A client ignores an extension that it does not know.
+    #[serde(rename = "extension/event")]
+    ExtensionEvent(ExtensionEventParams),
     /// The end of a login of `auth/login`.
     #[serde(rename = "auth/login_finished")]
     LoginFinished(crate::LoginFinishedParams),
@@ -243,6 +246,23 @@ pub enum NoticeLevel {
     Warn,
     /// A serious problem.
     Error,
+}
+
+/// The params of `extension/event`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionEventParams {
+    /// The session of the event. The field is absent for an event of the whole process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<SessionId>,
+    /// The name that the host gives the plugin.
+    pub extension: String,
+    /// The name of the event. The plugin chooses it.
+    pub event: String,
+    /// The data of the event. The plugin chooses its shape, and it puts a version in it when the shape changes.
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub data: serde_json::Value,
 }
 
 /// The answer to a request: its result or its error.

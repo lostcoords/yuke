@@ -2948,3 +2948,48 @@ async fn a_burst_past_the_batch_size_writes_in_two_batches_and_loses_no_line() {
     assert_eq!(bytes, expected.as_bytes());
     assert_eq!(*flushes, 2);
 }
+
+#[tokio::test]
+async fn process_and_session_events_of_a_plugin_reach_the_client_under_its_name() {
+    let place = Place::new(
+        "rpc",
+        "process_and_session_events_of_a_plugin_reach_the_client_under_its_name",
+    );
+    place.plugin(
+        "todo",
+        "export function apply(ctx) { ctx.emit('ready', { version: 1 }); }
+         export function session(s) { s.emit('changed', ['milk']); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["todo"] }"#).unwrap();
+    let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
+
+    let ready = client
+        .until(|message| message["method"] == "extension/event")
+        .await
+        .pop()
+        .unwrap();
+    client.initialize().await;
+    // The event of the new session can come before or after the response.
+    let id = client.request("session/new", settings(&place)).await;
+    let mut messages: Vec<Value> = Vec::new();
+    while !(messages.iter().any(|message| message["id"] == json!(id))
+        && messages.iter().any(|message| message["method"] == "extension/event"))
+    {
+        messages.push(client.next().await);
+    }
+    let session = &messages.iter().find(|message| message["id"] == json!(id)).unwrap()["result"]["sessionId"];
+    let changed = messages
+        .iter()
+        .find(|message| message["method"] == "extension/event")
+        .unwrap();
+
+    assert_eq!(
+        ready["params"],
+        json!({ "extension": "todo", "event": "ready", "data": { "version": 1 } })
+    );
+    assert_eq!(
+        changed["params"],
+        json!({ "sessionId": session, "extension": "todo", "event": "changed", "data": ["milk"] })
+    );
+    client.end().await;
+}

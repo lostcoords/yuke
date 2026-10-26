@@ -77,7 +77,18 @@ export interface PluginContext<O = Record<string, never>> {
   readonly get: <K extends keyof Services & string>(name: K) => ServiceOf<K>;
   /** Send a notice with this plugin as its source. */
   readonly notify: (level: NoticeLevel, message: string) => void;
+  /** Send an event of the whole process. See {@link Emit}. */
+  readonly emit: Emit;
 }
+
+/**
+ * Send the event `event` with `data` to the active client of `yuke --rpc`.
+ * - The extension of the event is the name of this plugin. A client ignores an extension that it does not know.
+ * - `data` follows `JSON.stringify`. A value with no JSON form, such as `undefined`, sends `null`. Put a version in
+ *   `data` when its shape changes.
+ * - The event is transient. A client that connects later does not get it. With no client, the host drops it.
+ */
+export type Emit = (event: string, data?: unknown) => void;
 
 /** What a `prompt.build` handler gets. */
 export interface PromptBuildEvent {
@@ -476,6 +487,8 @@ export interface SessionContext<O = Record<string, never>> {
   readonly hook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
   /** Send a notice of this session with this plugin as its source. */
   readonly notify: (level: NoticeLevel, message: string) => void;
+  /** Send an event of this session. See {@link Emit}. */
+  readonly emit: Emit;
   /**
    * Ask the user a yes or no question with this plugin as its source, and wait for the answer.
    * - The answer is `undefined` when the user cancels, the signal aborts, the session closes, or no client can answer,

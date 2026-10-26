@@ -13,14 +13,17 @@ use yuke_term::Terminal;
 
 use crate::app::{App, Machine, Mode, Observer, SOURCE, warn};
 
-/// Gives each notice to the display. The interface shows no session update yet.
+/// Gives each notice to the display. The interface shows no session update yet. Its plugins share data through services,
+/// so it ignores extension events.
 struct Notices(Arc<Display>);
 
 impl Observer for Notices {
     fn notify(&self, notification: ServerNotification) {
         match notification {
             ServerNotification::Notice(notice) => self.0.send(Input::Notice(notice)),
-            ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_) => {}
+            ServerNotification::SessionUpdate(_)
+            | ServerNotification::ExtensionEvent(_)
+            | ServerNotification::LoginFinished(_) => {}
         }
     }
 }

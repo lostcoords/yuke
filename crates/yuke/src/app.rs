@@ -842,26 +842,27 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
         .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
-/// Send a script fault to `observer` as a warning of yuke, a plugin notice as it is, and an entry of `console` as a
-/// notice from the source `console`.
+/// Send each report to `observer`. A script fault becomes a warning of yuke, and an entry of `console` becomes a notice
+/// from the source `console`. A notice or an event of a plugin goes as it is.
 async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn Observer>) {
     while let Some(report) = reports.recv().await {
-        let notice = match report {
-            Report::Fault(fault) => NoticeParams {
+        let notification = match report {
+            Report::Fault(fault) => ServerNotification::Notice(NoticeParams {
                 session_id: None,
                 level: NoticeLevel::Warn,
                 source: SOURCE.to_owned(),
                 message: format!("a script failed: {fault}"),
-            },
-            Report::Notice(notice) => notice,
-            Report::Console { level, text } => NoticeParams {
+            }),
+            Report::Notice(notice) => ServerNotification::Notice(notice),
+            Report::Event(event) => ServerNotification::ExtensionEvent(event),
+            Report::Console { level, text } => ServerNotification::Notice(NoticeParams {
                 session_id: None,
                 level,
                 source: "console".to_owned(),
                 message: text,
-            },
+            }),
         };
-        observer.notify(ServerNotification::Notice(notice));
+        observer.notify(notification);
     }
 }
 
@@ -926,7 +927,9 @@ mod tests {
             .iter()
             .map(|notification| match notification {
                 ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.message.clone()),
-                other @ (ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_)) => {
+                other @ (ServerNotification::SessionUpdate(_)
+                | ServerNotification::ExtensionEvent(_)
+                | ServerNotification::LoginFinished(_)) => {
                     panic!("expected a notice, got {other:?}")
                 }
             })
