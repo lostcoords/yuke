@@ -31,6 +31,8 @@ export class Notices {
       try {
         listener(notice);
       } catch (error) {
+        // The fault comes back as a notice, so a listener that stays would throw on it again and again.
+        this.#remove(listener);
         reportError(error);
       }
     }
@@ -47,9 +49,11 @@ export class Notices {
     // A wrapper makes each registration its own, so a disposer removes only its own one.
     const registered = (notice: Notice): void => listener(notice);
     this.#listeners.push(registered);
-    return () => {
-      const at = this.#listeners.indexOf(registered);
-      if (at >= 0) this.#listeners.splice(at, 1);
-    };
+    return () => this.#remove(registered);
+  }
+
+  #remove(listener: (notice: Notice) => void): void {
+    const at = this.#listeners.indexOf(listener);
+    if (at >= 0) this.#listeners.splice(at, 1);
   }
 }

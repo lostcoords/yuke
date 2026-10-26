@@ -12,7 +12,9 @@ use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use yuke_protocol::NoticeLevel;
-use yuke_term::{Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, MouseKind, Rgb, Style, graphemes};
+use yuke_term::{
+    Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, Modifiers, MouseKind, Rgb, Style, graphemes,
+};
 
 use crate::display::{Display, Frame, Input, Request, Scheme, scheme_of};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
@@ -430,12 +432,11 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
                 _ => String::new(),
             };
             object.set("code", code_name(key.code))?;
-            object.set("char", character)?;
+            object.set("character", character)?;
             object.set("shifted", key.shifted.map(String::from).unwrap_or_default())?;
             object.set("baseLayout", key.base_layout.map(String::from).unwrap_or_default())?;
             object.set("text", key.text)?;
-            // The kitty bits of shift, alt, ctrl, super, hyper, and meta. The lock bits stay out.
-            object.set("mods", key.modifiers.bits() & 0x3f)?;
+            object.set("modifiers", modifiers_object(ctx, key.modifiers)?)?;
             Ok(object)
         }),
         Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
@@ -487,7 +488,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
 
 fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse) -> rquickjs::Result<Object<'js>> {
     let object = kind(ctx, "mouse")?;
-    object.set("col", mouse.column)?;
+    object.set("column", mouse.column)?;
     object.set("row", mouse.row)?;
     let button = match mouse.button {
         Button::Left => "left".to_owned(),
@@ -507,8 +508,24 @@ fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse) -> rquickjs::Resul
         MouseKind::Motion => "motion",
         MouseKind::Drag => "drag",
     };
-    object.set("event", event)?;
-    object.set("mods", mouse.modifiers.bits() & 0x7)?;
+    object.set("action", event)?;
+    object.set("modifiers", modifiers_object(ctx, mouse.modifiers)?)?;
+    Ok(object)
+}
+
+/// The modifiers of an event as booleans. The lock modifiers stay out.
+fn modifiers_object<'js>(ctx: &Ctx<'js>, modifiers: Modifiers) -> rquickjs::Result<Object<'js>> {
+    let object = Object::new(ctx.clone())?;
+    for (name, modifier) in [
+        ("shift", Modifiers::SHIFT),
+        ("alt", Modifiers::ALT),
+        ("ctrl", Modifiers::CTRL),
+        ("super", Modifiers::SUPER),
+        ("hyper", Modifiers::HYPER),
+        ("meta", Modifiers::META),
+    ] {
+        object.set(name, modifiers.contains(modifier))?;
+    }
     Ok(object)
 }
 
@@ -518,8 +535,7 @@ fn kind<'js>(ctx: &Ctx<'js>, name: &str) -> rquickjs::Result<Object<'js>> {
     Ok(object)
 }
 
-/// The name of a key, as the Zig yuke names it: `char` for a key of one code point. A function key past 35 is
-/// `unknown`.
+/// The name of a key: `character` for a key of one code point. A function key outside F1 to F35 is `unknown`.
 fn code_name(code: Code) -> &'static str {
     const FUNCTION_KEYS: [&str; 35] = [
         "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17",
@@ -546,7 +562,7 @@ fn code_name(code: Code) -> &'static str {
             .get(usize::from(number).wrapping_sub(1))
             .copied()
             .unwrap_or("unknown"),
-        Code::Char(_) => "char",
+        Code::Char(_) => "character",
     }
 }
 

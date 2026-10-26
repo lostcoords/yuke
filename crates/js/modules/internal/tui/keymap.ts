@@ -27,7 +27,7 @@ export class Keymap {
   #atoms: readonly string[] = [];
   #timer: ReturnType<typeof setTimeout> | undefined;
 
-  /** `changed` asks for a frame when the pending keys change. */
+  /** `changed` asks for a frame when the bindings or the pending keys change. */
   constructor(commands: Commands, changed: () => void) {
     this.#commands = commands;
     this.#changed = changed;
@@ -40,10 +40,12 @@ export class Keymap {
     if (typeof atom !== "string" || atom === "") throw new TypeError("a context atom is a string that is not empty");
     const binding: Binding = { strokes: parseKeys(spec), command, atom, order: this.#order++ };
     this.#bindings.push(binding);
+    this.#changed();
     return () => {
       const at = this.#bindings.indexOf(binding);
       if (at < 0) return;
       this.#bindings.splice(at, 1);
+      this.#changed();
       // The wait may belong to this binding, as when its plugin stops.
       this.cancel();
     };

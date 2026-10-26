@@ -14,6 +14,7 @@ mod prompt;
 mod round_after;
 mod round_before;
 mod round_retry;
+mod scene;
 mod sessions;
 mod side_request;
 mod streams;

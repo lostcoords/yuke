@@ -2,7 +2,7 @@
  * The commands of the terminal interface. A key binding names a command, and the palette lists them. A run can be
  * async: the caller does not wait, so the keys go on during a dialog of the command.
  */
-import { failureOf } from "yuke:internal/plugins";
+import { failureOf } from "yuke:internal/failure";
 import type { Command } from "yuke:tui";
 
 const NAME = /^[A-Za-z0-9:._-]+$/;
@@ -18,6 +18,8 @@ export interface CommandItem {
 interface Entry {
   readonly command: Command;
   readonly title: string;
+  /** True after a throw of `enabled` gave its one fault. */
+  faulted: boolean;
 }
 
 export class Commands {
@@ -25,7 +27,7 @@ export class Commands {
   readonly #fault: (text: string) => void;
   readonly #changed: () => void;
 
-  /** `fault` gets the text of a failed command, and `changed` asks for a frame after each run. */
+  /** `fault` gets the text of a failed command, and `changed` asks for a frame after each change and each run. */
   constructor(fault: (text: string) => void, changed: () => void) {
     this.#fault = fault;
     this.#changed = changed;
@@ -43,17 +45,20 @@ export class Commands {
       throw new TypeError(`the enabled check of ${name} is a function`);
     }
     if (this.#commands.has(name)) throw new TypeError(`the command ${name} exists`);
-    const entry: Entry = { command, title: title ?? name };
+    const entry: Entry = { command, title: title ?? name, faulted: false };
     this.#commands.set(name, entry);
+    this.#changed();
     return () => {
-      if (this.#commands.get(name) === entry) this.#commands.delete(name);
+      if (this.#commands.get(name) !== entry) return;
+      this.#commands.delete(name);
+      this.#changed();
     };
   }
 
   /** True when the command `name` exists and is enabled. */
   available(name: string): boolean {
     const entry = this.#commands.get(name);
-    return entry !== undefined && this.#enabled(name, entry.command);
+    return entry !== undefined && this.#enabled(name, entry);
   }
 
   /**
@@ -62,7 +67,7 @@ export class Commands {
    */
   run(name: string, args?: unknown): boolean {
     const entry = this.#commands.get(name);
-    if (entry === undefined || !this.#enabled(name, entry.command)) return false;
+    if (entry === undefined || !this.#enabled(name, entry)) return false;
     const failed = (error: unknown): void => {
       this.#fault(`the command ${name} failed: ${failureOf(error)}`);
       this.#changed();
@@ -85,20 +90,27 @@ export class Commands {
 
   /** The commands, in the order of their adds. */
   list(): CommandItem[] {
-    return [...this.#commands].map(([name, { command, title }]) => ({
+    return [...this.#commands].map(([name, entry]) => ({
       name,
-      title,
-      enabled: this.#enabled(name, command),
+      title: entry.title,
+      enabled: this.#enabled(name, entry),
     }));
   }
 
-  /** True when `command` can run. A throw of `enabled` counts as disabled, and it is a fault. */
-  #enabled(name: string, command: Command): boolean {
+  /**
+   * True when the command of `entry` can run. A throw of `enabled` counts as disabled and gives one fault per
+   * registration, because a palette checks each command on each frame.
+   */
+  #enabled(name: string, entry: Entry): boolean {
+    const { command } = entry;
     if (command.enabled === undefined) return true;
     try {
       return command.enabled() === true;
     } catch (error) {
-      this.#fault(`the enabled check of the command ${name} failed: ${failureOf(error)}`);
+      if (!entry.faulted) {
+        entry.faulted = true;
+        this.#fault(`the enabled check of the command ${name} failed: ${failureOf(error)}`);
+      }
       return false;
     }
   }

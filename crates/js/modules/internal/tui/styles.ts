@@ -75,7 +75,9 @@ const PALETTES: Readonly<Record<"truecolor" | "256", Readonly<Record<"dark" | "l
   },
 };
 
-const COLORS = ["fg", "bg", "ul"] as const;
+const COLORS = ["fg", "bg", "underlineColor"] as const;
+/** The field of the cell style for each color field: the native style names the underline color `ul`. */
+const CELL_FIELD = { fg: "fg", bg: "bg", underlineColor: "ul" } as const;
 const FLAGS = ["bold", "dim", "italic", "reverse", "underline"] as const;
 
 interface Layer {
@@ -86,15 +88,20 @@ interface Layer {
 export class Styles {
   readonly #truecolor: () => boolean;
   readonly #background: () => "dark" | "light";
+  readonly #changed: () => void;
   readonly #layers: Layer[] = [];
   readonly #cache = new Map<string, TermStyle>();
   /** The palette of the cached styles. */
   #palette: Palette | undefined;
 
-  /** `truecolor` and `background` give the state of the terminal, which picks the base palette. */
-  constructor(truecolor: () => boolean, background: () => "dark" | "light") {
+  /**
+   * `truecolor` and `background` give the state of the terminal, which picks the base palette. `changed` asks for a
+   * frame after each change.
+   */
+  constructor(truecolor: () => boolean, background: () => "dark" | "light", changed: () => void) {
     this.#truecolor = truecolor;
     this.#background = background;
+    this.#changed = changed;
   }
 
   /** Change the group `name` by `patch`, and return the disposer of the change. A bad field throws a `TypeError`. */
@@ -103,11 +110,13 @@ export class Styles {
     const layer: Layer = { name, patch: checked(patch, true) };
     this.#layers.push(layer);
     this.#cache.clear();
+    this.#changed();
     return () => {
       const at = this.#layers.indexOf(layer);
       if (at < 0) return;
       this.#layers.splice(at, 1);
       this.#cache.clear();
+      this.#changed();
     };
   }
 
@@ -147,7 +156,7 @@ export class Styles {
     const cell: Record<string, unknown> = style.link === undefined ? {} : { ...this.#named(style.link, palette, seen) };
     for (const field of COLORS) {
       const color = style[field];
-      if (color !== undefined) cell[field] = isPaletteColor(color) ? palette[color] : color;
+      if (color !== undefined) cell[CELL_FIELD[field]] = isPaletteColor(color) ? palette[color] : color;
     }
     for (const field of FLAGS) {
       const flag = style[field];

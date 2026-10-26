@@ -4,13 +4,6 @@
  */
 import type { KeyEvent } from "yuke:tui";
 
-const SHIFT = 1;
-const ALT = 2;
-const CTRL = 4;
-const SUPER = 8;
-/** Hyper and meta: no spec names them, so a key with one of them takes no binding. */
-const OTHER = 16 | 32;
-
 /** The named keys: the codes of the host, and `space`. */
 const NAMED = new Set([
   "enter",
@@ -33,7 +26,7 @@ const NAMED = new Set([
 ]);
 
 /** The strokes of `spec`. A spec that names no key throws a `TypeError`. */
-export function parseKeys(spec: string): string[] {
+export function parseKeys(spec: string): readonly string[] {
   if (typeof spec !== "string") throw new TypeError("a key spec is a string");
   const strokes = spec.split(/\s+/).filter((stroke) => stroke !== "");
   if (strokes.length === 0) throw new TypeError(`'${spec}' names no key`);
@@ -42,21 +35,20 @@ export function parseKeys(spec: string): string[] {
 
 /** The stroke of `event`, or "" for a key that no spec names. */
 export function strokeOf(event: KeyEvent): string {
-  const { code, char, shifted, mods } = event;
-  if ((mods & OTHER) !== 0) return "";
-  const ctrl = (mods & CTRL) !== 0;
-  const alt = (mods & ALT) !== 0;
-  const superKey = (mods & SUPER) !== 0;
-  let shift = (mods & SHIFT) !== 0;
+  const { code, character, shifted, modifiers } = event;
+  const { ctrl, alt, super: superKey, hyper, meta } = modifiers;
+  // No spec names hyper or meta, so a key with one of them takes no binding.
+  if (hyper || meta) return "";
+  let { shift } = modifiers;
   let key: string;
-  if (code === "char") {
-    if (char === "") return "";
+  if (code === "character") {
+    if (character === "") return "";
     if (ctrl || alt || superKey) {
       // A legacy terminal cannot tell ctrl+G from ctrl+g, so another modifier folds the case.
-      key = char.toLowerCase();
+      key = character.toLowerCase();
     } else {
       // A kitty terminal reports the shifted key apart; a legacy terminal sends the shifted character.
-      key = shift ? shifted || char.toUpperCase() : char;
+      key = shift ? shifted || character.toUpperCase() : character;
     }
     shift = false;
     if (key === " ") key = "space";

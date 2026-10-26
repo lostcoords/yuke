@@ -2,8 +2,9 @@
 
 import { termFit, termGraphemes, termMeasure, termWrap } from "yuke:internal/native";
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";
+import { stack } from "yuke:internal/tui/layout";
 
-export { parseKeys, strokeOf };
+export { parseKeys, stack, strokeOf };
 
 export function measure(text: string): number {
   return termMeasure(String(text).toWellFormed());
@@ -22,5 +23,5 @@ export function wrap(text: string, width: number, head = 0): Int32Array {
 }
 
 // The check against `types/tui.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { measure, graphemes, fit, wrap, parseKeys, strokeOf } satisfies typeof import("yuke:tui");
+const declared = { measure, graphemes, fit, wrap, parseKeys, strokeOf, stack } satisfies typeof import("yuke:tui");
 void declared;

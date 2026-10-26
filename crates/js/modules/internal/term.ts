@@ -23,37 +23,16 @@ import {
   termTruecolor,
   termWrap,
 } from "yuke:internal/native";
+import type { KeyEvent, MouseEvent } from "yuke:tui";
 
 export type Style = TermStyle;
 
-/**
- * The bits of `mods`: shift 1, alt 2, ctrl 4, super 8, hyper 16, meta 32. A mouse event has the first three.
- */
+/** An event of the frame loop. The key and the mouse events are the public ones of `yuke:tui`. */
 export type TermEvent =
   /** The first event of a runtime. After a reload, `snapshot` is the text that the old runtime gave `term.reload`. */
   | { readonly type: "start"; readonly snapshot?: string }
-  | {
-      readonly type: "key";
-      /** `char` for a key that types, else a name such as `enter`, `esc`, `up`, `page_down`, or `f5`. */
-      readonly code: string;
-      /** The character of a `char` key, else "". */
-      readonly char: string;
-      /** The key with shift on the current layout, from a kitty terminal, else "". */
-      readonly shifted: string;
-      /** The key at the same place on a US layout, from a kitty terminal, else "". */
-      readonly baseLayout: string;
-      /** The text that the key types, else "". */
-      readonly text: string;
-      readonly mods: number;
-    }
-  | {
-      readonly type: "mouse";
-      readonly col: number;
-      readonly row: number;
-      readonly button: string;
-      readonly event: "press" | "release" | "motion" | "drag";
-      readonly mods: number;
-    }
+  | KeyEvent
+  | MouseEvent
   | { readonly type: "paste"; readonly text: string }
   | { readonly type: "resize"; readonly w: number; readonly h: number }
   | { readonly type: "focus"; readonly focused: boolean }

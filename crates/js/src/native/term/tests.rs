@@ -61,11 +61,11 @@ fn a_copy_is_osc_52_and_also_a_tmux_passthrough_in_tmux() {
 }
 
 #[test]
-fn key_names_follow_the_zig_yuke() {
+fn key_names_match_the_public_key_codes() {
     assert_eq!(code_name(Code::Escape), "esc");
     assert_eq!(code_name(Code::PageDown), "page_down");
     assert_eq!(code_name(Code::F(1)), "f1");
     assert_eq!(code_name(Code::F(35)), "f35");
     assert_eq!(code_name(Code::F(0)), "unknown");
-    assert_eq!(code_name(Code::Char('a')), "char");
+    assert_eq!(code_name(Code::Char('a')), "character");
 }

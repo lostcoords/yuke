@@ -151,7 +151,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     wait_until(&runtime, "return seen.length === 2 && frames === 1;").await;
     let text = evaluate::<String>(
         &runtime,
-        "return `${JSON.stringify(seen[0])} ${seen[1].type}:${seen[1].char}`;",
+        "return `${JSON.stringify(seen[0])} ${seen[1].type}:${seen[1].character}`;",
     )
     .await
     .unwrap();
@@ -205,12 +205,16 @@ async fn a_batch_of_inputs_draws_one_frame() {
     wait_until(&runtime, "return seen.length === 4;").await;
     let text = evaluate::<String>(
         &runtime,
-        "return seen.slice(1).map((event) => `${event.type}:${event.code}:${event.char}:${event.text}:${event.mods}`)
+        "return seen.slice(1).map((event) => `${event.type}:${event.code}:${event.character}:${event.text}:${JSON.stringify(event.modifiers)}`)
            .concat([frames]).join(' ');",
     )
     .await
     .unwrap();
-    assert_eq!(text, "key:char:a:a:0 key:char:b:b:0 key:char:c:c:0 2");
+    let none = r#"{"shift":false,"alt":false,"ctrl":false,"super":false,"hyper":false,"meta":false}"#;
+    assert_eq!(
+        text,
+        format!("key:character:a:a:{none} key:character:b:b:{none} key:character:c:c:{none} 2")
+    );
 }
 
 #[tokio::test]
@@ -270,6 +274,25 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
 }
 
 #[tokio::test]
+async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
+    let (runtime, _reports, display, _output, _requests) = started("a_mouse_event_gives_column_row").await;
+    display.send(Input::Event(Event::Mouse(Mouse {
+        column: 3,
+        row: 1,
+        button: Button::Left,
+        kind: MouseKind::Drag,
+        modifiers: Modifiers::CTRL,
+    })));
+    wait_until(&runtime, "return seen.length === 2;").await;
+    assert_eq!(
+        evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
+            .await
+            .unwrap(),
+        r#"{"type":"mouse","column":3,"row":1,"button":"left","action":"drag","modifiers":{"shift":false,"alt":false,"ctrl":true,"super":false,"hyper":false,"meta":false}}"#
+    );
+}
+
+#[tokio::test]
 async fn a_throwing_handler_reports_and_the_next_event_runs() {
     let (runtime, mut reports, display, _output, _requests) =
         started("a_throwing_handler_reports_and_the_next_event_runs").await;
@@ -286,7 +309,10 @@ async fn a_throwing_handler_reports_and_the_next_event_runs() {
     assert!(fault.message.contains("a broken handler"), "{fault:?}");
     display.send(key('b'));
     wait_until(&runtime, "return seen.length === 2;").await;
-    assert_eq!(evaluate::<String>(&runtime, "return seen[1].char;").await.unwrap(), "b");
+    assert_eq!(
+        evaluate::<String>(&runtime, "return seen[1].character;").await.unwrap(),
+        "b"
+    );
 }
 
 #[tokio::test]

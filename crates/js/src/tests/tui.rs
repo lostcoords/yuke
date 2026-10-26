@@ -10,8 +10,8 @@ use crate::error::caught;
 
 /// Put each export of the core modules and of `yuke:tui` on the global object, and add the helpers of the tests:
 /// `commands` and `keymap`, with `ran` (the runs), `faults`, and `frames` (the asks for a frame); `add(name, extra)`
-/// adds a command that records its run; `key(char, mods, extra)` and `named(code, mods)` make key events; `CTRL`,
-/// `ALT`, and `SHIFT` are the bits of `mods`.
+/// adds a command that records its run; `key(character, mods, extra)` and `named(code, mods)` make key events, with
+/// `mods` a sum of `SHIFT`, `ALT`, `CTRL`, 8 (super), 16 (hyper), and 32 (meta).
 async fn core(name: &str) -> Runtime {
     let (runtime, _reports) = start(&folder(name)).await;
     runtime
@@ -50,10 +50,12 @@ async fn core(name: &str) -> Runtime {
            ...extra,
          });
          globalThis.CTRL = 4; globalThis.ALT = 2; globalThis.SHIFT = 1;
-         globalThis.key = (char, mods = 0, extra = {}) =>
-           ({ type: 'key', code: 'char', char, shifted: '', baseLayout: '', text: '', mods, ...extra });
+         const modifiers = (mods) => ({ shift: (mods & 1) !== 0, alt: (mods & 2) !== 0, ctrl: (mods & 4) !== 0,
+           super: (mods & 8) !== 0, hyper: (mods & 16) !== 0, meta: (mods & 32) !== 0 });
+         globalThis.key = (character, mods = 0, extra = {}) => ({ type: 'key', code: 'character', character,
+           shifted: '', baseLayout: '', text: '', modifiers: modifiers(mods), ...extra });
          globalThis.named = (code, mods = 0) =>
-           ({ type: 'key', code, char: '', shifted: '', baseLayout: '', text: '', mods });",
+           ({ type: 'key', code, character: '', shifted: '', baseLayout: '', text: '', modifiers: modifiers(mods) });",
     )
     .await
     .unwrap();
@@ -145,7 +147,7 @@ async fn a_disabled_command_passes_its_key_on_and_at_last_to_the_view() {
          keymap.bind('x', 'closed');
          keymap.bind('y', 'closed');
          keymap.bind('z', 'missing');
-         const taken = ['x', 'y', 'z'].map((char) => keymap.key(key(char), ['global', 'root']));
+         const taken = ['x', 'y', 'z'].map((character) => keymap.key(key(character), ['global', 'root']));
          return `${ran.join(' ')} ${taken.join(' ')}`;",
     )
     .await;
@@ -314,9 +316,10 @@ async fn commands_check_their_names_and_run_with_args() {
         ),
     )
     .await;
+    // Frames: three adds, two runs, and the disposer each ask for one.
     assert_eq!(
         steps,
-        r#"TypeError TypeError TypeError TypeError TypeError TypeError | true false false true false | notes:open:{"id":3} first | notes:open/Open a note/true,off/off/false,first/first/true | false | 2"#
+        r#"TypeError TypeError TypeError TypeError TypeError TypeError | true false false true false | notes:open:{"id":3} first | notes:open/Open a note/true,off/off/false,first/first/true | false | 6"#
     );
 }
 
@@ -347,26 +350,34 @@ async fn an_async_command_lets_keys_go_on_and_a_failure_names_it() {
          return [during, after, frames, faults.map((fault) => fault.split('\\n')[0]).join(' / ')].join(' | ');",
     )
     .await;
+    // Frames: five adds before the keys; then one per run that ends.
     assert_eq!(
         steps,
-        "next 1 | 2 | 5 | the command sync failed: Error: bad state / the command broken failed: Error: no disk / \
+        "next 6 | 7 | 10 | the command sync failed: Error: bad state / the command broken failed: Error: no disk / \
          the command thenable failed: Error: no then"
     );
 }
 
 #[tokio::test]
-async fn a_throwing_enabled_check_counts_as_disabled_and_is_a_fault() {
+async fn a_throwing_enabled_check_counts_as_disabled_and_faults_once_per_registration() {
     let runtime = core("a_throwing_enabled_check").await;
     let steps = text(
         &runtime,
-        "add('flaky', { enabled: () => { throw new Error('no state'); } });
+        "const flaky = { enabled: () => { throw new Error('no state'); } };
+         const dispose = add('flaky', flaky);
          const ran_it = commands.run('flaky');
-         return `${ran_it} ${ran.length} ${faults[0].split('\\n')[0]}`;",
+         commands.list(); commands.list(); commands.run('flaky');
+         const before = faults.length;
+         dispose();
+         add('flaky', flaky);
+         commands.run('flaky');
+         return `${ran_it} ${ran.length} ${before} ${faults.length} ${faults[0].split('\\n')[0]}`;",
     )
     .await;
+    // A palette checks each command on each frame, so a broken check reports once until a new registration.
     assert_eq!(
         steps,
-        "false 0 the enabled check of the command flaky failed: Error: no state"
+        "false 0 1 2 the enabled check of the command flaky failed: Error: no state"
     );
 }
 
@@ -375,7 +386,7 @@ async fn the_newest_style_layer_wins_per_field_and_null_deletes() {
     let runtime = core("the_newest_style_layer_wins_per_field").await;
     let steps = text(
         &runtime,
-        "const styles = new Styles(() => true, () => 'dark');
+        "const styles = new Styles(() => true, () => 'dark', () => {});
          styles.set('title', { fg: 3, bold: true });
          const newer = styles.set('title', { fg: '#102030', bold: null, italic: true });
          const both = JSON.stringify(styles.resolve('title'));
@@ -391,13 +402,13 @@ async fn a_link_fills_the_missing_fields_and_a_cycle_stops() {
     let runtime = core("a_link_fills_the_missing_fields").await;
     let steps = text(
         &runtime,
-        "const styles = new Styles(() => true, () => 'dark');
+        "const styles = new Styles(() => true, () => 'dark', () => {});
          styles.set('base', { fg: 1, bg: 2, underline: true });
          styles.set('title', { link: 'base', fg: 5 });
          const inline = styles.resolve({ link: 'title', bg: 'reset' });
          // Each order of the first resolves gives the same result in a cycle.
          const cycle = (order) => {
-           const own = new Styles(() => true, () => 'dark');
+           const own = new Styles(() => true, () => 'dark', () => {});
            own.set('a', { link: 'b', bold: true });
            own.set('b', { link: 'a', dim: true });
            for (const name of order) own.resolve(name);
@@ -420,7 +431,7 @@ async fn a_palette_color_follows_the_depth_and_the_background() {
         &runtime,
         "let truecolor = true;
          let background = 'dark';
-         const styles = new Styles(() => truecolor, () => background);
+         const styles = new Styles(() => truecolor, () => background, () => {});
          styles.set('accent', { fg: 'accent', bg: 'reset' });
          const seen = [styles.resolve('accent').fg];
          background = 'light';
@@ -440,12 +451,12 @@ async fn a_bad_style_field_throws() {
         &runtime,
         &format!(
             "{NAMES}
-             const styles = new Styles(() => true, () => 'dark');
+             const styles = new Styles(() => true, () => 'dark', () => {{}});
              return names([
                () => styles.set('a', {{ fg: 'red' }}), () => styles.set('a', {{ fg: 'toString' }}),
                () => styles.set('a', {{ fg: 256 }}), () => styles.set('a', {{ bold: 1 }}),
                () => styles.set('a', {{ color: 1 }}), () => styles.set('a', {{ link: '' }}), () => styles.set('', {{}}),
-               () => styles.resolve({{ fg: null }}), () => styles.set('a', {{ fg: null, bg: 'surface', ul: '#ABCDEF' }}),
+               () => styles.resolve({{ fg: null }}), () => styles.set('a', {{ fg: null, bg: 'surface', underlineColor: '#ABCDEF' }}),
              ]);"
         ),
     )
@@ -477,7 +488,7 @@ async fn notices_keep_the_last_hundred_and_count_a_repeat() {
 }
 
 #[tokio::test]
-async fn a_throwing_notice_listener_is_reported_and_the_next_listener_runs() {
+async fn a_throwing_notice_listener_is_removed_and_reported_and_the_next_listener_runs() {
     let folder = folder("a_throwing_notice_listener_is_reported");
     let (runtime, mut reports) = start(&folder).await;
     runtime
@@ -494,13 +505,16 @@ async fn a_throwing_notice_listener_is_reported_and_the_next_listener_runs() {
         &runtime,
         "const notices = new Notices();
          const seen = [];
-         notices.on(() => { throw new Error('a broken listener'); });
+         let calls = 0;
+         notices.on(() => { calls += 1; throw new Error('a broken listener'); });
          notices.on((notice) => seen.push(notice.text));
          notices.add('info', 'notes', 'hello');
-         return seen.join(' ');",
+         notices.add('error', 'host:yuke', 'the fault of the listener');
+         return `${seen.join(' ')} ${calls}`;",
     )
     .await;
-    assert_eq!(seen, "hello");
+    // The broken listener is gone after its first throw, so its fault cannot feed it again.
+    assert_eq!(seen, "hello the fault of the listener 1");
     let fault = next_fault(&mut reports).await;
     assert!(fault.message.contains("a broken listener"), "{fault:?}");
 }
@@ -515,4 +529,24 @@ async fn the_public_module_works_without_a_display() {
     )
     .await;
     assert_eq!(steps, "3 2 0,3,1,3,5,0 0,1,1,1,1,1 ctrl+x s");
+}
+
+#[tokio::test]
+async fn each_registration_and_its_disposer_ask_for_a_frame() {
+    let runtime = core("each_registration_and_its_disposer_ask_for_a_frame").await;
+    let steps = text(
+        &runtime,
+        "let asked = 0;
+         const ask = () => { asked += 1; };
+         const keys = new Keymap(commands, ask);
+         const styles = new Styles(() => true, () => 'dark', ask);
+         const unbind = keys.bind('x', 'test:x');
+         const unset = styles.set('title', { bold: true });
+         const before = asked;
+         unbind(); unset(); unbind(); unset();
+         return `${before} ${asked}`;",
+    )
+    .await;
+    // A second call of a disposer changes nothing, so it asks for no frame.
+    assert_eq!(steps, "2 4");
 }
