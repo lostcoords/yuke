@@ -13,7 +13,7 @@ const { frontmatter } = useData();
     <InstallCommand class="install" />
     <p class="links">
       <a :href="repository">View on GitHub <span aria-hidden="true">→</span></a>
-      <a :href="withBase('/#run-yuke')">Quick start <span aria-hidden="true">→</span></a>
+      <a :href="withBase('/docs/get-started')">Get started <span aria-hidden="true">→</span></a>
     </p>
   </section>
 </template>
