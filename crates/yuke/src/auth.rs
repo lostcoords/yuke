@@ -1,7 +1,7 @@
-//! The logins of the providers. `auth.json` in the data folder holds one login for each provider. Only a login and a
-//! refresh write it, and each holds the lock file `auth.lock`, so two processes never refresh one login at once.
+//! The stored credentials of the providers. `auth.json` in the data folder holds one entry for each provider: a login
+//! or an API key. Each write holds the lock file `auth.lock`, so two processes never refresh one login at once.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, File, OpenOptions, Permissions, TryLockError};
@@ -85,6 +85,21 @@ impl StoredLogin {
     fn valid(&self, now: SystemTime, margin: Duration) -> bool {
         self.expires_at > millis(now + margin)
     }
+}
+
+/// The entry of one provider in `auth.json`.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum Stored {
+    Login(StoredLogin),
+    ApiKey { api_key: String },
+}
+
+/// The kind of an entry of `auth.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoredKind {
+    Login,
+    ApiKey,
 }
 
 /// An access token from `credential/update`. Only memory holds it, and yuke never refreshes it. `Debug` writes no
@@ -213,7 +228,7 @@ impl Error for AuthError {
     }
 }
 
-/// The files of the logins in one data folder.
+/// The files of the credentials in one data folder.
 #[derive(Debug, Clone)]
 struct Files {
     folder: PathBuf,
@@ -229,8 +244,8 @@ impl Files {
         move |error| AuthError::File { path, error }
     }
 
-    /// The logins of `auth.json`. A missing file has none.
-    fn read(&self) -> Result<BTreeMap<String, StoredLogin>, AuthError> {
+    /// The entries of `auth.json`. A missing file has none.
+    fn read(&self) -> Result<BTreeMap<String, Stored>, AuthError> {
         let path = self.path(FILE);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -242,7 +257,10 @@ impl Files {
 
     /// The login of `provider`.
     fn login(&self, provider: &str) -> Result<Option<StoredLogin>, AuthError> {
-        Ok(self.read()?.remove(provider))
+        match self.read()?.remove(provider) {
+            Some(Stored::Login(login)) => Ok(Some(login)),
+            Some(Stored::ApiKey { .. }) | None => Ok(None),
+        }
     }
 
     /// Take the lock, and wait at most `limit`. `None` when another holder keeps it longer.
@@ -278,7 +296,7 @@ impl Files {
     }
 }
 
-/// The files of the logins while this process holds the lock. Only this type writes `auth.json`. The drop releases
+/// The files of the credentials while this process holds the lock. Only this type writes `auth.json`. The drop releases
 /// the lock.
 #[derive(Debug)]
 struct LockedFiles {
@@ -287,26 +305,27 @@ struct LockedFiles {
 }
 
 impl LockedFiles {
-    /// Set the login of `provider` to `login`, or remove it. A removal of a missing login writes nothing.
-    fn set(&self, provider: &str, login: Option<StoredLogin>) -> Result<(), AuthError> {
-        let mut logins = self.files.read()?;
-        match login {
-            Some(login) => {
-                logins.insert(provider.to_owned(), login);
+    /// Set the entry of `provider` to `entry`, or remove it. A removal of a missing entry writes nothing.
+    fn set(&self, provider: &str, entry: Option<Stored>) -> Result<(), AuthError> {
+        let mut entries = self.files.read()?;
+        match entry {
+            Some(entry) => {
+                entries.insert(provider.to_owned(), entry);
             }
             None => {
-                if logins.remove(provider).is_none() {
+                if entries.remove(provider).is_none() {
                     return Ok(());
                 }
             }
         }
-        self.write(&logins)
+        self.write(&entries)
     }
 
-    /// Replace `auth.json` with `logins`. The new file is whole or absent after a crash, and only the user can read it.
-    fn write(&self, logins: &BTreeMap<String, StoredLogin>) -> Result<(), AuthError> {
+    /// Replace `auth.json` with `entries`. The new file is whole or absent after a crash, and only the user can read
+    /// it.
+    fn write(&self, entries: &BTreeMap<String, Stored>) -> Result<(), AuthError> {
         let files = &self.files;
-        let bytes = serde_json::to_vec_pretty(logins).map_err(|error| AuthError::Invalid {
+        let bytes = serde_json::to_vec_pretty(entries).map_err(|error| AuthError::Invalid {
             path: files.path(FILE),
             error,
         })?;
@@ -331,31 +350,66 @@ impl LockedFiles {
     }
 }
 
-/// Remove the stored login of `provider` from `auth.json` in the data folder `folder`. Without a login of `provider`,
-/// `auth.json` stays as it is.
+/// Remove the stored login or API key of `provider` from `auth.json` in the data folder `folder`. Without an entry of
+/// `provider`, `auth.json` stays as it is.
 ///
 /// # Errors
 ///
 /// Returns an [`AuthError`] when the lock waits too long, or the file does not read or write.
 pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), AuthError> {
+    write_entry(provider, None, folder).await
+}
+
+/// Store `api_key` as the entry of `provider` in `auth.json` in the data folder `folder`.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] when the lock waits too long, or the file does not read or write.
+pub(crate) async fn set_api_key(provider: &str, api_key: String, folder: PathBuf) -> Result<(), AuthError> {
+    write_entry(provider, Some(Stored::ApiKey { api_key }), folder).await
+}
+
+/// The API key of `provider` in `auth.json` in the data folder `folder`. It reads on the calling thread, because the
+/// model lookup is not async.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] when the file does not read or holds no valid content.
+pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>, AuthError> {
+    match (Files { folder }).read()?.remove(provider) {
+        Some(Stored::ApiKey { api_key }) => Ok(Some(api_key)),
+        Some(Stored::Login(_)) | None => Ok(None),
+    }
+}
+
+/// The kind of each entry of `auth.json` in the data folder `folder`, by provider id.
+///
+/// # Errors
+///
+/// Returns an [`AuthError`] when the file does not read or holds no valid content.
+pub(crate) async fn stored_kinds(folder: PathBuf) -> Result<HashMap<String, StoredKind>, AuthError> {
+    let entries = blocking(move || Files { folder }.read()).await?;
+    let kind = |entry| match entry {
+        Stored::Login(_) => StoredKind::Login,
+        Stored::ApiKey { .. } => StoredKind::ApiKey,
+    };
+    Ok(entries
+        .into_iter()
+        .map(|(provider, entry)| (provider, kind(entry)))
+        .collect())
+}
+
+/// Set the entry of `provider` in `auth.json` in the data folder `folder` to `entry`, or remove it, under the lock.
+async fn write_entry(provider: &str, entry: Option<Stored>, folder: PathBuf) -> Result<(), AuthError> {
     let files = Files { folder };
     let provider = provider.to_owned();
     blocking(move || {
         let Some(locked) = files.lock(LOCK_LIMIT)? else {
             return Err(AuthError::Locked(files.path(LOCK)));
         };
-        locked.set(&provider, None)
+        locked.set(&provider, entry)
     })
     .await
-}
-
-/// The provider ids of the entries of `auth.json` in the data folder `folder`.
-///
-/// # Errors
-///
-/// Returns an [`AuthError`] when the file does not read or holds no valid content.
-pub(crate) async fn logged_in(folder: PathBuf) -> Result<HashSet<String>, AuthError> {
-    blocking(move || Ok(Files { folder }.read()?.into_keys().collect())).await
 }
 
 /// Run `f` on a blocking thread of tokio, because the file calls block.
@@ -499,7 +553,7 @@ impl Login {
     /// Set the login of the provider to `login`, or remove it. The lock ends after the write.
     async fn save(&self, locked: LockedFiles, login: Option<StoredLogin>) -> Result<(), AuthError> {
         let provider = self.provider.clone();
-        blocking(move || locked.set(&provider, login)).await
+        blocking(move || locked.set(&provider, login.map(Stored::Login))).await
     }
 
     fn ended(&self) -> AuthError {
@@ -608,15 +662,7 @@ pub(crate) async fn poll_login(
 pub(crate) async fn save_login(provider: &str, mut grant: Grant, folder: PathBuf) -> Result<(), AuthError> {
     let refresh_token = grant.refresh_token.take().ok_or(AuthError::NoRefreshToken)?;
     let login = StoredLogin::from_grant(grant, refresh_token, None);
-    let files = Files { folder };
-    let provider = provider.to_owned();
-    blocking(move || {
-        let Some(locked) = files.lock(LOCK_LIMIT)? else {
-            return Err(AuthError::Locked(files.path(LOCK)));
-        };
-        locked.set(&provider, Some(login))
-    })
-    .await
+    write_entry(provider, Some(Stored::Login(login)), folder).await
 }
 
 #[cfg(test)]

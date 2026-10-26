@@ -44,7 +44,7 @@ pub struct ProviderInfo {
 pub enum ProviderState {
     /// The provider needs no key, or its key, its login, or a pushed token is there.
     Ready,
-    /// The environment variable of the API key is unset, not UTF-8, or empty.
+    /// The environment variable of the API key is unset, not UTF-8, or empty, and `auth.json` holds no key.
     NeedsApiKey {
         /// The name of the environment variable.
         variable: String,

@@ -1,4 +1,7 @@
-//! The logins of `auth/login`: a device login that the server drives for a client.
+//! The credentials that the server stores for a client: the device logins of `auth/login`, and the API keys of
+//! `auth/set_api_key`.
+
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +36,27 @@ pub struct LoginResult {
 pub struct LogoutParams {
     /// The id of a provider, as `catalog/list` gives it.
     pub provider: String,
+}
+
+/// The params of `auth/set_api_key`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SetApiKeyParams {
+    /// The id of a provider with an API key variable, as `catalog/list` gives it.
+    pub provider: String,
+    /// The API key. It is not empty and has no control character.
+    pub api_key: String,
+}
+
+/// It redacts the API key.
+impl fmt::Debug for SetApiKeyParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SetApiKeyParams")
+            .field("provider", &self.provider)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
 }
 
 /// The params of `auth/cancel_login`.

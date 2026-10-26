@@ -40,7 +40,7 @@ use yuke_store::SqliteStore;
 
 use self::live::LiveSession;
 use self::models::PluginModels;
-use crate::auth::{LOCK_LIMIT, LoginSource, Pushed};
+use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
 use crate::plugins;
@@ -554,17 +554,15 @@ impl App {
         Ok(())
     }
 
-    /// Remove what yuke stored for `provider`: its login in `auth.json`, and the token of `credential/update`. A login
-    /// in progress of the provider ends first, and the removal comes after its task.
+    /// Remove what yuke stored for `provider`: its login or its API key in `auth.json`, and the token of
+    /// `credential/update`. A login in progress of the provider ends first, and the removal comes after its task.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Invalid`] for an unknown provider, and [`AppError::Internal`] when yuke cannot update
     /// `auth.json`.
     pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
-        if !self.shared.providers().iter().any(|known| known.id == provider) {
-            return Err(AppError::Invalid(format!("yuke has no provider {provider}")));
-        }
+        self.shared.providers().get(provider).map_err(AppError::Invalid)?;
         let earlier = lock(&self.shared.pending_logins).remove(provider);
         if let Some(earlier) = earlier {
             earlier.stop.cancel();
@@ -582,13 +580,41 @@ impl App {
             .map_err(|error| AppError::Internal(chain_text(&error)))
     }
 
+    /// Store `api_key` in `auth.json` as the API key of `provider`. The variable of the provider wins when it is set and
+    /// not empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for an unknown provider, a provider without an API key variable, or a bad key, and
+    /// [`AppError::Internal`] when yuke cannot update `auth.json`.
+    pub(crate) async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
+        match &self.shared.providers().get(provider).map_err(AppError::Invalid)?.auth {
+            Auth::ApiKey(Some(_)) => {}
+            Auth::ApiKey(None) => return Err(AppError::Invalid(format!("{provider} takes no API key"))),
+            Auth::OAuth(_) => {
+                return Err(AppError::Invalid(format!(
+                    "{provider} takes a login, not an API key: send auth/login"
+                )));
+            }
+        }
+        // A model request sends the key in a header, and a header holds no control character.
+        if api_key.is_empty() || api_key.chars().any(char::is_control) {
+            return Err(AppError::Invalid(
+                "apiKey: send a value that is not empty and has no control character".to_owned(),
+            ));
+        }
+        crate::auth::set_api_key(provider, api_key, self.shared.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))
+    }
+
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
     pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
-        let logged_in = crate::auth::logged_in(self.shared.machine.paths.data.clone())
+        let stored = crate::auth::stored_kinds(self.shared.machine.paths.data.clone())
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
         let providers = self.shared.providers();
@@ -596,17 +622,21 @@ impl App {
         let providers = providers
             .iter()
             .filter_map(|provider| {
+                let kind = stored.get(provider.id.as_ref()).copied();
                 let state = match &provider.auth {
                     Auth::ApiKey(None) => ProviderState::Ready,
-                    Auth::ApiKey(Some(name)) => match api_key(&self.shared, name) {
-                        Some(_) => ProviderState::Ready,
-                        None => ProviderState::NeedsApiKey {
-                            variable: name.to_string(),
-                        },
-                    },
+                    Auth::ApiKey(Some(name)) => {
+                        if kind == Some(StoredKind::ApiKey) || variable_key(&self.shared, name).is_some() {
+                            ProviderState::Ready
+                        } else {
+                            ProviderState::NeedsApiKey {
+                                variable: name.to_string(),
+                            }
+                        }
+                    }
                     Auth::OAuth(_) => {
                         let pushed = logins.get(provider.id.as_ref()).is_some_and(LoginSource::has_pushed);
-                        if pushed || logged_in.contains(provider.id.as_ref()) {
+                        if pushed || kind == Some(StoredKind::Login) {
                             ProviderState::Ready
                         } else {
                             ProviderState::NeedsLogin
@@ -987,7 +1017,7 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let provider = entry.provider;
     let source: Arc<dyn CredentialSource> = match &provider.auth {
         Auth::ApiKey(Some(name)) => {
-            let key = api_key(shared, name)
+            let key = api_key(shared, &provider.id, name)?
                 .ok_or_else(|| AppError::Invalid(format!("no API key: set {name} for {}", provider.name)))?;
             Arc::new(Credential::ApiKey(key.into()))
         }
@@ -1028,8 +1058,21 @@ async fn save_settings(
     })
 }
 
+/// The API key of the provider `id` with the variable `name`: the variable when it holds a key, else the key in
+/// `auth.json`.
+///
+/// # Errors
+///
+/// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
+fn api_key(shared: &Shared, id: &str, name: &str) -> Result<Option<String>, AppError> {
+    if let Some(key) = variable_key(shared, name) {
+        return Ok(Some(key));
+    }
+    crate::auth::api_key(id, shared.machine.paths.data.clone()).map_err(|error| AppError::Internal(chain_text(&error)))
+}
+
 /// The API key in the environment variable `name`, when it is set, UTF-8, and not empty.
-fn api_key(shared: &Shared, name: &str) -> Option<String> {
+fn variable_key(shared: &Shared, name: &str) -> Option<String> {
     (shared.machine.variable)(name)
         .and_then(|key| key.into_string().ok())
         .filter(|key| !key.is_empty())

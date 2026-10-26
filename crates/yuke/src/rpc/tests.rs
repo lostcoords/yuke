@@ -2516,8 +2516,13 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
         "the_catalog_gives_the_ready_providers_or_each_provider_with_its_state",
     );
     std::fs::create_dir_all(&place.paths.data).unwrap();
-    let login = json!({ "openai-codex": { "access_token": "a", "refresh_token": "r", "expires_at": 0 } });
-    std::fs::write(place.paths.data.join("auth.json"), login.to_string()).unwrap();
+    // An entry of the wrong kind gives its provider no credential.
+    let stored = json!({
+        "openai-codex": { "access_token": "a", "refresh_token": "r", "expires_at": 0 },
+        "anthropic": { "access_token": "b", "refresh_token": "s", "expires_at": 0 },
+        "xai-grok": { "api_key": "k" },
+    });
+    std::fs::write(place.paths.data.join("auth.json"), stored.to_string()).unwrap();
     std::fs::create_dir_all(&place.paths.config).unwrap();
     let providers = r#"{ "providers": [{
         "id": "local", "base_url": "http://127.0.0.1:8080/v1",
@@ -2752,4 +2757,132 @@ async fn a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_log
     assert_eq!(states["openai-codex"], json!({ "kind": "needs_login" }));
     let saved: Value = serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap();
     assert_eq!(saved, json!({}));
+}
+
+/// The content of `auth.json` in `place`.
+fn saved_auth(place: &Place) -> Value {
+    serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap()
+}
+
+/// A new session of `provider/model`.
+async fn new_session(client: &mut Client, place: &Place, provider: &str, model: &str) -> Value {
+    let mut settings = settings(place);
+    settings["model"] = json!({ "provider": provider, "model": model });
+    client.call("session/new", settings).await.unwrap()["sessionId"].clone()
+}
+
+/// Run one turn of `session`, and wait for its end.
+async fn run_turn(client: &mut Client, session: &Value) {
+    client.request("session/input", input_params(session, "hi")).await;
+    client.until(is_idle).await;
+}
+
+#[tokio::test]
+async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_wins_over_it() {
+    let place = Place::new(
+        "rpc",
+        "a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_wins_over_it",
+    );
+    std::fs::create_dir_all(&place.paths.data).unwrap();
+    let login = json!({ "xai-grok": { "access_token": "a", "refresh_token": "r", "expires_at": 0 } });
+    std::fs::write(place.paths.data.join("auth.json"), login.to_string()).unwrap();
+    let transport = ScriptedTransport::new([text_reply("one"), text_reply("two"), text_reply("three")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let key = |provider: &str, key: &str| json!({ "provider": provider, "apiKey": key });
+
+    let stored = client.call("auth/set_api_key", key("anthropic", "first-key")).await;
+    client
+        .call("auth/set_api_key", key("minimax", "unused-key"))
+        .await
+        .unwrap();
+    let saved = saved_auth(&place);
+    let ready = client.call("catalog/list", json!({})).await.unwrap();
+    let anthropic = new_session(&mut client, &place, "anthropic", "claude-sonnet-4-5").await;
+    run_turn(&mut client, &anthropic).await;
+    client
+        .call("auth/set_api_key", key("anthropic", "second-key"))
+        .await
+        .unwrap();
+    run_turn(&mut client, &anthropic).await;
+    let minimax = new_session(&mut client, &place, "minimax", "MiniMax-M3").await;
+    run_turn(&mut client, &minimax).await;
+    client
+        .call("auth/logout", json!({ "provider": "anthropic" }))
+        .await
+        .unwrap();
+    let after = client.call("catalog/list", json!({ "all": true })).await.unwrap();
+    let mut settings = settings(&place);
+    settings["model"] = json!({ "provider": "anthropic", "model": "claude-sonnet-4-5" });
+    let refused = client.call("session/new", settings).await;
+    client.end().await;
+
+    assert_eq!(stored, Ok(json!({})));
+    assert_eq!(saved["anthropic"], json!({ "api_key": "first-key" }));
+    assert_eq!(saved["xai-grok"], login["xai-grok"]);
+    let states = provider_states(&ready);
+    assert_eq!(states["anthropic"], json!({ "kind": "ready" }));
+    assert_eq!(states["xai-grok"], json!({ "kind": "ready" }));
+    assert_eq!(
+        transport.header("x-api-key"),
+        [Some("first-key".to_owned()), Some("second-key".to_owned()), None]
+    );
+    assert_eq!(
+        transport.header("Authorization"),
+        [None, None, Some("Bearer test-key".to_owned())]
+    );
+    assert_eq!(
+        provider_states(&after)["anthropic"],
+        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
+    );
+    assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
+    let saved = saved_auth(&place);
+    let providers: Vec<&String> = saved.as_object().unwrap().keys().collect();
+    assert_eq!(providers, ["minimax", "xai-grok"]);
+}
+
+#[tokio::test]
+async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refused() {
+    let place = Place::new(
+        "rpc",
+        "an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refused",
+    );
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    let providers = r#"{ "providers": [{
+        "id": "local", "base_url": "http://127.0.0.1:8080/v1",
+        "endpoints": [{ "protocol": "anthropic_messages" }],
+        "models": [{ "id": "small", "limits": { "max_output_tokens": 4096 } }]
+    }] }"#;
+    std::fs::write(place.paths.config.join("providers.json"), providers).unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let key = |provider: &str, key: &str| json!({ "provider": provider, "apiKey": key });
+
+    let mut refusals = Vec::new();
+    for params in [
+        key("nobody", "k"),
+        key("xai-grok", "k"),
+        key("local", "k"),
+        key("anthropic", ""),
+        key("anthropic", "k\n"),
+    ] {
+        refusals.push(client.call("auth/set_api_key", params).await.unwrap_err());
+    }
+    client.end().await;
+
+    let texts: Vec<(&Value, &str)> = refusals
+        .iter()
+        .map(|error| (&error["code"], error["message"].as_str().unwrap()))
+        .collect();
+    let invalid = json!(ResponseError::INVALID_PARAMS);
+    let bad_key = "apiKey: send a value that is not empty and has no control character";
+    assert_eq!(
+        texts,
+        [
+            (&invalid, "yuke has no provider nobody"),
+            (&invalid, "xai-grok takes a login, not an API key: send auth/login"),
+            (&invalid, "local takes no API key"),
+            (&invalid, bad_key),
+            (&invalid, bad_key),
+        ]
+    );
+    assert!(!place.paths.data.join("auth.json").exists());
 }

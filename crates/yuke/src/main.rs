@@ -234,15 +234,12 @@ async fn login(id: &str) -> Result<ExitCode, String> {
     }
 }
 
-/// Remove the stored login of the provider `id` from `auth.json`. A running server keeps the token of
+/// Remove the stored login or API key of the provider `id` from `auth.json`. A running server keeps the token of
 /// `credential/update` and finishes its logins.
 async fn logout(id: &str) -> Result<ExitCode, String> {
     let machine = machine()?;
     let providers = Providers::load(&machine.paths.config)?;
-    let provider = providers
-        .iter()
-        .find(|provider| provider.id == id)
-        .ok_or_else(|| format!("yuke has no provider {id}"))?;
+    let provider = providers.get(id)?;
     auth::logout(id, machine.paths.data.clone())
         .await
         .map_err(|error| chain_text(&error))?;

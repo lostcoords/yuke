@@ -67,6 +67,18 @@ impl Providers {
         catalog::lookup_in(&self.0, selector)
     }
 
+    /// The provider `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when yuke has no provider `id`.
+    pub(crate) fn get(&self, id: &str) -> Result<&Provider, String> {
+        self.0
+            .iter()
+            .find(|provider| provider.id == id)
+            .ok_or_else(|| format!("yuke has no provider {id}"))
+    }
+
     /// The provider `id` and its login flow.
     ///
     /// # Errors
