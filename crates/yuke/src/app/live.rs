@@ -7,12 +7,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
-use tokio::sync::{Notify, oneshot};
+use tokio::sync::{Notify, oneshot, watch};
 use tokio::task::JoinHandle;
 use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
-use yuke_js::{Handle, ScriptSession, ScriptTool, SessionHost};
+use yuke_js::{Handle, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
 use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
@@ -67,6 +67,8 @@ impl LiveSession {
             shared,
             service,
             wake: Notify::new(),
+            accepted: AtomicU64::new(0),
+            handled: watch::Sender::new(0),
             closed: CancellationToken::new(),
         });
         let script = runtime
@@ -99,6 +101,27 @@ impl LiveSession {
         host.output
             .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
         Ok(())
+    }
+
+    /// Wait until the session runs no turn and has handled each input that it accepted before the call, or until its
+    /// close. A failed turn counts as handled, and its input waits for the next wake.
+    pub(super) async fn idle(&self) {
+        let host = &self.parts.host;
+        let accepted = host.accepted.load(Ordering::SeqCst);
+        let mut handled = host.handled.subscribe();
+        loop {
+            if *handled.borrow_and_update() >= accepted && self.state() == SessionState::Idle {
+                return;
+            }
+            tokio::select! {
+                changed = handled.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+                () = host.closed.cancelled() => return,
+            }
+        }
     }
 
     /// Wake the task, so it runs the waiting input, or reports that the session has no work.
@@ -168,7 +191,7 @@ impl LiveSession {
 
     /// Watch the session: `sink` receives its snapshot with its last `tail` saved events, then each later update that
     /// the snapshot does not hold, until the drop of the result.
-    pub(super) async fn view(&self, tail: usize, sink: Sink) -> Result<View, AppError> {
+    pub(super) async fn view(&self, tail: usize, sink: ViewSink) -> Result<View, AppError> {
         let host = &self.parts.host;
         // The drop of the view removes its listener, also after a failed read.
         let view = host.output.watch(sink);
@@ -230,8 +253,8 @@ impl LiveSession {
         self.parts.host.closed.cancel();
     }
 
-    /// Stop the running turn, wait for the task to end, and stop the jobs. Waiting input stays saved and starts no
-    /// turn.
+    /// Stop the running turn, wait for the task to end, end the views, and stop the jobs. Waiting input stays saved and
+    /// starts no turn.
     pub(super) async fn close(&self) {
         self.stop();
         let task = lock(&self.task).take();
@@ -240,6 +263,8 @@ impl LiveSession {
         {
             self.parts.host.shared.warn(&format!("a session task failed: {error}"));
         }
+        // After the last update of the turn, and before the plugin cleanup, which can wait for the end of a handle.
+        self.parts.host.output.end_views();
         // The task ends first, so no turn takes the tools of the closed plugins.
         let script = Arc::clone(&lock(&self.parts.script));
         close_plugins(&self.parts.host.shared, &script).await;
@@ -264,9 +289,10 @@ pub(super) async fn close_plugins(shared: &Shared, script: &ScriptSession) {
     }
 }
 
-// A session that the app drops without a close still ends its task and its turn.
+// A session that the app drops without a close still ends its views, its task, and its turn.
 impl Drop for LiveSession {
     fn drop(&mut self) {
+        self.parts.host.output.end_views();
         self.parts.host.closed.cancel();
     }
 }
@@ -342,22 +368,10 @@ impl Sent {
     }
 }
 
-/// What a view of a session receives: first its snapshot, then each update after it.
-#[derive(Debug, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge reads it"))]
-pub(crate) enum ViewEvent {
-    Snapshot(SessionSnapshot),
-    Update(SessionUpdate),
-}
-
-/// Takes the events of one view. The output calls it under the lock of the session, so a call must not block and must
-/// not call back into the session, also not by the drop of a view.
-pub(crate) type Sink = Arc<dyn Fn(ViewEvent) + Send + Sync>;
-
 /// A private listener of a session.
 struct Listener {
     id: u64,
-    sink: Sink,
+    sink: ViewSink,
     /// The updates that wait for the snapshot of the view, or `None` after the snapshot.
     waiting: Option<Vec<SessionUpdate>>,
 }
@@ -425,7 +439,7 @@ impl Output {
     }
 
     /// Add a listener with `sink`. It keeps the updates until [`Output::show`] sends its snapshot.
-    fn watch(self: &Arc<Self>, sink: Sink) -> View {
+    fn watch(self: &Arc<Self>, sink: ViewSink) -> View {
         let mut sent = lock(&self.sent);
         sent.last_view += 1;
         let id = sent.last_view;
@@ -459,6 +473,13 @@ impl Output {
         sink(ViewEvent::Snapshot(SessionSnapshot { settings, updates }));
         for update in kept {
             sink(ViewEvent::Update(update));
+        }
+    }
+
+    /// Send each view its end, and remove it. A later open of the session starts new views.
+    fn end_views(&self) {
+        for view in lock(&self.sent).views.drain(..) {
+            (view.sink)(ViewEvent::Closed);
         }
     }
 
@@ -577,7 +598,9 @@ impl Parts {
         loop {
             tokio::select! {
                 () = self.host.wake.notified() => {
+                    let accepted = self.host.accepted.load(Ordering::SeqCst);
                     self.run_waiting_turns().await;
+                    self.host.handled.send_replace(accepted);
                     // A failure leaves its input saved for the next wake. A session with no holder gets no wake, so
                     // the countdown starts after a failure too.
                     if let Some(service) = self.host.service.upgrade() {
@@ -850,6 +873,10 @@ struct Host {
     output: Arc<Output>,
     /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
     wake: Notify,
+    /// The inputs that the session accepted.
+    accepted: AtomicU64,
+    /// The accepted inputs at the start of the last run of the turns that ended.
+    handled: watch::Sender<u64>,
     /// The close of the session. It ends each open question.
     closed: CancellationToken,
 }
@@ -864,6 +891,7 @@ impl Host {
             .await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
+        self.accepted.fetch_add(1, Ordering::SeqCst);
         self.wake.notify_one();
         Ok(input_id)
     }
@@ -1035,7 +1063,7 @@ mod tests {
     }
 
     /// A sink that keeps each event of its view.
-    fn collector() -> (Sink, Arc<Mutex<Vec<ViewEvent>>>) {
+    fn collector() -> (ViewSink, Arc<Mutex<Vec<ViewEvent>>>) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let kept = Arc::clone(&events);
         (Arc::new(move |event| lock(&kept).push(event)), events)

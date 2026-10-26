@@ -11,7 +11,7 @@ use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
 use yuke_engine::{CancellationToken, Model, chain_text};
 use yuke_protocol::{ModelReference, SessionId};
 
-use super::Operation;
+use super::{Cancelled, Operation};
 use crate::error::{ErrorClass, throw};
 use crate::models::{CompleteAnswer, CompleteRequest, Models, SideRequest, merge_settings};
 use crate::tools::{Json, MediaFile, read_media};
@@ -36,12 +36,6 @@ struct Completion {
     text: String,
     finish_reason: Json<FinishReason>,
     usage: Json<Usage>,
-}
-
-/// The record that the promise rejects with after a call of `cancel`.
-#[derive(IntoJs)]
-struct Cancelled {
-    cancelled: bool,
 }
 
 /// Add `aiComplete` to `object`, the export object of the native module.

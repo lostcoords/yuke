@@ -5,6 +5,7 @@
 mod catalog;
 mod live;
 mod models;
+mod plugin_sessions;
 mod sessions;
 mod trust;
 
@@ -37,6 +38,7 @@ use yuke_protocol::{
 use yuke_store::SqliteStore;
 
 use self::models::PluginModels;
+use self::plugin_sessions::PluginSessions;
 pub(crate) use self::sessions::{Attachment, SessionService};
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
@@ -166,6 +168,47 @@ impl Shared {
         self.profile.read().unwrap_or_else(PoisonError::into_inner).session_idle
     }
 
+    /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
+    async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
+        let stored = crate::auth::stored_kinds(self.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+        let providers = self.providers();
+        let logins = lock(&self.logins);
+        let providers = providers
+            .iter()
+            .filter_map(|provider| {
+                let kind = stored.get(provider.id.as_ref()).copied();
+                let state = match &provider.auth {
+                    Auth::ApiKey(None) => ProviderState::Ready,
+                    Auth::ApiKey(Some(name)) => {
+                        if kind == Some(StoredKind::ApiKey) || variable_key(self, name).is_some() {
+                            ProviderState::Ready
+                        } else {
+                            ProviderState::NeedsApiKey {
+                                variable: name.to_string(),
+                            }
+                        }
+                    }
+                    Auth::OAuth(_) => {
+                        let pushed = logins.get(provider.id.as_ref()).is_some_and(LoginSource::has_pushed);
+                        if pushed || kind == Some(StoredKind::Login) {
+                            ProviderState::Ready
+                        } else {
+                            ProviderState::NeedsLogin
+                        }
+                    }
+                };
+                (all || state == ProviderState::Ready).then(|| catalog::provider_info(provider, state))
+            })
+            .collect();
+        Ok(ListCatalogResult { providers })
+    }
+
     /// The plugin folders now.
     fn plugin_folders(&self) -> Arc<[PathBuf]> {
         Arc::clone(
@@ -253,7 +296,8 @@ impl App {
             pending_logins: Mutex::default(),
             last_login: AtomicU64::new(0),
         });
-        let (runtime, reporter) = match start_runtime(&shared).await {
+        let sessions = SessionService::new(Arc::clone(&shared));
+        let (runtime, reporter) = match start_runtime(&shared, &sessions).await {
             Ok(started) => started,
             Err(error) => {
                 if let Err(shutdown) = shared.processes.shutdown().await {
@@ -262,12 +306,13 @@ impl App {
                 return Err(chain_text(&error));
             }
         };
+        sessions.set_runtime(runtime.handle());
         let app = App {
-            sessions: SessionService::new(Arc::clone(&shared), runtime.handle()),
             shared,
             runtime,
             reporter,
             processes_folder,
+            sessions,
         };
         Ok((app, plugins))
     }
@@ -328,7 +373,7 @@ impl App {
             Profile::new(providers, &plugins, &config),
         );
         // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
-        let (runtime, reporter) = match start_runtime(&self.shared).await {
+        let (runtime, reporter) = match start_runtime(&self.shared, &self.sessions).await {
             Ok(started) => started,
             Err(error) => {
                 *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
@@ -540,39 +585,7 @@ impl App {
     ///
     /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
     pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
-        let stored = crate::auth::stored_kinds(self.shared.machine.paths.data.clone())
-            .await
-            .map_err(|error| AppError::Internal(chain_text(&error)))?;
-        let providers = self.shared.providers();
-        let logins = lock(&self.shared.logins);
-        let providers = providers
-            .iter()
-            .filter_map(|provider| {
-                let kind = stored.get(provider.id.as_ref()).copied();
-                let state = match &provider.auth {
-                    Auth::ApiKey(None) => ProviderState::Ready,
-                    Auth::ApiKey(Some(name)) => {
-                        if kind == Some(StoredKind::ApiKey) || variable_key(&self.shared, name).is_some() {
-                            ProviderState::Ready
-                        } else {
-                            ProviderState::NeedsApiKey {
-                                variable: name.to_string(),
-                            }
-                        }
-                    }
-                    Auth::OAuth(_) => {
-                        let pushed = logins.get(provider.id.as_ref()).is_some_and(LoginSource::has_pushed);
-                        if pushed || kind == Some(StoredKind::Login) {
-                            ProviderState::Ready
-                        } else {
-                            ProviderState::NeedsLogin
-                        }
-                    }
-                };
-                (all || state == ProviderState::Ready).then(|| catalog::provider_info(provider, state))
-            })
-            .collect();
-        Ok(ListCatalogResult { providers })
+        self.shared.catalog(all).await
     }
 
     /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the
@@ -689,11 +702,18 @@ impl Error for AppError {
 
 /// Start a JavaScript runtime for `shared`, import the tools of yuke into it, and start the task that reports its faults
 /// and notices.
-async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
+async fn start_runtime(
+    shared: &Arc<Shared>,
+    sessions: &Arc<SessionService>,
+) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
     let (runtime, reports) = Runtime::start(Options {
         cache: shared.machine.paths.cache.join("js"),
         processes: Arc::clone(&shared.processes),
         models: Arc::new(PluginModels(Arc::clone(shared))),
+        sessions: Arc::new(PluginSessions {
+            service: Arc::downgrade(sessions),
+            shared: Arc::clone(shared),
+        }),
         http: Arc::clone(&shared.machine.fetch),
         display: shared.machine.display.clone(),
     })

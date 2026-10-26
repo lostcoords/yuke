@@ -22,6 +22,7 @@ use crate::models::{Models, OnConsumer};
 use crate::native;
 use crate::native::term::{Frames, drive};
 use crate::processes::Processes;
+use crate::sessions::Sessions;
 use crate::strip::Cache;
 use crate::timers::{self, Timers};
 use crate::tools::Registry;
@@ -49,6 +50,9 @@ pub struct Options {
 
     /// The models that the plugins call.
     pub models: Arc<dyn Models>,
+
+    /// The sessions and the catalog that the plugins use.
+    pub sessions: Arc<dyn Sessions>,
 
     /// The client of `fetch`. The consumer chooses its idle timeout. With none, only the signal stops a slow fetch.
     pub http: Arc<yuke_http::Client>,
@@ -144,6 +148,8 @@ impl Runtime {
             ..options
         };
         let models = Arc::clone(&options.models);
+        // The sessions of the consumer run on its runtime.
+        let consumer = tokio::runtime::Handle::current();
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
@@ -155,7 +161,18 @@ impl Runtime {
         let thread = std::thread::Builder::new()
             .name("yuke-js".into())
             .stack_size(STACK + THREAD_HEADROOM)
-            .spawn(move || serve(options, interrupt, call_receiver, stopped, shown, faults, ready))
+            .spawn(move || {
+                serve(
+                    options,
+                    consumer,
+                    interrupt,
+                    call_receiver,
+                    stopped,
+                    shown,
+                    faults,
+                    ready,
+                );
+            })
             .map_err(Error::Thread)?;
 
         let runtime = Self {
@@ -280,8 +297,10 @@ impl Caller {
 }
 
 /// The body of the JavaScript thread.
+#[expect(clippy::too_many_arguments, reason = "the thread takes each part of its start")]
 fn serve(
     options: Options,
+    consumer: tokio::runtime::Handle,
     stopping: Arc<AtomicBool>,
     calls: mpsc::UnboundedReceiver<Call>,
     stopped: oneshot::Receiver<()>,
@@ -299,11 +318,15 @@ fn serve(
             return;
         }
     };
-    tokio_runtime.block_on(serve_calls(options, stopping, calls, stopped, shown, faults, ready));
+    tokio_runtime.block_on(serve_calls(
+        options, consumer, stopping, calls, stopped, shown, faults, ready,
+    ));
 }
 
+#[expect(clippy::too_many_arguments, reason = "the thread takes each part of its start")]
 async fn serve_calls(
     options: Options,
+    consumer: tokio::runtime::Handle,
     stopping: Arc<AtomicBool>,
     mut calls: mpsc::UnboundedReceiver<Call>,
     mut stopped: oneshot::Receiver<()>,
@@ -311,7 +334,7 @@ async fn serve_calls(
     faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let engine = match Engine::new(options, stopping, shown, faults.clone()).await {
+    let engine = match Engine::new(options, &consumer, stopping, shown, faults.clone()).await {
         Ok(engine) => engine,
         Err(error) => {
             if ready.send(Err(error)).is_err() {
@@ -363,6 +386,7 @@ struct Engine {
 impl Engine {
     async fn new(
         options: Options,
+        consumer: &tokio::runtime::Handle,
         stopping: Arc<AtomicBool>,
         shown: oneshot::Receiver<Option<String>>,
         faults: mpsc::UnboundedSender<Report>,
@@ -371,7 +395,7 @@ impl Engine {
         let runtime = AsyncRuntime::new().map_err(engine_error)?;
         runtime.set_max_stack_size(STACK).await;
         runtime
-            .set_loader(NameResolver, ModuleLoader::new(Cache::new(options.cache)))
+            .set_loader(NameResolver, ModuleLoader::new(Cache::new(options.cache.clone())))
             .await;
         // The engine asks once for each 10,000 interrupt checks. Only the end of the runtime stops the JavaScript.
         runtime
@@ -396,15 +420,7 @@ impl Engine {
                 crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, faults.clone())?;
                 crate::error::install_report_error(&ctx, faults.clone())?;
-                native::install(
-                    &ctx,
-                    &registry,
-                    &options.processes,
-                    &options.models,
-                    &options.http,
-                    &frames,
-                    faults.clone(),
-                )?;
+                native::install(&ctx, &registry, &options, &frames, consumer, faults.clone())?;
                 ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, faults));
                 Ok(())
             })

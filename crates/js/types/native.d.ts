@@ -2,6 +2,24 @@
 
 declare module "yuke:internal/native" {
   import type { NoticeLevel } from "yuke:plugins";
+  import type {
+    Block,
+    EventNumber,
+    InputId,
+    InteractionId,
+    InteractionResponse,
+    Job,
+    ListCatalogResult,
+    ListSessionsParams,
+    ListSessionsResult,
+    McpServer,
+    SessionId,
+    SessionRow,
+    SessionSettings,
+    SessionSnapshot,
+    SessionUpdate,
+    StoredEvent,
+  } from "yuke:protocol";
   import type { ToolMedia } from "yuke:tools";
 
   /** What the start function of a tool gets for one call. */
@@ -363,4 +381,42 @@ declare module "yuke:internal/native" {
   export function termFit(text: string, cells: number): number;
   /** The rows of `text` at `width` cells, as `[start, end, soft]` UTF-16 triples: all, or the first `head` rows. */
   export function termWrap(text: string, width: number, head: number): Int32Array;
+
+  /** One event of a view: its snapshot first, then each later update, then the close of its session. */
+  export type ViewEvent =
+    | { readonly snapshot: SessionSnapshot }
+    | { readonly update: SessionUpdate }
+    | { readonly closed: true };
+  /** Deliver the events of the views of this runtime to `deliver`, in batches of `[key, event]` pairs. Call it once. */
+  export function sessionsListen(deliver: (batch: readonly (readonly [number, ViewEvent])[]) => void): void;
+  /** Open the session `id` when it is not open, hold it, and watch it as the view `key` with its last `tail` events. */
+  export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<null>;
+  /** End the hold and the view `key`. */
+  export function sessionsRelease(key: number): void;
+  export function sessionsCreate(settings: SessionSettings): Promise<SessionId>;
+  export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | null]): Promise<SessionId>;
+  export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;
+  export function sessionsGet(id: SessionId): Promise<SessionRow>;
+  export function sessionsRemove(id: SessionId): Promise<null>;
+  export function sessionsEvents(
+    request: readonly [id: SessionId, before: EventNumber | null, limit: number],
+  ): Promise<StoredEvent[]>;
+  /** Send `content` as a message of the user. */
+  export function sessionInput(request: readonly [id: SessionId, content: readonly Block[]]): Promise<InputId>;
+  /** Send a notification of `plugin`: the user sees `display`, and the model reads `text`. */
+  export function sessionNotify(
+    request: readonly [id: SessionId, plugin: string, display: string, text: string],
+  ): Promise<InputId>;
+  export function sessionIdle(id: SessionId): Promise<null>;
+  export function sessionSetSettings(request: readonly [id: SessionId, settings: SessionSettings]): Promise<null>;
+  export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<null>;
+  export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
+  export function sessionClose(request: readonly [id: SessionId, stopJobs: boolean]): Promise<null>;
+  export function sessionCancel(id: SessionId): void;
+  export function sessionRespond(
+    request: readonly [id: SessionId, interactionId: InteractionId, response: InteractionResponse],
+  ): void;
+  export function sessionJobs(id: SessionId): Job[];
+  export function sessionMcpServers(id: SessionId): McpServer[];
+  export function catalogList(all: boolean): Promise<ListCatalogResult>;
 }

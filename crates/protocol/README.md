@@ -52,7 +52,9 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   stored login of the provider.
 - A session is open after `session/new`, `session/fork`, or `session/load`, until `session/close` or the shutdown
   of the server. Many sessions can be open at once. The requests that use a live session need an open session, and
-  `session/load` opens a closed one.
+  `session/load` opens a closed one. A plugin can open a session too. A session that no client and no plugin holds
+  closes by itself when it runs no turn: after 30 seconds, or after `sessionIdleMinutes` of `config.json` while a job
+  runs. That close stops its jobs.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input

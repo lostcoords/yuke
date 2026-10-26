@@ -27,6 +27,7 @@ mod plugins;
 mod processes;
 mod runtime;
 mod session;
+mod sessions;
 mod strip;
 #[cfg(test)]
 mod tests;
@@ -41,4 +42,5 @@ pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
+pub use sessions::{Sessions, SessionsError, ViewEvent, ViewSink};
 pub use tools::{ScriptTool, SessionHost};

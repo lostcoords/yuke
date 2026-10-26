@@ -7,6 +7,12 @@ import { readLines } from "yuke:internal/native";
 /** The most bytes of the output of `read` and `exec`. A cut adds one line that tells the model what the cut left out. */
 const OUTPUT_BYTES = 50 * 1024;
 
+/**
+ * The live output of one `exec` call stops after the chunk that reaches this count of characters. A runaway command
+ * prints without end, and its log keeps the full output.
+ */
+const LIVE_OUTPUT = 1024 * 1024;
+
 /** The largest line number. */
 const LAST_LINE = 4_294_967_295;
 
@@ -132,7 +138,13 @@ defineTool({
     }
 
     const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT;
-    const end = await callOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, context.output);
+    let shown = 0;
+    const show = (text: string): void => {
+      if (shown >= LIVE_OUTPUT) return;
+      shown += text.length;
+      context.output(shown < LIVE_OUTPUT ? text : `${text}\n[yuke stops the live output here. The command runs on.]\n`);
+    };
+    const end = await callOf(context).exec(command, { timeoutMs: timeout, maxBytes: OUTPUT_BYTES }, show);
     const output = end.output.length === 0 ? "[no output]" : end.output;
     const text = output.endsWith("\n") ? output : `${output}\n`;
     // Only a command that exits with 0 succeeds.

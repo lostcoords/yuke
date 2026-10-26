@@ -91,8 +91,8 @@ pub trait Models: Send + Sync {
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
 }
 
-/// The models of the consumer on its own tokio runtime. The JavaScript thread has no I/O driver, so each request runs
-/// there.
+/// The models of the consumer on the tokio runtime of the consumer. A request runs there, and the drop of its wait
+/// cancels it.
 pub(crate) struct OnConsumer {
     pub(crate) models: Arc<dyn Models>,
     pub(crate) handle: Handle,

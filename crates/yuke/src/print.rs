@@ -13,8 +13,8 @@ use yuke_ai::catalog::ReasoningLevel;
 use yuke_ai::{Block, Effort, answer_text};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::{
-    LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ServerNotification,
+    SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, lock, warn};
@@ -140,7 +140,15 @@ async fn run_turn(
 
     let input_id = app
         .sessions()
-        .input(id, vec![Block::user_text(&task.prompt)])
+        .input(
+            id,
+            Input::new(
+                InputSource::User,
+                InputKind::Message,
+                vec![Block::user_text(&task.prompt)],
+            )
+            .map_err(|error| chain_text(&error))?,
+        )
         .await
         .map_err(|error| chain_text(&error))?;
     // A wake can come from another session, for example a session of a plugin, so the run checks its own.

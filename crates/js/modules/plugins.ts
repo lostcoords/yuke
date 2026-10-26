@@ -12,27 +12,165 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
-import type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
+import type {
+  Block,
+  EventNumber,
+  FinishReason,
+  InputId,
+  InputKind,
+  InputSource,
+  InteractionId,
+  InteractionResponse,
+  Job,
+  ListCatalogResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  McpServer,
+  ModelReference,
+  NoticeLevel,
+  SessionId,
+  SessionRow,
+  SessionSettings,
+  SessionSnapshot,
+  SessionUpdate,
+  Settings,
+  StoredEvent,
+  Usage,
+} from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 import type { Tui } from "yuke:tui";
 
-export type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
-
-/** The severity of a notice. */
-export type NoticeLevel = "debug" | "info" | "warn" | "error";
+export type {
+  Block,
+  EventNumber,
+  FinishReason,
+  InputId,
+  InputKind,
+  InputSource,
+  InteractionId,
+  InteractionResponse,
+  Job,
+  ListCatalogResult,
+  ListSessionsParams,
+  ListSessionsResult,
+  McpServer,
+  ModelReference,
+  NoticeLevel,
+  SessionId,
+  SessionRow,
+  SessionSettings,
+  SessionSnapshot,
+  SessionUpdate,
+  Settings,
+  StoredEvent,
+  Usage,
+} from "yuke:protocol";
 
 /**
  * The services of the plugins, by name. A provider ships a declaration file that adds its service to this interface:
  * `declare module "yuke:plugins" { interface Services { "acme.notes.v1": Notes } }`. Each plugin that uses the service
- * includes that file. A name without a declaration fails the type check. `tui` is the service of yuke itself: the
- * terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`; it needs no `uses` entry.
+ * includes that file. A name without a declaration fails the type check. Three services belong to yuke itself and
+ * need no `uses` entry:
+ * - `tui`: the terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`.
+ * - `sessions`: the sessions, in each mode.
+ * - `catalog`: the providers and their models, in each mode.
  */
 export interface Services {
   readonly tui: Tui | undefined;
+  readonly sessions: Sessions;
+  readonly catalog: Catalog;
 }
 
-/** The value of `ctx.get(name)`: never null for a service of a plugin; `tui` can be `undefined`. */
+/**
+ * The sessions of yuke. A session that a plugin creates is an ordinary session: each client sees it, can load it, and
+ * can send it input. A failed request rejects with an `Error` that tells why.
+ */
+export interface Sessions {
+  /** Create a session with `settings`, and open it. It closes by itself when nothing holds it and it has no work. */
+  readonly create: (settings: SessionSettings) => Promise<SessionId>;
+  /** Fork session `id` through the event `through`, or through its last event, and open the fork. */
+  readonly fork: (id: SessionId, through?: EventNumber) => Promise<SessionId>;
+  /** A page of the saved sessions, newest first. `nextCursor` continues the list. */
+  readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
+  /** The row of the saved session `id`, with its activity now. */
+  readonly get: (id: SessionId) => Promise<SessionRow>;
+  /** Delete the saved session `id`. An open session cannot be removed. */
+  readonly remove: (id: SessionId) => Promise<void>;
+  /**
+   * Open session `id`, also a closed one, and hold it: it does not close by itself until the handle ends. The handle
+   * starts with a snapshot of the session. `options.update` then gets each later update, in order.
+   */
+  readonly open: (id: SessionId, options: OpenOptions) => Promise<SessionHandle>;
+  /** At most `page.limit` saved events of session `id` before the event `page.before`, or its last ones, in order. */
+  readonly events: (id: SessionId, page: EventsPage) => Promise<readonly StoredEvent[]>;
+  /**
+   * Close session `id` at once for each holder, and end each handle on it. A close with running jobs fails unless
+   * `options.stopJobs` is true. A cleanup of the session must not await the close of its own session.
+   */
+  readonly close: (id: SessionId, options?: { readonly stopJobs?: boolean }) => Promise<void>;
+}
+
+/** How `Sessions.open` watches a session. */
+export interface OpenOptions {
+  /** The number of the last saved events in the snapshot. */
+  readonly tail: number;
+  /** Ends the handle: `update` gets no more calls, and the hold ends. The session stays open for its other holders. */
+  readonly signal?: AbortSignal;
+  /** Gets each update after the snapshot, in order. A throw is a fault of the plugin, and the next update still comes. */
+  readonly update: (update: SessionUpdate) => void;
+}
+
+/** A page of the saved events of a session. */
+export interface EventsPage {
+  /** The page ends before this event. Without it, the page holds the last events. */
+  readonly before?: EventNumber;
+  /** The most events of the page. */
+  readonly limit: number;
+}
+
+/** An open session that a plugin holds. Each request after the end of the handle rejects. */
+export interface SessionHandle {
+  readonly id: SessionId;
+  /**
+   * Aborts at the end of the handle: by the signal of the open, by the stop of the plugin, or by the close of the
+   * session. Its reason tells which.
+   */
+  readonly signal: AbortSignal;
+  /** The session when the handle starts: its settings, its last saved events, and its live state. */
+  readonly snapshot: SessionSnapshot;
+  /** Send `content` as a message of the user. A turn starts when the session is idle. */
+  readonly input: (content: readonly Block[]) => Promise<InputId>;
+  /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
+  readonly notify: (display: string, text: string) => Promise<InputId>;
+  /** Cancel the running turn. A session without a turn has nothing to cancel. */
+  readonly cancel: () => void;
+  /**
+   * Wait until the session runs no turn and has handled each input that it accepted before the call, or until its close.
+   * A failed turn counts as handled, and its input waits for the next input.
+   */
+  readonly idle: () => Promise<void>;
+  /** Save `settings`. It fails while a turn runs or input waits. */
+  readonly setSettings: (settings: SessionSettings) => Promise<void>;
+  /** Remove the pending input `inputId`. */
+  readonly removeInput: (inputId: InputId) => Promise<void>;
+  /** Answer the open question `interactionId`. */
+  readonly respond: (interactionId: InteractionId, response: InteractionResponse) => void;
+  /** The running background jobs, oldest first. */
+  readonly jobs: () => readonly Job[];
+  /** Stop the job `jobId`, and wait for its end. */
+  readonly stopJob: (jobId: string) => Promise<void>;
+  /** The MCP servers of the session and their states. */
+  readonly mcpServers: () => readonly McpServer[];
+}
+
+/** The providers of the profile and their models. */
+export interface Catalog {
+  /** Every provider with `options.all`, else only the providers that are ready. */
+  readonly list: (options?: { readonly all?: boolean }) => Promise<ListCatalogResult>;
+}
+
+/** The value of `ctx.get(name)`: never null, except `tui`, which can be `undefined`. */
 export type ServiceOf<K extends keyof Services> = K extends "tui" ? Services[K] : NonNullable<Services[K]>;
 
 /** `T` with each field read-only at each depth, as the host freezes it. */

@@ -1,9 +1,12 @@
+use yuke_ai::Block;
 use yuke_ai::transport::Transport;
-use yuke_protocol::{EventNumber, ListSessionsParams, ModelReference, SessionSettings, SessionUpdate};
+use yuke_js::ViewEvent;
+use yuke_protocol::{
+    EventNumber, Input, InputKind, InputSource, ListSessionsParams, ModelReference, SessionSettings, SessionUpdate,
+};
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
 use super::*;
-use crate::app::live::ViewEvent;
 use crate::app::{App, Mode, Observer};
 use crate::testing::{Place, with_key};
 
@@ -71,6 +74,11 @@ async fn release(sessions: &SessionService, id: SessionId, attachment: Attachmen
     until("no countdown starts", || countdown(sessions, id) != number).await;
 }
 
+/// A message of the user with `text`.
+fn said(text: &str) -> Input {
+    Input::new(InputSource::User, InputKind::Message, vec![Block::user_text(text)]).unwrap()
+}
+
 fn settings(place: &Place) -> SessionSettings {
     SessionSettings {
         model: ModelReference {
@@ -108,7 +116,7 @@ async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
 
     let opening = sessions.reserve(id).unwrap();
     let second = sessions.load(id, None).await;
-    let input = sessions.input(id, vec![Block::user_text("Hi.")]).await;
+    let input = sessions.input(id, said("Hi.")).await;
     drop(opening);
     let after = sessions.load(id, None).await;
 
@@ -219,7 +227,7 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
     let id = sessions.create(settings(&place)).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
 
-    sessions.input(id, vec![Block::user_text("Hi.")]).await.unwrap();
+    sessions.input(id, said("Hi.")).await.unwrap();
     // The first turn waits for the plugins on their own thread, so the clock pauses after the turn.
     while transport.requests().is_empty() || sessions.live(id).unwrap().state() == SessionState::Running {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -228,6 +236,58 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
     tokio::time::sleep(GRACE * 4).await;
 
     assert!(sessions.live(id).is_ok());
+    drop(attachment);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_it() {
+    let place = Place::new(
+        "sessions",
+        "a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_it",
+    );
+    let transport = ScriptedTransport::new([text_reply("Hello.")]);
+    let app = started_with(&place, Box::new(transport.clone())).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&events);
+    let view = sessions
+        .view(id, 1, Arc::new(move |event| lock(&kept).push(event)))
+        .await
+        .unwrap();
+
+    sessions.close(id, false).await.unwrap();
+    let at_the_close = lock(&events).len();
+    sessions.open(id, |_, _| Ok(None)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+    sessions.input(id, said("Hi.")).await.unwrap();
+    sessions.idle(id).await.unwrap();
+    drop(view);
+
+    let events = std::mem::take(&mut *lock(&events));
+    assert_eq!(events.len(), at_the_close);
+    assert!(matches!(events.last(), Some(ViewEvent::Closed)), "{events:?}");
+    assert_eq!(transport.requests().len(), 1);
+    drop(attachment);
+    app.shutdown().await;
+}
+
+// The input leaves the session idle until its task wakes, so only the count of the accepted inputs makes idle wait.
+#[tokio::test]
+async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
+    let place = Place::new("sessions", "idle_waits_for_the_turn_of_an_input_that_came_before_it");
+    let transport = ScriptedTransport::new([text_reply("Hello.")]);
+    let app = started_with(&place, Box::new(transport.clone())).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+
+    sessions.input(id, said("Hi.")).await.unwrap();
+    sessions.idle(id).await.unwrap();
+
+    assert_eq!(transport.requests().len(), 1);
+    assert_eq!(sessions.live(id).unwrap().state(), SessionState::Idle);
     drop(attachment);
     app.shutdown().await;
 }
@@ -290,7 +350,7 @@ async fn an_input_during_the_countdown_keeps_the_session_open_until_its_turn_end
 
     // The save of the input waits for the store thread, and a paused clock would jump to the end of the countdown.
     tokio::time::resume();
-    sessions.input(id, vec![Block::user_text("Hi.")]).await.unwrap();
+    sessions.input(id, said("Hi.")).await.unwrap();
     until("no turn runs", || {
         sessions.live(id).unwrap().state() == SessionState::Running
     })
@@ -347,10 +407,7 @@ async fn a_session_with_a_running_job_waits_the_idle_minutes_then_stops_the_job(
     let sessions = app.sessions();
     let id = sessions.create(settings(&place)).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
-    sessions
-        .input(id, vec![Block::user_text("Start a job.")])
-        .await
-        .unwrap();
+    sessions.input(id, said("Start a job.")).await.unwrap();
     // The turn ends before the release, so the task reports once.
     while transport.requests().len() < 2 || sessions.live(id).unwrap().state() == SessionState::Running {
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -391,7 +448,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let id = sessions.create(settings(&place)).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     for (turn, text) in ["One?", "Two?"].into_iter().enumerate() {
-        sessions.input(id, vec![Block::user_text(text)]).await.unwrap();
+        sessions.input(id, said(text)).await.unwrap();
         while transport.requests().len() <= turn || sessions.live(id).unwrap().state() == SessionState::Running {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -404,7 +461,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
         .view(id, 1, Arc::new(move |event| lock(&kept).push(event)))
         .await
         .unwrap();
-    sessions.input(id, vec![Block::user_text("Three?")]).await.unwrap();
+    sessions.input(id, said("Three?")).await.unwrap();
     while transport.requests().len() < 3 || sessions.live(id).unwrap().state() == SessionState::Running {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

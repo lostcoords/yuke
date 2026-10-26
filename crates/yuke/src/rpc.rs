@@ -23,9 +23,10 @@ use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
 use yuke_protocol::{
-    ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, InputResult,
-    InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, Request, RequestId,
-    Response, ResponseError, ResponseOutcome, ServerNotification, SessionId, SessionResult,
+    ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, Input, InputKind,
+    InputResult, InputSource, InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification,
+    PROTOCOL_VERSION, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionId,
+    SessionResult,
 };
 
 use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, lock, warn};
@@ -398,7 +399,14 @@ impl Server {
                 result(&EmptyResult {})
             }
             ClientRequest::Input(params) => result(&InputResult {
-                input_id: app.sessions().input(params.session_id, params.content).await?,
+                input_id: app
+                    .sessions()
+                    .input(
+                        params.session_id,
+                        Input::new(InputSource::User, InputKind::Message, params.content)
+                            .map_err(|error| AppError::Invalid(chain_text(&error)))?,
+                    )
+                    .await?,
             }),
             ClientRequest::ListMcpServers(params) => result(&ListMcpServersResult {
                 servers: app.sessions().mcp_servers(params.session_id)?,

@@ -7,16 +7,15 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use yuke_agent::{EventPage, ListPosition, Session};
-use yuke_ai::Block;
 use yuke_engine::chain_text;
-use yuke_js::Handle;
+use yuke_js::{Handle, ViewSink};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListSessionsParams,
-    ListSessionsResult, NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow,
-    SessionSettings, SessionState, SessionSummary, StoredEvent,
+    EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListSessionsParams, ListSessionsResult,
+    NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow, SessionSettings,
+    SessionState, SessionSummary, StoredEvent,
 };
 
-use super::live::{LiveSession, Sink, View};
+use super::live::{LiveSession, View};
 use super::{AppError, SOURCE, Shared, canonical, lock, model_of, save_settings, system_prompt};
 use crate::providers::Providers;
 
@@ -30,8 +29,9 @@ pub(crate) struct SessionService {
     /// The service itself, for the countdown tasks and the attachments.
     this: Weak<SessionService>,
     shared: Arc<Shared>,
-    /// Opens the plugins of a session in the runtime now. A reload replaces it.
-    runtime: Mutex<Handle>,
+    /// Opens the plugins of a session in the runtime now, or `None` before the first runtime starts. A reload replaces
+    /// it.
+    runtime: Mutex<Option<Handle>>,
     registry: Mutex<Registry>,
 }
 
@@ -146,12 +146,12 @@ impl Drop for Reload<'_> {
 }
 
 impl SessionService {
-    /// The service of `shared`, which opens the plugins of each session with `runtime`.
-    pub(super) fn new(shared: Arc<Shared>, runtime: Handle) -> Arc<Self> {
+    /// The service of `shared`. A session opens after [`SessionService::set_runtime`].
+    pub(super) fn new(shared: Arc<Shared>) -> Arc<Self> {
         Arc::new_cyclic(|this| SessionService {
             this: this.clone(),
             shared,
-            runtime: Mutex::new(runtime),
+            runtime: Mutex::new(None),
             registry: Mutex::default(),
         })
     }
@@ -272,7 +272,7 @@ impl SessionService {
 
     /// Open the plugins of each later session with `runtime`.
     pub(super) fn set_runtime(&self, runtime: Handle) {
-        *lock(&self.runtime) = runtime;
+        *lock(&self.runtime) = Some(runtime);
     }
 
     /// Refuse each later open, and close each open session. The sessions stop together before the first wait. A call
@@ -469,8 +469,7 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns [`AppError::NotOpen`], and [`AppError::Store`] when the store fails.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge calls it"))]
-    pub(crate) async fn view(&self, id: SessionId, tail: usize, sink: Sink) -> Result<View, AppError> {
+    pub(crate) async fn view(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<View, AppError> {
         self.live(id)?.view(tail, sink).await
     }
 
@@ -480,7 +479,6 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns [`AppError::Store`] for an unknown session or when the store fails.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge calls it"))]
     pub(crate) async fn events_before(
         &self,
         id: SessionId,
@@ -532,17 +530,24 @@ impl SessionService {
         }
     }
 
-    /// Save `content` as an input of the user, and start a turn when the session is idle.
+    /// Save `input`, and start a turn when the session is idle.
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::NotOpen`], [`AppError::Invalid`] for content that is no input, and [`AppError::Store`] when
-    /// the store fails.
-    pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
-        let live = self.live(id)?;
-        let input = Input::new(InputSource::User, InputKind::Message, content)
-            .map_err(|error| AppError::Invalid(chain_text(&error)))?;
-        Ok(live.accept(input).await?)
+    /// Returns [`AppError::NotOpen`], and [`AppError::Store`] when the store fails.
+    pub(crate) async fn input(&self, id: SessionId, input: Input) -> Result<InputId, AppError> {
+        Ok(self.live(id)?.accept(input).await?)
+    }
+
+    /// Wait until session `id` runs no turn and has handled each input that it accepted before the call, or until its
+    /// close. A failed turn counts as handled, and its input waits for the next wake.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`].
+    pub(crate) async fn idle(&self, id: SessionId) -> Result<(), AppError> {
+        self.live(id)?.idle().await;
+        Ok(())
     }
 
     /// Remove the pending input `input_id` of session `id`.
@@ -656,7 +661,9 @@ impl SessionService {
     /// Start the task of `session`, and make its slot `Open`.
     async fn start_session(&self, transition: Transition<'_>, session: Session) -> Result<Arc<LiveSession>, AppError> {
         let id = session.id();
-        let runtime = lock(&self.runtime).clone();
+        let runtime = lock(&self.runtime)
+            .clone()
+            .ok_or_else(|| AppError::Internal("the JavaScript runtime has not started".to_owned()))?;
         let live = Arc::new(LiveSession::start(session, &runtime, Arc::clone(&self.shared), self.this.clone()).await?);
         if let Err(error) = transition.open(Arc::clone(&live)) {
             // The shutdown started during the open and closes no session that it did not see.

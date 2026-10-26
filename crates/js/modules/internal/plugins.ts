@@ -3,6 +3,7 @@ import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { addAbortStep, hostOperation, hostSignal, signalOf, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
 import { emit, notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
+import { catalog, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import type {
   AskOptions,
@@ -22,6 +23,7 @@ import type {
   Services,
   SessionContext,
   SessionHooks,
+  Sessions,
   SideRequestOptions,
   SideRequestResult,
   ToolCall,
@@ -127,6 +129,7 @@ export async function load(spec: PluginSpec): Promise<void> {
   let applying = true;
   // One surface per plugin activation: each call of `get("tui")` gives the same one, and its signal stops it.
   let tui: { readonly surface: Tui | undefined } | undefined;
+  let sessions: Sessions | undefined;
   let cleanup: Cleanup | undefined;
   try {
     let apply: unknown;
@@ -173,9 +176,15 @@ export async function load(spec: PluginSpec): Promise<void> {
           tui ??= { surface: surfaceOf(spec.name, signal) };
           return tui.surface as ServiceOf<K>;
         }
+        if (name === "sessions") {
+          sessions ??= sessionsOf(spec.name, signal);
+          return sessions as ServiceOf<K>;
+        }
+        if (name === "catalog") return catalog as ServiceOf<K>;
         if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
-        if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
-        return services.get(name) as ServiceOf<K>;
+        const service = services.get(name);
+        if (service === undefined) throw new Error(`get: no loaded plugin provides '${name}'`);
+        return service as ServiceOf<K>;
       },
       notify(level: NoticeLevel, message: string): void {
         notify(spec.name, level, String(message), undefined);

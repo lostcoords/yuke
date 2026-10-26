@@ -10,17 +10,33 @@ use ts_rs::{Config, TS};
 use crate::{
     ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult,
     ListMcpServersResult, ListSessionsResult, LoginResult, Notification, Request, Response, ServerNotification,
-    SessionResult, SessionRow,
+    SessionResult, SessionRow, SessionSnapshot,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
 const PLUGIN_TYPES: &[&str] = &[
     "Block",
+    "EventNumber",
     "FinishReason",
+    "InputId",
     "InputKind",
     "InputSource",
+    "InteractionId",
+    "InteractionResponse",
+    "Job",
+    "ListCatalogResult",
+    "ListSessionsParams",
+    "ListSessionsResult",
+    "McpServer",
     "ModelReference",
+    "NoticeLevel",
+    "SessionId",
+    "SessionRow",
+    "SessionSettings",
+    "SessionSnapshot",
+    "SessionUpdate",
     "Settings",
+    "StoredEvent",
     "Usage",
 ];
 
@@ -75,6 +91,8 @@ fn export(folder: &Path) {
     SessionRow::export_all(&config).unwrap();
     ListMcpServersResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
+    // The plugins see a session as a snapshot, then updates.
+    SessionSnapshot::export_all(&config).unwrap();
 }
 
 /// The text of each file in `folder`, by its path relative to `folder`.

@@ -15,6 +15,7 @@ mod round_after;
 mod round_before;
 mod round_retry;
 mod scene;
+mod session_api;
 mod sessions;
 mod side_request;
 mod streams;
@@ -90,12 +91,114 @@ impl Models for NoModels {
     }
 }
 
+/// The sessions of a test runtime: none. Each request fails.
+struct NoSessions;
+
+/// The failure of each request of [`NoSessions`].
+fn no_sessions<T>() -> Result<T, crate::SessionsError> {
+    Err("no sessions".into())
+}
+
+#[async_trait::async_trait]
+impl crate::Sessions for NoSessions {
+    async fn create(
+        &self,
+        _: yuke_protocol::SessionSettings,
+    ) -> Result<yuke_protocol::SessionId, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn fork(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: Option<yuke_protocol::EventNumber>,
+    ) -> Result<yuke_protocol::SessionId, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn list(
+        &self,
+        _: yuke_protocol::ListSessionsParams,
+    ) -> Result<yuke_protocol::ListSessionsResult, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn get(&self, _: yuke_protocol::SessionId) -> Result<yuke_protocol::SessionRow, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn remove(&self, _: yuke_protocol::SessionId) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    async fn open(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: usize,
+        _: crate::ViewSink,
+    ) -> Result<Box<dyn Send>, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn events_before(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: Option<yuke_protocol::EventNumber>,
+        _: usize,
+    ) -> Result<Vec<yuke_protocol::StoredEvent>, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn input(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: yuke_protocol::Input,
+    ) -> Result<yuke_protocol::InputId, crate::SessionsError> {
+        no_sessions()
+    }
+    fn cancel(&self, _: yuke_protocol::SessionId) {}
+    async fn idle(&self, _: yuke_protocol::SessionId) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    async fn set_settings(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: yuke_protocol::SessionSettings,
+    ) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    async fn remove_input(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: yuke_protocol::InputId,
+    ) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    fn respond(
+        &self,
+        _: yuke_protocol::SessionId,
+        _: yuke_protocol::InteractionId,
+        _: yuke_protocol::InteractionResponse,
+    ) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    fn jobs(&self, _: yuke_protocol::SessionId) -> Result<Vec<yuke_protocol::Job>, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn stop_job(&self, _: yuke_protocol::SessionId, _: String) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    fn mcp_servers(&self, _: yuke_protocol::SessionId) -> Result<Vec<yuke_protocol::McpServer>, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn close(&self, _: yuke_protocol::SessionId, _: bool) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    async fn catalog(&self, _: bool) -> Result<yuke_protocol::ListCatalogResult, crate::SessionsError> {
+        no_sessions()
+    }
+}
+
 /// The options of a test runtime in `folder` with `processes`.
 fn options(folder: &Path, processes: Arc<Processes>) -> Options {
     Options {
         cache: folder.join("cache"),
         processes,
         models: Arc::new(NoModels),
+        sessions: Arc::new(NoSessions),
         http: Arc::new(
             yuke_http::Client::new(yuke_http::ClientOptions {
                 idle_timeout: None,

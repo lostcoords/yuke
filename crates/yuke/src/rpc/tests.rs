@@ -3013,3 +3013,65 @@ async fn a_session_that_a_client_created_stays_open_after_its_turn() {
     assert_eq!(row["activity"], "idle");
     client.end().await;
 }
+
+#[tokio::test]
+async fn a_plugin_creates_a_session_sends_input_and_sees_its_turn() {
+    let place = Place::new("rpc", "a_plugin_creates_a_session_sends_input_and_sees_its_turn");
+    place.plugin(
+        "driver",
+        &format!(
+            "export function apply(ctx) {{
+               const sessions = ctx.get('sessions');
+               setTimeout(async () => {{
+                 try {{
+                   const id = await sessions.create({settings});
+                   const seen = [];
+                   let reported = false;
+                   const report = () => {{
+                     const saved = seen.filter((update) => update.sessionUpdate === 'commit');
+                     const text = saved.flatMap((event) => event.commit.blocks).find((block) => 'assistant_text' in block);
+                     ctx.emit('turn', {{ states: seen.filter((update) => 'state' in update).map((update) => update.state),
+                                       answer: text?.assistant_text, model: handle.snapshot.settings.model.model }});
+                   }};
+                   const handle = await sessions.open(id, {{ tail: 10, update: (update) => {{
+                     seen.push(update);
+                     if (!reported && update.state === 'idle') {{ reported = true; report(); }}
+                   }} }});
+                   await handle.input([{{ user_text: 'hi' }}]);
+                   await handle.idle();
+                   ctx.emit('idle', handle.jobs().length);
+                 }} catch (error) {{
+                   ctx.emit('failed', String(error));
+                 }}
+               }}, 0);
+             }}",
+            settings = settings(&place)
+        ),
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["driver"] }"#).unwrap();
+    let mut client = Client::start(&place, Box::new(ScriptedTransport::new([text_reply("hello")])));
+
+    let mut events = Vec::new();
+    while events.len() < 2 {
+        let event = client
+            .until(|message| message["method"] == "extension/event")
+            .await
+            .pop()
+            .unwrap();
+        assert_ne!(event["params"]["event"], "failed", "{event}");
+        events.push(event["params"].clone());
+    }
+    client.initialize().await;
+
+    let turn = events.iter().find(|event| event["event"] == "turn").unwrap();
+    assert_eq!(
+        turn["data"],
+        json!({ "states": ["running", "idle"], "answer": "hello", "model": "MiniMax-M3" })
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"] == "idle" && event["data"] == 0)
+    );
+    client.end().await;
+}

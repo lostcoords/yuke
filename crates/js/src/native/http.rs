@@ -11,7 +11,7 @@ use rquickjs::convert::List;
 use rquickjs::{Class, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray};
 use yuke_http::http::{HeaderMap, HeaderName, HeaderValue, Method};
 
-use super::Operation;
+use super::{Cancelled, Operation};
 
 /// The body of a response. When QuickJS frees the object, the body drops and closes the connection.
 #[derive(Trace, JsLifetime)]
@@ -163,7 +163,7 @@ impl Failure {
                 message: error.to_string(),
             }
             .into_js(ctx),
-            Failure::Cancelled => Stopped { cancelled: true }.into_js(ctx),
+            Failure::Cancelled => Cancelled { cancelled: true }.into_js(ctx),
         };
         match record {
             Ok(value) => ctx.throw(value),
@@ -177,12 +177,6 @@ impl Failure {
 struct HttpError {
     code: &'static str,
     message: String,
-}
-
-/// The record of a stopped request or read.
-#[derive(IntoJs)]
-struct Stopped {
-    cancelled: bool,
 }
 
 /// The stable code of `error`, for the `cause` of the `TypeError` of `fetch`.

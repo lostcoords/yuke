@@ -140,6 +140,28 @@ async fn exec_gives_its_output_as_live_texts() {
     assert_eq!(texts.concat(), "one\ntwo\n");
 }
 
+#[tokio::test]
+async fn exec_stops_its_live_output_after_the_cap_and_answers_the_end() {
+    let folder = folder("exec_stops_its_live_output_after_the_cap_and_answers_the_end");
+    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+
+    let (answer, texts) = call(&tools["exec"], r#"{"command": "seq 1 300000"}"#).await;
+
+    let live = texts.concat();
+    assert!(live.starts_with("1\n2\n3\n"), "{}", &live[..20]);
+    assert!(
+        live.ends_with("\n[yuke stops the live output here. The command runs on.]\n"),
+        "{}",
+        &live[live.len() - 80..]
+    );
+    assert!(
+        (1024 * 1024..1024 * 1024 + 70 * 1024).contains(&live.len()),
+        "{}",
+        live.len()
+    );
+    assert!(answer.unwrap().text.ends_with("299999\n300000\n[exit code: 0]"));
+}
+
 // The pause makes two reads, and the first one ends inside the 3 bytes of the euro sign.
 #[tokio::test]
 async fn live_output_keeps_a_character_that_a_read_cuts() {

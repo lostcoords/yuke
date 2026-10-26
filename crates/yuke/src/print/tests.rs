@@ -708,12 +708,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
         .0
         .unwrap();
     // The store holds an input that waits, as a failed run leaves it.
-    let waiting = yuke_protocol::Input::new(
-        yuke_protocol::InputSource::User,
-        yuke_protocol::InputKind::Message,
-        vec![Block::user_text("Waits.")],
-    )
-    .unwrap();
+    let waiting = Input::new(InputSource::User, InputKind::Message, vec![Block::user_text("Waits.")]).unwrap();
     place.store().await.accept_input(first.session, waiting).await.unwrap();
     let model = Task {
         model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),

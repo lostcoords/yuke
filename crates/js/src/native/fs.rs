@@ -14,7 +14,7 @@ use rquickjs::{Ctx, Function, IntoJs, Object, TypedArray, Value};
 use rustix::io::Errno;
 use yuke_engine::CancellationToken;
 
-use super::Operation;
+use super::{Cancelled, Operation};
 use crate::error::{ErrorClass, throw};
 
 /// The bytes of one chunk of a read or a write. A stop takes effect between two chunks.
@@ -365,12 +365,6 @@ struct FileError {
     message: String,
     path: String,
     destination: Option<String>,
-}
-
-/// The record of a stopped operation.
-#[derive(IntoJs)]
-struct Cancelled {
-    cancelled: bool,
 }
 
 /// The stable code and the description of `error`. The codes are the POSIX names that most runtimes give.

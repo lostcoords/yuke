@@ -10,12 +10,12 @@ mod fs;
 mod http;
 mod lines;
 mod process;
+mod sessions;
 pub(crate) mod term;
 mod tools;
 mod url;
 
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Declared, Exports, ModuleDef};
 use rquickjs::{Ctx, Function, IntoJs, Module, Object};
@@ -24,9 +24,14 @@ use tokio::sync::mpsc;
 use yuke_engine::CancellationToken;
 
 use crate::error::{ErrorClass, Report, throw};
-use crate::models::Models;
-use crate::processes::Processes;
+use crate::runtime::Options;
 use crate::tools::Registry;
+
+/// The record that the promise of a native rejects with after a call of `cancel`.
+#[derive(rquickjs::IntoJs)]
+struct Cancelled {
+    cancelled: bool,
+}
 
 /// A started operation: the promise of its value, and the function that stops it. Rust gives one to JavaScript for a
 /// native, and JavaScript gives one to Rust for a tool call or a hook run.
@@ -71,7 +76,8 @@ impl ModuleDef for Native {
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
         let object = exports_object(ctx)?;
         for name in names(ctx)? {
-            exports.export(name.clone(), object.get::<_, Function<'js>>(name)?)?;
+            let function = object.get::<_, Function<'js>>(name.as_str())?;
+            exports.export(name, function)?;
         }
         Ok(())
     }
@@ -98,18 +104,18 @@ pub(crate) fn declare<'js>(ctx: &Ctx<'js>, name: &str) -> Option<rquickjs::Resul
 pub(crate) fn install(
     ctx: &Ctx<'_>,
     registry: &Rc<Registry>,
-    processes: &Arc<Processes>,
-    models: &Arc<dyn Models>,
-    client: &Arc<yuke_http::Client>,
+    options: &Options,
     frames: &Rc<term::Frames>,
+    consumer: &tokio::runtime::Handle,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
+    sessions::add(ctx, &object, &options.sessions, consumer, reports.clone())?;
     term::add(ctx, &object, frames)?;
-    ai::add(ctx, &object, models)?;
+    ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
-    http::add(ctx, &object, client)?;
-    process::add(ctx, &object, processes)?;
+    http::add(ctx, &object, &options.http)?;
+    process::add(ctx, &object, &options.processes)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
     url::add(ctx, &object)?;
