@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::future::Future;
 use std::io;
@@ -24,10 +25,10 @@ use yuke_agent::StoreError;
 use yuke_protocol::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, InputResult,
     InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, Request, RequestId,
-    Response, ResponseError, ResponseOutcome, ServerNotification, SessionResult,
+    Response, ResponseError, ResponseOutcome, ServerNotification, SessionId, SessionResult,
 };
 
-use crate::app::{App, AppError, Machine, Mode, Observer, lock, warn};
+use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, lock, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
@@ -173,6 +174,7 @@ pub(crate) async fn serve(
     let mut server = Server {
         app,
         instance_id: InstanceId::generate(),
+        attachments: HashMap::new(),
     };
     tokio::pin!(shutdown);
     // Each request runs to its end before the next client or the shutdown, because the methods of the app are not cancel
@@ -270,6 +272,9 @@ pub(crate) async fn connect(
 struct Server {
     app: App,
     instance_id: InstanceId,
+    /// The sessions that the clients created, forked, or loaded. A client holds each one until `session/close`, also
+    /// after it disconnects.
+    attachments: HashMap<SessionId, Attachment>,
 }
 
 impl Server {
@@ -329,7 +334,7 @@ impl Server {
 
     /// Do what `call` asks of the app, and answer its result.
     async fn dispatch(&mut self, call: ClientRequest) -> Result<serde_json::Value, AppError> {
-        let app = &mut self.app;
+        let app = &self.app;
         match call {
             ClientRequest::Initialize(_) => {
                 // The server speaks one version, so it answers that one.
@@ -343,18 +348,26 @@ impl Server {
                     instance_id: self.instance_id,
                 })
             }
-            ClientRequest::NewSession(settings) => result(&SessionResult {
-                session_id: app.sessions().create(settings).await?,
-            }),
-            ClientRequest::ForkSession(params) => result(&SessionResult {
-                session_id: app.sessions().fork(params.session_id, params.through).await?,
-            }),
+            ClientRequest::NewSession(settings) => {
+                let session_id = app.sessions().create(settings).await?;
+                self.attachments.insert(session_id, app.sessions().attach(session_id)?);
+                result(&SessionResult { session_id })
+            }
+            ClientRequest::ForkSession(params) => {
+                let session_id = app.sessions().fork(params.session_id, params.through).await?;
+                self.attachments.insert(session_id, app.sessions().attach(session_id)?);
+                result(&SessionResult { session_id })
+            }
             ClientRequest::LoadSession(params) => {
                 app.sessions().load(params.session_id, params.after).await?;
+                // A new attachment replaces the one of an earlier open of the same id.
+                let attachment = app.sessions().attach(params.session_id)?;
+                self.attachments.insert(params.session_id, attachment);
                 result(&EmptyResult {})
             }
             ClientRequest::CloseSession(params) => {
                 app.sessions().close(params.session_id, params.stop_jobs).await?;
+                self.attachments.remove(&params.session_id);
                 result(&EmptyResult {})
             }
             ClientRequest::ListSessions(params) => result(&app.sessions().list(params).await?),
@@ -408,7 +421,7 @@ impl Server {
                 result(&EmptyResult {})
             }
             ClientRequest::ReloadProfile(EmptyParams {}) => {
-                app.reload().await?;
+                self.app.reload().await?;
                 result(&EmptyResult {})
             }
         }

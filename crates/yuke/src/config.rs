@@ -17,6 +17,10 @@ pub(crate) struct Config {
     /// The bundled plugins that do not load, by name.
     #[serde(default)]
     pub(crate) disable: Vec<String>,
+    /// The minutes that a session with running jobs and no holder waits before it closes and stops the jobs. The
+    /// default is 30.
+    #[serde(default, rename = "sessionIdleMinutes")]
+    pub(crate) session_idle_minutes: Option<u32>,
 }
 
 /// One item of `plugins`: a folder path, or an object with `path` and `options`.

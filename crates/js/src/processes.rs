@@ -235,11 +235,7 @@ impl Processes {
                 })
                 .collect()
         };
-        for mut end in ends {
-            if end.wait_for(Option::is_some).await.is_err() {
-                // The task of the job has ended, so the job has ended too.
-            }
-        }
+        wait_for_ends(ends).await;
         match std::fs::remove_dir_all(&self.folder) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
@@ -378,11 +374,7 @@ impl Processes {
                 })
                 .collect()
         };
-        for mut end in ends {
-            if end.wait_for(Option::is_some).await.is_err() {
-                // The task of the job has ended, so the job has ended too.
-            }
-        }
+        wait_for_ends(ends).await;
     }
 
     /// The jobs of `owner` whose process runs, oldest first.
@@ -495,6 +487,15 @@ impl JobTask {
         lock(&self.jobs).running.retain(|job| job.id != self.id);
         if self.finish.send(Some(end.unwrap_or_default())).is_err() {
             // No stop waits for the end.
+        }
+    }
+}
+
+/// Wait for the end of each job that `ends` watches.
+async fn wait_for_ends(ends: Vec<watch::Receiver<Option<JobEnd>>>) {
+    for mut end in ends {
+        if end.wait_for(Option::is_some).await.is_err() {
+            // The task of the job has ended, so the job has ended too.
         }
     }
 }

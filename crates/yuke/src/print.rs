@@ -97,9 +97,9 @@ pub(crate) async fn run(
     cancellation_token: CancellationToken,
 ) -> Result<Finished, String> {
     let watcher = Arc::new(Watcher::default());
-    let mut app = App::start(machine, Mode::Print, Arc::clone(&watcher) as Arc<dyn Observer>).await?;
+    let app = App::start(machine, Mode::Print, Arc::clone(&watcher) as Arc<dyn Observer>).await?;
     // The shutdown must also run after an error.
-    let finished = run_turn(task, &mut app, cwd, &watcher, &cancellation_token).await;
+    let finished = run_turn(task, &app, cwd, &watcher, &cancellation_token).await;
     app.shutdown().await;
     finished
 }
@@ -107,7 +107,7 @@ pub(crate) async fn run(
 /// Open the session of `task` in `cwd`, run its turn, and close the session.
 async fn run_turn(
     task: &Task,
-    app: &mut App,
+    app: &App,
     cwd: &Path,
     watcher: &Watcher,
     cancellation_token: &CancellationToken,
@@ -205,7 +205,7 @@ fn new_settings(
 
 /// Open session `id` in `app`. A model or a level of `task` replaces the one of the session with a settings event. A
 /// new model needs a reasoning choice too, because the level of the session may not fit it.
-async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<SessionId, String> {
+async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<SessionId, String> {
     if task.model.is_some() && task.reasoning.is_none() {
         return Err(NO_REASONING.to_owned());
     }

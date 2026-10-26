@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use yuke_agent::{ListPosition, Session};
 use yuke_ai::Block;
@@ -26,6 +27,8 @@ use crate::providers::Providers;
 /// The methods are not cancel safe. A caller awaits each call to its end. A dropped close can leave the jobs of a
 /// session running, and a dropped settings change leaves the session stale until its next turn opens it again.
 pub(crate) struct SessionService {
+    /// The service itself, for the countdown tasks and the attachments.
+    this: Weak<SessionService>,
     shared: Arc<Shared>,
     /// Opens the plugins of a session in the runtime now. A reload replaces it.
     runtime: Mutex<Handle>,
@@ -53,8 +56,38 @@ enum Phase {
 
 enum Slot {
     Opening,
-    Open(Arc<LiveSession>),
+    Open(Open),
     Closing,
+}
+
+/// An open session and what keeps it open.
+struct Open {
+    live: Arc<LiveSession>,
+    /// The holders of the session. The session counts down to its close only without a holder.
+    attachments: usize,
+    /// The number of the countdown now. A new countdown, an attachment, and a turn start change it, so an older
+    /// countdown closes nothing.
+    countdown: u64,
+}
+
+/// The wait of a session with no holder, no turn, and no running job before it closes.
+const GRACE: Duration = Duration::from_secs(30);
+
+/// A holder of an open session: the session does not close by itself while an attachment exists. After the drop of the
+/// last attachment, the countdown starts when the task of the session runs no turn.
+pub(crate) struct Attachment {
+    service: Weak<SessionService>,
+    id: SessionId,
+    /// The open session that the attachment holds, so the drop never releases a later open of the same id.
+    live: Weak<LiveSession>,
+}
+
+impl Drop for Attachment {
+    fn drop(&mut self) {
+        if let Some(service) = self.service.upgrade() {
+            service.detach(self);
+        }
+    }
 }
 
 /// The `Opening` or `Closing` slot of one call. Its drop removes the slot, unless [`Transition::open`] made it `Open`,
@@ -75,7 +108,14 @@ impl Transition<'_> {
         if registry.phase == Phase::Stopped {
             return Err(AppError::Stopped);
         }
-        registry.slots.insert(self.id, Slot::Open(live));
+        registry.slots.insert(
+            self.id,
+            Slot::Open(Open {
+                live,
+                attachments: 0,
+                countdown: 0,
+            }),
+        );
         Ok(())
     }
 }
@@ -107,12 +147,104 @@ impl Drop for Reload<'_> {
 
 impl SessionService {
     /// The service of `shared`, which opens the plugins of each session with `runtime`.
-    pub(super) fn new(shared: Arc<Shared>, runtime: Handle) -> Self {
-        SessionService {
+    pub(super) fn new(shared: Arc<Shared>, runtime: Handle) -> Arc<Self> {
+        Arc::new_cyclic(|this| SessionService {
+            this: this.clone(),
             shared,
             runtime: Mutex::new(runtime),
             registry: Mutex::default(),
+        })
+    }
+
+    /// Hold the open session `id`, so it does not close by itself until the drop of the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`].
+    pub(crate) fn attach(&self, id: SessionId) -> Result<Attachment, AppError> {
+        let mut registry = lock(&self.registry);
+        let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
+            return Err(AppError::NotOpen(id));
+        };
+        open.attachments += 1;
+        open.countdown += 1;
+        Ok(Attachment {
+            service: self.this.clone(),
+            id,
+            live: Arc::downgrade(&open.live),
+        })
+    }
+
+    /// Release `attachment`. The last one wakes the task of the session, which reports when the session has no work.
+    fn detach(&self, attachment: &Attachment) {
+        let mut registry = lock(&self.registry);
+        if let Some(Slot::Open(open)) = registry.slots.get_mut(&attachment.id)
+            && Weak::as_ptr(&attachment.live) == Arc::as_ptr(&open.live)
+        {
+            open.attachments -= 1;
+            if open.attachments == 0 {
+                open.live.wake();
+            }
         }
+    }
+
+    /// Stop the countdown of session `id`, because a turn starts.
+    pub(super) fn touch(&self, id: SessionId) {
+        if let Some(Slot::Open(open)) = lock(&self.registry).slots.get_mut(&id) {
+            open.countdown += 1;
+        }
+    }
+
+    /// Start the countdown of session `id`, whose task runs no turn now. A session with a holder does not count down.
+    /// The wait is [`GRACE`], or `sessionIdleMinutes` while a job of the session runs. An older countdown task ends its
+    /// wait, and then finds a new number.
+    pub(super) fn report_idle(&self, id: SessionId) {
+        let mut registry = lock(&self.registry);
+        let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
+            return;
+        };
+        if open.attachments > 0 {
+            return;
+        }
+        open.countdown += 1;
+        let wait = if open.live.jobs().is_empty() {
+            GRACE
+        } else {
+            self.shared.session_idle()
+        };
+        let (service, countdown) = (self.this.clone(), open.countdown);
+        tokio::spawn(async move {
+            tokio::time::sleep(wait).await;
+            if let Some(service) = service.upgrade() {
+                service.expire(id, countdown).await;
+            }
+        });
+    }
+
+    /// End the countdown `countdown` of session `id`: close the session with its jobs, when no holder and no turn came
+    /// since the countdown started. During a reload, the countdown starts again.
+    async fn expire(&self, id: SessionId, countdown: u64) {
+        let live = {
+            let mut registry = lock(&self.registry);
+            let reloading = registry.phase == Phase::Reloading;
+            let Some(Slot::Open(open)) = registry.slots.get(&id) else {
+                return;
+            };
+            // An attachment and a turn start change the number. The shutdown removes each slot.
+            if open.countdown != countdown {
+                return;
+            }
+            let live = Arc::clone(&open.live);
+            if reloading {
+                drop(registry);
+                self.report_idle(id);
+                return;
+            }
+            registry.slots.insert(id, Slot::Closing);
+            live
+        };
+        let _transition = Transition { service: self, id };
+        live.close().await;
     }
 
     /// Refuse each open and close until the drop of the result, and give each open session.
@@ -127,7 +259,7 @@ impl SessionService {
         let mut sessions = Vec::with_capacity(registry.slots.len());
         for (id, slot) in &registry.slots {
             match slot {
-                Slot::Open(live) => sessions.push(Arc::clone(live)),
+                Slot::Open(open) => sessions.push(Arc::clone(&open.live)),
                 Slot::Opening | Slot::Closing => return Err(AppError::Changing(*id)),
             }
         }
@@ -152,7 +284,7 @@ impl SessionService {
             std::mem::take(&mut registry.slots)
                 .into_values()
                 .filter_map(|slot| match slot {
-                    Slot::Open(live) => Some(live),
+                    Slot::Open(open) => Some(open.live),
                     Slot::Opening | Slot::Closing => None,
                 })
                 .collect()
@@ -343,7 +475,7 @@ impl SessionService {
             let mut registry = lock(&self.registry);
             admit(registry.phase)?;
             let live = match registry.slots.get(&id) {
-                Some(Slot::Open(live)) => Arc::clone(live),
+                Some(Slot::Open(open)) => Arc::clone(&open.live),
                 Some(Slot::Opening | Slot::Closing) => return Err(AppError::Changing(id)),
                 None => return Err(AppError::NotOpen(id)),
             };
@@ -485,20 +617,23 @@ impl SessionService {
 
     /// Start the task of `session`, and make its slot `Open`.
     async fn start_session(&self, transition: Transition<'_>, session: Session) -> Result<Arc<LiveSession>, AppError> {
+        let id = session.id();
         let runtime = lock(&self.runtime).clone();
-        let live = Arc::new(LiveSession::start(session, &runtime, Arc::clone(&self.shared)).await?);
+        let live = Arc::new(LiveSession::start(session, &runtime, Arc::clone(&self.shared), self.this.clone()).await?);
         if let Err(error) = transition.open(Arc::clone(&live)) {
             // The shutdown started during the open and closes no session that it did not see.
             live.close().await;
             return Err(error);
         }
+        // A session that nobody attaches counts down too. A saved input still waits for a wake.
+        self.report_idle(id);
         Ok(live)
     }
 
     /// The open session `id`.
     pub(super) fn live(&self, id: SessionId) -> Result<Arc<LiveSession>, AppError> {
         match lock(&self.registry).slots.get(&id) {
-            Some(Slot::Open(live)) => Ok(Arc::clone(live)),
+            Some(Slot::Open(open)) => Ok(Arc::clone(&open.live)),
             Some(Slot::Opening | Slot::Closing) | None => Err(AppError::NotOpen(id)),
         }
     }

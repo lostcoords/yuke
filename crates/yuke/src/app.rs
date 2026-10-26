@@ -37,7 +37,7 @@ use yuke_protocol::{
 use yuke_store::SqliteStore;
 
 use self::models::PluginModels;
-use self::sessions::SessionService;
+pub(crate) use self::sessions::{Attachment, SessionService};
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
@@ -119,11 +119,13 @@ struct Profile {
     providers: Arc<Providers>,
     /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
     plugin_folders: Arc<[PathBuf]>,
+    /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
+    session_idle: Duration,
 }
 
 impl Profile {
-    /// The profile of `providers` and the folders of `plugins`.
-    fn new(providers: Providers, plugins: &[yuke_js::Plugin]) -> Self {
+    /// The profile of `providers`, the folders of `plugins`, and the session wait of `config`.
+    fn new(providers: Providers, plugins: &[yuke_js::Plugin], config: &Config) -> Self {
         Profile {
             providers: Arc::new(providers),
             plugin_folders: plugins
@@ -133,9 +135,15 @@ impl Profile {
                     Origin::Bundled { .. } => None,
                 })
                 .collect(),
+            session_idle: Duration::from_secs(
+                60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
+            ),
         }
     }
 }
+
+/// The default of `sessionIdleMinutes`.
+const SESSION_IDLE_MINUTES: u32 = 30;
 
 impl Shared {
     /// Send `text` to the observer as a warning of yuke.
@@ -151,6 +159,11 @@ impl Shared {
     /// The providers now.
     fn providers(&self) -> Arc<Providers> {
         Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).providers)
+    }
+
+    /// The wait of a session with running jobs and no holder before it closes.
+    fn session_idle(&self) -> Duration {
+        self.profile.read().unwrap_or_else(PoisonError::into_inner).session_idle
     }
 
     /// The plugin folders now.
@@ -229,7 +242,7 @@ impl App {
         });
         let shared = Arc::new(Shared {
             machine,
-            profile: RwLock::new(Profile::new(providers, &plugins)),
+            profile: RwLock::new(Profile::new(providers, &plugins, &config)),
             store,
             processes,
             observer,
@@ -250,7 +263,7 @@ impl App {
             }
         };
         let app = App {
-            sessions: Arc::new(SessionService::new(Arc::clone(&shared), runtime.handle())),
+            sessions: SessionService::new(Arc::clone(&shared), runtime.handle()),
             shared,
             runtime,
             reporter,
@@ -300,7 +313,7 @@ impl App {
         // A turn starts only under the session lock, so no turn starts while the reload holds each one.
         let mut held = Vec::with_capacity(reload.sessions.len());
         for live in &reload.sessions {
-            held.push(live.hold().ok_or(AppError::TurnRuns)?);
+            held.push(live.try_hold().ok_or(AppError::TurnRuns)?);
         }
         let paths = &self.shared.machine.paths;
         let providers = Providers::load(&paths.config).map_err(AppError::Invalid)?;
@@ -312,7 +325,7 @@ impl App {
         // The new plugins use the new providers, for example in a model request of their `apply`.
         let old_profile = std::mem::replace(
             &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
-            Profile::new(providers, &plugins),
+            Profile::new(providers, &plugins, &config),
         );
         // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
         let (runtime, reporter) = match start_runtime(&self.shared).await {

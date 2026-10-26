@@ -4,7 +4,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot};
@@ -20,6 +20,7 @@ use yuke_protocol::{
     SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
+use super::sessions::SessionService;
 use super::trust;
 use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings};
 use crate::config::read_json;
@@ -53,6 +54,7 @@ impl LiveSession {
         session: Session,
         runtime: &Handle,
         shared: Arc<Shared>,
+        service: Weak<SessionService>,
     ) -> Result<LiveSession, AppError> {
         let host = Arc::new(Host {
             settings: Mutex::new(session.settings().clone()),
@@ -63,6 +65,7 @@ impl LiveSession {
                 last_question: Arc::clone(&shared.last_question),
             }),
             shared,
+            service,
             wake: Notify::new(),
             closed: CancellationToken::new(),
         });
@@ -91,15 +94,12 @@ impl LiveSession {
 
     /// Remove the pending input `input_id`, and tell the observer.
     pub(super) async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
-        let output = &self.parts.host.output;
-        self.parts
-            .host
-            .shared
-            .store
-            .remove_input(output.session, input_id)
-            .await?;
-        output.publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
-        Ok(())
+        self.parts.host.remove_input(input_id).await
+    }
+
+    /// Wake the task, so it runs the waiting input, or reports that the session has no work.
+    pub(super) fn wake(&self) {
+        self.parts.host.wake.notify_one();
     }
 
     /// Each MCP server of the session and its state.
@@ -108,8 +108,8 @@ impl LiveSession {
     }
 
     /// The lock of the session, so no turn starts while the caller holds it. `None` while a turn runs or starts.
-    pub(super) fn hold(&self) -> Option<tokio::sync::OwnedMutexGuard<Session>> {
-        Arc::clone(&self.parts.session).try_lock_owned().ok()
+    pub(super) fn try_hold(&self) -> Option<tokio::sync::MutexGuard<'_, Session>> {
+        self.parts.session.try_lock().ok()
     }
 
     /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
@@ -121,7 +121,7 @@ impl LiveSession {
     }
 
     /// Give the next turn the tools and hooks of `script`, and close the old plugins. The caller holds the guard of
-    /// [`LiveSession::hold`], so no turn uses the old plugins.
+    /// [`LiveSession::try_hold`], so no turn uses the old plugins.
     pub(super) async fn replace_plugins(&self, script: ScriptSession) {
         let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
         close_plugins(&self.parts.host.shared, &old).await;
@@ -167,8 +167,7 @@ impl LiveSession {
         let host = &self.parts.host;
         let output = &host.output;
         // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
-        let waiting = host.shared.store.pending(output.session).await?;
-        if !waiting.is_empty() {
+        if host.has_pending_input().await? {
             return Err(AppError::Busy);
         }
         if session.is_stale() {
@@ -450,7 +449,12 @@ impl Parts {
         // An open alone runs nothing, so a load only reads. The waiting input runs at the next wake.
         loop {
             tokio::select! {
-                () = self.host.wake.notified() => self.run_waiting_turns().await,
+                () = self.host.wake.notified() => {
+                    self.run_waiting_turns().await;
+                    // A failure leaves its input saved for the next wake. A session with no holder gets no wake, so
+                    // the countdown starts after a failure too.
+                    self.host.report_idle();
+                }
                 () = self.host.closed.cancelled() => return,
             }
         }
@@ -469,14 +473,42 @@ impl Parts {
         }
     }
 
+    /// Mark a turn as running, tell the observer, and give the token of the turn. `None` after the close.
+    fn start_turn(&self) -> Option<CancellationToken> {
+        let token = {
+            let mut turn = lock(&self.turn);
+            if self.host.closed.is_cancelled() {
+                return None;
+            }
+            let token = self.host.closed.child_token();
+            *turn = Some(token.clone());
+            token
+        };
+        if let Some(service) = self.host.service.upgrade() {
+            service.touch(self.host.output.session);
+        }
+        self.host.output.publish(SessionUpdate::Live(LiveUpdate::State {
+            state: SessionState::Running,
+        }));
+        Some(token)
+    }
+
+    /// Mark the session as idle, and tell the observer.
+    fn finish_turn(&self) {
+        *lock(&self.turn) = None;
+        self.host.output.publish(SessionUpdate::Live(LiveUpdate::State {
+            state: SessionState::Idle,
+        }));
+    }
+
     /// Run one turn after another while input waits.
     async fn run_waiting_turns(&self) {
         let output = &self.host.output;
         loop {
             // The check comes before the lock, so a wake with no input never makes new settings fail.
-            match self.host.shared.store.pending(output.session).await {
-                Ok(pending) if !pending.is_empty() => {}
-                Ok(_) => return,
+            match self.host.has_pending_input().await {
+                Ok(true) => {}
+                Ok(false) => return,
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &chain_text(&error));
                     return;
@@ -498,18 +530,9 @@ impl Parts {
                 }
             };
             lock(&self.host.settings).clone_from(session.settings());
-            let token = {
-                let mut turn = lock(&self.turn);
-                if self.host.closed.is_cancelled() {
-                    return;
-                }
-                let token = self.host.closed.child_token();
-                *turn = Some(token.clone());
-                token
+            let Some(token) = self.start_turn() else {
+                return;
             };
-            output.publish(SessionUpdate::Live(LiveUpdate::State {
-                state: SessionState::Running,
-            }));
             // The session lock is held, so a reload cannot replace the plugins during this turn.
             let script = Arc::clone(&lock(&self.script));
             let toolset = self.toolset(&script, &token).await;
@@ -549,10 +572,7 @@ impl Parts {
                     None
                 }
             };
-            *lock(&self.turn) = None;
-            output.publish(SessionUpdate::Live(LiveUpdate::State {
-                state: SessionState::Idle,
-            }));
+            self.finish_turn();
             // Without a turn, the input that waits runs at the next wake.
             let Some(ended) = ended else {
                 return;
@@ -696,6 +716,8 @@ struct Host {
     /// The settings of the session now. A saved change of the settings and each turn set them.
     settings: Mutex<SessionSettings>,
     shared: Arc<Shared>,
+    /// The service of the open sessions, which closes the session after its countdown.
+    service: Weak<SessionService>,
     output: Arc<Output>,
     /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
     wake: Notify,
@@ -715,6 +737,26 @@ impl Host {
             .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
         self.wake.notify_one();
         Ok(input_id)
+    }
+
+    /// Remove the pending input `input_id`, and tell the observer.
+    async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
+        self.shared.store.remove_input(self.output.session, input_id).await?;
+        self.output
+            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
+        Ok(())
+    }
+
+    /// Tell the service that the task waits for a wake: no turn runs.
+    fn report_idle(&self) {
+        if let Some(service) = self.service.upgrade() {
+            service.report_idle(self.output.session);
+        }
+    }
+
+    /// Whether an input of the session waits.
+    async fn has_pending_input(&self) -> Result<bool, StoreError> {
+        Ok(!self.shared.store.pending(self.output.session).await?.is_empty())
     }
 }
 
