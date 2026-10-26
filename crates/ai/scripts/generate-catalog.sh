@@ -15,7 +15,7 @@ trap 'exit 1' HUP INT TERM
 
 if (( $# == 0 )); then
     curl --fail --silent --show-error --location --compressed \
-        --max-time 60 'https://yuke.sh/api/v1/catalog?executable=true' > "$tmp/catalog.json"
+        --max-time 60 'https://catalog.yuke.sh/v1/catalog?executable=true' > "$tmp/catalog.json"
     input=$tmp/catalog.json
 else
     input=$1

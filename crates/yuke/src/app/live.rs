@@ -1107,7 +1107,7 @@ mod tests {
         std::fs::create_dir(&other).unwrap();
         let model = ModelReference {
             provider: "minimax".to_owned(),
-            model: "MiniMax-M2.7".to_owned(),
+            model: "MiniMax-M3.1-Flash".to_owned(),
         };
         let changed = SessionSettings {
             model: model.clone(),

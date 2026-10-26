@@ -228,7 +228,7 @@ async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothi
     };
     // The level of the session may not fit a new model.
     let new_model_only = Task {
-        model: Some("minimax/MiniMax-M2.7".to_owned()),
+        model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
         ..task("Hi.", SessionChoice::Newest)
     };
     let no_level = "no reasoning choice: pass --reasoning <choice>, or --reasoning default to let the endpoint choose";
@@ -648,7 +648,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         ..task("Second.", SessionChoice::Newest)
     };
     let model = Task {
-        model: Some("minimax/MiniMax-M2.7".to_owned()),
+        model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
         reasoning: Some(Reasoning::Default),
         ..task("Third.", SessionChoice::Newest)
     };
@@ -688,7 +688,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         settings[2].model,
         ModelReference {
             provider: "minimax".to_owned(),
-            model: "MiniMax-M2.7".to_owned()
+            model: "MiniMax-M3.1-Flash".to_owned()
         }
     );
     assert_eq!(settings[2].settings.reasoning, yuke_ai::ReasoningSettings::default());
@@ -710,7 +710,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
     .unwrap();
     place.store().await.accept_input(first.session, waiting).await.unwrap();
     let model = Task {
-        model: Some("minimax/MiniMax-M2.7".to_owned()),
+        model: Some("minimax/MiniMax-M3.1-Flash".to_owned()),
         reasoning: Some(Reasoning::Default),
         ..task("Next.", SessionChoice::Newest)
     };
@@ -719,7 +719,11 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
 
     assert_eq!(finished.unwrap().end, completed());
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].contains(r#""model":"MiniMax-M2.7""#), "{}", requests[0]);
+    assert!(
+        requests[0].contains(r#""model":"MiniMax-M3.1-Flash""#),
+        "{}",
+        requests[0]
+    );
     assert_in_order(&requests[0], &["Waits.", "Next."]);
 }
 
