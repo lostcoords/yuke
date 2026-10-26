@@ -8,7 +8,7 @@ on:
       - 'tools/install.sh'
       - '.github/workflows/site.yml'
   push:
-    branches: [main]
+    branches: [site]
     paths:
       - 'docs/**'
       - 'website/**'
@@ -38,9 +38,10 @@ jobs:
           path: target/site
 
   # GitHub Pages serves target/site at yuke.sh; website/public/CNAME names the domain.
+  # The site branch deploys until the page is ready to merge into main.
   deploy:
     name: Deploy
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/site' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
