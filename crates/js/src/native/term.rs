@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use rquickjs::function::Opt;
 use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
+use yuke_protocol::NoticeLevel;
 use yuke_term::{Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, MouseKind, Rgb, Style, graphemes};
 
 use crate::display::{Display, Frame, Input, Request, Scheme, scheme_of};
@@ -157,8 +158,8 @@ fn add_drawing<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -
     )
 }
 
-/// Add the functions of the frame loop and of the host: the run, the frame asks, quit, suspend, and the state of the
-/// display. Each needs the display.
+/// Add the functions of the frame loop and of the host: the run, the frame asks, quit, suspend, reload, and the state of
+/// the display. Each needs the display.
 fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> rquickjs::Result<()> {
     let set = |name: &str, function: Function<'js>| object.set(name, function);
 
@@ -205,11 +206,23 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
         set(
             name,
             Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
-                held.display(&ctx)?.ask(request);
+                held.display(&ctx)?.ask(request.clone());
                 Ok(())
             })?,
         )?;
     }
+
+    let held = Rc::clone(frames);
+    set(
+        "termReload",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, snapshot: String| -> rquickjs::Result<_> {
+                held.display(&ctx)?.ask(Request::Reload(snapshot));
+                Ok(())
+            },
+        )?,
+    )?;
 
     let held = Rc::clone(frames);
     set(
@@ -283,11 +296,20 @@ fn add_text<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     )
 }
 
-/// Run the frame loop of `frames` on the JavaScript thread: take each waiting input, give its events to the
-/// handler, then draw one frame. An asked frame comes at its deadline, and no sooner than one interval after the last
-/// frame. Without a display the loop ends at once.
-pub(crate) async fn drive(ctx: Ctx<'_>, frames: Rc<Frames>, faults: mpsc::UnboundedSender<Report>) {
+/// Run the frame loop of `frames` on the JavaScript thread once `shown` gives the snapshot: take each waiting input,
+/// give its events to the handler, then draw one frame. An asked frame comes at its deadline, and no sooner than one
+/// interval after the last frame. Without a display, or when the runtime ends before the show, the loop ends at once.
+pub(crate) async fn drive(
+    ctx: Ctx<'_>,
+    frames: Rc<Frames>,
+    shown: oneshot::Receiver<Option<String>>,
+    faults: mpsc::UnboundedSender<Report>,
+) {
     let Some(display) = frames.display.clone() else {
+        return;
+    };
+    // A runtime that is not shown waits here, so it takes no input and draws nothing while another runtime draws.
+    let Ok(mut snapshot) = shown.await else {
         return;
     };
     let mut started = false;
@@ -307,7 +329,13 @@ pub(crate) async fn drive(ctx: Ctx<'_>, frames: Rc<Frames>, faults: mpsc::Unboun
         if !started {
             started = true;
             redraw = true;
-            dispatch(&ctx, &event, kind(&ctx, "start"), &faults);
+            let start = kind(&ctx, "start").and_then(|object| {
+                if let Some(snapshot) = snapshot.take() {
+                    object.set("snapshot", snapshot)?;
+                }
+                Ok(object)
+            });
+            dispatch(&ctx, &event, start, &faults);
         }
         let inputs = display.take_inputs();
         redraw |= !inputs.is_empty();
@@ -411,6 +439,18 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             Ok(object)
         }),
         Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
+        Input::Notice(notice) => kind(ctx, "notice").and_then(|object| {
+            let level = match notice.level {
+                NoticeLevel::Debug => "debug",
+                NoticeLevel::Info => "info",
+                NoticeLevel::Warn => "warn",
+                NoticeLevel::Error => "error",
+            };
+            object.set("level", level)?;
+            object.set("source", notice.source)?;
+            object.set("text", notice.message)?;
+            Ok(object)
+        }),
         Input::Event(Event::Paste(text)) => kind(ctx, "paste").and_then(|object| {
             object.set("text", text)?;
             Ok(object)

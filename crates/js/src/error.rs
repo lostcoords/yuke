@@ -31,7 +31,7 @@ pub enum Report {
     Fault(ScriptError),
     /// A plugin sent a notice, or the setup or the cleanup of the session of a plugin failed.
     Notice(yuke_protocol::NoticeParams),
-    /// A script wrote an entry with `console`. It is a diagnostic for the operator, never a notice.
+    /// A script wrote an entry with `console`. The host shows it as a notice from the source `console`.
     Console {
         /// `debug` for `console.log` and `console.debug`. `info`, `warn`, and `error` for the methods of those names.
         level: yuke_protocol::NoticeLevel,

@@ -1,6 +1,6 @@
 /**
- * The global `console`, with the methods of the Console Standard. Each call writes at most one entry for the operator,
- * on stderr in the app. An entry is never a notice. `yuke:internal/web` installs the object.
+ * The global `console`, with the methods of the Console Standard. Each call sends at most one entry, as a notice from
+ * the source `console`. `yuke:internal/web` installs the object.
  */
 import { writeConsole } from "yuke:internal/native";
 import type { NoticeLevel } from "yuke:plugins";

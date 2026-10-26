@@ -14,6 +14,7 @@ import {
   termGraphemes,
   termMeasure,
   termQuit,
+  termReload,
   termRequestFrame,
   termRun,
   termSize,
@@ -29,7 +30,8 @@ export type Style = TermStyle;
  * The bits of `mods`: shift 1, alt 2, ctrl 4, super 8, hyper 16, meta 32. A mouse event has the first three.
  */
 export type TermEvent =
-  | { readonly type: "start" }
+  /** The first event of a runtime. After a reload, `snapshot` is the text that the old runtime gave `term.reload`. */
+  | { readonly type: "start"; readonly snapshot?: string }
   | {
       readonly type: "key";
       /** `char` for a key that types, else a name such as `enter`, `esc`, `up`, `page_down`, or `f5`. */
@@ -55,7 +57,14 @@ export type TermEvent =
   | { readonly type: "paste"; readonly text: string }
   | { readonly type: "resize"; readonly w: number; readonly h: number }
   | { readonly type: "focus"; readonly focused: boolean }
-  | { readonly type: "background"; readonly background: "dark" | "light" };
+  | { readonly type: "background"; readonly background: "dark" | "light" }
+  /** A notice of the host or of a plugin. `source` is the plugin name, `console`, or `host:…`. */
+  | {
+      readonly type: "notice";
+      readonly level: "debug" | "info" | "warn" | "error";
+      readonly source: string;
+      readonly text: string;
+    };
 
 /** What `term.run` takes. */
 export interface Handler {
@@ -119,6 +128,13 @@ export const term = {
   /** Ask the host to give the terminal to the shell until the shell resumes yuke. A `resize` event comes after. */
   suspend(): void {
     termSuspend();
+  },
+  /**
+   * Ask the host to load the plugins again. After a reload, a new runtime starts with `snapshot` in its start event, and
+   * the current runtime stops. A failed reload keeps the current runtime and sends it a notice.
+   */
+  reload(snapshot: string): void {
+    termReload(snapshot);
   },
   get width(): number {
     return termSize()[0];

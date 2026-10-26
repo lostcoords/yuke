@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use rquickjs::{Ctx, Module, Object, Value};
 use tokio::sync::mpsc;
+use yuke_protocol::{NoticeLevel, NoticeParams};
 use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size};
 
 use super::{NAMES, evaluate, folder, next_fault, options, start, wait_until};
@@ -63,9 +64,9 @@ type Started = (
     mpsc::UnboundedReceiver<Request>,
 );
 
-/// Start a runtime on a 20×3 display. Its handler keeps each event in `seen` and counts the frames in `frames`. The
-/// call returns after the start frame.
-async fn started(name: &str) -> Started {
+/// Start a runtime on a 20×3 display, with the global `term`, and run its frame loop: the handler keeps each event in
+/// `seen` and counts the frames in `frames`. The runtime is not shown yet.
+async fn hidden(name: &str) -> Started {
     let folder = folder(name);
     let output = Output::default();
     let size = Size { columns: 20, rows: 3 };
@@ -85,8 +86,24 @@ async fn started(name: &str) -> Started {
     )
     .await
     .unwrap();
+    (runtime, reports, display, output, requests)
+}
+
+/// [`hidden`], shown with no snapshot. The call returns after the start frame.
+async fn started(name: &str) -> Started {
+    let (mut runtime, reports, display, output, requests) = hidden(name).await;
+    runtime.show(None);
     wait_until(&runtime, "return frames === 1;").await;
     (runtime, reports, display, output, requests)
+}
+
+fn notice(level: NoticeLevel, source: &str, message: &str) -> Input {
+    Input::Notice(NoticeParams {
+        session_id: None,
+        level,
+        source: source.to_owned(),
+        message: message.to_owned(),
+    })
 }
 
 fn key(character: char) -> Input {
@@ -114,6 +131,69 @@ async fn the_start_frame_writes_its_cells_to_the_output() {
         .unwrap();
     assert_eq!(first, r#"{"type":"start"}"#);
     assert!(output.text().contains("frame 1"), "{:?}", output.text());
+}
+
+#[tokio::test]
+async fn a_runtime_draws_and_takes_input_only_after_the_show() {
+    let (mut runtime, _reports, display, output, _requests) =
+        hidden("a_runtime_draws_and_takes_input_only_after_the_show").await;
+    display.send(key('a'));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        evaluate::<String>(&runtime, "return `${seen.length} ${frames}`;")
+            .await
+            .unwrap(),
+        "0 0"
+    );
+    assert_eq!(output.text(), "");
+
+    runtime.show(Some(r#"{"panes":2}"#.to_owned()));
+    wait_until(&runtime, "return seen.length === 2 && frames === 1;").await;
+    let text = evaluate::<String>(
+        &runtime,
+        "return `${JSON.stringify(seen[0])} ${seen[1].type}:${seen[1].char}`;",
+    )
+    .await
+    .unwrap();
+    assert_eq!(text, r#"{"type":"start","snapshot":"{\"panes\":2}"} key:a"#);
+    assert!(output.text().contains("frame 1"), "{:?}", output.text());
+}
+
+#[tokio::test]
+async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
+    let (runtime, _reports, display, _output, _requests) =
+        started("a_notice_comes_as_an_event_with_its_level_source_and_text").await;
+    display.send(notice(NoticeLevel::Warn, "notes", "the index is stale"));
+    wait_until(&runtime, "return seen.length === 2;").await;
+    assert_eq!(
+        evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
+            .await
+            .unwrap(),
+        r#"{"type":"notice","level":"warn","source":"notes","text":"the index is stale"}"#
+    );
+}
+
+#[tokio::test]
+async fn take_notices_gives_the_waiting_notices_and_drops_the_other_inputs() {
+    let (display, _requests) = Display::new(
+        Size { columns: 20, rows: 3 },
+        Box::new(Output::default()),
+        None,
+        true,
+        false,
+    );
+    display.send(key('a'));
+    display.send(notice(NoticeLevel::Error, "host:yuke", "first"));
+    display.send(Input::Resize(Size { columns: 30, rows: 4 }));
+    display.send(notice(NoticeLevel::Debug, "console", "second"));
+
+    let messages: Vec<String> = display
+        .take_notices()
+        .into_iter()
+        .map(|notice| notice.message)
+        .collect();
+    assert_eq!(messages, ["first", "second"]);
+    assert_eq!(display.take_notices(), []);
 }
 
 #[tokio::test]
@@ -221,7 +301,8 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     );
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
     options.display = Some(Arc::clone(&display));
-    let (runtime, _reports) = Runtime::start(options).await.unwrap();
+    let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
+    runtime.show(None);
     global_term(&runtime).await;
     // The inputs wait for `term.run`, so they come in one batch after the start event.
     for input in [
@@ -267,11 +348,17 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
 }
 
 #[tokio::test]
-async fn quit_and_suspend_reach_the_host_and_a_scheme_change_asks_for_the_background() {
+async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the_background() {
     let (runtime, _reports, display, output, mut requests) = started("quit_and_suspend_reach_the_host").await;
-    evaluate::<()>(&runtime, "term.quit(); term.suspend();").await.unwrap();
+    evaluate::<()>(&runtime, "term.quit(); term.suspend(); term.reload('{\"panes\":2}');")
+        .await
+        .unwrap();
     assert_eq!(requests.recv().await, Some(Request::Quit));
     assert_eq!(requests.recv().await, Some(Request::Suspend));
+    assert_eq!(
+        requests.recv().await,
+        Some(Request::Reload(r#"{"panes":2}"#.to_owned()))
+    );
     output.0.lock().unwrap().clear();
     display.send(Input::Event(Event::SchemeChanged));
     // The scheme change gives the handler no event, so the key is the next event.
@@ -324,7 +411,8 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
     );
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
     options.display = Some(display);
-    let (runtime, _reports) = Runtime::start(options).await.unwrap();
+    let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
+    runtime.show(None);
     global_term(&runtime).await;
     evaluate::<()>(&runtime, "term.requestFrame();").await.unwrap();
     tokio::time::sleep(Duration::from_millis(20)).await;

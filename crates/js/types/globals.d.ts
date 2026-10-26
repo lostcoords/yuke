@@ -99,8 +99,8 @@ declare var performance: {
 };
 
 /**
- * The entries of a script for the operator, on stderr in the app. An entry is never a notice: use `notify` of a
- * context for that. Each call formats `data` with `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`, and `%%`, and it never throws.
+ * The entries of a script, each a notice from the source `console`. A notice that names the plugin comes from `notify`
+ * of a context. Each call formats `data` with `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`, and `%%`, and it never throws.
  */
 declare var console: {
   /** A debug entry, as `debug`. */

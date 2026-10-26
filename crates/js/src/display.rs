@@ -7,6 +7,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::sync::{Notify, mpsc};
+use yuke_protocol::NoticeParams;
 use yuke_term::{Event, Rgb, Screen, Size};
 
 /// What the host gives the display.
@@ -16,15 +17,19 @@ pub enum Input {
     Event(Event),
     /// The terminal has this size, or its content is unknown, as after a suspend. The next frame writes every cell.
     Resize(Size),
+    /// A notice of the host or of a plugin, for the user.
+    Notice(NoticeParams),
 }
 
 /// What the JavaScript asks of the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// `term.quit()` ran.
     Quit,
     /// `term.suspend()` ran: give the terminal to the shell until the shell resumes yuke.
     Suspend,
+    /// `term.reload(snapshot)` ran: load the plugins again, and give `snapshot` to the start event of the new runtime.
+    Reload(String),
 }
 
 /// The cell grid of the terminal interface, its output, the queue of [`Input`], and the sender of [`Request`]. Give it
@@ -102,6 +107,17 @@ impl Display {
     pub fn hold<R>(&self, f: impl FnOnce() -> R) -> R {
         let _frame = self.frame();
         f()
+    }
+
+    /// Take the notices that no frame loop took, such as those of the shutdown, and drop the other inputs.
+    pub fn take_notices(&self) -> Vec<NoticeParams> {
+        self.take_inputs()
+            .into_iter()
+            .filter_map(|input| match input {
+                Input::Notice(notice) => Some(notice),
+                Input::Event(_) | Input::Resize(_) => None,
+            })
+            .collect()
     }
 
     pub(crate) fn ask(&self, request: Request) {

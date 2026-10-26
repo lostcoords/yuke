@@ -164,7 +164,7 @@ declare module "yuke:internal/native" {
   /** Close `body` and its connection. */
   export function httpClose(body: HttpBody): void;
 
-  /** Write a line of `console` for the operator. */
+  /** Send an entry of `console`, a notice from the source `console`. */
   export function writeConsole(level: NoticeLevel, text: string): void;
 
   /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
@@ -338,6 +338,8 @@ declare module "yuke:internal/native" {
   export function termQuit(): void;
   /** Ask the host to give the terminal to the shell until it resumes yuke. */
   export function termSuspend(): void;
+  /** Ask the host to load the plugins again in a new runtime, whose start event gets `snapshot`. */
+  export function termReload(snapshot: string): void;
   /** The columns and the rows of the grid. */
   export function termSize(): [columns: number, rows: number];
   /** The light or dark class of the terminal background. */

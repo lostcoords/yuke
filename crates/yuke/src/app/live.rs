@@ -21,7 +21,7 @@ use yuke_protocol::{
 };
 
 use super::trust;
-use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings, warn};
+use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings};
 use crate::config::read_json;
 
 /// An open session.
@@ -115,7 +115,7 @@ impl LiveSession {
     pub(super) async fn replace_plugins(&self, script: ScriptSession) {
         let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
         if let Err(error) = old.close().await {
-            warn(&format!(
+            self.parts.host.shared.warn(&format!(
                 "the plugins of a session did not close: {}",
                 chain_text(&error)
             ));
@@ -214,12 +214,12 @@ impl LiveSession {
     pub(super) async fn close(mut self) {
         self.stop();
         if let Err(error) = (&mut self.task).await {
-            warn(&format!("a session task failed: {error}"));
+            self.parts.host.shared.warn(&format!("a session task failed: {error}"));
         }
         // After the task, so no turn takes the tools of the closed plugins.
         let script = Arc::clone(&lock(&self.parts.script));
         if let Err(error) = script.close().await {
-            warn(&format!(
+            self.parts.host.shared.warn(&format!(
                 "the plugins of a session did not close: {}",
                 chain_text(&error)
             ));

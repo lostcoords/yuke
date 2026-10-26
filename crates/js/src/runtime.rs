@@ -84,6 +84,8 @@ pub struct Runtime {
     stop: oneshot::Sender<()>,
     /// Its drop stops the JavaScript that runs, so the thread can end even inside a loop without an `await`.
     stopping: Stopping,
+    /// Starts the frame loop with the snapshot of the start event. [`Runtime::show`] takes it.
+    show: Option<oneshot::Sender<Option<String>>>,
     thread: JoinHandle<()>,
 }
 
@@ -132,13 +134,14 @@ impl Runtime {
         let (faults, fault_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
         let (stop, stopped) = oneshot::channel();
+        let (show, shown) = oneshot::channel();
         let stopping = Arc::new(AtomicBool::new(false));
         let interrupt = Arc::clone(&stopping);
 
         let thread = std::thread::Builder::new()
             .name("yuke-js".into())
             .stack_size(STACK + THREAD_HEADROOM)
-            .spawn(move || serve(options, interrupt, call_receiver, stopped, faults, ready))
+            .spawn(move || serve(options, interrupt, call_receiver, stopped, shown, faults, ready))
             .map_err(Error::Thread)?;
 
         let runtime = Self {
@@ -146,6 +149,7 @@ impl Runtime {
             models,
             stop,
             stopping: Stopping(stopping),
+            show: Some(show),
             thread,
         };
         started.await.map_err(|_| Error::Stopped)??;
@@ -170,6 +174,17 @@ impl Runtime {
             .await
     }
 
+    /// Start the frame loop on the display. Its start event has `snapshot` when the argument is `Some`. The inputs and
+    /// the frames follow. Until this call, the runtime draws nothing and takes no input, so a reload can load a new
+    /// runtime while the old one draws. A second call, or a call without a display, does nothing.
+    pub fn show(&mut self, snapshot: Option<String>) {
+        if let Some(show) = self.show.take()
+            && show.send(snapshot).is_err()
+        {
+            // The frame loop has ended: the runtime has no display, or it stopped.
+        }
+    }
+
     /// Stop the JavaScript and wait for the end of the thread. The JavaScript that runs stops, also inside a loop.
     ///
     /// # Errors
@@ -182,6 +197,7 @@ impl Runtime {
             models: _,
             stop,
             stopping,
+            show: _,
             thread,
         } = self;
         drop(caller);
@@ -247,6 +263,7 @@ fn serve(
     stopping: Arc<AtomicBool>,
     calls: mpsc::UnboundedReceiver<Call>,
     stopped: oneshot::Receiver<()>,
+    shown: oneshot::Receiver<Option<String>>,
     faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
@@ -260,7 +277,7 @@ fn serve(
             return;
         }
     };
-    tokio_runtime.block_on(serve_calls(options, stopping, calls, stopped, faults, ready));
+    tokio_runtime.block_on(serve_calls(options, stopping, calls, stopped, shown, faults, ready));
 }
 
 async fn serve_calls(
@@ -268,10 +285,11 @@ async fn serve_calls(
     stopping: Arc<AtomicBool>,
     mut calls: mpsc::UnboundedReceiver<Call>,
     mut stopped: oneshot::Receiver<()>,
+    shown: oneshot::Receiver<Option<String>>,
     faults: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let engine = match Engine::new(options, stopping, faults.clone()).await {
+    let engine = match Engine::new(options, stopping, shown, faults.clone()).await {
         Ok(engine) => engine,
         Err(error) => {
             if ready.send(Err(error)).is_err() {
@@ -324,6 +342,7 @@ impl Engine {
     async fn new(
         options: Options,
         stopping: Arc<AtomicBool>,
+        shown: oneshot::Receiver<Option<String>>,
         faults: mpsc::UnboundedSender<Report>,
     ) -> Result<Self, Error> {
         let engine_error = |error: rquickjs::Error| Error::Script(ScriptError::from_engine(&error));
@@ -364,7 +383,7 @@ impl Engine {
                     &frames,
                     faults.clone(),
                 )?;
-                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), faults));
+                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, faults));
                 Ok(())
             })
             .await

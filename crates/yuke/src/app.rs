@@ -140,6 +140,16 @@ impl Profile {
 }
 
 impl Shared {
+    /// Send `text` to the observer as a warning of yuke.
+    fn warn(&self, text: &str) {
+        self.observer.notify(ServerNotification::Notice(NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Warn,
+            source: SOURCE.to_owned(),
+            message: text.to_owned(),
+        }));
+    }
+
     /// The providers now.
     fn providers(&self) -> Arc<Providers> {
         Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).providers)
@@ -238,7 +248,7 @@ impl App {
             Ok(started) => started,
             Err(error) => {
                 if let Err(shutdown) = shared.processes.shutdown().await {
-                    warn(&format!("{}: {shutdown}", processes_folder.display()));
+                    shared.warn(&format!("{}: {shutdown}", processes_folder.display()));
                 }
                 return Err(chain_text(&error));
             }
@@ -251,6 +261,12 @@ impl App {
             sessions: HashMap::new(),
         };
         Ok((app, plugins))
+    }
+
+    /// Start the frame loop of the runtime on the display, with `snapshot` for its start event. The terminal interface
+    /// calls it after the start and after each reload; without a display it does nothing.
+    pub(crate) fn show(&mut self, snapshot: Option<String>) {
+        self.runtime.show(snapshot);
     }
 
     /// Load `plugins`. Each plugin that does not load gives a notice, and the other plugins load.
@@ -311,7 +327,7 @@ impl App {
         let failures = runtime.load_plugins(&plugins).await;
         if !failures.is_empty() {
             // A plugin load failure rejects the reload. An edit with a fault keeps the old runtime.
-            stop_runtime(runtime, reporter).await;
+            stop_runtime(&self.shared, runtime, reporter).await;
             *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
             let texts: Vec<String> = failures.iter().map(|failure| chain_text(failure)).collect();
             return Err(AppError::Invalid(format!(
@@ -327,10 +343,10 @@ impl App {
                     // Each cleanup ends before the runtime stops.
                     for (_, script) in opened {
                         if let Err(error) = script.close().await {
-                            warn(&chain_text(&error));
+                            self.shared.warn(&chain_text(&error));
                         }
                     }
-                    stop_runtime(runtime, reporter).await;
+                    stop_runtime(&self.shared, runtime, reporter).await;
                     *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
                     return Err(error);
                 }
@@ -341,7 +357,7 @@ impl App {
         }
         let old_runtime = std::mem::replace(&mut self.runtime, runtime);
         let old_reporter = std::mem::replace(&mut self.reporter, reporter);
-        stop_runtime(old_runtime, old_reporter).await;
+        stop_runtime(&self.shared, old_runtime, old_reporter).await;
         drop(held);
         Ok(())
     }
@@ -838,9 +854,9 @@ impl App {
         for (_, live) in sessions.drain() {
             live.close().await;
         }
-        stop_runtime(runtime, reporter).await;
+        stop_runtime(&shared, runtime, reporter).await;
         if let Err(error) = shared.processes.shutdown().await {
-            warn(&format!("{}: {error}", processes_folder.display()));
+            shared.warn(&format!("{}: {error}", processes_folder.display()));
         }
     }
 
@@ -975,16 +991,16 @@ async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>)
         display: shared.machine.display.clone(),
     })
     .await?;
-    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), io::stderr()));
+    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer)));
     if let Err(error) = runtime.import("yuke:internal/builtins").await {
-        stop_runtime(runtime, reporter).await;
+        stop_runtime(shared, runtime, reporter).await;
         return Err(error);
     }
     // The interface runs in the plugin runtime, so a plugin reaches it, and each reload draws it again.
     if shared.machine.display.is_some()
         && let Err(error) = runtime.import("yuke:internal/tui").await
     {
-        stop_runtime(runtime, reporter).await;
+        stop_runtime(shared, runtime, reporter).await;
         return Err(error);
     }
     Ok((runtime, reporter))
@@ -992,16 +1008,16 @@ async fn start_runtime(shared: &Arc<Shared>) -> Result<(Runtime, JoinHandle<()>)
 
 /// Close the plugins of `runtime`, and stop the runtime. Then wait for the end of `reporter`. The jobs go on, because
 /// they belong to the processes.
-async fn stop_runtime(runtime: Runtime, reporter: JoinHandle<()>) {
+async fn stop_runtime(shared: &Shared, runtime: Runtime, reporter: JoinHandle<()>) {
     if let Err(error) = runtime.close_plugins().await {
-        warn(&chain_text(&error));
+        shared.warn(&chain_text(&error));
     }
     if let Err(error) = runtime.shutdown().await {
-        warn(&chain_text(&error));
+        shared.warn(&chain_text(&error));
     }
     // The shutdown of the runtime closes the channel of the reports, so the reporter ends.
     if let Err(error) = reporter.await {
-        warn(&format!(
+        shared.warn(&format!(
             "yuke could not report the faults and notices of the JavaScript: {error}"
         ));
     }
@@ -1132,13 +1148,9 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
         .map_err(|error| AppError::Internal(error.to_string()))?
 }
 
-/// Send a script fault to `observer` as a warning of yuke, and a plugin notice as it is. An entry of `console` goes to
-/// `console` (stderr in the app), because it is for the operator and stdout can carry the protocol.
-async fn report(
-    mut reports: mpsc::UnboundedReceiver<Report>,
-    observer: Arc<dyn Observer>,
-    mut console: impl Write + Send,
-) {
+/// Send a script fault to `observer` as a warning of yuke, a plugin notice as it is, and an entry of `console` as a
+/// notice from the source `console`.
+async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn Observer>) {
     while let Some(report) = reports.recv().await {
         let notice = match report {
             Report::Fault(fault) => NoticeParams {
@@ -1148,18 +1160,12 @@ async fn report(
                 message: format!("a script failed: {fault}"),
             },
             Report::Notice(notice) => notice,
-            Report::Console { level, text } => {
-                let level = match level {
-                    NoticeLevel::Debug => "debug",
-                    NoticeLevel::Info => "info",
-                    NoticeLevel::Warn => "warn",
-                    NoticeLevel::Error => "error",
-                };
-                if writeln!(console, "console {level}: {text}").is_err() {
-                    // No one reads stderr, so the line has nowhere to go.
-                }
-                continue;
-            }
+            Report::Console { level, text } => NoticeParams {
+                session_id: None,
+                level,
+                source: "console".to_owned(),
+                message: text,
+            },
         };
         observer.notify(ServerNotification::Notice(notice));
     }
@@ -1201,23 +1207,8 @@ mod tests {
         }
     }
 
-    /// A writer that keeps its bytes for the test.
-    #[derive(Clone, Default)]
-    struct Kept(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for Kept {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            lock(&self.0).extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
     #[tokio::test]
-    async fn a_console_entry_goes_to_its_writer_and_is_no_notice() {
+    async fn a_console_entry_and_a_fault_become_notices() {
         let (reports, receiver) = mpsc::unbounded_channel();
         let recorder = Arc::new(Recorder::default());
         reports
@@ -1235,19 +1226,27 @@ mod tests {
             .unwrap();
         drop(reports);
 
-        let console = Kept::default();
-        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>, console.clone()).await;
+        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>).await;
 
-        let messages: Vec<String> = lock(&recorder.0)
+        let notices: Vec<(NoticeLevel, String, String)> = lock(&recorder.0)
             .iter()
             .map(|notification| match notification {
-                ServerNotification::Notice(notice) => notice.message.clone(),
+                ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.message.clone()),
                 other @ (ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_)) => {
                     panic!("expected a notice, got {other:?}")
                 }
             })
             .collect();
-        assert_eq!(messages, ["a script failed: lost"]);
-        assert_eq!(lock(&console.0).as_slice(), b"console error: for the operator\n");
+        assert_eq!(
+            notices,
+            [
+                (NoticeLevel::Error, "console".to_owned(), "for the operator".to_owned()),
+                (
+                    NoticeLevel::Warn,
+                    "host:yuke".to_owned(),
+                    "a script failed: lost".to_owned()
+                ),
+            ]
+        );
     }
 }

@@ -8,20 +8,25 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
 use yuke_engine::{CancellationToken, chain_text};
 use yuke_js::{Display, Input, Request};
-use yuke_protocol::ServerNotification;
+use yuke_protocol::{NoticeLevel, NoticeParams, ServerNotification};
 use yuke_term::Terminal;
 
-use crate::app::{App, Machine, Mode, Observer};
+use crate::app::{App, Machine, Mode, Observer, SOURCE, warn};
 
-/// Drops each notification: the interface shows none yet.
-struct NoView;
+/// Gives each notice to the display. The interface shows no session update yet.
+struct Notices(Arc<Display>);
 
-impl Observer for NoView {
-    fn notify(&self, _notification: ServerNotification) {}
+impl Observer for Notices {
+    fn notify(&self, notification: ServerNotification) {
+        match notification {
+            ServerNotification::Notice(notice) => self.0.send(Input::Notice(notice)),
+            ServerNotification::SessionUpdate(_) | ServerNotification::LoginFinished(_) => {}
+        }
+    }
 }
 
 /// Run the interface on the terminal of the process until a quit or `shutdown`. The drop of the terminal restores
-/// the device, also on an error.
+/// the device, also on an error. Then the notices that no frame loop took go to stderr.
 pub(crate) async fn run(machine: Machine, shutdown: CancellationToken) -> Result<(), String> {
     let failed = |what: &'static str| move |error: io::Error| format!("{what}: {error}");
     // The stream registers before the app starts, so a resize while the app starts wakes the loop later.
@@ -38,22 +43,35 @@ pub(crate) async fn run(machine: Machine, shutdown: CancellationToken) -> Result
     );
     let mut host = Host {
         terminal,
-        display,
+        display: Arc::clone(&display),
         requests,
         resizes,
         ended: Arc::new(Notify::new()),
     };
-    host.start_reader().map_err(failed("the terminal input"))?;
+    let ended = serve(&mut host, machine, &shutdown).await;
+    drop(host);
+    for notice in display.take_notices() {
+        warn(&format!("{}: {}", notice.source, notice.message));
+    }
+    ended
+}
+
+/// Start the app on the display of `host`, and serve the host until a quit or `shutdown`.
+async fn serve(host: &mut Host, machine: Machine, shutdown: &CancellationToken) -> Result<(), String> {
+    host.start_reader()
+        .map_err(|error| format!("the terminal input: {error}"))?;
     let machine = Machine {
         display: Some(Arc::clone(&host.display)),
         ..machine
     };
-    let (app, plugins) = App::prepare(machine, Mode::Server, Arc::new(NoView)).await?;
+    let observer = Arc::new(Notices(Arc::clone(&host.display)));
+    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer).await?;
+    app.show(None);
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold
     // the terminal, and the app shuts down before the terminal restores.
     let ended = tokio::select! {
-        () = app.load_plugins(&plugins) => host.serve(&shutdown).await,
-        ended = host.serve(&shutdown) => ended,
+        () = app.load_plugins(&plugins) => host.serve(shutdown, Some(&mut app)).await,
+        ended = host.serve(shutdown, None) => ended,
     };
     app.shutdown().await;
     ended
@@ -72,7 +90,8 @@ struct Host {
 
 impl Host {
     /// Answer the requests of the JavaScript and pass each resize, until a quit, the end of the input, or `shutdown`.
-    async fn serve(&mut self, shutdown: &CancellationToken) -> Result<(), String> {
+    /// Without `app`, while the first plugins load, a reload gives a notice.
+    async fn serve(&mut self, shutdown: &CancellationToken, mut app: Option<&mut App>) -> Result<(), String> {
         loop {
             let answered = tokio::select! {
                 () = shutdown.cancelled() => return Ok(()),
@@ -80,6 +99,14 @@ impl Host {
                 request = self.requests.recv() => match request {
                     Some(Request::Quit) | None => return Ok(()),
                     Some(Request::Suspend) => self.suspend(),
+                    Some(Request::Reload(snapshot)) => {
+                        // A quit drops the reload, as it drops the first load, and the app shuts down after it.
+                        tokio::select! {
+                            () = reload(app.as_deref_mut(), &self.display, snapshot) => Ok(()),
+                            () = shutdown.cancelled() => return Ok(()),
+                            () = quit(&mut self.requests) => return Ok(()),
+                        }
+                    }
                 },
                 () = self.ended.notified() => return Err(match self.terminal.stop_reader() {
                     Ok(()) => "the terminal input ended".to_owned(),
@@ -110,3 +137,37 @@ impl Host {
         )
     }
 }
+
+/// Wait for a quit or the end of `requests`. The other requests go, so a second ctrl+r during a reload does nothing.
+async fn quit(requests: &mut mpsc::UnboundedReceiver<Request>) {
+    while let Some(request) = requests.recv().await {
+        match request {
+            Request::Quit => return,
+            Request::Suspend | Request::Reload(_) => {}
+        }
+    }
+}
+
+/// Load the plugins of `app` again, and show the new runtime with `snapshot`. A failure keeps the old runtime and gives
+/// `display` a notice. The old runtime draws until it stops.
+async fn reload(app: Option<&mut App>, display: &Display, snapshot: String) {
+    let failure = match app {
+        Some(app) => match app.reload().await {
+            Ok(()) => {
+                app.show(Some(snapshot));
+                return;
+            }
+            Err(error) => chain_text(&error),
+        },
+        None => "yuke is still loading the plugins".to_owned(),
+    };
+    display.send(Input::Notice(NoticeParams {
+        session_id: None,
+        level: NoticeLevel::Error,
+        source: SOURCE.to_owned(),
+        message: format!("the reload failed: {failure}"),
+    }));
+}
+
+#[cfg(test)]
+mod tests;
