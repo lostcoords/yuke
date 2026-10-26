@@ -5,7 +5,8 @@
   "scripts": {
     "build": "vitepress build",
     "dev": "vitepress dev --host 127.0.0.1 --strictPort",
-    "preview": "vitepress preview"
+    "preview": "vitepress preview",
+    "check": "node check.mjs"
   },
   "engines": {
     "node": ">=22.19.0"
