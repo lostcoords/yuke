@@ -797,7 +797,7 @@ function textOf(error: unknown): string {
 }
 
 /** The text form of the thrown `error` for its author: an `Error` adds the frames of the plugin on the next lines. */
-function failureOf(error: unknown): string {
+export function failureOf(error: unknown): string {
   const text = textOf(error);
   const stack = stackOf(error);
   if (stack === undefined) return text;
