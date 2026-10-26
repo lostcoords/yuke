@@ -38,7 +38,15 @@ Ask the user before you add a dependency.
   Use standard trait parameter names (`f: &mut Formatter`).
   Use common ecosystem names (`ctx`, `args`, `_ms`).
 - Do not discard a fallible result with `let _ =`. Propagate with `?` or handle it.
-- In TypeScript, give each parameter a plain name. Destructure it in the body: `const { a, b } = request;`.
+- In TypeScript, give each parameter a plain name. Prefer dot notation to preserve context.
+  Destructure only when it improves clarity or captures values that must stay fixed. Do not destructure parameters.
+- Validate unknown values once at the boundary that owns them. Pass typed values inward.
+  Do not repeat checks that a schema, constructor, or internal type already guarantees.
+- Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused,
+  hides a genuinely complex boundary, or has a clear independent name that improves the caller.
+- Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete
+  failure mode, likelihood, and complexity cost to the user and get their buy-in.
+  Do not silently expand scope for theoretical robustness.
 - Give each error one of two shapes. Never mix them, or a printer of the chain shows a text twice.
   - A context error writes its own text and returns the cause from `source`.
   - A transparent error writes the text of its inner error and returns the `source` of that inner error. It can add
