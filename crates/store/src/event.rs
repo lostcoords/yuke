@@ -19,7 +19,7 @@ pub(crate) const CANCELLED: &str = "cancelled";
 pub(crate) const FAILED: &str = "failed";
 
 /// Decode an event row as a [`StoredEvent`].
-pub(crate) fn stored_event(mut row: events::EventsAfter) -> Result<StoredEvent, StoreError> {
+pub(crate) fn stored_event(mut row: events::EventsPage) -> Result<StoredEvent, StoreError> {
     let event_number = EventNumber(row.seq);
     let kind = std::mem::take(&mut row.kind);
     let event = match kind.as_str() {
@@ -34,7 +34,7 @@ pub(crate) fn stored_event(mut row: events::EventsAfter) -> Result<StoredEvent, 
 }
 
 /// Decode a commit row as an owned [`Commit`].
-fn commit(row: events::EventsAfter) -> rusqlite::Result<Commit<'static>> {
+fn commit(row: events::EventsPage) -> rusqlite::Result<Commit<'static>> {
     let replaced = match (row.head, row.keep) {
         (Some(head), Some(keep)) => Some(Replaced {
             head: Cow::Owned(head.0),

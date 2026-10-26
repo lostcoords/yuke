@@ -17,7 +17,7 @@ use yuke_protocol::{
 };
 
 use crate::PromptSection;
-use crate::store::{Access, NewestTurn, Store, StoreError, blob_of};
+use crate::store::{Access, EventPage, NewestTurn, Store, StoreError, blob_of};
 
 /// Write one `#[tokio::test]` for each behavior of this module. `$make_store` is an async function that takes the
 /// name of the test and returns a new store, such as an `Arc<impl Store>`. The calling crate needs `tokio` with the
@@ -46,6 +46,7 @@ macro_rules! store_tests {
             a_commit_of_an_input_that_is_not_pending_saves_nothing,
             a_commit_with_fewer_blocks_than_its_inputs_saves_nothing,
             a_load_gives_the_events_with_the_inputs_that_are_still_pending,
+            a_page_before_an_event_gives_the_last_events_before_it_in_order,
             new_settings_give_the_number_of_their_event,
             a_removed_input_is_not_pending_and_cannot_be_removed_or_consumed_again,
             an_input_keeps_its_source_and_both_contents_through_its_commit,
@@ -442,7 +443,11 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
         .await
         .unwrap();
     let second = store.accept_input(id, user_input("two")).await.unwrap();
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     let again = store
         .commit(id, &step(&[yuke_ai::Block::user_text("one")]), &[consumed(first, 1)])
@@ -476,7 +481,14 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
         matches!(mixed, Err(StoreError::InputNotPending(input)) if input == first),
         "{mixed:?}"
     );
-    assert_eq!(store.load(id, None).await.map(|loaded| loaded.events).unwrap(), events);
+    assert_eq!(
+        store
+            .load(id, EventPage::After(None))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap(),
+        events
+    );
     let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
     assert_eq!(pending, [second]);
 }
@@ -485,7 +497,11 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
 pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dyn Store) {
     let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
     let input = store.accept_input(id, user_input("one")).await.unwrap();
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     let short = store.commit(id, &step(&[]), &[consumed(input, 1)]).await;
     let overflow = store
@@ -501,7 +517,14 @@ pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dy
         matches!(overflow, Err(StoreError::InputBlocksExceedCommit)),
         "{overflow:?}"
     );
-    assert_eq!(store.load(id, None).await.map(|loaded| loaded.events).unwrap(), events);
+    assert_eq!(
+        store
+            .load(id, EventPage::After(None))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap(),
+        events
+    );
     let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
     assert_eq!(pending, [input]);
 }
@@ -517,7 +540,7 @@ pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(stor
         .await
         .unwrap();
 
-    let loaded = store.load(id, Some(EventNumber(1))).await.unwrap();
+    let loaded = store.load(id, EventPage::After(Some(EventNumber(1)))).await.unwrap();
 
     assert_eq!(
         loaded.events,
@@ -538,6 +561,39 @@ pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(stor
     );
 }
 
+/// A page before an event gives at most `limit` of the events before it, the newest of them, in number order. A page
+/// with no event gives the last events.
+pub async fn a_page_before_an_event_gives_the_last_events_before_it_in_order(store: &dyn Store) {
+    let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
+    for _ in 0..4 {
+        store.commit(id, &step(&[]), &[]).await.unwrap();
+    }
+    let numbers = |events: Vec<StoredEvent>| events.iter().map(|event| event.event_number.0).collect::<Vec<_>>();
+    let page = async |before, limit| {
+        numbers(
+            store
+                .load(id, EventPage::Before { before, limit })
+                .await
+                .unwrap()
+                .events,
+        )
+    };
+
+    let last = page(None, 2).await;
+    let before_four = page(Some(EventNumber(4)), 2).await;
+    let before_two = page(Some(EventNumber(2)), 5).await;
+    let before_one = page(Some(EventNumber(1)), 5).await;
+    let all = page(None, 10).await;
+    let beyond = page(Some(EventNumber(100)), 10).await;
+
+    assert_eq!(last, [4, 5]);
+    assert_eq!(before_four, [2, 3]);
+    assert_eq!(before_two, [1]);
+    assert_eq!(before_one, Vec::<u64>::new());
+    assert_eq!(all, [1, 2, 3, 4, 5]);
+    assert_eq!(beyond, [1, 2, 3, 4, 5]);
+}
+
 /// New settings give the number of the event that holds them.
 pub async fn new_settings_give_the_number_of_their_event(store: &dyn Store) {
     let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
@@ -546,7 +602,11 @@ pub async fn new_settings_give_the_number_of_their_event(store: &dyn Store) {
     let event_number = store.set_settings(id, &settings("two")).await.unwrap();
 
     assert_eq!(event_number, EventNumber(3));
-    let events = store.load(id, Some(EventNumber(2))).await.unwrap().events;
+    let events = store
+        .load(id, EventPage::After(Some(EventNumber(2))))
+        .await
+        .unwrap()
+        .events;
     assert_eq!(
         events,
         [StoredEvent {
@@ -615,7 +675,11 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
     store.commit(id, &step(&blocks), &[record]).await.unwrap();
 
     assert_eq!(pending, [PendingInput { id: input_id, input }]);
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     assert_eq!(
         events[1].event,
         SessionEvent::Commit {
@@ -654,7 +718,7 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let delete = store.delete_session(id).await;
     let fork = store.fork_session(id, None).await;
     let fork_at = store.fork_session(id, Some(EventNumber(2))).await;
-    let load = store.load(id, None).await;
+    let load = store.load(id, EventPage::After(None)).await;
     let remove = store.remove_input(id, InputId(1)).await;
 
     assert!(matches!(open, Err(StoreError::NotFound)), "{open:?}");
@@ -872,7 +936,13 @@ pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_t
     assert_eq!(fork.settings, settings("one"));
     assert!(!fork.newest_turn.is_open());
     assert_eq!(
-        kinds(&store.load(fork.id, None).await.map(|loaded| loaded.events).unwrap()),
+        kinds(
+            &store
+                .load(fork.id, EventPage::After(None))
+                .await
+                .map(|loaded| loaded.events)
+                .unwrap()
+        ),
         [(1, "settings"), (2, "commit")]
     );
 }
@@ -965,7 +1035,11 @@ fn kinds(events: &[StoredEvent]) -> Vec<(u64, &'static str)> {
 pub async fn a_new_session_has_its_settings_as_its_first_event(store: &dyn Store) {
     let id = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
 
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     assert_eq!(
         events,
@@ -983,11 +1057,19 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
     let blocks = [yuke_ai::Block::user_text("one")];
 
     let input = store.accept_input(id, user_input("one")).await.unwrap();
-    let after_input = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let after_input = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     store.commit(id, &step(&blocks), &[consumed(input, 1)]).await.unwrap();
     store.set_settings(id, &settings("two")).await.unwrap();
 
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     assert_eq!(kinds(&after_input), [(1, "settings")]);
     assert_eq!(kinds(&events), [(1, "settings"), (2, "commit"), (3, "settings")]);
     assert_eq!(
@@ -1123,7 +1205,7 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
     }
 
     let events = store
-        .load(id, Some(EventNumber(1)))
+        .load(id, EventPage::After(Some(EventNumber(1))))
         .await
         .map(|loaded| loaded.events)
         .unwrap();
@@ -1150,17 +1232,17 @@ pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
     store.set_settings(id, &settings("two")).await.unwrap();
 
     let after_one = store
-        .load(id, Some(EventNumber(1)))
+        .load(id, EventPage::After(Some(EventNumber(1))))
         .await
         .map(|loaded| loaded.events)
         .unwrap();
     let after_last = store
-        .load(id, Some(EventNumber(3)))
+        .load(id, EventPage::After(Some(EventNumber(3))))
         .await
         .map(|loaded| loaded.events)
         .unwrap();
     let after_largest = store
-        .load(id, Some(EventNumber(u64::MAX)))
+        .load(id, EventPage::After(Some(EventNumber(u64::MAX))))
         .await
         .map(|loaded| loaded.events)
         .unwrap();
@@ -1178,12 +1260,20 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
         .commit(source, &end(&[yuke_ai::Block::user_text("one")]), &[])
         .await
         .unwrap();
-    let source_events = store.load(source, None).await.map(|loaded| loaded.events).unwrap();
+    let source_events = store
+        .load(source, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
 
     let fork = store.fork_session(source, None).await.unwrap().id;
     store.set_settings(fork, &settings("two")).await.unwrap();
 
-    let fork_events = store.load(fork, None).await.map(|loaded| loaded.events).unwrap();
+    let fork_events = store
+        .load(fork, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     assert_eq!(fork_events[..2], source_events[..]);
     assert_eq!(
         fork_events[2],
@@ -1193,7 +1283,11 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
         }
     );
     assert_eq!(
-        store.load(source, None).await.map(|loaded| loaded.events).unwrap(),
+        store
+            .load(source, EventPage::After(None))
+            .await
+            .map(|loaded| loaded.events)
+            .unwrap(),
         source_events
     );
 }
@@ -1212,7 +1306,7 @@ pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
     store.set_settings(quiet, &settings("still quiet")).await.unwrap();
 
     let numbers: Vec<EventNumber> = store
-        .load(quiet, None)
+        .load(quiet, EventPage::After(None))
         .await
         .map(|loaded| loaded.events)
         .unwrap()
@@ -1438,7 +1532,7 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
     assert_eq!(receipt, EventNumber(3));
     assert_eq!(
         store
-            .load(source.id, Some(EventNumber(2)))
+            .load(source.id, EventPage::After(Some(EventNumber(2))))
             .await
             .map(|loaded| loaded.events)
             .unwrap(),
@@ -1459,7 +1553,7 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
     assert_eq!(source_receipt, EventNumber(4));
     assert_eq!(
         store
-            .load(fork.id, Some(receipt))
+            .load(fork.id, EventPage::After(Some(receipt)))
             .await
             .map(|loaded| loaded.events)
             .unwrap(),

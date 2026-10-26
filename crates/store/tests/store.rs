@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 
 use tokio_rusqlite::rusqlite;
 use yuke_agent::testing::{consumed, end, prompt, settings, step, user_input};
-use yuke_agent::{Access, Store, StoreError};
+use yuke_agent::{Access, EventPage, Store, StoreError};
 use yuke_engine::{Answer, Commit};
 use yuke_protocol::EventNumber;
 use yuke_store::SqliteStore;
@@ -299,7 +299,7 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     );
     assert_eq!(
         store
-            .load(session.id, None)
+            .load(session.id, EventPage::After(None))
             .await
             .map(|loaded| loaded.events)
             .unwrap()
@@ -322,7 +322,11 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
     drop(session);
     drop(store);
     let reopened = SqliteStore::open(&folder).await.unwrap();
-    let events = reopened.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = reopened
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
 }
 

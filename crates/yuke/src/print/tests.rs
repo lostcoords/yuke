@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 use std::time::Instant;
 
-use yuke_agent::{Access, Store};
+use yuke_agent::{Access, EventPage, Store};
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 
 use super::*;
@@ -537,7 +537,13 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Stopped));
     assert_eq!(finished.text, "");
     assert_eq!(requests, Vec::<String>::new());
-    let pending = place.store().await.load(finished.session, None).await.unwrap().pending;
+    let pending = place
+        .store()
+        .await
+        .load(finished.session, EventPage::After(None))
+        .await
+        .unwrap()
+        .pending;
     assert!(pending.is_empty(), "{pending:?}");
 }
 
@@ -659,7 +665,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     let events = place
         .store()
         .await
-        .load(first.session, None)
+        .load(first.session, EventPage::After(None))
         .await
         .map(|loaded| loaded.events)
         .unwrap();

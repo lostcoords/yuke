@@ -53,12 +53,19 @@ SELECT
 FROM events WHERE session_id = :source AND seq <= :cut
 ORDER BY seq;
 
---! events_after (session_id: [u8; 16], after: u64) : (seq: u64, kind, blocks?: crate::Json<Vec<yuke_ai::Block>>, settings?: crate::Json<yuke_protocol::SessionSettings>, consumed?: crate::Json<Vec<yuke_protocol::ConsumedInput>>, head?: crate::Json<Vec<yuke_ai::Block>>, keep?: usize, model?, base_url?, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?, end_kind?, end_finish_reason?, end_message?)
---- The events of the session with a number above `after`, in number order.
+--! events_page (session_id: [u8; 16], after: u64, before: u64, limit: i64) : (seq: u64, kind, blocks?: crate::Json<Vec<yuke_ai::Block>>, settings?: crate::Json<yuke_protocol::SessionSettings>, consumed?: crate::Json<Vec<yuke_protocol::ConsumedInput>>, head?: crate::Json<Vec<yuke_ai::Block>>, keep?: usize, model?, base_url?, input_tokens?: u64, output_tokens?: u64, reasoning_tokens?: u64, cache_read_tokens?: u64, cache_write_tokens?: u64, finish_reason?, end_kind?, end_finish_reason?, end_message?)
+--- The last `limit` events of the session with a number above `after` and below `before`, in number order. A
+--- negative `limit` takes each matching event.
 SELECT
     seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens, reasoning_tokens,
     cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
-FROM events WHERE session_id = :session_id AND seq > :after
+FROM (
+    SELECT
+        seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens,
+        reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
+    FROM events WHERE session_id = :session_id AND seq > :after AND seq < :before
+    ORDER BY seq DESC LIMIT :limit
+)
 ORDER BY seq;
 
 --! newest_settings (session_id: [u8; 16]) : (settings?: crate::Json<yuke_protocol::SessionSettings>)

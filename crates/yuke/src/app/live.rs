@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
-use yuke_agent::{Loaded, Session, SessionError, SessionObserver, StoreError};
+use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
 use yuke_js::{Handle, ScriptSession, ScriptTool, SessionHost};
@@ -17,7 +17,7 @@ use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
     ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings,
-    SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::sessions::SessionService;
@@ -94,7 +94,11 @@ impl LiveSession {
 
     /// Remove the pending input `input_id`, and tell the observer.
     pub(super) async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
-        self.parts.host.remove_input(input_id).await
+        let host = &self.parts.host;
+        host.shared.store.remove_input(host.output.session, input_id).await?;
+        host.output
+            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
+        Ok(())
     }
 
     /// Wake the task, so it runs the waiting input, or reports that the session has no work.
@@ -149,13 +153,36 @@ impl LiveSession {
     }
 
     /// Send the session as updates: the saved events after `after`, the state, the pending inputs, and the running
-    /// jobs. The live updates that come during the load follow them, without the ones that they hold.
+    /// jobs. The live updates that come during the load and that the snapshot does not hold follow them.
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
         let host = &self.parts.host;
         let hold = Hold::start(&host.output);
-        let loaded = host.shared.store.load(host.output.session, after).await?;
-        hold.release(loaded, || (self.state(), self.jobs(), self.parts.servers.states()));
+        let loaded = host
+            .shared
+            .store
+            .load(host.output.session, EventPage::After(after))
+            .await?;
+        hold.release(loaded, || (self.state(), self.jobs(), self.mcp_servers()));
         Ok(())
+    }
+
+    /// Watch the session: `sink` receives its snapshot with its last `tail` saved events, then each later update that
+    /// the snapshot does not hold, until the drop of the result.
+    pub(super) async fn view(&self, tail: usize, sink: Sink) -> Result<View, AppError> {
+        let host = &self.parts.host;
+        // The drop of the view removes its listener, also after a failed read.
+        let view = host.output.watch(sink);
+        // Before the read, so a later change of the settings comes as a saved event in the page or after it.
+        let settings = lock(&host.settings).clone();
+        let page = EventPage::Before {
+            before: None,
+            limit: tail,
+        };
+        let loaded = host.shared.store.load(host.output.session, page).await?;
+        host.output.show(&view, settings, loaded, || {
+            (self.state(), self.jobs(), self.mcp_servers())
+        });
+        Ok(view)
     }
 
     /// Save `settings`. It fails while a turn runs or input waits, and it never waits for a turn. The session keeps its
@@ -258,11 +285,112 @@ struct Output {
 struct Sent {
     /// The updates that wait for the end of a load, or `None` while no load runs.
     held: Option<Vec<SessionUpdate>>,
-    /// The inputs that a sent commit consumed or a sent removal named. An `input_accepted` can come after them, because
-    /// the store saves an input before the server sends it, so the output drops it.
+    /// The inputs that a published commit consumed or a published removal named. An `input_accepted` can come after
+    /// them, because the store saves an input before the server publishes it, so the output drops it.
     gone: HashSet<InputId>,
-    /// The open questions. A load sends them, so they live under the same lock as the updates.
+    /// The open questions. A snapshot shows them, so they live under the same lock as the updates.
     questions: BTreeMap<InteractionId, Question>,
+    /// The private listeners of the session.
+    views: Vec<Listener>,
+    /// The id of the last view.
+    last_view: u64,
+}
+
+impl Sent {
+    /// Whether `update` goes out. A late `input_accepted` of an input that left does not.
+    fn admit(&mut self, update: &SessionUpdate) -> bool {
+        match update {
+            SessionUpdate::Saved(StoredEvent {
+                event: SessionEvent::Commit { consumed, .. },
+                ..
+            }) => self.gone.extend(consumed.iter().map(|input| input.id)),
+            SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }) => {
+                self.gone.insert(*input_id);
+            }
+            SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) => return !self.gone.contains(input_id),
+            _ => {}
+        }
+        true
+    }
+
+    /// The updates that show the session: the events and pending inputs of `loaded`, the live state of `now`, and the
+    /// open questions.
+    fn snapshot(&self, loaded: Loaded, now: (SessionState, Vec<Job>, Vec<McpServer>)) -> Vec<SessionUpdate> {
+        let (state, jobs, servers) = now;
+        let mut updates: Vec<SessionUpdate> = loaded.events.into_iter().map(SessionUpdate::Saved).collect();
+        updates.push(SessionUpdate::Live(LiveUpdate::State { state }));
+        updates.extend(loaded.pending.into_iter().map(|pending| {
+            SessionUpdate::Live(LiveUpdate::InputAccepted {
+                input_id: pending.id,
+                input: pending.input,
+            })
+        }));
+        updates.extend(jobs.into_iter().map(|job| SessionUpdate::Live(LiveUpdate::Job { job })));
+        updates.extend(
+            servers
+                .into_iter()
+                .map(|server| SessionUpdate::Live(LiveUpdate::McpServer { server })),
+        );
+        updates.extend(self.questions.iter().map(|(id, question)| {
+            SessionUpdate::Live(LiveUpdate::InteractionRequested {
+                interaction_id: *id,
+                source: question.source.clone(),
+                request: question.request.clone(),
+            })
+        }));
+        updates
+    }
+}
+
+/// What a view of a session receives: first its snapshot, then each update after it.
+#[derive(Debug, PartialEq)]
+#[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge reads it"))]
+pub(crate) enum ViewEvent {
+    Snapshot(SessionSnapshot),
+    Update(SessionUpdate),
+}
+
+/// Takes the events of one view. The output calls it under the lock of the session, so a call must not block and must
+/// not call back into the session, also not by the drop of a view.
+pub(crate) type Sink = Arc<dyn Fn(ViewEvent) + Send + Sync>;
+
+/// A private listener of a session.
+struct Listener {
+    id: u64,
+    sink: Sink,
+    /// The updates that wait for the snapshot of the view, or `None` after the snapshot.
+    waiting: Option<Vec<SessionUpdate>>,
+}
+
+/// A private listener of an open session. Its drop ends it.
+pub(crate) struct View {
+    output: Weak<Output>,
+    id: u64,
+}
+
+impl Drop for View {
+    fn drop(&mut self) {
+        if let Some(output) = self.output.upgrade() {
+            lock(&output.sent).views.retain(|listener| listener.id != self.id);
+        }
+    }
+}
+
+/// The updates that came during the read of a snapshot and that add to it: not a saved event that it holds, and not
+/// the acceptance of an input that it shows as pending or consumed.
+fn after(loaded: &Loaded, updates: Vec<SessionUpdate>) -> impl Iterator<Item = SessionUpdate> {
+    let last = loaded.events.last().map(|event| event.event_number);
+    let mut known: HashSet<InputId> = loaded.pending.iter().map(|pending| pending.id).collect();
+    for event in &loaded.events {
+        if let SessionEvent::Commit { consumed, .. } = &event.event {
+            known.extend(consumed.iter().map(|input| input.id));
+        }
+    }
+    updates.into_iter().filter(move |update| match update {
+        SessionUpdate::Saved(event) => last.is_none_or(|last| event.event_number > last),
+        SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) => !known.contains(input_id),
+        SessionUpdate::Live(_) => true,
+    })
 }
 
 /// An open question of the session.
@@ -274,16 +402,63 @@ struct Question {
 }
 
 impl Output {
-    /// Send `update` to the observer, or keep it while a load runs.
+    /// Send `update` to the views and to the observer. The observer gets it after a load that runs.
     fn publish(&self, update: SessionUpdate) {
         let mut sent = lock(&self.sent);
         self.publish_in(&mut sent, update);
     }
 
     fn publish_in(&self, sent: &mut Sent, update: SessionUpdate) {
+        if !sent.admit(&update) {
+            return;
+        }
+        for view in &mut sent.views {
+            match view.waiting.as_mut() {
+                Some(waiting) => waiting.push(update.clone()),
+                None => (view.sink)(ViewEvent::Update(update.clone())),
+            }
+        }
         match sent.held.as_mut() {
             Some(held) => held.push(update),
-            None => self.send(sent, update),
+            None => self.send(update),
+        }
+    }
+
+    /// Add a listener with `sink`. It keeps the updates until [`Output::show`] sends its snapshot.
+    fn watch(self: &Arc<Self>, sink: Sink) -> View {
+        let mut sent = lock(&self.sent);
+        sent.last_view += 1;
+        let id = sent.last_view;
+        sent.views.push(Listener {
+            id,
+            sink,
+            waiting: Some(Vec::new()),
+        });
+        View {
+            output: Arc::downgrade(self),
+            id,
+        }
+    }
+
+    /// Send `view` its snapshot of `settings`, `loaded` and `now`, then the kept updates that add to it. `now` runs
+    /// under the lock, so no update comes between it and the snapshot.
+    fn show(
+        &self,
+        view: &View,
+        settings: SessionSettings,
+        loaded: Loaded,
+        now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>),
+    ) {
+        let mut sent = lock(&self.sent);
+        let Some(listener) = sent.views.iter_mut().find(|listener| listener.id == view.id) else {
+            return;
+        };
+        let (sink, waiting) = (Arc::clone(&listener.sink), listener.waiting.take().unwrap_or_default());
+        let kept: Vec<SessionUpdate> = after(&loaded, waiting).collect();
+        let updates = sent.snapshot(loaded, now());
+        sink(ViewEvent::Snapshot(SessionSnapshot { settings, updates }));
+        for update in kept {
+            sink(ViewEvent::Update(update));
         }
     }
 
@@ -336,18 +511,7 @@ impl Output {
         question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
     }
 
-    fn send(&self, sent: &mut Sent, update: SessionUpdate) {
-        match &update {
-            SessionUpdate::Saved(StoredEvent {
-                event: SessionEvent::Commit { consumed, .. },
-                ..
-            }) => sent.gone.extend(consumed.iter().map(|input| input.id)),
-            SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }) => {
-                sent.gone.insert(*input_id);
-            }
-            SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) if sent.gone.contains(input_id) => return,
-            _ => {}
-        }
+    fn send(&self, update: SessionUpdate) {
         self.observer
             .notify(ServerNotification::SessionUpdate(SessionUpdateParams {
                 session_id: self.session,
@@ -373,8 +537,8 @@ impl SessionObserver for Output {
     }
 }
 
-/// Keeps the live updates of a session while a load reads its saved events. A drop without a release sends the kept
-/// updates.
+/// Keeps the updates of a session for the observer while a load reads its saved events. A drop without a release sends
+/// the kept updates.
 struct Hold<'a> {
     output: &'a Output,
 }
@@ -385,51 +549,14 @@ impl<'a> Hold<'a> {
         Hold { output }
     }
 
-    /// Send the snapshot: `loaded` from one store read, then the state and the running jobs from `now`. Then send the
-    /// kept updates without the saved events that the snapshot holds. `now` runs under the lock, so no update comes
-    /// between it and its send.
+    /// Send the snapshot of `loaded` and `now`, then the kept updates that add to it. `now` runs under the lock, so no
+    /// update comes between it and its send.
     fn release(self, loaded: Loaded, now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>)) {
         let mut sent = lock(&self.output.sent);
-        let last = loaded.events.last().map(|event| event.event_number);
-        let (state, jobs, servers) = now();
-        for event in loaded.events {
-            self.output.send(&mut sent, SessionUpdate::Saved(event));
-        }
-        self.output
-            .send(&mut sent, SessionUpdate::Live(LiveUpdate::State { state }));
-        for pending in loaded.pending {
-            let update = LiveUpdate::InputAccepted {
-                input_id: pending.id,
-                input: pending.input,
-            };
-            self.output.send(&mut sent, SessionUpdate::Live(update));
-        }
-        for job in jobs {
-            self.output
-                .send(&mut sent, SessionUpdate::Live(LiveUpdate::Job { job }));
-        }
-        for server in servers {
-            self.output
-                .send(&mut sent, SessionUpdate::Live(LiveUpdate::McpServer { server }));
-        }
-        let questions: Vec<LiveUpdate> = sent
-            .questions
-            .iter()
-            .map(|(id, question)| LiveUpdate::InteractionRequested {
-                interaction_id: *id,
-                source: question.source.clone(),
-                request: question.request.clone(),
-            })
-            .collect();
-        for update in questions {
-            self.output.send(&mut sent, SessionUpdate::Live(update));
-        }
-        for update in sent.held.take().unwrap_or_default() {
-            let read =
-                matches!(&update, SessionUpdate::Saved(event) if last.is_some_and(|last| event.event_number <= last));
-            if !read {
-                self.output.send(&mut sent, update);
-            }
+        let held = sent.held.take().unwrap_or_default();
+        let kept: Vec<SessionUpdate> = after(&loaded, held).collect();
+        for update in sent.snapshot(loaded, now()).into_iter().chain(kept) {
+            self.output.send(update);
         }
     }
 }
@@ -438,7 +565,7 @@ impl Drop for Hold<'_> {
     fn drop(&mut self) {
         let mut sent = lock(&self.output.sent);
         for update in sent.held.take().unwrap_or_default() {
-            self.output.send(&mut sent, update);
+            self.output.send(update);
         }
     }
 }
@@ -453,7 +580,9 @@ impl Parts {
                     self.run_waiting_turns().await;
                     // A failure leaves its input saved for the next wake. A session with no holder gets no wake, so
                     // the countdown starts after a failure too.
-                    self.host.report_idle();
+                    if let Some(service) = self.host.service.upgrade() {
+                        service.report_idle(self.host.output.session);
+                    }
                 }
                 () = self.host.closed.cancelled() => return,
             }
@@ -739,21 +868,6 @@ impl Host {
         Ok(input_id)
     }
 
-    /// Remove the pending input `input_id`, and tell the observer.
-    async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
-        self.shared.store.remove_input(self.output.session, input_id).await?;
-        self.output
-            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
-        Ok(())
-    }
-
-    /// Tell the service that the task waits for a wake: no turn runs.
-    fn report_idle(&self) {
-        if let Some(service) = self.service.upgrade() {
-            service.report_idle(self.output.session);
-        }
-    }
-
     /// Whether an input of the session waits.
     async fn has_pending_input(&self) -> Result<bool, StoreError> {
         Ok(!self.shared.store.pending(self.output.session).await?.is_empty())
@@ -920,6 +1034,67 @@ mod tests {
         }
     }
 
+    /// A sink that keeps each event of its view.
+    fn collector() -> (Sink, Arc<Mutex<Vec<ViewEvent>>>) {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let kept = Arc::clone(&events);
+        (Arc::new(move |event| lock(&kept).push(event)), events)
+    }
+
+    #[test]
+    fn a_view_gets_its_snapshot_then_only_the_kept_updates_that_it_does_not_hold() {
+        let recorder = Arc::new(Recorder::default());
+        let output = Arc::new(output(&recorder));
+        let (sink, events) = collector();
+        let settings = match stored(1).event {
+            SessionEvent::Settings(settings) => settings,
+            SessionEvent::Commit { .. } => unreachable!("stored gives a settings event"),
+        };
+
+        let view = output.watch(sink);
+        // The read holds the event 5 and the pending input 7.
+        output.publish(accepted(7));
+        output.publish(saved(5));
+        output.publish(accepted(9));
+        let loaded = Loaded {
+            events: vec![stored(4), stored(5)],
+            pending: vec![yuke_protocol::PendingInput {
+                id: InputId(7),
+                input: input(),
+            }],
+        };
+        output.show(&view, settings.clone(), loaded, || {
+            (SessionState::Idle, Vec::new(), Vec::new())
+        });
+        output.publish(saved(6));
+        drop(view);
+        output.publish(saved(7));
+
+        assert_eq!(
+            *lock(&events),
+            [
+                ViewEvent::Snapshot(SessionSnapshot {
+                    settings,
+                    updates: vec![
+                        saved(4),
+                        saved(5),
+                        SessionUpdate::Live(LiveUpdate::State {
+                            state: SessionState::Idle
+                        }),
+                        accepted(7),
+                    ],
+                }),
+                ViewEvent::Update(accepted(9)),
+                ViewEvent::Update(saved(6)),
+            ]
+        );
+        // The observer gets each update as it comes, and no snapshot of the view.
+        assert_eq!(
+            *lock(&recorder.0),
+            [accepted(7), saved(5), accepted(9), saved(6), saved(7)]
+        );
+    }
+
     #[test]
     fn a_load_sends_its_snapshot_then_only_the_kept_updates_that_the_snapshot_does_not_hold() {
         let recorder = Arc::new(Recorder::default());
@@ -955,8 +1130,7 @@ mod tests {
                 }),
                 accepted(7),
                 job(),
-                // A client drops the second copy of input 7. The commit 5 consumed input 8, so its copy is gone.
-                accepted(7),
+                // The snapshot shows input 7 as pending and input 8 as consumed, so their kept copies are gone.
                 accepted(9),
                 saved(6),
                 job(),

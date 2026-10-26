@@ -36,5 +36,6 @@ pub use message::{
 };
 pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
 pub use update::{
-    BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionState, SessionUpdate, SessionUpdateParams,
+    BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionSnapshot, SessionState, SessionUpdate,
+    SessionUpdateParams,
 };

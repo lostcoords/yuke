@@ -65,9 +65,9 @@ pub enum ClientRequest {
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
     /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
-    /// `input_accepted` update for each pending input, a `job` update for each running job, an `interaction_requested`
-    /// update for each open question, and an `mcp_server` update for each MCP server. The live updates that come during
-    /// the load follow them. The result comes last. A load starts no turn, also when input waits. Result:
+    /// `input_accepted` update for each pending input, a `job` update for each running job, an `mcp_server` update for
+    /// each MCP server, and an `interaction_requested` update for each open question. The live updates that come during
+    /// the load and that these updates do not hold follow them. The result comes last. A load starts no turn, also when input waits. Result:
     /// [`EmptyResult`].
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),

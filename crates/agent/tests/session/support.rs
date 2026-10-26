@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use yuke_agent::{Access, ListPosition, Loaded, MemoryStore, Opened, PromptSection, SessionPage, Store, StoreError};
+use yuke_agent::{
+    Access, EventPage, ListPosition, Loaded, MemoryStore, Opened, PromptSection, SessionPage, Store, StoreError,
+};
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
 use yuke_protocol::{
@@ -39,7 +41,7 @@ pub(crate) fn user_input(text: &str) -> Input {
 /// The records of the inputs that the commits of session `id` consumed, in event order.
 pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<ConsumedInput> {
     store
-        .load(id, None)
+        .load(id, EventPage::After(None))
         .await
         .map(|loaded| loaded.events)
         .unwrap()
@@ -190,8 +192,8 @@ impl Store for FailingStore {
         self.store.pending(id).await
     }
 
-    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
-        self.store.load(id, after).await
+    async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError> {
+        self.store.load(id, page).await
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {

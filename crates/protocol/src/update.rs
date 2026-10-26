@@ -3,8 +3,21 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DraftId, EventNumber, Input, InputId, InteractionId, InteractionRequest, Job, McpServer, SessionId, StoredEvent,
+    DraftId, EventNumber, Input, InputId, InteractionId, InteractionRequest, Job, McpServer, SessionId,
+    SessionSettings, StoredEvent,
 };
+
+/// A session for a new viewer: its settings, and the updates that show it. The updates are its last saved events, its
+/// state, its pending inputs, its running jobs, its MCP servers, and its open questions. The later updates follow it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSnapshot {
+    /// The settings of the session when the snapshot starts. A later change comes as a saved event.
+    pub settings: SessionSettings,
+    /// The updates that show the session, in order.
+    pub updates: Vec<SessionUpdate>,
+}
 
 /// The params of `session/update`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

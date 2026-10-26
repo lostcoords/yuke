@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use yuke_agent::{
-    Access, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
+    Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
     check_consumed_blocks, preview_of,
 };
 use yuke_engine::{Commit, Outcome, TurnEnd};
@@ -444,19 +444,25 @@ impl Store for SqliteStore {
             })
             .await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|row| PendingInput {
-                id: InputId(row.id),
-                input: row.input.0,
-            })
-            .collect())
+        Ok(rows.into_iter().map(PendingInput::from).collect())
     }
 
-    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
-        let params = events::EventsAfterParams {
-            session_id: *id.as_bytes(),
-            after: after.map_or(0, |after| after.0.min(LARGEST_SEQ)),
+    async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError> {
+        let session_id = *id.as_bytes();
+        let seq = |number: EventNumber| number.0.min(LARGEST_SEQ);
+        let params = match page {
+            EventPage::After(after) => events::EventsPageParams {
+                session_id,
+                after: after.map_or(0, seq),
+                before: LARGEST_SEQ,
+                limit: -1,
+            },
+            EventPage::Before { before, limit } => events::EventsPageParams {
+                session_id,
+                after: 0,
+                before: before.map_or(LARGEST_SEQ, seq),
+                limit: i64::try_from(limit).unwrap_or(i64::MAX),
+            },
         };
 
         // One read transaction gives both, so they come from one moment.
@@ -464,7 +470,7 @@ impl Store for SqliteStore {
             .call(move |connection| {
                 read(connection, |connection| {
                     ensure_session(connection, params.session_id)?;
-                    let events = events::events_after(connection, &params).all().map_err(failed)?;
+                    let events = events::events_page(connection, &params).all().map_err(failed)?;
                     let pending = pending_inputs::pending_inputs(connection, params.session_id)
                         .all()
                         .map_err(failed)?;
@@ -475,13 +481,7 @@ impl Store for SqliteStore {
 
         Ok(Loaded {
             events: events.into_iter().map(event::stored_event).collect::<Result<_, _>>()?,
-            pending: pending
-                .into_iter()
-                .map(|row| PendingInput {
-                    id: InputId(row.id),
-                    input: row.input.0,
-                })
-                .collect(),
+            pending: pending.into_iter().map(PendingInput::from).collect(),
         })
     }
 
@@ -743,4 +743,13 @@ fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), Stor
 
 pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {
     StoreError::Failed(error.into())
+}
+
+impl From<pending_inputs::PendingInputs> for PendingInput {
+    fn from(row: pending_inputs::PendingInputs) -> Self {
+        PendingInput {
+            id: InputId(row.id),
+            input: row.input.0,
+        }
+    }
 }

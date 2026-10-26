@@ -9,7 +9,7 @@ pub(crate) mod events {
     use yuke_sql::{Query, execute};
 
     #[derive(Debug, PartialEq)]
-    pub(crate) struct EventsAfter {
+    pub(crate) struct EventsPage {
         pub(crate) seq: u64,
         pub(crate) kind: String,
         pub(crate) blocks: Option<crate::Json<Vec<yuke_ai::Block>>>,
@@ -199,23 +199,37 @@ ORDER BY seq;",
     }
 
     #[derive(Debug)]
-    pub(crate) struct EventsAfterParams {
+    pub(crate) struct EventsPageParams {
         pub(crate) session_id: [u8; 16],
         pub(crate) after: u64,
+        pub(crate) before: u64,
+        pub(crate) limit: i64,
     }
 
-    /// The events of the session with a number above `after`, in number order.
-    pub(crate) fn events_after<'a>(connection: &'a Connection, params: &EventsAfterParams) -> Query<'a, EventsAfter> {
+    /// The last `limit` events of the session with a number above `after` and below `before`, in number order. A
+    /// negative `limit` takes each matching event.
+    pub(crate) fn events_page<'a>(connection: &'a Connection, params: &EventsPageParams) -> Query<'a, EventsPage> {
         Query::new(
             connection,
             r"SELECT
     seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens, reasoning_tokens,
     cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
-FROM events WHERE session_id = :session_id AND seq > :after
+FROM (
+    SELECT
+        seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens,
+        reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
+    FROM events WHERE session_id = :session_id AND seq > :after AND seq < :before
+    ORDER BY seq DESC LIMIT :limit
+)
 ORDER BY seq;",
-            &[(":session_id", &params.session_id), (":after", &params.after)],
+            &[
+                (":session_id", &params.session_id),
+                (":after", &params.after),
+                (":before", &params.before),
+                (":limit", &params.limit),
+            ],
             |row| {
-                Ok(EventsAfter {
+                Ok(EventsPage {
                     seq: row.get("seq")?,
                     kind: row.get("kind")?,
                     blocks: row.get("blocks")?,

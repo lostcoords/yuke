@@ -15,7 +15,7 @@ use yuke_protocol::{
 };
 
 use crate::store::{
-    Access, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
+    Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
     check_consumed_blocks, preview_of,
 };
 
@@ -364,15 +364,22 @@ impl Store for MemoryStore {
         Ok(state.sessions.get(&id).ok_or(StoreError::NotFound)?.pending.clone())
     }
 
-    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError> {
+    async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError> {
         // One lock covers both reads, so they come from one moment.
         let state = lock(&self.state);
         let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
-        // Event number `n` sits at index `n - 1`, so the events after it start at index `n`.
-        let after = after.map_or(0, |after| usize::try_from(after.0).unwrap_or(usize::MAX));
-        let after = after.min(saved.events.len());
+        // Event number `n` sits at index `n - 1`, so the events after it start at index `n`, and the events before it
+        // end at index `n - 1`.
+        let index = |number: u64| usize::try_from(number).unwrap_or(usize::MAX).min(saved.events.len());
+        let events = match page {
+            EventPage::After(after) => &saved.events[after.map_or(0, |after| index(after.0))..],
+            EventPage::Before { before, limit } => {
+                let end = before.map_or(saved.events.len(), |before| index(before.0.saturating_sub(1)));
+                &saved.events[end.saturating_sub(limit)..end]
+            }
+        };
         Ok(Loaded {
-            events: saved.events[after..].to_vec(),
+            events: events.to_vec(),
             pending: saved.pending.clone(),
         })
     }

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
 
 use async_trait::async_trait;
-use yuke_agent::{MemoryStore, Session, SessionObserver, Store};
+use yuke_agent::{EventPage, MemoryStore, Session, SessionObserver, Store};
 use yuke_ai::route::Credential;
 use yuke_ai::{Block, ToolDefinition, Wire};
 use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
@@ -154,7 +154,7 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     assert_eq!(
         saved,
         store
-            .load(session.id(), Some(EventNumber(1)))
+            .load(session.id(), EventPage::After(Some(EventNumber(1))))
             .await
             .map(|loaded| loaded.events)
             .unwrap()
@@ -295,7 +295,7 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
     drop(session);
     let reopened = Session::open(store.clone(), id).await.unwrap();
     let calls: Vec<_> = store
-        .load(id, None)
+        .load(id, EventPage::After(None))
         .await
         .map(|loaded| loaded.events)
         .unwrap()
@@ -493,7 +493,7 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
     );
     assert_eq!(
         store
-            .load(session.id(), None)
+            .load(session.id(), EventPage::After(None))
             .await
             .map(|loaded| loaded.events)
             .unwrap()
@@ -800,7 +800,11 @@ async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
     let id = session.id();
     drop(session);
     let repaired = Session::open(store.clone(), id).await.unwrap();
-    let events = store.load(id, None).await.map(|loaded| loaded.events).unwrap();
+    let events = store
+        .load(id, EventPage::After(None))
+        .await
+        .map(|loaded| loaded.events)
+        .unwrap();
     assert_eq!(
         events.iter().map(|event| event.event_number.0).collect::<Vec<_>>(),
         [1, 2, 3, 4]

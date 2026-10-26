@@ -1,8 +1,9 @@
 use yuke_ai::transport::Transport;
-use yuke_protocol::{ListSessionsParams, ModelReference, SessionSettings};
+use yuke_protocol::{EventNumber, ListSessionsParams, ModelReference, SessionSettings, SessionUpdate};
 use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
 use super::*;
+use crate::app::live::ViewEvent;
 use crate::app::{App, Mode, Observer};
 use crate::testing::{Place, with_key};
 
@@ -376,4 +377,67 @@ fn runs(process: u32) -> bool {
         .status()
         .unwrap()
         .success()
+}
+
+#[tokio::test]
+async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_pages() {
+    let place = Place::new(
+        "sessions",
+        "a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_pages",
+    );
+    let transport = ScriptedTransport::new([text_reply("One."), text_reply("Two."), text_reply("Three.")]);
+    let app = started_with(&place, Box::new(transport.clone())).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+    for (turn, text) in ["One?", "Two?"].into_iter().enumerate() {
+        sessions.input(id, vec![Block::user_text(text)]).await.unwrap();
+        while transport.requests().len() <= turn || sessions.live(id).unwrap().state() == SessionState::Running {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    let last = sessions.events_before(id, None, 1).await.unwrap()[0].event_number.0;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let kept = Arc::clone(&events);
+
+    let view = sessions
+        .view(id, 1, Arc::new(move |event| lock(&kept).push(event)))
+        .await
+        .unwrap();
+    sessions.input(id, vec![Block::user_text("Three?")]).await.unwrap();
+    while transport.requests().len() < 3 || sessions.live(id).unwrap().state() == SessionState::Running {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let older = sessions.events_before(id, Some(EventNumber(last)), 100).await.unwrap();
+    drop(view);
+
+    let events = std::mem::take(&mut *lock(&events));
+    let ViewEvent::Snapshot(snapshot) = &events[0] else {
+        panic!("the first view event is no snapshot: {events:?}");
+    };
+    assert_eq!(snapshot.settings.cwd, settings(&place).cwd);
+    let saved: Vec<u64> = snapshot
+        .updates
+        .iter()
+        .filter_map(|update| match update {
+            SessionUpdate::Saved(event) => Some(event.event_number.0),
+            SessionUpdate::Live(_) => None,
+        })
+        .collect();
+    assert_eq!(saved, [last]);
+    let later: Vec<u64> = events[1..]
+        .iter()
+        .filter_map(|event| match event {
+            ViewEvent::Update(SessionUpdate::Saved(event)) => Some(event.event_number.0),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !later.is_empty() && later.iter().all(|number| *number > last),
+        "{later:?}"
+    );
+    let older: Vec<u64> = older.iter().map(|event| event.event_number.0).collect();
+    assert_eq!(older, (1..last).collect::<Vec<_>>());
+    drop(attachment);
+    app.shutdown().await;
 }

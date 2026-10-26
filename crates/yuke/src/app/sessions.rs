@@ -6,17 +6,17 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use yuke_agent::{ListPosition, Session};
+use yuke_agent::{EventPage, ListPosition, Session};
 use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_js::Handle;
 use yuke_protocol::{
     EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListSessionsParams,
     ListSessionsResult, NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow,
-    SessionSettings, SessionState, SessionSummary,
+    SessionSettings, SessionState, SessionSummary, StoredEvent,
 };
 
-use super::live::LiveSession;
+use super::live::{LiveSession, Sink, View};
 use super::{AppError, SOURCE, Shared, canonical, lock, model_of, save_settings, system_prompt};
 use crate::providers::Providers;
 
@@ -234,12 +234,12 @@ impl SessionService {
             if open.countdown != countdown {
                 return;
             }
-            let live = Arc::clone(&open.live);
             if reloading {
                 drop(registry);
                 self.report_idle(id);
                 return;
             }
+            let live = Arc::clone(&open.live);
             registry.slots.insert(id, Slot::Closing);
             live
         };
@@ -308,7 +308,7 @@ impl SessionService {
     }
 
     /// Create a session with `settings`, and open it. The folder loses its links, and the app builds the system prompt
-    /// of that folder. A missing API key stops the create before the session exists.
+    /// of that folder.
     ///
     /// # Errors
     ///
@@ -325,7 +325,6 @@ impl SessionService {
             self.shared.plugin_folders().to_vec(),
         )
         .await?;
-        self.check_model(&settings)?;
         let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt.sections).await?;
         let id = self.start_new(session).await?;
         for warning in prompt.warnings {
@@ -448,7 +447,8 @@ impl SessionService {
     }
 
     /// Open session `id` when it is not open, and send it as updates: its saved events after `after`, its state, its
-    /// pending inputs, and its running jobs. The live updates of the session that come during the load follow them.
+    /// pending inputs, its running jobs, its MCP servers, and its open questions. The live updates that come during the
+    /// load and that the snapshot does not hold follow them.
     ///
     /// # Errors
     ///
@@ -461,6 +461,38 @@ impl SessionService {
             Err(_) => self.open_live(id, |_, _| Ok(None)).await?,
         };
         live.load(after).await
+    }
+
+    /// Watch the open session `id`: `sink` receives its snapshot with its last `tail` saved events, then each later
+    /// update that the snapshot does not hold, until the drop of the result. The other listeners get no snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NotOpen`], and [`AppError::Store`] when the store fails.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge calls it"))]
+    pub(crate) async fn view(&self, id: SessionId, tail: usize, sink: Sink) -> Result<View, AppError> {
+        self.live(id)?.view(tail, sink).await
+    }
+
+    /// At most `limit` saved events of session `id` with a number below `before`, or its last `limit` events, in
+    /// number order. The session can be closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] for an unknown session or when the store fails.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the JavaScript bridge calls it"))]
+    pub(crate) async fn events_before(
+        &self,
+        id: SessionId,
+        before: Option<EventNumber>,
+        limit: usize,
+    ) -> Result<Vec<StoredEvent>, AppError> {
+        Ok(self
+            .shared
+            .store
+            .load(id, EventPage::Before { before, limit })
+            .await?
+            .events)
     }
 
     /// Close session `id`: its turn stops, and its task ends. Waiting input stays saved. A session with running jobs
@@ -590,8 +622,14 @@ impl SessionService {
                 Err(error)
             }
         };
-        if started.is_err() {
-            self.shared.store.delete_session(id).await?;
+        // The caller learns why the start failed. A failed delete is a warning beside it.
+        if started.is_err()
+            && let Err(error) = self.shared.store.delete_session(id).await
+        {
+            self.shared.warn(&format!(
+                "the session {id} that did not start stays: {}",
+                chain_text(&error)
+            ));
         }
         started.map(|_| id)
     }

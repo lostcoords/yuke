@@ -120,14 +120,13 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError>;
 
-    /// The events of session `id` after event `after`, in event-number order, and its pending inputs, in id order. The
-    /// two come from one moment. An input that is not pending left in a returned event, in an event at or before
-    /// `after`, or by a removal. `None` gives every event.
+    /// The events of `page` of session `id`, in event-number order, and its pending inputs, in id order. The two come
+    /// from one moment. An input stops being pending when a commit consumes it or a removal names it.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the load fails.
-    async fn load(&self, id: SessionId, after: Option<EventNumber>) -> Result<Loaded, StoreError>;
+    async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError>;
 
     /// Save `bytes` as a blob of session `id`, and return its [`blob_of`] reference. Only this session reads the blob.
     /// The same bytes again give the same blob. Any caller can put a blob.
@@ -224,10 +223,24 @@ pub enum Access {
     Write,
 }
 
+/// The saved events that [`Store::load`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventPage {
+    /// The events with a number above this one, or each event.
+    After(Option<EventNumber>),
+    /// The last `limit` events with a number below `before`, or the last `limit` events.
+    Before {
+        /// The number above the page. The page never holds this event.
+        before: Option<EventNumber>,
+        /// The most events of the page.
+        limit: usize,
+    },
+}
+
 /// The saved events and the pending inputs of a session at one moment, as [`Store::load`] gives them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Loaded {
-    /// The events after the requested event number.
+    /// The events of the requested page.
     pub events: Vec<StoredEvent>,
     /// The inputs that no commit consumed.
     pub pending: Vec<PendingInput>,

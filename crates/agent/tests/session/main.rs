@@ -12,7 +12,7 @@ use std::pin::pin;
 use std::task::{Context, Waker};
 
 use support::{FailingStore, SendsInput, StoreBehavior, consumed_inputs, prompt, settings, user_input};
-use yuke_agent::{Access, MemoryStore, NewestTurn, PromptSection, Session, SessionError, Store, StoreError};
+use yuke_agent::{Access, EventPage, MemoryStore, NewestTurn, PromptSection, Session, SessionError, Store, StoreError};
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
@@ -83,13 +83,16 @@ async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing()
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    let before = store.load(session.id(), None).await.unwrap().events;
+    let before = store.load(session.id(), EventPage::After(None)).await.unwrap().events;
 
     let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
 
     assert!(matches!(ran, Err(SessionError::NoInput)), "{ran:?}");
     assert_eq!(transport.requests(), Vec::<String>::new());
-    assert_eq!(store.load(session.id(), None).await.unwrap().events, before);
+    assert_eq!(
+        store.load(session.id(), EventPage::After(None)).await.unwrap().events,
+        before
+    );
 }
 
 #[tokio::test]
