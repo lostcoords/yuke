@@ -1,0 +1,63 @@
+# Tools
+
+A model tool is a function that the model calls. Define it with `ctx.tools.define(definition)` before a `ctx.get("tui")` early return, so it exists in every mode.
+
+## Definition
+
+`definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer`.
+
+- `name` is 1 to 64 characters of a-z, A-Z, 0-9, `_`, or `-`.
+- `description` tells the model when to call the tool. Use the imperative mood. State each limit the model must know.
+- `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`. Set `additionalProperties: false`.
+- `defer: true` waits for a `tool_search` tool to load the tool. Without a search tool, the engine loads it at once.
+- A tool cannot take the name of a built-in tool: `read`, `write`, `edit`, `exec`, or `stop`. `define` throws, and the plugin fails.
+
+## Inspect registrations
+
+`ctx.tools.inspect()` copies current registration metadata into owned objects. It runs no hooks or handlers. Each row gives the name, exact UTF-8 definition sizes, estimated framing bytes and tokens, the deferred flag, the owning `pluginIndex`, and the workspace scope.
+
+`pluginIndex` is `null` for a core registration. `workspace` is `null` for a registration that is not limited to one workspace. Activation rules, workspace scope, and request hooks can exclude a registration from a request. Deferred registrations need not appear in a request. Inspection is not a record of a past request or a provider token count. See `ToolInspection` in the declarations.
+
+## Arguments
+
+`args` is any JSON that the model wrote. Check each field before use. Throw an error for a missing or wrong field. Do not use a default in its place.
+
+## Result
+
+`execute` returns a promise. The promise resolves to one of these values:
+
+| Value | Result |
+|---|---|
+| a string | The model reads the string. |
+| a `ToolOutcome` | The model reads `output`, `media`, and `tools_added`. The UI also shows `diff`. |
+
+`ToolOutcome` is `{ output, is_error?, diff?, media?, tools_added? }`. `diff` is a list of `{ path, hunks }` with unified diff lines. An unknown key makes the call an error. An error result shows `output` only. A `tool.after` hook replaces the result with a `ToolOutcome`. Its payload also holds `name` and `arguments` as context. The replacement must not hold them.
+
+The engine rejects every other value, including `undefined` and `null`. A tool with nothing to report returns a short string that says so. Return JSON data as a string: `JSON.stringify(data)`.
+
+## Size
+
+The engine cuts an `output` longer than 50 KiB. It keeps at most 25 KiB from each end, on whole lines when possible. A one-line marker between them names a file that holds the whole text, or says that yuke kept no copy. The file lives until yuke exits. A plugin tool does not need its own cap. The built-in `exec` keeps at most 48 KiB of output before this cut, so its own status line fits.
+
+## Errors
+
+Throw an `Error` when the call fails. The model reads its `message` and nothing else. On OpenAI routes, the model reads `Error: <message>`, because those APIs have no error flag.
+
+- Write a message that tells the model what to do next.
+- Return `{ output, is_error: true }` when the output of a failed call is evidence, such as the log of a failed build.
+
+## Context
+
+- `toolCtx.output(text)` streams live output to the user. The model does not read it.
+- `toolCtx.workspaceRoot` is the session root.
+- `toolCtx.sessionId`, `toolCtx.messageId`, and `toolCtx.partId` name the transcript part that holds the call.
+
+## Background jobs
+
+`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. The status is `exited N`, `signal N`, or `failed` (yuke could not wait for the process). No hook rewrites it. A queue clear does not drop it. `stop` with the job ID ends it, waits for the end, and returns `[job-k3x9 stopped.] Log: <path>`. A requested stop sends no end message.
+
+## Cancellation
+
+The host aborts `signal` when the call stops. Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.
+
+[`examples/plugin.js`](examples/plugin.js) defines a complete model tool.
