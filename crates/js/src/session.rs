@@ -24,7 +24,7 @@ use crate::Runtime;
 use crate::error::{Error, caught};
 use crate::models::{Models, merge_settings};
 use crate::native::Operation;
-use crate::native::ai::{Round, side_request};
+use crate::native::ai::{Round, context_tokens, side_request, tokens};
 use crate::plugins::loader;
 use crate::runtime::Caller;
 use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
@@ -241,6 +241,7 @@ impl Hooks for ScriptHooks {
             open: self.open,
             window: round.model.context_window,
             input_tokens: round.input_tokens,
+            context_tokens: context_tokens(round.context, round.input_tokens),
             blocks: round.context.len(),
             round: self.natives(round),
         };
@@ -273,6 +274,7 @@ impl Hooks for ScriptHooks {
             retries: self.retries.load(Ordering::Relaxed),
             window: round.model.context_window,
             input_tokens: round.input_tokens,
+            context_tokens: context_tokens(round.context, round.input_tokens),
             blocks: round.context.len(),
             round: self.natives(round),
         };
@@ -563,6 +565,8 @@ struct RoundRetryRequest {
     retries: u64,
     window: Option<u64>,
     input_tokens: Option<u64>,
+    /// The estimate of [`context_tokens`] for the context before the round.
+    context_tokens: u64,
     blocks: usize,
     round: RoundNatives,
 }
@@ -609,13 +613,15 @@ struct RoundBeforeRequest {
     open: u64,
     window: Option<u64>,
     input_tokens: Option<u64>,
+    /// The estimate of [`context_tokens`] for the context before the round.
+    context_tokens: u64,
     blocks: usize,
     round: RoundNatives,
 }
 
 /// A copy of the round. `round.before` and `round.retry` make it, also without a handler. It crosses to JavaScript as
-/// the functions `context` and `sideRequest`. `context` converts the blocks at each call, so a round without a call
-/// converts nothing.
+/// the functions `context`, `tokens`, and `sideRequest`. `context` converts the blocks at each call, so a round without
+/// a call converts nothing.
 struct RoundNatives {
     round: Arc<Round>,
     models: Arc<dyn Models>,
@@ -625,6 +631,7 @@ impl<'js> IntoJs<'js> for RoundNatives {
     fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let object = Object::new(ctx.clone())?;
         object.set("sideRequest", side_request(ctx, Arc::clone(&self.round), self.models)?)?;
+        object.set("tokens", tokens(ctx, Arc::clone(&self.round))?)?;
         let round = self.round;
         object.set(
             "context",

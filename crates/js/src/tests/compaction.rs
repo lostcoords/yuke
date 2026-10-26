@@ -239,26 +239,20 @@ async fn a_cut_that_covers_only_the_old_summary_compacts_nothing() {
     assert!(models.requests.lock().unwrap().is_empty());
 }
 
-// A replacement leaves the count of the newest answer, so the same count describes the old context.
+// After a replacement the host gives no count, so the estimate of each block decides.
 #[tokio::test]
-async fn after_a_compaction_the_same_count_gives_way_to_an_estimate_of_the_context() {
+async fn without_a_count_the_estimate_of_each_block_decides() {
     let models = Arc::new(answered("summary"));
-    let (_runtime, session, _reports) = opened(
-        "after_a_compaction_the_same_count_gives_way_to_an_estimate_of_the_context",
-        &models,
-    )
-    .await;
+    let (_runtime, session, _reports) = opened("without_a_count_the_estimate_of_each_block_decides", &models).await;
     let hooks = session.hooks(CancellationToken::new());
     let small = two_inputs();
-    // A new input after a failed round: the estimate of the context alone passes the threshold.
     let large: Vec<Block> = (0..8).map(|index| long(&index.to_string(), 12_000)).collect();
 
-    let first = before(&hooks, &small, Some(90_000), Some(WINDOW)).await;
-    let same = before(&hooks, &small, Some(90_000), Some(WINDOW)).await;
-    let grown = before(&hooks, &large, Some(90_000), Some(WINDOW)).await;
+    let below = before(&hooks, &small, None, Some(WINDOW)).await;
+    let above = before(&hooks, &large, None, Some(WINDOW)).await;
 
-    assert!(first.replace.is_some() && same.replace.is_none() && grown.replace.is_some());
-    assert_eq!(models.requests.lock().unwrap().len(), 2);
+    assert!(below.replace.is_none() && above.replace.is_some());
+    assert_eq!(models.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

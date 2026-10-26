@@ -54,7 +54,7 @@ pub struct Session {
     lease: Option<Lease>,
     /// The newest saved turn. An open turn of the store ends at the open of the session, so it is never open here.
     newest_turn: NewestTurn,
-    /// The input tokens of the newest saved answer. The next turn starts from them.
+    /// The input tokens of the newest saved answer, or `None` after a newer replacement. The next turn starts from them.
     input_tokens: Option<u64>,
 }
 
@@ -73,7 +73,8 @@ impl fmt::Debug for Session {
 struct TurnJournal<'a> {
     inputs: TurnInputs<'a>,
     updates: &'a Updates<'a>,
-    /// The input tokens of the newest saved answer: from before the turn, then from each answer that the turn saves.
+    /// The input tokens of the newest saved answer: from before the turn, then from each answer that the turn saves. A
+    /// saved replacement clears them.
     input_tokens: Mutex<Option<u64>>,
 }
 
@@ -186,6 +187,8 @@ impl Journal for TurnJournal<'_> {
         let event_number = store.commit(*id, commit, &consumed).await?;
         if let Some(answer) = &commit.answer {
             *lock(&self.input_tokens) = answer.usage.input;
+        } else if commit.replaced.is_some() {
+            *lock(&self.input_tokens) = None;
         }
         self.updates.committed(event_number, commit, consumed);
         Ok(())

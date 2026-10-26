@@ -5,12 +5,6 @@
 
 import type { Block, RoundBeforeAnswer, RoundBeforeEvent, RoundRetryEvent, SessionContext } from "yuke:plugins";
 
-/** The tokens of a media item in an estimate. */
-const MEDIA_TOKENS = 1600;
-
-/** The characters of a token in an estimate. */
-const CHARS_PER_TOKEN = 4;
-
 /** The most tokens that stay exact after a summary. */
 const KEPT_TOKENS = 20_000;
 
@@ -77,13 +71,6 @@ Write one summary that replaces both. Rules:
 
 ${SUMMARY_FORMAT}`;
 
-/** The estimated tokens of `block`. */
-function tokensOf(block: Block): number {
-  if ("media" in block) return MEDIA_TOKENS;
-  const media = "tool_result" in block ? (block.tool_result.media?.length ?? 0) : 0;
-  return Math.ceil(JSON.stringify(block).length / CHARS_PER_TOKEN) + media * MEDIA_TOKENS;
-}
-
 function isAssistant(block: Block): boolean {
   return "assistant_text" in block || "reasoning" in block || "tool_call" in block;
 }
@@ -100,26 +87,16 @@ function isSummary(block: Block | undefined): boolean {
 }
 
 /**
- * The estimated input tokens of the next request. With `inputTokens`, the input count of the newest answer, the count
- * adds an estimate of the last answer and the blocks after it. Without it, the count estimates each block.
+ * The first kept block: the newest blocks keep about `target` tokens, and the cut moves back to a boundary. `tokens`
+ * holds the estimate of each block. A cut with only the old summary before it gives `undefined`, because the summary
+ * request has no new block.
  */
-function countOf(inputTokens: number | null, blocks: readonly Block[]): number {
-  let start = inputTokens === null ? 0 : Math.max(blocks.findLastIndex(isAssistant), 0);
-  while (start > 0 && isAssistant(blocks[start - 1] as Block)) start -= 1;
-  const estimate = blocks.slice(start).reduce((sum, block) => sum + tokensOf(block), 0);
-  return (inputTokens ?? 0) + estimate;
-}
-
-/**
- * The first kept block: the newest blocks keep about `target` tokens, and the cut moves back to a boundary. A cut that
- * leaves only the old summary before it summarizes nothing new, so it gives `undefined`.
- */
-function cutOf(blocks: readonly Block[], target: number): number | undefined {
+function cutOf(blocks: readonly Block[], tokens: readonly number[], target: number): number | undefined {
   let kept = 0;
   let cut = blocks.length;
   while (cut > 0 && kept < target) {
     cut -= 1;
-    kept += tokensOf(blocks[cut] as Block);
+    kept += tokens[cut] as number;
   }
   while (cut > 0 && !isBoundary(blocks, cut)) cut -= 1;
   const covered = isSummary(blocks[0]) ? 1 : 0;
@@ -172,25 +149,18 @@ async function compact(
 }
 
 export function session(s: SessionContext): undefined {
-  // A replacement does not change the input count of the newest answer. Until the next answer, that count describes
-  // the context before the replacement, so the plugin keeps it here.
-  let compactedAt: number | null = null;
-
   s.hook("round.before", async (event) => {
-    const { window, inputTokens } = event;
+    const { window, contextTokens } = event;
     if (window === null) return undefined;
-    const context = event.context();
-    const stale = inputTokens !== null && inputTokens === compactedAt;
     const reserve = Math.max(window / 10, Math.min(16_384, window / 4));
-    if (countOf(stale ? null : inputTokens, context) <= window - reserve) return undefined;
-    const cut = cutOf(context, Math.min(KEPT_TOKENS, window / 10));
+    if (contextTokens <= window - reserve) return undefined;
+    const context = event.context();
+    const cut = cutOf(context, event.blockTokens(), Math.min(KEPT_TOKENS, window / 10));
     if (cut === undefined) return undefined;
     s.notify("info", "The context nears the window of the model. A summary replaces its old part.");
     try {
       // The whole context is the next request with one more block, so the summary request reads the prompt cache.
-      const answer = await compact(event, context, cut, undefined);
-      compactedAt = inputTokens;
-      return answer;
+      return await compact(event, context, cut, undefined);
     } catch (error) {
       if (event.signal.aborted) throw error;
       s.notify("warn", `the compaction failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -202,13 +172,11 @@ export function session(s: SessionContext): undefined {
     const { window, failure, retries } = event;
     if (window === null || failure.kind !== "context_overflow" || retries >= RETRIES) return undefined;
     const context = event.context();
-    const cut = cutOf(context, Math.min(KEPT_TOKENS, window / 10) / 2 ** (retries + 1));
+    const cut = cutOf(context, event.blockTokens(), Math.min(KEPT_TOKENS, window / 10) / 2 ** (retries + 1));
     if (cut === undefined) return undefined;
     s.notify("info", "The context does not fit the window of the model. A summary replaces its old part.");
     // The whole context does not fit, so the summary request sends only the part before the cut.
-    const answer = await compact(event, context, cut, cut);
-    compactedAt = event.inputTokens;
-    return answer;
+    return compact(event, context, cut, cut);
   });
   return undefined;
 }

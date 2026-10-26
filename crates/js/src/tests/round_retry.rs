@@ -46,8 +46,8 @@ async fn an_answer_sends_the_round_again_and_each_round_counts_its_retries_from_
             "compact",
             "globalThis.seen = [];
              export function session(s) {
-               s.hook('round.retry', ({ failure, retries, window, inputTokens, blocks }) => {
-                 globalThis.seen.push(`${failure.kind} ${retries} ${window} ${inputTokens} ${blocks}`);
+               s.hook('round.retry', ({ failure, retries, window, inputTokens, contextTokens, blocks, blockTokens }) => {
+                 globalThis.seen.push(`${failure.kind} ${retries} ${window} ${inputTokens} ${contextTokens} ${blocks} ${blockTokens()}`);
                  return { replace: { head: [{ user_text: 'summary' }], keep: 0 } };
                });
              }",
@@ -82,9 +82,9 @@ async fn an_answer_sends_the_round_again_and_each_round_counts_its_retries_from_
             .await
             .unwrap(),
         [
-            "context_overflow 0 1000 900 1",
-            "context_overflow 1 1000 900 1",
-            "context_overflow 0 1000 900 1",
+            "context_overflow 0 1000 900 901 1 1",
+            "context_overflow 1 1000 900 901 1 1",
+            "context_overflow 0 1000 900 901 1 1",
         ]
     );
 }

@@ -238,6 +238,65 @@ fn before_round_gets_the_window_the_settings_and_the_input_tokens_of_the_newest_
 }
 
 #[test]
+fn a_replacement_clears_the_input_tokens_until_the_next_answer() {
+    let transport = ScriptedTransport::new([failed_reply("half")]);
+    let plan = RoundPlan {
+        replace: Some(Replaced {
+            head: vec![Block::user_text("summary")].into(),
+            keep: 1,
+        }),
+        ..RoundPlan::default()
+    };
+    let hooks = Script::default().plans([plan]).retries([None]);
+    let model = model();
+    let settings = temperature(0.25);
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
+
+    let ended = block_on(
+        driver
+            .turn(&mut vec![Block::user_text("old")], vec![Block::user_text("go")])
+            .settings(&settings)
+            .input_tokens(Some(7))
+            .run(),
+    );
+
+    assert!(ended.is_err(), "{ended:?}");
+    // The count of the newest answer describes the context before the summary, so the failed round has none.
+    assert_eq!(
+        hooks.rounds(),
+        ["before 2 None Some(7) Some(0.25)", "retry 2 None None Some(0.25)"]
+    );
+}
+
+#[test]
+fn a_replacement_that_changes_nothing_keeps_the_input_tokens() {
+    let transport = ScriptedTransport::new([failed_reply("half")]);
+    let plan = RoundPlan {
+        replace: Some(Replaced {
+            head: Vec::new().into(),
+            keep: 5,
+        }),
+        ..RoundPlan::default()
+    };
+    let hooks = Script::default().plans([plan]).retries([None]);
+    let model = model();
+    let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
+
+    let ended = block_on(
+        driver
+            .turn(&mut vec![Block::user_text("old")], vec![Block::user_text("go")])
+            .input_tokens(Some(7))
+            .run(),
+    );
+
+    assert!(ended.is_err(), "{ended:?}");
+    assert_eq!(
+        hooks.rounds(),
+        ["before 2 None Some(7) None", "retry 2 None Some(7) None"]
+    );
+}
+
+#[test]
 fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
     let transport = ScriptedTransport::new([failed_reply("half")]);
     let plan = RoundPlan {

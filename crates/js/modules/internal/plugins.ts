@@ -403,6 +403,8 @@ interface RoundBeforeRequest {
   readonly open: number;
   readonly window: number | undefined;
   readonly inputTokens: number | undefined;
+  /** The estimated input tokens of the context before the round. It adds to `inputTokens` when that count is set. */
+  readonly contextTokens: number;
   readonly blocks: number;
   readonly round: RoundNatives;
 }
@@ -491,7 +493,7 @@ function startRoundPlan<K extends RoundPoint>(
   request: RoundBeforeRequest,
   facts: Omit<EventOf<K>, keyof RoundBeforeEvent>,
 ): Operation<RoundBeforePlan | undefined> {
-  const { open, window, inputTokens, blocks, round } = request;
+  const { open, window, inputTokens, contextTokens, blocks, round } = request;
   return hostOperation(async (signal) => {
     // The replacements so far make the context `head`, then the last `kept` blocks of the context before the round.
     let head: readonly Block[] = [];
@@ -504,11 +506,16 @@ function startRoundPlan<K extends RoundPoint>(
       (handler) => {
         // The event shows the context that this handler sees, also after the answers of the later handlers.
         const seen = { head, kept };
+        const tokens = () => round.tokens(jsonCopy(seen.head, "the answer"), seen.kept);
+        // `inputTokens` counts the old context, so after a replacement only the estimate of each block holds.
+        const replaced = seen.head.length > 0 || seen.kept !== blocks;
         const event = Object.freeze({
           ...facts,
           window: window ?? null,
           inputTokens: inputTokens ?? null,
+          contextTokens: replaced ? tokens().reduce((sum, count) => sum + count, 0) : contextTokens,
           blocks: seen.head.length + seen.kept,
+          blockTokens: tokens,
           context: () => {
             const before = round.context();
             return [...jsonCopy(seen.head, "the answer"), ...before.slice(before.length - seen.kept)];

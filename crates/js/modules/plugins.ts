@@ -177,12 +177,24 @@ export interface RoundBeforeEvent {
   /** The context window of the model of the session in tokens, or `null` when the catalog names none. */
   readonly window: number | null;
   /**
-   * The input tokens of the newest answer of the session, or `null` before the first answer or when the provider sent
-   * no count. A replacement does not change the count, so after one it describes the old context until the next answer.
+   * The input tokens of the newest answer of the session. It is `null` before an answer, without a provider count, or
+   * after a newer replacement.
    */
   readonly inputTokens: number | null;
+  /**
+   * The estimated input tokens of the context that this handler sees. It adds the estimate of the newest assistant run
+   * and each later block to `inputTokens`. Without `inputTokens`, or after an earlier replacement, it sums
+   * `blockTokens()`. It needs no copy of the context, so read it in place of a count over `context()`.
+   */
+  readonly contextTokens: number;
   /** The number of blocks of the context, after the replacements of the earlier handlers of this round. */
   readonly blocks: number;
+  /**
+   * The estimated tokens of each block of `context()`, in the same order. Text bytes divide by 4 and round up. A tool
+   * call counts its name and its arguments. Reasoning counts the larger of its text and its provider state. Each media
+   * item adds 1600.
+   */
+  readonly blockTokens: () => number[];
   /** The blocks of the context, oldest first, after the replacements of the earlier handlers. Each call gives a copy. */
   readonly context: () => Block[];
   /**

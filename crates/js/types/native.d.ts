@@ -228,12 +228,15 @@ declare module "yuke:internal/native" {
   /**
    * The natives of the round of a `round.before` or `round.retry` request.
    * - `context` gives a new copy of the blocks of the context before the round.
+   * - `tokens` gives the estimated tokens of each block of the view: `head`, then the last `kept` blocks of the
+   *   context. A head that is not a list of blocks throws a `TypeError`.
    * - `sideRequest` sends the request of the round with the oldest `blocks` blocks of the view, then `prompt`. The view
    *   is `head`, then the last `kept` blocks of the context. A head that is not a list of blocks throws a `TypeError`. A failed request
    *   rejects with an `Error`, and a stop with `{ cancelled: true }`.
    */
   export interface RoundNatives {
     readonly context: () => import("yuke:protocol").Block[];
+    readonly tokens: (head: readonly unknown[], kept: number) => number[];
     readonly sideRequest: (options: {
       readonly head: readonly unknown[];
       readonly kept: number;

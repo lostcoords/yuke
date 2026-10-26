@@ -68,9 +68,10 @@ WHERE session_id = :session_id AND kind = 'settings'
 ORDER BY seq DESC LIMIT 1;
 
 --! newest_input_tokens (session_id: [u8; 16]) : (input_tokens?: u64)
---- The input tokens of the newest answer of the session. It returns no row for a session without an answer.
+--- The input tokens of the newest answer of the session. It returns no row without an answer or a replacement. It
+-- returns NULL after a newer replacement, because a replacement row has no usage.
 SELECT input_tokens FROM events
-WHERE session_id = :session_id AND kind = 'commit' AND model IS NOT NULL
+WHERE session_id = :session_id AND kind = 'commit' AND (model IS NOT NULL OR keep IS NOT NULL)
 ORDER BY seq DESC LIMIT 1;
 
 --! newest_replacement (session_id: [u8; 16]) : (seq: u64, head?: crate::Json<Vec<yuke_ai::Block>>, keep?: usize)

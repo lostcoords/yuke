@@ -340,9 +340,10 @@ s.hook("tool.after", () => ({ media: [mixed] }));
 s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
 
 // A round.before handler reads the window and the tokens, and answers a summary of the old blocks.
-s.hook("round.before", ({ window, inputTokens, context }): RoundBeforeAnswer | undefined => {
-  if (window === null || inputTokens === null || inputTokens < window * 0.8) return undefined;
-  const summary: Block = { user_text: `${context().length} blocks before this summary.` };
+s.hook("round.before", ({ window, contextTokens, blockTokens, context }): RoundBeforeAnswer | undefined => {
+  if (window === null || contextTokens < window * 0.8) return undefined;
+  const tokens: number[] = blockTokens();
+  const summary: Block = { user_text: `${context().length} blocks, ${tokens.length} estimates before this summary.` };
   return { replace: { head: [summary], keep: 4 }, settings: { temperature: 0 } };
 });
 // @ts-expect-error: a block holds one known kind.

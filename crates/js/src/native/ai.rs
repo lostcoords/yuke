@@ -1,4 +1,5 @@
-//! The model requests of the plugins: `aiComplete` of `yuke:ai`, and `sideRequest` of a round event.
+//! The model requests of the plugins: `aiComplete` of `yuke:ai`, and `sideRequest` of a round event. Also the token
+//! estimate of a round event.
 
 use std::error::Error;
 use std::path::Path;
@@ -110,6 +111,74 @@ struct SideOptions {
     max_output_tokens: Option<u32>,
 }
 
+/// The tokens of a media item in an estimate.
+const MEDIA_TOKENS: u64 = 1600;
+
+/// The bytes of a token in an estimate.
+const BYTES_PER_TOKEN: u64 = 4;
+
+/// The estimated tokens of `block`. Its text bytes divide by [`BYTES_PER_TOKEN`] and round up. A tool call counts its
+/// name and its arguments. Reasoning counts the larger of its text and its provider state. Each media item adds
+/// [`MEDIA_TOKENS`].
+pub(crate) fn block_tokens(block: &Block) -> u64 {
+    match block {
+        Block::Media(_) => MEDIA_TOKENS,
+        Block::UserText(text) | Block::AssistantText(text) => text_tokens(text.len()),
+        Block::ToolResult(result) => text_tokens(result.content.len()) + result.media.len() as u64 * MEDIA_TOKENS,
+        Block::Reasoning(reasoning) => {
+            let state = reasoning.replay.as_ref().map_or(0, |replay| replay.data.len());
+            text_tokens(reasoning.text.len().max(state))
+        }
+        Block::ToolCall(call) => text_tokens(call.name.len() + call.arguments.len()),
+    }
+}
+
+fn text_tokens(bytes: usize) -> u64 {
+    (bytes as u64).div_ceil(BYTES_PER_TOKEN)
+}
+
+/// The estimated input tokens of a request with `context`. The count `input_tokens` holds every block before the newest
+/// assistant run. So the estimate adds that run and each later block to it. Without the count, it sums every block.
+pub(crate) fn context_tokens(context: &[Block], input_tokens: Option<u64>) -> u64 {
+    let Some(input_tokens) = input_tokens else {
+        return context.iter().map(block_tokens).sum();
+    };
+    let is_answer = |block: &Block| block.role() == yuke_ai::Role::Assistant;
+    let mut start = context.iter().rposition(is_answer).unwrap_or(0);
+    while start > 0 && is_answer(&context[start - 1]) {
+        start -= 1;
+    }
+    // The provider sends the count, so it can be any number.
+    input_tokens.saturating_add(context[start..].iter().map(block_tokens).sum())
+}
+
+/// The view of a round handler: `head`, the replacements of the earlier handlers, then the last `kept` blocks of the
+/// context of `round`. A head that is not a list of blocks throws a `TypeError`.
+fn view<'a>(
+    ctx: &Ctx<'_>,
+    round: &'a Round,
+    head: Json<Value>,
+    kept: usize,
+) -> rquickjs::Result<(Vec<Block>, &'a [Block])> {
+    let head: Vec<Block> = serde_json::from_value(head.0).map_err(|error| {
+        let message = format!("the head is not a list of blocks: {error}");
+        throw(ctx, ErrorClass::TypeError, &message)
+    })?;
+    Ok((head, &round.context[round.context.len().saturating_sub(kept)..]))
+}
+
+/// The native `tokens(head, kept)` of a round event: the estimated tokens of each block of the view, as
+/// [`block_tokens`] gives them.
+pub(crate) fn tokens<'js>(ctx: &Ctx<'js>, round: Arc<Round>) -> rquickjs::Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, head: Json<Value>, kept: usize| -> rquickjs::Result<Vec<u64>> {
+            let (head, kept) = view(&ctx, &round, head, kept)?;
+            Ok(head.iter().chain(kept).map(block_tokens).collect())
+        },
+    )
+}
+
 /// The native `sideRequest(options)` of a round event: the request of `round`, with the context as the handler sees
 /// it, cut to `blocks`, then `prompt`. A head that is not a list of blocks throws a `TypeError`.
 pub(crate) fn side_request<'js>(
@@ -120,11 +189,7 @@ pub(crate) fn side_request<'js>(
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>, options: SideOptions| -> rquickjs::Result<Operation<'js>> {
-            let head: Vec<Block> = serde_json::from_value(options.head.0).map_err(|error| {
-                let message = format!("the head is not a list of blocks: {error}");
-                throw(&ctx, ErrorClass::TypeError, &message)
-            })?;
-            let kept = &round.context[round.context.len().saturating_sub(options.kept)..];
+            let (head, kept) = view(&ctx, &round, options.head, options.kept)?;
             let blocks: Vec<Block> = head
                 .into_iter()
                 .chain(kept.iter().cloned())

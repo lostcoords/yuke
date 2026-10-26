@@ -23,7 +23,7 @@ use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
 use crate::model::{Model, RoundError};
 use crate::search::{self, Declared};
 use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
-use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, TurnState, not_executed};
+use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, Replaced, TurnState, not_executed};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -471,8 +471,8 @@ impl<'a> Turn<'a> {
         self
     }
 
-    /// Start the turn with `input_tokens`, the input tokens of the newest answer before it. The first round gives it to
-    /// [`Hooks::before_round`].
+    /// Start the turn with `input_tokens`, the input tokens of the newest answer before it, or `None` when a replacement
+    /// came after that answer. The first round gives it to [`Hooks::before_round`].
     pub fn input_tokens(mut self, input_tokens: Option<u64>) -> Self {
         self.input_tokens = input_tokens;
         self
@@ -622,7 +622,10 @@ impl TurnParts<'_> {
             Raced::Cancelled => return Ok(Sent::Cancelled(Vec::new())),
         };
         loop {
-            if let Some(replace) = plan.replace.take() {
+            // A replacement with no head that keeps every block changes nothing, so the count of the newest answer stays.
+            let changes =
+                |replace: &Replaced<'_>| !replace.head.is_empty() || replace.keep < turn_state.context().len();
+            if let Some(replace) = plan.replace.take().filter(changes) {
                 self.save(&turn_state.replace(replace)).await?;
             }
             let model = plan.model.as_ref().unwrap_or(driver.model);

@@ -254,6 +254,7 @@ impl<'c> TurnState<'c> {
         let head_len = head.len();
         self.context.splice(..cut, head.into_owned());
         self.saved = self.context.len();
+        self.input_tokens = None;
         Commit {
             replaced: Some(Replaced {
                 head: Cow::Borrowed(&self.context[..head_len]),

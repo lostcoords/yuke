@@ -16,7 +16,7 @@ use yuke_agent::{Access, MemoryStore, NewestTurn, PromptSection, Session, Sessio
 use yuke_ai::route::SessionHeader;
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{Commit, Driver, Hooks, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text};
+use yuke_engine::{Commit, Driver, Hooks, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text};
 use yuke_protocol::{
     ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
 };
@@ -794,4 +794,52 @@ async fn a_turn_starts_from_the_input_tokens_of_the_newest_answer_also_after_an_
         .unwrap();
 
     assert_eq!(*hooks.0.lock().unwrap(), [None, Some(900), Some(1500)]);
+}
+
+/// Hooks that record the input tokens of each round start, and replace the context at the second round start.
+#[derive(Default)]
+struct ReplacesSecondRound(std::sync::Mutex<Vec<Option<u64>>>);
+
+#[async_trait::async_trait]
+impl Hooks for ReplacesSecondRound {
+    async fn before_round(
+        &self,
+        round: &RoundStart<'_>,
+    ) -> Result<RoundPlan, Box<dyn std::error::Error + Send + Sync>> {
+        let mut rounds = self.0.lock().unwrap();
+        rounds.push(round.input_tokens);
+        if rounds.len() != 2 {
+            return Ok(RoundPlan::default());
+        }
+        Ok(RoundPlan {
+            replace: Some(Replaced {
+                head: vec![Block::user_text("summary")].into(),
+                keep: 1,
+            }),
+            ..RoundPlan::default()
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_saved_replacement_clears_the_input_tokens_of_the_next_turn() {
+    let store = Arc::new(MemoryStore::new());
+    let transport = ScriptedTransport::new([
+        counted(&text_reply("two"), 900),
+        failed_reply("cut"),
+        text_reply("five"),
+    ]);
+    let model = model();
+    let hooks = ReplacesSecondRound::default();
+    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut results = Vec::new();
+    for text in ["one", "three", "four"] {
+        store.accept_input(session.id(), user_input(text)).await.unwrap();
+        let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
+        results.push(session.turn(driver).run().await.is_ok());
+    }
+
+    // The second turn replaced the context and failed before an answer, so the third turn has no count.
+    assert_eq!(results, [true, false, true]);
+    assert_eq!(*hooks.0.lock().unwrap(), [None, Some(900), None]);
 }

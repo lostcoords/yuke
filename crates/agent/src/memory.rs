@@ -123,6 +123,8 @@ impl Saved {
                     newest_turn = commit.end.clone().map_or(NewestTurn::Open, NewestTurn::Ended);
                     if let Some(answer) = &commit.answer {
                         input_tokens = answer.usage.input;
+                    } else if commit.replaced.is_some() {
+                        input_tokens = None;
                     }
                 }
             }

@@ -83,8 +83,8 @@ pub struct RoundStart<'a> {
     pub system: &'a str,
     /// The tool definitions that the request of the round offers.
     pub tools: &'a [ToolDefinition],
-    /// The input tokens of the newest answer, or `None` before the first answer or when the provider sent no count. A
-    /// replacement does not change the count, so after one the count describes the old context until the next answer.
+    /// The input tokens of the newest answer. It is `None` before an answer, without a provider count, or after a newer
+    /// replacement, because a count of the old context does not describe the new one.
     pub input_tokens: Option<u64>,
 }
 

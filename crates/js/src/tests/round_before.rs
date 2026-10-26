@@ -3,13 +3,14 @@
 
 use std::time::Duration;
 
-use yuke_ai::{Block, Settings, ToolCall, ToolResult};
+use yuke_ai::{Blob, Block, Media, Origin, Reasoning, ReasoningReplay, ReplayKind, Settings, ToolCall, ToolResult};
 use yuke_engine::{CancellationToken, Hooks, RoundPlan, RoundStart};
 
 use super::prompt::opened;
 use super::windowed;
 use super::{evaluate, wait_until};
 use crate::ScriptSession;
+use crate::native::ai::{block_tokens, context_tokens};
 
 /// A context of 4 blocks: the input, a call and its result, and a text.
 fn context() -> Vec<Block> {
@@ -51,10 +52,11 @@ async fn a_handler_gets_the_window_the_tokens_and_the_context_and_no_answer_keep
         &[(
             "watch",
             "export function session(s) {
-               s.hook('round.before', ({ window, inputTokens, blocks, context }) => {
+               s.hook('round.before', ({ window, inputTokens, contextTokens, blocks, blockTokens, context }) => {
                  const first = context();
                  first[0].user_text = 'changed';
-                 globalThis.seen = JSON.stringify({ window, inputTokens, blocks, context: context() });
+                 const tokens = blockTokens();
+                 globalThis.seen = JSON.stringify({ window, inputTokens, contextTokens, blocks, tokens, context: context() });
                });
              }",
         )],
@@ -65,11 +67,64 @@ async fn a_handler_gets_the_window_the_tokens_and_the_context_and_no_answer_keep
 
     assert!(plan.replace.is_none() && plan.model.is_none() && plan.settings.is_none());
     let seen = evaluate::<String>(&runtime, "return globalThis.seen;").await.unwrap();
-    // Each call of `context` gives a new copy, so the change of the first copy is not in the second.
+    // Each call of `context` gives a new copy, so the change of the first copy is not in the second. The count holds
+    // every block before the newest answer, so only the text `two` adds to it.
     assert_eq!(
         seen,
-        r#"{"window":200000,"inputTokens":1200,"blocks":4,"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":"two"}]}"#
+        r#"{"window":200000,"inputTokens":1200,"contextTokens":1201,"blocks":4,"tokens":[1,2,1,1],"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":"two"}]}"#
     );
+}
+
+#[test]
+fn an_estimate_charges_each_media_item_and_the_larger_part_of_reasoning() {
+    let media = Media::new(
+        Blob {
+            digest: [0; 32],
+            len: 3,
+        },
+        "image/png",
+    );
+    let mut result = ToolResult::success("c1", "abcd");
+    result.media = vec![media.clone(), media.clone()];
+    let reasoning = |text: &str, state: &str| {
+        Block::Reasoning(Reasoning {
+            text: text.to_owned(),
+            replay: Some(ReasoningReplay {
+                origin: Origin {
+                    model: "m".to_owned(),
+                    base_url: "https://example.test".to_owned(),
+                },
+                kind: ReplayKind::AnthropicSignature,
+                data: state.to_owned(),
+            }),
+        })
+    };
+
+    assert_eq!(block_tokens(&Block::Media(media)), 1600);
+    assert_eq!(block_tokens(&Block::ToolResult(result)), 1 + 2 * 1600);
+    assert_eq!(block_tokens(&reasoning("12345678", &"s".repeat(40))), 10);
+    assert_eq!(block_tokens(&reasoning(&"t".repeat(40), "")), 10);
+}
+
+#[test]
+fn a_count_adds_the_whole_newest_answer_and_the_blocks_after_it() {
+    let call = Block::ToolCall(ToolCall {
+        call_id: "c1".to_owned(),
+        name: "read".to_owned(),
+        arguments: "{}".to_owned(),
+    });
+    // The answer is the text and the call. The result and the input come after it.
+    let context = [
+        Block::user_text("aaaaaaaa"),
+        Block::assistant_text("bbbb"),
+        call,
+        Block::ToolResult(ToolResult::success("c1", "cccc")),
+        Block::user_text("dddd"),
+    ];
+
+    assert_eq!(context_tokens(&context, Some(100)), 100 + 1 + 2 + 1 + 1);
+    assert_eq!(context_tokens(&context, None), 2 + 1 + 2 + 1 + 1);
+    assert_eq!(context_tokens(&context[..1], Some(100)), 100 + 2);
 }
 
 #[tokio::test]
@@ -86,8 +141,8 @@ async fn a_later_handler_gets_the_replaced_context_and_the_plan_combines_the_rep
             (
                 "second",
                 "export function session(s) {
-                   s.hook('round.before', ({ blocks, context }) => {
-                     globalThis.seen = JSON.stringify({ blocks, context: context() });
+                   s.hook('round.before', ({ contextTokens, blocks, blockTokens, context }) => {
+                     globalThis.seen = JSON.stringify({ contextTokens, blocks, tokens: blockTokens(), context: context() });
                      return { replace: { head: [{ user_text: 'newer' }], keep: 2 } };
                    });
                  }",
@@ -99,9 +154,10 @@ async fn a_later_handler_gets_the_replaced_context_and_the_plan_combines_the_rep
     let plan = plan(&session).await.unwrap();
 
     let seen = evaluate::<String>(&runtime, "return globalThis.seen;").await.unwrap();
+    // The count of the newest answer describes the context before the replacement, so each block counts.
     assert_eq!(
         seen,
-        r#"{"blocks":2,"context":[{"user_text":"summary"},{"assistant_text":"two"}]}"#
+        r#"{"contextTokens":3,"blocks":2,"tokens":[2,1],"context":[{"user_text":"summary"},{"assistant_text":"two"}]}"#
     );
     // The second keeps the head of the first and the text, so the plan keeps 1 block of the context before the round.
     let replace = plan.replace.unwrap();

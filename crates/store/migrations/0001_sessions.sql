@@ -31,7 +31,7 @@ CREATE TABLE events (                      -- the commits and the settings of ea
     keep INTEGER,                          -- set with head: the number of earlier blocks that stay after head
     model TEXT,                            -- the origin of an answer
     base_url TEXT,                         -- set with model
-    input_tokens INTEGER,                  -- the usage of an answer. NULL marks a count that the provider left out.
+    input_tokens INTEGER,                  -- the usage of an answer. NULL marks a count that the provider left out, or a replacement.
     output_tokens INTEGER,
     reasoning_tokens INTEGER,
     cache_read_tokens INTEGER,
