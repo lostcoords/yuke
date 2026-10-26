@@ -4,13 +4,13 @@
  * and draws a one-cell divider between the two parts of each split.
  */
 import { createMount, startView } from "yuke:internal/tui/mount";
+import type { SavedPane, SavedPanes, ViewType } from "yuke:internal/tui/restore";
 import type {
   Canvas,
   Direction,
   FocusDirection,
   Mount,
   Pane,
-  Panes,
   Placement,
   Rect,
   Size,
@@ -23,6 +23,8 @@ interface Leaf {
   readonly view: View;
   /** The handle of a plugin pane; a placeholder has none. */
   readonly pane: Pane | undefined;
+  /** The plugin of the pane, or `core` for a placeholder. */
+  readonly owner: string;
 }
 
 interface Split {
@@ -66,21 +68,6 @@ export class PaneTree {
     });
   }
 
-  /** The public face of the tree for one owner: the panes it splits report and close as `owner`. */
-  facade(owner: string): Panes {
-    const active = (): Pane | undefined => this.active;
-    return Object.freeze({
-      view: this.view,
-      get active(): Pane | undefined {
-        return active();
-      },
-      split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }): Pane =>
-        this.split(owner, create, options?.direction ?? "row"),
-      focus: (direction: FocusDirection): boolean => this.focus(direction),
-      focusNext: (): void => this.focusNext(),
-    });
-  }
-
   /** The handle of the active pane, or `undefined` while a placeholder is active. */
   get active(): Pane | undefined {
     return this.#active.pane;
@@ -103,11 +90,52 @@ export class PaneTree {
     const pane = paneOf(mount, view, () => {
       if (leaf !== undefined && this.#leaves().includes(leaf)) this.#activate(leaf);
     });
-    leaf = { kind: "leaf", view, pane };
+    leaf = { kind: "leaf", view, pane, owner };
     const old = this.#active;
     this.#replace(old, { kind: "split", direction, ratio: 0.5, first: old, second: leaf });
     this.#activate(leaf);
     return pane;
+  }
+
+  /**
+   * The saved tree. `save` gives the saved view of a leaf (the plugin of the pane and its view), or `null` for a
+   * placeholder or a view without a snapshot.
+   */
+  snapshot(save: (view: View, owner: string) => SavedPane): SavedPanes {
+    const walk = (node: Node): SavedPane =>
+      node.kind === "leaf"
+        ? save(node.view, node.owner)
+        : { split: node.direction, ratio: node.ratio, first: walk(node.first), second: walk(node.second) };
+    return { tree: walk(this.#root), focus: Math.max(0, this.#leaves().indexOf(this.#active)) };
+  }
+
+  /**
+   * Replace the tree with `saved`, and close the panes of the tree before. A `null` leaf gives a placeholder; a type
+   * without a factory gives no pane (its plugin is gone); a factory that fails gives a placeholder and one notice.
+   */
+  restore(saved: SavedPanes, factoryOf: (type: string) => ViewType | undefined): void {
+    const before = this.#leaves();
+    const order: (Leaf | undefined)[] = [];
+    const build = (pane: SavedPane): Node | undefined => {
+      if (pane === null) {
+        const leaf = this.#placeholderLeaf();
+        order.push(leaf);
+        return leaf;
+      }
+      if ("split" in pane) {
+        const first = build(pane.first);
+        const second = build(pane.second);
+        if (first === undefined) return second;
+        if (second === undefined) return first;
+        return { kind: "split", direction: pane.split, ratio: pane.ratio, first, second };
+      }
+      const leaf = this.#restoreLeaf(pane.state, factoryOf(pane.type));
+      order.push(leaf);
+      return leaf;
+    };
+    this.#root = build(saved.tree) ?? this.#placeholderLeaf();
+    for (const leaf of before) leaf.pane?.close();
+    this.#activate(order[saved.focus] ?? firstLeaf(this.#root));
   }
 
   /** Close the active pane: a plugin pane through its mount, a placeholder at once. The last pane stays. */
@@ -221,8 +249,25 @@ export class PaneTree {
     return leaves;
   }
 
+  /** The leaf of a saved view, `undefined` without a factory, or a placeholder when the factory fails. */
+  #restoreLeaf(state: unknown, entry: ViewType | undefined): Leaf | undefined {
+    if (entry === undefined) return undefined;
+    let leaf: Leaf | undefined;
+    const mount = createMount(() => {
+      if (leaf !== undefined) this.#remove(leaf);
+    });
+    const view = startView(entry.owner, (given) => entry.restore(state, given), mount, this.#host.report);
+    if (view === undefined) return this.#placeholderLeaf();
+    const pane = paneOf(mount, view, () => {
+      if (leaf !== undefined && this.#leaves().includes(leaf)) this.#activate(leaf);
+    });
+    leaf = { kind: "leaf", view, pane, owner: entry.owner };
+    entry.adopt(pane);
+    return leaf;
+  }
+
   #placeholderLeaf(): Leaf {
-    return { kind: "leaf", view: this.#host.placeholder(), pane: undefined };
+    return { kind: "leaf", view: this.#host.placeholder(), pane: undefined, owner: "core" };
   }
 
   /**

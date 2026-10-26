@@ -1,6 +1,7 @@
 // Type checks of `yuke:tui`. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
 
 import type { TermEvent } from "yuke:internal/term";
+import type { PluginContext } from "yuke:plugins";
 import type { Canvas, Command, KeyEvent, Placement, Size, Style, StylePatch, Tui, View } from "yuke:tui";
 import type * as Runtime from "../modules/runtime/tui.ts";
 
@@ -45,4 +46,10 @@ const handler = (event: KeyEvent): boolean => event.modifiers.ctrl && event.char
 // The surface gives the panes and a root mount from a factory.
 declare const tui: Tui;
 const root = tui.setRoot((mount) => ({ draw: () => mount.signal.aborted }));
-void [patch, style, color, command, container, Clock, handler, root];
+// `get("tui")` can be `undefined` outside the terminal interface, so a plugin must check it.
+declare const ctx: PluginContext;
+const got = ctx.get("tui");
+assert<Equal<typeof got, Tui | undefined>>();
+// @ts-expect-error `tui` is a service of yuke: a plugin cannot provide it.
+ctx.provide("tui", tui);
+void [patch, style, color, command, container, Clock, handler, root, got];

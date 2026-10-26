@@ -4,20 +4,19 @@
  */
 import { type TermEvent, term } from "yuke:internal/term";
 import { CORE, Core } from "yuke:internal/tui/core";
+import { setSurfaces } from "yuke:internal/tui/host";
 import { strokeOf } from "yuke:internal/tui/keys";
+import { createSurface } from "yuke:internal/tui/surface";
 import type { Canvas, View } from "yuke:tui";
 
 const LEADER = "ctrl+k";
 const HINT = `ctrl+q quits · ctrl+z suspends · ${LEADER} then v/s split, c closes, h/j/k/l move`;
 
-/**
- * The view of a pane that holds nothing: the size, the reload count of the start snapshot, the newest notice, and the
- * last key, so a key that reaches yuke shows.
- */
+/** The view of a pane that holds nothing: the size, the newest notice, and the last key, so a key that reaches yuke shows. */
 function placeholder(core: Core): View {
   return {
     draw(canvas: Canvas, focused: boolean): void {
-      canvas.text(0, 0, `yuke ${term.width}x${term.height} ${term.background} reloads ${reloads}`, {
+      canvas.text(0, 0, `yuke ${term.width}x${term.height} ${term.background}`, {
         bold: true,
         ...(focused ? { fg: "accent" as const } : {}),
       });
@@ -32,7 +31,6 @@ function placeholder(core: Core): View {
   };
 }
 
-let reloads = 0;
 let lastKey = "";
 const core = new Core(
   {
@@ -46,9 +44,10 @@ const core = new Core(
     fill: (column, row, width, height, style) => term.fill(column, row, width, height, style),
     cursor: (point) => (point === undefined ? term.cursor(0, 0, false) : term.cursor(point.column, point.row)),
     requestFrame: (delay) => term.requestFrame(delay),
+    copy: (text) => term.copy(text),
     quit: () => term.quit(),
     suspend: () => term.suspend(),
-    reload: () => term.reload(JSON.stringify({ reloads: reloads + 1 })),
+    reload: (snapshot) => term.reload(snapshot),
   },
   placeholder,
 );
@@ -70,12 +69,10 @@ const bindings: readonly (readonly [string, string])[] = [
   [`${LEADER} right`, "focus-right"],
 ];
 for (const [spec, command] of bindings) core.keymap.bind(spec, `${CORE}:${command}`);
+setSurfaces((owner, signal) => createSurface(core, owner, signal));
 
 term.run({
   event(event: TermEvent): void {
-    if (event.type === "start" && event.snapshot !== undefined) {
-      reloads = (JSON.parse(event.snapshot) as { reloads?: number }).reloads ?? 0;
-    }
     if (event.type === "key") lastKey = strokeOf(event) || event.code;
     core.event(event);
   },

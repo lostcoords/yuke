@@ -19,7 +19,7 @@ async fn scene(name: &str) -> Runtime {
     runtime
         .caller
         .run(async move |ctx: Ctx<'_>, _registry| {
-            for module in ["yuke:internal/tui/core", "yuke:tui"] {
+            for module in ["yuke:internal/tui/core", "yuke:internal/tui/surface", "yuke:tui"] {
                 let promise = caught(&ctx, Module::import(&ctx, module))?;
                 let namespace = caught(&ctx, promise.into_future::<Object<'_>>().await)?;
                 for key in namespace.keys::<String>() {
@@ -51,8 +51,10 @@ async fn scene(name: &str) -> Runtime {
            },
            cursor: (point) => { cursorAt = point === undefined ? 'none' : `${point.column},${point.row}`; },
            requestFrame: () => { frames += 1; },
-           quit: () => calls.push('quit'), suspend: () => calls.push('suspend'), reload: () => calls.push('reload'),
+           quit: () => calls.push('quit'), suspend: () => calls.push('suspend'),
+           reload: (snapshot) => calls.push(`reload ${snapshot}`), copy: (text) => calls.push(`copy ${text}`),
          };
+         globalThis.driver = driver;
          globalThis.core = new Core(driver, () => ({ draw: (canvas) => { canvas.text(0, 0, 'empty'); } }));
          globalThis.screen = () => {
            for (const row of grid) row.fill(' ');
@@ -235,7 +237,7 @@ async fn panes_split_focus_and_close_and_the_last_pane_stays() {
     let steps = text(
         &runtime,
         "const pane = (name) => (mount) => ({ draw: (canvas, focused) => { canvas.text(0, 0, focused ? name.toUpperCase() : name); } });
-         const panes = core.panes.facade('test');
+         const panes = createSurface(core, 'test', new AbortController().signal).panes;
          const a = panes.split(pane('a'));
          const b = panes.split(pane('b'), { direction: 'column' });
          const shown = [screen().join('|')];
@@ -279,7 +281,7 @@ async fn a_pane_gets_its_inner_focus_back_and_focus_changes_reach_the_path() {
              { view: transcript, rect: { column: 0, row: 0, width: size.width, height: size.height - 1 } },
              { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
            ] };
-         const panes = core.panes.facade('test');
+         const panes = createSurface(core, 'test', new AbortController().signal).panes;
          panes.split(() => chat);
          core.scene.layout();
          core.scene.focus(composer);
@@ -383,7 +385,7 @@ async fn the_core_commands_reach_the_driver() {
          return calls.join(' ');",
     )
     .await;
-    assert_eq!(steps, "quit suspend reload");
+    assert_eq!(steps, r#"quit suspend reload {"tree":null,"focus":0}"#);
     tokio::time::sleep(Duration::from_millis(1)).await;
 }
 
@@ -397,7 +399,7 @@ async fn a_factory_that_closes_its_own_mount_mounts_nothing() {
            return { draw: (canvas) => { canvas.text(0, 0, 'closed'); } };
          });
          const overlay = core.scene.overlay('test', (mount) => { mount.close(); return { draw() {} }; });
-         const pane = core.panes.facade('test').split((mount) => { mount.close(); return { draw() {} }; });
+         const pane = createSurface(core, 'test', new AbortController().signal).panes.split((mount) => { mount.close(); return { draw() {} }; });
          return `${screen()[0]} ${root.signal.aborted} ${overlay.signal.aborted} ${pane.signal.aborted} ${atoms()}`;",
     )
     .await;
@@ -409,7 +411,7 @@ async fn a_focus_change_beneath_a_modal_moves_the_active_pane() {
     let runtime = scene("a_focus_change_beneath_a_modal").await;
     let steps = text(
         &runtime,
-        "const panes = core.panes.facade('test');
+        "const panes = createSurface(core, 'test', new AbortController().signal).panes;
          const a = panes.split(() => ({ draw() {} }));
          const b = panes.split(() => ({ draw() {} }));
          screen();
@@ -469,4 +471,183 @@ async fn a_press_that_opens_a_modal_captures_nothing() {
     )
     .await;
     assert_eq!(steps, "opener press");
+}
+
+/// The views of the tests of restore: a note shows its id and saves it; `note(id)` is the factory of a new note.
+const NOTE: &str = "globalThis.note = (state) => ({
+       draw: (canvas, focused) => { canvas.text(0, 0, `${focused ? 'N' : 'n'}ote ${state.id}`); },
+       snapshot: () => ({ type: 'note', state }),
+     });";
+
+#[tokio::test]
+async fn a_bare_name_gets_the_plugin_prefix_and_a_foreign_prefix_throws() {
+    let runtime = scene("a_bare_name_gets_the_plugin_prefix").await;
+    let steps = text(
+        &runtime,
+        "const tui = createSurface(core, 'notes', new AbortController().signal);
+         tui.commands.add({ name: 'open', run: () => log.push('open') });
+         tui.keys.bind('ctrl+n', 'open');
+         tui.views.register('note', () => ({ draw() {} }));
+         const thrown = [() => tui.commands.add({ name: 'other:x', run() {} }), () => tui.views.register('core:note', () => {})]
+           .map((call) => { try { call(); return 'none'; } catch (error) { return error.name; } }).join(' ');
+         tui.commands.add({ name: 'notes:close', run() {} });
+         const ran = [tui.commands.run('open'), tui.commands.run('core:quit')];
+         const names = tui.commands.list().map((item) => item.name).filter((name) => name.startsWith('notes:'));
+         return [thrown, ran.join(' '), log.join(' '), calls.join(' '), names.join(' '), tui.keys.keysOf('open').join(' '),
+           core.views.get('notes:note') !== undefined].join(' | ');",
+    )
+    .await;
+    assert_eq!(
+        steps,
+        "TypeError TypeError | true true | open | quit | notes:open notes:close | ctrl+n | true"
+    );
+}
+
+#[tokio::test]
+async fn the_stop_of_a_plugin_removes_its_registrations_and_mounts_and_later_calls_throw() {
+    let runtime = scene("the_stop_of_a_plugin_removes_its_registrations").await;
+    let steps = text(
+        &runtime,
+        "const stop = new AbortController();
+         // A listener of the plugin that runs before the one of the surface sees a stopped surface too.
+         stop.signal.addEventListener('abort', () => {
+           try { tui.commands.add({ name: 'during', run() {} }); } catch (error) { log.push(error.name); }
+         });
+         const tui = createSurface(core, 'notes', stop.signal);
+         const once = tui.commands.add({ name: 'open', run() {} });
+         once();
+         tui.commands.add({ name: 'open', run() {} });
+         tui.keys.bind('ctrl+n', 'open');
+         tui.styles.set('notes.title', { bold: true });
+         tui.notices.on(() => log.push('heard'));
+         tui.views.register('note', () => ({ draw() {} }));
+         const pane = tui.panes.split(() => ({ draw: (canvas) => { canvas.text(0, 0, 'pane'); } }));
+         const overlay = tui.overlay(() => ({ draw() {} }), { modal: false, place: () => ({ column: 0, row: 5, width: 1, height: 1 }) });
+         const root = tui.setRoot(() => ({ draw: (canvas) => { canvas.text(0, 0, 'root'); } }));
+         const before = screen()[0];
+         stop.abort();
+         core.notices.add('info', 'core', 'after');
+         let thrown = 'none';
+         try { tui.commands.add({ name: 'late', run() {} }); } catch (error) { thrown = error.name; }
+         once(); root.close();
+         return [before, screen()[0], [pane, overlay, root].map((mount) => mount.signal.aborted).join(' '),
+           core.commands.list().some((item) => item.name.startsWith('notes:')), core.keymap.keysOf('notes:open').length,
+           JSON.stringify(core.styles.resolve('notes.title')), String(core.views.get('notes:note')), log.join(' '), thrown].join(' | ');",
+    )
+    .await;
+    // After the stop the pane tree is a placeholder again: the root, the pane, and the overlay of the plugin are gone.
+    assert_eq!(
+        steps,
+        "root | empty | true true true | false | 0 | {} | undefined | TypeError | TypeError"
+    );
+}
+
+#[tokio::test]
+async fn a_command_of_a_plugin_keeps_its_this_and_its_fault_names_the_plugin() {
+    let runtime = scene("a_command_of_a_plugin_keeps_its_this").await;
+    let steps = text(
+        &runtime,
+        "class Counter { count = 0; name = 'count'; run() { this.count += 1; } }
+         const counter = new Counter();
+         const tui = createSurface(core, 'notes', new AbortController().signal);
+         tui.commands.add(counter);
+         tui.commands.add({ name: 'broken', run: () => { throw new Error('no disk'); } });
+         tui.commands.run('count'); tui.commands.run('count'); tui.commands.run('broken');
+         const fault = core.notices.list().at(-1);
+         return `${counter.count} ${fault.source} ${fault.text.split('\\n')[0]}`;",
+    )
+    .await;
+    assert_eq!(steps, "2 notes the command notes:broken failed: Error: no disk");
+}
+
+#[tokio::test]
+async fn the_panes_of_a_snapshot_come_back_with_their_views_and_focus() {
+    let runtime = scene("the_panes_of_a_snapshot_come_back").await;
+    evaluate::<()>(&runtime, NOTE).await.unwrap();
+    let steps = text(
+        &runtime,
+        "const tui = createSurface(core, 'notes', new AbortController().signal);
+         tui.views.register('note', note);
+         const one = tui.panes.split(() => note({ id: 1 }));
+         tui.panes.split(() => note({ id: 2 }), { direction: 'column' });
+         tui.panes.split(() => ({ draw() {} }));
+         // A state that is no JSON value saves as `null`, with a notice.
+         const cycle = { id: 3 };
+         cycle.self = cycle;
+         tui.panes.split(() => note(cycle), { direction: 'column' });
+         screen();
+         one.focus();
+         const before = screen();
+         const snapshot = core.snapshot();
+         const cycleNotice = core.notices.list().at(-1);
+         globalThis.core = new Core(driver, () => ({ draw: (canvas) => { canvas.text(0, 0, 'empty'); } }));
+         createSurface(core, 'notes', new AbortController().signal).views.register('note', note);
+         core.restore(snapshot);
+         return `${snapshot} | ${before.join('/')} | ${screen().join('/')} | ${cycleNotice.source}: ${cycleNotice.text.split(':')[0]}`;",
+    )
+    .await;
+    // The placeholder and the view without `snapshot()` save as `null`; the focus is the index of note 1. After the
+    // restore the layout and the focus are the same, and the view without a snapshot is a placeholder.
+    let tree = r#"{"tree":{"split":"row","ratio":0.5,"first":null,"second":{"split":"column","ratio":0.5,"first":{"type":"notes:note","state":{"id":1}},"second":{"split":"row","ratio":0.5,"first":{"type":"notes:note","state":{"id":2}},"second":{"split":"column","ratio":0.5,"first":null,"second":null}}}},"focus":1}"#;
+    let before = "empty     │Note 1/          │/          │/          │─────────/          │note│/          │    │────";
+    let after =
+        "empty     │Note 1/          │/          │/          │─────────/          │note│empt/          │    │────";
+    let notice = "notes: the snapshot of a pane is no JSON value";
+    assert_eq!(steps, format!("{tree} | {before} | {after} | {notice}"));
+}
+
+#[tokio::test]
+async fn a_restore_drops_a_pane_without_its_plugin_and_keeps_a_placeholder_for_a_failed_one() {
+    let runtime = scene("a_restore_drops_a_pane_without_its_plugin").await;
+    evaluate::<()>(&runtime, NOTE).await.unwrap();
+    let steps = text(
+        &runtime,
+        "const notes = new AbortController();
+         const tui = createSurface(core, 'notes', notes.signal);
+         tui.views.register('note', note);
+         const earlier = tui.panes.split(() => note({ id: 9 }));
+         createSurface(core, 'broken', new AbortController().signal).views.register('view', () => {
+           throw new Error('old state');
+         });
+         const split = (first, second) => ({ split: 'row', ratio: 0.5, first, second });
+         const saved = { tree: split(split({ type: 'gone:view', state: 1 }, { type: 'notes:note', state: { id: 3 } }),
+           { type: 'broken:view', state: 2 }), focus: 0 };
+         core.restore(JSON.stringify(saved));
+         const rows = screen();
+         // The restore closes the panes from before it.
+         const closed = earlier.signal.aborted;
+         const fault = core.notices.list().at(-1);
+         core.restore('not json');
+         const unread = core.notices.list().at(-1).text.split(':')[0];
+         // A snapshot that does not read gives the default layout: the restored note closes.
+         const afterBad = screen()[0];
+         // The stop of `notes` closes its restored pane too.
+         notes.abort();
+         return `${rows[0]} | ${closed} | ${fault.source}: ${fault.text.split('\\n')[0]} | ${unread} | ${afterBad} | ${screen()[0]}`;",
+    )
+    .await;
+    // `gone:view` has no factory: its pane goes, and note 3 takes its place, with the focus of the gone leaf.
+    assert_eq!(
+        steps,
+        "Note 3    │empty | true | broken: a view did not start: Error: old state | the saved panes did not read | empty | empty"
+    );
+}
+
+#[tokio::test]
+async fn a_focus_out_of_the_tree_and_a_state_that_is_no_json_value_give_a_notice() {
+    let runtime = scene("a_focus_out_of_the_tree").await;
+    let steps = text(
+        &runtime,
+        "const tui = createSurface(core, 'notes', new AbortController().signal);
+         tui.panes.split(() => ({ draw() {}, snapshot: () => ({ type: 'note', state: undefined }) }));
+         const saved = core.snapshot();
+         const stateNotice = core.notices.list().at(-1).text.split(':')[0];
+         core.restore(JSON.stringify({ tree: null, focus: 1 }));
+         return `${saved} | ${stateNotice} | ${core.notices.list().at(-1).text.split('\\n')[0]}`;",
+    )
+    .await;
+    assert_eq!(
+        steps,
+        r#"{"tree":{"split":"row","ratio":0.5,"first":null,"second":null},"focus":1} | the snapshot of a pane is no JSON value | the saved panes did not read: TypeError: the focus of a snapshot is the index of a leaf"#
+    );
 }

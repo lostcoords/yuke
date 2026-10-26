@@ -3,6 +3,7 @@ import { defineTool, fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { addAbortStep, hostOperation, hostSignal, signalOf, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
 import { notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
+import { surfaceOf } from "yuke:internal/tui/host";
 import type {
   AskOptions,
   Cleanup,
@@ -17,6 +18,7 @@ import type {
   RoundAfterEvent,
   RoundBeforeEvent,
   RoundFailure,
+  ServiceOf,
   Services,
   SessionContext,
   SessionHooks,
@@ -27,6 +29,7 @@ import type {
 } from "yuke:plugins";
 import type { Block, ModelReference } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+import type { Tui } from "yuke:tui";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
 interface PluginSpec {
@@ -122,6 +125,8 @@ export async function load(spec: PluginSpec): Promise<void> {
   const { signal, abort } = hostSignal();
   const pending = new Map<string, unknown>();
   let applying = true;
+  // One surface per plugin activation: each call of `get("tui")` gives the same one, and its signal stops it.
+  let tui: { readonly surface: Tui | undefined } | undefined;
   let cleanup: Cleanup | undefined;
   try {
     let apply: unknown;
@@ -163,10 +168,14 @@ export async function load(spec: PluginSpec): Promise<void> {
           throw new TypeError(`provide: plugin ${spec.name} cannot provide '${name}' as null or undefined`);
         pending.set(name, value);
       },
-      get<K extends keyof Services & string>(name: K): NonNullable<Services[K]> {
+      get<K extends keyof Services & string>(name: K): ServiceOf<K> {
+        if (name === "tui") {
+          tui ??= { surface: surfaceOf(spec.name, signal) };
+          return tui.surface as ServiceOf<K>;
+        }
         if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
         if (!services.has(name)) throw new Error(`get: no loaded plugin provides '${name}'`);
-        return services.get(name) as NonNullable<Services[K]>;
+        return services.get(name) as ServiceOf<K>;
       },
       notify(level: NoticeLevel, message: string): void {
         notify(spec.name, level, String(message), undefined);

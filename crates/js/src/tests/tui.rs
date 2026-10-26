@@ -42,7 +42,7 @@ async fn core(name: &str) -> Runtime {
         "globalThis.ran = [];
          globalThis.faults = [];
          globalThis.frames = 0;
-         globalThis.commands = new Commands((text) => faults.push(text), () => { frames += 1; });
+         globalThis.commands = new Commands((_name, text) => faults.push(text), () => { frames += 1; });
          globalThis.keymap = new Keymap(commands, () => {});
          globalThis.add = (name, extra = {}) => commands.add({
            name,

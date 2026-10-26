@@ -118,16 +118,31 @@ async fn the_console_of_a_plugin_reaches_the_screen_as_a_notice() {
     app.shutdown().await;
 }
 
+/// A plugin with the view type `note`: a pane that shows its id.
+const NOTES: &str = "export function apply(ctx) {
+  const tui = ctx.get('tui');
+  if (tui === undefined) return;
+  // One surface per plugin: a second call gives the same one.
+  if (ctx.get('tui') !== tui) throw new Error('two surfaces');
+  tui.views.register('note', (state) => ({
+    draw: (canvas) => { canvas.text(0, 0, `note ${state.id}`); },
+    snapshot: () => ({ type: 'note', state }),
+  }));
+}";
+
 #[tokio::test]
-async fn a_reload_shows_the_new_runtime_with_the_snapshot() {
+async fn a_plugin_pane_comes_back_after_a_reload() {
     let place = Place::new("tui", "reload_snapshot");
+    place.plugin("notes", NOTES);
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["notes"] }"#).unwrap();
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output.shows("yuke 200x4 dark reloads 0").await;
+    output.shows("yuke 200x4 dark").await;
 
-    reload(Some(&mut app), &display, r#"{"reloads":4}"#.to_owned()).await;
+    let snapshot = r#"{"tree":{"type":"notes:note","state":{"id":4}},"focus":0}"#;
+    reload(Some(&mut app), &display, snapshot.to_owned()).await;
 
-    output.shows("yuke 200x4 dark reloads 4").await;
+    output.shows("note 4").await;
     app.shutdown().await;
 }
 
@@ -136,17 +151,17 @@ async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
     let place = Place::new("tui", "reload_failure");
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output.shows("yuke 200x4 dark reloads 0").await;
+    output.shows("yuke 200x4 dark").await;
     place.plugin("broken", "throw new Error('broken on purpose');");
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["broken"] }"#).unwrap();
 
-    reload(Some(&mut app), &display, r#"{"reloads":1}"#.to_owned()).await;
+    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
 
     // Only the old runtime draws, so the notice on the screen comes from it.
     output
         .shows("error host:yuke: the reload failed: the reload keeps the old plugins")
         .await;
-    assert_eq!(output.rows()[0], "yuke 200x4 dark reloads 0");
+    assert_eq!(output.rows()[0], "yuke 200x4 dark");
     app.shutdown().await;
 }
 

@@ -788,3 +788,24 @@ async fn options_that_fail_the_check_fail_the_load_of_that_plugin_before_its_app
         ["good"]
     );
 }
+
+#[tokio::test]
+async fn get_tui_is_undefined_outside_the_terminal_interface_and_needs_no_uses_entry() {
+    let folder = folder("get_tui_is_undefined_outside_the_terminal_interface");
+    let (runtime, _reports) = start(&folder).await;
+    let one = plugin(
+        &folder,
+        "one",
+        Some("export function apply(ctx) { globalThis.seen = String(ctx.get('tui')); }"),
+        &[],
+        &[],
+    );
+
+    let failures = runtime.load_plugins(&[one]).await;
+
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.seen;").await.unwrap(),
+        "undefined"
+    );
+}

@@ -24,11 +24,14 @@ interface Entry {
 
 export class Commands {
   readonly #commands = new Map<string, Entry>();
-  readonly #fault: (text: string) => void;
+  readonly #fault: (name: string, text: string) => void;
   readonly #changed: () => void;
 
-  /** `fault` gets the text of a failed command, and `changed` asks for a frame after each change and each run. */
-  constructor(fault: (text: string) => void, changed: () => void) {
+  /**
+   * `fault` gets the name of a failed command and the text of its failure; `changed` asks for a frame after each change
+   * and each run.
+   */
+  constructor(fault: (name: string, text: string) => void, changed: () => void) {
     this.#fault = fault;
     this.#changed = changed;
   }
@@ -69,7 +72,7 @@ export class Commands {
     const entry = this.#commands.get(name);
     if (entry === undefined || !this.#enabled(name, entry)) return false;
     const failed = (error: unknown): void => {
-      this.#fault(`the command ${name} failed: ${failureOf(error)}`);
+      this.#fault(name, `the command ${name} failed: ${failureOf(error)}`);
       this.#changed();
     };
     let result: unknown;
@@ -109,7 +112,7 @@ export class Commands {
     } catch (error) {
       if (!entry.faulted) {
         entry.faulted = true;
-        this.#fault(`the enabled check of the command ${name} failed: ${failureOf(error)}`);
+        this.#fault(name, `the enabled check of the command ${name} failed: ${failureOf(error)}`);
       }
       return false;
     }

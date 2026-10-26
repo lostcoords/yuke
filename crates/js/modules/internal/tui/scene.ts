@@ -297,6 +297,11 @@ export class Scene {
     if (shown === undefined) for (const child of target.children) this.#drawTarget(child, focused);
   }
 
+  /** Run `f`, a callback of `view` of `owner`, inside the fault boundary of the view. A fault gives `fallback`. */
+  guard<T>(view: View, owner: string, fallback: T, f: () => T): T {
+    return this.#call({ view, owner }, fallback, f);
+  }
+
   /**
    * Run a callback of the view of `target`. The first throw, or a returned promise, marks the view failed and reports
    * once; a failed view gets no more calls, and its rect draws the error until the view goes.

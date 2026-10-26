@@ -15,6 +15,8 @@
 import type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
+import type { Tui } from "yuke:tui";
+
 export type { Block, FinishReason, InputKind, InputSource, ModelReference, Settings, Usage } from "yuke:protocol";
 
 /** The severity of a notice. */
@@ -23,10 +25,15 @@ export type NoticeLevel = "debug" | "info" | "warn" | "error";
 /**
  * The services of the plugins, by name. A provider ships a declaration file that adds its service to this interface:
  * `declare module "yuke:plugins" { interface Services { "acme.notes.v1": Notes } }`. Each plugin that uses the service
- * includes that file. A name without a declaration fails the type check.
+ * includes that file. A name without a declaration fails the type check. `tui` is the service of yuke itself: the
+ * terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`; it needs no `uses` entry.
  */
-// biome-ignore lint/suspicious/noEmptyInterface: each provider adds its service to this interface.
-export interface Services {}
+export interface Services {
+  readonly tui: Tui | undefined;
+}
+
+/** The value of `ctx.get(name)`: never null for a service of a plugin; `tui` can be `undefined`. */
+export type ServiceOf<K extends keyof Services> = K extends "tui" ? Services[K] : NonNullable<Services[K]>;
 
 /** `T` with each field read-only at each depth, as the host freezes it. */
 export type Frozen<T> = T extends readonly (infer U)[]
@@ -59,9 +66,15 @@ export interface PluginContext<O = Record<string, never>> {
    */
   readonly signal: AbortSignal;
   /** Publish the service `name` once, during `apply`. The value is not null or undefined. `name` must be in `provides`. */
-  readonly provide: <K extends keyof Services & string>(name: K, value: NonNullable<Services[NoInfer<K>]>) => void;
-  /** The service `name` of an earlier plugin, never null. `name` must be in `uses` of the manifest. */
-  readonly get: <K extends keyof Services & string>(name: K) => NonNullable<Services[K]>;
+  readonly provide: <K extends Exclude<keyof Services & string, "tui">>(
+    name: K,
+    value: NonNullable<Services[NoInfer<K>]>,
+  ) => void;
+  /**
+   * The service `name`. The service of a plugin must be in `uses` of the manifest and is never null. `get("tui")` gives
+   * the terminal interface of this plugin, or `undefined` outside it; it needs no `uses` entry.
+   */
+  readonly get: <K extends keyof Services & string>(name: K) => ServiceOf<K>;
   /** Send a notice with this plugin as its source. */
   readonly notify: (level: NoticeLevel, message: string) => void;
 }
