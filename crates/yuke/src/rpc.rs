@@ -30,8 +30,11 @@ use yuke_protocol::{
 use crate::app::{App, AppError, Machine, Mode, Observer, lock, warn};
 use yuke_engine::chain_text;
 
-/// The most messages that wait to reach the client. A client that falls further behind loses its connection.
+/// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
 const OUTGOING_LIMIT: usize = 8192;
+
+/// The size at which a write stops taking queued lines. A single longer line still goes out whole.
+const BATCH_BYTES: usize = 64 * 1024;
 
 /// The wait after a failed accept, so an error that repeats does not spin the server or fill stderr.
 const ACCEPT_RETRY: Duration = Duration::from_secs(1);
@@ -517,10 +520,22 @@ impl Writer {
     fn start(mut output: impl AsyncWrite + Unpin + Send + 'static) -> (Writer, JoinHandle<()>) {
         let (sender, mut receiver) = mpsc::channel::<String>(OUTGOING_LIMIT);
         let task = tokio::spawn(async move {
-            while let Some(line) = receiver.recv().await {
+            let mut batch = Vec::new();
+            while let Some(mut line) = receiver.recv().await {
+                batch.clear();
+                // Each write and flush of stdout is a task on another thread, so one write takes the lines that queued
+                // meanwhile. The size bound keeps the buffer small and the queue limit meaningful.
+                loop {
+                    batch.extend_from_slice(line.as_bytes());
+                    batch.push(b'\n');
+                    if batch.len() >= BATCH_BYTES {
+                        break;
+                    }
+                    let Ok(next) = receiver.try_recv() else { break };
+                    line = next;
+                }
                 let written = async {
-                    output.write_all(line.as_bytes()).await?;
-                    output.write_all(b"\n").await?;
+                    output.write_all(&batch).await?;
                     output.flush().await
                 };
                 if let Err(error) = written.await {

@@ -2886,3 +2886,65 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
     );
     assert!(!place.paths.data.join("auth.json").exists());
 }
+
+/// An output that keeps its bytes and counts its flushes.
+struct CountedOutput(Arc<Mutex<(Vec<u8>, usize)>>);
+
+impl AsyncWrite for CountedOutput {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        self.0.lock().unwrap().0.extend_from_slice(bytes);
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+
+    fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
+        self.0.lock().unwrap().1 += 1;
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn the_writer_writes_a_burst_of_lines_in_order_with_one_flush() {
+    let counted = Arc::new(Mutex::new((Vec::new(), 0)));
+    let (writer, written) = Writer::start(CountedOutput(Arc::clone(&counted)));
+
+    // The writer task runs only at the next await, so the three lines wait in the queue together.
+    for number in 1..=3 {
+        writer.send(&json!({ "n": number }));
+    }
+    drop(writer);
+    written.await.unwrap();
+
+    let (bytes, flushes) = &*counted.lock().unwrap();
+    assert_eq!(bytes, b"{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n");
+    assert_eq!(*flushes, 1);
+}
+
+#[tokio::test]
+async fn a_burst_past_the_batch_size_writes_in_two_batches_and_loses_no_line() {
+    let counted = Arc::new(Mutex::new((Vec::new(), 0)));
+    let (writer, written) = Writer::start(CountedOutput(Arc::clone(&counted)));
+    let texts: Vec<String> = ["a", "b", "c"].iter().map(|letter| letter.repeat(40_000)).collect();
+
+    // Two lines pass 64 KiB, so the first write stops after them, and the third line goes in a second write.
+    for text in &texts {
+        writer.send(text);
+    }
+    drop(writer);
+    written.await.unwrap();
+
+    let (bytes, flushes) = &*counted.lock().unwrap();
+    let expected = format!("\"{}\"\n\"{}\"\n\"{}\"\n", texts[0], texts[1], texts[2]);
+    assert_eq!(bytes, expected.as_bytes());
+    assert_eq!(*flushes, 2);
+}
