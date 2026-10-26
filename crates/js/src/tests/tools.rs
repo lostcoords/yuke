@@ -127,7 +127,7 @@ pub(super) struct Tools {
 impl Tools {
     /// Open the session of `host` on `runtime`, and wait for its tools.
     pub(super) async fn open(runtime: &Runtime, host: Arc<dyn SessionHost>) -> Tools {
-        let session = runtime.open_session(host).await.unwrap();
+        let session = runtime.handle().open_session(host).await.unwrap();
         let list = tokio::time::timeout(Duration::from_secs(5), session.tools())
             .await
             .unwrap()

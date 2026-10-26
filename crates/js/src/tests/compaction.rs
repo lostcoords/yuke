@@ -40,7 +40,11 @@ async fn opened(name: &str, models: &Arc<Recorded>) -> (Runtime, ScriptSession, 
         provides: Vec::new(),
     };
     assert!(runtime.load_plugins(&[compaction]).await.is_empty());
-    let session = runtime.open_session(Arc::new(TestHost::new(&folder))).await.unwrap();
+    let session = runtime
+        .handle()
+        .open_session(Arc::new(TestHost::new(&folder)))
+        .await
+        .unwrap();
     (runtime, session, reports)
 }
 

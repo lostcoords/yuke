@@ -5,16 +5,16 @@
 mod catalog;
 mod live;
 mod models;
+mod sessions;
 mod trust;
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -22,8 +22,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use yuke_agent::{ListPosition, Session, SessionError, Store, StoreError};
-use yuke_ai::Block;
+use yuke_agent::{Session, SessionError, Store, StoreError};
 use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::route::Credential;
@@ -31,15 +30,14 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult,
-    ListSessionsParams, ListSessionsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference,
-    NoticeLevel, NoticeParams, ProviderState, ServerNotification, SessionActivity, SessionEvent, SessionId, SessionRow,
-    SessionSettings, SessionState, SessionSummary, StoredEvent, UpdateCredentialParams,
+    InteractionId, ListCatalogResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference,
+    NoticeLevel, NoticeParams, ProviderState, ServerNotification, SessionEvent, SessionId, SessionSettings,
+    StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
-use self::live::LiveSession;
 use self::models::PluginModels;
+use self::sessions::SessionService;
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
@@ -167,19 +165,17 @@ impl Shared {
     }
 }
 
-/// The open sessions of one client, and the parts that they share.
+/// The core of one mode of yuke: the store, the JavaScript runtime, the jobs, the logins, and the open sessions.
 ///
 /// # Cancel safety
 ///
-/// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does. A
-/// dropped close can leave the jobs of a session running, and a dropped settings change leaves the session stale until
-/// its next turn opens it again.
+/// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does.
 pub(crate) struct App {
     shared: Arc<Shared>,
     runtime: Runtime,
     reporter: JoinHandle<()>,
     processes_folder: PathBuf,
-    sessions: HashMap<SessionId, LiveSession>,
+    sessions: Arc<SessionService>,
 }
 
 impl App {
@@ -254,11 +250,11 @@ impl App {
             }
         };
         let app = App {
+            sessions: Arc::new(SessionService::new(Arc::clone(&shared), runtime.handle())),
             shared,
             runtime,
             reporter,
             processes_folder,
-            sessions: HashMap::new(),
         };
         Ok((app, plugins))
     }
@@ -293,15 +289,17 @@ impl App {
     /// # Errors
     ///
     /// - Returns [`AppError::TurnRuns`] while a turn runs in an open session.
+    /// - Returns [`AppError::Changing`] while a call opens or closes a session.
     /// - Returns [`AppError::Invalid`] when yuke cannot read or check `config.json`, `providers.json`, or a plugin folder.
     /// - Returns [`AppError::Invalid`] when a plugin does not load.
     /// - Returns [`AppError::Internal`] when the new runtime does not start.
     ///
     /// Each error keeps the old plugins and providers.
     pub(crate) async fn reload(&mut self) -> Result<(), AppError> {
+        let reload = self.sessions.start_reload()?;
         // A turn starts only under the session lock, so no turn starts while the reload holds each one.
-        let mut held = Vec::with_capacity(self.sessions.len());
-        for live in self.sessions.values() {
+        let mut held = Vec::with_capacity(reload.sessions.len());
+        for live in &reload.sessions {
             held.push(live.hold().ok_or(AppError::TurnRuns)?);
         }
         let paths = &self.shared.machine.paths;
@@ -335,16 +333,15 @@ impl App {
                 texts.join("; ")
             )));
         }
-        let mut opened = Vec::with_capacity(self.sessions.len());
-        for live in self.sessions.values() {
-            match live.open_plugins(&runtime).await {
+        let handle = runtime.handle();
+        let mut opened = Vec::with_capacity(reload.sessions.len());
+        for live in &reload.sessions {
+            match live.open_plugins(&handle).await {
                 Ok(script) => opened.push((live, script)),
                 Err(error) => {
                     // Each cleanup ends before the runtime stops.
                     for (_, script) in opened {
-                        if let Err(error) = script.close().await {
-                            self.shared.warn(&chain_text(&error));
-                        }
+                        live::close_plugins(&self.shared, &script).await;
                     }
                     stop_runtime(&self.shared, runtime, reporter).await;
                     *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
@@ -355,128 +352,28 @@ impl App {
         for (live, script) in opened {
             live.replace_plugins(script).await;
         }
+        self.sessions.set_runtime(handle);
         let old_runtime = std::mem::replace(&mut self.runtime, runtime);
         let old_reporter = std::mem::replace(&mut self.reporter, reporter);
         stop_runtime(&self.shared, old_runtime, old_reporter).await;
         drop(held);
+        drop(reload);
         Ok(())
     }
 
+    /// The open sessions and the calls on them.
+    pub(crate) fn sessions(&self) -> &Arc<SessionService> {
+        &self.sessions
+    }
+
     /// The store of the sessions.
-    pub(crate) fn store(&self) -> &Arc<dyn Store> {
-        &self.shared.store
+    pub(crate) fn store(&self) -> &dyn Store {
+        self.shared.store.as_ref()
     }
 
     /// The providers of the profile now.
     pub(crate) fn providers(&self) -> Arc<Providers> {
         self.shared.providers()
-    }
-
-    /// Check that the model of `settings` can run: the catalog knows it, and its credential source exists. An API key
-    /// must be set. A login is read at each attempt.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for an unknown model, a missing API key, or a provider with no login flow.
-    fn check_model(&self, settings: &SessionSettings) -> Result<(), AppError> {
-        model_of(&settings.model, &self.shared).map(drop)
-    }
-
-    /// Create a session with `settings`, and open it. The folder loses its links, and the app builds the system prompt
-    /// of that folder. A missing API key stops the create before the session exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a folder that does not exist or a model that cannot run, and
-    /// [`AppError::Store`] when the store fails.
-    pub(crate) async fn create(&mut self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
-        settings.cwd = canonical(settings.cwd).await?;
-        let prompt = system_prompt(
-            settings.cwd.clone(),
-            self.shared.machine.home.clone(),
-            self.shared.plugin_folders().to_vec(),
-        )
-        .await?;
-        self.check_model(&settings)?;
-        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt.sections)
-            .await
-            .map_err(AppError::Store)?;
-        let id = self.start_new(session).await?;
-        for warning in prompt.warnings {
-            self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
-                session_id: Some(id),
-                level: NoticeLevel::Warn,
-                source: SOURCE.to_owned(),
-                message: warning,
-            }));
-        }
-        Ok(id)
-    }
-
-    /// Fork session `id` through event `through`, and open the fork.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
-    pub(crate) async fn fork(&mut self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
-        let session = Session::fork(Arc::clone(&self.shared.store), id, through)
-            .await
-            .map_err(AppError::Store)?;
-        self.start_new(session).await
-    }
-
-    /// A page of the saved sessions, newest first, with the activity of each one. `params.cursor` continues the list
-    /// with the same `params.cwd`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a limit outside 1 to 100 or an invalid cursor, and [`AppError::Store`] when
-    /// the store fails.
-    pub(crate) async fn list(&self, params: ListSessionsParams) -> Result<ListSessionsResult, AppError> {
-        let ListSessionsParams { cwd, limit, cursor } = params;
-        let limit = limit.unwrap_or(PAGE_ROWS);
-        if !(1..=MOST_PAGE_ROWS).contains(&limit) {
-            return Err(AppError::Invalid(format!(
-                "the limit {limit} must be between 1 and {MOST_PAGE_ROWS}"
-            )));
-        }
-        let after = cursor
-            .as_deref()
-            .map(|cursor| position_of(cursor, cwd.as_deref()))
-            .transpose()?;
-        let page = self
-            .shared
-            .store
-            .list_sessions(cwd.as_deref(), after, limit as usize)
-            .await
-            .map_err(AppError::Store)?;
-        Ok(ListSessionsResult {
-            sessions: page.sessions.into_iter().map(|session| self.row(session)).collect(),
-            next_cursor: page.next.map(|next| cursor_of(next, cwd.as_deref())),
-        })
-    }
-
-    /// The row of the saved session `id`, which can be closed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Store`] for an unknown session or when the store fails.
-    pub(crate) async fn get(&self, id: SessionId) -> Result<SessionRow, AppError> {
-        let session = self.shared.store.session_summary(id).await.map_err(AppError::Store)?;
-        Ok(self.row(session))
-    }
-
-    /// Delete the saved session `id` with its events, its pending inputs, and its blobs. Its forks stay.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Open`] for an open session, and [`AppError::Store`] for an unknown session, a session that
-    /// another process holds, or a failed delete.
-    pub(crate) async fn remove(&self, id: SessionId) -> Result<(), AppError> {
-        if self.sessions.contains_key(&id) {
-            return Err(AppError::Open(id));
-        }
-        self.shared.store.delete_session(id).await.map_err(AppError::Store)
     }
 
     /// Start a device login of `provider`, and give its code. A login in progress of the provider ends as cancelled
@@ -665,113 +562,6 @@ impl App {
         Ok(ListCatalogResult { providers })
     }
 
-    /// The row of `session` with its activity in this app now.
-    fn row(&self, session: SessionSummary) -> SessionRow {
-        let activity = match self.sessions.get(&session.session_id).map(LiveSession::state) {
-            None => SessionActivity::Closed,
-            Some(SessionState::Idle) => SessionActivity::Idle,
-            Some(SessionState::Running) => SessionActivity::Running,
-        };
-        SessionRow { session, activity }
-    }
-
-    /// Open session `id`, which is not open. `change` gets the saved settings and the providers, and it can return new
-    /// settings. The app saves them before the session starts, so a waiting input runs with them. An open runs no turn
-    /// and sends no update. [`App::load`] sends the saved events.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Store`] when the store fails. Returns [`AppError::Invalid`] for an open session or a model
-    /// that cannot run. Returns the error of `change` as it is.
-    pub(crate) async fn open(
-        &mut self,
-        id: SessionId,
-        change: impl FnOnce(&SessionSettings, &Providers) -> Result<Option<SessionSettings>, AppError>,
-    ) -> Result<(), AppError> {
-        if self.sessions.contains_key(&id) {
-            return Err(AppError::Invalid(format!("the session {id} is open already")));
-        }
-        let mut session = Session::open(Arc::clone(&self.shared.store), id)
-            .await
-            .map_err(AppError::Store)?;
-        match change(session.settings(), &self.shared.providers())? {
-            Some(settings) => drop(save_settings(&mut session, settings, &self.shared).await?),
-            None => self.check_model(session.settings())?,
-        }
-        self.start_session(session).await
-    }
-
-    /// Open session `id` when it is not open, and send it as updates: its saved events after `after`, its state, its
-    /// pending inputs, and its running jobs. The live updates of the session that come during the load follow them.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Store`] when the store fails, and [`AppError::Invalid`] for a model that cannot run.
-    pub(crate) async fn load(&mut self, id: SessionId, after: Option<EventNumber>) -> Result<(), AppError> {
-        if !self.sessions.contains_key(&id) {
-            self.open(id, |_, _| Ok(None)).await?;
-        }
-        self.live(id)?.load(after).await
-    }
-
-    /// Close session `id`: its turn stops, and its task ends. Waiting input stays saved. A session with running jobs
-    /// closes only with `stop_jobs`, which stops them.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NotOpen`], or [`AppError::JobsRun`] for running jobs without `stop_jobs`.
-    pub(crate) async fn close(&mut self, id: SessionId, stop_jobs: bool) -> Result<(), AppError> {
-        let Entry::Occupied(live) = self.sessions.entry(id) else {
-            return Err(AppError::NotOpen(id));
-        };
-        if !stop_jobs {
-            let jobs = live.get().jobs();
-            if !jobs.is_empty() {
-                return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
-            }
-        }
-        live.remove().close().await;
-        Ok(())
-    }
-
-    /// Cancel the running turn of session `id`. A session that is not open or runs no turn has nothing to cancel.
-    pub(crate) fn cancel(&self, id: SessionId) {
-        if let Some(live) = self.sessions.get(&id) {
-            live.cancel();
-        }
-    }
-
-    /// Save `content` as an input of the user, and start a turn when the session is idle.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for content that is no input, and [`AppError::Store`] when the store fails.
-    pub(crate) async fn input(&self, id: SessionId, content: Vec<Block>) -> Result<InputId, AppError> {
-        let live = self.live(id)?;
-        let input = Input::new(InputSource::User, InputKind::Message, content)
-            .map_err(|error| AppError::Invalid(chain_text(&error)))?;
-        live.inbox().accept(input).await.map_err(AppError::Store)
-    }
-
-    /// Remove the pending input `input_id` of session `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Store`] when the input is not pending or the store fails.
-    pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), AppError> {
-        self.live(id)?.inbox().remove(input_id).await.map_err(AppError::Store)
-    }
-
-    /// Save `settings` for session `id`. The session keeps its system prompt.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Busy`] while a turn runs or input waits, and [`AppError::Invalid`] for a folder or a model
-    /// that cannot work.
-    pub(crate) async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), AppError> {
-        self.live(id)?.set_settings(settings).await
-    }
-
     /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the
     /// stored login. Each open session of the provider takes it, also during a turn.
     ///
@@ -792,52 +582,6 @@ impl App {
         Ok(())
     }
 
-    /// The running background jobs of session `id`, oldest first.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NotOpen`].
-    pub(crate) fn jobs(&self, id: SessionId) -> Result<Vec<Job>, AppError> {
-        Ok(self.live(id)?.jobs())
-    }
-
-    /// Stop the job `job_id` of session `id`, and wait for its end. The `job` update with the end comes first.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NoJob`] when the session runs no such job.
-    pub(crate) async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), AppError> {
-        if self.live(id)?.stop_job(job_id).await {
-            Ok(())
-        } else {
-            Err(AppError::NoJob(job_id.to_owned()))
-        }
-    }
-
-    /// The MCP servers of session `id` and their states, in config order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NotOpen`].
-    pub(crate) fn mcp_servers(&self, id: SessionId) -> Result<Vec<yuke_protocol::McpServer>, AppError> {
-        Ok(self.live(id)?.mcp_servers())
-    }
-
-    /// Give `response` to the open question `interaction_id` of session `id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NoInteraction`] when the session has no such open question, and [`AppError::Invalid`] when
-    /// the answer does not fit the question.
-    pub(crate) fn respond(
-        &self,
-        id: SessionId,
-        interaction_id: InteractionId,
-        response: InteractionResponse,
-    ) -> Result<(), AppError> {
-        self.live(id)?.answer(interaction_id, response)
-    }
-
     /// Close each session, close the plugins, stop the runtime, and stop the jobs.
     pub(crate) async fn shutdown(self) {
         let App {
@@ -845,81 +589,13 @@ impl App {
             runtime,
             reporter,
             processes_folder,
-            mut sessions,
+            sessions,
         } = self;
-        // Each session stops before the first wait, so the sessions end together.
-        for live in sessions.values() {
-            live.stop();
-        }
-        for (_, live) in sessions.drain() {
-            live.close().await;
-        }
+        sessions.close_all().await;
         stop_runtime(&shared, runtime, reporter).await;
         if let Err(error) = shared.processes.shutdown().await {
             shared.warn(&format!("{}: {error}", processes_folder.display()));
         }
-    }
-
-    /// Open `session`, which this app saved just now. A session that cannot start is deleted again, so no session that
-    /// cannot run stays in the store.
-    async fn start_new(&mut self, session: Session) -> Result<SessionId, AppError> {
-        let id = session.id();
-        // The drop frees the lease of the session, and the delete refuses a session with a lease.
-        let started = match self.check_model(session.settings()) {
-            Ok(()) => self.start_session(session).await,
-            Err(error) => {
-                drop(session);
-                Err(error)
-            }
-        };
-        if started.is_err() {
-            self.shared.store.delete_session(id).await.map_err(AppError::Store)?;
-        }
-        started.map(|()| id)
-    }
-
-    /// Start the task of `session`.
-    async fn start_session(&mut self, session: Session) -> Result<(), AppError> {
-        let id = session.id();
-        let live = LiveSession::start(session, &self.runtime, Arc::clone(&self.shared)).await?;
-        self.sessions.insert(id, live);
-        Ok(())
-    }
-
-    /// The open session `id`.
-    fn live(&self, id: SessionId) -> Result<&LiveSession, AppError> {
-        self.sessions.get(&id).ok_or(AppError::NotOpen(id))
-    }
-}
-
-/// The rows of a `session/list` page without a limit, and the most rows of one page.
-const PAGE_ROWS: u32 = 50;
-const MOST_PAGE_ROWS: u32 = 100;
-
-/// The cursor of the page after `next` in the list of `cwd`. It holds the folder, so a cursor of another list does not
-/// read.
-fn cursor_of(next: ListPosition, cwd: Option<&Path>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut cursor = format!("{}.", next.0);
-    for byte in cwd.map_or(&[][..], |cwd| cwd.as_os_str().as_encoded_bytes()) {
-        cursor.push(char::from(HEX[usize::from(byte >> 4)]));
-        cursor.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    cursor
-}
-
-/// The position that `cursor`, a cursor of the list of `cwd`, names.
-fn position_of(cursor: &str, cwd: Option<&Path>) -> Result<ListPosition, AppError> {
-    let invalid = || AppError::Invalid(format!("the cursor '{cursor}' is invalid for this list"));
-    let (position, _) = cursor.split_once('.').ok_or_else(invalid)?;
-    // A store gives no position above `i64::MAX`, the largest SQLite integer.
-    let position: i64 = position.parse().map_err(|_| invalid())?;
-    let position = ListPosition(position.unsigned_abs());
-    // A cursor of this list encodes to the same text again.
-    if cursor_of(position, cwd) == cursor {
-        Ok(position)
-    } else {
-        Err(invalid())
     }
 }
 
@@ -944,6 +620,12 @@ pub(crate) enum AppError {
     NoInteraction(InteractionId),
     /// No login with this id is in progress.
     NoLogin(LoginId),
+    /// Another call opens or closes the session now.
+    Changing(SessionId),
+    /// A reload runs, so no session opens or closes.
+    Reloading,
+    /// The shutdown started, so no session opens.
+    Stopped,
     /// The store failed.
     Store(StoreError),
     /// A part of yuke failed. The text tells why.
@@ -966,8 +648,20 @@ impl fmt::Display for AppError {
             AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
             AppError::NoInteraction(id) => write!(f, "the session has no open question {}", id.0),
             AppError::NoLogin(id) => write!(f, "no login {} is in progress", id.0),
+            AppError::Changing(id) => write!(
+                f,
+                "another call opens or closes the session {id}: try again when that call ends"
+            ),
+            AppError::Reloading => f.write_str("a reload runs: try again when the reload ends"),
+            AppError::Stopped => f.write_str("yuke shuts down"),
             AppError::Store(error) => fmt::Display::fmt(error, f),
         }
+    }
+}
+
+impl From<StoreError> for AppError {
+    fn from(error: StoreError) -> Self {
+        AppError::Store(error)
     }
 }
 
@@ -1065,7 +759,7 @@ async fn save_settings(
         .set_settings(settings.clone())
         .await
         .map_err(|error| match error {
-            SessionError::Store(error) => AppError::Store(error),
+            SessionError::Store(error) => error.into(),
             error => AppError::Internal(chain_text(&error)),
         })?;
     Ok(StoredEvent {

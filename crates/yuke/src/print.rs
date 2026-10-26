@@ -2,6 +2,7 @@
 //! answers how the turn ended and the text of the last answer. It drives the session through the app, as the protocol
 //! server does.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -12,8 +13,8 @@ use yuke_ai::catalog::ReasoningLevel;
 use yuke_ai::{Block, Effort, answer_text};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
 use yuke_protocol::{
-    LiveUpdate, ModelReference, NoticeLevel, ServerNotification, SessionEvent, SessionId, SessionSettings,
-    SessionState, SessionUpdate, StoredEvent,
+    LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, lock, warn};
@@ -116,7 +117,10 @@ async fn run_turn(
             let selector = task.model.as_deref().ok_or("no model: pass --model <provider/model>")?;
             let choice = task.reasoning.ok_or(NO_REASONING)?;
             let settings = new_settings(&app.providers(), selector, choice, cwd)?;
-            app.create(settings).await.map_err(|error| chain_text(&error))?
+            app.sessions()
+                .create(settings)
+                .await
+                .map_err(|error| chain_text(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
         SessionChoice::Newest => {
@@ -135,16 +139,23 @@ async fn run_turn(
     };
 
     let input_id = app
+        .sessions()
         .input(id, vec![Block::user_text(&task.prompt)])
         .await
         .map_err(|error| chain_text(&error))?;
-    tokio::select! {
-        () = watcher.ended.notified() => {}
-        () = cancellation_token.cancelled() => {}
+    // A wake can come from another session, for example a session of a plugin, so the run checks its own.
+    while !watcher.has_ended(id) {
+        tokio::select! {
+            () = watcher.ended.notified() => {}
+            () = cancellation_token.cancelled() => break,
+        }
     }
     // The close cancels a running turn, and that turn saves its end before the close returns.
-    app.close(id, true).await.map_err(|error| chain_text(&error))?;
-    let watched = std::mem::take(&mut *lock(&watcher.watched));
+    app.sessions()
+        .close(id, true)
+        .await
+        .map_err(|error| chain_text(&error))?;
+    let watched = lock(&watcher.watched).remove(&id).unwrap_or_default();
     // A cancel before the turn leaves the input pending, and a later run must not answer it. After a failure, the input
     // stays for a later run.
     if cancellation_token.is_cancelled() && !watched.ran {
@@ -212,7 +223,7 @@ async fn existing_session(task: &Task, id: SessionId, app: &mut App) -> Result<S
         settings.settings.reasoning = reasoning;
         Ok(Some(settings))
     };
-    match app.open(id, changed).await {
+    match app.sessions().open(id, changed).await {
         Ok(()) => Ok(id),
         Err(AppError::Store(StoreError::NotFound)) => Err(format!("no session has the id {id}")),
         Err(error) => Err(chain_text(&error)),
@@ -242,17 +253,31 @@ fn choose(
     Ok((model, reasoning))
 }
 
-/// Keeps what a run needs from the notifications of its session: the saved blocks of the turn, its end, and a
+/// Keeps what a run needs from the notifications of each session: the saved blocks of the turn, its end, and a
 /// failure: an error notice of yuke for the session. Other notices, also those of plugins, go to stderr.
 #[derive(Default)]
 struct Watcher {
-    watched: Mutex<Watched>,
-    /// Wakes the run when the turn ends, or when a failure stops the session before its turn.
+    watched: Mutex<HashMap<SessionId, Watched>>,
+    /// Wakes the run when a turn ends, or when a failure stops a session before its turn.
     ended: Notify,
+}
+
+impl Watcher {
+    /// Whether the turn of session `id` ended, or a failure stopped the session.
+    fn has_ended(&self, id: SessionId) -> bool {
+        lock(&self.watched).get(&id).is_some_and(|watched| watched.ended)
+    }
+
+    /// Change what the watcher keeps of session `id`.
+    fn change(&self, id: SessionId, change: impl FnOnce(&mut Watched)) {
+        change(lock(&self.watched).entry(id).or_default());
+    }
 }
 
 #[derive(Default)]
 struct Watched {
+    /// Whether the turn ended, or a failure stopped the session.
+    ended: bool,
     /// Whether a turn started.
     ran: bool,
     /// Whether an `input.before` hook removed the input.
@@ -265,12 +290,11 @@ struct Watched {
 impl Observer for Watcher {
     fn notify(&self, notification: ServerNotification) {
         match notification {
-            ServerNotification::SessionUpdate(params) => match params.update {
+            ServerNotification::SessionUpdate(SessionUpdateParams { session_id, update }) => match update {
                 SessionUpdate::Saved(StoredEvent {
                     event: SessionEvent::Commit { commit, .. },
                     ..
-                }) => {
-                    let mut watched = lock(&self.watched);
+                }) => self.change(session_id, |watched| {
                     // A replacement starts the context again, and the answer comes after it.
                     if commit.replaced.is_some() {
                         watched.blocks.clear();
@@ -279,20 +303,31 @@ impl Observer for Watcher {
                     if commit.end.is_some() {
                         watched.end = commit.end;
                     }
-                }
+                }),
                 SessionUpdate::Live(LiveUpdate::State {
                     state: SessionState::Running,
-                }) => lock(&self.watched).ran = true,
-                SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => lock(&self.watched).removed = true,
+                }) => self.change(session_id, |watched| watched.ran = true),
+                SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => {
+                    self.change(session_id, |watched| watched.removed = true);
+                }
                 SessionUpdate::Live(LiveUpdate::State {
                     state: SessionState::Idle,
-                }) => self.ended.notify_one(),
+                }) => {
+                    self.change(session_id, |watched| watched.ended = true);
+                    self.ended.notify_one();
+                }
                 _ => {}
             },
-            ServerNotification::Notice(notice)
-                if notice.source == SOURCE && notice.session_id.is_some() && notice.level == NoticeLevel::Error =>
-            {
-                lock(&self.watched).failure = Some(notice.message);
+            ServerNotification::Notice(NoticeParams {
+                session_id: Some(session_id),
+                level: NoticeLevel::Error,
+                source,
+                message,
+            }) if source == SOURCE => {
+                self.change(session_id, |watched| {
+                    watched.failure = Some(message);
+                    watched.ended = true;
+                });
                 self.ended.notify_one();
             }
             ServerNotification::Notice(notice) => warn(&format!("{}: {}", notice.source, notice.message)),

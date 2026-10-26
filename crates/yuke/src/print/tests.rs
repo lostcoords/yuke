@@ -918,10 +918,10 @@ async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
 #[test]
 fn only_an_error_notice_of_yuke_fails_the_run() {
     let watcher = Watcher::default();
-    let session_id = Some(SessionId::generate());
+    let id = SessionId::generate();
     let notice = |source: &str| {
-        ServerNotification::Notice(yuke_protocol::NoticeParams {
-            session_id,
+        ServerNotification::Notice(NoticeParams {
+            session_id: Some(id),
             level: NoticeLevel::Error,
             source: source.to_owned(),
             message: format!("from {source}"),
@@ -929,11 +929,34 @@ fn only_an_error_notice_of_yuke_fails_the_run() {
     };
 
     watcher.notify(notice("loud"));
-    let after_plugin = lock(&watcher.watched).failure.clone();
+    let after_plugin = lock(&watcher.watched)
+        .get(&id)
+        .and_then(|watched| watched.failure.clone());
     watcher.notify(notice(SOURCE));
 
     assert_eq!(after_plugin, None);
-    assert_eq!(lock(&watcher.watched).failure.as_deref(), Some("from host:yuke"));
+    assert_eq!(lock(&watcher.watched)[&id].failure.as_deref(), Some("from host:yuke"));
+}
+
+#[test]
+fn the_end_of_another_session_does_not_end_the_run() {
+    let watcher = Watcher::default();
+    let (id, other) = (SessionId::generate(), SessionId::generate());
+    let idle = |session_id| {
+        ServerNotification::SessionUpdate(SessionUpdateParams {
+            session_id,
+            update: SessionUpdate::Live(LiveUpdate::State {
+                state: SessionState::Idle,
+            }),
+        })
+    };
+
+    watcher.notify(idle(other));
+    let after_other = watcher.has_ended(id);
+    watcher.notify(idle(id));
+
+    assert!(!after_other);
+    assert!(watcher.has_ended(id));
 }
 
 #[test]

@@ -25,7 +25,7 @@ use crate::runtime::Caller;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
 /// once, so each session gives its own host. Give the same host to every
-/// [`Runtime::open_session`](crate::Runtime::open_session) of a session, also after a reload or a change of its folder:
+/// [`Handle::open_session`](crate::Handle::open_session) of a session, also after a reload or a change of its folder:
 /// the jobs of a session belong to its host. The host stores the attachments of the session as a [`MediaStore`], for
 /// example an image that a tool read.
 #[async_trait]

@@ -292,7 +292,7 @@ impl Server {
                 Ok(Notification {
                     message: ClientNotification::Cancel(params),
                     ..
-                }) => self.app.cancel(params.session_id),
+                }) => self.app.sessions().cancel(params.session_id),
                 Err(error) => warn(&format!("a notification does not read: {error}")),
             }
             return;
@@ -344,21 +344,21 @@ impl Server {
                 })
             }
             ClientRequest::NewSession(settings) => result(&SessionResult {
-                session_id: app.create(settings).await?,
+                session_id: app.sessions().create(settings).await?,
             }),
             ClientRequest::ForkSession(params) => result(&SessionResult {
-                session_id: app.fork(params.session_id, params.through).await?,
+                session_id: app.sessions().fork(params.session_id, params.through).await?,
             }),
             ClientRequest::LoadSession(params) => {
-                app.load(params.session_id, params.after).await?;
+                app.sessions().load(params.session_id, params.after).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::CloseSession(params) => {
-                app.close(params.session_id, params.stop_jobs).await?;
+                app.sessions().close(params.session_id, params.stop_jobs).await?;
                 result(&EmptyResult {})
             }
-            ClientRequest::ListSessions(params) => result(&app.list(params).await?),
-            ClientRequest::GetSession(params) => result(&app.get(params.session_id).await?),
+            ClientRequest::ListSessions(params) => result(&app.sessions().list(params).await?),
+            ClientRequest::GetSession(params) => result(&app.sessions().get(params.session_id).await?),
             ClientRequest::Login(params) => result(&app.login(params.provider).await?),
             ClientRequest::CancelLogin(params) => {
                 app.cancel_login(params.login_id)?;
@@ -374,32 +374,33 @@ impl Server {
             }
             ClientRequest::ListCatalog(params) => result(&app.catalog(params.all.unwrap_or(false)).await?),
             ClientRequest::RemoveSession(params) => {
-                app.remove(params.session_id).await?;
+                app.sessions().remove(params.session_id).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::ListJobs(params) => result(&ListJobsResult {
-                jobs: app.jobs(params.session_id)?,
+                jobs: app.sessions().jobs(params.session_id)?,
             }),
             ClientRequest::StopJob(params) => {
-                app.stop_job(params.session_id, &params.job_id).await?;
+                app.sessions().stop_job(params.session_id, &params.job_id).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::Input(params) => result(&InputResult {
-                input_id: app.input(params.session_id, params.content).await?,
+                input_id: app.sessions().input(params.session_id, params.content).await?,
             }),
             ClientRequest::ListMcpServers(params) => result(&ListMcpServersResult {
-                servers: app.mcp_servers(params.session_id)?,
+                servers: app.sessions().mcp_servers(params.session_id)?,
             }),
             ClientRequest::InteractionRespond(params) => {
-                app.respond(params.session_id, params.interaction_id, params.response)?;
+                app.sessions()
+                    .respond(params.session_id, params.interaction_id, params.response)?;
                 result(&EmptyResult {})
             }
             ClientRequest::RemoveInput(params) => {
-                app.remove_input(params.session_id, params.input_id).await?;
+                app.sessions().remove_input(params.session_id, params.input_id).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::SetSettings(params) => {
-                app.set_settings(params.session_id, params.settings).await?;
+                app.sessions().set_settings(params.session_id, params.settings).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::UpdateCredential(params) => {
@@ -585,9 +586,13 @@ fn response_error(error: &AppError) -> ResponseError {
     let code = match error {
         AppError::NotOpen(_) => ResponseError::SESSION_NOT_FOUND,
         AppError::Invalid(_) => ResponseError::INVALID_PARAMS,
-        AppError::Open(_) | AppError::Busy | AppError::TurnRuns | AppError::JobsRun(_) => {
-            ResponseError::INVALID_REQUEST
-        }
+        AppError::Open(_)
+        | AppError::Busy
+        | AppError::TurnRuns
+        | AppError::JobsRun(_)
+        | AppError::Changing(_)
+        | AppError::Reloading
+        | AppError::Stopped => ResponseError::INVALID_REQUEST,
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::NoLogin(_) => ResponseError::LOGIN_NOT_FOUND,

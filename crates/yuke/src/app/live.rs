@@ -9,10 +9,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot};
 use tokio::task::JoinHandle;
-use yuke_agent::{Loaded, Session, SessionError, SessionObserver, Store, StoreError};
+use yuke_agent::{Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
-use yuke_js::{Runtime, ScriptSession, ScriptTool, SessionHost};
+use yuke_js::{Handle, ScriptSession, ScriptTool, SessionHost};
 use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
@@ -27,7 +27,8 @@ use crate::config::read_json;
 /// An open session.
 pub(super) struct LiveSession {
     parts: Arc<Parts>,
-    task: JoinHandle<()>,
+    /// The task that runs the turns. The close takes it.
+    task: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// The parts of an open session that the app and the task of the session share.
@@ -50,23 +51,19 @@ impl LiveSession {
     /// the first turn does.
     pub(super) async fn start(
         session: Session,
-        runtime: &Runtime,
+        runtime: &Handle,
         shared: Arc<Shared>,
     ) -> Result<LiveSession, AppError> {
-        let inbox = Inbox {
-            store: Arc::clone(&shared.store),
-            wake: Arc::new(Notify::new()),
+        let host = Arc::new(Host {
+            settings: Mutex::new(session.settings().clone()),
             output: Arc::new(Output {
                 session: session.id(),
                 observer: Arc::clone(&shared.observer),
                 sent: Mutex::default(),
                 last_question: Arc::clone(&shared.last_question),
             }),
-        };
-        let host = Arc::new(Host {
-            settings: Mutex::new(session.settings().clone()),
             shared,
-            inbox,
+            wake: Notify::new(),
             closed: CancellationToken::new(),
         });
         let script = runtime
@@ -82,14 +79,27 @@ impl LiveSession {
             servers,
         });
         Ok(LiveSession {
-            task: tokio::spawn(Arc::clone(&parts).run()),
+            task: Mutex::new(Some(tokio::spawn(Arc::clone(&parts).run()))),
             parts,
         })
     }
 
-    /// The inbox of the session. The app saves and removes input through the inbox.
-    pub(super) fn inbox(&self) -> &Inbox {
-        &self.parts.host.inbox
+    /// Save `input`, show it to the observer, and wake the task. The task runs a turn when the session is idle.
+    pub(super) async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
+        self.parts.host.accept(input).await
+    }
+
+    /// Remove the pending input `input_id`, and tell the observer.
+    pub(super) async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
+        let output = &self.parts.host.output;
+        self.parts
+            .host
+            .shared
+            .store
+            .remove_input(output.session, input_id)
+            .await?;
+        output.publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
+        Ok(())
     }
 
     /// Each MCP server of the session and its state.
@@ -103,7 +113,7 @@ impl LiveSession {
     }
 
     /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
-    pub(super) async fn open_plugins(&self, runtime: &Runtime) -> Result<ScriptSession, AppError> {
+    pub(super) async fn open_plugins(&self, runtime: &Handle) -> Result<ScriptSession, AppError> {
         runtime
             .open_session(self.owner())
             .await
@@ -114,12 +124,7 @@ impl LiveSession {
     /// [`LiveSession::hold`], so no turn uses the old plugins.
     pub(super) async fn replace_plugins(&self, script: ScriptSession) {
         let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
-        if let Err(error) = old.close().await {
-            self.parts.host.shared.warn(&format!(
-                "the plugins of a session did not close: {}",
-                chain_text(&error)
-            ));
-        }
+        close_plugins(&self.parts.host.shared, &old).await;
     }
 
     /// Whether a turn runs.
@@ -133,7 +138,7 @@ impl LiveSession {
 
     /// Give `response` to the open question `id`.
     pub(super) fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
-        self.parts.host.inbox.output.answer(id, response)
+        self.parts.host.output.answer(id, response)
     }
 
     /// Cancel the running turn.
@@ -147,13 +152,8 @@ impl LiveSession {
     /// jobs. The live updates that come during the load follow them, without the ones that they hold.
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
         let host = &self.parts.host;
-        let hold = Hold::start(&host.inbox.output);
-        let loaded = host
-            .shared
-            .store
-            .load(host.inbox.output.session, after)
-            .await
-            .map_err(AppError::Store)?;
+        let hold = Hold::start(&host.output);
+        let loaded = host.shared.store.load(host.output.session, after).await?;
         hold.release(loaded, || (self.state(), self.jobs(), self.parts.servers.states()));
         Ok(())
     }
@@ -165,14 +165,9 @@ impl LiveSession {
             return Err(AppError::Busy);
         };
         let host = &self.parts.host;
-        let output = &host.inbox.output;
+        let output = &host.output;
         // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
-        let waiting = host
-            .shared
-            .store
-            .pending(output.session)
-            .await
-            .map_err(AppError::Store)?;
+        let waiting = host.shared.store.pending(output.session).await?;
         if !waiting.is_empty() {
             return Err(AppError::Busy);
         }
@@ -211,20 +206,18 @@ impl LiveSession {
 
     /// Stop the running turn, wait for the task to end, and stop the jobs. Waiting input stays saved and starts no
     /// turn.
-    pub(super) async fn close(mut self) {
+    pub(super) async fn close(&self) {
         self.stop();
-        if let Err(error) = (&mut self.task).await {
+        let task = lock(&self.task).take();
+        if let Some(task) = task
+            && let Err(error) = task.await
+        {
             self.parts.host.shared.warn(&format!("a session task failed: {error}"));
         }
-        // After the task, so no turn takes the tools of the closed plugins.
+        // The task ends first, so no turn takes the tools of the closed plugins.
         let script = Arc::clone(&lock(&self.parts.script));
-        if let Err(error) = script.close().await {
-            self.parts.host.shared.warn(&format!(
-                "the plugins of a session did not close: {}",
-                chain_text(&error)
-            ));
-        }
-        // After the task, so a job that the cancelled turn started also stops.
+        close_plugins(&self.parts.host.shared, &script).await;
+        // The task ends first, so a job that the cancelled turn started also stops.
         self.parts.host.shared.processes.close_owner(&self.owner()).await;
         self.parts.servers.close().await;
     }
@@ -235,38 +228,20 @@ impl LiveSession {
     }
 }
 
+/// Close the plugins `script` of a session. A failure is a warning.
+pub(super) async fn close_plugins(shared: &Shared, script: &ScriptSession) {
+    if let Err(error) = script.close().await {
+        shared.warn(&format!(
+            "the plugins of a session did not close: {}",
+            chain_text(&error)
+        ));
+    }
+}
+
 // A session that the app drops without a close still ends its task and its turn.
 impl Drop for LiveSession {
     fn drop(&mut self) {
         self.parts.host.closed.cancel();
-    }
-}
-
-/// The input of one session: the saved queue, the observer, and the wake of the task.
-#[derive(Clone)]
-pub(super) struct Inbox {
-    store: Arc<dyn Store>,
-    /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
-    wake: Arc<Notify>,
-    output: Arc<Output>,
-}
-
-impl Inbox {
-    /// Save `input`, show it to the observer, and wake the task. The task runs a turn when the session is idle.
-    pub(super) async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
-        let input_id = self.store.accept_input(self.output.session, input.clone()).await?;
-        self.output
-            .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
-        self.wake.notify_one();
-        Ok(input_id)
-    }
-
-    /// Remove the pending input `input_id`, and tell the observer.
-    pub(super) async fn remove(&self, input_id: InputId) -> Result<(), StoreError> {
-        self.store.remove_input(self.output.session, input_id).await?;
-        self.output
-            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
-        Ok(())
     }
 }
 
@@ -475,7 +450,7 @@ impl Parts {
         // An open alone runs nothing, so a load only reads. The waiting input runs at the next wake.
         loop {
             tokio::select! {
-                () = self.host.inbox.wake.notified() => self.run_waiting_turns().await,
+                () = self.host.wake.notified() => self.run_waiting_turns().await,
                 () = self.host.closed.cancelled() => return,
             }
         }
@@ -496,7 +471,7 @@ impl Parts {
 
     /// Run one turn after another while input waits.
     async fn run_waiting_turns(&self) {
-        let output = &self.host.inbox.output;
+        let output = &self.host.output;
         loop {
             // The check comes before the lock, so a wake with no input never makes new settings fail.
             match self.host.shared.store.pending(output.session).await {
@@ -608,7 +583,7 @@ impl Parts {
 /// Open `session` again from the store after a failed write or a panic, and publish the end of a turn that the store
 /// held as open.
 async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError> {
-    if let Some(event) = session.recover().await.map_err(AppError::Store)? {
+    if let Some(event) = session.recover().await? {
         output.publish(SessionUpdate::Saved(event));
     }
     Ok(())
@@ -635,7 +610,7 @@ const MCP_SOURCE: &str = "host:mcp";
 /// Start the MCP servers of the user config and of `.mcp.json` in `folder` for the session of `host`. The project
 /// servers start after the trust. Each change of a server state is a live update of the session.
 fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
-    let output = Arc::clone(&host.inbox.output);
+    let output = Arc::clone(&host.output);
     let project = match read_json::<yuke_mcp::Config>(&folder.join(".mcp.json")) {
         Ok(project) => project.unwrap_or_default(),
         Err(error) => {
@@ -657,7 +632,7 @@ fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
 /// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A
 /// yes is kept. The close of the session ends the question.
 async fn trust_of(host: Arc<Host>, folder: PathBuf, project: yuke_mcp::Config) -> bool {
-    let output = &host.inbox.output;
+    let output = &host.output;
     let data = &host.shared.machine.paths.data;
     let key = match trust::key(&folder, &project) {
         Ok(key) => key,
@@ -721,9 +696,26 @@ struct Host {
     /// The settings of the session now. A saved change of the settings and each turn set them.
     settings: Mutex<SessionSettings>,
     shared: Arc<Shared>,
-    inbox: Inbox,
+    output: Arc<Output>,
+    /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
+    wake: Notify,
     /// The close of the session. It ends each open question.
     closed: CancellationToken,
+}
+
+impl Host {
+    /// Save `input`, show it to the observer, and wake the task. The task runs a turn when the session is idle.
+    async fn accept(&self, input: Input) -> Result<InputId, StoreError> {
+        let input_id = self
+            .shared
+            .store
+            .accept_input(self.output.session, input.clone())
+            .await?;
+        self.output
+            .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
+        self.wake.notify_one();
+        Ok(input_id)
+    }
 }
 
 #[async_trait]
@@ -731,7 +723,7 @@ impl MediaStore for Host {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
         self.shared
             .store
-            .put_blob(self.inbox.output.session, bytes)
+            .put_blob(self.output.session, bytes)
             .await
             .map_err(|error| chain_text(&error))
     }
@@ -740,7 +732,7 @@ impl MediaStore for Host {
 #[async_trait]
 impl SessionHost for Host {
     fn session_id(&self) -> SessionId {
-        self.inbox.output.session
+        self.output.session
     }
 
     fn folder(&self) -> PathBuf {
@@ -748,17 +740,17 @@ impl SessionHost for Host {
     }
 
     fn job_changed(&self, job: Job) {
-        self.inbox.output.publish(SessionUpdate::Live(LiveUpdate::Job { job }));
+        self.output.publish(SessionUpdate::Live(LiveUpdate::Job { job }));
     }
 
     async fn accept_input(&self, input: Input) {
-        if let Err(error) = self.inbox.accept(input).await {
-            self.inbox.output.notice(NoticeLevel::Error, &chain_text(&error));
+        if let Err(error) = self.accept(input).await {
+            self.output.notice(NoticeLevel::Error, &chain_text(&error));
         }
     }
 
     async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
-        let output = &self.inbox.output;
+        let output = &self.output;
         if self.shared.mode == Mode::Print {
             output.notice(
                 NoticeLevel::Warn,
@@ -1091,7 +1083,7 @@ mod tests {
             "after_new_settings_the_host_names_their_model_and_folder_before_any_turn",
         );
         let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
-        let mut app = App::start(machine, Mode::Print, Arc::new(Recorder::default()))
+        let app = App::start(machine, Mode::Print, Arc::new(Recorder::default()))
             .await
             .unwrap();
         let first = SessionSettings {
@@ -1102,7 +1094,7 @@ mod tests {
             settings: yuke_ai::Settings::new(),
             cwd: place.work.clone(),
         };
-        let id = app.create(first.clone()).await.unwrap();
+        let id = app.sessions().create(first.clone()).await.unwrap();
         let other = place.work.join("other");
         std::fs::create_dir(&other).unwrap();
         let model = ModelReference {
@@ -1115,9 +1107,10 @@ mod tests {
             ..first
         };
 
-        app.set_settings(id, changed).await.unwrap();
-        let host = &app.sessions[&id].parts.host;
-        let named = (host.model_reference(), host.folder());
+        app.sessions().set_settings(id, changed).await.unwrap();
+        let live = app.sessions().live(id).unwrap();
+        let named = (live.parts.host.model_reference(), live.parts.host.folder());
+        drop(live);
         app.shutdown().await;
 
         assert_eq!(named, (model, other));

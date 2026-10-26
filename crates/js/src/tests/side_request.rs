@@ -81,7 +81,7 @@ async fn opened(
         .collect();
     assert!(runtime.load_plugins(&specs).await.is_empty());
     let host = Arc::new(TestHost::new(&folder));
-    let session = runtime.open_session(host.clone()).await.unwrap();
+    let session = runtime.handle().open_session(host.clone()).await.unwrap();
     (runtime, session, host)
 }
 

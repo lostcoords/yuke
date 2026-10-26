@@ -20,13 +20,12 @@ use yuke_protocol::{
     Input, InputKind, InputSource, InteractionRequest, InteractionResponse, ModelReference, PendingInput,
 };
 
-use crate::Runtime;
 use crate::error::{Error, caught};
 use crate::models::{Models, merge_settings};
 use crate::native::Operation;
 use crate::native::ai::{Round, context_tokens, side_request, tokens};
 use crate::plugins::loader;
-use crate::runtime::Caller;
+use crate::runtime::{Caller, Handle};
 use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
@@ -49,7 +48,7 @@ impl std::fmt::Debug for ScriptSession {
     }
 }
 
-impl Runtime {
+impl Handle {
     /// Open the session of `host`: start `session(s)` of each loaded plugin. The open does not wait for them;
     /// [`ScriptSession::tools`] does. Keep `host` for the whole session: its jobs belong to it.
     ///

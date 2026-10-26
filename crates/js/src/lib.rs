@@ -10,7 +10,7 @@
 //! so a deep recursion throws and does not crash the thread. A shutdown stops running JavaScript and each running
 //! program.
 //!
-//! A plugin runs `apply` once per runtime and `session` once per session. [`Runtime::open_session`] opens the session
+//! A plugin runs `apply` once per runtime and `session` once per session. [`Handle::open_session`] opens the session
 //! of a [`SessionHost`]. [`ScriptSession::tools`] gives each tool of that session as a [`ScriptTool`]: the tools of
 //! yuke and the tools that the `session` exports define. `yuke:internal/builtins` defines the tools `read`, `write`,
 //! `edit`, `exec`, and `stop`. [`Processes`] runs the commands and the background jobs on the tokio runtime of the consumer,
@@ -39,6 +39,6 @@ pub use error::{Error, Report, ScriptError};
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};
-pub use runtime::{Options, Runtime};
+pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use tools::{ScriptTool, SessionHost};

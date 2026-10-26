@@ -228,7 +228,7 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
         ),
     )
     .await;
-    let session = runtime.open_session(host(&folder)).await.unwrap();
+    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
 
     let early = tokio::time::timeout(Duration::from_millis(100), session.tools()).await;
     evaluate::<bool>(&runtime, "globalThis.release(); return true;")
@@ -397,7 +397,7 @@ async fn a_closed_session_has_no_tools() {
     let folder = folder("a_closed_session_has_no_tools");
     let (runtime, _reports) = start(&folder).await;
     runtime.import("yuke:internal/builtins").await.unwrap();
-    let session = runtime.open_session(host(&folder)).await.unwrap();
+    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
 
     session.close().await.unwrap();
 
@@ -558,7 +558,7 @@ async fn a_close_during_the_setup_ends_and_runs_the_late_cleanup_once() {
          }",
     )
     .await;
-    let session = runtime.open_session(host(&folder)).await.unwrap();
+    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
 
     tokio::time::timeout(Duration::from_secs(5), session.close())
         .await
@@ -624,7 +624,7 @@ async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
         "export function session() { return new Promise(() => {}); }",
     )
     .await;
-    let session = runtime.open_session(host(&folder)).await.unwrap();
+    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
 
     let ended = tokio::time::timeout(Duration::from_secs(5), runtime.shutdown()).await;
 

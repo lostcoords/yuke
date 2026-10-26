@@ -13,7 +13,6 @@ use std::task::Poll;
 use std::thread::JoinHandle;
 
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
-use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::display::Display;
@@ -107,6 +106,21 @@ impl Drop for Stopping {
     }
 }
 
+/// A cheap clone of a [`Runtime`] that opens sessions.
+#[derive(Clone)]
+pub struct Handle {
+    pub(crate) caller: Caller,
+    pub(crate) models: Arc<dyn Models>,
+}
+
+impl fmt::Debug for Handle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Handle")
+            .field("caller", &self.caller)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The sender of calls to the JavaScript thread. A tool keeps a clone, so its calls reach the thread.
 #[derive(Debug, Clone)]
 pub(crate) struct Caller {
@@ -125,7 +139,7 @@ impl Runtime {
         let options = Options {
             models: Arc::new(OnConsumer {
                 models: options.models,
-                handle: Handle::current(),
+                handle: tokio::runtime::Handle::current(),
             }),
             ..options
         };
@@ -172,6 +186,14 @@ impl Runtime {
                 Ok(())
             })
             .await
+    }
+
+    /// A handle that opens sessions on this runtime.
+    pub fn handle(&self) -> Handle {
+        Handle {
+            caller: self.caller.clone(),
+            models: Arc::clone(&self.models),
+        }
     }
 
     /// Start the frame loop on the display. Its start event has `snapshot` when the argument is `Some`. The inputs and
