@@ -663,8 +663,8 @@ async fn run_program(program: Program, stop: CancellationToken) -> Result<Progra
     }
     command.envs(program.env);
     new_session(&mut command);
-    let mut child = command
-        .spawn()
+    let mut child = spawn(command)
+        .await
         .map_err(|error| format!("{} did not start: {error}", program.command))?;
     let group = group_of(&child).map_err(|error| error.to_string())?;
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
@@ -765,11 +765,9 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
     shell_command
         .stdout(Stdio::from(writer))
         .stderr(Stdio::from(error_writer));
-    let mut child = shell_command
-        .spawn()
+    let mut child = spawn(shell_command)
+        .await
         .map_err(|error| format!("the command did not start: {error}"))?;
-    // The command holds the write ends. The read sees the end of the output only after they close.
-    drop(shell_command);
     let group = group_of(&child).map_err(|error| error.to_string())?;
 
     let capture = Arc::new(Mutex::new(Capture::new(max_bytes, file)));
@@ -948,6 +946,14 @@ impl Capture {
         };
         format!("{head}\n[yuke cut {} bytes here. {file}]\n{tail}", self.cut)
     }
+}
+
+/// Spawn `command` on a blocking thread, because the spawn forks and waits until the child calls exec. The command
+/// drops after the spawn. So its copies of the pipe write ends close, and a read of the output sees the end.
+async fn spawn(mut command: Command) -> io::Result<Child> {
+    tokio::task::spawn_blocking(move || command.spawn())
+        .await
+        .map_err(io::Error::other)?
 }
 
 /// Start `command` in `folder` with its output in the file `log`, in a new process group.
