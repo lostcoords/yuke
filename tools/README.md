@@ -40,3 +40,14 @@ Successful push CI on `main` triggers the rolling nightly. Manual runs also requ
 Stale runs skip publication. Nightly needs mutable releases.
 Published versioned releases stay unchanged. An upload or publish failure can hide nightly until retry.
 Retry all jobs to rebuild expired artifacts and complete the draft.
+
+## Benchmarks
+
+`bench-idle.py` measures agents at rest: startup time, idle memory, idle CPU, and binary size.
+It needs tmux. It starts each agent in an empty directory and prints a Markdown table.
+
+```sh
+python3 tools/bench-idle.py yuke=target/release/yuke "Claude Code=claude" Codex=codex
+```
+
+The [benchmarks page](../docs/guide/benchmarks.md) publishes the results and the method.

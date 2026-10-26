@@ -210,7 +210,7 @@ install_yuke() {
     *":${bin_dir}:"*) ;;
     *) printf 'Add ~/.local/bin to PATH in your shell configuration.\n' ;;
   esac
-  printf 'Run yuke --help for supported commands. The terminal interface is not available.\n'
+  printf 'Run yuke to start, or yuke --help for its commands.\n'
 }
 
 install_yuke "$@"

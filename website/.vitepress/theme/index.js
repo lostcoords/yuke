@@ -6,6 +6,7 @@ import HeroBackground from './HeroBackground.vue';
 import HeroDemo from './HeroDemo.vue';
 import HomeCta from './HomeCta.vue';
 import HomeWhy from './HomeWhy.vue';
+import NotFound from './NotFound.vue';
 import SiteFooter from './SiteFooter.vue';
 import '../../styles/yuke.css';
 
@@ -17,6 +18,7 @@ export default {
     'home-hero-after': () => h(HeroDemo),
     // VitePress has no slot after the home content; HomeCta moves itself last with `order`.
     'home-features-after': () => [h(Footprint), h(HomeWhy), h(HomeCta)],
+    'not-found': () => h(NotFound),
     'layout-bottom': () => h(SiteFooter),
   }),
 };

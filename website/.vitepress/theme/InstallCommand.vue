@@ -50,8 +50,10 @@ code {
   color: var(--vp-c-text-1);
   font-family: var(--vp-font-family-mono);
   font-size: 15px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  /* A narrow screen scrolls the command sideways, so every character stays readable. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .prompt {
@@ -86,8 +88,12 @@ code {
 }
 
 @media (max-width: 480px) {
+  .install {
+    padding-left: 12px;
+  }
+
   code {
-    font-size: 12px;
+    font-size: 11.5px;
   }
 }
 </style>

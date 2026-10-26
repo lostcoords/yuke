@@ -20,10 +20,10 @@ The installer writes one binary to `~/.local/bin` and its library to `~/.local/l
 ### Connect a model
 
 ```sh
-yuke login
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-`yuke login` lists each provider and its state. Use an API key, or log in with a ChatGPT or Grok account. A local model server is one entry in `providers.json`.
+Set the API key of any built-in provider, or log in with an account: `yuke login openai-codex` for ChatGPT and `yuke login xai-grok` for Grok. A local model server is one entry in `providers.json`.
 
 ### Start it
 
@@ -32,7 +32,7 @@ cd your-project
 yuke
 ```
 
-yuke reads `AGENTS.md` and your skills, and opens the TUI. `yuke resume <id>` opens a saved conversation again.
+yuke reads `AGENTS.md` and your skills, and opens the TUI.
 
 ### Add your first command
 

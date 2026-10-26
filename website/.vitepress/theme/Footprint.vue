@@ -1,25 +1,27 @@
 <script setup>
-// Measured on 2026-10-25: each agent idle at its first screen in a 160x45 tmux pane, in an
-// empty directory, on an Apple M2 Pro with macOS 26.6. Memory is the RSS of the process tree,
-// the median of three runs. yuke is the full TUI build; Claude Code waited at its trust prompt.
+import { withBase } from 'vitepress';
+import Mascot from './Mascot.vue';
+// From tools/bench-idle.py on 2026-10-26; docs/guide/benchmarks.md has the full table and the
+// method. Each agent idled at its first screen; the values are medians of three runs.
 const agents = [
-  { name: 'yuke', memory: 14.4, self: true },
-  { name: 'Claude Code', memory: 189 },
-  { name: 'Codex', memory: 250 },
-  { name: 'OpenCode', memory: 1191 },
+  { name: 'yuke', memory: 12.5, self: true },
+  { name: 'Claude Code', memory: 188.9 },
+  { name: 'Codex', memory: 257.4 },
+  { name: 'OpenCode', memory: 1231.5 },
 ];
 const most = Math.max(...agents.map((agent) => agent.memory));
 
 const stats = [
-  { value: '14 MB', label: 'memory at idle' },
-  { value: '~0%', label: 'CPU while it waits' },
-  { value: '7 MB', label: 'download' },
-  { value: '1', label: 'native binary, no runtime' },
+  { value: '12 MiB', label: 'memory at idle' },
+  { value: '0.06 s', label: 'to the first screen' },
+  { value: '16 MB', label: 'binary' },
+  { value: '0', label: 'runtimes to install' },
 ];
 </script>
 
 <template>
   <section class="footprint yuke-section yuke-reveal">
+    <Mascot pose="coffee" class="mascot" />
     <p class="yuke-label">Footprint</p>
     <h2 class="yuke-heading">Small by default.</h2>
     <p class="lead">yuke is one native binary. It needs no Node, no Python and no Electron, so it leaves your memory to the tests, the build and the other agents.</p>
@@ -36,9 +38,9 @@ const stats = [
       <div v-for="agent in agents" :key="agent.name" class="row" :class="{ self: agent.self }">
         <span class="name">{{ agent.name }}</span>
         <span class="track"><span class="bar" :style="{ width: `${(agent.memory / most) * 100}%` }"></span></span>
-        <span class="value">{{ agent.memory >= 100 ? Math.round(agent.memory) : agent.memory }} MB</span>
+        <span class="value">{{ agent.memory >= 100 ? Math.round(agent.memory) : agent.memory }} MiB</span>
       </div>
-      <p class="method">Idle at the first screen on an Apple M2 Pro, macOS 26.6. Median of three runs, October 2026.</p>
+      <p class="method">Idle at the first screen on an Apple M2 Pro, macOS 26.6. Median of three runs, October 2026. <a :href="withBase('/docs/benchmarks')">All results and the method →</a></p>
     </figure>
   </section>
 </template>
@@ -47,6 +49,10 @@ const stats = [
 .footprint {
   margin-top: 128px;
   text-align: center;
+}
+
+.mascot {
+  margin-bottom: 24px;
 }
 
 h2 {
@@ -172,5 +178,10 @@ figcaption {
   margin: 16px 0 0;
   color: var(--vp-c-text-3);
   font-size: 12.5px;
+}
+
+.method a {
+  color: var(--vp-c-brand-1);
+  text-decoration: none;
 }
 </style>
