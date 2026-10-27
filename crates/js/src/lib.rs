@@ -6,7 +6,8 @@
 //! add web APIs to the language: timers, `reportError`, events and abort signals, `TextEncoder` and `TextDecoder`,
 //! `URL` and `URLSearchParams`, `ReadableStream`, `fetch` with `Headers`, `Request`, and `Response`, `console`, and
 //! `performance`. The public modules are `yuke:tools`, `yuke:plugins`, `yuke:fs` (files), `yuke:process` (programs),
-//! and `yuke:ai` (model requests). The runtime sets no heap and no time limit. It checks the stack of the JavaScript,
+//! `yuke:ai` (model requests), `yuke:tui` (the terminal interface), and `yuke:transcript` (the conversation of a
+//! session as data). The runtime sets no heap and no time limit. It checks the stack of the JavaScript,
 //! so a deep recursion throws and does not crash the thread. A shutdown stops running JavaScript and each running
 //! program.
 //!

@@ -184,12 +184,12 @@ ctx.provide("test.notes.v1", null);
 assert<Equal<ReturnType<typeof ctx.get<"sessions">>, Sessions>>();
 assert<Equal<ReturnType<typeof ctx.get<"catalog">>, Catalog>>();
 export async function drive(sessions: Sessions): Promise<void> {
-  const handle = await sessions.open("id", { tail: 50, update: (update) => void update });
+  const handle = await sessions.open("id", { tail: 50, event: (event) => void event });
   await handle.input([{ user_text: "hi" }]);
   // @ts-expect-error: an input holds blocks, not a text.
   await handle.input("hi");
   // @ts-expect-error: the snapshot needs a tail.
-  await sessions.open("id", { update: () => undefined });
+  await sessions.open("id", { event: () => undefined });
   // @ts-expect-error: a handle ends by its signal. Only `sessions.close` closes the session for each holder.
   await handle.close();
   await sessions.close(handle.id, { stopJobs: true });

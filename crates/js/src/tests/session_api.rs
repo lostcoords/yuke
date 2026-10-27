@@ -183,13 +183,13 @@ async fn started(name: &str, scripted: &Arc<Scripted>) -> Runtime {
     runtime
 }
 
-/// Open the session of [`session`] as `handle`, with each update into `seen`.
+/// Open the session of [`session`] as `handle`, with each event into `seen`. Return its snapshot.
 async fn open(runtime: &Runtime, signal: &str) -> String {
     evaluate::<String>(
         runtime,
         &format!(
-            "globalThis.handle = await sessions.open('{}', {{ tail: 5, signal: {signal}, update: (u) => seen.push(u) }});
-             return JSON.stringify(handle.snapshot);",
+            "globalThis.handle = await sessions.open('{}', {{ tail: 5, signal: {signal}, event: (e) => seen.push(e) }});
+             return JSON.stringify(seen[0].snapshot);",
             session()
         ),
     )
@@ -212,10 +212,10 @@ async fn a_handle_starts_with_its_snapshot_and_gets_each_later_update_in_order()
         scripted.send(0, state(SessionState::Running));
         scripted.send(0, state(SessionState::Idle));
     }
-    wait_until(&runtime, "return seen.length === 1200;").await;
+    wait_until(&runtime, "return seen.length === 1201;").await;
     let alternate = evaluate::<bool>(
         &runtime,
-        "return seen.every((u, i) => u.state === (i % 2 === 0 ? 'running' : 'idle'));",
+        "return seen.slice(1).every((e, i) => e.update.state === (i % 2 === 0 ? 'running' : 'idle'));",
     )
     .await
     .unwrap();
@@ -241,7 +241,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
         &runtime,
         &format!(
             "globalThis.later = [];
-             await sessions.open('{}', {{ tail: 5, update: (u) => later.push(u) }});
+             await sessions.open('{}', {{ tail: 5, event: (e) => later.push(e) }});
              pane.abort();",
             session()
         ),
@@ -251,7 +251,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     // The feed keeps the order, so the update of the second view comes after the one of the first view.
     scripted.send(0, state(SessionState::Running));
     scripted.send(1, state(SessionState::Running));
-    wait_until(&runtime, "return later.length === 1;").await;
+    wait_until(&runtime, "return later.length === 2;").await;
     let input = evaluate::<String>(
         &runtime,
         "try { await handle.input([]); return 'sent'; } catch (error) { return error.message; }",
@@ -262,7 +262,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
 
     assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
     assert_eq!(input, format!("the handle of the session {} has ended", session()));
-    assert_eq!(seen, 0);
+    assert_eq!(seen, 1);
 }
 
 // The abort comes before the hold exists, so the open itself ends the hold.
@@ -275,7 +275,7 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
         &runtime,
         &format!(
             "const pane = new AbortController();
-             const opening = sessions.open('{}', {{ tail: 5, signal: pane.signal, update: () => undefined }});
+             const opening = sessions.open('{}', {{ tail: 5, signal: pane.signal, event: () => undefined }});
              pane.abort(new Error('the pane closed'));
              try {{ await opening; return 'opened'; }} catch (error) {{ return error.message; }}",
             session()
@@ -313,7 +313,7 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
 
     evaluate::<()>(
         &runtime,
-        "globalThis.other = await sessions.open(handle.id, { tail: 5, update: () => undefined });
+        "globalThis.other = await sessions.open(handle.id, { tail: 5, event: () => undefined });
          await sessions.close(handle.id);",
     )
     .await

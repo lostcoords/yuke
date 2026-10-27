@@ -98,12 +98,13 @@ export interface Sessions {
   /** Delete the saved session `id`. An open session cannot be removed. */
   readonly remove: (id: SessionId) => Promise<void>;
   /**
-   * Open session `id`, also a closed one, and hold it: it does not close by itself until the handle ends. The handle
-   * starts with a snapshot of the session. `options.update` then gets each later update, in order.
+   * Open session `id`, also a closed one, and hold it: it does not close by itself until the handle ends.
+   * `options.event` gets a snapshot of the session first, then each later update, in order. The open resolves after
+   * the snapshot.
    */
   readonly open: (id: SessionId, options: OpenOptions) => Promise<SessionHandle>;
   /** At most `page.limit` saved events of session `id` before the event `page.before`, or its last ones, in order. */
-  readonly events: (id: SessionId, page: EventsPage) => Promise<readonly StoredEvent[]>;
+  readonly events: (id: SessionId, page: EventsPage) => Promise<readonly Frozen<StoredEvent>[]>;
   /**
    * Close session `id` at once for each holder, and end each handle on it. A close with running jobs fails unless
    * `options.stopJobs` is true. A cleanup of the session must not await the close of its own session.
@@ -115,11 +116,14 @@ export interface Sessions {
 export interface OpenOptions {
   /** The number of the last saved events in the snapshot. */
   readonly tail: number;
-  /** Ends the handle: `update` gets no more calls, and the hold ends. The session stays open for its other holders. */
+  /** Ends the handle: `event` gets no more calls, and the hold ends. The session stays open for its other holders. */
   readonly signal?: AbortSignal;
-  /** Gets each update after the snapshot, in order. A throw is a fault of the plugin, and the next update still comes. */
-  readonly update: (update: SessionUpdate) => void;
+  /** Gets the snapshot, then each later update, in order. A throw is a fault of the plugin, and the next event still comes. */
+  readonly event: (event: ViewEvent) => void;
 }
+
+/** One event of an open session: its snapshot first, then each later update. */
+export type ViewEvent = { readonly snapshot: Frozen<SessionSnapshot> } | { readonly update: Frozen<SessionUpdate> };
 
 /** A page of the saved events of a session. */
 export interface EventsPage {
@@ -140,8 +144,6 @@ export interface SessionHandle {
    * session. Its reason tells which.
    */
   readonly signal: AbortSignal;
-  /** The session when the handle starts: its settings, its last saved events, and its live state. */
-  readonly snapshot: SessionSnapshot;
   /** Send `content` as a message of the user. A turn starts when the session is idle. */
   readonly input: (content: readonly Block[]) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
@@ -176,7 +178,7 @@ export interface Catalog {
 /** The value of `ctx.get(name)`: never null, except `tui`, which can be `undefined`. */
 export type ServiceOf<K extends keyof Services> = K extends "tui" ? Services[K] : NonNullable<Services[K]>;
 
-/** `T` with each field read-only at each depth, as the host freezes it. */
+/** `T` with each field read-only at each depth. */
 export type Frozen<T> = T extends readonly (infer U)[]
   ? readonly Frozen<U>[]
   : T extends object

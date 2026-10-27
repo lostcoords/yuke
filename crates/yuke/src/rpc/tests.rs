@@ -3026,14 +3026,17 @@ async fn a_plugin_creates_a_session_sends_input_and_sees_its_turn() {
                  try {{
                    const id = await sessions.create({settings});
                    const seen = [];
+                   let model;
                    let reported = false;
                    const report = () => {{
                      const saved = seen.filter((update) => update.sessionUpdate === 'commit');
                      const text = saved.flatMap((event) => event.commit.blocks).find((block) => 'assistant_text' in block);
                      ctx.emit('turn', {{ states: seen.filter((update) => 'state' in update).map((update) => update.state),
-                                       answer: text?.assistant_text, model: handle.snapshot.settings.model.model }});
+                                       answer: text?.assistant_text, model }});
                    }};
-                   const handle = await sessions.open(id, {{ tail: 10, update: (update) => {{
+                   const handle = await sessions.open(id, {{ tail: 10, event: (event) => {{
+                     if ('snapshot' in event) {{ model = event.snapshot.settings.model.model; return; }}
+                     const update = event.update;
                      seen.push(update);
                      if (!reported && update.state === 'idle') {{ reported = true; report(); }}
                    }} }});

@@ -23,6 +23,7 @@ mod term;
 mod tool_after;
 mod tool_before;
 mod tools;
+mod transcript;
 mod tui;
 mod url;
 mod web;

@@ -2,6 +2,7 @@
 
 import {
   catalogList,
+  type ViewEvent as NativeViewEvent,
   sessionCancel,
   sessionClose,
   sessionIdle,
@@ -22,17 +23,17 @@ import {
   sessionsOpen,
   sessionsRelease,
   sessionsRemove,
-  type ViewEvent,
 } from "yuke:internal/native";
-import type { Catalog, OpenOptions, SessionHandle, Sessions } from "yuke:plugins";
-import type { SessionId, SessionSnapshot, SessionUpdate } from "yuke:protocol";
+import type { Catalog, OpenOptions, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
+import type { SessionId } from "yuke:protocol";
 
 const { reportError } = globalThis;
 
 /** Where the events of one view go: its snapshot once, then each update, then the close of its session. */
 interface Route {
-  snapshot: ((snapshot: SessionSnapshot) => void) | undefined;
-  readonly update: (update: SessionUpdate) => void;
+  /** Resolves the open at the snapshot. */
+  opened: (() => void) | undefined;
+  readonly event: (event: ViewEvent) => void;
   readonly closed: () => void;
 }
 
@@ -42,7 +43,7 @@ let lastKey = 0;
 let listening = false;
 
 /** Give each event of `batch` to its view. A view that ended gets nothing. */
-function deliver(batch: readonly (readonly [number, ViewEvent])[]): void {
+function deliver(batch: readonly (readonly [number, NativeViewEvent])[]): void {
   for (const [key, event] of batch) {
     const route = routes.get(key);
     if (route === undefined) continue;
@@ -51,12 +52,11 @@ function deliver(batch: readonly (readonly [number, ViewEvent])[]): void {
       continue;
     }
     if ("snapshot" in event) {
-      route.snapshot?.(event.snapshot);
-      route.snapshot = undefined;
-      continue;
+      route.opened?.();
+      route.opened = undefined;
     }
     try {
-      route.update(event.update);
+      route.event(event);
     } catch (error) {
       reportError(error);
     }
@@ -98,17 +98,16 @@ async function open(
   };
   const stop = (): void => end(signal.reason);
   signal.addEventListener("abort", stop, { once: true });
-  const snapshot = Promise.withResolvers<SessionSnapshot>();
+  const opened = Promise.withResolvers<void>();
   // The route comes before the open, so the snapshot finds it.
   routes.set(key, {
-    snapshot: snapshot.resolve,
-    update: options.update,
+    opened: opened.resolve,
+    event: options.event,
     closed: () => end(new Error(`the session ${id} closed`)),
   });
-  let first: SessionSnapshot;
   try {
     await sessionsOpen([key, id, options.tail]);
-    first = await untilAbort(snapshot.promise, ended.signal);
+    await untilAbort(opened.promise, ended.signal);
   } catch (error) {
     end(error);
     // The handle can end before the native open stores its hold.
@@ -121,7 +120,6 @@ async function open(
   return Object.freeze({
     id,
     signal: ended.signal,
-    snapshot: first,
     async input(content) {
       live();
       return sessionInput([id, content]);
