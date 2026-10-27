@@ -7,11 +7,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
+use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset};
 use yuke_mcp::{ServerConfig, Servers};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
-use yuke_testing::{NoWait, ScriptedTransport, model_of, target, text_reply, tool_reply};
+use yuke_testing::{model_of, target};
 
 /// The base64 PNG of one pixel, as the `picture` tool of the test server sends it.
 const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";

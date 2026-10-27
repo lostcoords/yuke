@@ -125,11 +125,12 @@ mod tests {
 
     use crate::app::{TokioTimer, open_store};
 
+    use yuke_ai::scripted::{ScriptedTransport, counted, overloaded_reply, text_reply, tool_reply};
     use yuke_ai::transport::Transport;
     use yuke_ai::{FinishReason, ToolDefinition, Usage};
     use yuke_js::Attachment;
     use yuke_protocol::{ModelReference, ServerNotification};
-    use yuke_testing::{ScriptedTransport, assert_in_order, counted, overloaded_reply, text_reply, tool_reply};
+    use yuke_testing::assert_in_order;
 
     use super::*;
     use crate::app::{App, Mode, Observer};
@@ -365,7 +366,7 @@ mod tests {
     #[tokio::test]
     async fn a_side_request_keeps_the_cache_key_and_the_cache_marker_of_its_round() {
         let reply =
-            yuke_testing::sse(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#]);
+            yuke_ai::scripted::sse(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#]);
         let transport = ScriptedTransport::new([reply]);
         let app = app(
             "a_side_request_keeps_the_cache_key_and_the_cache_marker_of_its_round",

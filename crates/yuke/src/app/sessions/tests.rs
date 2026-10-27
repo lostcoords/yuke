@@ -1,10 +1,10 @@
 use yuke_ai::Block;
+use yuke_ai::scripted::{ScriptedTransport, Stalled, overloaded_reply, text_reply, tool_reply};
 use yuke_ai::transport::Transport;
 use yuke_js::ViewEvent;
 use yuke_protocol::{
     EventNumber, Input, InputKind, InputSource, ListSessionsParams, ModelReference, SessionSettings, SessionUpdate,
 };
-use yuke_testing::{ScriptedTransport, Stalled, overloaded_reply, text_reply, tool_reply};
 
 use super::*;
 use crate::app::{App, Mode, Observer, TokioTimer, open_store};

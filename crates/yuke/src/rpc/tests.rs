@@ -14,7 +14,7 @@ use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, InputKind, InputSource, ModelReference, SessionId, SessionSettings};
 
 use super::*;
-use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_ai::scripted::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
 use crate::app::Machine;
 use crate::providers::Providers;

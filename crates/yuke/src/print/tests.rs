@@ -8,7 +8,8 @@ use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 
 use super::*;
 use crate::app::Variable;
-use yuke_testing::{ScriptedTransport, Stalled, assert_in_order, text_reply, tool_reply};
+use yuke_ai::scripted::{ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_testing::assert_in_order;
 
 use crate::testing::{Place, Rejecting, with_key};
 
@@ -335,7 +336,7 @@ async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_rou
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["shrink"] }"#).unwrap();
-    let overflow = yuke_testing::sse(&[
+    let overflow = yuke_ai::scripted::sse(&[
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
         r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 300000 tokens > 200000 maximum"}}"#,
     ]);
@@ -407,7 +408,7 @@ async fn a_session_near_the_window_compacts_before_the_round_and_keeps_the_summa
     run_with(
         &place,
         &task(&first, SessionChoice::New),
-        &[yuke_testing::counted(&text_reply("One."), NEAR_WINDOW)],
+        &[yuke_ai::scripted::counted(&text_reply("One."), NEAR_WINDOW)],
     )
     .await
     .0
@@ -446,7 +447,7 @@ async fn an_overflow_compacts_the_part_before_the_cut_and_the_round_goes_again()
         .await
         .0
         .unwrap();
-    let overflow = yuke_testing::sse(&[
+    let overflow = yuke_ai::scripted::sse(&[
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
         r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 1100000 tokens > 1048576 maximum"}}"#,
     ]);
@@ -479,7 +480,7 @@ async fn disable_in_the_config_turns_the_compaction_off() {
     run_with(
         &place,
         &task(&first, SessionChoice::New),
-        &[yuke_testing::counted(&text_reply("One."), NEAR_WINDOW)],
+        &[yuke_ai::scripted::counted(&text_reply("One."), NEAR_WINDOW)],
     )
     .await
     .0

@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use yuke_ai::scripted::ScriptedTransport;
 use yuke_ai::transport::{
     Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport,
 };
 use yuke_store::SqliteStore;
-use yuke_testing::ScriptedTransport;
 
 use async_trait::async_trait;
 use yuke_engine::Timer;

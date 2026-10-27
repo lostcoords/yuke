@@ -4,9 +4,9 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use yuke_ai::scripted::ScriptedTransport;
 use yuke_js::Display;
 use yuke_term::Size;
-use yuke_testing::ScriptedTransport;
 
 use super::{Notices, reload};
 use crate::app::{App, Mode};

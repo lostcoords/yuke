@@ -46,6 +46,9 @@ pub enum Origin {
         /// The name of the entry module.
         module: String,
     },
+    /// Exports that the runtime holds already: a test host gave them with the name of the plugin. The plugin has no
+    /// folder.
+    Given,
 }
 
 /// A plugin that did not load. Its text names the plugin and the reason.
@@ -154,12 +157,14 @@ impl Runtime {
                 let (root, entry) = match &plugin.origin {
                     Origin::Folder { root, entry } => (Some(path(root)), entry.as_ref().map(path)),
                     Origin::Bundled { module } => (None, Some(module.clone())),
+                    Origin::Given => (None, None),
                 };
                 let spec = PluginSpec {
                     name: plugin.name,
                     root,
                     data_dir: path(&plugin.data_dir),
                     options: Json(plugin.options),
+                    given: matches!(plugin.origin, Origin::Given),
                     entry,
                     uses: plugin.uses,
                     provides: plugin.provides,
@@ -181,6 +186,8 @@ struct PluginSpec {
     data_dir: String,
     options: Json<serde_json::Map<String, serde_json::Value>>,
     entry: Option<String>,
+    /// The runtime holds the exports, given with the name of the plugin.
+    given: bool,
     uses: Vec<String>,
     provides: Vec<String>,
 }

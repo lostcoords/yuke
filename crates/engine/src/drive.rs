@@ -105,6 +105,15 @@ pub trait Timer: Send + Sync {
     async fn sleep(&self, duration: Duration);
 }
 
+/// A timer whose waits end at once, for tests, where a retry must not wait.
+#[derive(Debug)]
+pub struct NoWait;
+
+#[async_trait]
+impl Timer for NoWait {
+    async fn sleep(&self, _: Duration) {}
+}
+
 /// Holds the input that arrives during a turn. The driver takes it after a round only when the turn continues, so
 /// input never changes a request in flight. An inbox is `Sync`, so another task can add input while a turn runs.
 #[async_trait]

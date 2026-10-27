@@ -854,3 +854,85 @@ async fn get_tui_is_undefined_outside_the_terminal_interface_and_needs_no_uses_e
         "undefined"
     );
 }
+
+/// A plugin `name` whose exports are the ones that a test host gave. The plugin gets `options`.
+fn given(folder: &Path, name: &str, options: &serde_json::Value) -> Plugin {
+    let data_dir = folder.join("data").join(name);
+    std::fs::create_dir_all(&data_dir).unwrap();
+    Plugin {
+        name: name.to_owned(),
+        origin: Origin::Given,
+        data_dir,
+        options: options.as_object().unwrap().clone(),
+        uses: Vec::new(),
+        provides: Vec::new(),
+    }
+}
+
+// The given exports pass the same checks as an entry: the options schema, the frozen options, and the export shape.
+#[tokio::test]
+async fn given_exports_load_through_the_checks_of_an_entry() {
+    let folder = folder("given_exports_load_through_the_checks_of_an_entry");
+    // The test gives the exports as the test host does, through the internal loader.
+    let options = crate::Options {
+        internal_imports: true,
+        ..super::options(&folder, Arc::new(crate::Processes::new(folder.join("processes"))))
+    };
+    let (runtime, _reports) = Runtime::start(options).await.unwrap();
+    evaluate::<()>(
+        &runtime,
+        "const loader = await import('yuke:internal/plugins');
+         loader.give('fine', {
+           optionsSchema: { type: 'object', properties: { depth: { type: 'number' } } },
+           apply(ctx) { globalThis.seen = [ctx.options.depth, Object.isFrozen(ctx.options), 'root' in ctx]; },
+         });
+         loader.give('empty', { other: 1 });
+         loader.give('unchecked', { apply() {} });
+         loader.give('sessioned', { session(s) { s.tools.define({ name: 'from_session', description: 'd',
+           concurrency: 'serial', parameters: { type: 'object', properties: {} }, execute: () => 'x' }); } });
+         loader.give('broken', { apply: 1 });",
+    )
+    .await
+    .unwrap();
+
+    let failures = runtime
+        .load_plugins(&[
+            given(&folder, "fine", &serde_json::json!({ "depth": 2 })),
+            given(&folder, "empty", &serde_json::json!({})),
+            given(&folder, "unchecked", &serde_json::json!({ "depth": 2 })),
+            given(&folder, "missing", &serde_json::json!({})),
+            given(&folder, "sessioned", &serde_json::json!({})),
+            given(&folder, "broken", &serde_json::json!({})),
+        ])
+        .await;
+    let seen = evaluate::<String>(&runtime, "return JSON.stringify(globalThis.seen);")
+        .await
+        .unwrap();
+
+    assert_eq!(seen, "[2,true,false]");
+    assert_eq!(tool_names(&runtime, &folder).await, ["from_session"]);
+    assert_eq!(
+        texts(&failures),
+        [
+            (
+                "empty".to_owned(),
+                "plugin empty did not load: TypeError: the given exports of plugin empty hold neither apply nor session"
+                    .to_owned()
+            ),
+            (
+                "unchecked".to_owned(),
+                "plugin unchecked did not load: TypeError: config.json gives options, and the plugin exports no \
+                 optionsSchema"
+                    .to_owned()
+            ),
+            (
+                "missing".to_owned(),
+                "plugin missing did not load: TypeError: plugin missing has no given exports".to_owned()
+            ),
+            (
+                "broken".to_owned(),
+                "plugin broken did not load: TypeError: the apply export is no function".to_owned()
+            ),
+        ]
+    );
+}

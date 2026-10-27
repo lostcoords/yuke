@@ -136,7 +136,7 @@ impl Profile {
                 .iter()
                 .filter_map(|plugin| match &plugin.origin {
                     Origin::Folder { root, .. } => Some(root.clone()),
-                    Origin::Bundled { .. } => None,
+                    Origin::Bundled { .. } | Origin::Given => None,
                 })
                 .collect(),
             session_idle: Duration::from_secs(

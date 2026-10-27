@@ -14,6 +14,7 @@ mod request;
 mod response;
 pub mod retry;
 pub mod route;
+pub mod scripted;
 mod stream;
 pub mod transport;
 mod wire;

@@ -43,6 +43,8 @@ interface PluginSpec {
   readonly options: Readonly<Record<string, unknown>>;
   /** The absolute path or the `yuke:` name of the entry module, or `undefined` for a plugin without code. */
   readonly entry: string | undefined;
+  /** The exports are the ones that `give` keeps for this name, not the ones of an entry module. */
+  readonly given: boolean;
   readonly uses: readonly string[];
   readonly provides: readonly string[];
 }
@@ -115,6 +117,16 @@ interface Scope {
   readonly clean: (cleanup: Cleanup) => Promise<void>;
 }
 
+/** The exports that a test host gives as values. The key is the name of the plugin. */
+const given = new Map<string, object>();
+
+/**
+ * Keep `exports` as the exports of the plugin `name`. A later `load` uses them when its spec has `given` set to true.
+ */
+export function give(name: string, exports: object): void {
+  given.set(name, exports);
+}
+
 /** The scopes of each open session, by the open number of the host. */
 const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
 
@@ -135,13 +147,18 @@ export async function load(spec: PluginSpec): Promise<void> {
     let apply: unknown;
     let session: PluginSession<Options> | undefined;
     let optionsSchema: unknown;
-    if (spec.entry !== undefined) {
-      const exports = (await import(spec.entry)) as {
+    const source = spec.given ? given.get(spec.name) : spec.entry === undefined ? undefined : await import(spec.entry);
+    if (spec.given && source === undefined) throw new TypeError(`plugin ${spec.name} has no given exports`);
+    if (source !== undefined) {
+      const exports = source as {
         readonly apply?: unknown;
         readonly session?: unknown;
         readonly optionsSchema?: unknown;
       };
       if (exports.apply === undefined && exports.session === undefined) {
+        if (spec.entry === undefined) {
+          throw new TypeError(`the given exports of plugin ${spec.name} hold neither apply nor session`);
+        }
         throw new TypeError(`${spec.entry} exports neither apply nor session: a plugin entry exports one or both`);
       }
       if (exports.apply !== undefined && typeof exports.apply !== "function") {

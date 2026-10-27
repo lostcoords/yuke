@@ -966,8 +966,8 @@ mod tests {
     use yuke_ai::Block;
 
     use crate::app::{TokioTimer, open_store};
+    use yuke_ai::scripted::ScriptedTransport;
     use yuke_protocol::{InputKind, InputSource, ModelReference};
-    use yuke_testing::ScriptedTransport;
 
     use super::*;
     use crate::app::App;
