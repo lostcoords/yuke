@@ -122,9 +122,11 @@ pub async fn run_test_file<T: TestRuntime>(
         let place = folder.join(index.to_string());
         let scratch = place.join("scratch");
         // `create_dir` fails on a folder that exists, so each test starts with an empty folder.
-        std::fs::create_dir_all(folder)
+        // A session names its folder by its real path, so the test gets that path too.
+        let scratch = std::fs::create_dir_all(folder)
             .and_then(|()| std::fs::create_dir(&place))
             .and_then(|()| std::fs::create_dir(&scratch))
+            .and_then(|()| scratch.canonicalize())
             .map_err(|error| TestFileError::Runtime(Box::new(error)))?;
         let (owner, mut reports) = start(&place).await.map_err(TestFileError::Runtime)?;
         let expected = names.as_ref().and_then(|names| names.get(index)).map(String::as_str);

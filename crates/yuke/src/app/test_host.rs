@@ -108,6 +108,7 @@ enum ReplyRequest {
         input_tokens: u64,
     },
     ToolCalls {
+        text: String,
         calls: Vec<CallRequest>,
         #[serde(default)]
         input_tokens: u64,
@@ -116,6 +117,7 @@ enum ReplyRequest {
         calls: Vec<CallRequest>,
     },
     Overloaded,
+    Overflow,
     Failed {
         text: String,
     },
@@ -187,19 +189,23 @@ impl AppTestHost {
             self.transport.push_answer(match reply {
                 ReplyRequest::Text { text, input_tokens } => Answer::Text { text, input_tokens },
                 ReplyRequest::ToolCalls {
+                    text,
                     calls: requested,
                     input_tokens,
                 } => Answer::Calls {
+                    text,
                     calls: calls(requested),
                     input_tokens,
                     cut: false,
                 },
                 ReplyRequest::Cut { calls: requested } => Answer::Calls {
+                    text: String::new(),
                     calls: calls(requested),
                     input_tokens: 0,
                     cut: true,
                 },
                 ReplyRequest::Overloaded => Answer::Overloaded,
+                ReplyRequest::Overflow => Answer::Overflow,
                 ReplyRequest::Failed { text } => Answer::Failed { text },
                 ReplyRequest::Stall { text } => Answer::Stall { text },
             });

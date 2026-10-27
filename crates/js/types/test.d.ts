@@ -9,6 +9,8 @@
  *   a rejection that no code handles. A test awaits its work, so a fault belongs to it.
  * - A test that runs longer than 5 seconds fails, and the runner stops its runtime. The next test still runs.
  * - Each assertion throws an `Error` when it fails.
+ * - A stack line of a TypeScript file can name an earlier line than the source. The transpiler removes the type
+ *   declarations and has no source map yet. Read the code at the failure to find the assertion.
  *
  * ```ts
  * import { assert, equal, rejects, test } from "yuke:test";
@@ -64,7 +66,7 @@ declare module "yuke:test" {
   /** Await `promise`, and return its reason. Fail when `promise` fulfills. */
   export function rejects(promise: Promise<unknown>): Promise<unknown>;
 
-  /** The scratch folder of the test: an empty folder for this test alone. */
+  /** The scratch folder of the test: an empty folder for this test alone. Its path has no symbolic link. */
   export function folder(): string;
   // The host of plugins under test: an app with a scripted model, in the runtime of the test.
 
@@ -93,9 +95,15 @@ declare module "yuke:test" {
   /** One scripted answer of the fake model. Make it with `reply`. */
   export type Reply =
     | { readonly kind: "text"; readonly text: string; readonly inputTokens: number }
-    | { readonly kind: "toolCalls"; readonly calls: readonly ScriptedCall[]; readonly inputTokens: number }
+    | {
+        readonly kind: "toolCalls";
+        readonly text: string;
+        readonly calls: readonly ScriptedCall[];
+        readonly inputTokens: number;
+      }
     | { readonly kind: "cut"; readonly calls: readonly ScriptedCall[] }
     | { readonly kind: "overloaded" }
+    | { readonly kind: "overflow" }
     | { readonly kind: "failed"; readonly text: string }
     | { readonly kind: "stall"; readonly text: string };
 
@@ -110,18 +118,26 @@ declare module "yuke:test" {
     readonly inputTokens?: number;
   }
 
+  /** The options of an answer with calls. */
+  export interface CallsOptions extends ReplyOptions {
+    /** The text of the answer before its calls. */
+    readonly text?: string;
+  }
+
   /** The makers of the scripted answers. */
   export const reply: {
     /** A complete answer with the text `text`. */
     readonly text: (text: string, options?: ReplyOptions) => Reply;
     /** A complete answer that calls the tool `name` with `args`. */
-    readonly toolCall: (name: string, args: unknown, options?: ReplyOptions) => Reply;
+    readonly toolCall: (name: string, args: unknown, options?: CallsOptions) => Reply;
     /** A complete answer with several calls. */
-    readonly toolCalls: (calls: readonly ScriptedCall[], options?: ReplyOptions) => Reply;
+    readonly toolCalls: (calls: readonly ScriptedCall[], options?: CallsOptions) => Reply;
     /** An answer with calls that the output limit cut. */
     readonly cut: (calls: readonly ScriptedCall[]) => Reply;
     /** An overload error before any output. The retry policy of yuke sends the request again. */
     readonly overloaded: () => Reply;
+    /** A context overflow before any output. The retry policy skips it, so the `round.retry` hooks get the failure. */
+    readonly overflow: () => Reply;
     /** An answer that streams `text`, then fails. The request fails without a retry. */
     readonly failed: (text: string) => Reply;
     /** An answer that streams `text` and never ends, for a test of a cancel. */
@@ -167,9 +183,10 @@ declare module "yuke:test" {
     readonly model?: FakeModel;
     /**
      * The answer to each question. Give `true` or `false` for `confirm`. Give a text for `select` and `input`.
-     * `undefined` cancels the question. Without the function, each question gets `undefined`, as with no client.
+     * `undefined` cancels the question. Without the function, each question gets `undefined`, as with no client. A
+     * promise keeps the question open until it settles.
      */
-    readonly answer?: (question: TestQuestion) => boolean | string | undefined;
+    readonly answer?: (question: TestQuestion) => boolean | string | undefined | Promise<boolean | string | undefined>;
   }
 
   /**
@@ -199,9 +216,16 @@ declare module "yuke:test" {
     readonly close: () => Promise<void>;
   }
 
-  /** The plain data of a round, for `round.before` and `round.retry`. The host makes the functions of the event. */
+  /**
+   * The plain data of a round, for `round.before` and `round.retry`. The host makes the functions of the event. The
+   * model of the round is the model of the session, as in a turn.
+   */
   export interface TestRound {
     readonly context: readonly Block[];
+    /**
+     * The context window of the round. `null` gives a round with no known window. Without it, the round has the
+     * window of the model of the session.
+     */
     readonly window?: number | null;
     readonly inputTokens?: number | null;
     readonly system?: string;
@@ -301,5 +325,9 @@ declare module "yuke:test" {
     ) => Promise<HookResults[K]>;
     /** Call the tool `tool` with `args`, as a turn does. */
     readonly call: (tool: string, args: unknown, options?: OperationOptions) => Promise<CallOutcome>;
+    /** Save the settings of the session with the fields of `settings` changed. It fails while a turn runs or input waits. */
+    readonly setSettings: (settings: Partial<SessionSettings>) => Promise<void>;
+    /** Close the session, and stop its background jobs. Its tools and its open questions end, and its cleanups run. */
+    readonly close: () => Promise<void>;
   }
 }

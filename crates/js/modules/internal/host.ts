@@ -19,6 +19,7 @@ import type { Frozen, ViewEvent } from "yuke:plugins";
 import type { Block, InteractionResponse, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
 import type {
   CallOutcome,
+  CallsOptions,
   FakeModel,
   HookEvents,
   HookResults,
@@ -61,18 +62,21 @@ export const reply = Object.freeze({
     text,
     inputTokens: options?.inputTokens ?? 0,
   }),
-  toolCall: (name: string, args: unknown, options?: ReplyOptions): Reply => ({
+  toolCall: (name: string, args: unknown, options?: CallsOptions): Reply => ({
     kind: "toolCalls",
+    text: options?.text ?? "",
     calls: [{ name, args }],
     inputTokens: options?.inputTokens ?? 0,
   }),
-  toolCalls: (calls: readonly ScriptedCall[], options?: ReplyOptions): Reply => ({
+  toolCalls: (calls: readonly ScriptedCall[], options?: CallsOptions): Reply => ({
     kind: "toolCalls",
+    text: options?.text ?? "",
     calls: [...calls],
     inputTokens: options?.inputTokens ?? 0,
   }),
   cut: (calls: readonly ScriptedCall[]): Reply => ({ kind: "cut", calls: [...calls] }),
   overloaded: (): Reply => ({ kind: "overloaded" }),
+  overflow: (): Reply => ({ kind: "overflow" }),
   failed: (text: string): Reply => ({ kind: "failed", text }),
   stall: (text = ""): Reply => ({ kind: "stall", text }),
 });
@@ -143,6 +147,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
   const stop = new AbortController();
   const sessions = sessionsOf("test", stop.signal);
   const questions: TestQuestion[] = [];
+  /** The sessions that the test closed. */
+  const closed = new Set<SessionId>();
   let closing: Promise<void> | undefined;
 
   /** Record the question of `update` in the session `id`, and answer it. */
@@ -150,17 +156,42 @@ export async function createHost(options: HostOptions): Promise<Host> {
     if (update.sessionUpdate !== "interaction_requested") return;
     const question: TestQuestion = Object.freeze({ sessionId: id, source: update.source, request: update.request });
     questions.push(question);
+    const respond = (answer: () => boolean | string | undefined): void => {
+      // A close ends the question, so a later answer has no question to reach.
+      if (closed.has(id) || stop.signal.aborted) return;
+      try {
+        sessionRespond([id, update.interactionId, responseOf(update, answer())]);
+      } catch (error) {
+        // The cancel ends the operation that asked, and the error fails the test.
+        sessionRespond([id, update.interactionId, { kind: "canceled" }]);
+        throw error;
+      }
+    };
+    let value: ReturnType<NonNullable<HostOptions["answer"]>>;
     try {
-      sessionRespond([id, update.interactionId, responseOf(update, options.answer?.(question))]);
+      value = options.answer?.(question);
     } catch (error) {
-      // The cancel ends the operation that asked, and the error fails the test.
-      sessionRespond([id, update.interactionId, { kind: "canceled" }]);
-      throw error;
+      respond(() => {
+        throw error;
+      });
+      return;
+    }
+    if (value instanceof Promise) {
+      // A rejection that no code handles is a fault, so a failed answer fails the test.
+      void value.then(
+        (answer) => respond(() => answer),
+        (error: unknown) =>
+          respond(() => {
+            throw error;
+          }),
+      );
+    } else {
+      respond(() => value);
     }
   };
 
   const openSession = async (settings?: Partial<SessionSettings>): Promise<TestSession> => {
-    const id = await sessions.create({
+    let current: SessionSettings = {
       model: settings?.model ?? TEST_MODEL,
       settings: settings?.settings ?? {
         maxOutputTokens: null,
@@ -171,7 +202,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
         outputSchema: null,
       },
       cwd: settings?.cwd ?? folder(),
-    });
+    };
+    const id = await sessions.create(current);
     const transcript = new Transcript();
     const handle = await sessions.open(id, {
       tail: 1000,
@@ -209,6 +241,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
         if (point === "tool.after") {
           const after = event as HookEvents["tool.after"];
           sent = { ...after, result: { ...after.result, media: (after.result.media ?? []).map(wireMedia) } };
+        } else if (point === "prompt.build") {
+          sent = { sections: Object.entries((event as HookEvents["prompt.build"]).sections) };
         } else if (point === "input.before") {
           const input = event as HookEvents["input.before"];
           sent = { ...input, blocks: input.blocks.map((block) => ("mimeType" in block ? wireMedia(block) : block)) };
@@ -221,6 +255,9 @@ export async function createHost(options: HostOptions): Promise<Host> {
         if (point === "tool.after") {
           const outcome = result as Omit<ToolOutcome, "media"> & { readonly media: readonly WireMedia[] };
           answer = { ...outcome, media: outcome.media.map(testMedia) };
+        } else if (point === "prompt.build") {
+          const pairs = (result as { sections: readonly (readonly [string, string])[] }).sections;
+          answer = { sections: Object.fromEntries(pairs) };
         } else if (point === "input.before" && typeof result === "object" && result !== null) {
           const blocks = (result as { replace: { blocks: readonly (Block | WireMedia)[] } }).replace.blocks;
           answer = { replace: { blocks: blocks.map((block) => ("base64" in block ? testMedia(block) : block)) } };
@@ -233,6 +270,17 @@ export async function createHost(options: HostOptions): Promise<Host> {
         // The tool ends early after a cancel, so its result is no answer.
         operation?.signal?.throwIfAborted();
         return { ...result, media: result.media.map(testMedia) };
+      },
+      async setSettings(changed: Partial<SessionSettings>): Promise<void> {
+        const next = { ...current, ...changed };
+        await handle.setSettings(next);
+        current = next;
+        await settle();
+      },
+      async close(): Promise<void> {
+        closed.add(id);
+        await sessions.close(id, { stopJobs: true });
+        await settle();
       },
     } satisfies TestSession);
   };

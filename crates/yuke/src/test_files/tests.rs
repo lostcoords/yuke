@@ -144,19 +144,21 @@ async fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
                    });
                  },
                }],
-               answer: () => answer,
+               answer: typeof answer === "function" ? answer : () => answer,
              });
              const session = await host.openSession();
              await session.call("ask", {});
            }
            test("no option", () => ask((s, signal) => s.select("Which?", ["red"], { signal }), "blue"));
+           test("thrown", () => ask((s, signal) => s.confirm("Go on?", undefined, { signal }), () => { throw new Error("no answer"); }));
            test("no boolean", () => ask((s, signal) => s.confirm("Go on?", undefined, { signal }), "yes"));"#,
     )
     .await;
 
-    assert_eq!((summary.passed, summary.failed), (0, 2));
+    assert_eq!((summary.passed, summary.failed), (0, 3));
     for failure in [
         "no option\n  Error: the question offers no option \"blue\"",
+        "thrown\n  Error: no answer",
         "no boolean\n  TypeError: the answer to the confirm \"Go on?\" is no boolean",
     ] {
         assert!(summary.failures.contains(failure), "{}", summary.failures);

@@ -88,17 +88,26 @@ pub fn failed_reply(text: &str) -> String {
 
 /// One complete answer that asks for `calls`. Each call has an id, a name, and JSON arguments.
 pub fn tool_reply(calls: &[(&str, &str, &str)]) -> String {
-    calls_reply(calls, "tool_use")
+    calls_reply("", calls, "tool_use")
 }
 
 /// An answer like [`tool_reply`] that the output limit cut.
 pub fn cut_reply(calls: &[(&str, &str, &str)]) -> String {
-    calls_reply(calls, "max_tokens")
+    calls_reply("", calls, "max_tokens")
 }
 
-fn calls_reply(calls: &[(&str, &str, &str)], stop_reason: &str) -> String {
+/// An answer with the text `text` when it is not empty, then `calls`.
+fn calls_reply(text: &str, calls: &[(&str, &str, &str)], stop_reason: &str) -> String {
     let mut events = vec![message_start()];
-    for (index, (id, name, arguments)) in calls.iter().enumerate() {
+    let first = usize::from(!text.is_empty());
+    if !text.is_empty() {
+        events.extend([
+            text_start(),
+            text_delta(text),
+            json!({"type": "content_block_stop", "index": 0}),
+        ]);
+    }
+    for (index, (id, name, arguments)) in (first..).zip(calls) {
         events.extend([
             json!({
                 "type": "content_block_start",
@@ -117,6 +126,9 @@ fn calls_reply(calls: &[(&str, &str, &str)], stop_reason: &str) -> String {
     sse(&events)
 }
 
+/// The error text of [`Answer::Overflow`]. Anthropic names an overflow only by this start of the text.
+const OVERFLOW_TEXT: &str = "prompt is too long: the scripted context overflow";
+
 /// One scripted answer of the model. The transport writes it in the stream format of the protocol of the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
@@ -129,6 +141,8 @@ pub enum Answer {
     },
     /// A complete answer that asks for tool calls.
     Calls {
+        /// The text before the calls. An empty text sends no text.
+        text: String,
         /// The calls in order.
         calls: Vec<Call>,
         /// The input tokens of the usage of the answer.
@@ -138,6 +152,8 @@ pub enum Answer {
     },
     /// An overload error before any output. The default retry policy retries it.
     Overloaded,
+    /// A context overflow before any output. The default retry policy does not retry it, so `round.retry` gets it.
+    Overflow,
     /// An answer that streams a text, then fails with an overload error. The output before the error stops a retry.
     Failed {
         /// The text before the error.
@@ -175,6 +191,7 @@ impl Answer {
         let body = match self {
             Answer::Text { text, input_tokens } => counted(&text_reply(text), *input_tokens),
             Answer::Calls {
+                text,
                 calls,
                 input_tokens,
                 cut,
@@ -184,9 +201,14 @@ impl Answer {
                     .map(|call| (call.id.as_str(), call.name.as_str(), call.arguments.as_str()))
                     .collect();
                 let stop_reason = if *cut { "max_tokens" } else { "tool_use" };
-                counted(&calls_reply(&calls, stop_reason), *input_tokens)
+                counted(&calls_reply(text, &calls, stop_reason), *input_tokens)
             }
             Answer::Overloaded => overloaded_reply(),
+            // Anthropic names an overflow only in the message of a request error.
+            Answer::Overflow => sse(&[
+                message_start(),
+                json!({"type": "error", "error": {"type": "invalid_request_error", "message": OVERFLOW_TEXT}}),
+            ]),
             Answer::Failed { text } => failed_reply(text),
             Answer::Stall { text } => return (partial_reply(text), true),
         };
@@ -212,23 +234,30 @@ impl Answer {
                 events
             }
             Answer::Calls {
+                text,
                 calls,
                 input_tokens,
                 cut,
             } => {
-                let mut events: Vec<String> = calls
-                    .iter()
-                    .enumerate()
-                    .map(|(index, call)| {
-                        let function = json!({"name": call.name, "arguments": call.arguments});
-                        let call = json!({"index": index, "id": call.id, "type": "function", "function": function});
-                        chunk(json!({"tool_calls": [call]}), None)
-                    })
-                    .collect();
+                let mut events = Vec::new();
+                if !text.is_empty() {
+                    events.push(chunk(json!({"role": "assistant", "content": text}), None));
+                }
+                events.extend(calls.iter().enumerate().map(|(index, call)| {
+                    let function = json!({"name": call.name, "arguments": call.arguments});
+                    let call = json!({"index": index, "id": call.id, "type": "function", "function": function});
+                    chunk(json!({"tool_calls": [call]}), None)
+                }));
                 events.extend(end(if *cut { "length" } else { "tool_calls" }, *input_tokens));
                 events
             }
             Answer::Overloaded => vec![overloaded],
+            Answer::Overflow => {
+                vec![
+                    json!({"error": {"code": "context_length_exceeded", "message": OVERFLOW_TEXT}, "choices": []})
+                        .to_string(),
+                ]
+            }
             Answer::Failed { text } => vec![chunk(json!({"content": text}), None), overloaded],
             Answer::Stall { text } => {
                 return (sse(&[chunk(json!({"role": "assistant", "content": text}), None)]), true);
@@ -249,6 +278,14 @@ impl Answer {
             }),
         ];
         let text_delta = |text: &str| json!({"type": "response.output_text.delta", "output_index": 0, "delta": text});
+        // A complete message item with `text` at the output index 0.
+        let message = |text: &str| {
+            [
+                text_delta(text),
+                json!({"type": "response.output_text.done", "output_index": 0}),
+                json!({"type": "response.output_item.done", "output_index": 0, "item": {"type": "message"}}),
+            ]
+        };
         let usage = |input_tokens: u64| json!({"input_tokens": input_tokens, "output_tokens": 1});
         let failed = json!({
             "type": "response.failed",
@@ -258,28 +295,24 @@ impl Answer {
         match self {
             Answer::Text { text, input_tokens } => {
                 events.extend(text_start);
-                events.extend([
-                    text_delta(text),
-                    json!({"type": "response.output_text.done", "output_index": 0}),
-                    json!({
-                        "type": "response.content_part.done",
-                        "output_index": 0,
-                        "content_index": 0,
-                        "part": {"type": "output_text"},
-                    }),
-                    json!({"type": "response.output_item.done", "output_index": 0, "item": {"type": "message"}}),
-                    json!({
-                        "type": "response.completed",
-                        "response": {"status": "completed", "usage": usage(*input_tokens)},
-                    }),
-                ]);
+                events.extend(message(text));
+                events.push(json!({
+                    "type": "response.completed",
+                    "response": {"status": "completed", "usage": usage(*input_tokens)},
+                }));
             }
             Answer::Calls {
+                text,
                 calls,
                 input_tokens,
                 cut,
             } => {
-                for (index, call) in calls.iter().enumerate() {
+                let first = usize::from(!text.is_empty());
+                if !text.is_empty() {
+                    events.extend(text_start);
+                    events.extend(message(text));
+                }
+                for (index, call) in (first..).zip(calls) {
                     events.extend([
                         json!({
                             "type": "response.output_item.added",
@@ -315,6 +348,10 @@ impl Answer {
                 });
             }
             Answer::Overloaded => events.push(failed),
+            Answer::Overflow => events.push(json!({
+                "type": "response.failed",
+                "response": {"status": "failed", "error": {"code": "context_length_exceeded", "message": OVERFLOW_TEXT}},
+            })),
             Answer::Failed { text } => {
                 events.extend(text_start);
                 events.extend([text_delta(text), failed]);
@@ -637,16 +674,19 @@ mod tests {
                     input_tokens: 7,
                 },
                 Answer::Calls {
+                    text: String::new(),
                     calls: vec![call("a", "read", r#"{"path":"x"}"#), call("b", "exec", "{}")],
                     input_tokens: 9,
                     cut: false,
                 },
                 Answer::Calls {
+                    text: "first".to_owned(),
                     calls: vec![call("c", "read", "{}")],
                     input_tokens: 0,
                     cut: true,
                 },
                 Answer::Overloaded,
+                Answer::Overflow,
                 Answer::Failed {
                     text: "part".to_owned(),
                 },
@@ -666,6 +706,7 @@ mod tests {
             let asked = next().unwrap().completion;
             let cut = next().unwrap().completion;
             let overloaded = next().unwrap_err();
+            let overflow = next().unwrap_err();
             let failed = next().unwrap_err();
 
             let context = format!("{protocol:?}");
@@ -687,11 +728,17 @@ mod tests {
                 "{context}"
             );
             assert_eq!(
-                (calls(&cut), cut.finish_reason),
+                (cut.text(), calls(&cut), cut.finish_reason),
                 (
+                    "first".to_owned(),
                     vec![("c".to_owned(), "read".to_owned(), "{}".to_owned())],
                     FinishReason::Length
                 ),
+                "{context}"
+            );
+            assert_eq!(
+                (overflow.cause, overflow.partial),
+                (Failure::Provider(ProviderKind::ContextOverflow), Vec::new()),
                 "{context}"
             );
             assert_eq!(

@@ -1,7 +1,6 @@
 //! The drivers of `run` and `call` in `yuke:test`. A driver runs one hook point or one tool of a session from plain
 //! data. It uses the real hooks and tools, so each point keeps the conversions and the checks of a turn.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Deserialize;
@@ -9,10 +8,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc;
 use yuke_agent::{InputDecision, InputHook, PromptSection};
-use yuke_ai::route::{Credential, Route};
 use yuke_ai::{
-    AnthropicWire, AttemptError, AttemptInfo, Block, Failure, FinishReason, Media, ProviderKind, Settings, Target,
-    ToolCall, ToolDefinition, ToolResult, Wire, decode_base64, encode_base64_into,
+    AttemptError, AttemptInfo, Block, Failure, FinishReason, Media, ProviderKind, Settings, ToolCall, ToolDefinition,
+    ToolResult, decode_base64, encode_base64_into,
 };
 use yuke_engine::{CancellationToken, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision};
 use yuke_protocol::{Input, InputId, InputKind, InputSource, PendingInput, SessionId};
@@ -118,24 +116,16 @@ struct OwnedRound {
 }
 
 impl OwnedRound {
-    /// `{ context, window?, inputTokens?, system?, tools?, settings? }`. The model of the round is a test target with the
-    /// context window `window`.
-    fn of(event: &Value) -> Result<Self, TestError> {
+    /// `{ context, window?, inputTokens?, system?, tools?, settings? }`. The model of the round is the model of the
+    /// session of `script`, as in a turn. A `window` in the event replaces its context window, also with `null`.
+    fn of(script: &ScriptSession, event: &Value) -> Result<Self, TestError> {
+        let mut model = script.host.model(&script.host.model_reference())?;
+        if event.get("window").is_some() {
+            model.context_window = optional(event, "window")?;
+        }
         Ok(OwnedRound {
             context: field(event, "context")?,
-            model: Model {
-                target: Target {
-                    model: "test-model".into(),
-                    route: Route::default(),
-                    wire: Wire::AnthropicMessages(AnthropicWire {
-                        max_tokens: 1024,
-                        cache: false,
-                    }),
-                    tool_search: false,
-                },
-                source: Arc::new(Credential::None),
-                context_window: optional(event, "window")?,
-            },
+            model,
             settings: optional(event, "settings")?.unwrap_or_else(Settings::new),
             system: optional(event, "system")?.unwrap_or_default(),
             tools: optional(event, "tools")?.unwrap_or_default(),
@@ -239,11 +229,11 @@ pub(crate) async fn run_point(
             Ok(json!({ "text": changed.content, "isError": changed.is_error, "media": media }))
         }
         "round.before" => {
-            let round = OwnedRound::of(event)?;
+            let round = OwnedRound::of(&script, event)?;
             plan_json(hooks.before_round(&round.start()).await?)
         }
         "round.retry" => {
-            let round = OwnedRound::of(event)?;
+            let round = OwnedRound::of(&script, event)?;
             let failure: Value = field(event, "failure")?;
             let failure = round_error(&field::<String>(&failure, "kind")?)?;
             hooks
@@ -299,18 +289,15 @@ pub(crate) async fn run_point(
             })
         }
         "prompt.build" => {
-            let given: Map<String, Value> = field(event, "sections")?;
-            let mut sections = Vec::with_capacity(given.len());
-            for (key, text) in given {
-                let text = text.as_str().ok_or(format!("the section {key} is no text"))?.to_owned();
-                sections.push(PromptSection { key, text });
-            }
-            let built = script.build_prompt(&sections, &token).await?;
-            let sections: Map<String, Value> = built
+            // The order of the sections is the order of the prompt, so they travel as pairs.
+            let given: Vec<(String, String)> = field(event, "sections")?;
+            let sections: Vec<PromptSection> = given
                 .into_iter()
-                .map(|section| (section.key, Value::String(section.text)))
+                .map(|(key, text)| PromptSection { key, text })
                 .collect();
-            Ok(json!({ "sections": sections }))
+            let built = script.build_prompt(&sections, &token).await?;
+            let pairs: Vec<(String, String)> = built.into_iter().map(|section| (section.key, section.text)).collect();
+            Ok(json!({ "sections": pairs }))
         }
         other => Err(format!("{other} is no hook point").into()),
     }

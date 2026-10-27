@@ -101,3 +101,68 @@ test("a question in the setup of a session gets its answer", async () => {
     ["the answer is true"],
   );
 });
+
+test("an answer promise keeps the question open until it settles", async () => {
+  let release = (_value: boolean): void => {};
+  await using host = await createHost({
+    plugins: [{ name: "asker", session: asker }],
+    answer: () =>
+      new Promise<boolean>((resolve) => {
+        release = resolve;
+      }),
+  });
+  const session = await host.openSession();
+
+  const pending = session.call("ask", {});
+  await waitFor(() => host.questions.length === 1);
+  release(true);
+
+  equal((await pending).text, "true");
+});
+
+test("the close of a session ends its open question with undefined", async () => {
+  let answered: unknown = "open";
+  const early: PluginSession = async (s) => {
+    answered = await s.confirm("Start?");
+  };
+  await using host = await createHost({
+    plugins: [{ name: "early", session: early }],
+    answer: () => new Promise<boolean>(() => {}),
+  });
+  const session = await host.openSession();
+  await waitFor(() => host.questions.length === 1);
+
+  await session.close();
+
+  equal(answered, undefined);
+});
+
+/** Wait until `done` holds, for a state that the host reaches in the background. */
+async function waitFor(done: () => boolean): Promise<void> {
+  for (let tries = 0; !done(); tries += 1) {
+    if (tries === 200) throw new Error("the state never came");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("an answer that settles after the close of its session reaches no question", async () => {
+  let release = (_value: boolean): void => {};
+  const early: PluginSession = async (s) => {
+    await s.confirm("Start?");
+  };
+  await using host = await createHost({
+    plugins: [{ name: "early", session: early }],
+    answer: () =>
+      new Promise<boolean>((resolve) => {
+        release = resolve;
+      }),
+  });
+  const session = await host.openSession();
+  await waitFor(() => host.questions.length === 1);
+  await session.close();
+
+  release(true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  equal(host.questions.length, 1);
+});
