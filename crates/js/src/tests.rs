@@ -301,14 +301,6 @@ async fn next_fault(reports: &mut mpsc::UnboundedReceiver<Report>) -> ScriptErro
     }
 }
 
-/// The next report of `reports`, which must be a notice.
-async fn next_notice(reports: &mut mpsc::UnboundedReceiver<Report>) -> yuke_protocol::NoticeParams {
-    match next_report(reports).await {
-        Report::Notice(notice) => notice,
-        other => panic!("expected a notice, got {other:?}"),
-    }
-}
-
 fn script_error(result: Result<impl std::fmt::Debug, Error>) -> ScriptError {
     match result {
         Err(Error::Script(error)) => error,

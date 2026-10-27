@@ -511,8 +511,8 @@ export function hostSignal(): { readonly signal: AbortSignal; readonly abort: (m
 }
 
 /**
- * Start `run` with a host signal and its abort. The `cancel` of the operation aborts the signal with `message`, and
- * marks a later rejection as handled. A hook host stops its wait at a cancel, and a tool host awaits the result.
+ * Start `run` with a host signal and its abort. The `cancel` of the operation aborts the signal with `message`. A hook
+ * host stops its wait at a cancel, and a tool host awaits the result.
  */
 export function hostOperation<T>(
   run: (signal: AbortSignal, abort: (message: string) => void) => Promise<T>,
@@ -520,11 +520,9 @@ export function hostOperation<T>(
 ): Operation<T> {
   const { signal, abort } = hostSignal();
   const promise = run(signal, abort);
-  const cancel = (): void => {
-    promise.catch(() => undefined);
-    abort(message);
-  };
-  return { promise, cancel };
+  // The host reads a rejection after this return, or not at all after a cancel, so no rejection is a fault.
+  promise.catch(() => undefined);
+  return { promise, cancel: () => abort(message) };
 }
 
 /**

@@ -147,12 +147,12 @@ export async function load(spec: PluginSpec): Promise<void> {
     let apply: unknown;
     let session: PluginSession<Options> | undefined;
     let optionsSchema: unknown;
-    // The given exports wait one step, as an entry import does, so a throw of `apply` rejects after the caller waits.
-    const source = spec.given
-      ? await given.get(spec.name)
+    // Each source waits one step, as an entry import does, so a failure of the load rejects after the caller waits.
+    const source = await (spec.given
+      ? given.get(spec.name)
       : spec.entry === undefined
         ? undefined
-        : await import(spec.entry);
+        : import(spec.entry));
     if (spec.given && source === undefined) throw new TypeError(`plugin ${spec.name} has no given exports`);
     if (source !== undefined) {
       const exports = source as {

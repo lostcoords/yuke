@@ -70,7 +70,10 @@ declare module "yuke:test" {
   export function folder(): string;
   // The host of plugins under test: an app with a scripted model, in the runtime of the test.
 
-  /** A plugin under test: its exports as a value, or a folder with its `plugin.json`. */
+  /**
+   * A plugin under test: its exports as a value, or a folder with its `plugin.json`. A plugin of exports has no folder,
+   * so its context has no `root`. Test a plugin that reads its `root` in the folder form.
+   */
   export type PluginUnderTest =
     | {
         /** The name of the plugin, as in a manifest. */
