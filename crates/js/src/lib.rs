@@ -30,6 +30,7 @@ mod runtime;
 mod session;
 mod sessions;
 mod strip;
+mod test_runner;
 #[cfg(test)]
 mod tests;
 mod timers;
@@ -44,4 +45,5 @@ pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Sessions, SessionsError, ViewEvent, ViewSink};
+pub use test_runner::{TestFileError, TestOutcome, TestStatus, run_test_file};
 pub use tools::{ScriptTool, SessionHost};

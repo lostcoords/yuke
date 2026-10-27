@@ -716,6 +716,7 @@ async fn start_runtime(
         }),
         http: Arc::clone(&shared.machine.fetch),
         display: shared.machine.display.clone(),
+        internal_imports: false,
     })
     .await?;
     let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer)));

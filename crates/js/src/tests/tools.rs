@@ -214,7 +214,7 @@ async fn every_built_in_module_loads_from_its_bytecode() {
         .run(async |ctx: Ctx<'_>, _registry| {
             let mut loaded = Vec::new();
             for name in baked::names() {
-                let module = crate::error::caught(&ctx, baked::load(&ctx, baked::bytecode(name).unwrap()))?;
+                let module = crate::error::caught(&ctx, baked::load(&ctx, name).unwrap())?;
                 let module_name: String = crate::error::caught(&ctx, module.name())?;
                 loaded.push(module_name);
             }
@@ -225,26 +225,6 @@ async fn every_built_in_module_loads_from_its_bytecode() {
 
     assert_eq!(loaded, baked::names().collect::<Vec<_>>());
     assert!(loaded.contains(&"yuke:internal/builtins".to_owned()), "{loaded:?}");
-}
-
-#[tokio::test]
-async fn a_user_module_imports_a_public_built_in_module() {
-    let folder = folder("a_user_module_imports_a_public_built_in_module");
-    write(
-        &folder,
-        &[(
-            "main.ts",
-            "import * as plugins from 'yuke:plugins';\nglobalThis.loaded = typeof plugins;\n",
-        )],
-    );
-    let (runtime, _faults) = start(&folder).await;
-
-    runtime.import(&module(&folder, "main.ts")).await.unwrap();
-
-    assert_eq!(
-        evaluate::<String>(&runtime, "return globalThis.loaded;").await.unwrap(),
-        "object"
-    );
 }
 
 #[tokio::test]
@@ -264,21 +244,6 @@ async fn a_user_module_cannot_import_an_internal_module() {
     assert_eq!(error.name.as_deref(), Some("TypeError"));
     assert!(
         error.message.contains("only a built-in module imports"),
-        "{}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn an_unknown_built_in_name_does_not_load() {
-    let folder = folder("an_unknown_built_in_name_does_not_load");
-    let (runtime, _faults) = start(&folder).await;
-
-    let error = script_error(runtime.import("yuke:nothing").await);
-
-    assert_eq!(error.name.as_deref(), Some("TypeError"));
-    assert!(
-        error.message.contains("no built-in module has the name 'yuke:nothing'"),
         "{}",
         error.message
     );

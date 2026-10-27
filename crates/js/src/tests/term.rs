@@ -1,4 +1,4 @@
-//! The terminal module `yuke:internal/term`: its text functions, and the frame loop on a test display.
+//! The terminal module `yuke:internal/term`: the frame loop on a test display.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -472,30 +472,6 @@ async fn term_run_runs_once_and_draws_need_a_display() {
     )
     .await;
     assert_eq!(without, "Error Error Error 2");
-}
-
-#[tokio::test]
-async fn text_functions_count_utf16_units_and_cells() {
-    let text = run_without_display(
-        "text_functions_count_utf16_units_and_cells",
-        &format!(
-            "{NAMES}
-             const s = 'a\\u4e2de\\u0301\\ud834\\udd1e';
-             const triples = Array.from(term.graphemes(s)).join(',');
-             return [
-               term.measure(''), term.measure('a\\tb'), term.measure('\\u4e2d'), term.measure('\\ud834'),
-               triples,
-               term.fit(s, 3),
-               Array.from(term.wrap('hello world', 5)).join(','),
-               names([() => term.wrap(s, 2, -1), () => term.wrap(s, 2, 1.5)]),
-             ].join(' ');"
-        ),
-    )
-    .await;
-    assert_eq!(
-        text,
-        "0 2 2 1 0,1,1,1,1,2,2,2,1,4,2,1 2 0,6,1,6,11,0 TypeError TypeError"
-    );
 }
 
 #[tokio::test]

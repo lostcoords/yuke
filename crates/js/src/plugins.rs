@@ -145,7 +145,7 @@ impl Runtime {
     }
 
     /// Load `plugin` on the JavaScript thread.
-    async fn load_plugin(&self, plugin: &Plugin) -> Result<(), Error> {
+    pub(crate) async fn load_plugin(&self, plugin: &Plugin) -> Result<(), Error> {
         let plugin = plugin.clone();
         self.caller
             .run(async move |ctx: Ctx<'_>, _registry| {

@@ -2,10 +2,8 @@ mod ai;
 mod ask;
 mod compaction;
 mod exec;
-mod fetch;
 mod fs;
 mod globals;
-mod headers;
 mod input_before;
 mod network;
 mod plugins;
@@ -14,18 +12,15 @@ mod prompt;
 mod round_after;
 mod round_before;
 mod round_retry;
-mod scene;
 mod session_api;
 mod sessions;
 mod side_request;
-mod streams;
 mod term;
 mod tool_after;
 mod tool_before;
 mod tools;
-mod transcript;
 mod tui;
-mod url;
+mod typescript;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -37,7 +32,6 @@ use tokio::sync::mpsc;
 use yuke_engine::CancellationToken;
 
 use crate::error::caught;
-use crate::plugins::PluginError;
 use crate::{
     CompleteAnswer, CompleteRequest, Error, Models, Options, Origin, Plugin, Processes, Report, Runtime, ScriptError,
     SideRequest,
@@ -208,6 +202,7 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
             .unwrap(),
         ),
         display: None,
+        internal_imports: false,
     }
 }
 
@@ -240,16 +235,7 @@ fn descriptor(
 async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
     let root = path.parent().unwrap().to_owned();
     let plugin = descriptor("test", root.clone(), root.join("data"), Some(path.to_owned()), &[], &[]);
-    match runtime
-        .load_plugins(&[plugin])
-        .await
-        .pop()
-        .map(|failure| failure.reason)
-    {
-        None => Ok(()),
-        Some(PluginError::Load(error)) => Err(error),
-        Some(other) => panic!("{other:?}"),
-    }
+    runtime.load_plugin(&plugin).await
 }
 
 /// Wait until the body `condition` returns `true`. A wait past 5 seconds fails the test, so the test does not hang.
@@ -301,13 +287,17 @@ const NAMES: &str = "const names = (calls) => calls.map((call) => {
        try { call(); return 'none'; } catch (error) { return error.name; }
      }).join(' ');";
 
-/// The next fault. A missing fault fails the test after five seconds.
-async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError {
-    let report = tokio::time::timeout(Duration::from_secs(5), faults.recv())
+/// The next report. A missing report fails the test after five seconds.
+async fn next_report(reports: &mut mpsc::UnboundedReceiver<Report>) -> Report {
+    tokio::time::timeout(Duration::from_secs(5), reports.recv())
         .await
         .unwrap()
-        .unwrap();
-    match report {
+        .unwrap()
+}
+
+/// The next fault. A missing fault fails the test after five seconds.
+async fn next_fault(reports: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError {
+    match next_report(reports).await {
         Report::Fault(error) => error,
         other => panic!("expected a fault, got {other:?}"),
     }
@@ -315,11 +305,7 @@ async fn next_fault(faults: &mut mpsc::UnboundedReceiver<Report>) -> ScriptError
 
 /// The next report of `reports`, which must be a notice.
 async fn next_notice(reports: &mut mpsc::UnboundedReceiver<Report>) -> yuke_protocol::NoticeParams {
-    let report = tokio::time::timeout(Duration::from_secs(5), reports.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    match report {
+    match next_report(reports).await {
         Report::Notice(notice) => notice,
         other => panic!("expected a notice, got {other:?}"),
     }
@@ -438,17 +424,6 @@ async fn a_shutdown_ends_a_call_in_flight_as_stopped() {
 }
 
 #[tokio::test]
-async fn a_deep_recursion_throws_a_catchable_range_error() {
-    let name = run::<String>(
-        "a_deep_recursion_throws_a_catchable_range_error",
-        "function deep(depth) { return deep(depth + 1) + 1; }
-         try { deep(0); } catch (error) { return error.name; }",
-    )
-    .await;
-    assert_eq!(name, "RangeError");
-}
-
-#[tokio::test]
 async fn a_shutdown_with_waiting_timers_ends_the_thread() {
     let folder = folder("a_shutdown_with_waiting_timers_ends_the_thread");
     let (runtime, _faults) = start(&folder).await;
@@ -484,90 +459,6 @@ async fn a_drop_does_not_wait_for_the_javascript() {
     let begin = Instant::now();
     drop(Arc::into_inner(runtime).unwrap());
     assert!(begin.elapsed() < Duration::from_millis(50), "{:?}", begin.elapsed());
-}
-
-#[tokio::test]
-async fn timers_with_one_delay_fire_in_the_order_of_their_set() {
-    let order = run::<Vec<i32>>(
-        "timers_with_one_delay_fire_in_the_order_of_their_set",
-        "const order = [];
-         for (let index = 0; index < 20; index++) setTimeout(() => order.push(index), 5);
-         await new Promise(resolve => setTimeout(resolve, 50));
-         return order;",
-    )
-    .await;
-    assert_eq!(order, (0..20).collect::<Vec<_>>());
-}
-
-#[tokio::test]
-async fn a_promise_reaction_of_a_timer_callback_runs_before_the_next_callback() {
-    let order = run::<Vec<String>>(
-        "a_promise_reaction_of_a_timer_callback_runs_before_the_next_callback",
-        "const order = [];
-         setTimeout(() => { order.push('first'); Promise.resolve().then(() => order.push('job')); }, 5);
-         setTimeout(() => order.push('second'), 5);
-         await new Promise(resolve => setTimeout(resolve, 50));
-         return order;",
-    )
-    .await;
-    assert_eq!(order, ["first", "job", "second"]);
-}
-
-#[tokio::test]
-async fn a_cleared_timer_does_not_fire() {
-    // The first callback clears a timer of the same round.
-    let fired = run::<Vec<String>>(
-        "a_cleared_timer_does_not_fire",
-        "const fired = [];
-         let later;
-         setTimeout(() => { fired.push('first'); clearTimeout(later); }, 5);
-         later = setTimeout(() => fired.push('later'), 5);
-         const never = setTimeout(() => fired.push('never'), 10);
-         clearTimeout(never);
-         await new Promise(resolve => setTimeout(resolve, 50));
-         return fired;",
-    )
-    .await;
-    assert_eq!(fired, ["first"]);
-}
-
-#[tokio::test]
-async fn an_interval_repeats_until_its_own_callback_clears_it() {
-    let count = run::<i32>(
-        "an_interval_repeats_until_its_own_callback_clears_it",
-        "let count = 0;
-         const interval = setInterval(() => { count += 1; if (count === 3) clearInterval(interval); }, 2);
-         await new Promise(resolve => setTimeout(resolve, 100));
-         return count;",
-    )
-    .await;
-    assert_eq!(count, 3);
-}
-
-#[tokio::test]
-async fn an_interval_waits_its_delay_between_calls() {
-    let elapsed = run::<f64>(
-        "an_interval_waits_its_delay_between_calls",
-        "const begin = Date.now();
-         await new Promise(resolve => {
-           let count = 0;
-           const interval = setInterval(() => { count += 1; if (count === 3) { clearInterval(interval); resolve(); } }, 30);
-         });
-         return Date.now() - begin;",
-    )
-    .await;
-    // The third call comes 90 ms or later after the set. `Date.now` counts whole milliseconds.
-    assert!(elapsed >= 89.0, "{elapsed}");
-}
-
-#[tokio::test]
-async fn a_timer_callback_gets_the_extra_arguments() {
-    let arguments = run::<Vec<String>>(
-        "a_timer_callback_gets_the_extra_arguments",
-        "return await new Promise(resolve => setTimeout((...values) => resolve(values), undefined, 'a', 'b'));",
-    )
-    .await;
-    assert_eq!(arguments, ["a", "b"]);
 }
 
 #[tokio::test]

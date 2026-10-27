@@ -18,7 +18,10 @@ const INTERNAL: &str = "yuke:internal/";
 /// starts in the folder of the importer. One resolver holds every rule, because the engine tries a second resolver
 /// only after a failure that is not a throw.
 #[derive(Debug)]
-pub(crate) struct NameResolver;
+pub(crate) struct NameResolver {
+    /// Every module can import the `yuke:internal/` modules, as in the tests of yuke.
+    pub(crate) internal_imports: bool,
+}
 
 impl Resolver for NameResolver {
     fn resolve<'js>(
@@ -30,7 +33,7 @@ impl Resolver for NameResolver {
     ) -> rquickjs::Result<String> {
         if name.starts_with("yuke:") {
             // An empty base is an import of the host itself, such as the plugin loader.
-            if name.starts_with(INTERNAL) && !base.starts_with("yuke:") && !base.is_empty() {
+            if name.starts_with(INTERNAL) && !base.starts_with("yuke:") && !base.is_empty() && !self.internal_imports {
                 return Err(throw(
                     ctx,
                     ErrorClass::TypeError,
@@ -111,8 +114,8 @@ impl Loader for ModuleLoader {
         if let Some(declared) = native::declare(ctx, name) {
             return declared;
         }
-        if let Some(bytes) = baked::bytecode(name) {
-            return baked::load(ctx, bytes);
+        if let Some(declared) = baked::load(ctx, name) {
+            return declared;
         }
         if name.starts_with("yuke:") {
             return Err(throw(

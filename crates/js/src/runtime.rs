@@ -60,6 +60,10 @@ pub struct Options {
     /// The display of the terminal interface, or `None` for a runtime with no view, such as `yuke -p`. The runtime
     /// draws its frames on it; give each runtime of a reload the same display.
     pub display: Option<Arc<Display>>,
+
+    /// Let every module import the `yuke:internal/` modules. Only the runner of the tests of yuke sets it; a plugin
+    /// can never import them.
+    pub internal_imports: bool,
 }
 
 impl fmt::Debug for Options {
@@ -69,6 +73,7 @@ impl fmt::Debug for Options {
             .field("processes", &self.processes)
             .field("http", &self.http)
             .field("display", &self.display)
+            .field("internal_imports", &self.internal_imports)
             .finish_non_exhaustive()
     }
 }
@@ -132,8 +137,8 @@ pub(crate) struct Caller {
 }
 
 impl Runtime {
-    /// Start the JavaScript thread. The receiver gets each [`Report`]: a script failure that belongs to no call, or a
-    /// notice of a plugin.
+    /// Start the JavaScript thread. The receiver gets each [`Report`]: a script failure that belongs to no call, a notice
+    /// or an event of a plugin, or a `console` entry.
     ///
     /// # Errors
     ///
@@ -151,7 +156,7 @@ impl Runtime {
         // The sessions of the consumer run on its runtime.
         let consumer = tokio::runtime::Handle::current();
         let (calls, call_receiver) = mpsc::unbounded_channel();
-        let (faults, fault_receiver) = mpsc::unbounded_channel();
+        let (reports, report_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
         let (stop, stopped) = oneshot::channel();
         let (show, shown) = oneshot::channel();
@@ -169,7 +174,7 @@ impl Runtime {
                     call_receiver,
                     stopped,
                     shown,
-                    faults,
+                    reports,
                     ready,
                 );
             })
@@ -184,7 +189,7 @@ impl Runtime {
             thread,
         };
         started.await.map_err(|_| Error::Stopped)??;
-        Ok((runtime, fault_receiver))
+        Ok((runtime, report_receiver))
     }
 
     /// Import the module `name`: a built-in module such as `yuke:tools`, or the absolute path of a file. Wait for its
@@ -305,7 +310,7 @@ fn serve(
     calls: mpsc::UnboundedReceiver<Call>,
     stopped: oneshot::Receiver<()>,
     shown: oneshot::Receiver<Option<String>>,
-    faults: mpsc::UnboundedSender<Report>,
+    reports: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
     // `fetch` runs its sockets on this thread, so the runtime has the IO driver too.
@@ -319,7 +324,7 @@ fn serve(
         }
     };
     tokio_runtime.block_on(serve_calls(
-        options, consumer, stopping, calls, stopped, shown, faults, ready,
+        options, consumer, stopping, calls, stopped, shown, reports, ready,
     ));
 }
 
@@ -331,10 +336,10 @@ async fn serve_calls(
     mut calls: mpsc::UnboundedReceiver<Call>,
     mut stopped: oneshot::Receiver<()>,
     shown: oneshot::Receiver<Option<String>>,
-    faults: mpsc::UnboundedSender<Report>,
+    reports: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let engine = match Engine::new(options, &consumer, stopping, shown, faults.clone()).await {
+    let engine = match Engine::new(options, &consumer, stopping, shown, reports.clone()).await {
         Ok(engine) => engine,
         Err(error) => {
             if ready.send(Err(error)).is_err() {
@@ -363,7 +368,7 @@ async fn serve_calls(
                 debug_assert!(polled.is_pending());
                 // A rejection that got no handler in this poll is a fault. A later handler comes too late.
                 for (_, error) in engine.rejections.pending.take() {
-                    if faults.send(Report::Fault(error)).is_err() {
+                    if reports.send(Report::Fault(error)).is_err() {
                         // The owner dropped the receiver, so it ignores faults.
                     }
                 }
@@ -389,13 +394,18 @@ impl Engine {
         consumer: &tokio::runtime::Handle,
         stopping: Arc<AtomicBool>,
         shown: oneshot::Receiver<Option<String>>,
-        faults: mpsc::UnboundedSender<Report>,
+        reports: mpsc::UnboundedSender<Report>,
     ) -> Result<Self, Error> {
         let engine_error = |error: rquickjs::Error| Error::Script(ScriptError::from_engine(&error));
         let runtime = AsyncRuntime::new().map_err(engine_error)?;
         runtime.set_max_stack_size(STACK).await;
         runtime
-            .set_loader(NameResolver, ModuleLoader::new(Cache::new(options.cache.clone())))
+            .set_loader(
+                NameResolver {
+                    internal_imports: options.internal_imports,
+                },
+                ModuleLoader::new(Cache::new(options.cache.clone())),
+            )
             .await;
         // The engine asks once for each 10,000 interrupt checks. Only the end of the runtime stops the JavaScript.
         runtime
@@ -418,10 +428,10 @@ impl Engine {
             .with(|ctx| {
                 // The error constructors come before the natives, so each native throws with the constructors of the start.
                 crate::error::install_error_classes(&ctx)?;
-                timers::install(&ctx, &timers, faults.clone())?;
-                crate::error::install_report_error(&ctx, faults.clone())?;
-                native::install(&ctx, &registry, &options, &frames, consumer, faults.clone())?;
-                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, faults));
+                timers::install(&ctx, &timers, reports.clone())?;
+                crate::error::install_report_error(&ctx, reports.clone())?;
+                native::install(&ctx, &registry, &options, &frames, consumer, reports.clone())?;
+                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, reports));
                 Ok(())
             })
             .await
