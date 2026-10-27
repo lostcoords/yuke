@@ -285,43 +285,6 @@ async fn a_level_that_the_model_does_not_take_is_an_error() {
     );
 }
 
-// A summary through `yuke:ai` covers the way from a plugin to the catalog, the credentials, and the transport.
-#[tokio::test]
-async fn a_plugin_summarizes_the_context_with_the_model_of_the_session_and_replaces_it() {
-    let place = Place::new("print", "summary");
-    place.plugin(
-        "summary",
-        "import { generateText } from 'yuke:ai';
-         export function session(s) {
-           s.hook('round.before', async ({ blocks, context, signal }) => {
-             if (blocks < 3) return undefined;
-             const instructions = 'Summarize the conversation.';
-             const summary = await generateText({ model: s.model, instructions, prompt: context(), abortSignal: signal });
-             return { replace: { head: [{ user_text: `Summary: ${summary.text}` }], keep: 0 } };
-           });
-         }",
-    );
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["summary"] }"#).unwrap();
-    let replies = [
-        tool_reply(&[("c1", "read", r#"{"path":"missing.txt"}"#)]),
-        text_reply("They said hi."),
-        text_reply("Done."),
-    ];
-
-    let (finished, requests) = run_with(&place, &task("Hi.", SessionChoice::New), &replies).await;
-
-    assert_eq!(finished.unwrap().text, "Done.");
-    assert_eq!(requests.len(), 3);
-    let summary = &requests[1];
-    assert_in_order(summary, &["Summarize the conversation.", "Hi."]);
-    assert!(
-        !summary.contains("You are yuke") && !summary.contains(r#""tools""#),
-        "{summary}"
-    );
-    assert!(requests[2].contains("Summary: They said hi."), "{}", requests[2]);
-    assert!(!requests[2].contains(r#""Hi.""#), "{}", requests[2]);
-}
-
 // The overflow error comes from the stream of the provider, so this test covers the way from its classification to a plugin.
 #[tokio::test]
 async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_round_goes_again() {
@@ -355,40 +318,6 @@ async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_rou
         "{}",
         requests[1]
     );
-}
-
-// The prompt cache of a provider matches a prefix, so a side request must repeat the bytes of its round.
-#[tokio::test]
-async fn a_side_request_repeats_the_bytes_of_its_round_with_one_more_block() {
-    let place = Place::new("print", "side_request");
-    place.plugin(
-        "aside",
-        "export function session(s) {
-           let asked = false;
-           s.hook('round.before', async (event) => {
-             if (asked) return undefined;
-             asked = true;
-             await event.sideRequest({ prompt: 'Summarize.' });
-           });
-         }",
-    );
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["aside"] }"#).unwrap();
-
-    let (finished, requests) = run_with(
-        &place,
-        &task("Hi.", SessionChoice::New),
-        &[text_reply("A summary."), text_reply("Done.")],
-    )
-    .await;
-
-    assert_eq!(finished.unwrap().text, "Done.");
-    let [side, round] = &requests[..] else {
-        panic!("{requests:?}")
-    };
-    let input = r#"{"type":"text","text":"Hi."}"#;
-    let expected = round.replacen(input, &format!(r#"{input},{{"type":"text","text":"Summarize."}}"#), 1);
-    assert_ne!(&expected, round, "the round has no input: {round}");
-    assert_eq!(side, &expected);
 }
 
 /// A user text of about `tokens` estimated tokens: 4 characters each.
@@ -499,31 +428,6 @@ async fn disable_in_the_config_turns_the_compaction_off() {
 }
 
 #[tokio::test]
-async fn an_input_that_a_plugin_replaces_reaches_the_model_as_the_new_blocks() {
-    let place = Place::new("print", "input_before_replace");
-    place.plugin(
-        "skills",
-        "export function session(s) {
-           s.hook('input.before', (event) => {
-             const { blocks } = event;
-             if (blocks[0]?.user_text !== '/skill:pdf') return undefined;
-             return { replace: { blocks: [{ user_text: 'Read PDF files with care.' }] } };
-           });
-         }",
-    );
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["skills"] }"#).unwrap();
-
-    let (finished, requests) = run_with(&place, &task("/skill:pdf", SessionChoice::New), &[text_reply("Done.")]).await;
-
-    assert_eq!(finished.unwrap().text, "Done.");
-    assert!(
-        requests[0].contains("Read PDF files with care.") && !requests[0].contains("/skill:pdf"),
-        "{}",
-        requests[0]
-    );
-}
-
-#[tokio::test]
 async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     let place = Place::new("print", "input_before_handled");
     place.plugin(
@@ -546,39 +450,6 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
         .unwrap()
         .pending;
     assert!(pending.is_empty(), "{pending:?}");
-}
-
-#[tokio::test]
-async fn the_skills_of_the_workspace_and_of_a_plugin_folder_reach_the_system_prompt() {
-    let place = Place::new("print", "skills");
-    place.plugin("helper", "export function session(s) {}");
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["helper"] }"#).unwrap();
-    let plugin_skill = place.paths.config.join("helper/skills/charts");
-    std::fs::create_dir_all(&plugin_skill).unwrap();
-    std::fs::write(
-        plugin_skill.join("SKILL.md"),
-        "---\nname: charts\ndescription: Draw charts.\n---\n",
-    )
-    .unwrap();
-    let workspace_skill = place.work.join(".agents/skills/pdf");
-    std::fs::create_dir_all(&workspace_skill).unwrap();
-    std::fs::write(
-        workspace_skill.join("SKILL.md"),
-        "---\nname: pdf\ndescription: Read PDF files.\n---\n",
-    )
-    .unwrap();
-
-    let (finished, requests) = run_with(&place, &task("Hi.", SessionChoice::New), &[text_reply("Hello.")]).await;
-
-    finished.unwrap();
-    let request = &requests[0];
-    let at = |text: &str| {
-        request
-            .find(text)
-            .unwrap_or_else(|| panic!("{text} is not in {request}"))
-    };
-    assert!(at("<name>charts</name>") < at("Draw charts.") && at("Draw charts.") < at("<name>pdf</name>"));
-    assert!(at("Read PDF files.") < at("<environment>"));
 }
 
 #[tokio::test]

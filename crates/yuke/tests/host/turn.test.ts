@@ -3,6 +3,7 @@
 import type { PluginSession } from "yuke:plugins";
 import { assert, createFakeModel, createHost, equal, folder, rejects, reply, test } from "yuke:test";
 import type { Entry } from "yuke:transcript";
+import { waitFor } from "./wait.ts";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
@@ -111,9 +112,11 @@ test("an abort of the signal cancels a turn that waits for the model, and send r
   await using host = await createHost({ plugins: [], model });
   const session = await host.openSession();
   const stop = new AbortController();
-  setTimeout(() => stop.abort(new Error("stop")), 50);
+  const sent = rejects(session.send("Hi.", { signal: stop.signal }));
+  await waitFor(() => model.requests.length === 1);
+  stop.abort(new Error("stop"));
 
-  const error = await rejects(session.send("Hi.", { signal: stop.signal }));
+  const error = await sent;
 
   equal(error instanceof Error ? error.message : error, "stop");
   equal(session.transcript.entries.at(-1), { kind: "end", key: "3:end", end: { outcome: "cancelled" } });

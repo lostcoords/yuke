@@ -2,6 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import { createFakeModel, createHost, equal, reply, test } from "yuke:test";
+import { waitFor } from "./wait.ts";
 
 /** A plugin whose tool `ask` asks the user to confirm, and answers with the answer. */
 const asker: PluginSession = (s) => {
@@ -140,14 +141,6 @@ test("the close of a session ends its open question with undefined", async () =>
     [["early", { kind: "confirm", title: "Start?", message: "" }]],
   );
 });
-
-/** Wait until `done` holds, for a state that the host reaches in the background. */
-async function waitFor(done: () => boolean): Promise<void> {
-  for (let tries = 0; !done(); tries += 1) {
-    if (tries === 200) throw new Error("the state never came");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
 
 test("an answer that settles after the close of its session reaches no question", async () => {
   let release = (_value: boolean): void => {};
