@@ -114,11 +114,8 @@ impl LiveSession {
                 return;
             }
             tokio::select! {
-                changed = handled.changed() => {
-                    if changed.is_err() {
-                        return;
-                    }
-                }
+                // The host owns the sender, so the channel stays open while `idle` runs.
+                Ok(()) = handled.changed() => {}
                 () = host.closed.cancelled() => return,
             }
         }
@@ -392,7 +389,7 @@ impl Drop for View {
 
 /// The updates that came during the read of a snapshot and that add to it: not a saved event that it holds, and not
 /// the acceptance of an input that it shows as pending or consumed.
-fn after(loaded: &Loaded, updates: Vec<SessionUpdate>) -> impl Iterator<Item = SessionUpdate> {
+fn after(loaded: &Loaded, mut updates: Vec<SessionUpdate>) -> Vec<SessionUpdate> {
     let last = loaded.events.last().map(|event| event.event_number);
     let mut known: HashSet<InputId> = loaded.pending.iter().map(|pending| pending.id).collect();
     for event in &loaded.events {
@@ -400,11 +397,12 @@ fn after(loaded: &Loaded, updates: Vec<SessionUpdate>) -> impl Iterator<Item = S
             known.extend(consumed.iter().map(|input| input.id));
         }
     }
-    updates.into_iter().filter(move |update| match update {
+    updates.retain(|update| match update {
         SessionUpdate::Saved(event) => last.is_none_or(|last| event.event_number > last),
         SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) => !known.contains(input_id),
         SessionUpdate::Live(_) => true,
-    })
+    });
+    updates
 }
 
 /// An open question of the session.
@@ -468,7 +466,7 @@ impl Output {
             return;
         };
         let (sink, waiting) = (Arc::clone(&listener.sink), listener.waiting.take().unwrap_or_default());
-        let kept: Vec<SessionUpdate> = after(&loaded, waiting).collect();
+        let kept = after(&loaded, waiting);
         let updates = sent.snapshot(loaded, now());
         sink(ViewEvent::Snapshot(SessionSnapshot { settings, updates }));
         for update in kept {
@@ -575,7 +573,7 @@ impl<'a> Hold<'a> {
     fn release(self, loaded: Loaded, now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>)) {
         let mut sent = lock(&self.output.sent);
         let held = sent.held.take().unwrap_or_default();
-        let kept: Vec<SessionUpdate> = after(&loaded, held).collect();
+        let kept = after(&loaded, held);
         for update in sent.snapshot(loaded, now()).into_iter().chain(kept) {
             self.output.send(update);
         }

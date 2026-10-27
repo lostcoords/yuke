@@ -46,7 +46,7 @@ function deliver(batch: readonly (readonly [number, ViewEvent])[]): void {
   for (const [key, event] of batch) {
     const route = routes.get(key);
     if (route === undefined) continue;
-    if ("closed" in event) {
+    if (event === "closed") {
       route.closed();
       continue;
     }
@@ -128,7 +128,7 @@ async function open(
     },
     async notify(display, text) {
       live();
-      return sessionNotify([id, plugin, String(display), String(text)]);
+      return sessionNotify([id, plugin, display, text]);
     },
     cancel() {
       live();
@@ -156,7 +156,7 @@ async function open(
     },
     async stopJob(jobId) {
       live();
-      await sessionStopJob([id, String(jobId)]);
+      await sessionStopJob([id, jobId]);
     },
     mcpServers() {
       live();

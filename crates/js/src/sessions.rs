@@ -25,8 +25,8 @@ pub enum ViewEvent {
     Closed,
 }
 
-/// Takes the events of one view. The consumer calls it under the output lock of the session, so a call must not block and must
-/// not call back into the session.
+/// Takes the events of one view. The consumer calls it under the output lock of the session. A call must not block, call
+/// back into the session, or drop its view.
 pub type ViewSink = Arc<dyn Fn(ViewEvent) + Send + Sync>;
 
 /// The sessions and the catalog that the plugins use. The consumer gives one value to each runtime. Each async call runs

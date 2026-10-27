@@ -129,7 +129,10 @@ export interface EventsPage {
   readonly limit: number;
 }
 
-/** An open session that a plugin holds. Each request after the end of the handle rejects. */
+/**
+ * An open session that a plugin holds. After the end of the handle, each async request rejects and each sync request
+ * throws.
+ */
 export interface SessionHandle {
   readonly id: SessionId;
   /**

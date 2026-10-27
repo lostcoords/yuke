@@ -383,14 +383,11 @@ declare module "yuke:internal/native" {
   export function termWrap(text: string, width: number, head: number): Int32Array;
 
   /** One event of a view: its snapshot first, then each later update, then the close of its session. */
-  export type ViewEvent =
-    | { readonly snapshot: SessionSnapshot }
-    | { readonly update: SessionUpdate }
-    | { readonly closed: true };
+  export type ViewEvent = { readonly snapshot: SessionSnapshot } | { readonly update: SessionUpdate } | "closed";
   /** Deliver the events of the views of this runtime to `deliver`, in batches of `[key, event]` pairs. Call it once. */
   export function sessionsListen(deliver: (batch: readonly (readonly [number, ViewEvent])[]) => void): void;
   /** Open the session `id` when it is not open, hold it, and watch it as the view `key` with its last `tail` events. */
-  export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<null>;
+  export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<void>;
   /** End the hold and the view `key`. */
   export function sessionsRelease(key: number): void;
   export function sessionsCreate(settings: SessionSettings): Promise<SessionId>;

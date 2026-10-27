@@ -8,9 +8,8 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rquickjs::{Ctx, Function, Object, Promise};
-use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::{Serialize, Serializer};
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc};
 use yuke_ai::Block;
@@ -58,13 +57,15 @@ impl Feed {
     }
 }
 
-/// The JSON of `event` for JavaScript: `{ snapshot }`, `{ update }`, or `{ closed: true }`.
-fn event_json(event: ViewEvent) -> Result<Value, serde_json::Error> {
-    Ok(match event {
-        ViewEvent::Snapshot(snapshot) => json!({ "snapshot": serde_json::to_value(snapshot)? }),
-        ViewEvent::Update(update) => json!({ "update": serde_json::to_value(update)? }),
-        ViewEvent::Closed => json!({ "closed": true }),
-    })
+/// The JSON of an event for JavaScript: `{ snapshot }`, `{ update }`, or `"closed"`.
+impl Serialize for ViewEvent {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Snapshot(snapshot) => serializer.serialize_newtype_variant("ViewEvent", 0, "snapshot", snapshot),
+            Self::Update(update) => serializer.serialize_newtype_variant("ViewEvent", 1, "update", update),
+            Self::Closed => serializer.serialize_unit_variant("ViewEvent", 2, "closed"),
+        }
+    }
 }
 
 /// Add the session functions to `object`, the export object of the native module. Each request runs on the runtime of
@@ -251,15 +252,7 @@ async fn deliver_events<'js>(
     faults: mpsc::UnboundedSender<Report>,
 ) {
     loop {
-        let batch = feed.next().await;
-        let items: Result<Vec<Value>, serde_json::Error> = batch
-            .into_iter()
-            .map(|(key, event)| Ok(json!([key, event_json(event)?])))
-            .collect();
-        let result = match items {
-            Ok(items) => deliver.call::<_, ()>((Json(items),)),
-            Err(error) => Err(throw(&ctx, ErrorClass::Error, &error.to_string())),
-        };
+        let result = deliver.call::<_, ()>((Json(feed.next().await),));
         if let Err(Error::Script(error)) = caught(&ctx, result)
             && faults.send(Report::Fault(error)).is_err()
         {
