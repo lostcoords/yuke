@@ -11,7 +11,7 @@ use yuke_js::{Display, Input, Request};
 use yuke_protocol::{NoticeLevel, NoticeParams, ServerNotification};
 use yuke_term::Terminal;
 
-use crate::app::{App, Machine, Mode, Observer, SOURCE, warn};
+use crate::app::{App, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
 
 /// Gives each notice to the display. The interface shows no session update yet. Its plugins share data through services,
 /// so it ignores extension events.
@@ -68,7 +68,8 @@ async fn serve(host: &mut Host, machine: Machine, shutdown: &CancellationToken) 
         ..machine
     };
     let observer = Arc::new(Notices(Arc::clone(&host.display)));
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer).await?;
+    let store = open_store(&machine.paths.data).await?;
+    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await?;
     app.show(None);
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold
     // the terminal, and the app shuts down before the terminal restores.

@@ -12,7 +12,7 @@ use yuke_engine::{CancellationToken, Driver, Model};
 use yuke_js::{CompleteAnswer, CompleteRequest, Models, SideRequest};
 use yuke_protocol::SessionId;
 
-use super::{Shared, TokioTimer, model_of};
+use super::{Shared, model_of};
 
 /// The models of the app for the plugins. A request is one request to the model: no tool runs, no hook sees it, and
 /// the store keeps nothing of it.
@@ -83,7 +83,7 @@ async fn send(
     shared: &Shared,
     cancel: &CancellationToken,
 ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
-    let response = Driver::new(&*shared.machine.transport, model, &TokioTimer)
+    let response = Driver::new(&*shared.machine.transport, model, &*shared.timer)
         .request(request, cancel)
         .await?
         .ok_or("the model request was cancelled")?;
@@ -121,15 +121,19 @@ impl BlobStore for SessionMedia<'_> {
 mod tests {
     use std::time::Duration;
 
+    use yuke_engine::Timer;
+
+    use crate::app::{TokioTimer, open_store};
+
     use yuke_ai::transport::Transport;
     use yuke_ai::{FinishReason, ToolDefinition, Usage};
     use yuke_js::Attachment;
     use yuke_protocol::{ModelReference, ServerNotification};
-    use yuke_testing::{ScriptedTransport, assert_in_order, counted, text_reply, tool_reply};
+    use yuke_testing::{ScriptedTransport, assert_in_order, counted, overloaded_reply, text_reply, tool_reply};
 
     use super::*;
     use crate::app::{App, Mode, Observer};
-    use crate::testing::{Place, with_key};
+    use crate::testing::{CountedWaits, Place, with_key};
 
     /// Drops each notification.
     struct Silent;
@@ -140,14 +144,42 @@ mod tests {
 
     /// An app of the test `name` that sends the requests of the model through `transport`.
     async fn app(name: &str, transport: Box<dyn Transport>) -> App {
+        timed_app(name, transport, Arc::new(TokioTimer)).await
+    }
+
+    /// An app as [`app`] that waits for the retries of a model request with `timer`.
+    async fn timed_app(name: &str, transport: Box<dyn Transport>, timer: Arc<dyn Timer>) -> App {
         let place = Place::new("models", name);
         App::start(
             place.machine(Box::new(with_key), transport),
             Mode::Print,
             Arc::new(Silent),
+            open_store(&place.paths.data).await.unwrap(),
+            timer,
         )
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_retry_of_a_plugin_request_waits_with_the_timer_of_the_app() {
+        let transport = ScriptedTransport::new([overloaded_reply(), text_reply("A summary.")]);
+        let timer = Arc::new(CountedWaits::default());
+        let app = timed_app(
+            "a_retry_of_a_plugin_request_waits_with_the_timer_of_the_app",
+            Box::new(transport.clone()),
+            Arc::clone(&timer) as _,
+        )
+        .await;
+
+        let answer = PluginModels(Arc::clone(&app.shared))
+            .complete(request("MiniMax-M3"), CancellationToken::new())
+            .await;
+        app.shutdown().await;
+
+        assert_eq!(answer.unwrap().text, "A summary.");
+        assert_eq!(transport.requests().len(), 2);
+        assert_eq!(timer.count(), 1);
     }
 
     /// A request to the MiniMax model `model` for a summary of at most 77 tokens.

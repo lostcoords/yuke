@@ -94,7 +94,9 @@ async fn started(place: &Place, display: &Arc<Display>) -> App {
         display: Some(Arc::clone(display)),
         ..place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])))
     };
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, Arc::new(Notices(Arc::clone(display))))
+    let store = crate::app::open_store(&place.paths.data).await.unwrap();
+    let observer = Arc::new(Notices(Arc::clone(display)));
+    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer))
         .await
         .unwrap();
     app.show(None);

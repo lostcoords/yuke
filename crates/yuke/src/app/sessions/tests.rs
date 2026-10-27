@@ -4,11 +4,11 @@ use yuke_js::ViewEvent;
 use yuke_protocol::{
     EventNumber, Input, InputKind, InputSource, ListSessionsParams, ModelReference, SessionSettings, SessionUpdate,
 };
-use yuke_testing::{ScriptedTransport, Stalled, text_reply, tool_reply};
+use yuke_testing::{ScriptedTransport, Stalled, overloaded_reply, text_reply, tool_reply};
 
 use super::*;
-use crate::app::{App, Mode, Observer};
-use crate::testing::{Place, with_key};
+use crate::app::{App, Mode, Observer, TokioTimer, open_store};
+use crate::testing::{CountedWaits, Place, with_key};
 
 /// Drops each notification.
 struct Silent;
@@ -23,7 +23,10 @@ async fn started(place: &Place) -> App {
 
 async fn started_with(place: &Place, transport: Box<dyn Transport>) -> App {
     let machine = place.machine(Box::new(with_key), transport);
-    App::start(machine, Mode::Server, Arc::new(Silent)).await.unwrap()
+    let store = open_store(&place.paths.data).await.unwrap();
+    App::start(machine, Mode::Server, Arc::new(Silent), store, Arc::new(TokioTimer))
+        .await
+        .unwrap()
 }
 
 /// The number of the countdown of the open session `id`.
@@ -288,6 +291,32 @@ async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
 
     assert_eq!(transport.requests().len(), 1);
     assert_eq!(sessions.live(id).unwrap().state(), SessionState::Idle);
+    drop(attachment);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app() {
+    let place = Place::new(
+        "sessions",
+        "a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app",
+    );
+    let transport = ScriptedTransport::new([overloaded_reply(), text_reply("Hello.")]);
+    let timer = Arc::new(CountedWaits::default());
+    let machine = place.machine(Box::new(with_key), Box::new(transport.clone()));
+    let store = open_store(&place.paths.data).await.unwrap();
+    let app = App::start(machine, Mode::Server, Arc::new(Silent), store, Arc::clone(&timer) as _)
+        .await
+        .unwrap();
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+
+    sessions.input(id, said("Hi.")).await.unwrap();
+    sessions.idle(id).await.unwrap();
+
+    assert_eq!(transport.requests().len(), 2);
+    assert_eq!(timer.count(), 1);
     drop(attachment);
     app.shutdown().await;
 }

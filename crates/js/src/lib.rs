@@ -45,5 +45,5 @@ pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Sessions, SessionsError, ViewEvent, ViewSink};
-pub use test_runner::{TestFileError, TestOutcome, TestStatus, run_test_file};
+pub use test_runner::{TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, run_test_file};
 pub use tools::{ScriptTool, SessionHost};

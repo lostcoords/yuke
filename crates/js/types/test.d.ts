@@ -1,12 +1,13 @@
 // The declaration of the public module `yuke:test`.
 
 /**
- * Tests for `yuke test`. A test file registers its tests at the top level. The runner gives each file a fresh runtime,
- * and it runs the tests of the file one by one, in the order of their registration.
+ * Tests for `yuke test`. A test file registers its tests at the top level.
+ * - The runner runs the tests of a file one by one, in the order of their registration.
+ * - Each test runs in a fresh runtime. No state of one test reaches the next test.
  * - A test passes when its function returns, or when its promise fulfills.
  * - A test fails when it throws, when its promise rejects, or when the runtime reports a fault while it runs, such as
  *   a rejection that no code handles. A test awaits its work, so a fault belongs to it.
- * - A test that runs longer than 5 seconds stops the runtime of its file. The later tests of the file do not run.
+ * - A test that runs longer than 5 seconds fails, and the runner stops its runtime. The next test still runs.
  * - Each assertion throws an `Error` when it fails.
  *
  * ```ts
@@ -46,4 +47,7 @@ declare module "yuke:test" {
 
   /** Await `promise`, and return its reason. Fail when `promise` fulfills. */
   export function rejects(promise: Promise<unknown>): Promise<unknown>;
+
+  /** The scratch folder of the test: an empty folder for this test alone. */
+  export function folder(): string;
 }

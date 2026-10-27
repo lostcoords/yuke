@@ -1,6 +1,7 @@
 // The assertions of the public module `yuke:test`.
 
-import { assert, equal, rejects, test, throws } from "yuke:test";
+import { readDir, writeTextFile } from "yuke:fs";
+import { assert, equal, folder, rejects, test, throws } from "yuke:test";
 
 /** The message of the failure of `check`. */
 function failure(check: () => void): string {
@@ -60,4 +61,16 @@ test("assert, throws, and rejects fail with a message", async () => {
   const error = await rejects(rejects(Promise.resolve(1)));
   assert(error instanceof Error);
   equal(error.message, "rejects: the promise fulfilled");
+});
+
+// The two tests run in this order. The first test leaves a global and a file. The second test sees neither.
+test("a test leaves a global and a file behind", async () => {
+  Reflect.set(globalThis, "leftover", true);
+  await writeTextFile("left.txt", "x", { baseDir: folder() });
+  equal(Reflect.has(globalThis, "leftover"), true);
+});
+
+test("the next test runs in a fresh runtime with an empty folder of its own", async () => {
+  equal(Reflect.has(globalThis, "leftover"), false);
+  equal(await readDir(".", { baseDir: folder() }), []);
 });

@@ -1,4 +1,4 @@
-// The tests of one test file: `test` of `yuke:test` adds each test here, and the runner of yuke runs them by index.
+// The tests of one test file: `test` of `yuke:test` adds each test here. The runner of yuke runs one test by its index.
 
 /** One registered test. */
 interface Entry {
@@ -20,24 +20,28 @@ export function names(): string[] {
 }
 
 /**
- * Run the test at `index`. The promise fulfills with what the test threw or rejected with, or with `undefined` when it
- * passed. It never rejects, so a failure is no fault of the runtime.
+ * Run the test at `index`, which has the name `name`. The promise fulfills with what the test threw or rejected with, or
+ * with `undefined` when the test passed. The promise never rejects, so a failure is no fault of the runtime.
  */
-export async function run(index: number): Promise<{ failed: unknown } | undefined> {
+export async function run(index: number, name: string): Promise<{ failed: unknown } | undefined> {
+  const entry = entries[index];
+  if (entry?.name !== name) {
+    return { failed: new Error(`the file registers no test "${name}" at position ${index} in this runtime`) };
+  }
   try {
-    await entries[index]?.fn();
+    await entry.fn();
     return undefined;
   } catch (error) {
     return { failed: error };
   }
 }
 
-/** Give the scratch folder of the file. The runner calls it before it imports the file. */
+/** Keep `path` as the scratch folder of the test. The runner calls this function before the import of the file. */
 export function setFolder(path: string): void {
   scratch = path;
 }
 
-/** The scratch folder of the file: an empty folder that the runner made. A test makes its own subfolder in it. */
+/** The scratch folder of the test: an empty folder that the runner made for this test alone. */
 export function folder(): string {
   if (scratch === undefined) throw new Error("the runner gave no scratch folder");
   return scratch;

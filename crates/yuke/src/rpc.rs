@@ -29,7 +29,7 @@ use yuke_protocol::{
     SessionResult,
 };
 
-use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, lock, warn};
+use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
@@ -162,7 +162,12 @@ pub(crate) async fn serve(
         Clients::One(stream) => (Some(Connection::open(stream, &outbox)), None),
         Clients::Socket(socket) => (None, Some(socket)),
     };
-    let app = match App::start(machine, Mode::Server, Arc::clone(&outbox) as Arc<dyn Observer>).await {
+    let observer = Arc::clone(&outbox) as Arc<dyn Observer>;
+    let started = async {
+        let store = open_store(&machine.paths.data).await?;
+        App::start(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await
+    };
+    let app = match started.await {
         Ok(app) => app,
         Err(error) => {
             outbox.detach();

@@ -3,9 +3,9 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use yuke_ai::transport::{
@@ -13,6 +13,9 @@ use yuke_ai::transport::{
 };
 use yuke_store::SqliteStore;
 use yuke_testing::ScriptedTransport;
+
+use async_trait::async_trait;
+use yuke_engine::Timer;
 
 use crate::app::{Machine, Variable};
 use crate::paths::Paths;
@@ -173,4 +176,22 @@ impl Place {
 /// The MiniMax key that every test environment holds.
 pub(crate) fn with_key(name: &str) -> Option<OsString> {
     (name == "MINIMAX_API_KEY").then(|| OsString::from("test-key"))
+}
+
+/// Counts its waits, and returns at once.
+#[derive(Default)]
+pub(crate) struct CountedWaits(AtomicUsize);
+
+impl CountedWaits {
+    /// The number of waits so far.
+    pub(crate) fn count(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl Timer for CountedWaits {
+    async fn sleep(&self, _: Duration) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
 }

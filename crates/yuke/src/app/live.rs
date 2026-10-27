@@ -22,7 +22,7 @@ use yuke_protocol::{
 
 use super::sessions::SessionService;
 use super::trust;
-use super::{AppError, Mode, Observer, SOURCE, Shared, TokioTimer, lock, model_of, save_settings};
+use super::{AppError, Mode, Observer, SOURCE, Shared, lock, model_of, save_settings};
 use crate::config::read_json;
 
 /// An open session.
@@ -703,7 +703,7 @@ impl Parts {
                     // The session saves a round failure as the end of the turn.
                     let turn = async move {
                         let mut session = session;
-                        let driver = Driver::new(&*shared.machine.transport, &model, &TokioTimer)
+                        let driver = Driver::new(&*shared.machine.transport, &model, &*shared.timer)
                             .toolset(&toolset)
                             .hooks(&hooks);
                         session
@@ -964,6 +964,8 @@ impl SessionHost for Host {
 #[cfg(test)]
 mod tests {
     use yuke_ai::Block;
+
+    use crate::app::{TokioTimer, open_store};
     use yuke_protocol::{InputKind, InputSource, ModelReference};
     use yuke_testing::ScriptedTransport;
 
@@ -1325,9 +1327,16 @@ mod tests {
             "after_new_settings_the_host_names_their_model_and_folder_before_any_turn",
         );
         let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
-        let app = App::start(machine, Mode::Print, Arc::new(Recorder::default()))
-            .await
-            .unwrap();
+        let store = open_store(&place.paths.data).await.unwrap();
+        let app = App::start(
+            machine,
+            Mode::Print,
+            Arc::new(Recorder::default()),
+            store,
+            Arc::new(TokioTimer),
+        )
+        .await
+        .unwrap();
         let first = SessionSettings {
             model: ModelReference {
                 provider: "minimax".to_owned(),

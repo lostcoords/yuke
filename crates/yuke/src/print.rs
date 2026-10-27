@@ -17,7 +17,7 @@ use yuke_protocol::{
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
-use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, lock, warn};
+use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, TokioTimer, lock, open_store, warn};
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -97,7 +97,15 @@ pub(crate) async fn run(
     cancellation_token: CancellationToken,
 ) -> Result<Finished, String> {
     let watcher = Arc::new(Watcher::default());
-    let app = App::start(machine, Mode::Print, Arc::clone(&watcher) as Arc<dyn Observer>).await?;
+    let store = open_store(&machine.paths.data).await?;
+    let app = App::start(
+        machine,
+        Mode::Print,
+        Arc::clone(&watcher) as Arc<dyn Observer>,
+        store,
+        Arc::new(TokioTimer),
+    )
+    .await?;
     // The shutdown must also run after an error.
     let finished = run_turn(task, &app, cwd, &watcher, &cancellation_token).await;
     app.shutdown().await;

@@ -15,7 +15,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -93,6 +93,8 @@ struct Shared {
     /// The parts of the profile that a reload replaces.
     profile: RwLock<Profile>,
     store: Arc<dyn Store>,
+    /// Waits before each retry of a model request.
+    timer: Arc<dyn Timer>,
     processes: Arc<Processes>,
     observer: Arc<dyn Observer>,
     mode: Mode,
@@ -235,14 +237,21 @@ pub(crate) struct App {
 }
 
 impl App {
-    /// Open the store, start the JavaScript runtime with the built-in tools, and load the bundled plugins and the plugins
-    /// of `config.json`. The app tells `observer` what happens.
+    /// Start the JavaScript runtime with the built-in tools, and load the bundled plugins and the plugins of
+    /// `config.json`. The sessions keep their events in `store`. Before each retry of a model request, the app waits
+    /// with `timer`. The app sends its notices, the updates of its sessions, and the plugin events to `observer`.
     ///
     /// # Errors
     ///
     /// Returns a text for the user when a part does not start.
-    pub(crate) async fn start(machine: Machine, mode: Mode, observer: Arc<dyn Observer>) -> Result<App, String> {
-        let (app, plugins) = Self::prepare(machine, mode, observer).await?;
+    pub(crate) async fn start(
+        machine: Machine,
+        mode: Mode,
+        observer: Arc<dyn Observer>,
+        store: Arc<dyn Store>,
+        timer: Arc<dyn Timer>,
+    ) -> Result<App, String> {
+        let (app, plugins) = Self::prepare(machine, mode, observer, store, timer).await?;
         app.load_plugins(&plugins).await;
         Ok(app)
     }
@@ -257,6 +266,8 @@ impl App {
         machine: Machine,
         mode: Mode,
         observer: Arc<dyn Observer>,
+        store: Arc<dyn Store>,
+        timer: Arc<dyn Timer>,
     ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
         let providers = Providers::load(&machine.paths.config)?;
         let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
@@ -267,11 +278,6 @@ impl App {
             &config.disable,
             &machine.paths.data,
         )?;
-        let store: Arc<dyn Store> = Arc::new(
-            SqliteStore::open(&machine.paths.data)
-                .await
-                .map_err(|error| chain_text(&error))?,
-        );
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes.
         let processes_folder = std::env::temp_dir().join(format!(
@@ -287,6 +293,7 @@ impl App {
             machine,
             profile: RwLock::new(Profile::new(providers, &plugins, &config)),
             store,
+            timer,
             processes,
             observer,
             mode,
@@ -912,8 +919,19 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The store of the sessions in the data folder `data`.
+///
+/// # Errors
+///
+/// Returns a text for the user when the store does not open.
+pub(crate) async fn open_store(data: &Path) -> Result<Arc<dyn Store>, String> {
+    Ok(Arc::new(
+        SqliteStore::open(data).await.map_err(|error| chain_text(&error))?,
+    ))
+}
+
 /// Waits with the tokio timer.
-struct TokioTimer;
+pub(crate) struct TokioTimer;
 
 #[async_trait]
 impl Timer for TokioTimer {
