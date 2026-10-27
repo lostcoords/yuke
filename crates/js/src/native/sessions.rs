@@ -11,7 +11,7 @@ use rquickjs::{Ctx, Function, Object, Promise};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use tokio::runtime::Handle;
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, oneshot};
 use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_protocol::{
@@ -31,6 +31,8 @@ const BATCH: usize = 256;
 struct Feed {
     events: Mutex<VecDeque<(u32, ViewEvent)>>,
     arrived: Notify,
+    /// The flushes that wait until the feed delivered each event before them.
+    flushes: Mutex<Vec<oneshot::Sender<()>>>,
 }
 
 impl Feed {
@@ -42,7 +44,7 @@ impl Feed {
         self.arrived.notify_one();
     }
 
-    /// The next events, at most [`BATCH`]. It waits while the feed is empty.
+    /// The next events, at most [`BATCH`]. It waits while the feed is empty and no flush waits.
     async fn next(&self) -> Vec<(u32, ViewEvent)> {
         loop {
             {
@@ -52,7 +54,30 @@ impl Feed {
                     return events.drain(..count).collect();
                 }
             }
+            if !self.flushes.lock().unwrap_or_else(PoisonError::into_inner).is_empty() {
+                return Vec::new();
+            }
             self.arrived.notified().await;
+        }
+    }
+
+    /// A wait for the delivery of each event that the feed holds now.
+    fn flush(&self) -> oneshot::Receiver<()> {
+        let (sender, receiver) = oneshot::channel();
+        self.flushes.lock().unwrap_or_else(PoisonError::into_inner).push(sender);
+        self.arrived.notify_one();
+        receiver
+    }
+
+    /// End each flush when the feed is empty: the delivery has given each event before them.
+    fn end_flushes(&self) {
+        if !self.events.lock().unwrap_or_else(PoisonError::into_inner).is_empty() {
+            return;
+        }
+        for flush in self.flushes.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
+            if flush.send(()).is_err() {
+                // The caller stopped waiting.
+            }
         }
     }
 }
@@ -81,6 +106,19 @@ pub(super) fn add<'js>(
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
     let held: Rc<RefCell<HashMap<u32, Box<dyn Send>>>> = Rc::default();
 
+    let flush_feed = Arc::clone(&feed);
+    object.set(
+        "sessionsFlush",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
+            let flushed = flush_feed.flush();
+            let error_ctx = ctx.clone();
+            Promise::wrap_future(&ctx, async move {
+                flushed
+                    .await
+                    .map_err(|_| throw(&error_ctx, ErrorClass::Error, "the feed of the sessions has ended"))
+            })
+        })?,
+    )?;
     let listen_feed = Arc::clone(&feed);
     object.set(
         "sessionsListen",
@@ -252,12 +290,16 @@ async fn deliver_events<'js>(
     faults: mpsc::UnboundedSender<Report>,
 ) {
     loop {
-        let result = deliver.call::<_, ()>((Json(feed.next().await),));
-        if let Err(Error::Script(error)) = caught(&ctx, result)
-            && faults.send(Report::Fault(error)).is_err()
-        {
-            // The owner dropped the receiver, so it ignores faults.
+        let batch = feed.next().await;
+        if !batch.is_empty() {
+            let result = deliver.call::<_, ()>((Json(batch),));
+            if let Err(Error::Script(error)) = caught(&ctx, result)
+                && faults.send(Report::Fault(error)).is_err()
+            {
+                // The owner dropped the receiver, so it ignores faults.
+            }
         }
+        feed.end_flushes();
         tokio::task::yield_now().await;
     }
 }

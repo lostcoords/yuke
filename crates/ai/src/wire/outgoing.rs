@@ -86,7 +86,7 @@ impl HeadText {
     }
 }
 
-fn protocol_path(protocol: Protocol) -> &'static str {
+pub(crate) fn protocol_path(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::AnthropicMessages => "/messages",
         Protocol::OpenaiChat => "/chat/completions",

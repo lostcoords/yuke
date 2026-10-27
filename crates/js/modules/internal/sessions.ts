@@ -16,6 +16,7 @@ import {
   sessionStopJob,
   sessionsCreate,
   sessionsEvents,
+  sessionsFlush,
   sessionsFork,
   sessionsGet,
   sessionsList,
@@ -61,6 +62,11 @@ function deliver(batch: readonly (readonly [number, NativeViewEvent])[]): void {
       reportError(error);
     }
   }
+}
+
+/** Wait until each view got each event that came before this call. Without a view, nothing waits. */
+export async function flush(): Promise<void> {
+  if (listening) await sessionsFlush();
 }
 
 /** `promise`, or a rejection with the reason of `signal` when it aborts first. */

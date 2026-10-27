@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use rquickjs::{Ctx, Function, IntoJs, Module, Object, Promise};
 
-use crate::Runtime;
 use crate::error::{Error, caught};
 use crate::tools::Json;
+use crate::{Handle, Runtime};
 
 /// The name of the internal module that loads a plugin.
 const LOADER: &str = "yuke:internal/plugins";
@@ -98,6 +98,39 @@ impl std::error::Error for PluginFailure {
 }
 
 impl Runtime {
+    /// Load `plugins` in their order, as [`Handle::load_plugins`] does.
+    pub async fn load_plugins(&self, plugins: &[Plugin]) -> Vec<PluginFailure> {
+        self.handle().load_plugins(plugins).await
+    }
+
+    /// Close the loaded plugins, as [`Handle::close_plugins`] does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Stopped`] when the thread has ended or ends during the close.
+    pub async fn close_plugins(&self) -> Result<(), Error> {
+        self.handle().close_plugins().await
+    }
+}
+
+impl Handle {
+    /// Close the loaded plugins: abort the signal of each one, then await the cleanup of each `apply`, newest plugin
+    /// first, with no time limit. A failed cleanup is a notice. Call it after each session closed, before
+    /// [`Runtime::shutdown`]; a second call does nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Stopped`] when the thread has ended or ends during the close.
+    pub async fn close_plugins(&self) -> Result<(), Error> {
+        self.caller
+            .run(async move |ctx: Ctx<'_>, _registry| {
+                let close: Function<'_> = caught(&ctx, loader(&ctx).await?.get("closePlugins"))?;
+                let promise: Promise<'_> = caught(&ctx, close.call(()))?;
+                caught(&ctx, promise.into_future::<()>().await)
+            })
+            .await
+    }
+
     /// Load `plugins` in their order. Run each `apply`, and keep each `session` for the sessions that open later.
     /// Return each plugin that did not load. A failed plugin runs no `session`. A plugin whose provider did not load does
     /// not run, and its own services fail with it.
@@ -128,23 +161,6 @@ impl Runtime {
             });
         }
         failures
-    }
-
-    /// Close the loaded plugins: abort the signal of each one, then await the cleanup of each `apply`, newest plugin
-    /// first, with no time limit. A failed cleanup is a notice. Call it after each session closed, before
-    /// [`Runtime::shutdown`]; a second call does nothing.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Stopped`] when the thread has ended or ends during the close.
-    pub async fn close_plugins(&self) -> Result<(), Error> {
-        self.caller
-            .run(async move |ctx: Ctx<'_>, _registry| {
-                let close: Function<'_> = caught(&ctx, loader(&ctx).await?.get("closePlugins"))?;
-                let promise: Promise<'_> = caught(&ctx, close.call(()))?;
-                caught(&ctx, promise.into_future::<()>().await)
-            })
-            .await
     }
 
     /// Load `plugin` on the JavaScript thread.

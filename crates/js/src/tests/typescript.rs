@@ -68,6 +68,7 @@ async fn the_typescript_tests_pass() {
                             Report::Notice(notice) => notice.message,
                             Report::Fault(error) => error.to_string(),
                             Report::Event(event) => event.event,
+                            Report::Barrier(_) => continue,
                         };
                         writeln!(failures, "  | {}", line.replace('\n', "\n  | ")).unwrap();
                     }

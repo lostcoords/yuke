@@ -136,9 +136,16 @@ pub async fn run_test_file<T: TestRuntime>(
                 ..
             }) | Err(TestFileError::ImportTimedOut)
         );
-        let stopped = owner.shutdown(timed_out).await;
+        // A cleanup that never settles would hold the run, so the end of a test has the time limit too.
+        let stopped = tokio::time::timeout(TIME_LIMIT, owner.shutdown(timed_out)).await;
         let mut ran = ran?;
-        stopped.map_err(TestFileError::Runtime)?;
+        let ended = match stopped {
+            Ok(stopped) => {
+                stopped.map_err(TestFileError::Runtime)?;
+                true
+            }
+            Err(_) => false,
+        };
         // The sender ends with the runtime, so this drain also holds the reports of the shutdown.
         ran.reports.extend(drain(&mut reports));
         if matches!(ran.status, TestStatus::Passed)
@@ -148,6 +155,16 @@ pub async fn run_test_file<T: TestRuntime>(
             })
         {
             ran.status = TestStatus::Failed(fault);
+        }
+        if !ended && matches!(ran.status, TestStatus::Passed) {
+            ran.status = TestStatus::Failed(ScriptError {
+                name: Some("Error".to_owned()),
+                message: format!(
+                    "the end of the test ran longer than {} seconds: a cleanup did not settle",
+                    TIME_LIMIT.as_secs()
+                ),
+                stack: None,
+            });
         }
         if let Some(found) = ran.names {
             names = Some(found);

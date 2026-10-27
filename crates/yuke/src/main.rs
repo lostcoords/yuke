@@ -14,6 +14,7 @@ mod prompt;
 mod providers;
 mod rpc;
 mod skills;
+mod test_files;
 #[cfg(test)]
 mod testing;
 mod tui;
@@ -103,6 +104,12 @@ enum Command {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
     },
+    /// Run the tests of yuke:test in the *.test.ts files at PATHS, or below the current folder. Each test runs in its
+    /// own app with a fake model.
+    Test {
+        /// Test files, or folders that hold them.
+        paths: Vec<PathBuf>,
+    },
 }
 
 /// What the program runs.
@@ -120,6 +127,8 @@ enum Mode {
     Login(String),
     /// A removal of the saved login of a provider.
     Logout(String),
+    /// A run of test files.
+    Test(Vec<PathBuf>),
 }
 
 /// The path of a `unix://PATH` value.
@@ -136,6 +145,7 @@ impl Cli {
         match self.command {
             Some(Command::Login { provider }) => return Mode::Login(provider),
             Some(Command::Logout { provider }) => return Mode::Logout(provider),
+            Some(Command::Test { paths }) => return Mode::Test(paths),
             None => {}
         }
         if self.rpc {
@@ -182,6 +192,7 @@ fn main() -> ExitCode {
             Mode::Print { task, json } => print_task(&task, json).await,
             Mode::Login(provider) => login(&provider).await,
             Mode::Logout(provider) => logout(&provider).await,
+            Mode::Test(paths) => test(paths).await,
         };
         ran.unwrap_or_else(|error| {
             warn(&error);
@@ -209,6 +220,35 @@ async fn print_task(task: &Task, json: bool) -> Result<ExitCode, String> {
         }
         Signaled::Stopped(number) => Ok(signal_exit(number)),
     }
+}
+
+/// Run the test files at `paths`, or below the current folder. Print each failure and a count, and fail when a test
+/// fails.
+async fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
+    let paths = if paths.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        paths
+    };
+    let files = test_files::collect(&paths)?;
+    if files.is_empty() {
+        return Err("no *.test.ts file found".to_owned());
+    }
+    let work = std::env::temp_dir().join(format!("yuke-test-{}", std::process::id()));
+    std::fs::create_dir_all(&work).map_err(|error| format!("{}: {error}", work.display()))?;
+    let summary = test_files::run(&files, &work, false).await;
+    if let Err(error) = std::fs::remove_dir_all(&work) {
+        warn(&format!("{}: {error}", work.display()));
+    }
+    let mut stdout = io::stdout().lock();
+    write!(stdout, "{}", summary.failures)
+        .and_then(|()| writeln!(stdout, "{} passed, {} failed", summary.passed, summary.failed))
+        .map_err(|error| format!("the output did not write: {error}"))?;
+    Ok(if summary.failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 /// Log in to the provider `id`.
@@ -308,6 +348,7 @@ fn machine() -> Result<Machine, String> {
         exchange: http,
         fetch: Arc::new(fetch),
         display: None,
+        test: None,
     })
 }
 

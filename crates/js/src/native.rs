@@ -120,7 +120,8 @@ pub(crate) fn install(
     encoding::add(ctx, &object)?;
     url::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
-    tools::add(ctx, &object, registry, reports)?;
+    tools::add(ctx, &object, registry, reports.clone())?;
+    crate::test_host::add(ctx, &object, options.test_host.as_ref(), consumer, reports)?;
     match ctx.store_userdata(object) {
         Ok(_) => Ok(()),
         Err(_) => Err(throw(ctx, ErrorClass::Error, "the native module cannot be stored")),

@@ -803,23 +803,17 @@ async fn options_that_fail_the_check_fail_the_load_of_that_plugin_before_its_app
     assert_eq!(
         texts(&failures),
         [
-            failure("missing", "the options of config.json: Set folder to a string."),
+            failure("missing", "the options of the plugin: Set folder to a string."),
             failure(
                 "wrong",
-                "the options of config.json: Set depth to an integer of at least 1."
+                "the options of the plugin: Set depth to an integer of at least 1."
             ),
             failure(
                 "extra",
-                "the options of config.json: Remove colour. The fields are: folder, depth, tags."
+                "the options of the plugin: Remove colour. The fields are: folder, depth, tags."
             ),
-            failure(
-                "unasked",
-                "config.json gives options, and the plugin exports no optionsSchema"
-            ),
-            failure(
-                "codeless",
-                "config.json gives options, and the plugin exports no optionsSchema"
-            ),
+            failure("unasked", "the plugin gets options, and it exports no optionsSchema"),
+            failure("codeless", "the plugin gets options, and it exports no optionsSchema"),
             failure(
                 "unchecked",
                 "optionsSchema.properties.a: yuke does not check the keyword 'default'"
@@ -921,8 +915,7 @@ async fn given_exports_load_through_the_checks_of_an_entry() {
             ),
             (
                 "unchecked".to_owned(),
-                "plugin unchecked did not load: TypeError: config.json gives options, and the plugin exports no \
-                 optionsSchema"
+                "plugin unchecked did not load: TypeError: the plugin gets options, and it exports no optionsSchema"
                     .to_owned()
             ),
             (

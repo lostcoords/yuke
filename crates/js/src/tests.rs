@@ -203,6 +203,7 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
         ),
         display: None,
         internal_imports: false,
+        test_host: None,
     }
 }
 
@@ -235,7 +236,7 @@ fn descriptor(
 async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
     let root = path.parent().unwrap().to_owned();
     let plugin = descriptor("test", root.clone(), root.join("data"), Some(path.to_owned()), &[], &[]);
-    runtime.load_plugin(&plugin).await
+    runtime.handle().load_plugin(&plugin).await
 }
 
 /// Wait until the body `condition` returns `true`. A wait past 5 seconds fails the test, so the test does not hang.
@@ -585,6 +586,25 @@ async fn a_thrown_value_that_is_no_error_keeps_its_string_form() {
             stack: None
         }
     );
+}
+
+#[tokio::test]
+async fn a_suppressed_error_names_the_first_error_and_the_error_of_the_disposal() {
+    let folder = folder("a_suppressed_error_names_the_first_error_and_the_error_of_the_disposal");
+    let (runtime, _faults) = start(&folder).await;
+
+    let error = script_error(
+        evaluate::<()>(
+            &runtime,
+            "throw new SuppressedError(new TypeError('close failed'), new RangeError('body failed'), '');",
+        )
+        .await,
+    );
+
+    assert_eq!(error.name.as_deref(), Some("SuppressedError"));
+    let (first, then) = error.message.split_once("\nThen a disposal threw: ").unwrap();
+    assert!(first.starts_with("RangeError: body failed\n"), "{first}");
+    assert!(then.starts_with("TypeError: close failed\n"), "{then}");
 }
 
 #[tokio::test]

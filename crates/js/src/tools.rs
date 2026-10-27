@@ -460,13 +460,13 @@ struct Answer {
 /// A media item of a result.
 #[derive(Debug)]
 pub(crate) struct MediaFile {
-    mime_type: String,
-    source: Source,
+    pub(crate) mime_type: String,
+    pub(crate) source: Source,
 }
 
 /// Where the bytes of a media file come from.
 #[derive(Debug)]
-enum Source {
+pub(crate) enum Source {
     /// A file. A relative path starts in the folder of the call.
     Path(String),
     /// The bytes that the tool gave.

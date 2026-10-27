@@ -271,6 +271,11 @@ impl SessionService {
     }
 
     /// Open the plugins of each later session with `runtime`.
+    /// The handle of the plugins of the runtime now, or `None` before the first runtime starts.
+    pub(super) fn plugins(&self) -> Option<Handle> {
+        lock(&self.runtime).clone()
+    }
+
     pub(super) fn set_runtime(&self, runtime: Handle) {
         *lock(&self.runtime) = Some(runtime);
     }

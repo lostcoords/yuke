@@ -22,6 +22,22 @@
  * ```
  */
 declare module "yuke:test" {
+  import type { PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
+  import type {
+    Block,
+    ExtensionEventParams,
+    FinishReason,
+    InputKind,
+    InputSource,
+    NoticeParams,
+    SessionId,
+    SessionSettings,
+    Settings,
+    ToolDefinition,
+  } from "yuke:protocol";
+  import type { ObjectSchema, ToolMedia } from "yuke:tools";
+  import type { Question, Transcript } from "yuke:transcript";
+
   /** Add the test `name`. The runner awaits the promise of `fn`. */
   export function test(name: string, fn: () => void | Promise<void>): void;
 
@@ -50,4 +66,240 @@ declare module "yuke:test" {
 
   /** The scratch folder of the test: an empty folder for this test alone. */
   export function folder(): string;
+  // The host of plugins under test: an app with a scripted model, in the runtime of the test.
+
+  /** A plugin under test: its exports as a value, or a folder with its `plugin.json`. */
+  export type PluginUnderTest =
+    | {
+        /** The name of the plugin, as in a manifest. */
+        readonly name: string;
+        // `any` lets a plugin keep the option type of its exports.
+        // biome-ignore lint/suspicious/noExplicitAny: the options of each plugin have their own type.
+        readonly apply?: PluginApply<any>;
+        // biome-ignore lint/suspicious/noExplicitAny: the options of each plugin have their own type.
+        readonly session?: PluginSession<any>;
+        /** The schema of `options`, as the `optionsSchema` export of an entry. */
+        readonly optionsSchema?: ObjectSchema;
+        readonly options?: Readonly<Record<string, unknown>>;
+        readonly uses?: readonly string[];
+        readonly provides?: readonly string[];
+      }
+    | {
+        /** The absolute folder of the plugin. The host reads its `plugin.json`, as for a plugin in `config.json`. */
+        readonly folder: string;
+        readonly options?: Readonly<Record<string, unknown>>;
+      };
+
+  /** One scripted answer of the fake model. Make it with `reply`. */
+  export type Reply =
+    | { readonly kind: "text"; readonly text: string; readonly inputTokens: number }
+    | { readonly kind: "toolCalls"; readonly calls: readonly ScriptedCall[]; readonly inputTokens: number }
+    | { readonly kind: "cut"; readonly calls: readonly ScriptedCall[] }
+    | { readonly kind: "overloaded" }
+    | { readonly kind: "failed"; readonly text: string }
+    | { readonly kind: "stall"; readonly text: string };
+
+  /** One tool call of a scripted answer. */
+  export interface ScriptedCall {
+    readonly name: string;
+    readonly args: unknown;
+  }
+
+  /** The options of an answer: the input tokens of its usage, for a test of the context window. */
+  export interface ReplyOptions {
+    readonly inputTokens?: number;
+  }
+
+  /** The makers of the scripted answers. */
+  export const reply: {
+    /** A complete answer with the text `text`. */
+    readonly text: (text: string, options?: ReplyOptions) => Reply;
+    /** A complete answer that calls the tool `name` with `args`. */
+    readonly toolCall: (name: string, args: unknown, options?: ReplyOptions) => Reply;
+    /** A complete answer with several calls. */
+    readonly toolCalls: (calls: readonly ScriptedCall[], options?: ReplyOptions) => Reply;
+    /** An answer with calls that the output limit cut. */
+    readonly cut: (calls: readonly ScriptedCall[]) => Reply;
+    /** An overload error before any output. The retry policy of yuke sends the request again. */
+    readonly overloaded: () => Reply;
+    /** An answer that streams `text`, then fails. The request fails without a retry. */
+    readonly failed: (text: string) => Reply;
+    /** An answer that streams `text` and never ends, for a test of a cancel. */
+    readonly stall: (text?: string) => Reply;
+  };
+
+  /** One request that the fake model got. */
+  export interface ModelRequest {
+    readonly system: string;
+    /**
+     * Each message of the request in the order and with the roles of its protocol. The text joins the text parts and the
+     * tool result contents. The OpenAI Responses protocol gives a tool result the role `tool`.
+     */
+    readonly messages: readonly { readonly role: string; readonly text: string }[];
+    /** The names of the tools of the request. */
+    readonly tools: readonly string[];
+    /** The body as the provider got it. */
+    readonly body: unknown;
+  }
+
+  /**
+   * The fake model of a host. Each request takes the next reply in order. The host writes the reply in the stream
+   * format of the protocol of the request. A request after the last reply fails. A reply without a request fails the
+   * test at the close of the host.
+   */
+  export interface FakeModel {
+    readonly requests: readonly ModelRequest[];
+  }
+
+  /** A fake model that answers with `replies`, in order. */
+  export function createFakeModel(replies: readonly Reply[]): FakeModel;
+
+  /** A question that a plugin asked in a session of the host. */
+  export interface TestQuestion extends Question {
+    readonly sessionId: SessionId;
+  }
+
+  /** What `createHost` gets. */
+  export interface HostOptions {
+    /** The plugins under test, in load order. */
+    readonly plugins: readonly PluginUnderTest[];
+    /** The model of the sessions. Without it, a model request fails the test. */
+    readonly model?: FakeModel;
+    /**
+     * The answer to each question. Give `true` or `false` for `confirm`. Give a text for `select` and `input`.
+     * `undefined` cancels the question. Without the function, each question gets `undefined`, as with no client.
+     */
+    readonly answer?: (question: TestQuestion) => boolean | string | undefined;
+  }
+
+  /**
+   * Start a host for the plugins under test. The host is an app of yuke with an in-memory store and no bundled plugins.
+   * It does not wait before a retry. A test creates one host. The end of the test closes it.
+   */
+  export function createHost(options: HostOptions): Promise<Host>;
+
+  /** The host of a test. `await using` closes it at the end of its block. */
+  export interface Host extends AsyncDisposable {
+    /** The notices of the plugins and of the app so far. */
+    readonly notices: readonly NoticeParams[];
+    /** The events of the plugins so far. */
+    readonly events: readonly ExtensionEventParams[];
+    /** The questions of the plugins so far. */
+    readonly questions: readonly TestQuestion[];
+    /**
+     * Create a session and open it. The model defaults to `minimax/MiniMax-M3`. The settings default to the endpoint
+     * defaults. The workspace defaults to the folder of the test. The host has no login, so a provider with a login
+     * fails.
+     */
+    readonly openSession: (settings?: Partial<SessionSettings>) => Promise<TestSession>;
+    /**
+     * Close the sessions and the plugins. Then check the fake model. A reply without a request fails the test, also
+     * when the test catches the rejection. A second call gives the same promise.
+     */
+    readonly close: () => Promise<void>;
+  }
+
+  /** The plain data of a round, for `round.before` and `round.retry`. The host makes the functions of the event. */
+  export interface TestRound {
+    readonly context: readonly Block[];
+    readonly window?: number | null;
+    readonly inputTokens?: number | null;
+    readonly system?: string;
+    readonly tools?: readonly ToolDefinition[];
+    readonly settings?: Settings;
+  }
+
+  /** The event of each hook point for `run`, as plain data. */
+  export interface HookEvents {
+    readonly "tool.before": { readonly call: ToolCall };
+    readonly "tool.after": {
+      readonly call: ToolCall;
+      /** The result of the call. The host stores each media item, as for the result of a tool. */
+      readonly result: { readonly text: string; readonly isError: boolean; readonly media?: readonly ToolMedia[] };
+    };
+    readonly "round.before": TestRound;
+    readonly "round.retry": TestRound & {
+      readonly failure: { readonly kind: RoundFailureKind };
+      readonly retries?: number;
+    };
+    readonly "round.after": {
+      readonly text: string;
+      readonly finishReason?: FinishReason | null;
+      readonly continues?: number;
+    };
+    readonly "input.before": {
+      readonly source: InputSource;
+      readonly kind: InputKind;
+      /** The blocks of the input. The host stores each media item, and the handlers get it as a media block. */
+      readonly blocks: readonly (Block | ToolMedia)[];
+    };
+    readonly "prompt.build": { readonly sections: Readonly<Record<string, string>> };
+  }
+
+  /** The plan of a round as the host keeps it. */
+  export interface RoundPlan {
+    readonly replace?: { readonly head: readonly Block[]; readonly keep: number };
+    /** The id of the model of the round. */
+    readonly model?: string;
+    readonly settings?: Settings;
+  }
+
+  /** The decision of the host at each hook point, after each handler ran. */
+  export interface HookResults {
+    readonly "tool.before": "run" | { readonly block: string };
+    readonly "tool.after": ToolOutcome;
+    readonly "round.before": RoundPlan;
+    readonly "round.retry": RoundPlan | undefined;
+    readonly "round.after": "proceed" | "stop";
+    readonly "input.before":
+      | "keep"
+      | "remove"
+      | { readonly replace: { readonly blocks: readonly (Block | TestMedia)[] } };
+    readonly "prompt.build": { readonly sections: Readonly<Record<string, string>> };
+  }
+
+  /** A media item that the host gives back, with its bytes from the store. */
+  export interface TestMedia {
+    readonly mimeType: string;
+    readonly size: number;
+    readonly bytes: Uint8Array;
+  }
+
+  /** The result of a tool call. */
+  export interface ToolOutcome {
+    readonly text: string;
+    readonly isError: boolean;
+    readonly media: readonly TestMedia[];
+  }
+
+  /** The result of `call`. */
+  export interface CallOutcome extends ToolOutcome {
+    /** The live texts of the call, in order. */
+    readonly output: readonly string[];
+  }
+
+  /** The options of an operation of a session. An abort of `signal` cancels it, and it rejects with the reason. */
+  export interface OperationOptions {
+    readonly signal?: AbortSignal;
+  }
+
+  /** A session of the host. */
+  export interface TestSession {
+    readonly id: SessionId;
+    /** The conversation of the session. Each operation returns after the transcript got each update before its end. */
+    readonly transcript: Transcript;
+    /** Send `text` as a message of the user, and wait until the session is idle again. */
+    readonly send: (text: string, options?: OperationOptions) => Promise<void>;
+    /**
+     * Run the hook point `point` with `event`, as a turn does, and return the decision of the host. A handler sees the
+     * same event as in a turn. A `continue` answer of `round.after` adds its input to the session.
+     */
+    readonly run: <K extends keyof HookEvents>(
+      point: K,
+      event: HookEvents[K],
+      options?: OperationOptions,
+    ) => Promise<HookResults[K]>;
+    /** Call the tool `tool` with `args`, as a turn does. */
+    readonly call: (tool: string, args: unknown, options?: OperationOptions) => Promise<CallOutcome>;
+  }
 }

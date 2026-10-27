@@ -3,7 +3,9 @@
 use std::fmt;
 
 use rquickjs::{CatchResultExt, CaughtError, Coerced, Constructor, Ctx, Exception, FromJs, Function, Value};
-use tokio::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use tokio::sync::{mpsc, oneshot};
 
 /// The failure of a call into the runtime.
 #[derive(Debug)]
@@ -33,6 +35,8 @@ pub enum Report {
     Notice(yuke_protocol::NoticeParams),
     /// A plugin sent an event for the clients.
     Event(yuke_protocol::ExtensionEventParams),
+    /// A test host waits until the consumer got each report before this one. The consumer calls [`Barrier::release`].
+    Barrier(Barrier),
     /// A script wrote an entry with `console`. The host shows it as a notice from the source `console`.
     Console {
         /// `debug` for `console.log` and `console.debug`. `info`, `warn`, and `error` for the methods of those names.
@@ -41,6 +45,41 @@ pub enum Report {
         text: String,
     },
 }
+
+/// The release of a wait for the reports before it. A clone releases the same wait.
+#[derive(Clone)]
+pub struct Barrier(Arc<Mutex<Option<oneshot::Sender<()>>>>);
+
+impl Barrier {
+    /// A barrier, and the wait that its release ends.
+    pub(crate) fn new() -> (Self, oneshot::Receiver<()>) {
+        let (sender, receiver) = oneshot::channel();
+        (Barrier(Arc::new(Mutex::new(Some(sender)))), receiver)
+    }
+
+    /// End the wait. A second release does nothing.
+    pub fn release(&self) {
+        if let Some(sender) = self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+            && sender.send(()).is_err()
+        {
+            // The waiter has left.
+        }
+    }
+}
+
+impl fmt::Debug for Barrier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Barrier")
+    }
+}
+
+impl PartialEq for Barrier {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Barrier {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -84,10 +123,27 @@ impl ScriptError {
     /// Copy the thrown `value` out of the engine.
     pub(crate) fn from_value<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Self {
         match value.as_object().cloned().and_then(Exception::from_object) {
+            // The error of `using` has an empty message, so its text names the error that it suppressed and its own.
+            Some(exception) if text_of(ctx, &exception, "name").as_deref() == Some("SuppressedError") => {
+                let part = |key: &str| {
+                    if let Ok(value) = exception.get::<_, Value<'js>>(key) {
+                        return Self::from_value(ctx, &value).to_string();
+                    }
+                    // The getter left its own exception, which belongs to no caller.
+                    drop(ctx.catch());
+                    String::new()
+                };
+                Self {
+                    name: Some("SuppressedError".to_owned()),
+                    message: format!("{}\nThen a disposal threw: {}", part("suppressed"), part("error")),
+                    stack: None,
+                }
+            }
             Some(exception) => Self {
                 name: text_of(ctx, &exception, "name"),
                 message: text_of(ctx, &exception, "message").unwrap_or_default(),
-                stack: text_of(ctx, &exception, "stack"),
+                // An error that the host makes has no frame, and its stack is empty.
+                stack: text_of(ctx, &exception, "stack").filter(|stack| !stack.trim().is_empty()),
             },
             None => Self {
                 name: None,

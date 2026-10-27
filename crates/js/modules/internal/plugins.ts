@@ -39,7 +39,7 @@ interface PluginSpec {
   /** The folder of the plugin, or `undefined` for a bundled plugin. */
   readonly root: string | undefined;
   readonly dataDir: string;
-  /** The options of `config.json`. They are `{}` when the user gives none. */
+  /** The options of `config.json`, or of `createHost` in a test. They are `{}` when none come. */
   readonly options: Readonly<Record<string, unknown>>;
   /** The absolute path or the `yuke:` name of the entry module, or `undefined` for a plugin without code. */
   readonly entry: string | undefined;
@@ -65,7 +65,7 @@ type Options = Readonly<Record<string, unknown>>;
 function optionsOf(given: Options, schema: unknown): Options {
   if (schema === undefined) {
     if (Object.keys(given).length > 0) {
-      throw new TypeError("config.json gives options, and the plugin exports no optionsSchema");
+      throw new TypeError("the plugin gets options, and it exports no optionsSchema");
     }
     return Object.freeze({});
   }
@@ -74,7 +74,7 @@ function optionsOf(given: Options, schema: unknown): Options {
     return frozen(checkArguments(schema, given));
   } catch (error) {
     // The check throws an `Error` whose message says what to change.
-    throw new TypeError(`the options of config.json: ${(error as Error).message}`);
+    throw new TypeError(`the options of the plugin: ${(error as Error).message}`);
   }
 }
 
@@ -147,7 +147,12 @@ export async function load(spec: PluginSpec): Promise<void> {
     let apply: unknown;
     let session: PluginSession<Options> | undefined;
     let optionsSchema: unknown;
-    const source = spec.given ? given.get(spec.name) : spec.entry === undefined ? undefined : await import(spec.entry);
+    // The given exports wait one step, as an entry import does, so a throw of `apply` rejects after the caller waits.
+    const source = spec.given
+      ? await given.get(spec.name)
+      : spec.entry === undefined
+        ? undefined
+        : await import(spec.entry);
     if (spec.given && source === undefined) throw new TypeError(`plugin ${spec.name} has no given exports`);
     if (source !== undefined) {
       const exports = source as {

@@ -100,6 +100,20 @@ fn with_bundled(
         plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
     }
 
+    check_list(&plugins)?;
+    for plugin in &plugins {
+        std::fs::create_dir_all(&plugin.data_dir).map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
+    }
+    Ok(plugins)
+}
+
+/// Check `plugins` as one load order: each name once, each service from one plugin, and each provider before each plugin
+/// that uses it.
+///
+/// # Errors
+///
+/// Returns a text for the user that names the first plugin that breaks a rule.
+pub(crate) fn check_list(plugins: &[Plugin]) -> Result<(), String> {
     // The order of the list is the load order, so each provider must come before each plugin that uses it.
     let mut providers: HashMap<&str, (usize, &str)> = HashMap::new();
     for (index, plugin) in plugins.iter().enumerate() {
@@ -135,15 +149,11 @@ fn with_bundled(
             return Err(format!("plugin {}: {message}", plugin.name));
         }
     }
-
-    for plugin in &plugins {
-        std::fs::create_dir_all(&plugin.data_dir).map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
-    }
-    Ok(plugins)
+    Ok(())
 }
 
 /// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.
-fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
+pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
     let path = root.join(MANIFEST);
     let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
     valid_name(&manifest.name)?;
@@ -207,7 +217,7 @@ fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Res
 
 /// Check the Agent Plugins name rule: 1 to 64 lowercase letters, digits, `-`, and `.`, a letter or a digit at each end,
 /// and no `--` or `..`.
-fn valid_name(name: &str) -> Result<(), String> {
+pub(crate) fn valid_name(name: &str) -> Result<(), String> {
     let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.';
     let ends = |c: Option<char>| c.is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
     let valid = (1..=64).contains(&name.len())

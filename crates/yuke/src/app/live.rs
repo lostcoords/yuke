@@ -136,6 +136,11 @@ impl LiveSession {
         self.parts.session.try_lock().ok()
     }
 
+    /// The session of the plugins now.
+    pub(super) fn script_session(&self) -> Arc<ScriptSession> {
+        Arc::clone(&lock(&self.parts.script))
+    }
+
     /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
     pub(super) async fn open_plugins(&self, runtime: &Handle) -> Result<ScriptSession, AppError> {
         runtime

@@ -24,6 +24,7 @@ use crate::native::term::{Frames, drive};
 use crate::processes::Processes;
 use crate::sessions::Sessions;
 use crate::strip::Cache;
+use crate::test_host::TestHost;
 use crate::timers::{self, Timers};
 use crate::tools::Registry;
 
@@ -64,6 +65,9 @@ pub struct Options {
     /// Let every module import the `yuke:internal/` modules. Only the runner of the tests of yuke sets it; a plugin
     /// can never import them.
     pub internal_imports: bool,
+
+    /// The host of `createHost` in `yuke:test`, or `None` outside a test.
+    pub test_host: Option<Arc<dyn TestHost>>,
 }
 
 impl fmt::Debug for Options {
@@ -74,6 +78,7 @@ impl fmt::Debug for Options {
             .field("http", &self.http)
             .field("display", &self.display)
             .field("internal_imports", &self.internal_imports)
+            .field("test_host", &self.test_host.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -208,6 +213,12 @@ impl Runtime {
                 Ok(())
             })
             .await
+    }
+
+    /// Stop the JavaScript that runs now, and each later stretch of it. The thread stays until [`Runtime::shutdown`].
+    /// A test that runs past its time limit calls it, so a cleanup does not wait for the loop of the test.
+    pub fn interrupt(&self) {
+        self.stopping.0.store(true, Ordering::Relaxed);
     }
 
     /// A handle that opens sessions on this runtime.

@@ -5,6 +5,7 @@ declare module "yuke:internal/native" {
   import type {
     Block,
     EventNumber,
+    ExtensionEventParams,
     InputId,
     InteractionId,
     InteractionResponse,
@@ -13,6 +14,7 @@ declare module "yuke:internal/native" {
     ListSessionsParams,
     ListSessionsResult,
     McpServer,
+    NoticeParams,
     SessionId,
     SessionRow,
     SessionSettings,
@@ -20,6 +22,7 @@ declare module "yuke:internal/native" {
     SessionUpdate,
     StoredEvent,
   } from "yuke:protocol";
+  import type { CallOutcome, ModelRequest } from "yuke:test";
   import type { ToolMedia } from "yuke:tools";
 
   /** What the start function of a tool gets for one call. */
@@ -386,6 +389,8 @@ declare module "yuke:internal/native" {
   export type ViewEvent = { readonly snapshot: SessionSnapshot } | { readonly update: SessionUpdate } | "closed";
   /** Deliver the events of the views of this runtime to `deliver`, in batches of `[key, event]` pairs. Call it once. */
   export function sessionsListen(deliver: (batch: readonly (readonly [number, ViewEvent])[]) => void): void;
+  /** Wait until the listener got each event that the feed holds now. */
+  export function sessionsFlush(): Promise<void>;
   /** Open the session `id` when it is not open, hold it, and watch it as the view `key` with its last `tail` events. */
   export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<void>;
   /** End the hold and the view `key`. */
@@ -416,4 +421,32 @@ declare module "yuke:internal/native" {
   export function sessionJobs(id: SessionId): Job[];
   export function sessionMcpServers(id: SessionId): McpServer[];
   export function catalogList(all: boolean): Promise<ListCatalogResult>;
+
+  /** What the host of a test recorded. */
+  export interface HostRecord {
+    readonly notices: NoticeParams[];
+    readonly events: ExtensionEventParams[];
+    readonly requests: ModelRequest[];
+  }
+
+  /** Load the plugins and the model script of the host of a test. The given plugins hold their exports already. */
+  export function testHostCreate(request: unknown): Operation<undefined>;
+  /** What the host of the test recorded so far. */
+  export function testHostRecord(): HostRecord;
+  /** Close the sessions and the plugins of the host, then check the model script. */
+  export function testHostClose(request: null): Operation<undefined>;
+  /** Wait until the host got each report of the runtime before this call. */
+  export function testHostSettle(): Promise<undefined>;
+  /** Run the hook point `point` of the session `id` with `event`. The answer is the decision of the host. */
+  export function testHostRun(request: readonly [id: SessionId, point: string, event: unknown]): Operation<unknown>;
+  /** A media item that the test host gives back. The bytes travel in base64. */
+  export interface WireMedia {
+    readonly mimeType: string;
+    readonly size: number;
+    readonly base64: string;
+  }
+  /** Call the tool `tool` of the session `id` with `args`. The answer has the live texts of the call in order. */
+  export function testHostCall(
+    request: readonly [id: SessionId, tool: string, args: unknown],
+  ): Operation<Omit<CallOutcome, "media"> & { readonly media: readonly WireMedia[] }>;
 }

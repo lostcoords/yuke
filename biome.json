@@ -6,7 +6,8 @@
       "!crates/js/modules/protocol.ts",
       "crates/js/types/**/*.ts",
       "crates/js/type-tests/**/*.ts",
-      "crates/js/tests/**/*.ts"
+      "crates/js/tests/**/*.ts",
+      "crates/yuke/tests/**/*.ts"
     ]
   },
   "formatter": {

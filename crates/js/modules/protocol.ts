@@ -128,6 +128,27 @@ export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type EventNumber = number;
 
 /**
+ * The params of `extension/event`.
+ */
+export type ExtensionEventParams = { 
+/**
+ * The session of the event. The field is absent for an event of the whole process.
+ */
+sessionId?: SessionId | null, 
+/**
+ * The name that the host gives the plugin.
+ */
+extension: string, 
+/**
+ * The name of the event. The plugin chooses it.
+ */
+event: string, 
+/**
+ * The data of the event. The plugin chooses its shape, and it puts a version in it when the shape changes.
+ */
+data: unknown, };
+
+/**
  * Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
  * `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
  */
@@ -600,6 +621,27 @@ usage: Usage, };
  * The severity of a notice.
  */
 export type NoticeLevel = "debug" | "info" | "warn" | "error";
+
+/**
+ * The params of `notice`.
+ */
+export type NoticeParams = { 
+/**
+ * The session of the notice. The field is absent for a notice of the whole process.
+ */
+sessionId?: SessionId | null, 
+/**
+ * The severity of the notice. A client uses it to show the notice.
+ */
+level: NoticeLevel, 
+/**
+ * The plugin or the part of yuke that sent the notice.
+ */
+source: string, 
+/**
+ * The text for the user.
+ */
+message: string, };
 
 /**
  * The model and host that answered a request. Provider state returns only to the same model at the same host.

@@ -1,7 +1,7 @@
 // The assertions of the public module `yuke:test`.
 
 import { readDir, writeTextFile } from "yuke:fs";
-import { assert, equal, folder, rejects, test, throws } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, test, throws } from "yuke:test";
 
 /** The message of the failure of `check`. */
 function failure(check: () => void): string {
@@ -73,4 +73,10 @@ test("a test leaves a global and a file behind", async () => {
 test("the next test runs in a fresh runtime with an empty folder of its own", async () => {
   equal(Reflect.has(globalThis, "leftover"), false);
   equal(await readDir(".", { baseDir: folder() }), []);
+});
+
+test("a host needs the runner of yuke test", async () => {
+  const error = await rejects(createHost({ plugins: [] }));
+  assert(error instanceof Error);
+  equal(error.message, "no test host: run this file with yuke test");
 });

@@ -33,5 +33,5 @@
     "noUncheckedSideEffectImports": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["modules/**/*.ts", "types/**/*.d.ts", "type-tests/**/*.ts", "tests/**/*.ts"]
+  "include": ["modules/**/*.ts", "types/**/*.d.ts", "type-tests/**/*.ts", "tests/**/*.ts", "../yuke/tests/**/*.ts"]
 }

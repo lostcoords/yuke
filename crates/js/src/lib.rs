@@ -30,6 +30,8 @@ mod runtime;
 mod session;
 mod sessions;
 mod strip;
+mod test_drive;
+mod test_host;
 mod test_runner;
 #[cfg(test)]
 mod tests;
@@ -38,12 +40,13 @@ mod tools;
 mod typescript;
 
 pub use display::{Display, Input, Request};
-pub use error::{Error, Report, ScriptError};
+pub use error::{Barrier, Error, Report, ScriptError};
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Sessions, SessionsError, ViewEvent, ViewSink};
+pub use test_host::TestHost;
 pub use test_runner::{TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, run_test_file};
 pub use tools::{ScriptTool, SessionHost};

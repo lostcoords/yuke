@@ -155,6 +155,7 @@ impl Place {
                 .unwrap(),
             ),
             display: None,
+            test: None,
         }
     }
 

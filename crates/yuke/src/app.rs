@@ -7,6 +7,7 @@ mod live;
 mod models;
 mod plugin_sessions;
 mod sessions;
+mod test_host;
 mod trust;
 
 use std::collections::HashMap;
@@ -40,6 +41,7 @@ use yuke_store::SqliteStore;
 use self::models::PluginModels;
 use self::plugin_sessions::PluginSessions;
 pub(crate) use self::sessions::{Attachment, SessionService};
+pub(crate) use self::test_host::{TestPlace, TestSetup};
 use crate::auth::{LOCK_LIMIT, LoginSource, Pushed, StoredKind};
 use crate::config::{Config, read_json};
 use crate::paths::Paths;
@@ -69,6 +71,8 @@ pub(crate) struct Machine {
     pub(crate) fetch: Arc<yuke_http::Client>,
     /// The display of the terminal interface, or `None` with no view. Each runtime of a reload draws on it.
     pub(crate) display: Option<Arc<yuke_js::Display>>,
+    /// What the app of a test needs beyond production, or `None` outside a test.
+    pub(crate) test: Option<TestSetup>,
 }
 
 /// How the app runs: as a server that clients come to (`yuke --rpc`), or for one task with no client (`yuke -p`).
@@ -279,12 +283,15 @@ impl App {
             &machine.paths.data,
         )?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
-        // removes.
-        let processes_folder = std::env::temp_dir().join(format!(
-            "yuke-{}-{:016x}",
-            std::process::id(),
-            RandomState::new().hash_one(0_u8)
-        ));
+        // removes. A test keeps the folder in its own place.
+        let processes_folder = match &machine.test {
+            Some(test) => test.processes.clone(),
+            None => std::env::temp_dir().join(format!(
+                "yuke-{}-{:016x}",
+                std::process::id(),
+                RandomState::new().hash_one(0_u8)
+            )),
+        };
         let processes = Arc::new(match mode {
             Mode::Server => Processes::new(processes_folder.clone()),
             Mode::Print => Processes::without_jobs(processes_folder.clone()),
@@ -713,8 +720,9 @@ async fn start_runtime(
     shared: &Arc<Shared>,
     sessions: &Arc<SessionService>,
 ) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
+    let test = shared.machine.test.as_ref();
     let (runtime, reports) = Runtime::start(Options {
-        cache: shared.machine.paths.cache.join("js"),
+        cache: test.map_or_else(|| shared.machine.paths.cache.join("js"), |test| test.cache.clone()),
         processes: Arc::clone(&shared.processes),
         models: Arc::new(PluginModels(Arc::clone(shared))),
         sessions: Arc::new(PluginSessions {
@@ -723,10 +731,12 @@ async fn start_runtime(
         }),
         http: Arc::clone(&shared.machine.fetch),
         display: shared.machine.display.clone(),
-        internal_imports: false,
+        internal_imports: test.is_some_and(|test| test.internal_imports),
+        test_host: test.map(|test| Arc::clone(&test.host) as Arc<dyn yuke_js::TestHost>),
     })
     .await?;
-    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer)));
+    let copy = test.map(|test| test.reports.clone());
+    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), copy));
     if let Err(error) = runtime.import("yuke:internal/builtins").await {
         stop_runtime(shared, runtime, reporter).await;
         return Err(error);
@@ -884,10 +894,26 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
 }
 
 /// Send each report to `observer`. A script fault becomes a warning of yuke, and an entry of `console` becomes a notice
-/// from the source `console`. A notice or an event of a plugin goes as it is.
-async fn report(mut reports: mpsc::UnboundedReceiver<Report>, observer: Arc<dyn Observer>) {
+/// from the source `console`. A notice or an event of a plugin goes as it is. `copy`, the runner of a test, gets each
+/// report first as it is.
+async fn report(
+    mut reports: mpsc::UnboundedReceiver<Report>,
+    observer: Arc<dyn Observer>,
+    copy: Option<mpsc::UnboundedSender<Report>>,
+) {
     while let Some(report) = reports.recv().await {
+        // The observer got each report before the barrier, so the test host can read what it recorded.
+        if let Report::Barrier(barrier) = &report {
+            barrier.release();
+            continue;
+        }
+        if let Some(copy) = &copy
+            && copy.send(report.clone()).is_err()
+        {
+            // The runner of the test has left.
+        }
         let notification = match report {
+            Report::Barrier(_) => continue,
             Report::Fault(fault) => ServerNotification::Notice(NoticeParams {
                 session_id: None,
                 level: NoticeLevel::Warn,
@@ -973,7 +999,7 @@ mod tests {
             .unwrap();
         drop(reports);
 
-        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>).await;
+        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>, None).await;
 
         let notices: Vec<(NoticeLevel, String, String)> = lock(&recorder.0)
             .iter()

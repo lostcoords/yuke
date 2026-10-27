@@ -17,6 +17,7 @@ use crate::{
 const PLUGIN_TYPES: &[&str] = &[
     "Block",
     "EventNumber",
+    "ExtensionEventParams",
     "FinishReason",
     "InputId",
     "InputKind",
@@ -30,6 +31,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "McpServer",
     "ModelReference",
     "NoticeLevel",
+    "NoticeParams",
     "SessionId",
     "SessionRow",
     "SessionSettings",

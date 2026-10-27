@@ -32,7 +32,7 @@ use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost,
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
 pub struct ScriptSession {
     caller: Caller,
-    host: Arc<dyn SessionHost>,
+    pub(crate) host: Arc<dyn SessionHost>,
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
     open: u64,
@@ -199,9 +199,9 @@ pub struct ScriptHooks {
     open: u64,
     token: CancellationToken,
     /// The `continue` answers of the `round.after` hooks in this turn.
-    continues: AtomicU64,
+    pub(crate) continues: AtomicU64,
     /// The `round.retry` answers that sent the current round again.
-    retries: AtomicU64,
+    pub(crate) retries: AtomicU64,
     models: Arc<dyn Models>,
 }
 

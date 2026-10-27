@@ -1,8 +1,9 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
+import { createFakeModel, createHost, reply } from "yuke:internal/host";
 import { folder, register } from "yuke:internal/test";
 
-export { folder };
+export { createFakeModel, createHost, folder, reply };
 
 /** The most characters of a value in a failure. */
 const SHOWN = 200;
@@ -128,5 +129,15 @@ export async function rejects(promise: Promise<unknown>): Promise<unknown> {
 }
 
 // The check against `types/test.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { test, assert, equal, throws, rejects, folder } satisfies typeof import("yuke:test");
+const declared = {
+  test,
+  assert,
+  equal,
+  throws,
+  rejects,
+  folder,
+  createHost,
+  createFakeModel,
+  reply,
+} satisfies typeof import("yuke:test");
 void declared;
