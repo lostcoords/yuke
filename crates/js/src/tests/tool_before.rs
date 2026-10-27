@@ -5,7 +5,7 @@ use std::time::Duration;
 use yuke_ai::ToolCall;
 use yuke_engine::{CancellationToken, Hooks, ToolDecision};
 
-use super::prompt::opened;
+use super::opened;
 use super::{evaluate, wait_until};
 use crate::ScriptSession;
 
@@ -24,132 +24,6 @@ async fn decide(session: &ScriptSession, name: &str, arguments: &str) -> ToolDec
 
 fn block(reason: &str) -> ToolDecision {
     ToolDecision::Block(reason.to_owned())
-}
-
-#[tokio::test]
-async fn a_call_runs_when_no_handler_blocks_it() {
-    let (_runtime, session, _reports) = opened(
-        "a_call_runs_when_no_handler_blocks_it",
-        &[(
-            "quiet",
-            "export function session(s) { s.hook('tool.before', () => undefined); }",
-        )],
-    )
-    .await;
-
-    assert_eq!(decide(&session, "read", "{}").await, ToolDecision::Run);
-}
-
-// The first block ends the chain, so a later handler never sees the call.
-#[tokio::test]
-async fn the_first_block_in_plugin_order_then_in_addition_order_stops_the_call() {
-    let (runtime, session, _reports) = opened(
-        "the_first_block_in_plugin_order_then_in_addition_order_stops_the_call",
-        &[
-            (
-                "first",
-                "globalThis.seen = [];
-                 export function session(s) {
-                   s.hook('tool.before', () => { globalThis.seen.push('first one'); });
-                   s.hook('tool.before', () => { globalThis.seen.push('first two'); return { block: 'first says no' }; });
-                 }",
-            ),
-            (
-                "second",
-                "export function session(s) {
-                   s.hook('tool.before', () => { globalThis.seen.push('second'); return { block: 'second says no' }; });
-                 }",
-            ),
-        ],
-    )
-    .await;
-
-    let decision = decide(&session, "read", "{}").await;
-    let seen = evaluate::<Vec<String>>(&runtime, "return globalThis.seen;")
-        .await
-        .unwrap();
-
-    assert_eq!(decision, block("first says no"));
-    assert_eq!(seen, ["first one", "first two"]);
-}
-
-#[tokio::test]
-async fn a_handler_gets_the_id_the_name_and_the_parsed_arguments_of_the_call() {
-    let (_runtime, session, _reports) = opened(
-        "a_handler_gets_the_id_the_name_and_the_parsed_arguments_of_the_call",
-        &[(
-            "reader",
-            "export function session(s) {
-               s.hook('tool.before', ({ call }) => ({ block: `${call.id} ${call.name} ${call.arguments.path.join('/')}` }));
-             }",
-        )],
-    )
-    .await;
-
-    let decision = decide(&session, "read", r#"{"path": ["src", "main.rs"]}"#).await;
-
-    assert_eq!(decision, block("c1 read src/main.rs"));
-}
-
-// The call runs as the model gave it, so a change of the event or the call fails at once and stops the call.
-#[tokio::test]
-async fn a_change_of_the_event_or_the_call_at_any_depth_throws_and_stops_the_call() {
-    let cases = [
-        "event.call.arguments.options.force = true;",
-        "event.call.name = 'write';",
-        "event.call = {};",
-    ];
-    for (index, body) in cases.into_iter().enumerate() {
-        let (_runtime, session, _reports) = opened(
-            &format!("a_change_of_the_event_or_the_call_at_any_depth_throws_and_stops_the_call_{index}"),
-            &[(
-                "editor",
-                &format!("export function session(s) {{ s.hook('tool.before', (event) => {{ {body} }}); }}"),
-            )],
-        )
-        .await;
-
-        let decision = decide(&session, "write", r#"{"options": {"force": false}}"#).await;
-
-        let ToolDecision::Block(reason) = decision else {
-            panic!("{body}: the call runs: {decision:?}");
-        };
-        assert!(
-            reason.starts_with("tool.before of plugin editor failed: TypeError: "),
-            "{body}: {reason}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_throw_or_an_answer_of_another_shape_stops_the_call_and_names_the_plugin() {
-    let cases = [
-        ("throw new Error('no check today');", "Error: no check today"),
-        (
-            "return { block: 1 };",
-            "TypeError: the block of the answer is not a string",
-        ),
-        (
-            "return { block: 'no', why: 'x' };",
-            "TypeError: the answer has the unknown field 'why'",
-        ),
-        ("return {};", "TypeError: the block of the answer is not a string"),
-        ("return 'no';", "TypeError: the answer is not an object"),
-        ("return null;", "TypeError: the answer is not an object"),
-    ];
-    for (index, (body, error)) in cases.into_iter().enumerate() {
-        let (_runtime, session, _reports) = opened(
-            &format!("a_throw_or_an_answer_of_another_shape_stops_the_call_and_names_the_plugin_{index}"),
-            &[(
-                "check",
-                &format!("export function session(s) {{ s.hook('tool.before', () => {{ {body} }}); }}"),
-            )],
-        )
-        .await;
-
-        let expected = format!("tool.before of plugin check failed: {error}");
-        assert_eq!(decide(&session, "read", "{}").await, block(&expected), "{body}");
-    }
 }
 
 // The driver drops the hook future at a cancel, as this `select!` does. The signal of the hook still aborts.
@@ -229,30 +103,6 @@ async fn a_block_that_comes_after_the_close_of_the_session_does_not_count() {
     let (decision, ()) = tokio::join!(decision, close);
 
     assert_eq!(decision, ToolDecision::Run);
-}
-
-#[tokio::test]
-async fn a_removed_handler_and_the_handler_of_a_failed_session_block_nothing() {
-    let (_runtime, session, _reports) = opened(
-        "a_removed_handler_and_the_handler_of_a_failed_session_block_nothing",
-        &[
-            (
-                "removed",
-                "export function session(s) { s.hook('tool.before', () => ({ block: 'removed' }))(); }",
-            ),
-            (
-                "failed",
-                "export async function session(s) {
-                   s.hook('tool.before', () => ({ block: 'failed' }));
-                   await null;
-                   throw new Error('broken');
-                 }",
-            ),
-        ],
-    )
-    .await;
-
-    assert_eq!(decide(&session, "read", "{}").await, ToolDecision::Run);
 }
 
 // A hook that cannot answer never lets a call run.

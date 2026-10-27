@@ -1,7 +1,6 @@
 //! The built-in modules, the tool bridge, and the tools `read`, `write`, `edit`.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,10 +29,6 @@ pub(super) struct TestHost {
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
     /// Each input that the plugins and the jobs gave the session, in order.
     pub(super) inputs: Mutex<Vec<yuke_protocol::Input>>,
-    /// Each question and its source, in order.
-    pub(super) questions: Mutex<Vec<(String, InteractionRequest)>>,
-    /// The answer of each question, in order. A question after the last answer waits for its cancel.
-    pub(super) answers: Mutex<VecDeque<InteractionResponse>>,
     /// The model of the session. A test can change it.
     pub(super) model: Mutex<yuke_protocol::ModelReference>,
 }
@@ -48,8 +43,6 @@ impl TestHost {
             changed: Mutex::default(),
             end_gate: None,
             inputs: Mutex::default(),
-            questions: Mutex::default(),
-            answers: Mutex::default(),
             model: Mutex::new(yuke_protocol::ModelReference {
                 provider: "test".to_owned(),
                 model: "test-model".to_owned(),
@@ -91,12 +84,8 @@ impl SessionHost for TestHost {
         self.inputs.lock().unwrap().push(input);
     }
 
-    async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
-        self.questions.lock().unwrap().push((source.to_owned(), request));
-        let answer = self.answers.lock().unwrap().pop_front();
-        if let Some(answer) = answer {
-            return answer;
-        }
+    // A question waits for its cancel, as with a client that never answers.
+    async fn ask(&self, _source: &str, _request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
         cancel.cancelled().await;
         InteractionResponse::Canceled
     }
@@ -592,40 +581,6 @@ async fn a_cancel_aborts_the_signal_and_the_tool_still_answers() {
         answer.unwrap().text,
         "stopped: true AbortError: The tool call was cancelled"
     );
-}
-
-#[tokio::test]
-async fn a_cancel_reaches_the_signal_after_a_plugin_replaces_the_web_globals() {
-    let folder = folder("a_cancel_reaches_the_signal_after_a_plugin_replaces_the_web_globals");
-    write(
-        &folder,
-        &[(
-            "tools.ts",
-            "export function session({ tools: { define } }) {\n\
-             const global = globalThis as Record<string, unknown>;\n\
-             const signals = AbortController.prototype as unknown as Record<string, unknown>;\n\
-             signals.abort = () => {};\n\
-             global.AbortController = undefined; global.AbortSignal = undefined; global.Event = undefined;\n\
-             global.DOMException = undefined;\n\
-             define({ name: 'wait', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
-               execute(_args, context) {\n\
-                 return new Promise((resolve) => context.signal.addEventListener('abort', () =>\n\
-                   resolve(`stopped ${'abort' in context.signal} ${(context.signal.reason as Error).name}`)));\n\
-               } });\n\
-             }\n",
-        )],
-    );
-    let (_runtime, _host, tools) = tools_of(&folder, &[&module(&folder, "tools.ts")]).await;
-    let token = CancellationToken::new();
-    let cancel = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancel.cancel();
-    });
-
-    let (answer, _texts) = call_with(&tools["wait"], "{}", token).await;
-
-    assert_eq!(answer.unwrap().text, "stopped false AbortError");
 }
 
 #[tokio::test]

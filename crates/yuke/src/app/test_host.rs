@@ -213,17 +213,19 @@ impl AppTestHost {
     }
 }
 
-/// The text of `content`, a text or a list of parts: the text parts and the content of the tool results, joined.
+/// The text of `content`, a text or a list of parts: the text parts and the content of the tool results, one per line.
 fn text_of(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
         Value::Array(parts) => parts
             .iter()
-            .map(|part| match part.get("text") {
-                Some(Value::String(text)) => text.clone(),
-                _ => part.get("content").map(text_of).unwrap_or_default(),
+            // A part with no text and no content, such as a call, adds no line.
+            .filter_map(|part| match part.get("text") {
+                Some(Value::String(text)) => Some(text.clone()),
+                _ => part.get("content").map(text_of),
             })
-            .collect(),
+            .collect::<Vec<_>>()
+            .join("\n"),
         _ => String::new(),
     }
 }

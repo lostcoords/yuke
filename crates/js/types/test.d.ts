@@ -148,8 +148,8 @@ declare module "yuke:test" {
   export interface ModelRequest {
     readonly system: string;
     /**
-     * Each message of the request in the order and with the roles of its protocol. The text joins the text parts and the
-     * tool result contents. The OpenAI Responses protocol gives a tool result the role `tool`.
+     * Each message of the request in the order and with the roles of its protocol. The text holds the text parts and
+     * the tool result contents, one per line. The OpenAI Responses protocol gives a tool result the role `tool`.
      */
     readonly messages: readonly { readonly role: string; readonly text: string }[];
     /** The names of the tools of the request. */

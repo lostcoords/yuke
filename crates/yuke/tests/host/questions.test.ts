@@ -135,6 +135,10 @@ test("the close of a session ends its open question with undefined", async () =>
   await session.close();
 
   equal(answered, undefined);
+  equal(
+    host.questions.map((question) => [question.source, question.request]),
+    [["early", { kind: "confirm", title: "Start?", message: "" }]],
+  );
 });
 
 /** Wait until `done` holds, for a state that the host reaches in the background. */
@@ -165,4 +169,93 @@ test("an answer that settles after the close of its session reaches no question"
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   equal(host.questions.length, 1);
+});
+
+/** A plugin whose tool `ask` runs `body` with the session context and the signal of the call, and gives its JSON. */
+const asking =
+  (body: (s: Parameters<PluginSession>[0], signal: AbortSignal) => Promise<unknown>): PluginSession =>
+  (s) => {
+    s.tools.define({
+      name: "ask",
+      description: "Ask the user.",
+      concurrency: "serial",
+      parameters: { type: "object", properties: {} },
+      execute: async (_args, context) => JSON.stringify(await body(s, context.signal)),
+    });
+  };
+
+test("each question names its plugin and its fields, and gives the answer of the user", async () => {
+  const answers = [true, "production", "v2", "t1"];
+  const asker = asking(async (s, signal) => [
+    await s.confirm("Run the migration?", "It drops a table.", { signal }),
+    await s.select("Deploy to?", ["staging", "production"], { signal }),
+    await s.input("Name?", { placeholder: "main", secret: true, signal }),
+    await s.input("Tag?"),
+  ]);
+  await using host = await createHost({ plugins: [{ name: "asker", session: asker }], answer: () => answers.shift() });
+  const session = await host.openSession();
+
+  const result = await session.call("ask", {});
+
+  equal(result.text, '[true,"production","v2","t1"]');
+  equal(
+    host.questions.map((question) => [question.source, question.request]),
+    [
+      ["asker", { kind: "confirm", title: "Run the migration?", message: "It drops a table." }],
+      ["asker", { kind: "select", title: "Deploy to?", options: ["staging", "production"] }],
+      ["asker", { kind: "input", title: "Name?", placeholder: "main", secret: true }],
+      ["asker", { kind: "input", title: "Tag?", secret: false }],
+    ],
+  );
+});
+
+test("a cancel or an abort answers undefined, and an aborted signal asks nothing", async () => {
+  const asker = asking(async (s) => {
+    const canceled = await s.confirm("First?");
+    const controller = new AbortController();
+    const waiting = s.confirm("Second?", "", { signal: controller.signal });
+    controller.abort();
+    const aborted = await waiting;
+    const late = await s.input("Third?", { signal: controller.signal });
+    const refused = await s.confirm("Fourth?", "", { signal: 5 as never }).then(
+      () => "answered",
+      (error: unknown) => (error instanceof Error ? error.name : String(error)),
+    );
+    return [...[canceled, aborted, late].map((answer) => answer === undefined), refused];
+  });
+  await using host = await createHost({
+    plugins: [{ name: "asker", session: asker }],
+    answer: (question) => (question.request.title === "First?" ? undefined : new Promise<boolean>(() => {})),
+  });
+  const session = await host.openSession();
+
+  const result = await session.call("ask", {});
+
+  equal(result.text, '[true,true,true,"TypeError"]');
+  // A `signal` option of another type throws a `TypeError` before the question.
+  equal(
+    host.questions.map((question) => question.request.title),
+    ["First?", "Second?"],
+  );
+});
+
+test("select refuses no choice and a repeated choice", async () => {
+  const asker = asking(async (s) => {
+    const failures: string[] = [];
+    for (const choices of [[], ["a", "a"]]) {
+      try {
+        await s.select("Pick?", choices);
+      } catch (error) {
+        failures.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      }
+    }
+    return failures;
+  });
+  await using host = await createHost({ plugins: [{ name: "asker", session: asker }] });
+  const session = await host.openSession();
+
+  const result = await session.call("ask", {});
+
+  equal(result.text, '["TypeError: select: choices is empty","TypeError: select: choices has a choice twice"]');
+  equal(host.questions, []);
 });

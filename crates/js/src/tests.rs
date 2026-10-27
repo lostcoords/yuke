@@ -1,20 +1,15 @@
 mod ai;
-mod ask;
-mod compaction;
 mod exec;
 mod fs;
 mod globals;
-mod input_before;
 mod network;
 mod plugins;
 mod process;
 mod prompt;
 mod round_after;
 mod round_before;
-mod round_retry;
 mod session_api;
 mod sessions;
-mod side_request;
 mod term;
 mod tool_after;
 mod tool_before;
@@ -31,10 +26,12 @@ use rquickjs::{Ctx, FromJs, Promise};
 use tokio::sync::mpsc;
 use yuke_engine::CancellationToken;
 
+use self::plugins::plugin;
+use self::tools::TestHost;
 use crate::error::caught;
 use crate::{
     CompleteAnswer, CompleteRequest, Error, Models, Options, Origin, Plugin, Processes, Report, Runtime, ScriptError,
-    SideRequest,
+    ScriptSession, SideRequest,
 };
 
 /// A new empty folder for the test `name`.
@@ -738,4 +735,22 @@ async fn a_changed_typescript_file_gets_a_new_cache_file() {
 
     assert_eq!(std::fs::read_dir(folder.join("cache")).unwrap().count(), 2);
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.value;").await.unwrap(), 2);
+}
+
+/// A runtime in a new folder `name` with one plugin per `(name, entry)`, in that order, an open session, and the
+/// reports of the runtime.
+async fn opened(name: &str, plugins: &[(&str, &str)]) -> (Runtime, ScriptSession, mpsc::UnboundedReceiver<Report>) {
+    let folder = folder(name);
+    let (runtime, reports) = start(&folder).await;
+    let specs: Vec<_> = plugins
+        .iter()
+        .map(|(plugin_name, source)| plugin(&folder, plugin_name, Some(source), &[], &[]))
+        .collect();
+    assert!(runtime.load_plugins(&specs).await.is_empty());
+    let session = runtime
+        .handle()
+        .open_session(Arc::new(TestHost::new(&folder)))
+        .await
+        .unwrap();
+    (runtime, session, reports)
 }

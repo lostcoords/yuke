@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use rquickjs::{CatchResultExt, CaughtError, Coerced, Constructor, Ctx, Exception, FromJs, Function, Value};
+use rquickjs::{CatchResultExt, CaughtError, Coerced, Constructor, Ctx, Exception, FromJs, Function, Object, Value};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::{mpsc, oneshot};
@@ -120,6 +120,28 @@ pub struct ScriptError {
 }
 
 impl ScriptError {
+    /// Throw this error again in `ctx`: an error of the global class of its name, with its message and its stack. An
+    /// error without a name, or with the name of no class, is an `Error`.
+    pub(crate) fn rethrow(&self, ctx: &Ctx<'_>) -> rquickjs::Error {
+        let globals = ctx.globals();
+        let built = self
+            .name
+            .as_deref()
+            .and_then(|name| globals.get::<_, Constructor<'_>>(name).ok())
+            .map_or_else(|| globals.get::<_, Constructor<'_>>("Error"), Ok)
+            .and_then(|class| class.construct::<_, Object<'_>>((self.message.as_str(),)))
+            .and_then(|error| {
+                if let Some(stack) = &self.stack {
+                    error.set("stack", stack.as_str())?;
+                }
+                Ok(error)
+            });
+        match built {
+            Ok(error) => ctx.throw(error.into_value()),
+            Err(error) => error,
+        }
+    }
+
     /// Copy the thrown `value` out of the engine.
     pub(crate) fn from_value<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Self {
         match value.as_object().cloned().and_then(Exception::from_object) {
@@ -232,10 +254,6 @@ pub(crate) enum ErrorClass {
 }
 
 impl ErrorClass {
-    /// Each class at the index of its discriminant. [`install_error_classes`] keeps the constructors in this order, and
-    /// [`throw`] reads them by `class as usize`.
-    const ALL: [Self; 3] = [Self::Error, Self::TypeError, Self::SyntaxError];
-
     /// The name of the global constructor of the class.
     fn name(self) -> &'static str {
         match self {
@@ -246,44 +264,15 @@ impl ErrorClass {
     }
 }
 
-/// Keep the error constructors of the runtime start, so a plugin that replaces a global does not change the errors of
-/// the natives. The context keeps two kinds of user data: this `Vec<Constructor>`, and the `Object` of the native module.
-pub(crate) fn install_error_classes(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    let constructors = ErrorClass::ALL
-        .iter()
-        .map(|class| ctx.globals().get::<_, Constructor<'_>>(class.name()))
-        .collect::<rquickjs::Result<Vec<_>>>()?;
-    match ctx.store_userdata(constructors) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(rquickjs::Error::new_from_js("error constructors", "user data")),
-    }
-}
-
 /// Throw a new error of `class` with `message`. A constructed error keeps the whole message, and a typed throw of the
 /// engine cuts it at 255 bytes.
 pub(crate) fn throw(ctx: &Ctx<'_>, class: ErrorClass, message: &str) -> rquickjs::Error {
-    let built = match ctx
-        .userdata::<Vec<Constructor<'_>>>()
-        .as_deref()
-        .and_then(|constructors| constructors.get(class as usize))
-    {
-        Some(constructor) => constructor.construct::<_, Value<'_>>((message,)),
-        None => Err(rquickjs::Error::new_from_js(class.name(), "a kept error constructor")),
-    };
+    let built = ctx
+        .globals()
+        .get::<_, Constructor<'_>>(class.name())
+        .and_then(|constructor| constructor.construct::<_, Value<'_>>((message,)));
     match built {
         Ok(error) => ctx.throw(error),
         Err(error) => error,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ErrorClass;
-
-    #[test]
-    fn each_error_class_sits_at_the_index_of_its_discriminant() {
-        for (index, class) in ErrorClass::ALL.iter().enumerate() {
-            assert_eq!(*class as usize, index, "{class:?}");
-        }
     }
 }

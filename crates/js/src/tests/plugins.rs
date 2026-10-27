@@ -302,68 +302,6 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
 }
 
 #[tokio::test]
-async fn a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal() {
-    let folder = folder("a_failed_apply_that_replaces_the_web_globals_still_aborts_its_signal");
-    let (runtime, _reports) = start(&folder).await;
-    let bad = plugin(
-        &folder,
-        "bad",
-        Some(
-            "export function apply(ctx) {
-               globalThis.badSignal = ctx.signal;
-               globalThis.DOMException = undefined;
-               globalThis.AbortController = undefined;
-               throw new Error('broken');
-             }",
-        ),
-        &[],
-        &[],
-    );
-
-    let failures = runtime.load_plugins(&[bad]).await;
-
-    assert_eq!(
-        texts(&failures),
-        [("bad".to_owned(), "plugin bad did not load: Error: broken".to_owned())]
-    );
-    assert_eq!(
-        evaluate::<String>(&runtime, "return globalThis.badSignal.reason.name;")
-            .await
-            .unwrap(),
-        "AbortError"
-    );
-}
-
-#[tokio::test]
-async fn a_native_throws_the_error_class_of_the_start_after_a_plugin_replaces_the_global() {
-    let folder = folder("a_native_throws_the_error_class_of_the_start_after_a_plugin_replaces_the_global");
-    let (runtime, _reports) = start(&folder).await;
-    let one = plugin(
-        &folder,
-        "one",
-        Some(
-            "export function apply(ctx) {
-               const original = TypeError;
-               globalThis.TypeError = class Fake extends Error {};
-               try { ctx.notify('loud', 'x'); } catch (error) { globalThis.seen = error instanceof original; }
-               globalThis.TypeError = original;
-             }",
-        ),
-        &[],
-        &[],
-    );
-
-    let failures = runtime.load_plugins(&[one]).await;
-
-    assert!(failures.is_empty(), "{failures:?}");
-    assert!(
-        evaluate::<bool>(&runtime, "return globalThis.seen === true;")
-            .await
-            .unwrap()
-    );
-}
-
-#[tokio::test]
 async fn a_plugin_cannot_abort_the_signal_of_its_context() {
     let folder = folder("a_plugin_cannot_abort_the_signal_of_its_context");
     let (runtime, _reports) = start(&folder).await;

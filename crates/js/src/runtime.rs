@@ -437,8 +437,6 @@ impl Engine {
         let frames = Rc::new(Frames::new(options.display.clone()));
         context
             .with(|ctx| {
-                // The error constructors come before the natives, so each native throws with the constructors of the start.
-                crate::error::install_error_classes(&ctx)?;
                 timers::install(&ctx, &timers, reports.clone())?;
                 crate::error::install_report_error(&ctx, reports.clone())?;
                 native::install(&ctx, &registry, &options, &frames, consumer, reports.clone())?;

@@ -169,7 +169,11 @@ where
 fn joined<T>(ctx: &Ctx<'_>, joined: Result<Result<T, TestError>, tokio::task::JoinError>) -> rquickjs::Result<T> {
     match joined {
         Ok(Ok(value)) => Ok(value),
-        Ok(Err(error)) => Err(throw(ctx, ErrorClass::Error, &error.to_string())),
+        // A throw of a plugin keeps its name, its message, and its stack, as in the plugin.
+        Ok(Err(error)) => Err(match error.downcast_ref::<crate::Error>() {
+            Some(crate::Error::Script(script)) => script.rethrow(ctx),
+            _ => throw(ctx, ErrorClass::Error, &error.to_string()),
+        }),
         Err(error) => Err(throw(ctx, ErrorClass::Error, &error.to_string())),
     }
 }
