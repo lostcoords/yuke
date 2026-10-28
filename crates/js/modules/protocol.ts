@@ -58,6 +58,23 @@ eventNumber: EventNumber,
 blockIndex: number, };
 
 /**
+ * The hints of one tool call of a commit, and the folder where it ran.
+ */
+export type CallDisplay = { 
+/**
+ * The index of the call in the blocks of the commit.
+ */
+blockIndex: number, 
+/**
+ * The hints of the tool that the call names, after the deferred-tool bridge.
+ */
+hints: ToolHints, 
+/**
+ * The folder where the call ran. A relative path of the call starts there.
+ */
+folder: string | null, };
+
+/**
  * The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
  * of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
  * blocks, and a store that reads a commit back owns them.
@@ -78,7 +95,24 @@ answer: Answer | null,
 /**
  * How the turn ended. A commit in the middle of a turn has `None`.
  */
-end: TurnEnd | null, };
+end: TurnEnd | null, 
+/**
+ * What a frontend shows for the tool calls and results in `blocks`. The model never sees it.
+ */
+display?: CommitDisplay, };
+
+/**
+ * What a frontend shows for the tool calls and results of a commit. The model never sees it.
+ */
+export type CommitDisplay = { 
+/**
+ * The hints of each tool call that the driver handled, in block order.
+ */
+calls: Array<CallDisplay>, 
+/**
+ * The display of each tool result that has one, in block order.
+ */
+results: Array<ResultDisplay>, };
 
 /**
  * An input that a commit consumed. The commit starts with the model blocks of its consumed inputs, in input order.
@@ -105,6 +139,23 @@ displayContent?: Array<Block> | null,
  * The number of blocks of the commit that the model read for this input.
  */
 blockCount: number, };
+
+/**
+ * One block that a frontend shows for a result. The model never sees it.
+ */
+export type DisplayBlock = { "kind": "markdown", 
+/**
+ * The Markdown source.
+ */
+text: string, } | { "kind": "diff", 
+/**
+ * The path of the file. A relative path starts in the folder of the call.
+ */
+path: string, 
+/**
+ * Unified hunks, each with its `@@` header.
+ */
+patch: string, };
 
 /**
  * Why a client must remove a draft without a confirmed saved replacement.
@@ -431,7 +482,11 @@ execution: BlockPosition,
 /**
  * The result of the call.
  */
-result: ToolResult, } | { "sessionUpdate": "retry_scheduled", 
+result: ToolResult, 
+/**
+ * What a frontend shows in place of the result text. The model never sees it.
+ */
+display: Array<DisplayBlock>, } | { "sessionUpdate": "retry_scheduled", 
 /**
  * The wait in milliseconds.
  */
@@ -684,6 +739,11 @@ schema: string,
 strict: boolean, };
 
 /**
+ * The part of the output that a folded call shows. An error always shows its first rows.
+ */
+export type Preview = "head" | "tail" | "none";
+
+/**
  * The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
  */
 export type PriceBand = { 
@@ -827,6 +887,19 @@ keep: number, };
  * produced the state. Only the encoder of that protocol writes it.
  */
 export type ReplayKind = "anthropic_signature" | "anthropic_redacted" | "responses_encrypted" | "openrouter_details";
+
+/**
+ * The display of one tool result of a commit.
+ */
+export type ResultDisplay = { 
+/**
+ * The index of the result in the blocks of the commit.
+ */
+blockIndex: number, 
+/**
+ * What a frontend shows in place of the result text.
+ */
+blocks: Array<DisplayBlock>, };
 
 /**
  * Whether a session is open in the server, and whether a turn runs in it.
@@ -976,6 +1049,24 @@ commit: Commit,
 consumed: Array<ConsumedInput>, } | { "sessionUpdate": "settings" } & SessionSettings);
 
 /**
+ * The argument of a call that its summary line shows.
+ */
+export type Subject = { 
+/**
+ * The name of a top-level string argument.
+ */
+argument: string, 
+/**
+ * What the value of the argument names.
+ */
+kind: SubjectKind, };
+
+/**
+ * What the subject argument names. A frontend can open a file or a URI.
+ */
+export type SubjectKind = "text" | "file" | "uri";
+
+/**
  * Whether and how the model thinks before it answers.
  */
 export type Thinking = "off" | { "adaptive": ThinkingDisplay | null } | { "budget": number };
@@ -1029,6 +1120,23 @@ inputSchema: string,
  * [`Target::tool_search`].
  */
 deferLoading: boolean, };
+
+/**
+ * How a frontend shows the calls of a tool. The model never sees the hints.
+ */
+export type ToolHints = { 
+/**
+ * The name of the summary line in place of the tool name.
+ */
+title: string | null, 
+/**
+ * The argument of the call that the summary line shows.
+ */
+subject: Subject | null, 
+/**
+ * The part of the output that a folded call shows.
+ */
+preview: Preview, };
 
 /**
  * The result of one tool call.

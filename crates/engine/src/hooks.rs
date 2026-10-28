@@ -4,9 +4,10 @@
 use std::error::Error;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolDefinition, ToolResult};
+use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolDefinition};
 
 use crate::model::{Model, RoundError};
+use crate::tool::ToolOutcome;
 use crate::turn_state::Replaced;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
@@ -44,11 +45,11 @@ pub trait Hooks: Send + Sync {
         ToolDecision::Run
     }
 
-    /// Return a replacement for the `result` of `call`, or `None` to keep it. The driver asks after each call that
+    /// Return a replacement for the `outcome` of `call`, or `None` to keep it. The driver asks after each call that
     /// started, at once when the call returns. A call to an unknown tool also starts. The driver can ask for the calls
-    /// of a parallel group together. A replacement keeps the call id. A cancel during this hook keeps the result.
+    /// of a parallel group together. A replacement keeps the call id. A cancel during this hook keeps the outcome.
     /// The engine sets no cap on a result, so a caller bounds a large result here.
-    async fn after_tool(&self, _call: &ToolCall, _result: &ToolResult) -> Option<ToolResult> {
+    async fn after_tool(&self, _call: &ToolCall, _outcome: &ToolOutcome) -> Option<ToolOutcome> {
         None
     }
 

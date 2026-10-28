@@ -201,10 +201,8 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
     assert_eq!(
         journal.saved()[1],
         Commit {
-            replaced: None,
-            blocks: vec![Block::assistant_text("cut")].into(),
-            answer: None,
             end: Some(cancelled()),
+            ..Commit::blocks(vec![Block::assistant_text("cut")])
         }
     );
     assert_eq!(journal.context(), context);

@@ -16,7 +16,10 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 use yuke_ai::MAX_MEDIA_BYTES;
-use yuke_engine::{CancellationToken, Concurrency, MediaStore, Tool, ToolContent, ToolContext, check_tool_name};
+use yuke_engine::{
+    CancellationToken, Concurrency, DisplayBlock, MediaStore, Tool, ToolContent, ToolContext, ToolHints,
+    check_tool_name,
+};
 
 use crate::error::{Error, caught};
 use crate::models::Attachment;
@@ -83,6 +86,7 @@ struct Registered {
     open: Option<u64>,
     definition: yuke_ai::ToolDefinition,
     concurrency: Concurrency,
+    hints: ToolHints,
     /// The JavaScript function that starts a call.
     start: Persistent<Function<'static>>,
 }
@@ -104,6 +108,7 @@ impl Registry {
         ctx: &Ctx<'js>,
         definition: yuke_ai::ToolDefinition,
         concurrency: Concurrency,
+        hints: ToolHints,
         start: Function<'js>,
         open: Option<u64>,
     ) -> Result<u64, String> {
@@ -129,6 +134,7 @@ impl Registry {
             open,
             definition,
             concurrency,
+            hints,
             start: Persistent::save(ctx, start),
         });
         Ok(id)
@@ -154,9 +160,8 @@ impl Registry {
         self.tools.borrow_mut().retain(|tool| tool.open != Some(open));
     }
 
-    /// The id, the definition, and the concurrency of each tool of the open session `open`, in the order of their
-    /// definition. A closed session has no tools.
-    pub(crate) fn entries(&self, open: u64) -> Vec<(u64, yuke_ai::ToolDefinition, Concurrency)> {
+    /// Each tool of the open session `open`, in the order of their definition. A closed session has no tools.
+    pub(crate) fn entries(&self, open: u64) -> Vec<Entry> {
         if !self.opens.borrow().contains(&open) {
             return Vec::new();
         }
@@ -164,7 +169,12 @@ impl Registry {
             .borrow()
             .iter()
             .filter(|tool| tool.open.is_none_or(|own| own == open))
-            .map(|tool| (tool.id, tool.definition.clone(), tool.concurrency))
+            .map(|tool| Entry {
+                id: tool.id,
+                definition: tool.definition.clone(),
+                concurrency: tool.concurrency,
+                hints: tool.hints.clone(),
+            })
             .collect()
     }
 
@@ -198,6 +208,14 @@ impl Registry {
     }
 }
 
+/// One tool of an open session: its id, its definition, how its calls run, and how a chat shows them.
+pub(crate) struct Entry {
+    pub(crate) id: u64,
+    pub(crate) definition: yuke_ai::ToolDefinition,
+    pub(crate) concurrency: Concurrency,
+    pub(crate) hints: ToolHints,
+}
+
 /// A tool that the JavaScript defined, for one session. Each call runs on the JavaScript thread.
 #[derive(Clone)]
 pub struct ScriptTool {
@@ -205,6 +223,7 @@ pub struct ScriptTool {
     pub(crate) id: u64,
     pub(crate) open: u64,
     pub(crate) concurrency: Concurrency,
+    pub(crate) hints: ToolHints,
     pub(crate) host: Arc<dyn SessionHost>,
 }
 
@@ -222,6 +241,10 @@ impl fmt::Debug for ScriptTool {
 impl Tool for ScriptTool {
     fn concurrency(&self) -> Concurrency {
         self.concurrency
+    }
+
+    fn hints(&self) -> ToolHints {
+        self.hints.clone()
     }
 
     async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
@@ -336,6 +359,7 @@ impl ScriptTool {
             text: answer.text,
             media: store_media(&*self.host, answer.media, folder).await?,
             is_error: answer.is_error,
+            display: answer.display.0,
         })
     }
 }
@@ -432,6 +456,7 @@ impl<'js> IntoJs<'js> for JsonText {
 }
 
 /// A value that crosses to JavaScript and back as its serde JSON, so a type of another crate needs no copy here.
+#[derive(Debug)]
 pub(crate) struct Json<T>(pub(crate) T);
 
 impl<'js, T: Serialize> IntoJs<'js> for Json<T> {
@@ -461,6 +486,7 @@ struct Answer {
     text: String,
     is_error: bool,
     media: Vec<MediaFile>,
+    display: Json<Vec<DisplayBlock>>,
 }
 
 /// A media item of a result.

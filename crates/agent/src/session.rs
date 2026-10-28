@@ -362,10 +362,8 @@ async fn open_and_end_turn(
         .collect::<Vec<_>>();
     let end = TurnEnd::Failed(TURN_STOPPED.to_owned());
     let repair = Commit {
-        replaced: None,
-        blocks: std::borrow::Cow::Owned(results),
-        answer: None,
         end: Some(end.clone()),
+        ..Commit::blocks(results)
     };
     let event_number = store.commit(opened.id, &repair, &[]).await?;
     opened.context.extend_from_slice(&repair.blocks);

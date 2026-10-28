@@ -177,6 +177,8 @@ pub enum LiveUpdate {
         execution: BlockPosition,
         /// The result of the call.
         result: yuke_ai::ToolResult,
+        /// What a frontend shows in place of the result text. The model never sees it.
+        display: Vec<yuke_engine::DisplayBlock>,
     },
     /// An attempt failed. The same request follows after a wait.
     RetryScheduled {

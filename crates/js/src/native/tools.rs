@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use yuke_protocol::{ExtensionEventParams, NoticeParams, SessionId};
 
 use crate::error::{ErrorClass, Report, throw};
-use crate::tools::Registry;
+use crate::tools::{Json, Registry};
 
 /// Add `register`, `unregister`, `notify`, and `emit` to `object`, the export object of the native module.
 pub(super) fn add<'js>(
@@ -50,8 +50,9 @@ pub(super) fn add<'js>(
                     input_schema: tool.get("parameters")?,
                     defer_loading: tool.get("deferLoading")?,
                 };
+                let Json(hints) = tool.get("hints")?;
                 registry
-                    .add(&ctx, definition, concurrency, start, tool.get("open")?)
+                    .add(&ctx, definition, concurrency, hints, start, tool.get("open")?)
                     .map_err(|message| throw(&ctx, ErrorClass::TypeError, &message))
             },
         )?,

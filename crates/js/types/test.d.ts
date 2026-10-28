@@ -37,7 +37,7 @@ declare module "yuke:test" {
     Settings,
     ToolDefinition,
   } from "yuke:protocol";
-  import type { ObjectSchema, ToolMedia } from "yuke:tools";
+  import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Question, Transcript } from "yuke:transcript";
 
   /** Add the test `name`. The runner awaits the promise of `fn`. */
@@ -236,7 +236,12 @@ declare module "yuke:test" {
     readonly "tool.after": {
       readonly call: ToolCall;
       /** The result of the call. The host stores each media item, as for the result of a tool. */
-      readonly result: { readonly text: string; readonly isError: boolean; readonly media?: readonly ToolMedia[] };
+      readonly result: {
+        readonly text: string;
+        readonly isError: boolean;
+        readonly media?: readonly ToolMedia[];
+        readonly display?: readonly DisplayBlock[];
+      };
     };
     readonly "round.before": TestRound;
     readonly "round.retry": TestRound & {
@@ -291,6 +296,8 @@ declare module "yuke:test" {
     readonly text: string;
     readonly isError: boolean;
     readonly media: readonly TestMedia[];
+    /** What a chat shows in place of the text. */
+    readonly display: readonly DisplayBlock[];
   }
 
   /** The result of `call`. */

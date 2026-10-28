@@ -37,7 +37,7 @@ import type {
   StoredEvent,
   Usage,
 } from "yuke:protocol";
-import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 import type { Tui } from "yuke:tui";
 
@@ -296,6 +296,8 @@ export interface ToolCallResult {
   readonly isError: boolean;
   /** The media items: the items of the tool, and the new items of the answers before. */
   readonly media: readonly (ResultMedia | ToolMedia)[];
+  /** What a chat shows in place of the text. The model never sees it. */
+  readonly display: readonly DisplayBlock[];
 }
 
 /** What a `tool.before` handler gets. */
@@ -335,6 +337,11 @@ export interface ToolAfterAnswer {
    * starts in the workspace folder of the session.
    */
   readonly media?: readonly (KeptMedia | (ToolMedia & { readonly id?: never }))[] | undefined;
+  /**
+   * The new display list. Keep it in step with a changed text, for example a redaction, because a chat shows the
+   * display in place of the text. `[]` removes it.
+   */
+  readonly display?: readonly DisplayBlock[] | undefined;
 }
 
 /** What a `round.before` handler gets. */

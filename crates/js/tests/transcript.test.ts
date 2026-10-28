@@ -5,6 +5,7 @@ import type {
   Block,
   Commit,
   ConsumedInput,
+  DisplayBlock,
   DraftId,
   FinishReason,
   LiveUpdate,
@@ -13,6 +14,7 @@ import type {
   SessionUpdate,
   StoredEvent,
   ToolCall,
+  ToolHints,
   ToolResult,
 } from "yuke:protocol";
 import { assert, equal, test } from "yuke:test";
@@ -56,6 +58,8 @@ function position(seq: number, index: number): { eventNumber: number; blockIndex
 const call: ToolCall = { callId: "call_0", name: "bash", arguments: '{"command":"cargo test"}' };
 const result: ToolResult = { callId: "call_0", content: "1 failed", isError: false };
 const userText: Block = { user_text: "fix the test" };
+const hints: ToolHints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" };
+const shown: DisplayBlock[] = [{ kind: "markdown", text: "**1 failed**" }];
 
 /** The updates of one turn in the order of the protocol: it reads a test, runs it, and answers. */
 const turn: SessionUpdate[] = [
@@ -92,12 +96,13 @@ const turn: SessionUpdate[] = [
       { tool_call: call },
     ],
     answer: answer("tool_calls"),
+    display: { calls: [{ blockIndex: 2, hints, folder: "/w" }], results: [] },
   }),
   { sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
   { sessionUpdate: "tool_started", execution: position(3, 2), call },
   { sessionUpdate: "tool_output", execution: position(3, 2), text: "running 1 test\n" },
-  { sessionUpdate: "tool_finished", execution: position(3, 2), result },
-  commit(4, { blocks: [{ tool_result: result }] }),
+  { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: shown },
+  commit(4, { blocks: [{ tool_result: result }], display: { calls: [], results: [{ blockIndex: 0, blocks: shown }] } }),
   { sessionUpdate: "draft_started", draftId: "d2" },
   model("d2", { kind: "block_started", block: 0, blockKind: "text" }),
   model("d2", { kind: "text_delta", block: 0, text: "Fixed." }),
@@ -151,8 +156,11 @@ const turnEntries: Entry[] = [
     name: "bash",
     arguments: '{"command":"cargo test"}',
     status: "done",
+    hints,
+    folder: "/w",
     output: "",
     result,
+    display: shown,
   },
   { kind: "text", key: "5:0", text: "Fixed.", refusal: false, draft: false },
   { kind: "end", key: "6:end", end: { outcome: { completed: { finishReason: "stop" } } } },
@@ -175,8 +183,12 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
       name: "bash",
       arguments: '{"command":"cargo test"}',
       status: "waiting",
+      // The host has not handled the call yet, so it has the default hints.
+      hints: { title: null, subject: null, preview: "head" },
+      folder: undefined,
       output: "",
       result: undefined,
+      display: [],
     },
   ]);
   fed(transcript, turn.slice(16, 18));

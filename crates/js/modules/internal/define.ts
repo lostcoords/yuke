@@ -2,8 +2,8 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
 import { type Answer, register } from "yuke:internal/native";
-import { fieldsOf, mediaOf } from "yuke:internal/values";
-import type { Infer, ObjectSchema, Tool, ToolContext, ToolMedia } from "yuke:tools";
+import { displayOf, fieldsOf, hintsOf, mediaOf } from "yuke:internal/values";
+import type { Infer, ObjectSchema, Tool, ToolContext, ToolHints, ToolMedia } from "yuke:tools";
 
 /**
  * Define `tool` for the open session `open`, or for every session without `open`, and return its id. A name that the
@@ -16,12 +16,14 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
   const text = JSON.stringify(tool.parameters) as string | undefined;
   const parameters: unknown = text === undefined ? undefined : JSON.parse(text);
   checkParameters(parameters);
+  const hints = hintsOf(tool.hints as ToolHints | undefined, parameters as ObjectSchema);
   const description = {
     name: tool.name,
     description: tool.description,
     parameters: JSON.stringify(parameters),
     concurrency: tool.concurrency,
     deferLoading: tool.deferLoading === true,
+    hints,
     open,
   };
   return register(description, (request) =>
@@ -39,11 +41,11 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
 }
 
 /** The fields of a result object. */
-const RESULT_FIELDS = ["text", "media", "isError"];
+const RESULT_FIELDS = ["text", "media", "isError", "display"];
 
 /** The checked result of `execute`. A value of another shape throws a `TypeError`. */
 function answerOf(result: unknown): Answer {
-  if (typeof result === "string") return { text: result, isError: false, media: [] };
+  if (typeof result === "string") return { text: result, isError: false, media: [], display: [] };
   const fields = fieldsOf(result, "the result", RESULT_FIELDS);
   if (typeof fields.text !== "string") throw new TypeError("the result text is not a string");
   if (fields.isError !== undefined && typeof fields.isError !== "boolean") {
@@ -54,5 +56,6 @@ function answerOf(result: unknown): Answer {
   // An index loop, so a hole of a sparse array fails as a value that is not an object.
   const media: ToolMedia[] = [];
   for (let index = 0; index < list.length; index += 1) media.push(mediaOf(list[index], `the result media[${index}]`));
-  return { text: fields.text, isError: fields.isError === true, media };
+  const display = fields.display === undefined ? [] : displayOf(fields.display, "the result display");
+  return { text: fields.text, isError: fields.isError === true, media, display };
 }

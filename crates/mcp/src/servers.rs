@@ -21,7 +21,7 @@ use tokio::process::ChildStderr;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
-use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, parse_arguments};
+use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, ToolHints, parse_arguments};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
 use crate::config::ServerConfig;
@@ -218,6 +218,12 @@ impl Servers {
                 let tool = McpTool {
                     peer: peer.clone(),
                     name: info.name.to_string(),
+                    // MCP has no subject or preview hint, so only the title is set, and the preview stays `head`.
+                    title: info.title.clone().or_else(|| {
+                        info.annotations
+                            .as_ref()
+                            .and_then(|annotations| annotations.title.clone())
+                    }),
                     media: Arc::clone(&self.media),
                 };
                 tools.push((definition, tool));
@@ -429,6 +435,8 @@ pub struct McpTool {
     peer: Peer<RoleClient>,
     /// The name of the tool on its server.
     name: String,
+    /// The title of the tool for a person, from the tool or from its annotations.
+    title: Option<String>,
     media: Arc<dyn MediaStore>,
 }
 
@@ -442,6 +450,13 @@ impl std::fmt::Debug for McpTool {
 
 #[async_trait]
 impl Tool for McpTool {
+    fn hints(&self) -> ToolHints {
+        ToolHints {
+            title: self.title.clone(),
+            ..ToolHints::default()
+        }
+    }
+
     async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
         let arguments: JsonObject = parse_arguments(arguments)?;
         let params = CallToolRequestParams::new(self.name.clone()).with_arguments(arguments);
@@ -458,7 +473,11 @@ impl Tool for McpTool {
                 if let Err(error) = handle.cancel(Some("the user cancelled the turn".to_owned())).await {
                     text = format!("{text} The server did not get the cancel: {error}");
                 }
-                return Ok(ToolContent { text, media: Vec::new(), is_error: true });
+                return Ok(ToolContent {
+                    text,
+                    is_error: true,
+                    ..ToolContent::default()
+                });
             }
         };
         match answer {
@@ -503,6 +522,7 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
         text: texts.join("\n"),
         media: attachments,
         is_error: result.is_error == Some(true),
+        display: Vec::new(),
     }
 }
 

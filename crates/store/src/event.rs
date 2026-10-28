@@ -64,6 +64,7 @@ fn commit(row: events::EventsPage) -> rusqlite::Result<Commit<'static>> {
         blocks: Cow::Owned(required(row.blocks, "blocks")?.0),
         answer,
         end: turn_end(row.end_kind.as_deref(), row.end_finish_reason, row.end_message)?,
+        display: row.display.map(|display| display.0).unwrap_or_default(),
     })
 }
 

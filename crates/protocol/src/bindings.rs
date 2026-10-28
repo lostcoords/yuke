@@ -16,6 +16,7 @@ use crate::{
 /// The types that plugins use. The plugin module holds them and each type that they use.
 const PLUGIN_TYPES: &[&str] = &[
     "Block",
+    "DisplayBlock",
     "EventNumber",
     "ExtensionEventParams",
     "FinishReason",
@@ -39,6 +40,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "SessionUpdate",
     "Settings",
     "StoredEvent",
+    "ToolHints",
     "Usage",
 ];
 

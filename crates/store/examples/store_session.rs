@@ -3,7 +3,7 @@
 #![expect(clippy::print_stdout, reason = "an example prints what the store saved")]
 
 use yuke_agent::{Access, PromptSection, Store};
-use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_engine::{Commit, CommitDisplay, Outcome, TurnEnd};
 use yuke_protocol::{Input, InputKind, InputSource, ModelReference, PendingInput, SessionSettings};
 use yuke_store::SqliteStore;
 
@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         blocks: std::borrow::Cow::Owned(blocks),
         answer: None,
         end: Some(TurnEnd::Outcome(Outcome::Stopped)),
+        display: CommitDisplay::default(),
     };
     let event_number = store.commit(id, &commit, &[consumed]).await?;
     println!("commit event: {}", event_number.0);

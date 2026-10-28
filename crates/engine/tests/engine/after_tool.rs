@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Block, ToolCall, ToolResult};
 use yuke_engine::NoWait;
-use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, Toolset};
+use yuke_engine::{CancellationToken, Driver, Hooks, Outcome, ToolOutcome, Toolset};
 use yuke_testing::{definition, model};
 
 use crate::support::{Fixed, Script, block_on, results_in_context};
@@ -24,9 +24,9 @@ struct ReplaceResult {
 
 #[async_trait]
 impl Hooks for ReplaceResult {
-    async fn after_tool(&self, call: &ToolCall, result: &ToolResult) -> Option<ToolResult> {
-        self.seen.lock().unwrap().push(result.content.clone());
-        Some(ToolResult::error(format!("not-{}", call.call_id), "replaced"))
+    async fn after_tool(&self, call: &ToolCall, outcome: &ToolOutcome) -> Option<ToolOutcome> {
+        self.seen.lock().unwrap().push(outcome.result.content.clone());
+        Some(ToolResult::error(format!("not-{}", call.call_id), "replaced").into())
     }
 }
 

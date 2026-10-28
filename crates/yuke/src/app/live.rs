@@ -452,10 +452,10 @@ impl Output {
     fn new(session: SessionId, observer: Arc<dyn Observer>, last_question: Arc<AtomicU64>) -> Self {
         let notified = Arc::clone(&observer);
         let send = move |update: SessionUpdate| {
-            notified.notify(ServerNotification::SessionUpdate(SessionUpdateParams {
+            notified.notify(ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
                 session_id: session,
                 update,
-            }));
+            })));
         };
         // The observer reads a snapshot as its updates.
         let sink: ViewSink = Arc::new(move |event| match event {
@@ -662,7 +662,7 @@ impl Parts {
                 let tools = script.tools().await;
                 self.servers.ready().await;
                 tools
-            } => toolset_of(tools, self.servers.tools()),
+            } => toolset_of(tools, self.servers.tools(), &self.host.folder()),
             () = token.cancelled() => Ok(Toolset::new()),
         }
     }
@@ -803,12 +803,14 @@ async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError>
     Ok(())
 }
 
-/// The toolset of a turn from the tools of the plugins.
+/// The toolset of a turn from the tools of the plugins and of the MCP servers. The tools run in `folder`.
 fn toolset_of(
     tools: Result<Vec<(ToolDefinition, ScriptTool)>, yuke_js::Error>,
     mcp: Vec<(ToolDefinition, McpTool)>,
+    folder: &Path,
 ) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
+    toolset.set_folder(folder.to_string_lossy());
     for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
@@ -1068,12 +1070,7 @@ mod tests {
         StoredEvent {
             event_number: EventNumber(number),
             event: SessionEvent::Commit {
-                commit: yuke_engine::Commit {
-                    replaced: None,
-                    blocks: Vec::new().into(),
-                    answer: None,
-                    end: None,
-                },
+                commit: yuke_engine::Commit::blocks(Vec::new()),
                 consumed: vec![yuke_protocol::ConsumedInput {
                     id: InputId(input),
                     source: InputSource::User,

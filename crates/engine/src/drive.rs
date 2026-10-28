@@ -22,8 +22,10 @@ use yuke_ai::{
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
 use crate::model::{Model, RoundError};
 use crate::search::{self, Declared};
-use crate::tool::{Concurrency, TOOL_CALL_NAME, ToolContext, Toolset};
-use crate::turn_state::{Action, CANCELLED_REASON, Commit, Outcome, Replaced, TurnState, not_executed};
+use crate::tool::{Concurrency, DisplayBlock, TOOL_CALL_NAME, ToolContext, ToolOutcome, Toolset};
+use crate::turn_state::{
+    Action, CANCELLED_REASON, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, TurnState, not_executed,
+};
 
 /// One fact of a turn, for an observer. It borrows turn data until the observer returns, so an observer copies the
 /// data that it keeps.
@@ -49,7 +51,7 @@ pub enum TurnEvent<'a> {
     ToolStarted {
         /// The zero-based block index of the call in its answer commit.
         block_index: usize,
-        /// The resolved call, after the deferred-tool bridge.
+        /// The resolved call, after the deferred-tool bridge. The answer commit saved its hints before this event.
         call: &'a ToolCall,
     },
 
@@ -68,6 +70,8 @@ pub enum TurnEvent<'a> {
         block_index: usize,
         /// The result of the call.
         result: &'a ToolResult,
+        /// What a frontend shows in place of the result text.
+        display: &'a [DisplayBlock],
     },
 
     /// A round failed after its retries. The model events of the round came before it, and the context keeps none of
@@ -568,8 +572,12 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::Done { tail, result } => {
-                    parts.save(&Commit::end(tail, result.as_ref())).await?;
+                Action::Done { tail, result, display } => {
+                    let commit = Commit {
+                        display,
+                        ..Commit::end(tail, result.as_ref())
+                    };
+                    parts.save(&commit).await?;
                     return result.map_err(TurnError::Round);
                 }
             }
@@ -578,12 +586,28 @@ impl<'a> Turn<'a> {
 }
 
 impl TurnParts<'_> {
-    /// Save `commit` in the journal. The save does not race the cancel. A failed save ends the turn.
+    /// Save `commit` in the journal, with the hints and the folder of each tool call in its blocks, also of a call
+    /// that never runs. The save does not race the cancel. A failed save ends the turn.
     async fn save(&self, commit: &Commit<'_>) -> Result<(), TurnError> {
-        match self.journal {
-            Some(journal) => journal.commit(commit).await.map_err(TurnError::Commit),
-            None => Ok(()),
-        }
+        let Some(journal) = self.journal else {
+            return Ok(());
+        };
+        let calls = self.call_display(&commit.blocks);
+        let saved = if calls.is_empty() {
+            journal.commit(commit).await
+        } else {
+            let display = CommitDisplay {
+                calls,
+                results: commit.display.results.clone(),
+            };
+            journal
+                .commit(&Commit {
+                    display,
+                    ..commit.clone()
+                })
+                .await
+        };
+        saved.map_err(TurnError::Commit)
     }
 
     /// The request of `context` that offers `tools` with `settings`, and the system prompt, the session id, and the
@@ -676,9 +700,26 @@ impl TurnParts<'_> {
         }
     }
 
-    /// Run the calls in `blocks`, the blocks of an answer commit, and return their results in call order. Consecutive
+    /// The hints and the folder of each tool call among `blocks`.
+    fn call_display(&self, blocks: &[Block]) -> Vec<CallDisplay> {
+        let toolset = self.driver.toolset;
+        blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(block_index, block)| match block {
+                Block::ToolCall(call) => Some(CallDisplay {
+                    block_index,
+                    hints: toolset.hints_of(&self.driver.resolve(block_index, call).call.name),
+                    folder: toolset.folder().map(str::to_owned),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Run the calls in `blocks`, the blocks of an answer commit, and return their outcomes in call order. Consecutive
     /// parallel calls form one group. A serial call forms a group of its own.
-    async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<ToolResult> {
+    async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<ToolOutcome> {
         let driver = &self.driver;
         // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
         let resolved: Vec<Resolved<'_>> = blocks
@@ -704,9 +745,9 @@ impl TurnParts<'_> {
         results
     }
 
-    /// Run the calls of one group, and return their results in call order. The driver asks [`Hooks::before_tool`] for
+    /// Run the calls of one group, and return their outcomes in call order. The driver asks [`Hooks::before_tool`] for
     /// each call in call order first. Then the approved calls run together.
-    async fn call_group(&self, mut group: Vec<Resolved<'_>>, native_search: bool) -> Vec<ToolResult> {
+    async fn call_group(&self, mut group: Vec<Resolved<'_>>, native_search: bool) -> Vec<ToolOutcome> {
         // After this loop, a call without a result is a call that the hooks let run.
         for Resolved {
             block_index,
@@ -729,6 +770,7 @@ impl TurnParts<'_> {
                 self.observer.event(&TurnEvent::ToolFinished {
                     block_index: *block_index,
                     result,
+                    display: &[],
                 });
             }
         }
@@ -740,7 +782,7 @@ impl TurnParts<'_> {
                  result,
              }| async move {
                 match result {
-                    Some(result) => result,
+                    Some(result) => result.into(),
                     None => self.run_call(block_index, &call, native_search).await,
                 }
             },
@@ -748,42 +790,47 @@ impl TurnParts<'_> {
         join_all(calls).await
     }
 
-    /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its result. A cancel before the start runs
+    /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its outcome. A cancel before the start runs
     /// nothing.
-    async fn run_call(&self, block_index: usize, call: &ToolCall, native_search: bool) -> ToolResult {
+    async fn run_call(&self, block_index: usize, call: &ToolCall, native_search: bool) -> ToolOutcome {
         let driver = &self.driver;
         // A cancel during the hooks of the group comes before this call starts, so the call does not start.
-        let result = if self.cancellation_token.is_cancelled() {
-            not_executed(call, CANCELLED_REASON)
-        } else if driver.is_search(call) {
-            let result = search::search(driver.toolset, call, native_search);
-            self.after_tool(call, result).await
+        let outcome = if self.cancellation_token.is_cancelled() {
+            not_executed(call, CANCELLED_REASON).into()
         } else {
-            let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
-            let result = driver.toolset.call(call, &context).await;
-            self.after_tool(call, result).await
+            let outcome = if driver.is_search(call) {
+                search::search(driver.toolset, call, native_search).into()
+            } else {
+                let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
+                driver.toolset.call(call, &context).await
+            };
+            self.after_tool(call, outcome).await
         };
         self.observer.event(&TurnEvent::ToolFinished {
             block_index,
-            result: &result,
+            result: &outcome.result,
+            display: &outcome.display,
         });
-        result
+        outcome
     }
 
-    /// Ask [`Hooks::after_tool`] for a replacement of `result`. A cancel keeps `result`.
-    async fn after_tool(&self, call: &ToolCall, result: ToolResult) -> ToolResult {
+    /// Ask [`Hooks::after_tool`] for a replacement of `outcome`. A cancel keeps `outcome`.
+    async fn after_tool(&self, call: &ToolCall, outcome: ToolOutcome) -> ToolOutcome {
         match race(
-            self.driver.hooks.after_tool(call, &result),
+            self.driver.hooks.after_tool(call, &outcome),
             self.cancellation_token.cancelled(),
         )
         .await
         {
             // The result answers this call, so a replacement keeps its call id.
-            Raced::Done(Some(replacement)) => ToolResult {
-                call_id: result.call_id,
-                ..replacement
+            Raced::Done(Some(replacement)) => ToolOutcome {
+                result: ToolResult {
+                    call_id: outcome.result.call_id,
+                    ..replacement.result
+                },
+                display: replacement.display,
             },
-            Raced::Done(None) | Raced::Cancelled => result,
+            Raced::Done(None) | Raced::Cancelled => outcome,
         }
     }
 }

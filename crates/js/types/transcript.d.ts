@@ -13,6 +13,7 @@ declare module "yuke:transcript" {
   import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
   import type {
     Block,
+    DisplayBlock,
     EventNumber,
     Input,
     InputId,
@@ -23,6 +24,7 @@ declare module "yuke:transcript" {
     SessionSettings,
     SessionState,
     StoredEvent,
+    ToolHints,
     ToolResult,
     TurnEnd,
   } from "yuke:protocol";
@@ -51,6 +53,11 @@ declare module "yuke:transcript" {
    *   runs since before the snapshot shows as `waiting`.
    * - `running`: the call runs. `output` grows.
    * - `done`: `result` holds the result. The saved result replaces the live result. It also clears `output`.
+   *
+   * `hints` tell how to show the call. A streamed call has the default hints, and the saved answer gives the hints of
+   * its tool before the call starts. `folder` is the folder where the call ran, the start of a relative path of the
+   * call. `display` is what to show in place of the result text, and it is empty for a result without one. The model
+   * sees neither.
    */
   export type ToolEntry = Frozen<{
     kind: "tool";
@@ -58,8 +65,11 @@ declare module "yuke:transcript" {
     name: string;
     arguments: string;
     status: "streaming" | "waiting" | "running" | "done";
+    hints: ToolHints;
+    folder: string | undefined;
     output: string;
     result: ToolResult | undefined;
+    display: DisplayBlock[];
   }>;
 
   /** The model context was replaced here, for example by a compaction. The entries before it stay. */

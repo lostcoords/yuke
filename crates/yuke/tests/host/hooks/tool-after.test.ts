@@ -1,7 +1,7 @@
 // The `tool.after` hook: its chain, its answers, its media, and its failures.
 
 import { writeFile, writeTextFile } from "yuke:fs";
-import type { PluginSession } from "yuke:plugins";
+import type { PluginSession, ToolAfterAnswer } from "yuke:plugins";
 import { createHost, equal, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
 
 const call = { callId: "c1", name: "read", arguments: { path: "notes.md" } };
@@ -380,3 +380,29 @@ test("a removed handler and the handler of a failed session do not run", async (
 
   equal([result.text, ran], [original.text, []]);
 });
+
+const diff = { kind: "diff", path: "notes.md", patch: "@@ -1 +1 @@\n-secret: hunter2\n+secret: hunter3\n" } as const;
+
+// The display is what a chat shows in place of the text, so a redaction that keeps the display would still show it.
+for (const [name, answer, expected] of [
+  ["leaves out display, so the display stays", { text: "secret: ***" }, [diff]],
+  ["answers [], so the display goes", { text: "secret: ***", display: [] }, []],
+  [
+    "answers a list, so the list replaces the display",
+    { text: "secret: ***", display: [{ kind: "markdown", text: "secret: ***" }] },
+    [{ kind: "markdown", text: "secret: ***" }],
+  ],
+  ["fails on a display that is no list, so the display goes", { display: "x" }, []],
+] as const) {
+  test(`a handler that ${name}`, async () => {
+    const redact: PluginSession = (s) => {
+      s.hook("tool.after", () => answer as ToolAfterAnswer);
+    };
+    await using host = await createHost({ plugins: [{ name: "redact", session: redact }], answer: () => undefined });
+    const session = await host.openSession();
+
+    const result = await session.run("tool.after", { call, result: { ...original, display: [diff] } });
+
+    equal(result.display, expected);
+  });
+}

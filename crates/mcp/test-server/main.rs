@@ -90,9 +90,13 @@ fn tools() -> Value {
     let object = json!({ "type": "object", "properties": { "text": { "type": "string" } } });
     let tool =
         |name: &str, description: &str| json!({ "name": name, "description": description, "inputSchema": object });
+    let mut echo = tool("echo", "Echo the text.");
+    echo["title"] = json!("Echo");
+    let mut picture = tool("picture", "Draw a picture.");
+    picture["annotations"] = json!({ "title": "Picture" });
     json!([
-        tool("echo", "Echo the text."),
-        tool("picture", "Draw a picture."),
+        echo,
+        picture,
         tool("huge", "Draw a huge picture."),
         tool("fail", "Fail."),
         tool("structured", "Answer a structure."),

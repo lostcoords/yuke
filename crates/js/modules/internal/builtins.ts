@@ -38,6 +38,7 @@ defineTool({
     required: ["path"],
   },
   concurrency: "parallel",
+  hints: { subject: { argument: "path", kind: "file" }, preview: "none" },
   async execute(args, context) {
     const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
     if ("image" in read) return { text: "The tool read the image.", media: [read.image] };
@@ -62,6 +63,7 @@ defineTool({
     required: ["path", "content"],
   },
   concurrency: "serial",
+  hints: { subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
     const options = { baseDir: context.folder, signal: context.signal };
     // The tool makes the missing parent folders, so the model can write a new file in a new folder.
@@ -86,6 +88,7 @@ defineTool({
     required: ["path", "old_string", "new_string"],
   },
   concurrency: "serial",
+  hints: { subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
     const { path, old_string: oldString, new_string: newString, replace_all: replaceAll = false } = args;
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
@@ -100,9 +103,101 @@ defineTool({
       throw new Error("old_string matches more than one place. Add context to old_string, or set replace_all to true.");
     }
     await writeTextFile(path, parts.join(newString), options);
-    return count === 1 ? "The tool replaced 1 match." : `The tool replaced ${count} matches.`;
+    return {
+      text: count === 1 ? "The tool replaced 1 match." : `The tool replaced ${count} matches.`,
+      display: [{ kind: "diff", path, patch: patchOf(parts, oldString, newString) }],
+    };
   },
 });
+
+/** The lines of context around each change of a patch. */
+const CONTEXT = 3;
+
+/**
+ * The unified hunks of the replacement of each `oldString` between `parts` by `newString`. A match changes the lines from
+ * its start to the line after its end. Lines that stay equal at the edges of a change show as context, and the hunks of
+ * near changes merge.
+ */
+function patchOf(parts: readonly string[], oldString: string, newString: string): string {
+  const before = parts.join(oldString);
+  const after = parts.join(newString);
+  const oldLines = linesOf(before);
+  const newLines = linesOf(after);
+  /** The index of the line that holds `offset` of `text`, or of the line after the text at its end. */
+  const lineAt = (text: string, offset: number): number => text.slice(0, offset).split("\n").length - 1;
+  // Each change holds the old lines `first..last` and the new lines `start..end`. An empty range has `last < first`.
+  const changes: { first: number; last: number; start: number; end: number }[] = [];
+  let offset = 0;
+  for (const [index, part] of parts.slice(0, -1).entries()) {
+    offset += part.length;
+    const shifted = offset + index * (newString.length - oldString.length);
+    const change = {
+      first: lineAt(before, offset),
+      last: Math.min(lineAt(before, offset + oldString.length), oldLines.length - 1),
+      start: lineAt(after, shifted),
+      end: Math.min(lineAt(after, shifted + newString.length), newLines.length - 1),
+    };
+    offset += oldString.length;
+    const previous = changes.at(-1);
+    // Two matches on one line make one change of that line.
+    if (previous !== undefined && change.first <= previous.last) {
+      previous.last = Math.max(previous.last, change.last);
+      previous.end = Math.max(previous.end, change.end);
+    } else changes.push(change);
+  }
+  for (const change of changes) {
+    while (
+      change.first <= change.last &&
+      change.start <= change.end &&
+      oldLines[change.first] === newLines[change.start]
+    ) {
+      change.first += 1;
+      change.start += 1;
+    }
+    while (
+      change.last >= change.first &&
+      change.end >= change.start &&
+      oldLines[change.last] === newLines[change.end]
+    ) {
+      change.last -= 1;
+      change.end -= 1;
+    }
+  }
+  const hunks: string[] = [];
+  let index = 0;
+  while (index < changes.length) {
+    const group = changes.slice(index, index + 1);
+    index += 1;
+    while (index < changes.length && (changes[index]?.first ?? 0) - (group.at(-1)?.last ?? 0) <= 2 * CONTEXT + 1) {
+      group.push(changes[index] as (typeof changes)[number]);
+      index += 1;
+    }
+    const head = group[0] as (typeof changes)[number];
+    const first = Math.max(0, head.first - CONTEXT);
+    const last = Math.min(oldLines.length - 1, (group.at(-1)?.last ?? 0) + CONTEXT);
+    const rows: string[] = [];
+    let line = first;
+    let added = 0;
+    for (const change of group) {
+      for (; line < change.first; line += 1, added += 1) rows.push(` ${oldLines[line]}`);
+      for (; line <= change.last; line += 1) rows.push(`-${oldLines[line]}`);
+      for (let row = change.start; row <= change.end; row += 1, added += 1) rows.push(`+${newLines[row]}`);
+    }
+    for (; line <= last; line += 1, added += 1) rows.push(` ${oldLines[line]}`);
+    hunks.push(
+      `@@ -${first + 1},${last - first + 1} +${first + head.start - head.first + 1},${added} @@\n${rows.join("\n")}\n`,
+    );
+  }
+  return hunks.join("");
+}
+
+/** The lines of `text`. A line break at the end starts no line, and an empty text has no line. */
+function linesOf(text: string): string[] {
+  if (text === "") return [];
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
 
 defineTool({
   name: "exec",
@@ -125,6 +220,7 @@ defineTool({
     required: ["command"],
   },
   concurrency: "serial",
+  hints: { subject: { argument: "command", kind: "text" }, preview: "tail" },
   async execute(args, context) {
     const command = args.command;
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
@@ -178,6 +274,7 @@ defineTool({
     required: ["id"],
   },
   concurrency: "serial",
+  hints: { subject: { argument: "id", kind: "text" } },
   async execute(args, context) {
     const id = args.id;
     const call = callOf(context);

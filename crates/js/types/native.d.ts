@@ -4,6 +4,7 @@ declare module "yuke:internal/native" {
   import type { NoticeLevel } from "yuke:plugins";
   import type {
     Block,
+    DisplayBlock,
     EventNumber,
     ExtensionEventParams,
     InputId,
@@ -21,6 +22,7 @@ declare module "yuke:internal/native" {
     SessionSnapshot,
     SessionUpdate,
     StoredEvent,
+    ToolHints,
   } from "yuke:protocol";
   import type { CallOutcome, ModelRequest } from "yuke:test";
   import type { ToolMedia } from "yuke:tools";
@@ -43,6 +45,7 @@ declare module "yuke:internal/native" {
     readonly text: string;
     readonly isError: boolean;
     readonly media: readonly ToolMedia[];
+    readonly display: readonly DisplayBlock[];
   }
 
   /** A started job: its id and its log file. */
@@ -101,6 +104,7 @@ declare module "yuke:internal/native" {
       readonly parameters: string;
       readonly concurrency: "serial" | "parallel";
       readonly deferLoading: boolean;
+      readonly hints: ToolHints;
       readonly open: number | undefined;
     },
     start: (request: CallRequest) => Operation<Answer>,

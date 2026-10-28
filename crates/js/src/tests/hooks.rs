@@ -8,7 +8,7 @@ use yuke_ai::{
     Blob, Block, FinishReason, Media, Origin, Reasoning, ReasoningReplay, ReplayKind, Settings, ToolCall,
     ToolDefinition, ToolResult,
 };
-use yuke_engine::{CancellationToken, Hooks, RoundStart, ToolDecision};
+use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundStart, ToolDecision, ToolOutcome};
 
 use super::{evaluate, opened, wait_until, windowed};
 use crate::ScriptSession;
@@ -37,6 +37,17 @@ fn call() -> ToolCall {
 }
 
 /// The result of [`call`]: a text, a png of 3 bytes, and one loaded tool.
+/// The outcome of `result()` with a diff in its display.
+fn outcome() -> ToolOutcome {
+    ToolOutcome {
+        result: result(),
+        display: vec![DisplayBlock::Diff {
+            path: "notes.md".to_owned(),
+            patch: "@@ -1 +1 @@\n-secret: hunter2\n+secret: hunter3\n".to_owned(),
+        }],
+    }
+}
+
 fn result() -> ToolResult {
     ToolResult {
         call_id: "c1".to_owned(),
@@ -77,7 +88,10 @@ async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) 
             "tool.before" => format!("{:?}", hooks.before_tool(&call()).await),
             "tool.after" => format!(
                 "{:?}",
-                hooks.after_tool(&call(), &result()).await.map(|answer| answer.content)
+                hooks
+                    .after_tool(&call(), &outcome())
+                    .await
+                    .map(|answer| answer.result.content)
             ),
             "round.before" => match hooks.before_round(&round).await {
                 Ok(plan) if plan.replace.is_none() && plan.model.is_none() && plan.settings.is_none() => {
@@ -235,7 +249,7 @@ async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_th
         .unwrap();
 
     let before = hooks.before_tool(&call()).await;
-    let after = hooks.after_tool(&call(), &result()).await;
+    let after = hooks.after_tool(&call(), &outcome()).await;
 
     assert_eq!(
         before,
@@ -247,15 +261,16 @@ async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_th
         media: Vec::new(),
         ..result()
     };
-    assert_eq!(after, Some(failed));
+    // A failed hook also clears the display, so the display cannot show what the hook was to remove.
+    assert_eq!(after, Some(failed.into()));
 }
 
-// An answer replaces only its own fields, so the media and the loaded tools of the result stay. The test host of
-// `yuke:test` shows no loaded tools.
+// An answer replaces only its own fields, so the result keeps its media, its display, and its loaded tools. The test
+// host of `yuke:test` shows no loaded tools.
 #[tokio::test]
-async fn an_answer_keeps_the_media_and_the_loaded_tools_of_the_result() {
+async fn an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_result() {
     let (_runtime, session, _reports) = opened(
-        "an_answer_keeps_the_media_and_the_loaded_tools_of_the_result",
+        "an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_result",
         &[(
             "redact",
             "export function session(s) {
@@ -267,13 +282,16 @@ async fn an_answer_keeps_the_media_and_the_loaded_tools_of_the_result() {
 
     let changed = session
         .hooks(CancellationToken::new())
-        .after_tool(&call(), &result())
+        .after_tool(&call(), &outcome())
         .await;
 
-    let expected = ToolResult {
-        content: "secret: ***".to_owned(),
-        is_error: true,
-        ..result()
+    let expected = ToolOutcome {
+        result: ToolResult {
+            content: "secret: ***".to_owned(),
+            is_error: true,
+            ..result()
+        },
+        display: outcome().display,
     };
     assert_eq!(changed, Some(expected));
 }

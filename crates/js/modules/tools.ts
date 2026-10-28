@@ -1,3 +1,7 @@
+import type { DisplayBlock, Preview } from "yuke:protocol";
+
+export type { DisplayBlock, Preview };
+
 /**
  * A JSON schema of a value, in the subset that yuke checks:
  * - Each type takes only the keywords of its schema below. Another keyword fails the definition of the tool.
@@ -104,7 +108,7 @@ export type ToolMedia = {
     }
 );
 
-/** The result of a call: the text for the model, with media or without. */
+/** The result of a call: the text for the model, with media or without, and a display for the user. */
 export type ToolResult =
   | string
   | {
@@ -113,7 +117,33 @@ export type ToolResult =
       readonly media?: readonly ToolMedia[] | undefined;
       /** `true` makes the result an error. The model still gets the text and the media. The default is `false`. */
       readonly isError?: boolean | undefined;
+      /**
+       * What a chat shows in place of the text, for example the diff of an edit. The model never sees it. A relative
+       * path starts in the folder of the call.
+       */
+      readonly display?: readonly DisplayBlock[] | undefined;
     };
+
+/** The names of the string arguments of `S`. */
+type StringArgument<S extends ObjectSchema> = string extends keyof S["properties"]
+  ? string
+  : {
+      [K in keyof S["properties"]]: S["properties"][K] extends { readonly type: "string" } ? K : never;
+    }[keyof S["properties"]] &
+      string;
+
+/** How a chat shows the calls of a tool. The model never sees the hints. */
+export interface ToolHints<S extends ObjectSchema = ObjectSchema> {
+  /** The name of the summary line in place of the tool name. */
+  readonly title?: string | undefined;
+  /**
+   * The string argument that the summary line shows, and what it names. A chat can open a `file`, relative to the
+   * folder of the call, or a `uri`.
+   */
+  readonly subject?: { readonly argument: StringArgument<S>; readonly kind: "text" | "file" | "uri" } | undefined;
+  /** The part of the output that a folded call shows. The default is `head`. An error always shows its first rows. */
+  readonly preview?: Preview | undefined;
+}
 
 /** What a call gives its tool besides the arguments. */
 export interface ToolContext {
@@ -160,5 +190,7 @@ export interface Tool<S extends ObjectSchema = ObjectSchema> {
    * the model rarely needs. The default is `false`.
    */
   readonly deferLoading?: boolean | undefined;
+  /** How a chat shows the calls of the tool. */
+  readonly hints?: ToolHints<S> | undefined;
   readonly execute: (this: void, args: Infer<S>, context: ToolContext) => ToolResult | Promise<ToolResult>;
 }

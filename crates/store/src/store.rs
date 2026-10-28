@@ -723,6 +723,9 @@ fn commit_params(
         end_kind,
         end_finish_reason,
         end_message,
+        display: (!commit.display.is_empty())
+            .then(|| serde_json::to_string(&commit.display))
+            .transpose()?,
     })
 }
 

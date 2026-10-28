@@ -2,6 +2,7 @@
 
 import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
 import type {
+  DisplayBlock,
   Input,
   InputId,
   InteractionId,
@@ -10,10 +11,20 @@ import type {
   SessionUpdate,
   StoredEvent,
   ToolCall,
+  ToolHints,
 } from "yuke:protocol";
 import type { Entry, Question, Status } from "yuke:transcript";
 
 type Saved = Frozen<StoredEvent>;
+
+/** The hints of a call whose tool gave none, or before the host handles it. */
+const NO_HINTS: Frozen<ToolHints> = Object.freeze({ title: null, subject: null, preview: "head" });
+
+/** The display of a result without one. One object, so an entry keeps its object across a re-fold. */
+const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
+
+/** The fields of a tool entry before the host handles the call. */
+const UNHANDLED = { hints: NO_HINTS, folder: undefined, output: "", result: undefined, display: NO_DISPLAY } as const;
 
 /** The tool that `call` runs: the bridge call `tool_call` runs the deferred tool that its arguments name. */
 function called(call: Frozen<ToolCall>): { name: string; arguments: string } {
@@ -158,7 +169,8 @@ export class Transcript {
         this.#dropDraft();
         for (const key of this.#calls) {
           const entry = this.#at(key);
-          if (entry?.kind === "tool") this.#set({ ...entry, status: "waiting", output: "", result: undefined });
+          if (entry?.kind === "tool")
+            this.#set({ ...entry, status: "waiting", output: "", result: undefined, display: NO_DISPLAY });
         }
         break;
       case "draft_started":
@@ -179,15 +191,7 @@ export class Transcript {
           draft.keys.set(model.block, key);
           if (model.blockKind === "reasoning") this.#put({ kind: "reasoning", key, text: "", draft: true });
           else if (model.blockKind === "tool_call") {
-            this.#put({
-              kind: "tool",
-              key,
-              name: "",
-              arguments: "",
-              status: "streaming",
-              output: "",
-              result: undefined,
-            });
+            this.#put({ kind: "tool", key, name: "", arguments: "", status: "streaming", ...UNHANDLED });
           } else this.#put({ kind: "text", key, text: "", refusal: model.blockKind === "refusal", draft: true });
           break;
         }
@@ -211,7 +215,10 @@ export class Transcript {
         if (entry?.kind !== "tool" || entry.status === "done") break;
         if (update.sessionUpdate === "tool_started") this.#set({ ...entry, status: "running" });
         else if (update.sessionUpdate === "tool_output") this.#set({ ...entry, output: entry.output + update.text });
-        else this.#set({ ...entry, status: "done", result: update.result });
+        else {
+          const display = update.display.length === 0 ? NO_DISPLAY : update.display;
+          this.#set({ ...entry, status: "done", result: update.result, display });
+        }
         break;
       }
     }
@@ -249,11 +256,22 @@ export class Transcript {
         if (!answer) this.#calls = [];
         answer = true;
         this.#calls.push(key);
-        this.#put({ kind: "tool", key, ...called(block.tool_call), status: "waiting", output: "", result: undefined });
+        const shown = commit.display?.calls.find((call) => call.blockIndex === index);
+        this.#put({
+          kind: "tool",
+          key,
+          ...called(block.tool_call),
+          status: "waiting",
+          ...UNHANDLED,
+          ...(shown === undefined ? {} : { hints: shown.hints, folder: shown.folder ?? undefined }),
+        });
       } else if ("tool_result" in block) {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.
         const entry = this.#at(this.#calls.shift());
-        if (entry?.kind === "tool") this.#set({ ...entry, status: "done", output: "", result: block.tool_result });
+        const display = commit.display?.results.find((result) => result.blockIndex === index)?.blocks ?? NO_DISPLAY;
+        if (entry?.kind === "tool") {
+          this.#set({ ...entry, status: "done", output: "", result: block.tool_result, display });
+        }
       }
     }
     if (commit.end !== null) this.#put({ kind: "end", key: `${event.seq}:end`, end: commit.end });
@@ -282,7 +300,13 @@ export class Transcript {
   #kept(entry: Entry): Entry {
     const previous = this.#previous?.get(entry.key);
     if (previous === undefined || entry.kind !== "tool" || entry.status === "waiting") return previous ?? entry;
-    return previous.kind === "tool" && previous.result === entry.result && previous.output === "" ? previous : entry;
+    const same =
+      previous.kind === "tool" &&
+      previous.result === entry.result &&
+      previous.display === entry.display &&
+      previous.hints === entry.hints &&
+      previous.output === "";
+    return same ? previous : entry;
   }
 
   #dropDraft(): void {

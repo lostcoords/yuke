@@ -5,6 +5,7 @@ use std::fmt;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use yuke_ai::{Media, ToolCall, ToolResult};
 
@@ -28,6 +29,11 @@ pub trait Tool: Send + Sync {
     /// depend on each other, for example a tool that only reads.
     fn concurrency(&self) -> Concurrency {
         Concurrency::Serial
+    }
+
+    /// How a frontend shows the calls of this tool. The model never sees the hints.
+    fn hints(&self) -> ToolHints {
+        ToolHints::default()
     }
 
     /// Run one call with its JSON `arguments`. The engine checks that the arguments are valid JSON first. `Err`
@@ -100,7 +106,8 @@ impl<'a> ToolContext<'a> {
     }
 }
 
-/// The content of a call. The model sees its text and its media. An `Err` of [`Tool::call`] is a failure with text only.
+/// The content of a call. The model sees its text and its media, and the user sees its display. An `Err` of
+/// [`Tool::call`] is a failure with text only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ToolContent {
     /// The result text.
@@ -109,6 +116,96 @@ pub struct ToolContent {
     pub media: Vec<Media>,
     /// The call failed. The model still sees the text and the media.
     pub is_error: bool,
+    /// What a frontend shows in place of the text. The model never sees it.
+    pub display: Vec<DisplayBlock>,
+}
+
+/// How a frontend shows the calls of a tool. The model never sees the hints.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ToolHints {
+    /// The name of the summary line in place of the tool name.
+    pub title: Option<String>,
+    /// The argument of the call that the summary line shows.
+    pub subject: Option<Subject>,
+    /// The part of the output that a folded call shows.
+    pub preview: Preview,
+}
+
+/// The argument of a call that its summary line shows.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct Subject {
+    /// The name of a top-level string argument.
+    pub argument: String,
+    /// What the value of the argument names.
+    pub kind: SubjectKind,
+}
+
+/// What the subject argument names. A frontend can open a file or a URI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum SubjectKind {
+    /// Plain text, such as a command.
+    Text,
+    /// A file path. A relative path starts in the folder of the call.
+    File,
+    /// A URI.
+    Uri,
+}
+
+/// The part of the output that a folded call shows. An error always shows its first rows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+pub enum Preview {
+    /// The first rows.
+    #[default]
+    Head,
+    /// The last rows.
+    Tail,
+    /// No rows.
+    None,
+}
+
+/// One block that a frontend shows for a result. The model never sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DisplayBlock {
+    /// Markdown text. A relative file link starts in the folder of the call, and `#L40` or `#L40-L52` names lines.
+    Markdown {
+        /// The Markdown source.
+        text: String,
+    },
+    /// The change of one file.
+    Diff {
+        /// The path of the file. A relative path starts in the folder of the call.
+        path: String,
+        /// Unified hunks, each with its `@@` header.
+        patch: String,
+    },
+}
+
+/// The result of a call for the model, and its display for the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolOutcome {
+    /// What the model receives.
+    pub result: ToolResult,
+    /// What a frontend shows in place of the result text.
+    pub display: Vec<DisplayBlock>,
+}
+
+impl From<ToolResult> for ToolOutcome {
+    fn from(result: ToolResult) -> Self {
+        ToolOutcome {
+            result,
+            display: Vec::new(),
+        }
+    }
 }
 
 impl From<String> for ToolContent {
@@ -197,6 +294,10 @@ pub struct Toolset {
     /// One handler for each definition, at the same index. The definitions stay one slice, so a request without a
     /// deferred tool borrows them without a copy.
     handlers: Vec<Box<dyn Tool>>,
+    /// The hints of each handler, at the same index.
+    hints: Vec<ToolHints>,
+    /// The folder where the tools run, for a frontend that opens a relative path of a call. The engine does not read it.
+    folder: Option<String>,
 }
 
 impl fmt::Debug for Toolset {
@@ -213,7 +314,28 @@ impl Toolset {
         Toolset {
             definitions: Vec::new(),
             handlers: Vec::new(),
+            hints: Vec::new(),
+            folder: None,
         }
+    }
+
+    /// Set the folder where the tools run. Each call carries it to the frontend.
+    pub fn set_folder(&mut self, folder: impl Into<String>) {
+        self.folder = Some(folder.into());
+    }
+
+    /// The folder where the tools run, if the caller set one.
+    pub(crate) fn folder(&self) -> Option<&str> {
+        self.folder.as_deref()
+    }
+
+    /// The hints of the tool `name`, or the default hints for a name that no tool has.
+    pub(crate) fn hints_of(&self, name: &str) -> ToolHints {
+        self.definitions
+            .iter()
+            .position(|definition| definition.name == name)
+            .map(|index| self.hints[index].clone())
+            .unwrap_or_default()
     }
 
     /// Offer `definition` to the model. A call with that name runs `tool`.
@@ -228,6 +350,7 @@ impl Toolset {
             return Err(ToolNameError::Duplicate(definition.name));
         }
         self.definitions.push(definition);
+        self.hints.push(tool.hints());
         self.handlers.push(Box::new(tool));
         Ok(())
     }
@@ -256,16 +379,22 @@ impl Toolset {
         }
     }
 
-    /// Run `call`, and return its result. The tool sees `context`.
-    pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> ToolResult {
+    /// Run `call`, and return its outcome. The tool sees `context`.
+    pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> ToolOutcome {
         let Some(index) = self.definitions.iter().position(|tool| tool.name == call.name) else {
-            return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name));
+            return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name)).into();
         };
 
         match self.handlers[index].call(&call.arguments, context).await {
-            Ok(content) if content.is_error => ToolResult::error(&call.call_id, content.text).with_media(content.media),
-            Ok(content) => ToolResult::success(&call.call_id, content.text).with_media(content.media),
-            Err(content) => ToolResult::error(&call.call_id, content),
+            Ok(content) => ToolOutcome {
+                result: ToolResult {
+                    is_error: content.is_error,
+                    ..ToolResult::success(&call.call_id, content.text)
+                }
+                .with_media(content.media),
+                display: content.display,
+            },
+            Err(content) => ToolResult::error(&call.call_id, content).into(),
         }
     }
 }

@@ -265,9 +265,9 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolStarted { execution, call } => Some(("start", execution, call.call_id)),
+            LiveUpdate::ToolStarted { execution, call, .. } => Some(("start", execution, call.call_id)),
             LiveUpdate::ToolOutput { execution, text } => Some(("output", execution, text)),
-            LiveUpdate::ToolFinished { execution, result } => Some(("finish", execution, result.call_id)),
+            LiveUpdate::ToolFinished { execution, result, .. } => Some(("finish", execution, result.call_id)),
             _ => None,
         })
         .collect();
@@ -626,7 +626,7 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolFinished { execution, result } => {
+            LiveUpdate::ToolFinished { execution, result, .. } => {
                 Some((execution.event_number.0, execution.block_index, result.content))
             }
             _ => None,
@@ -964,7 +964,7 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         let finished: Vec<_> = live
             .iter()
             .filter_map(|event| match event {
-                LiveUpdate::ToolFinished { execution, result } => {
+                LiveUpdate::ToolFinished { execution, result, .. } => {
                     Some((execution.event_number.0, execution.block_index, result.content.as_str()))
                 }
                 _ => None,
@@ -1028,7 +1028,7 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
                     .is_pending()
             );
             assert!(capture.live().iter().any(|event| matches!(event,
-                LiveUpdate::ToolFinished { execution, result } if execution.event_number == EventNumber(3) && result.content == "{}")));
+                LiveUpdate::ToolFinished { execution, result, .. } if execution.event_number == EventNumber(3) && result.content == "{}")));
             assert!(!capture.live().contains(&LiveUpdate::TurnUnconfirmed));
         }
         assert_eq!(capture.live().last(), Some(&LiveUpdate::TurnUnconfirmed));

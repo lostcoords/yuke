@@ -5,7 +5,7 @@ import { hostOperation, hostSignal, signalOf, underSignal, underStop } from "yuk
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
 import { emit, notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
 import { type Options, sessionExports } from "yuke:internal/plugins";
-import { fieldsOf, frozen, jsonCopy, mediaOf } from "yuke:internal/values";
+import { displayOf, fieldsOf, frozen, jsonCopy, mediaOf } from "yuke:internal/values";
 import type {
   AskOptions,
   Cleanup,
@@ -26,7 +26,7 @@ import type {
   ToolCallResult,
 } from "yuke:plugins";
 import type { Block, ModelReference } from "yuke:protocol";
-import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The form of a prompt section key. */
 const sectionKey = /^[a-z][a-z0-9_-]*$/;
@@ -465,6 +465,7 @@ interface ChangedResult {
   readonly text: string;
   readonly isError: boolean;
   readonly media: readonly ChangedMedia[];
+  readonly display: readonly DisplayBlock[];
 }
 
 /** What `startToolAfter` gets: the call as for `startToolBefore`, and its result with each media item as its facts. */
@@ -475,6 +476,7 @@ interface ToolAfterRequest {
     readonly text: string;
     readonly isError: boolean;
     readonly media: readonly { readonly mimeType: string; readonly size: number }[];
+    readonly display: readonly DisplayBlock[];
   };
 }
 
@@ -495,6 +497,7 @@ export function startToolAfter(request: ToolAfterRequest): Operation<ChangedResu
       text: given.text,
       isError: given.isError,
       media: Object.freeze([...originals]),
+      display: frozen(given.display),
     });
     let answered = false;
     await runHandlers(
@@ -515,6 +518,7 @@ export function startToolAfter(request: ToolAfterRequest): Operation<ChangedResu
         const index = originals.indexOf(item as ResultMedia);
         return index === -1 ? (item as ToolMedia) : index;
       }),
+      display: result.display,
     };
   }, TURN_CANCELLED);
 }
@@ -575,7 +579,7 @@ function blockOf(answer: unknown): string {
 }
 
 /** The fields of a `tool.after` answer. */
-const AFTER_FIELDS = ["text", "isError", "media"];
+const AFTER_FIELDS = ["text", "isError", "media", "display"];
 
 /** `result` after the `tool.after` answer `answer`. An item of `originals` stays as it is. Another shape throws. */
 function applied(result: ToolCallResult, answer: unknown, originals: readonly ResultMedia[]): ToolCallResult {
@@ -605,6 +609,8 @@ function applied(result: ToolCallResult, answer: unknown, originals: readonly Re
     text: (fields.text as string | undefined) ?? result.text,
     isError: (fields.isError as boolean | undefined) ?? result.isError,
     media,
+    display:
+      fields.display === undefined ? result.display : Object.freeze(displayOf(fields.display, "the answer display")),
   });
 }
 

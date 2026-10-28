@@ -306,34 +306,37 @@ struct Watched {
 impl Observer for Watcher {
     fn notify(&self, notification: ServerNotification) {
         match notification {
-            ServerNotification::SessionUpdate(SessionUpdateParams { session_id, update }) => match update {
-                SessionUpdate::Saved(StoredEvent {
-                    event: SessionEvent::Commit { commit, .. },
-                    ..
-                }) => self.change(session_id, |watched| {
-                    // A replacement starts the context again, and the answer comes after it.
-                    if commit.replaced.is_some() {
-                        watched.blocks.clear();
+            ServerNotification::SessionUpdate(params) => {
+                let SessionUpdateParams { session_id, update } = *params;
+                match update {
+                    SessionUpdate::Saved(StoredEvent {
+                        event: SessionEvent::Commit { commit, .. },
+                        ..
+                    }) => self.change(session_id, |watched| {
+                        // A replacement starts the context again, and the answer comes after it.
+                        if commit.replaced.is_some() {
+                            watched.blocks.clear();
+                        }
+                        watched.blocks.extend(commit.blocks.into_owned());
+                        if commit.end.is_some() {
+                            watched.end = commit.end;
+                        }
+                    }),
+                    SessionUpdate::Live(LiveUpdate::State {
+                        state: SessionState::Running,
+                    }) => self.change(session_id, |watched| watched.ran = true),
+                    SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => {
+                        self.change(session_id, |watched| watched.removed = true);
                     }
-                    watched.blocks.extend(commit.blocks.into_owned());
-                    if commit.end.is_some() {
-                        watched.end = commit.end;
+                    SessionUpdate::Live(LiveUpdate::State {
+                        state: SessionState::Idle,
+                    }) => {
+                        self.change(session_id, |watched| watched.ended = true);
+                        self.ended.notify_one();
                     }
-                }),
-                SessionUpdate::Live(LiveUpdate::State {
-                    state: SessionState::Running,
-                }) => self.change(session_id, |watched| watched.ran = true),
-                SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => {
-                    self.change(session_id, |watched| watched.removed = true);
+                    _ => {}
                 }
-                SessionUpdate::Live(LiveUpdate::State {
-                    state: SessionState::Idle,
-                }) => {
-                    self.change(session_id, |watched| watched.ended = true);
-                    self.ended.notify_one();
-                }
-                _ => {}
-            },
+            }
             ServerNotification::Notice(NoticeParams {
                 session_id: Some(session_id),
                 level: NoticeLevel::Error,

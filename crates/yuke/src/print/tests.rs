@@ -816,12 +816,12 @@ fn the_end_of_another_session_does_not_end_the_run() {
     let watcher = Watcher::default();
     let (id, other) = (SessionId::generate(), SessionId::generate());
     let idle = |session_id| {
-        ServerNotification::SessionUpdate(SessionUpdateParams {
+        ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
             session_id,
             update: SessionUpdate::Live(LiveUpdate::State {
                 state: SessionState::Idle,
             }),
-        })
+        }))
     };
 
     watcher.notify(idle(other));

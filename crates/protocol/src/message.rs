@@ -205,7 +205,7 @@ pub enum ClientNotification {
 pub enum ServerNotification {
     /// A saved event or a live update of a session.
     #[serde(rename = "session/update")]
-    SessionUpdate(SessionUpdateParams),
+    SessionUpdate(Box<SessionUpdateParams>),
     /// A message for the user. It is not part of session history.
     #[serde(rename = "notice")]
     Notice(NoticeParams),

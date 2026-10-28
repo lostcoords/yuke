@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use yuke_ai::{Block, FinishReason, ToolCall, ToolResult};
 use yuke_engine::{
     CancellationToken, Commit, Driver, Hooks, Inbox, Journal, Observer, RoundDecision, RoundError, RoundPlan,
-    RoundStart, Timer, Tool, ToolContent, ToolContext, ToolDecision, TurnEnd, TurnEvent,
+    RoundStart, Timer, Tool, ToolContent, ToolContext, ToolDecision, ToolOutcome, TurnEnd, TurnEvent,
 };
 
 /// A tool that records the arguments of each call, and answers the call with "result N", counted from 1.
@@ -231,7 +231,7 @@ impl Hooks for Script {
         ToolDecision::Run
     }
 
-    async fn after_tool(&self, call: &ToolCall, _: &ToolResult) -> Option<ToolResult> {
+    async fn after_tool(&self, call: &ToolCall, _: &ToolOutcome) -> Option<ToolOutcome> {
         self.stop_at("after_tool").await;
         self.tools.lock().unwrap().push(format!("after {}", call.call_id));
         None

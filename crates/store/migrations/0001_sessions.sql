@@ -40,6 +40,7 @@ CREATE TABLE events (                      -- the commits and the settings of ea
     end_kind TEXT,                         -- completed | stopped | cancelled | failed; set on the end commit
     end_finish_reason TEXT,                -- FinishReason::as_str(), set only with end_kind = 'completed'
     end_message TEXT,                      -- the text of the error, set only with end_kind = 'failed'
+    display TEXT,                          -- JSON CommitDisplay of a commit: tool hints and result display, NULL if none
     created_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),
     UNIQUE (session_id, seq),
     CHECK ((end_kind IS 'completed') = (end_finish_reason IS NOT NULL)),

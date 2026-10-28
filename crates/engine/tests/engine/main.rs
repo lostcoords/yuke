@@ -7,6 +7,7 @@ mod before_round;
 mod commit;
 mod credentials;
 mod deferred;
+mod display;
 mod drive;
 mod hook_errors;
 mod parallel;

@@ -18,7 +18,9 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, counted, failed_reply, text_
 use yuke_ai::transport::Header;
 use yuke_ai::{Block, Media, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::NoWait;
-use yuke_engine::{Commit, Driver, Hooks, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text};
+use yuke_engine::{
+    Commit, CommitDisplay, Driver, Hooks, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text,
+};
 use yuke_protocol::{
     ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
 };
@@ -34,6 +36,7 @@ fn step(blocks: &[Block]) -> Commit<'_> {
         blocks: std::borrow::Cow::Borrowed(blocks),
         answer: None,
         end: None,
+        display: CommitDisplay::default(),
     }
 }
 

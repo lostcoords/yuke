@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::NoWait;
-use yuke_engine::{CancellationToken, Driver, MediaStore, Toolset};
+use yuke_engine::{CancellationToken, Driver, MediaStore, Tool, Toolset};
 use yuke_mcp::{ServerConfig, Servers};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 use yuke_testing::{model_of, target};
@@ -151,6 +151,9 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
             "mcp__test__exit"
         ]
     );
+    // A tool title, else an annotation title, is the title of the summary line.
+    let titles: Vec<_> = tools.iter().take(3).map(|(_, tool)| tool.hints().title).collect();
+    assert_eq!(titles, [Some("Echo".to_owned()), Some("Picture".to_owned()), None]);
     let (echo, _) = &tools[0];
     assert!(echo.defer_loading);
     assert_eq!(echo.description, "Echo the text.");

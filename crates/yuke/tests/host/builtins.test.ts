@@ -1,7 +1,7 @@
 // The built-in tools `read`, `write`, and `edit` of yuke, called in the folder of the test.
 
 import { readFile, readTextFile, writeFile, writeTextFile } from "yuke:fs";
-import { createHost, equal, folder, type TestSession, test } from "yuke:test";
+import { createHost, equal, folder, reply, type TestSession, test } from "yuke:test";
 
 /** The text of a call of `name` with `args` that succeeds. */
 async function text(session: TestSession, name: string, args: unknown): Promise<string> {
@@ -124,6 +124,69 @@ test("edit replaces one exact match", async () => {
   );
 });
 
+// A change keeps 3 lines of context, and the hunks of two changes merge when their contexts meet.
+for (const [name, content, edit, patch] of [
+  [
+    "one change",
+    "fn main() {\n    old();\n}\n",
+    { old_string: "old();", new_string: "new();" },
+    "@@ -1,3 +1,3 @@\n fn main() {\n-    old();\n+    new();\n }\n",
+  ],
+  [
+    "two far changes",
+    `a\n${Array.from({ length: 10 }, (_item, index) => `x${index + 1}\n`).join("")}a\n`,
+    { old_string: "a", new_string: "b", replace_all: true },
+    "@@ -1,4 +1,4 @@\n-a\n+b\n x1\n x2\n x3\n@@ -9,4 +9,4 @@\n x8\n x9\n x10\n-a\n+b\n",
+  ],
+  [
+    "two near changes",
+    "a\nx\na\n",
+    { old_string: "a", new_string: "b", replace_all: true },
+    "@@ -1,3 +1,3 @@\n-a\n+b\n x\n-a\n+b\n",
+  ],
+  [
+    "a removed line",
+    "one\ntwo\nthree\n",
+    { old_string: "two\n", new_string: "" },
+    "@@ -1,3 +1,2 @@\n one\n-two\n three\n",
+  ],
+  ["an added line", "one\ntwo\n", { old_string: "one", new_string: "one\nnew" }, "@@ -1,2 +1,3 @@\n one\n+new\n two\n"],
+  [
+    "two matches on one line",
+    "a, b, a\n",
+    { old_string: "a", new_string: "c", replace_all: true },
+    "@@ -1,1 +1,1 @@\n-a, b, a\n+c, b, c\n",
+  ],
+  [
+    "a last line without a line break",
+    "one\ntwo",
+    { old_string: "two", new_string: "" },
+    "@@ -1,2 +1,1 @@\n one\n-two\n",
+  ],
+  [
+    "a removed line break that joins two lines",
+    "one\ntwo\nthree",
+    { old_string: "two\n", new_string: "X" },
+    "@@ -1,3 +1,2 @@\n one\n-two\n-three\n+Xthree\n",
+  ],
+  [
+    "a changed line with its line break",
+    "one\ntwo\nthree\n",
+    { old_string: "two\n", new_string: "TWO\n" },
+    "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n",
+  ],
+] as const) {
+  test(`edit shows the diff of ${name}`, async () => {
+    await writeTextFile(`${folder()}/file.txt`, content);
+    const { host, session } = await opened();
+    await using _host = host;
+
+    const result = await session.call("edit", { path: "file.txt", ...edit });
+
+    equal(result.display, [{ kind: "diff", path: "file.txt", patch }]);
+  });
+}
+
 test("edit of two matches needs replace_all", async () => {
   await writeTextFile(`${folder()}/list.txt`, "a, b, a\n");
   const { host, session } = await opened();
@@ -171,4 +234,30 @@ test("edit of a file that is not UTF-8 fails and keeps its bytes", async () => {
 
   equal(refused, `the bytes are not valid UTF-8: ${folder()}/latin1.txt`);
   equal([...(await readFile(`${folder()}/latin1.txt`))], [...latin]);
+});
+
+// The hints of the built-in tools follow the same public path as a plugin tool.
+test("the built-in tools show their path or command as the subject, and read and exec pick their preview", async () => {
+  await writeTextFile(`${folder()}/a.txt`, "a\n");
+  await using host = await createHost({
+    plugins: [],
+    replies: [
+      reply.toolCalls([
+        { name: "read", args: { path: "a.txt" } },
+        { name: "exec", args: { command: "true" } },
+        { name: "write", args: { path: "b.txt", content: "b" } },
+      ]),
+      reply.text("done"),
+    ],
+  });
+  const session = await host.openSession();
+
+  await session.send("go");
+
+  const hints = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.hints] : []));
+  equal(hints, [
+    { title: null, subject: { argument: "path", kind: "file" }, preview: "none" },
+    { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" },
+    { title: null, subject: { argument: "path", kind: "file" }, preview: "head" },
+  ]);
 });

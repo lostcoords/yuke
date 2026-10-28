@@ -169,9 +169,14 @@ impl Observer for Updates<'_> {
                 execution: self.execution(*block_index),
                 text: (*text).to_owned(),
             }),
-            TurnEvent::ToolFinished { block_index, result } => self.live(LiveUpdate::ToolFinished {
+            TurnEvent::ToolFinished {
+                block_index,
+                result,
+                display,
+            } => self.live(LiveUpdate::ToolFinished {
                 execution: self.execution(*block_index),
                 result: (*result).clone(),
+                display: display.to_vec(),
             }),
             TurnEvent::RetryScheduled { after, error } => self.live(LiveUpdate::RetryScheduled {
                 after_ms: u64::try_from(after.as_millis()).unwrap_or(u64::MAX),

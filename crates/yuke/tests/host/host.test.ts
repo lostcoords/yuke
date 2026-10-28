@@ -24,7 +24,7 @@ test("call runs a tool and gives its live texts in order", async () => {
 
   const result = await session.call("echo", { text: "hi" });
 
-  equal(result, { text: "hi", isError: false, media: [], output: ["one", "two"] });
+  equal(result, { text: "hi", isError: false, media: [], display: [], output: ["one", "two"] });
 });
 
 test("the notices and the events of a plugin are in the records after the operation", async () => {

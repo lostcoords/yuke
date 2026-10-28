@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_engine::{Commit, CommitDisplay, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
     InputKind, InputSource, JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState,
@@ -515,6 +515,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
                 blocks: Cow::Borrowed(&blocks),
                 answer: None,
                 end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+                display: CommitDisplay::default(),
             }
             .into_owned(),
             consumed: vec![ConsumedInput {
@@ -542,10 +543,10 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
         } }),
         &Notification {
             jsonrpc: yuke_protocol::JsonRpc::V2,
-            message: ServerNotification::SessionUpdate(SessionUpdateParams {
+            message: ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
                 session_id: session(),
                 update: SessionUpdate::Saved(commit),
-            }),
+            })),
         },
     );
 

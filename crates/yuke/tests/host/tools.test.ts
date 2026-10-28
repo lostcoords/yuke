@@ -138,6 +138,26 @@ for (const [name, definition, expected] of [
     "parameters.type is not object",
   ],
   ["an execute that is no function", { ...tool("bad", () => "x"), execute: "x" }, "execute is not a function"],
+  [
+    "a subject that names no string argument",
+    { ...tool("bad", () => "x"), hints: { subject: { argument: "path", kind: "file" } } },
+    "hints.subject.argument names no string argument",
+  ],
+  [
+    "a subject of an unknown kind",
+    {
+      ...tool("bad", () => "x"),
+      parameters: { type: "object", properties: { path: { type: "string" } } },
+      hints: { subject: { argument: "path", kind: "folder" } },
+    },
+    "hints.subject.kind is not 'text', 'file', or 'uri'",
+  ],
+  [
+    "an unknown preview",
+    { ...tool("bad", () => "x"), hints: { preview: "all" } },
+    "hints.preview is not 'head', 'tail', or 'none'",
+  ],
+  ["an unknown hint", { ...tool("bad", () => "x"), hints: { icon: "x" } }, "hints has the unknown field 'icon'"],
   // The check reads the copy that the model gets, so a `toJSON` cannot hide a keyword from it.
   [
     "a keyword behind toJSON",
@@ -425,6 +445,10 @@ test("a result of another shape is an error that names the problem", async () =>
     { text: "x", media: [{ mimeType: "image/png", path: "a", bytes: undefined }] },
     // biome-ignore lint/suspicious/noSparseArray: a hole in the media list is the case under test.
     { text: "x", media: [, { mimeType: "image/png", path: "a" }] },
+    { text: "x", display: {} },
+    { text: "x", display: [{ kind: "html", text: "a" }] },
+    { text: "x", display: [{ kind: "diff", path: "a" }] },
+    { text: "x", display: [{ kind: "markdown", text: "a", path: "b" }] },
   ];
   const shape = {
     name: "shape",
@@ -459,6 +483,34 @@ test("a result of another shape is an error that names the problem", async () =>
     "the result media is not an array",
     "the result media[0] needs exactly one of path and bytes",
     "the result media[0] is not an object",
+    "the result display is not an array",
+    "the result display[0].kind is not 'markdown' or 'diff'",
+    "the result display[0].patch is not a string",
+    "the result display[0] has the unknown field 'path'",
+  ]);
+});
+
+// The answer commit saves the hints and the folder before the call runs, so the saved transcript shows them too.
+test("a call in a turn shows the hints of its tool, the folder of the session, and the display of its result", async () => {
+  const show = {
+    ...tool("show", () => ({ text: "ok", display: [{ kind: "markdown", text: "*a*" }] })),
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    hints: { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
+  } as unknown as Tool;
+  await using host = await createHost({
+    plugins: [{ name: "tools", session: defining(show) }],
+    replies: [reply.toolCall("show", { path: "a.md" }), reply.text("done")],
+  });
+  const session = await host.openSession();
+
+  await session.send("show it");
+
+  const entry = session.transcript.entries.find((item) => item.kind === "tool");
+  equal(entry?.kind === "tool" && [entry.hints, entry.folder, entry.result?.content, entry.display], [
+    { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
+    folder(),
+    "ok",
+    [{ kind: "markdown", text: "*a*" }],
   ]);
 });
 

@@ -14,7 +14,8 @@ use tokio::sync::oneshot;
 use yuke_agent::{InputDecision, InputHook, PromptSection};
 use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult, answer_text};
 use yuke_engine::{
-    CancellationToken, Hooks, Replaced, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision, chain_text,
+    CancellationToken, DisplayBlock, Hooks, Replaced, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
+    ToolOutcome, chain_text,
 };
 use yuke_protocol::{
     Input, InputKind, InputSource, InteractionRequest, InteractionResponse, ModelReference, PendingInput,
@@ -114,15 +115,16 @@ impl ScriptSession {
             .await?;
         Ok(entries
             .into_iter()
-            .map(|(id, definition, concurrency)| {
+            .map(|entry| {
                 let tool = ScriptTool {
                     caller: self.caller.clone(),
-                    id,
+                    id: entry.id,
                     open,
-                    concurrency,
+                    concurrency: entry.concurrency,
+                    hints: entry.hints,
                     host: Arc::clone(&self.host),
                 };
-                (definition, tool)
+                (entry.definition, tool)
             })
             .collect())
     }
@@ -332,11 +334,13 @@ impl Hooks for ScriptHooks {
         }
     }
 
-    async fn after_tool(&self, call: &ToolCall, result: &ToolResult) -> Option<ToolResult> {
+    async fn after_tool(&self, call: &ToolCall, outcome: &ToolOutcome) -> Option<ToolOutcome> {
+        let result = &outcome.result;
         let request = ToolAfterRequest {
             open: self.open,
             call: HookCall::of(call),
             result: HookResult {
+                display: Json(outcome.display.clone()),
                 text: result.content.clone(),
                 is_error: result.is_error,
                 media: result
@@ -356,13 +360,16 @@ impl Hooks for ScriptHooks {
             Ok(None) => return None,
             Err(error) => Err(failure_text("tool.after", &error)),
         };
-        // A failed hook never shows the original result.
-        Some(changed.unwrap_or_else(|text| ToolResult {
-            call_id: result.call_id.clone(),
-            content: text,
-            is_error: true,
-            media: Vec::new(),
-            loaded: result.loaded.clone(),
+        // A failed hook never shows the original result or its display.
+        Some(changed.unwrap_or_else(|text| {
+            ToolResult {
+                call_id: result.call_id.clone(),
+                content: text,
+                is_error: true,
+                media: Vec::new(),
+                loaded: result.loaded.clone(),
+            }
+            .into()
         }))
     }
 }
@@ -404,9 +411,9 @@ impl ScriptHooks {
             .collect())
     }
 
-    /// `result` after the `tool.after` handlers. The text and `is_error` come from `changed`. Each media item is an
-    /// item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
-    async fn changed(&self, result: &ToolResult, changed: ChangedResult) -> Result<ToolResult, String> {
+    /// `result` after the `tool.after` handlers. The text, `is_error`, and the display come from `changed`. Each media
+    /// item is an item of `result`, or a new item that the host stores. The `loaded` tools of `result` stay.
+    async fn changed(&self, result: &ToolResult, changed: ChangedResult) -> Result<ToolOutcome, String> {
         let mut answered = Vec::with_capacity(changed.media.len());
         for item in changed.media {
             answered.push(match item {
@@ -416,12 +423,15 @@ impl ScriptHooks {
                 ChangedMedia::New(file) => Answered::New(file),
             });
         }
-        Ok(ToolResult {
-            call_id: result.call_id.clone(),
-            content: changed.text,
-            is_error: changed.is_error,
-            media: self.stored("tool.after", answered, |media| media).await?,
-            loaded: result.loaded.clone(),
+        Ok(ToolOutcome {
+            result: ToolResult {
+                call_id: result.call_id.clone(),
+                content: changed.text,
+                is_error: changed.is_error,
+                media: self.stored("tool.after", answered, |media| media).await?,
+                loaded: result.loaded.clone(),
+            },
+            display: changed.display.0,
         })
     }
 }
@@ -542,6 +552,7 @@ struct HookResult {
     text: String,
     is_error: bool,
     media: Vec<HookMedia>,
+    display: Json<Vec<DisplayBlock>>,
 }
 
 /// A media item of a result: its media type and the size of its bytes.
@@ -750,6 +761,7 @@ struct ChangedResult {
     text: String,
     is_error: bool,
     media: Vec<ChangedMedia>,
+    display: Json<Vec<DisplayBlock>>,
 }
 
 /// What `startInputBefore` gets.

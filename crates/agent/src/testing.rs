@@ -9,7 +9,10 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
+use yuke_engine::{
+    Answer, CallDisplay, Commit, CommitDisplay, DisplayBlock, Outcome, Preview, Replaced, ResultDisplay, Subject,
+    SubjectKind, ToolHints, TurnEnd,
+};
 
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
@@ -132,14 +135,34 @@ pub fn consumed(id: InputId, block_count: usize) -> ConsumedInput {
     }
 }
 
+/// The display of a commit with one call and one result.
+pub fn display() -> CommitDisplay {
+    CommitDisplay {
+        calls: vec![CallDisplay {
+            block_index: 0,
+            hints: ToolHints {
+                title: Some("Read".to_owned()),
+                subject: Some(Subject {
+                    argument: "path".to_owned(),
+                    kind: SubjectKind::File,
+                }),
+                preview: Preview::None,
+            },
+            folder: Some("/repo".to_owned()),
+        }],
+        results: vec![ResultDisplay {
+            block_index: 0,
+            blocks: vec![DisplayBlock::Diff {
+                path: "a.rs".to_owned(),
+                patch: "@@ -1 +1 @@\n-a\n+b\n".to_owned(),
+            }],
+        }],
+    }
+}
+
 /// A commit in the middle of a turn.
 pub fn step(blocks: &[yuke_ai::Block]) -> Commit<'_> {
-    Commit {
-        replaced: None,
-        blocks: Cow::Borrowed(blocks),
-        answer: None,
-        end: None,
-    }
+    Commit::blocks(blocks)
 }
 
 /// A commit that ends a turn as completed.
@@ -337,6 +360,7 @@ pub async fn the_newest_turn_keeps_a_cancelled_or_failed_end(store: &dyn Store) 
         blocks: Cow::Owned(vec![yuke_ai::Block::user_text("one")]),
         answer: None,
         end: Some(end),
+        display: CommitDisplay::default(),
     };
 
     let empty = newest().await;
@@ -1199,6 +1223,10 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
             end: Some(TurnEnd::Failed("the request failed".to_owned())),
             ..step(&[])
         },
+        Commit {
+            display: display(),
+            ..step(&blocks)
+        },
     ];
     for commit in &commits {
         store.commit(id, commit, &[]).await.unwrap();
@@ -1256,10 +1284,12 @@ pub async fn events_after_a_number_are_the_newer_events(store: &dyn Store) {
 /// source does not change.
 pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store: &dyn Store) {
     let source = store.create_session(&settings("one"), &prompt()).await.unwrap().id;
-    store
-        .commit(source, &end(&[yuke_ai::Block::user_text("one")]), &[])
-        .await
-        .unwrap();
+    let blocks = [yuke_ai::Block::user_text("one")];
+    let commit = Commit {
+        display: display(),
+        ..end(&blocks)
+    };
+    store.commit(source, &commit, &[]).await.unwrap();
     let source_events = store
         .load(source, EventPage::After(None))
         .await

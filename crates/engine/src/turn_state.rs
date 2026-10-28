@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, ToolCall, ToolResult, Usage};
 
 use crate::model::RoundError;
+use crate::tool::{DisplayBlock, ToolHints, ToolOutcome};
 
 /// The decisions of one turn on the caller's context.
 #[derive(Debug)]
@@ -22,6 +23,9 @@ pub(crate) struct TurnState<'c> {
 
     /// The input tokens of the newest answer, before this turn or in it.
     input_tokens: Option<u64>,
+
+    /// The display of the tool results since the last commit, for the next commit.
+    results: Vec<ResultDisplay>,
 }
 
 /// The next thing the driver does for a turn. The driver saves the commit of an action before it acts.
@@ -57,6 +61,9 @@ pub(crate) enum Action<'a> {
 
         /// How the turn ended.
         result: Result<Outcome, RoundError>,
+
+        /// The display of the tool results in `tail`.
+        display: CommitDisplay,
     },
 }
 
@@ -78,16 +85,63 @@ pub struct Commit<'a> {
 
     /// How the turn ended. A commit in the middle of a turn has `None`.
     pub end: Option<TurnEnd>,
+
+    /// What a frontend shows for the tool calls and results in `blocks`. The model never sees it.
+    #[serde(default, skip_serializing_if = "CommitDisplay::is_empty")]
+    pub display: CommitDisplay,
+}
+
+/// What a frontend shows for the tool calls and results of a commit. The model never sees it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDisplay {
+    /// The hints of each tool call that the driver handled, in block order.
+    pub calls: Vec<CallDisplay>,
+    /// The display of each tool result that has one, in block order.
+    pub results: Vec<ResultDisplay>,
+}
+
+impl CommitDisplay {
+    /// Whether the commit has no display.
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty() && self.results.is_empty()
+    }
+}
+
+/// The hints of one tool call of a commit, and the folder where it ran.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CallDisplay {
+    /// The index of the call in the blocks of the commit.
+    pub block_index: usize,
+    /// The hints of the tool that the call names, after the deferred-tool bridge.
+    pub hints: ToolHints,
+    /// The folder where the call ran. A relative path of the call starts there.
+    pub folder: Option<String>,
+}
+
+/// The display of one tool result of a commit.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ResultDisplay {
+    /// The index of the result in the blocks of the commit.
+    pub block_index: usize,
+    /// What a frontend shows in place of the result text.
+    pub blocks: Vec<DisplayBlock>,
 }
 
 impl<'a> Commit<'a> {
     /// The commit of `blocks` with no other fact.
-    fn blocks(blocks: &'a [Block]) -> Self {
+    pub fn blocks(blocks: impl Into<Cow<'a, [Block]>>) -> Self {
         Commit {
             replaced: None,
-            blocks: Cow::Borrowed(blocks),
+            blocks: blocks.into(),
             answer: None,
             end: None,
+            display: CommitDisplay::default(),
         }
     }
 
@@ -110,6 +164,7 @@ impl<'a> Commit<'a> {
             blocks: Cow::Owned(self.blocks.into_owned()),
             answer: self.answer,
             end: self.end,
+            display: self.display,
         }
     }
 
@@ -232,6 +287,7 @@ impl<'c> TurnState<'c> {
             saved,
             turn_end: None,
             input_tokens,
+            results: Vec::new(),
         }
     }
 
@@ -310,9 +366,9 @@ impl<'c> TurnState<'c> {
         self.after_round(Some(answer))
     }
 
-    /// Take the results of the calls that [`Action::CallTools`] asked for, in call order.
-    pub(crate) fn tools_finished(&mut self, results: Vec<ToolResult>) -> Action<'_> {
-        self.context.extend(results.into_iter().map(Block::ToolResult));
+    /// Take the outcomes of the calls that [`Action::CallTools`] asked for, in call order.
+    pub(crate) fn tools_finished(&mut self, outcomes: Vec<ToolOutcome>) -> Action<'_> {
+        self.add_outcomes(outcomes);
         self.after_round(None)
     }
 
@@ -359,11 +415,24 @@ impl<'c> TurnState<'c> {
         self.cancel()
     }
 
-    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`], with the `results` of every call, in call
+    /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`], with the `outcomes` of every call, in call
     /// order. A call that did not run has its error result among them.
-    pub(crate) fn tools_cancelled(&mut self, results: Vec<ToolResult>) -> Action<'_> {
-        self.context.extend(results.into_iter().map(Block::ToolResult));
+    pub(crate) fn tools_cancelled(&mut self, outcomes: Vec<ToolOutcome>) -> Action<'_> {
+        self.add_outcomes(outcomes);
         self.cancel()
+    }
+
+    /// Add the result of each outcome to the context, and keep its display for the next commit.
+    fn add_outcomes(&mut self, outcomes: Vec<ToolOutcome>) {
+        for ToolOutcome { result, display } in outcomes {
+            if !display.is_empty() {
+                self.results.push(ResultDisplay {
+                    block_index: self.context.len() - self.saved,
+                    blocks: display,
+                });
+            }
+            self.context.push(Block::ToolResult(result));
+        }
     }
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::AfterRound`].
@@ -384,6 +453,10 @@ impl<'c> TurnState<'c> {
             finish_reason: self.turn_end,
             commit: Commit {
                 answer,
+                display: CommitDisplay {
+                    calls: Vec::new(),
+                    results: std::mem::take(&mut self.results),
+                },
                 ..Commit::blocks(&self.context[start..])
             },
         }
@@ -395,6 +468,10 @@ impl<'c> TurnState<'c> {
         Action::Done {
             tail: &self.context[start..],
             result,
+            display: CommitDisplay {
+                calls: Vec::new(),
+                results: std::mem::take(&mut self.results),
+            },
         }
     }
 

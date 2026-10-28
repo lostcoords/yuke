@@ -3,8 +3,9 @@ use std::borrow::Cow;
 use yuke_ai::{Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage};
 use yuke_testing::origin;
 
-use super::{Action, Answer, Commit, Outcome, Replaced, TurnEnd, TurnState};
+use super::{Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, TurnState};
 use crate::model::RoundError;
+use crate::tool::{DisplayBlock, Preview, Subject, SubjectKind, ToolHints, ToolOutcome};
 
 /// Each block of `context` as one line.
 fn lines(context: &[Block]) -> Vec<String> {
@@ -98,7 +99,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         ToolResult::success("c1", "file text"),
         ToolResult::success("c2", "written"),
     ];
-    let action = turn_state.tools_finished(results);
+    let action = turn_state.tools_finished(results.into_iter().map(ToolOutcome::from).collect());
     assert!(matches!(
         action,
         Action::AfterRound {
@@ -284,6 +285,7 @@ fn a_commit_reads_back_from_its_json() {
                 end: Some(TurnEnd::Outcome(Outcome::Completed {
                     finish_reason: FinishReason::ToolCalls,
                 })),
+                display: CommitDisplay::default(),
             },
             r#"{"replaced":{"head":[{"user_text":"summary"}],"keep":2},"blocks":[{"assistant_text":"a"}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"outcome":{"completed":{"finishReason":"tool_calls"}}}}"#,
         ),
@@ -293,6 +295,7 @@ fn a_commit_reads_back_from_its_json() {
                 blocks: Cow::Borrowed(&[]),
                 answer: None,
                 end: Some(TurnEnd::Failed("the request failed".to_owned())),
+                display: CommitDisplay::default(),
             },
             r#"{"replaced":null,"blocks":[],"answer":null,"end":{"failed":"the request failed"}}"#,
         ),
@@ -302,8 +305,39 @@ fn a_commit_reads_back_from_its_json() {
                 blocks: Cow::Borrowed(&[]),
                 answer: None,
                 end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+                display: CommitDisplay::default(),
             },
             r#"{"replaced":null,"blocks":[],"answer":null,"end":{"outcome":"cancelled"}}"#,
+        ),
+        (
+            Commit {
+                display: CommitDisplay {
+                    calls: vec![CallDisplay {
+                        block_index: 0,
+                        hints: ToolHints {
+                            title: Some("Read".to_owned()),
+                            subject: Some(Subject {
+                                argument: "path".to_owned(),
+                                kind: SubjectKind::File,
+                            }),
+                            preview: Preview::None,
+                        },
+                        folder: Some("/repo".to_owned()),
+                    }],
+                    results: vec![ResultDisplay {
+                        block_index: 1,
+                        blocks: vec![
+                            DisplayBlock::Markdown { text: "*a*".to_owned() },
+                            DisplayBlock::Diff {
+                                path: "a.rs".to_owned(),
+                                patch: "@@ -1 +1 @@\n-a\n+b\n".to_owned(),
+                            },
+                        ],
+                    }],
+                },
+                ..Commit::blocks(&[][..])
+            },
+            r#"{"replaced":null,"blocks":[],"answer":null,"end":null,"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}]}]}}"#,
         ),
     ];
     for (commit, json) in cases {

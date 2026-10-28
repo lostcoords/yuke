@@ -12,7 +12,10 @@ use yuke_ai::{
     AttemptError, AttemptInfo, Block, Failure, FinishReason, Media, ProviderKind, Settings, ToolCall, ToolDefinition,
     ToolResult,
 };
-use yuke_engine::{CancellationToken, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision};
+use yuke_engine::{
+    CancellationToken, DisplayBlock, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
+    ToolOutcome,
+};
 use yuke_protocol::{Input, InputId, InputKind, InputSource, PendingInput, SessionId};
 
 use crate::ScriptSession;
@@ -54,6 +57,7 @@ struct EventResult {
     text: String,
     is_error: bool,
     media: Option<Vec<MediaFile>>,
+    display: Option<Json<Vec<DisplayBlock>>>,
 }
 
 /// The round of a `round.before` or a `round.retry` event, as plain data.
@@ -231,6 +235,7 @@ pub(crate) enum Decision {
         text: String,
         is_error: bool,
         media: Vec<OutMedia>,
+        display: Vec<DisplayBlock>,
         output: Option<Vec<String>>,
     },
     /// The blocks of an `input.before` replacement.
@@ -248,11 +253,13 @@ impl<'js> IntoJs<'js> for Decision {
                 text,
                 is_error,
                 media,
+                display,
                 output,
             } => {
                 object.set("text", text)?;
                 object.set("isError", is_error)?;
                 object.set("media", media)?;
+                object.set("display", Json(display))?;
                 if let Some(output) = output {
                     object.set("output", output)?;
                 }
@@ -408,18 +415,22 @@ pub(crate) async fn run_point(
             ToolDecision::Block(reason) => json!({ "block": reason }),
         }),
         Point::ToolAfter(call, result) => {
-            let result = ToolResult {
-                call_id: call.call_id.clone(),
-                content: result.text,
-                is_error: result.is_error,
-                media: stored(&script, result.media.unwrap_or_default()).await?,
-                loaded: Vec::new(),
+            let outcome = ToolOutcome {
+                result: ToolResult {
+                    call_id: call.call_id.clone(),
+                    content: result.text,
+                    is_error: result.is_error,
+                    media: stored(&script, result.media.unwrap_or_default()).await?,
+                    loaded: Vec::new(),
+                },
+                display: result.display.map(|display| display.0).unwrap_or_default(),
             };
-            let changed = hooks.after_tool(&call, &result).await.unwrap_or(result);
+            let changed = hooks.after_tool(&call, &outcome).await.unwrap_or(outcome);
             Decision::Outcome {
-                text: changed.content,
-                is_error: changed.is_error,
-                media: read(host, id, changed.media)?,
+                text: changed.result.content,
+                is_error: changed.result.is_error,
+                media: read(host, id, changed.result.media)?,
+                display: changed.display,
                 output: None,
             }
         }
@@ -511,12 +522,14 @@ pub(crate) async fn call_tool(
             text: content.text,
             is_error: content.is_error,
             media: read(host, request.id, content.media)?,
+            display: content.display,
             output,
         },
         Err(text) => Decision::Outcome {
             text,
             is_error: true,
             media: Vec::new(),
+            display: Vec::new(),
             output,
         },
     })

@@ -194,6 +194,7 @@ fn image_content(text: &str, is_error: bool) -> ToolContent {
         text: text.to_owned(),
         media: vec![image()],
         is_error,
+        display: Vec::new(),
     }
 }
 

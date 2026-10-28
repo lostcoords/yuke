@@ -28,6 +28,7 @@ pub(crate) mod events {
         pub(crate) end_kind: Option<String>,
         pub(crate) end_finish_reason: Option<String>,
         pub(crate) end_message: Option<String>,
+        pub(crate) display: Option<crate::Json<yuke_engine::CommitDisplay>>,
     }
 
     #[derive(Debug, PartialEq)]
@@ -90,6 +91,7 @@ RETURNING seq;",
         pub(crate) end_kind: Option<&'a str>,
         pub(crate) end_finish_reason: Option<&'a str>,
         pub(crate) end_message: Option<String>,
+        pub(crate) display: Option<String>,
     }
 
     /// Add a commit event with the next event number of the session. It adds no row for an unknown session.
@@ -98,12 +100,13 @@ RETURNING seq;",
             connection,
             r"INSERT INTO events(
     session_id, seq, kind, blocks, consumed, head, keep, model, base_url, input_tokens, output_tokens,
-    reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
+    reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message,
+    display
 )
 SELECT
     id, (SELECT coalesce(max(seq), 0) + 1 FROM events WHERE session_id = :session_id), 'commit', :blocks, :consumed,
     :head, :keep, :model, :base_url, :input_tokens, :output_tokens, :reasoning_tokens, :cache_read_tokens,
-    :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message
+    :cache_write_tokens, :finish_reason, :end_kind, :end_finish_reason, :end_message, :display
 FROM sessions WHERE id = :session_id
 RETURNING seq;",
             &[
@@ -123,6 +126,7 @@ RETURNING seq;",
                 (":end_kind", &params.end_kind),
                 (":end_finish_reason", &params.end_finish_reason),
                 (":end_message", &params.end_message),
+                (":display", &params.display),
             ],
             |row| row.get("seq"),
         )
@@ -182,12 +186,12 @@ FROM sessions WHERE id = :id;",
             r"INSERT INTO events(
     session_id, seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens,
     reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message,
-    created_at
+    display, created_at
 )
 SELECT
     :session_id, seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens,
     reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message,
-    created_at
+    display, created_at
 FROM events WHERE session_id = :source AND seq <= :cut
 ORDER BY seq;",
             &[
@@ -211,13 +215,11 @@ ORDER BY seq;",
     pub(crate) fn events_page<'a>(connection: &'a Connection, params: &EventsPageParams) -> Query<'a, EventsPage> {
         Query::new(
             connection,
-            r"SELECT
-    seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens, reasoning_tokens,
-    cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
-FROM (
+            r"SELECT * FROM (
     SELECT
         seq, kind, blocks, settings, consumed, head, keep, model, base_url, input_tokens, output_tokens,
-        reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message
+        reasoning_tokens, cache_read_tokens, cache_write_tokens, finish_reason, end_kind, end_finish_reason, end_message,
+        display
     FROM events WHERE session_id = :session_id AND seq > :after AND seq < :before
     ORDER BY seq DESC LIMIT :limit
 )
@@ -248,6 +250,7 @@ ORDER BY seq;",
                     end_kind: row.get("end_kind")?,
                     end_finish_reason: row.get("end_finish_reason")?,
                     end_message: row.get("end_message")?,
+                    display: row.get("display")?,
                 })
             },
         )
