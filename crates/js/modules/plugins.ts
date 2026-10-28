@@ -192,8 +192,6 @@ export type Frozen<T> = T extends readonly (infer U)[]
 export interface PluginContext<O = Record<string, never>> {
   /** The name of the plugin, from its `plugin.json`, or the name of a bundled plugin of yuke. */
   readonly name: string;
-  /** The absolute folder of the plugin. A bundled plugin of yuke has no folder, and its context has no `root`. */
-  readonly root: string;
   /** The absolute data folder of the plugin. It exists, and it stays across reloads. */
   readonly dataDir: string;
   /**

@@ -11,8 +11,6 @@ import type { Tui } from "yuke:tui";
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
 interface PluginSpec {
   readonly name: string;
-  /** The folder of the plugin, or `undefined` for a bundled plugin. */
-  readonly root: string | undefined;
   readonly dataDir: string;
   /** The options of `config.json`, or of `createHost` in a test. They are `{}` when none come. */
   readonly options: Readonly<Record<string, unknown>>;
@@ -23,12 +21,6 @@ interface PluginSpec {
   readonly uses: readonly string[];
   readonly provides: readonly string[];
 }
-
-/**
- * The context of a bundled plugin: a `PluginContext` without `root`, because a bundled plugin has no folder. Only yuke
- * writes bundled plugins, so the public `PluginContext` keeps `root` a string.
- */
-export type BundledContext = Omit<PluginContext<Options>, "root">;
 
 /** The type of the options in the loader. */
 export type Options = Readonly<Record<string, unknown>>;
@@ -126,10 +118,8 @@ export async function load(spec: PluginSpec): Promise<void> {
       optionsSchema = exports.optionsSchema;
     }
     const options = optionsOf(spec.options, optionsSchema);
-    // A bundled plugin has no folder, so its context has no `root`.
-    const ctx: BundledContext & { readonly root?: string } = Object.freeze({
+    const ctx: PluginContext<Options> = Object.freeze({
       name: spec.name,
-      ...(spec.root === undefined ? {} : { root: spec.root }),
       dataDir: spec.dataDir,
       options,
       signal,

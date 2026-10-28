@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::Declared;
 use rquickjs::{Ctx, Module};
+use url::Url;
 
 use crate::error::{ErrorClass, throw};
 use crate::strip::{Cache, StripError};
@@ -92,7 +93,8 @@ fn normal(path: &Path) -> PathBuf {
 }
 
 /// Load a native module, the bytecode of a built-in module, a `.ts` file through the strip cache, or a `.js` file as
-/// it is.
+/// it is. A bytecode module gets its `yuke:` name as `import.meta.url`. A file module gets its `file:` URL, its
+/// `filename`, and its `dirname`.
 #[derive(Debug)]
 pub(crate) struct ModuleLoader {
     cache: Cache,
@@ -115,7 +117,9 @@ impl Loader for ModuleLoader {
             return declared;
         }
         if let Some(declared) = baked::load(ctx, name) {
-            return declared;
+            let module = declared?;
+            module.meta()?.set("url", name)?;
+            return Ok(module);
         }
         if name.starts_with("yuke:") {
             return Err(throw(
@@ -147,6 +151,42 @@ impl Loader for ModuleLoader {
             }
         };
 
-        Module::declare(ctx.clone(), name, code)
+        let module = Module::declare(ctx.clone(), name, code)?;
+        let url = Url::from_file_path(path)
+            .map_err(|()| throw(ctx, ErrorClass::TypeError, &format!("{name} has no file URL")))?;
+        let meta = module.meta()?;
+        meta.set("url", url.as_str())?;
+        meta.set("filename", name)?;
+        meta.set("dirname", path.parent().and_then(Path::to_str))?;
+        Ok(module)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rquickjs::loader::Loader;
+    use rquickjs::{Context, Runtime};
+
+    use super::ModuleLoader;
+    use crate::strip::Cache;
+
+    #[test]
+    fn a_built_in_module_has_its_name_as_its_url_and_no_folder() {
+        let folder = yuke_testing::folder("js", "a_built_in_module_has_its_name_as_its_url_and_no_folder");
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+
+        let (url, dirname) = context.with(|ctx| {
+            let module = ModuleLoader::new(Cache::new(folder))
+                .load(&ctx, "yuke:plugins", None)
+                .unwrap();
+            let meta = module.meta().unwrap();
+            (
+                meta.get::<_, String>("url").unwrap(),
+                meta.contains_key("dirname").unwrap(),
+            )
+        });
+
+        assert_eq!((url.as_str(), dirname), ("yuke:plugins", false));
     }
 }

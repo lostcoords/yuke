@@ -44,7 +44,7 @@ pub enum Origin {
         /// The entry module, or `None` for a plugin without code.
         entry: Option<PathBuf>,
     },
-    /// A module of the consumer, for example a `yuke:` name. The plugin has no folder, so its context has no `root`.
+    /// A module of the consumer, for example a `yuke:` name. The plugin has no folder.
     Bundled {
         /// The name of the entry module.
         module: String,
@@ -173,14 +173,13 @@ impl Handle {
             .run(async move |ctx: Ctx<'_>, _registry| {
                 let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
-                let (root, entry) = match &plugin.origin {
-                    Origin::Folder { root, entry } => (Some(path(root)), entry.as_ref().map(path)),
-                    Origin::Bundled { module } => (None, Some(module.clone())),
-                    Origin::Given => (None, None),
+                let entry = match &plugin.origin {
+                    Origin::Folder { entry, .. } => entry.as_ref().map(path),
+                    Origin::Bundled { module } => Some(module.clone()),
+                    Origin::Given => None,
                 };
                 let spec = PluginSpec {
                     name: plugin.name,
-                    root,
                     data_dir: path(&plugin.data_dir),
                     options: Json(plugin.options),
                     given: matches!(plugin.origin, Origin::Given),
@@ -200,8 +199,6 @@ impl Handle {
 #[qjs(rename_all = "camelCase")]
 struct PluginSpec {
     name: String,
-    /// The folder of the plugin, or `None` for a bundled plugin.
-    root: Option<String>,
     data_dir: String,
     options: Json<serde_json::Map<String, serde_json::Value>>,
     entry: Option<String>,

@@ -89,6 +89,28 @@ test("a given plugin before its folder provider rejects the host", async () => {
   );
 });
 
+test("a folder plugin reads a file beside its module through import.meta", async () => {
+  const root = await writePlugin(
+    "prompted",
+    {},
+    `import { readTextFile } from "yuke:fs";
+     export const session = (s) => {
+       s.tools.define({
+         name: "prompt",
+         description: "Read the prompt.",
+         concurrency: "serial",
+         parameters: { type: "object", properties: {} },
+         execute: () => readTextFile("prompt.md", { baseDir: import.meta.dirname }),
+       });
+     };`,
+  );
+  await writeTextFile("prompt.md", "Be brief.", { baseDir: root });
+  await using host = await createHost({ plugins: [{ folder: root }] });
+  const session = await host.openSession();
+
+  equal((await session.call("prompt", {})).text, "Be brief.");
+});
+
 test("apply runs once with its context, and session runs for each session", async () => {
   let applied = 0;
   let seen: unknown[] = [];
@@ -101,7 +123,7 @@ test("apply runs once with its context, and session runs for each session", asyn
     const aborts = ["abort" in signal, signal.dispatchEvent(new Event("abort")), signal.aborted];
     seen = [
       ctx.name,
-      ctx.root,
+      "root" in ctx,
       ctx.dataDir.endsWith("/data/plugins/one"),
       aborts,
       "tools" in ctx,
@@ -134,7 +156,7 @@ test("apply runs once with its context, and session runs for each session", asyn
   const second = await host.openSession({ cwd: `${folder()}/b` });
 
   equal([(await first.call("hello", {})).text, (await second.call("hello", {})).text], ["hello", "hello"]);
-  equal(seen, ["one", root, true, [false, true, false], false, "undefined"]);
+  equal(seen, ["one", false, true, [false, true, false], false, "undefined"]);
   equal([applied, (await stat(dataDir)).isDirectory], [1, true]);
   equal(sessions, [`${folder()}/a`, `${folder()}/b`]);
 });

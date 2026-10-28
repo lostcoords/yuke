@@ -200,26 +200,33 @@ async function files(): Promise<void> {
   const fs = await import("yuke:fs");
   const text: string = await fs.readTextFile("state.json", { baseDir: ctx.dataDir, signal: ctx.signal });
   const bytes: Uint8Array = await fs.readFile("data.bin", { baseDir: ctx.dataDir, position: 0, length: 4 });
-  const info: Date | null = (await fs.stat(ctx.root)).mtime;
+  // A module finds the files beside it through `import.meta`. A built-in module has no folder.
+  const here: string | undefined = import.meta.dirname;
+  // @ts-expect-error: `dirname` can be undefined.
+  const folder: string = import.meta.dirname;
+  const url: string = import.meta.url;
+  const info: Date | null = (await fs.stat("prompt.md", { baseDir: here ?? ctx.dataDir })).mtime;
   await fs.writeTextFile("state.json", text, { baseDir: ctx.dataDir, atomic: true, mode: 0o600 });
   // @ts-expect-error: the data of `writeFile` is bytes.
   await fs.writeFile("data.bin", "text", { baseDir: ctx.dataDir });
   void bytes;
   void info;
+  void folder;
+  void url;
 }
 void files;
 
 // `yuke:process` runs a program in a required folder, and its output is bytes.
 async function programs(): Promise<void> {
   const { Command } = await import("yuke:process");
-  const out = await new Command("git", { args: ["status"], cwd: ctx.root, signal: ctx.signal }).output();
+  const out = await new Command("git", { args: ["status"], cwd: ctx.dataDir, signal: ctx.signal }).output();
   const ok: boolean = out.success;
   const stdout: Uint8Array = out.stdout;
   const signal: string | null = out.signal;
   // @ts-expect-error: a command needs its folder.
   new Command("git", { args: ["status"] });
   // @ts-expect-error: the output of a program never goes to the terminal of yuke.
-  new Command("git", { cwd: ctx.root, stdout: "inherit" });
+  new Command("git", { cwd: ctx.dataDir, stdout: "inherit" });
   void ok;
   void stdout;
   void signal;

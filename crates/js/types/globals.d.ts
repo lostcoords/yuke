@@ -1,6 +1,16 @@
 // The globals of the runtime besides the language: the timers of crates/js/src/timers.rs, the classes and objects of
 // modules/internal/web.ts, and what QuickJS-NG adds.
 
+/** What the host tells a module of itself, with the field names of Node, Deno, and Bun. A path keeps its links. */
+interface ImportMeta {
+  /** The `file:` URL of the module, or its `yuke:` name. */
+  readonly url: string;
+  /** The absolute path of the module file. A built-in `yuke:` module has none. */
+  readonly filename: string | undefined;
+  /** The absolute folder of the module file. A built-in `yuke:` module has none. */
+  readonly dirname: string | undefined;
+}
+
 /** The id of a timer. `setTimeout` and `setInterval` share one id space. */
 type TimerId = number;
 
