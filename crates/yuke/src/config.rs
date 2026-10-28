@@ -1,5 +1,6 @@
 //! `config.json`: the settings of the user. It and `providers.json` are JSON with `//` and `/* */` comments.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -17,6 +18,9 @@ pub(crate) struct Config {
     /// The bundled plugins that do not load, by name.
     #[serde(default)]
     pub(crate) disable: Vec<String>,
+    /// The options of bundled plugins, by name. A bundled plugin that the map does not name gets no options.
+    #[serde(default)]
+    pub(crate) bundled: BTreeMap<String, Map<String, Value>>,
     /// The minutes that a session with running jobs and no holder waits before it closes and stops the jobs. The
     /// default is 30.
     #[serde(default, rename = "sessionIdleMinutes")]
@@ -191,6 +195,19 @@ mod tests {
             "invalid type: sequence, expected a map"
         );
         assert_eq!(error(json!({ "options": {} })), "missing field `path`");
+    }
+
+    #[test]
+    fn the_options_of_a_bundled_plugin_are_an_object() {
+        let config: Config =
+            serde_json::from_value(json!({ "bundled": { "chat": { "questions": "modal" } } })).unwrap();
+        let refused = serde_json::from_value::<Config>(json!({ "bundled": { "chat": 1 } }));
+
+        assert_eq!(
+            config.bundled["chat"],
+            *json!({ "questions": "modal" }).as_object().unwrap()
+        );
+        assert!(refused.is_err());
     }
 
     #[test]

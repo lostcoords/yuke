@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use yuke_js::{Origin, Plugin};
 
-use crate::config::{ConfigPlugin, read_json};
+use crate::config::{Config, ConfigPlugin, read_json};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -40,55 +40,53 @@ struct YukeFields {
 /// plugin uses and provides no service.
 const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:internal/bundled/compaction")];
 
-/// The bundled plugins that `disable` does not name, then the plugins of `list`, in its order. A relative folder starts
-/// in `config_folder`. A bundled plugin has no options. The function makes the data folder `<data>/plugins/<name>` of each plugin.
+/// The plugins to load, in load order. The bundled plugins come first, without the ones that `config.disable` names.
+/// Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order. A
+/// relative folder starts in `config_folder`. The function makes the data folder `<data>/plugins/<name>` of each plugin.
 ///
 /// # Errors
 ///
-/// Returns a text that names the plugin and the problem: an unreadable folder or manifest, a bad name or field, a
-/// duplicate name, two providers of one service, a missing or later provider, or a `disable` name that no bundled
-/// plugin has.
-pub(crate) fn plugins(
-    config_folder: &Path,
-    list: &[ConfigPlugin],
-    disable: &[String],
-    data: &Path,
-) -> Result<Vec<Plugin>, String> {
-    with_bundled(BUNDLED, config_folder, list, disable, data)
+/// Returns a text that names the plugin and the problem. The problem is an unreadable folder or manifest, a bad name or
+/// field, or a duplicate name. It can also be two providers of one service, or a missing or later provider. A `disable`
+/// or `bundled` name that no bundled plugin has is an error too.
+pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
+    with_bundled(BUNDLED, config_folder, config, data)
 }
 
 /// [`plugins`] with the bundled plugins `bundled`.
 fn with_bundled(
     bundled: &[(&str, &str)],
     config_folder: &Path,
-    list: &[ConfigPlugin],
-    disable: &[String],
+    config: &Config,
     data: &Path,
 ) -> Result<Vec<Plugin>, String> {
-    if let Some(name) = disable
-        .iter()
-        .find(|name| !bundled.iter().any(|(bundled, _)| bundled == name))
-    {
+    let known = |name: &str| bundled.iter().any(|&(bundled, _)| bundled == name);
+    if let Some(name) = config.disable.iter().find(|name| !known(name)) {
         return Err(format!(
             "config.json: disable names '{name}', which is not a bundled plugin"
         ));
     }
+    if let Some(name) = config.bundled.keys().find(|name| !known(name)) {
+        return Err(format!(
+            "config.json: bundled names '{name}', which is not a bundled plugin"
+        ));
+    }
     let mut plugins: Vec<Plugin> = bundled
         .iter()
-        .filter(|(name, _)| !disable.iter().any(|disabled| disabled == name))
+        .filter(|(name, _)| !config.disable.iter().any(|disabled| disabled == name))
         .map(|&(name, module)| Plugin {
             name: name.to_owned(),
             origin: Origin::Bundled {
                 module: module.to_owned(),
             },
             data_dir: data.join("plugins").join(name),
-            options: Map::new(),
+            options: config.bundled.get(name).cloned().unwrap_or_default(),
             uses: Vec::new(),
             provides: Vec::new(),
         })
         .collect();
     let mut roots = HashSet::new();
-    for ConfigPlugin { path: folder, options } in list {
+    for ConfigPlugin { path: folder, options } in &config.plugins {
         let fail = |message: String| format!("plugin folder {folder}: {message}");
         let root = config_folder
             .join(folder)

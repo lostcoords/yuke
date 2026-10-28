@@ -34,15 +34,18 @@ fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
 
 /// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
 fn load_with(bundled: &[(&str, &str)], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
-    let list: Vec<ConfigPlugin> = list
-        .iter()
-        .map(|&path| ConfigPlugin {
-            path: path.to_owned(),
-            options: Map::new(),
-        })
-        .collect();
-    let disable: Vec<String> = disable.iter().map(|&name| name.to_owned()).collect();
-    with_bundled(bundled, &root.join("config"), &list, &disable, &root.join("data"))
+    let config = Config {
+        plugins: list
+            .iter()
+            .map(|&path| ConfigPlugin {
+                path: path.to_owned(),
+                options: Map::new(),
+            })
+            .collect(),
+        disable: disable.iter().map(|&name| name.to_owned()).collect(),
+        ..Config::default()
+    };
+    with_bundled(bundled, &root.join("config"), &config, &root.join("data"))
 }
 
 #[test]
@@ -250,6 +253,30 @@ fn a_disable_name_that_no_bundled_plugin_has_stops_the_start() {
     assert_eq!(
         refused,
         Err("config.json: disable names 'frist', which is not a bundled plugin".to_owned())
+    );
+}
+
+#[test]
+fn a_bundled_plugin_gets_its_options_and_an_unknown_name_stops_the_start() {
+    let root = place("bundled_options");
+    let options = json!({ "first": { "level": 2 } });
+    let config = Config {
+        bundled: serde_json::from_value(options).unwrap(),
+        ..Config::default()
+    };
+
+    let plugins = with_bundled(BUNDLED_PAIR, &root.join("config"), &config, &root.join("data")).unwrap();
+    let unknown = Config {
+        bundled: serde_json::from_value(json!({ "frist": {} })).unwrap(),
+        ..Config::default()
+    };
+    let refused = with_bundled(BUNDLED_PAIR, &root.join("config"), &unknown, &root.join("data"));
+
+    let options: Vec<&Map<String, Value>> = plugins.iter().map(|plugin| &plugin.options).collect();
+    assert_eq!(options, [json!({ "level": 2 }).as_object().unwrap(), &Map::new()]);
+    assert_eq!(
+        refused,
+        Err("config.json: bundled names 'frist', which is not a bundled plugin".to_owned())
     );
 }
 

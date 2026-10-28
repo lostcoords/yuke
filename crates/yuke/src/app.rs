@@ -276,12 +276,7 @@ impl App {
         let providers = Providers::load(&machine.paths.config)?;
         let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
-        let plugins = plugins::plugins(
-            &machine.paths.config,
-            &config.plugins,
-            &config.disable,
-            &machine.paths.data,
-        )?;
+        let plugins = plugins::plugins(&machine.paths.config, &config, &machine.paths.data)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes. A test keeps the folder in its own place.
         let processes_folder = match &machine.test {
@@ -379,8 +374,7 @@ impl App {
         let config: Config = read_json(&paths.config.join("config.json"))
             .map_err(AppError::Invalid)?
             .unwrap_or_default();
-        let plugins = plugins::plugins(&paths.config, &config.plugins, &config.disable, &paths.data)
-            .map_err(AppError::Invalid)?;
+        let plugins = plugins::plugins(&paths.config, &config, &paths.data).map_err(AppError::Invalid)?;
         // The new plugins use the new providers, for example in a model request of their `apply`.
         let old_profile = std::mem::replace(
             &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
