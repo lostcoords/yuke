@@ -55,6 +55,8 @@ export class PaneTree {
   #active: Leaf;
   /** The rects of the leaves and the dividers at the last layout, local to the view of the tree. */
   #leafRects = new Map<Leaf, Rect>();
+  /** The leaf of each view at the last layout, so the scene finds a pane at each placed child. */
+  #leafViews = new Map<View, Leaf>();
   #dividers: { readonly rect: Rect; readonly direction: Direction }[] = [];
   readonly view: View;
 
@@ -73,9 +75,9 @@ export class PaneTree {
     return this.#active.pane;
   }
 
-  /** True for the view of a leaf, which takes the focus as a pane. */
-  has(view: View): boolean {
-    return this.#leaves().some((leaf) => leaf.view === view);
+  /** The leaf of `view` at the last layout, or `undefined` when no pane shows it. */
+  leafOf(view: View): Leaf | undefined {
+    return this.#leafViews.get(view);
   }
 
   /** Split the active pane along `direction`. The new pane comes after it (right or below) and gets the focus. */
@@ -276,11 +278,13 @@ export class PaneTree {
    */
   #layout(size: Size): readonly Placement[] {
     this.#leafRects = new Map();
+    this.#leafViews = new Map();
     this.#dividers = [];
     const placements: Placement[] = [];
     const walk = (node: Node, rect: Rect): void => {
       if (node.kind === "leaf") {
         this.#leafRects.set(node, rect);
+        this.#leafViews.set(node.view, node);
         placements.push({ view: node.view, rect });
         return;
       }

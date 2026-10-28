@@ -1,7 +1,7 @@
 /**
- * The core of the terminal interface: the registries of 3b, the scene, and the pane tree, wired to a driver of the
- * terminal. The keymap sees each key first; a key that it does not take goes along the focus path, and an Escape that
- * nothing takes closes the top modal.
+ * The core of the terminal interface: the registries, the scene, the pane tree, and the text widgets on a driver of
+ * the terminal. A key goes to the `beforeKeymap` handlers of the focused text widget first. Then it goes to the keymap
+ * and along the focus path. An Escape that nothing takes closes the top modal.
  */
 
 import { failureOf } from "yuke:internal/failure";
@@ -15,7 +15,8 @@ import { PaneTree } from "yuke:internal/tui/panes";
 import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
-import type { Point, Style, View } from "yuke:tui";
+import { WidgetMounts } from "yuke:internal/tui/widgets";
+import type { Cursor, Disposer, FocusChange, Style, View } from "yuke:tui";
 
 /** What the core needs from the terminal. The boot passes `term`; a test passes a fake. */
 export interface Driver {
@@ -25,7 +26,7 @@ export interface Driver {
   readonly truecolor: () => boolean;
   readonly text: (column: number, row: number, text: string, style: TermStyle) => void;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
-  readonly cursor: (point: Point | undefined) => void;
+  readonly cursor: (cursor: Cursor | undefined) => void;
   readonly requestFrame: (delay?: number) => void;
   readonly copy: (text: string) => void;
   readonly quit: () => void;
@@ -44,8 +45,10 @@ export class Core {
   readonly keymap: Keymap;
   readonly panes: PaneTree;
   readonly scene: Scene;
+  readonly widgets: WidgetMounts;
   readonly driver: Driver;
   readonly #placeholder: () => View;
+  readonly #focusListeners = new Set<{ readonly owner: string; readonly listener: (change: FocusChange) => void }>();
 
   /** `placeholder` makes the view of a pane that holds nothing, such as the last pane after its close. */
   constructor(driver: Driver, placeholder: (core: Core) => View) {
@@ -62,6 +65,15 @@ export class Core {
       frame,
     );
     this.keymap = new Keymap(this.commands, frame);
+    this.widgets = new WidgetMounts(
+      {
+        requestFrame: frame,
+        // A key sequence belongs to the contexts where it started.
+        contextsChanged: () => this.keymap.cancel(),
+        report: (text) => report(CORE, text),
+      },
+      report,
+    );
     this.panes = new PaneTree({
       placeholder: this.#placeholder,
       focus: (view) => this.scene.focusRoot(view),
@@ -79,17 +91,29 @@ export class Core {
         cursor: driver.cursor,
         requestFrame: frame,
         report,
-        focusableByRole: (view) => this.panes.has(view),
+        paneOf: (view) => this.panes.leafOf(view),
         fallbackFocus: () => this.panes.activeView(),
-        focusMoved: (rootPath) => {
+        focusMoved: (rootPath, change) => {
           this.panes.noteFocus(rootPath);
           // A key sequence belongs to the focus where it started.
           this.keymap.cancel();
+          if (change !== undefined) this.#focusChanged(change);
         },
+        placed: (widgets) => this.widgets.update(widgets),
       },
       this.panes.view,
     );
     this.#addCommands();
+  }
+
+  /** Give each later change of `tui.focused` to `listener` of the plugin `owner`. A throw reports and removes it. */
+  onFocus(owner: string, listener: (change: FocusChange) => void): Disposer {
+    if (typeof listener !== "function") throw new TypeError("a focus listener is a function");
+    const entry = { owner, listener };
+    this.#focusListeners.add(entry);
+    return () => {
+      this.#focusListeners.delete(entry);
+    };
   }
 
   /** Handle one event of the frame loop. Each one draws a frame after it. */
@@ -97,6 +121,10 @@ export class Core {
     switch (event.type) {
       case "key": {
         this.scene.layout();
+        if (this.scene.beforeKeymap(event)) {
+          this.keymap.cancel();
+          return;
+        }
         if (this.keymap.key(event, this.scene.atoms())) return;
         if (this.scene.key(event)) return;
         if (strokeOf(event) === "esc") this.scene.closeTopModal();
@@ -170,6 +198,17 @@ export class Core {
     }
   }
 
+  #focusChanged(change: FocusChange): void {
+    for (const entry of [...this.#focusListeners]) {
+      try {
+        entry.listener(change);
+      } catch (error) {
+        this.#focusListeners.delete(entry);
+        this.notices.add("error", entry.owner, `a focus listener failed: ${failureOf(error)}`);
+      }
+    }
+  }
+
   #addCommands(): void {
     const driver = this.driver;
     const add = (name: string, title: string, run: () => void): void => {
@@ -178,8 +217,8 @@ export class Core {
     add("quit", "Quit yuke", () => driver.quit());
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
     add("reload", "Reload the plugins", () => driver.reload(this.snapshot()));
-    add("split-right", "Split the pane to the right", () => this.panes.split(CORE, () => this.#placeholder(), "row"));
-    add("split-down", "Split the pane down", () => this.panes.split(CORE, () => this.#placeholder(), "column"));
+    add("split-right", "Split the pane to the right", () => this.panes.split(CORE, this.#placeholder, "row"));
+    add("split-down", "Split the pane down", () => this.panes.split(CORE, this.#placeholder, "column"));
     add("close", "Close the pane", () => this.panes.closeActive());
     for (const direction of ["left", "right", "up", "down"] as const) {
       add(

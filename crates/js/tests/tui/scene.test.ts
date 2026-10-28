@@ -3,7 +3,7 @@
 
 import { createSurface } from "yuke:internal/tui/surface";
 import { assert, equal, test, throws } from "yuke:test";
-import { type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
+import { type Cursor, type CursorShape, type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
 import { atoms, click, fakeTerminal, key, named, newCore } from "./terminal.ts";
 
 test("a placed child draws in its rect and is cut to it", () => {
@@ -284,6 +284,82 @@ test("a pane gets its inner focus back and focus changes reach the path", () => 
   equal(log, ["chat true", "composer true", "chat false", "composer false", "chat true", "composer true"]);
 });
 
+test("a pane starts at its initial focus and each focus change names the view and the pane", () => {
+  const core = newCore(fakeTerminal());
+  const tui = createSurface(core, "chat", new AbortController().signal);
+  /** A chat pane: a transcript above a composer, and the composer takes the first focus. */
+  const chat = (name: string) => {
+    const composer: View = { focusable: true, draw() {} };
+    const transcript: View = { focusable: true, draw() {} };
+    const view: View = {
+      draw() {},
+      initialFocus: composer,
+      layout: (size) => [
+        { view: transcript, rect: { column: 0, row: 0, width: size.width, height: size.height - 1 } },
+        { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
+      ],
+    };
+    names.set(composer, `${name} composer`).set(transcript, `${name} transcript`);
+    return { view, composer, transcript };
+  };
+  const names = new Map<View | undefined, string>();
+  const changes: string[] = [];
+  tui.onFocus((change) => {
+    const pane = change.pane === undefined ? "no pane" : change.pane === a ? "pane a" : "pane b";
+    changes.push(`${names.get(change.previous) ?? "none"} -> ${names.get(change.current) ?? "?"} in ${pane}`);
+  });
+  const first = chat("a");
+  const second = chat("b");
+  const a = tui.panes.split(() => first.view);
+  const b = tui.panes.split(() => second.view);
+  core.draw();
+  equal(tui.focused, second.composer);
+  tui.focus(first.transcript);
+  core.draw();
+  b.focus();
+  core.draw();
+  const input: View = { focusable: true, draw() {} };
+  names.set(input, "modal input");
+  const modal = tui.overlay(() => ({
+    draw() {},
+    initialFocus: input,
+    layout: () => [{ view: input, rect: { column: 0, row: 0, width: 5, height: 1 } }],
+  }));
+  core.draw();
+  // A focus beneath the modal moves the active pane but not `tui.focused`, so it gives no change.
+  tui.focus(first.composer);
+  core.draw();
+  modal.close();
+  core.draw();
+  // The modal input belongs to no pane; after the modal the focus is the one beneath it.
+  equal(changes, [
+    "none -> b composer in pane b",
+    "b composer -> a transcript in pane a",
+    "a transcript -> b composer in pane b",
+    "b composer -> modal input in no pane",
+    "modal input -> a composer in pane a",
+  ]);
+});
+
+test("a throwing focus listener is reported under its plugin and removed", () => {
+  const core = newCore(fakeTerminal());
+  const tui = createSurface(core, "watcher", new AbortController().signal);
+  let calls = 0;
+  tui.onFocus(() => {
+    calls += 1;
+    throw new Error("bad focus");
+  });
+  tui.panes.split(() => ({ draw() {} }));
+  core.draw();
+  tui.panes.split(() => ({ draw() {} }));
+  core.draw();
+  equal(calls, 1);
+  equal(
+    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
+    [["watcher", "a focus listener failed: Error: bad focus"]],
+  );
+});
+
 test("a throwing view shows its error once and the rest works", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
@@ -330,6 +406,29 @@ test("a throwing view shows its error once and the rest works", () => {
   );
 });
 
+test("a fault in a pane names the plugin of the pane", () => {
+  const terminal = fakeTerminal();
+  const core = newCore(terminal);
+  const inner: View = {
+    draw: () => {
+      throw new Error("bad inner");
+    },
+  };
+  core.panes.split(
+    "notes",
+    () => ({
+      layout: () => [{ view: inner, rect: { column: 0, row: 0, width: 5, height: 1 } }],
+      draw() {},
+    }),
+    "row",
+  );
+  terminal.screen(core);
+  equal(
+    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
+    [["notes", "Error: bad inner"]],
+  );
+});
+
 test("a new root closes the old one and its close gives the default root back", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
@@ -353,10 +452,10 @@ test("a new root closes the old one and its close gives the default root back", 
   equal(second.signal.aborted, true);
 });
 
-test("the cursor of the focused view reaches the screen inside its clip", () => {
+test("the cursor of the focused view reaches the screen inside its clip with its shape", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
-  let at = { column: 2, row: 0 };
+  let at: Cursor = { column: 2, row: 0, shape: "bar" };
   const input: View = { focusable: true, draw() {}, cursor: () => at };
   core.scene.setRoot("test", () => ({
     layout: () => [{ view: input, rect: { column: 5, row: 3, width: 4, height: 1 } }],
@@ -365,9 +464,19 @@ test("the cursor of the focused view reaches the screen inside its clip", () => 
   core.scene.layout();
   core.scene.focus(input);
   terminal.screen(core);
+  at = { column: 1, row: 0 };
+  terminal.screen(core);
   at = { column: 9, row: 0 };
   terminal.screen(core);
-  equal(terminal.cursors, [{ column: 7, row: 3 }, undefined]);
+  equal(terminal.cursors, [{ column: 7, row: 3, shape: "bar" }, { column: 6, row: 3 }, undefined]);
+  // A shape that no terminal knows is a fault of the view.
+  at = { column: 1, row: 0, shape: "beam" as CursorShape };
+  terminal.screen(core);
+  equal(terminal.cursors.at(-1), undefined);
+  equal(
+    core.notices.list().at(-1)?.text.split("\n")[0],
+    "TypeError: a cursor shape is block, underline, or bar, not beam",
+  );
 });
 
 test("the core commands reach the driver", () => {

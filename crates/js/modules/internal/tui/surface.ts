@@ -8,6 +8,7 @@ import type {
   CommandItem,
   Direction,
   Disposer,
+  FocusChange,
   FocusDirection,
   Mount,
   Notice,
@@ -140,6 +141,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       return core.scene.focused;
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
+    onFocus: live((listener: (change: FocusChange) => void): Disposer => scope.own(core.onFocus(owner, listener))),
     setRoot: live((create: ViewFactory): Mount => mounted(core.scene.setRoot(owner, create))),
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),

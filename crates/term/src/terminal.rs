@@ -189,7 +189,7 @@ impl Terminal {
             // No value resets modifyOtherKeys to the initial value of the terminal.
             leave.extend_from_slice(b"\x1b[>4m");
         }
-        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[?25h\x1b[?1049l");
+        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l");
         let written = self.write_all(&leave);
         // The settings come back also after a failed write, so the shell does not stay raw.
         let restored = set(&self.file, &self.saved);

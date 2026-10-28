@@ -23,7 +23,7 @@ import {
   termTruecolor,
   termWrap,
 } from "yuke:internal/native";
-import type { KeyEvent, MouseEvent } from "yuke:tui";
+import type { Cursor, KeyEvent, MouseEvent } from "yuke:tui";
 
 export type Style = TermStyle;
 
@@ -72,9 +72,9 @@ export const term = {
   text(x: number, y: number, text: string, style?: Style): number {
     return termText(x, y, text.toWellFormed(), style);
   },
-  /** Show the cursor at a cell, or hide it. A frame starts with the cursor hidden. */
-  cursor(x: number, y: number, visible = true): void {
-    termCursor(x, y, visible);
+  /** Show the cursor, or hide it with `undefined`. A frame starts with the cursor hidden. */
+  cursor(cursor: Cursor | undefined): void {
+    termCursor(cursor);
   },
   /** The cells of `text`. */
   measure(text: string): number {

@@ -1,7 +1,8 @@
 /**
- * The keymap: it sees each key before the focused view. A binding names a command in one context atom. Among the
- * bindings of a key, the deepest active atom wins, then the newest binding. The first enabled command runs. `key`
- * returns `false` when no enabled command takes the key, and the caller then gives it to the focused view.
+ * The keymap: it sees each key after the `beforeKeymap` handlers of the focused text widget, before the focused view.
+ * A binding names a command in one context atom. Among the bindings of a key, the deepest active atom wins, then the
+ * newest binding. The first enabled command runs. `key` returns `false` when no enabled command takes the key, and the
+ * caller then gives it to the focused view.
  */
 import type { Commands } from "yuke:internal/tui/commands";
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";

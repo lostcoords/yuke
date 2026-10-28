@@ -42,7 +42,7 @@ const core = new Core(
       term.text(column, row, text, style);
     },
     fill: (column, row, width, height, style) => term.fill(column, row, width, height, style),
-    cursor: (point) => (point === undefined ? term.cursor(0, 0, false) : term.cursor(point.column, point.row)),
+    cursor: (cursor) => term.cursor(cursor),
     requestFrame: (delay) => term.requestFrame(delay),
     copy: (text) => term.copy(text),
     quit: () => term.quit(),

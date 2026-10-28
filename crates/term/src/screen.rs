@@ -79,6 +79,31 @@ pub struct Style {
     pub attributes: Attributes,
 }
 
+/// The shape of the cursor. `Default` is the shape of the terminal settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CursorShape {
+    /// The shape of the terminal settings.
+    #[default]
+    Default,
+    /// A steady block.
+    Block,
+    /// A steady underline.
+    Underline,
+    /// A steady bar.
+    Bar,
+}
+
+/// A shown cursor: its cell and its shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Cursor {
+    /// The column of the cell.
+    pub column: u16,
+    /// The row of the cell.
+    pub row: u16,
+    /// The shape.
+    pub shape: CursorShape,
+}
+
 /// The grapheme of a cell. Most graphemes fit inline, so they need no allocation of their own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Glyph {
@@ -106,6 +131,14 @@ impl Glyph {
                 Self::Inline { length, bytes }
             }
             _ => Self::Heap(grapheme.into()),
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            // The bytes come from a `str` in `Glyph::new`, so they stay UTF-8.
+            Self::Inline { length, bytes } => std::str::from_utf8(&bytes[..usize::from(*length)]).unwrap_or_default(),
+            Self::Heap(text) => text,
         }
     }
 
@@ -149,8 +182,10 @@ pub struct Screen {
     size: Size,
     next: Vec<Cell>,
     shown: Vec<Cell>,
-    cursor: Option<(u16, u16)>,
-    shown_cursor: Option<(u16, u16)>,
+    cursor: Option<Cursor>,
+    shown_cursor: Option<Cursor>,
+    /// The cursor shape on the terminal, or `None` when it is unknown. A hidden cursor keeps its shape.
+    shown_shape: Option<CursorShape>,
     /// The terminal content is unknown, so the next render writes every cell.
     repaint: bool,
 }
@@ -165,6 +200,8 @@ impl Screen {
             shown: vec![Cell::blank(Style::default()); cells],
             cursor: None,
             shown_cursor: None,
+            // A new terminal shows the shape of its settings.
+            shown_shape: Some(CursorShape::Default),
             repaint: true,
         }
     }
@@ -174,15 +211,17 @@ impl Screen {
         self.size
     }
 
-    /// Change the size and blank the grid. The next render writes every cell.
+    /// Change the size and blank the grid. The next render writes every cell and the cursor shape.
     pub fn resize(&mut self, size: Size) {
         *self = Self::new(size);
+        self.shown_shape = None;
     }
 
-    /// Write every cell at the next render, for a terminal whose content changed under the screen, such as after a
-    /// suspend.
+    /// Write every cell and the cursor shape at the next render, for a terminal whose content changed under the
+    /// screen, such as after a suspend.
     pub fn repaint(&mut self) {
         self.repaint = true;
+        self.shown_shape = None;
     }
 
     /// Blank the next frame with the default style and hide its cursor.
@@ -237,9 +276,24 @@ impl Screen {
         column
     }
 
-    /// Show the cursor at a column and a row of the next frame, or hide it with `None`.
-    pub fn cursor(&mut self, at: Option<(u16, u16)>) {
-        self.cursor = at.filter(|&(column, row)| column < self.size.columns && row < self.size.rows);
+    /// Show the cursor of the next frame, or hide it with `None`. A cursor outside the grid is hidden.
+    pub fn cursor(&mut self, cursor: Option<Cursor>) {
+        self.cursor = cursor.filter(|cursor| cursor.column < self.size.columns && cursor.row < self.size.rows);
+    }
+
+    /// The grapheme, its width in cells, and the style at a cell of the next frame. The second cell of a wide grapheme
+    /// has width 0 and no grapheme.
+    pub fn cell(&self, column: u16, row: u16) -> Option<(&str, u8, Style)> {
+        if column >= self.size.columns || row >= self.size.rows {
+            return None;
+        }
+        let cell = &self.next[usize::from(row) * usize::from(self.size.columns) + usize::from(column)];
+        Some((cell.glyph.as_str(), cell.width, cell.style))
+    }
+
+    /// The cursor of the next frame.
+    pub fn next_cursor(&self) -> Option<Cursor> {
+        self.cursor
     }
 
     /// Append to `out` the bytes that turn the shown frame into the next frame, inside a synchronized update. An
@@ -269,8 +323,18 @@ impl Screen {
             at = Some((column.saturating_add(u16::from(cell.width)), row));
         }
         out.extend_from_slice(b"\x1b[0m");
-        if let Some((column, row)) = self.cursor {
-            move_to(out, column, row);
+        if let Some(cursor) = self.cursor {
+            move_to(out, cursor.column, cursor.row);
+            if self.shown_shape != Some(cursor.shape) {
+                let code = match cursor.shape {
+                    CursorShape::Default => 0,
+                    CursorShape::Block => 2,
+                    CursorShape::Underline => 4,
+                    CursorShape::Bar => 6,
+                };
+                write_bytes(out, format_args!("\x1b[{code} q"));
+                self.shown_shape = Some(cursor.shape);
+            }
             out.extend_from_slice(b"\x1b[?25h");
         }
         out.extend_from_slice(b"\x1b[?2026l");

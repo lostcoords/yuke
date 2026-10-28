@@ -20,6 +20,13 @@ declare module "yuke:tui" {
 
   export interface Rect extends Point, Size {}
 
+  /** A steady block, underline, or bar. No shape keeps the shape of the terminal settings. */
+  export type CursorShape = "block" | "underline" | "bar";
+
+  export interface Cursor extends Point {
+    readonly shape?: CursorShape | undefined;
+  }
+
   /** Remove a registration. A second call does nothing. */
   export type Disposer = () => void;
 
@@ -227,9 +234,61 @@ declare module "yuke:tui" {
     readonly mouse?: ((event: MouseEvent) => boolean) | undefined;
     readonly paste?: ((text: string) => boolean) | undefined;
     /** The cursor of the focused view, or `undefined` for none. */
-    readonly cursor?: (() => Point | undefined) | undefined;
+    readonly cursor?: (() => Cursor | undefined) | undefined;
+    /** The view inside this one that takes the first focus of this view. A later focus returns to the last one. */
+    readonly initialFocus?: View | undefined;
     /** The type and the state that restore the view after a reload. */
     readonly snapshot?: (() => ViewSnapshot) | undefined;
+  }
+
+  /** A selection from `anchor`, where it started, to `head`, where the caret is. */
+  export interface Selection<P> {
+    readonly anchor: P;
+    readonly head: P;
+  }
+
+  /** How a text widget looks: the cursor shape when it has the focus, and a prompt before its text. */
+  export interface TextAppearance {
+    readonly cursorShape?: CursorShape | undefined;
+    readonly prompt?: string | undefined;
+    readonly promptStyle?: string | Style | undefined;
+  }
+
+  /** A style over a range of a text widget. `wholeRows` styles each row of the range from edge to edge. */
+  export interface Decoration<P> {
+    readonly range: Selection<P>;
+    readonly style: string | Style;
+    readonly wholeRows?: boolean | undefined;
+  }
+
+  /**
+   * The part of one plugin in a text widget: key contexts, an appearance, decorations, and handlers. Each setter
+   * replaces only this part. A later extension wins per appearance field and per decoration style field. `dispose()`
+   * and the abort of the signal of `extend` remove the part. After that, each call does nothing.
+   */
+  export interface TextExtension<P, E> {
+    /** Add context atoms of the keymap while the widget is on the focus path. */
+    setContexts: (atoms: readonly string[]) => void;
+    setAppearance: (appearance: TextAppearance) => void;
+    setDecorations: (decorations: readonly Decoration<P>[]) => void;
+    /**
+     * Take a key of the focused widget: `true` stops it. A `beforeKeymap` handler runs before the keymap. A key that it
+     * takes ends a pending key sequence. A `beforeDefault` handler (the default) runs after the keymap and before the
+     * editing of the widget. The newest handler of a phase runs first.
+     */
+    onKey: (handler: (event: KeyEvent) => boolean, phase?: "beforeDefault" | "beforeKeymap") => Disposer;
+    /** Take a mouse event before the widget: `true` stops it. A handler can return `false` to only watch. */
+    onMouse: (handler: (event: MouseEvent) => boolean) => Disposer;
+    onPaste: (handler: (text: string) => boolean) => Disposer;
+    onChange: (listener: (event: E) => void) => Disposer;
+    dispose: () => void;
+  }
+
+  /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
+  export interface FocusChange {
+    readonly previous: View | undefined;
+    readonly current: View | undefined;
+    readonly pane: Pane | undefined;
   }
 
   /** A mounted view. `close()` runs once by any path, and `signal` aborts at the close. */
@@ -299,6 +358,8 @@ declare module "yuke:tui" {
     /** The deepest view on the focus path. */
     readonly focused: View | undefined;
     readonly focus: (view: View) => boolean;
+    /** Give each later change of `focused` to `listener`. */
+    readonly onFocus: (listener: (change: FocusChange) => void) => Disposer;
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;

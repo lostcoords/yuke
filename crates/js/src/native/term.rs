@@ -13,7 +13,8 @@ use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use yuke_term::{
-    Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, Modifiers, MouseKind, Rgb, Style, graphemes,
+    Attributes, BACKGROUND_QUERY, Button, Code, Color, Cursor, CursorShape, Event, Modifiers, MouseKind, Rgb, Style,
+    graphemes,
 };
 
 use crate::display::{Display, Frame, Input, Request, Scheme, scheme_of};
@@ -75,11 +76,12 @@ impl Frames {
     }
 }
 
-/// Add the terminal functions to `object`, the export object of the native module.
+/// Add the terminal functions and `TestScreen` to `object`, the export object of the native module.
 pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> rquickjs::Result<()> {
     add_drawing(ctx, object, frames)?;
     add_loop(ctx, object, frames)?;
-    add_text(ctx, object)
+    add_text(ctx, object)?;
+    screen::add(ctx, object)
 }
 
 /// Add the functions that draw on the grid. Each needs the display.
@@ -129,13 +131,9 @@ fn add_drawing<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -
         "termCursor",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>, x: f64, y: f64, visible: bool| -> rquickjs::Result<_> {
-                let display = held.display(&ctx)?;
-                let at = match (visible, cell(x), cell(y)) {
-                    (true, Some(x), Some(y)) => Some((x, y)),
-                    _ => None,
-                };
-                display.frame().screen.cursor(at);
+            move |ctx: Ctx<'js>, cursor: Opt<Value<'js>>| -> rquickjs::Result<_> {
+                let cursor = cursor_of(&ctx, cursor.0)?;
+                held.display(&ctx)?.frame().screen.cursor(cursor);
                 Ok(())
             },
         )?,
@@ -599,6 +597,33 @@ fn units(text: &str) -> i32 {
     small(text.encode_utf16().count())
 }
 
+/// The cursor of `{ column, row, shape? }`. `undefined` or a cell outside the grid range gives `None`.
+fn cursor_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<Option<Cursor>> {
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Ok(None);
+    };
+    let Some(object) = value.as_object() else {
+        return Err(throw(ctx, ErrorClass::TypeError, "a cursor is an object"));
+    };
+    let shape = match object.get::<_, Option<String>>("shape")?.as_deref() {
+        None => CursorShape::Default,
+        Some("block") => CursorShape::Block,
+        Some("underline") => CursorShape::Underline,
+        Some("bar") => CursorShape::Bar,
+        Some(other) => {
+            return Err(throw(
+                ctx,
+                ErrorClass::TypeError,
+                &format!("a cursor shape is block, underline, or bar, not {other}"),
+            ));
+        }
+    };
+    Ok(match (cell(object.get("column")?), cell(object.get("row")?)) {
+        (Some(column), Some(row)) => Some(Cursor { column, row, shape }),
+        _ => None,
+    })
+}
+
 /// The style of a `term` call: `fg`, `bg`, `ul`, `bold`, `dim`, `italic`, `reverse`, and `underline`.
 fn style_of<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::Result<Style> {
     let Some(object) = value.filter(|value| !value.is_undefined() && !value.is_null()) else {
@@ -755,6 +780,8 @@ fn wrap(text: &str, width: Option<usize>, head: usize) -> Vec<i32> {
     rows.extend([start, offset, 0]);
     rows
 }
+
+mod screen;
 
 #[cfg(test)]
 mod tests;

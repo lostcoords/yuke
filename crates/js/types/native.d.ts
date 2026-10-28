@@ -24,8 +24,9 @@ declare module "yuke:internal/native" {
     StoredEvent,
     ToolHints,
   } from "yuke:protocol";
-  import type { CallOutcome, ModelRequest } from "yuke:test";
+  import type { CallOutcome, Frame, ModelRequest } from "yuke:test";
   import type { ToolMedia } from "yuke:tools";
+  import type { Cursor } from "yuke:tui";
 
   /** What the start function of a tool gets for one call. */
   export interface CallRequest {
@@ -364,10 +365,23 @@ declare module "yuke:internal/native" {
   export function termFill(x: number, y: number, width: number, height: number, style: TermStyle | undefined): void;
   /** Write `text`, a well-formed string, on one row of the next frame, and return the column after it. */
   export function termText(x: number, y: number, text: string, style: TermStyle | undefined): number;
-  /** Show the cursor at a cell of the next frame, or hide it. */
-  export function termCursor(x: number, y: number, visible: boolean): void;
+  /** Show the cursor of the next frame, or hide it with `undefined`. */
+  export function termCursor(cursor: Cursor | undefined): void;
   /** Send `text`, a well-formed string, to the clipboard of the terminal with OSC 52. */
   export function termCopy(text: string): void;
+  /** A grid of cells that no terminal shows, for the frame tests. It draws with the rules of the terminal grid. */
+  export class TestScreen {
+    constructor(columns: number, rows: number);
+    /** Change the size and blank the grid. */
+    resize(columns: number, rows: number): void;
+    /** Blank the grid and hide the cursor. */
+    clear(): void;
+    text(x: number, y: number, text: string, style: TermStyle | undefined): number;
+    fill(x: number, y: number, width: number, height: number, style: TermStyle | undefined): void;
+    cursor(cursor: Cursor | undefined): void;
+    /** The cells and the cursor. A hidden cursor gives no `cursor` key. */
+    frame(): Omit<Frame, "cursor"> & { readonly cursor?: Cursor };
+  }
   /** Ask the host to quit. */
   export function termQuit(): void;
   /** Ask the host to give the terminal to the shell until it resumes yuke. */

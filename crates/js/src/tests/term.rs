@@ -64,8 +64,8 @@ type Started = (
     mpsc::UnboundedReceiver<Request>,
 );
 
-/// Start a runtime on a 20×3 display, with the global `term`, and run its frame loop: the handler keeps each event in
-/// `seen` and counts the frames in `frames`. The runtime is not shown yet.
+/// Start a hidden runtime on a 20×3 display, with the global `term`, and run its frame loop. The handler keeps each event
+/// in `seen` and counts the frames in `frames`. Each frame shows `globalThis.cursor`.
 async fn hidden(name: &str) -> Started {
     let folder = folder(name);
     let output = Output::default();
@@ -81,7 +81,7 @@ async fn hidden(name: &str) -> Started {
          globalThis.frames = 0;
          term.run({
            event: (event) => { seen.push(event); },
-           draw: () => { frames += 1; term.text(0, 0, `frame ${frames}`); },
+           draw: () => { frames += 1; term.text(0, 0, `frame ${frames}`); term.cursor(globalThis.cursor); },
          });",
     )
     .await
@@ -131,6 +131,32 @@ async fn the_start_frame_writes_its_cells_to_the_output() {
         .unwrap();
     assert_eq!(first, r#"{"type":"start"}"#);
     assert!(output.text().contains("frame 1"), "{:?}", output.text());
+}
+
+#[tokio::test]
+async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
+    let (runtime, _reports, _display, output, _requests) = started("a_cursor_shape_reaches_the_terminal").await;
+    output.0.lock().unwrap().clear();
+    evaluate::<()>(
+        &runtime,
+        "globalThis.cursor = { column: 2, row: 1, shape: 'bar' }; term.requestFrame();",
+    )
+    .await
+    .unwrap();
+    wait_until(&runtime, "return frames === 2;").await;
+    assert!(
+        output.text().contains("\x1b[2;3H\x1b[6 q\x1b[?25h"),
+        "{:?}",
+        output.text()
+    );
+    let error = evaluate::<String>(
+        &runtime,
+        "try { term.cursor({ column: 0, row: 0, shape: 'beam' }); return 'no throw'; }
+         catch (error) { return `${error.name}: ${error.message}`; }",
+    )
+    .await
+    .unwrap();
+    assert_eq!(error, "TypeError: a cursor shape is block, underline, or bar, not beam");
 }
 
 #[tokio::test]

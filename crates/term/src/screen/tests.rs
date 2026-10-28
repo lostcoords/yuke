@@ -10,6 +10,8 @@ struct Model {
     at: (u16, u16),
     style: Style,
     cursor_visible: bool,
+    /// The DECSCUSR parameter of the last shape sequence, or `None` before one.
+    shape: Option<u8>,
     /// The text that the model drew, without the escape sequences.
     drawn: String,
 }
@@ -24,6 +26,7 @@ impl Model {
             at: (0, 0),
             style: Style::default(),
             cursor_visible: true,
+            shape: None,
             drawn: String::new(),
         }
     }
@@ -52,6 +55,7 @@ impl Model {
         match (params, last) {
             ("?25", "l") => self.cursor_visible = false,
             ("?25", "h") => self.cursor_visible = true,
+            (_, "q") => self.shape = Some(params.strip_suffix(' ').expect("a space before q").parse().unwrap()),
             (_, "H") => {
                 let (row, column) = params.split_once(';').expect("row and column");
                 self.at = (column.parse::<u16>().unwrap() - 1, row.parse::<u16>().unwrap() - 1);
@@ -143,10 +147,14 @@ impl Model {
             assert_eq!((text.as_str(), *style), (expected, cell.style), "cell {index}");
         }
         assert_eq!(self.cursor_visible, screen.shown_cursor.is_some());
-        if let Some(at) = screen.shown_cursor {
-            assert_eq!(self.at, at);
+        if let Some(cursor) = screen.shown_cursor {
+            assert_eq!(self.at, (cursor.column, cursor.row));
         }
     }
+}
+
+fn at(column: u16, row: u16, shape: CursorShape) -> Cursor {
+    Cursor { column, row, shape }
 }
 
 fn size(columns: u16, rows: u16) -> Size {
@@ -248,7 +256,7 @@ fn frames_on_the_terminal_match_the_grid() {
         },
         &|screen| {
             screen.fill(1, 0, 2, 3, colors);
-            screen.cursor(Some((5, 2)));
+            screen.cursor(Some(at(5, 2, CursorShape::Default)));
         },
         &|screen| {
             screen.clear();
@@ -331,7 +339,7 @@ fn a_moved_cursor_writes_no_cell() {
     model.drawn.clear();
     screen.clear();
     screen.text(0, 0, "ab", Style::default());
-    screen.cursor(Some((3, 1)));
+    screen.cursor(Some(at(3, 1, CursorShape::Default)));
     model.replay(&render(&mut screen));
     assert_eq!(model.drawn, "");
     model.assert_shows(&screen);
@@ -340,10 +348,47 @@ fn a_moved_cursor_writes_no_cell() {
 #[test]
 fn a_cursor_outside_the_grid_is_hidden() {
     let mut screen = Screen::new(size(4, 2));
-    screen.cursor(Some((4, 0)));
+    screen.cursor(Some(at(4, 0, CursorShape::Default)));
     let mut model = Model::new(size(4, 2), "#");
     model.replay(&render(&mut screen));
     assert!(!model.cursor_visible);
+}
+
+#[test]
+fn a_shape_change_writes_the_shape_and_a_repaint_writes_it_again() {
+    let mut screen = Screen::new(size(4, 2));
+    let mut model = Model::new(size(4, 2), "#");
+    // A new terminal shows the shape of its settings, so the default shape writes nothing.
+    screen.cursor(Some(at(1, 0, CursorShape::Default)));
+    model.replay(&render(&mut screen));
+    assert_eq!(model.shape, None);
+    screen.clear();
+    screen.cursor(Some(at(1, 0, CursorShape::Bar)));
+    model.replay(&render(&mut screen));
+    assert_eq!(model.shape, Some(6));
+    // This render changes only the shape. It writes no cell.
+    model.drawn.clear();
+    screen.clear();
+    screen.cursor(Some(at(1, 0, CursorShape::Block)));
+    model.replay(&render(&mut screen));
+    assert_eq!((model.shape, model.drawn.as_str()), (Some(2), ""));
+    // A hidden cursor keeps the shape on the terminal. A later frame with the same shape writes no shape.
+    screen.clear();
+    render(&mut screen);
+    screen.clear();
+    screen.cursor(Some(at(2, 1, CursorShape::Block)));
+    model.shape = None;
+    model.replay(&render(&mut screen));
+    assert_eq!(model.shape, None);
+    // After a repaint the terminal shape is unknown, also through a frame that hides the cursor.
+    screen.clear();
+    screen.repaint();
+    render(&mut screen);
+    screen.clear();
+    screen.cursor(Some(at(2, 1, CursorShape::Block)));
+    model.replay(&render(&mut screen));
+    assert_eq!(model.shape, Some(2));
+    model.assert_shows(&screen);
 }
 
 #[test]

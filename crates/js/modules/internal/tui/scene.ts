@@ -5,12 +5,17 @@
 import { failureOf } from "yuke:internal/failure";
 import { createCanvas, type DrawCall, intersect, type Screen } from "yuke:internal/tui/canvas";
 import { createMount, startView } from "yuke:internal/tui/mount";
+import { type PlacedWidget, supportOf } from "yuke:internal/tui/widgets";
 import type {
+  Cursor,
+  CursorShape,
+  FocusChange,
   KeyEvent,
   Mount,
   MouseButton,
   MouseEvent,
   OverlayOptions,
+  Pane,
   Point,
   Rect,
   Size,
@@ -22,22 +27,34 @@ import type {
 export interface SceneHost {
   readonly screen: Screen;
   readonly size: () => Size;
-  readonly cursor: (point: Point | undefined) => void;
+  readonly cursor: (cursor: Cursor | undefined) => void;
   readonly requestFrame: () => void;
   /** Report a fault of a callback of `source` (a plugin name or `core`). */
   readonly report: (source: string, text: string) => void;
-  /** True for a view that takes the focus without `focusable`, such as the view of a pane. */
-  readonly focusableByRole: (view: View) => boolean;
+  /** The owner and the handle of the view of a pane, or `undefined` for another view. A pane takes the focus. */
+  readonly paneOf: (view: View) => PaneLeaf | undefined;
   /** The root focus when the focused view left the tree, such as the view of the active pane. */
   readonly fallbackFocus: () => View | undefined;
-  /** The focus path changed: the views of the root layer, from the root down, even under a modal. */
-  readonly focusMoved: (rootPath: readonly View[]) => void;
+  /**
+   * The focus path changed: the views of the root layer, from the root down, even under a modal. `change` is set when
+   * the deepest view of the input path changed.
+   */
+  readonly focusMoved: (rootPath: readonly View[], change: FocusChange | undefined) => void;
+  /** The text widgets of a layout, before its focus resolves. */
+  readonly placed: (widgets: readonly PlacedWidget[]) => void;
 }
 
-/** A placed view: its rect and clip in screen cells, its parent, and its children. */
+/** A pane of the tree: the plugin of its view, and its handle (none for a placeholder). */
+export interface PaneLeaf {
+  readonly owner: string;
+  readonly pane: Pane | undefined;
+}
+
+/** A placed view: its rect and clip in screen cells, its pane, its parent, and its children. */
 interface Target {
   readonly view: View;
   readonly owner: string;
+  readonly pane: Pane | undefined;
   readonly parent: Target | undefined;
   readonly rect: Rect;
   readonly clip: Rect;
@@ -57,6 +74,7 @@ interface Layer {
 
 const NO_MOUNT: Mount = Object.freeze({ close(): void {}, signal: AbortSignal.abort() });
 const ERROR_STYLE = Object.freeze({ fg: "danger" as const });
+const SHAPES: readonly unknown[] = ["block", "underline", "bar"] satisfies CursorShape[];
 
 export class Scene {
   readonly #host: SceneHost;
@@ -94,7 +112,7 @@ export class Scene {
     let layer: Layer | undefined;
     const mount = createMount(() => {
       if (layer !== undefined && this.#root === layer) this.#root = this.#defaultRoot;
-      this.#changed();
+      this.#host.requestFrame();
     });
     const view = startView(owner, create, mount, this.#host.report);
     if (view === undefined) return mount;
@@ -102,7 +120,7 @@ export class Scene {
     const old = this.#root;
     this.#root = layer;
     old.mount.close();
-    this.#changed();
+    this.#host.requestFrame();
     return mount;
   }
 
@@ -114,14 +132,14 @@ export class Scene {
     const mount = createMount(() => {
       const at = layer === undefined ? -1 : this.#overlays.indexOf(layer);
       if (at >= 0) this.#overlays.splice(at, 1);
-      this.#changed();
+      this.#host.requestFrame();
     });
     const view = startView(owner, create, mount, this.#host.report);
     if (view === undefined) return mount;
     layer = { view, owner, mount, modal: modal !== false, place, focus: undefined, tree: undefined };
     if (layer.modal) this.cancelCapture();
     this.#overlays.push(layer);
-    this.#changed();
+    this.#host.requestFrame();
     return mount;
   }
 
@@ -129,11 +147,18 @@ export class Scene {
   layout(): void {
     const size = this.#host.size();
     const screen = { column: 0, row: 0, width: size.width, height: size.height };
-    this.#root.tree = this.#place(this.#root.view, this.#root.owner, screen, screen, undefined, new Set());
+    this.#root.tree = this.#place(this.#root.view, this.#root.owner, undefined, screen, screen, undefined, new Set());
     for (const layer of this.#overlays) {
       const rect = layer.place === undefined ? screen : this.#placeOverlay(layer, size, screen);
-      layer.tree = this.#place(layer.view, layer.owner, rect, rect, undefined, new Set());
+      layer.tree = this.#place(layer.view, layer.owner, undefined, rect, rect, undefined, new Set());
     }
+    const widgets: PlacedWidget[] = [];
+    const collect = (target: Target, layer: Layer): void => {
+      if (supportOf(target.view) !== undefined) widgets.push({ view: target.view, pane: target.pane, layer });
+      for (const child of target.children) collect(child, layer);
+    };
+    for (const layer of [this.#root, ...this.#overlays]) if (layer.tree !== undefined) collect(layer.tree, layer);
+    this.#host.placed(widgets);
     // A captured view that left the tree gets its `cancel` now: no release can reach it.
     if (this.#capture !== undefined && this.#find(this.#capture.view) === undefined) this.cancelCapture();
     this.#syncFocus();
@@ -150,6 +175,13 @@ export class Scene {
       this.#drawTarget(layer.tree, focused);
     }
     this.#host.cursor(this.#cursor());
+  }
+
+  /** Give `event` to the `beforeKeymap` handlers of the focused text widget. */
+  beforeKeymap(event: KeyEvent): boolean {
+    const view = this.focused;
+    if (view === undefined || this.#failed.has(view)) return false;
+    return supportOf(view)?.key(event, "beforeKeymap") === true;
   }
 
   /** Give `event` to the floats above the input layer, then along the focus path from the deepest view up. */
@@ -236,7 +268,7 @@ export class Scene {
   /** Make `view` the root focus, also before its first layout, as for a new pane. Its remembered inner focus wins. */
   focusRoot(view: View): void {
     this.#rootFocus = view;
-    this.#changed();
+    this.#host.requestFrame();
   }
 
   /** The deepest view on the focus path of the input layer. */
@@ -261,8 +293,16 @@ export class Scene {
   }
 
   /** The target of `view` at `rect`, cut to `clip`, with its placed children. A view placed twice keeps its first place. */
-  #place(view: View, owner: string, rect: Rect, clip: Rect, parent: Target | undefined, seen: Set<View>): Target {
-    const target: Target = { view, owner, parent, rect, clip, children: [] };
+  #place(
+    view: View,
+    owner: string,
+    pane: Pane | undefined,
+    rect: Rect,
+    clip: Rect,
+    parent: Target | undefined,
+    seen: Set<View>,
+  ): Target {
+    const target: Target = { view, owner, pane, parent, rect, clip, children: [] };
     seen.add(view);
     if (view.layout === undefined) return target;
     const placements = this.#call(target, [], () => view.layout?.({ width: rect.width, height: rect.height }) ?? []);
@@ -276,7 +316,12 @@ export class Scene {
         width: Math.max(0, placement.rect.width),
         height: Math.max(0, placement.rect.height),
       };
-      target.children.push(this.#place(child as View, owner, childRect, intersect(clip, childRect), target, seen));
+      // A pane view belongs to the plugin of the pane, not to the owner of the tree.
+      const leaf = this.#host.paneOf(child as View);
+      const childOwner = leaf?.owner ?? owner;
+      const childPane = leaf === undefined ? pane : leaf.pane;
+      const childClip = intersect(clip, childRect);
+      target.children.push(this.#place(child as View, childOwner, childPane, childRect, childClip, target, seen));
     }
     return target;
   }
@@ -318,7 +363,7 @@ export class Scene {
       const text = failureOf(error);
       this.#failed.set(target.view, text);
       this.#host.report(target.owner, text);
-      this.#changed();
+      this.#host.requestFrame();
       return fallback;
     }
   }
@@ -327,7 +372,6 @@ export class Scene {
   #bubble<A>(layer: Layer, handler: (view: View) => ((value: A) => boolean) | undefined, value: A): boolean {
     for (let target = this.#focusTarget(layer); target !== undefined; target = target.parent) {
       const { view } = target;
-      if (handler(view) === undefined) continue;
       if (this.#call(target, false, () => handler(view)?.call(view, value) === true)) return true;
     }
     return false;
@@ -351,7 +395,6 @@ export class Scene {
     for (let target: Target | undefined = hit; target !== undefined; target = target.parent) {
       const current = target;
       const { view } = current;
-      if (view.mouse === undefined) continue;
       if (this.#call(current, false, () => view.mouse?.(local(event, current)) === true)) {
         // A handler that opened a modal gave the input away, so it gets no capture.
         if (event.action === "press" && event.button === "left" && this.#inputLayer() === input) {
@@ -368,7 +411,7 @@ export class Scene {
     if (layer === this.#root || layer === this.#defaultRoot) this.#rootFocus = view;
     else layer.focus = view;
     this.#syncFocus();
-    this.#changed();
+    this.#host.requestFrame();
   }
 
   /** The focused target of `layer`, or a fallback when its focused view left the tree. */
@@ -380,13 +423,20 @@ export class Scene {
     if (found !== undefined) return this.#remembered(found);
     const fallback = isRoot ? this.#host.fallbackFocus() : undefined;
     const fallen = fallback === undefined ? undefined : findIn(layer.tree, fallback);
-    return fallen === undefined ? layer.tree : this.#remembered(fallen);
+    return this.#remembered(fallen ?? layer.tree);
   }
 
-  /** The last focused view inside `target`, when it is still in the subtree of `target`. */
+  /**
+   * The last focused view inside `target` when it is still in the subtree. Else the `initialFocus` of `target` when it
+   * is in the subtree and can take the focus. Else `target`.
+   */
   #remembered(target: Target): Target {
     const inner = this.#lastInside.get(target.view);
-    return (inner === undefined ? undefined : findIn(target, inner)) ?? target;
+    const remembered = inner === undefined ? undefined : findIn(target, inner);
+    if (remembered !== undefined) return remembered;
+    const initial = this.#call(target, undefined, () => target.view.initialFocus);
+    const found = initial === undefined ? undefined : findIn(target, initial);
+    return found !== undefined && this.#focusable(found.view) ? found : target;
   }
 
   /**
@@ -409,7 +459,10 @@ export class Scene {
       for (const target of before) if (!views.includes(target.view)) this.#notifyFocus(target, false);
       for (const target of path) if (!viewsBefore.includes(target.view)) this.#notifyFocus(target, true);
     }
-    if (inputChanged || !sameViews(rootPath, rootBefore)) this.#host.focusMoved(rootPath);
+    const previous = before.at(-1)?.view;
+    const change =
+      deepest === previous ? undefined : Object.freeze({ previous, current: deepest, pane: path.at(-1)?.pane });
+    if (inputChanged || !sameViews(rootPath, rootBefore)) this.#host.focusMoved(rootPath, change);
   }
 
   /** Tell the view of `target` its focus change. A target of an earlier layout reaches a view that left the tree. */
@@ -419,7 +472,7 @@ export class Scene {
   }
 
   #focusable(view: View): boolean {
-    return view.focusable === true || this.#host.focusableByRole(view);
+    return view.focusable === true || this.#host.paneOf(view) !== undefined;
   }
 
   /** The top modal, else the root. */
@@ -445,20 +498,23 @@ export class Scene {
     return undefined;
   }
 
-  #cursor(): Point | undefined {
+  #cursor(): Cursor | undefined {
     const target = this.#focusTarget(this.#inputLayer());
     if (target === undefined || target.view.cursor === undefined) return undefined;
-    const point = this.#call(target, undefined, () => target.view.cursor?.());
-    if (point === undefined || !Number.isFinite(point.column) || !Number.isFinite(point.row)) return undefined;
+    const cursor = this.#call(target, undefined, () => {
+      const cursor = target.view.cursor?.();
+      if (cursor?.shape !== undefined && !SHAPES.includes(cursor.shape)) {
+        throw new TypeError(`a cursor shape is block, underline, or bar, not ${String(cursor.shape)}`);
+      }
+      return cursor;
+    });
+    if (cursor === undefined || !Number.isFinite(cursor.column) || !Number.isFinite(cursor.row)) return undefined;
     const screen = {
-      column: target.rect.column + Math.floor(point.column),
-      row: target.rect.row + Math.floor(point.row),
+      column: target.rect.column + Math.floor(cursor.column),
+      row: target.rect.row + Math.floor(cursor.row),
+      ...(cursor.shape === undefined ? {} : { shape: cursor.shape }),
     };
     return inside(target.clip, screen) ? screen : undefined;
-  }
-
-  #changed(): void {
-    this.#host.requestFrame();
   }
 }
 

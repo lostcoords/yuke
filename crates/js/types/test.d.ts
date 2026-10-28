@@ -39,6 +39,63 @@ declare module "yuke:test" {
   } from "yuke:protocol";
   import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Question, Transcript } from "yuke:transcript";
+  import type { Cursor, KeyEvent, Mount, MouseEvent, Size, Tui, ViewFactory } from "yuke:tui";
+
+  /** A color of a frame cell: a palette index from 0 to 255, or `#` and six lower-case hex digits. */
+  export type ScreenColor = number | `#${string}`;
+
+  /** The style of a frame cell: each color that is not the default, and each attribute that is on. */
+  export interface CellStyle {
+    readonly fg?: ScreenColor;
+    readonly bg?: ScreenColor;
+    readonly underlineColor?: ScreenColor;
+    readonly bold?: true;
+    readonly dim?: true;
+    readonly italic?: true;
+    readonly reverse?: true;
+    readonly underline?: true;
+  }
+
+  export interface ScreenCell {
+    readonly text: string;
+    /** The cells of the grapheme. 0 is the second cell of a wide grapheme, with no text. */
+    readonly width: 0 | 1 | 2;
+    readonly style: CellStyle;
+  }
+
+  /** One drawn frame: the rows of cells, and the cursor in screen cells. */
+  export interface Frame extends Size {
+    readonly cells: readonly (readonly ScreenCell[])[];
+    readonly cursor: Cursor | undefined;
+  }
+
+  /** The surface of a plugin in a frame test. `close()` removes its registrations and mounts, as a plugin stop does. */
+  export interface TestSurface extends Mount {
+    readonly tui: Tui;
+  }
+
+  /**
+   * A terminal interface in a test: the real core, keymap, scene, and styles on a grid of cells. Each input method
+   * handles its event, then draws a frame. `[Symbol.dispose]()` closes each surface.
+   */
+  export interface FrameTest extends Disposable {
+    /** The last drawn frame. */
+    readonly frame: Frame;
+    /** The texts that `tui.copy` sent, the oldest first. */
+    readonly copies: readonly string[];
+    /** A new surface for the plugin `name`. */
+    surface: (name: string) => TestSurface;
+    draw: () => Frame;
+    /** Press a key event, or the keys of a key spec such as `ctrl+k v`, one after the other. */
+    key: (event: KeyEvent | string) => void;
+    /** A mouse event in screen cells. */
+    mouse: (event: MouseEvent) => void;
+    paste: (text: string) => void;
+    resize: (size: Size) => void;
+  }
+
+  /** A frame test of `size`. `create` makes the root view; without it, the root is the pane tree. */
+  export function createFrame(size: Size, create?: ViewFactory): FrameTest;
 
   /** Add the test `name`. The runner awaits the promise of `fn`. */
   export function test(name: string, fn: () => void | Promise<void>): void;

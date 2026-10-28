@@ -2,8 +2,9 @@
 
 import { createHost, reply } from "yuke:internal/host";
 import { folder, register } from "yuke:internal/test";
+import { createFrame } from "yuke:internal/tui/frame";
 
-export { createHost, folder, reply };
+export { createFrame, createHost, folder, reply };
 
 /** The most characters of a value in a failure. */
 const SHOWN = 200;
@@ -138,5 +139,6 @@ const declared = {
   folder,
   createHost,
   reply,
+  createFrame,
 } satisfies typeof import("yuke:test");
 void declared;
