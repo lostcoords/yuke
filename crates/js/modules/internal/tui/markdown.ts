@@ -1,10 +1,11 @@
 /**
- * Markdown to styled rows. A stream parses again only its last two blocks, and each closed
- * block keeps its rows for its newest width. A segment with a source range maps back to its source; a layout segment,
- * such as a space between words, has none. A link keeps its brackets and its target, so the user can copy the target.
+ * `Markdown` of `yuke:tui`: Markdown to styled rows. A stream parses again only its last two blocks. Each closed block
+ * keeps its rows for its newest width. A segment with a source maps back to the source. A layout segment, such as the
+ * continuation indent of a list item, has none. A link keeps its brackets and its target, so a copy keeps the target.
  * The style groups are `markdown.*`, and a plugin sets their look.
  */
 import { termGraphemes, termMeasure } from "yuke:internal/native";
+import type { MarkdownBlock, SourceMapping, TextRow } from "yuke:tui";
 
 /** Printable ASCII: each character is one cell and one grapheme, so its width needs no native call. */
 const ASCII = /^[\x20-\x7e]*$/;
@@ -14,31 +15,20 @@ function widthOf(text: string): number {
   return ASCII.test(text) ? text.length : termMeasure(text);
 }
 
-/** One styled piece of a row. */
-export interface Segment {
+/** A segment before the renderer returns it, with a style group name. */
+interface Part {
   text: string;
-  /** The style group. */
   style: string;
-  /** The source range of the piece, when it has one. */
-  src?: number;
-  srcEnd?: number;
-  /** The piece stands for markup that it does not show, such as a list mark. */
-  mark?: boolean;
-  /** The target of the link that the piece belongs to. */
+  source?: SourceMapping;
   link?: string;
+  copy?: false;
 }
 
-/** One row of the rendered text. `width` is its width in cells, when the renderer counted it. */
-export interface Row {
-  segments: Segment[];
+/** A row while it builds. `width` is its width in cells, when the renderer counted it. */
+interface Row {
+  segments: Part[];
+  join: string;
   width?: number;
-}
-
-/** The kind and the source range of one block. */
-export interface BlockSummary {
-  readonly kind: Block["kind"];
-  readonly at: number;
-  readonly end: number;
 }
 
 /** The style groups of the rendered text. */
@@ -93,10 +83,10 @@ type Block = BlockBase &
   (
     | { kind: "heading"; text: string; runs: SourceRun[] }
     | { kind: "paragraph"; text: string; runs: SourceRun[] }
-    | { kind: "code"; lang: string; lines: string[]; lineAt: number[] }
+    | { kind: "code"; language: string; lines: string[]; lineAt: number[] }
     | { kind: "quote"; text: string; runs: SourceRun[]; markAt: number; markEnd: number }
-    | { kind: "hr" }
-    | { kind: "list"; ordered: boolean; items: ListItem[] }
+    | { kind: "rule" }
+    | { kind: "list"; items: ListItem[] }
     | { kind: "table"; columns: number; rows: InlineSource[][]; align: Align[]; sepAt: number; sepEnd: number }
   );
 
@@ -107,7 +97,7 @@ interface Fence {
   marker: string;
   length: number;
   indent: number;
-  lang: string;
+  language: string;
 }
 
 const FENCE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
@@ -142,7 +132,7 @@ function fenceOpen(line: string): Fence | null {
   const marker = marks[0] as string;
   const info = m[3] as string;
   if (marker === "`" && info.includes("`")) return null;
-  return { marker, length: marks.length, indent: (m[1] as string).length, lang: info.trim() };
+  return { marker, length: marks.length, indent: (m[1] as string).length, language: info.trim() };
 }
 
 function isBlockStart(line: string): boolean {
@@ -244,7 +234,7 @@ function segment(text: string, base: number): Block[] {
         bodyAt.push(start(j) + cut);
       }
       const to = closed ? j + 1 : lines.length;
-      push({ kind: "code", lang: fence.lang, lines: body, lineAt: bodyAt }, i, to);
+      push({ kind: "code", language: fence.language, lines: body, lineAt: bodyAt }, i, to);
       i = to;
       continue;
     }
@@ -267,7 +257,7 @@ function segment(text: string, base: number): Block[] {
     }
 
     if (canStartBlock && HR.test(line)) {
-      push({ kind: "hr" }, i, i + 1);
+      push({ kind: "rule" }, i, i + 1);
       i++;
       continue;
     }
@@ -309,7 +299,7 @@ function segment(text: string, base: number): Block[] {
           markEnd: src,
         });
       }
-      push({ kind: "list", ordered, items }, i, j);
+      push({ kind: "list", items }, i, j);
       i = j;
       continue;
     }
@@ -416,9 +406,7 @@ type InlineNode =
 
 interface Delimiter {
   kind: "delimiter";
-  text: string;
   at: number;
-  len: number;
   marker: string;
   count: number;
   canOpen: boolean;
@@ -579,8 +567,7 @@ function parseInline(text: string, baseStyle: string = STYLE.text): Piece[] {
       const d = scanDelimiters(cps, i, c);
       nodes.push({
         kind: "delimiter",
-        text: c.repeat(d.count),
-        ...span(i, i + d.count),
+        at: at(i),
         marker: c,
         count: d.count,
         canOpen: d.canOpen,
@@ -675,28 +662,28 @@ function flattenInline(nodes: readonly InlineNode[], baseStyle: string): Piece[]
   return out.length > 0 ? out : [{ text: "", style: baseStyle, at: 0, len: 0 }];
 }
 
-/** The pieces on source offsets. Markup, such as an escape, can make a piece not linear. */
-function resolveSegments(pieces: readonly Piece[], runs: readonly SourceRun[]): Segment[] {
-  const withLink = (segment: Segment, link: string | undefined): Segment =>
-    link === undefined ? segment : { ...segment, link };
+/** The pieces on source offsets. Markup, such as an escape, makes a piece a replacement of its source. */
+function resolveSegments(pieces: readonly Piece[], runs: readonly SourceRun[]): Part[] {
+  const withLink = (part: Part, link: string | undefined): Part => (link === undefined ? part : { ...part, link });
   if (runs.length === 0) return pieces.map((p) => withLink({ text: p.text, style: p.style }, p.link));
-  const out: Segment[] = [];
+  const out: Part[] = [];
   for (const p of pieces) {
     if (p.text.length === 0) out.push({ text: "", style: p.style });
     else if (p.len !== p.text.length) {
-      out.push(
-        withLink(
-          { text: p.text, style: p.style, src: srcAt(runs, p.at, false), srcEnd: srcAt(runs, p.at + p.len - 1, true) },
-          p.link,
-        ),
-      );
+      const source = mapping("replacement", srcAt(runs, p.at, false), srcAt(runs, p.at + p.len - 1, true));
+      out.push(withLink({ text: p.text, style: p.style, source }, p.link));
     } else {
       let k = 0;
       while (k < p.text.length) {
         const r = runFor(runs, p.at + k);
         const take = Math.min(p.text.length - k, Math.max(1, r.at + r.len - (p.at + k)));
         const src = r.src + (p.at + k - r.at);
-        out.push(withLink({ text: p.text.slice(k, k + take), style: p.style, src, srcEnd: src + take }, p.link));
+        out.push(
+          withLink(
+            { text: p.text.slice(k, k + take), style: p.style, source: mapping("text", src, src + take) },
+            p.link,
+          ),
+        );
         k += take;
       }
     }
@@ -704,54 +691,46 @@ function resolveSegments(pieces: readonly Piece[], runs: readonly SourceRun[]): 
   return out;
 }
 
-/** One source character for each shown character, so an offset survives a slice. A mark and an escape are not linear. */
-function isLinear(segment: Segment): boolean {
-  return (
-    segment.src !== undefined &&
-    segment.mark !== true &&
-    (segment.srcEnd as number) - segment.src === segment.text.length
-  );
+function mapping(kind: SourceMapping["kind"], from: number, to: number): SourceMapping {
+  return { kind, from, to };
 }
 
-/** A slice of a resolved segment. A segment that is not linear keeps its whole source span. */
-function sliceSegment(segment: Segment, from: number, to: number): Segment {
-  const out: Segment = { text: segment.text.slice(from, to), style: segment.style };
-  if (segment.link !== undefined) out.link = segment.link;
-  if (segment.src === undefined) return out;
-  if (!isLinear(segment)) {
-    out.src = segment.src;
-    out.srcEnd = segment.srcEnd as number;
-    if (segment.mark === true) out.mark = true;
-    return out;
-  }
-  out.src = segment.src + from;
-  out.srcEnd = segment.src + to;
+/** A slice of a resolved part. A text source slices with it, and a replacement keeps its whole source. */
+function sliceSegment(part: Part, from: number, to: number): Part {
+  const out: Part = { text: part.text.slice(from, to), style: part.style };
+  if (part.link !== undefined) out.link = part.link;
+  if (part.source === undefined) return out;
+  out.source =
+    part.source.kind === "text" ? mapping("text", part.source.from + from, part.source.from + to) : part.source;
   return out;
 }
 
 /** Whether two neighbours join: their style and link match, and their text and source stay contiguous. */
-function segmentsJoin(a: Segment, b: Segment): boolean {
+function segmentsJoin(a: Part, b: Part): boolean {
   if (a.style !== b.style || a.link !== b.link) return false;
-  if (a.src === undefined && b.src === undefined) return true;
-  return a.srcEnd === b.src && isLinear(a) && isLinear(b);
+  if (a.source === undefined && b.source === undefined) return true;
+  return a.source?.kind === "text" && b.source?.kind === "text" && a.source.to === b.source.from;
 }
 
 interface Word {
-  pieces: Segment[];
+  pieces: Part[];
   width: number;
-  /** The space before the word, with the style and the link of the blank run that it stands for. */
-  space: Segment | undefined;
+  /** The space before the word: one cell for the blank run, with its style, its link, and its source. */
+  space: Part | undefined;
 }
 
 interface WrapOptions {
   limit?: number;
-  firstPrefix?: Segment;
-  restPrefix?: Segment;
+  firstPrefix?: Part;
+  restPrefix?: Part;
   emptyStyle?: string;
 }
 
-/** The rows of `segments` wrapped at `width`, at most `limit`. A word wider than the row breaks between graphemes. */
-function wrapSegments(segments: readonly Segment[], width: number, options: WrapOptions = {}): Row[] {
+/**
+ * The rows of `segments` wrapped at `width`, at most `limit`. A word wider than the row breaks between graphemes.
+ * A wrap at a space joins with " ". A break in a word joins with "". The last row joins with "\n".
+ */
+function wrapSegments(segments: readonly Part[], width: number, options: WrapOptions = {}): Row[] {
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
   if (limit === 0) return [];
   const first = options.firstPrefix;
@@ -761,16 +740,17 @@ function wrapSegments(segments: readonly Segment[], width: number, options: Wrap
   const rows: Row[] = [];
   const available = (): number => Math.max(1, width - (rows.length === 0 ? firstWidth : restWidth));
   const spaceWidth = 1;
-  let line: Segment[] = [];
+  let line: Part[] = [];
   let lineWidth = 0;
 
-  const emit = (): boolean => {
+  const emit = (join: string): boolean => {
     if (rows.length >= limit) return false;
     const prefix = rows.length === 0 ? first : rest;
     const segs = prefix === undefined ? line.slice() : [prefix, ...line];
     const rowWidth = lineWidth + (rows.length === 0 ? firstWidth : restWidth);
     rows.push({
       segments: segs.length > 0 ? segs : [{ text: "", style: options.emptyStyle ?? STYLE.text }],
+      join,
       width: rowWidth,
     });
     line = [];
@@ -780,15 +760,15 @@ function wrapSegments(segments: readonly Segment[], width: number, options: Wrap
 
   for (const word of segmentsToWords(segments)) {
     if (rows.length >= limit) break;
-    if (line.length > 0 && lineWidth + spaceWidth + word.width > available() && !emit()) break;
+    if (line.length > 0 && lineWidth + spaceWidth + word.width > available() && !emit(" ")) break;
     if (word.width > available()) {
-      if (line.length > 0 && !emit()) break;
+      if (line.length > 0 && !emit(" ")) break;
       const broken = hardBreak(word.pieces, available(), limit - rows.length + 1);
       for (let i = 0; i < broken.length; i++) {
         const piece = broken[i] as Row;
         line = piece.segments;
         lineWidth = piece.width ?? 0;
-        if (i + 1 < broken.length && !emit()) break;
+        if (i + 1 < broken.length && !emit("")) break;
       }
       if (rows.length >= limit) break;
       continue;
@@ -800,26 +780,31 @@ function wrapSegments(segments: readonly Segment[], width: number, options: Wrap
     line.push(...word.pieces);
     lineWidth += word.width;
   }
-  if (rows.length < limit) emit();
+  if (rows.length < limit) emit("\n");
   return rows;
 }
 
 /** A blank run or a word, so a wrap walks a segment in runs and not in characters. */
 const RUNS = /[ \t\n]+|[^ \t\n]+/g;
 
-/** The words of `segments`, split at each blank run with their source offsets. A wrap puts one space between words. */
-function segmentsToWords(segments: readonly Segment[]): Word[] {
+/**
+ * The words of `segments`, split at each blank run with their source offsets. A wrap puts one space between two words.
+ * The space of a longer blank run is a replacement of the whole run.
+ */
+function segmentsToWords(segments: readonly Part[]): Word[] {
   const words: Word[] = [];
   let current: Word | undefined;
-  let space: Segment | undefined;
+  let space: Part | undefined;
   for (const segment of segments) {
     for (const m of segment.text.matchAll(RUNS)) {
       const run = m[0];
       if (run[0] === " " || run[0] === "\t" || run[0] === "\n") {
         if (current !== undefined) words.push(current);
         current = undefined;
-        space = { text: " ", style: segment.style };
-        if (segment.link !== undefined) space.link = segment.link;
+        space = { ...sliceSegment(segment, m.index, m.index + run.length), text: " " };
+        if (run.length > 1 && space.source !== undefined) {
+          space.source = mapping("replacement", space.source.from, space.source.to);
+        }
         continue;
       }
       if (current === undefined) {
@@ -835,23 +820,28 @@ function segmentsToWords(segments: readonly Segment[]): Word[] {
   return words;
 }
 
-/** `pieces` broken into rows of `width` cells between graphemes, at most `limit` rows. A wider grapheme stays whole. */
-function hardBreak(pieces: readonly Segment[], width: number, limit: number): Row[] {
+/**
+ * `pieces` broken into rows of `width` cells between graphemes, at most `limit` rows. A wider grapheme stays whole.
+ * Each row joins with "". The caller sets the join of the last row.
+ */
+function hardBreak(pieces: readonly Part[], width: number, limit: number): Row[] {
   const out: Row[] = [];
-  let segments: Segment[] = [];
+  let segments: Part[] = [];
   let lineWidth = 0;
   const emit = (): boolean => {
     if (out.length >= limit) return false;
-    if (segments.length > 0) out.push({ segments, width: lineWidth });
+    if (segments.length > 0) out.push({ segments, join: "", width: lineWidth });
     segments = [];
     lineWidth = 0;
     return out.length < limit;
   };
-  const append = (segment: Segment, cells: number): void => {
+  const append = (segment: Part, cells: number): void => {
     const last = segments.at(-1);
     if (last !== undefined && segmentsJoin(last, segment)) {
       last.text += segment.text;
-      if (last.src !== undefined) last.srcEnd = segment.srcEnd as number;
+      if (last.source !== undefined && segment.source !== undefined) {
+        last.source = mapping("text", last.source.from, segment.source.to);
+      }
     } else segments.push(segment);
     lineWidth += cells;
   };
@@ -887,7 +877,7 @@ function hardBreak(pieces: readonly Segment[], width: number, limit: number): Ro
 const TABLE_GAP = " │ ";
 
 /** The width of each column: its widest cell. When the columns do not fit, wide columns shrink to a common cap of 3 or more. */
-function columnWidths(cells: readonly Segment[][][], available: number): number[] {
+function columnWidths(cells: readonly Part[][][], available: number): number[] {
   const widths: number[] = [];
   for (const row of cells) {
     row.forEach((segments, c) => {
@@ -922,10 +912,13 @@ function columnWidths(cells: readonly Segment[][][], available: number): number[
 }
 
 function plainRow(text: string, style: string = STYLE.text): Row {
-  return { segments: [{ text, style }] };
+  return { segments: [{ text, style }], join: "\n" };
 }
 
-/** The rows of `block` at `width`, at most `limit`. A mark carries the span of the markup that it hides. */
+/**
+ * The rows of `block` at `width`, at most `limit`. A replacement segment, such as a list mark, maps to the markup that
+ * it stands for. The last row joins with "\n".
+ */
 function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINITY): Row[] {
   switch (block.kind) {
     case "heading": {
@@ -944,53 +937,47 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
         const at = block.lineAt[k] as number;
         const text = block.lines[k] as string;
         const parts = hardBreak(
-          [{ text, style: STYLE.codeBlock, src: at, srcEnd: at + text.length }],
+          [{ text, style: STYLE.codeBlock, source: mapping("text", at, at + text.length) }],
           width,
           limit - rows.length,
         );
         if (parts.length === 0) rows.push(plainRow("", STYLE.codeBlock));
-        for (const part of parts) {
+        // A limit can cut the line, and then its last shown part still joins with "".
+        const shown = parts.reduce((length, part) => length + part.segments.reduce((n, s) => n + s.text.length, 0), 0);
+        for (const [index, part] of parts.entries()) {
           if (rows.length >= limit) break;
-          rows.push({ segments: part.segments });
+          const end = index + 1 === parts.length && shown === text.length;
+          rows.push({ segments: part.segments, join: end ? "\n" : "" });
         }
       }
       if (rows.length === 0 && limit > 0) rows.push(plainRow("", STYLE.codeBlock));
       return rows;
     }
     case "quote": {
-      const bar: Segment = { text: "▏ ", style: STYLE.quote, src: block.markAt, srcEnd: block.markEnd, mark: true };
+      const source = mapping("replacement", block.markAt, block.markEnd);
+      const bar: Part = { text: "▏ ", style: STYLE.quote, source, copy: false };
       const segments = resolveSegments(parseInline(block.text, STYLE.quote), block.runs);
       return wrapSegments(segments, width, {
         firstPrefix: bar,
-        restPrefix: { text: "▏ ", style: STYLE.quote },
+        restPrefix: { text: "▏ ", style: STYLE.quote, copy: false },
         emptyStyle: STYLE.quote,
         limit,
       });
     }
-    case "hr": {
-      const rule: Segment = {
-        text: "─".repeat(Math.max(1, width)),
-        style: STYLE.rule,
-        src: block.at,
-        srcEnd: block.end,
-        mark: true,
-      };
-      return limit > 0 ? [{ segments: [rule] }] : [];
+    case "rule": {
+      const source = mapping("replacement", block.at, block.end);
+      const rule: Part = { text: "─".repeat(Math.max(1, width)), style: STYLE.rule, source };
+      return limit > 0 ? [{ segments: [rule], join: "\n" }] : [];
     }
     case "list": {
       const rows: Row[] = [];
       for (const item of block.items) {
         if (rows.length >= limit) break;
         const pad = "  ".repeat(item.indent);
-        const mark: Segment = {
-          text: `${pad}${item.marker} `,
-          style: STYLE.listMark,
-          src: item.markAt,
-          srcEnd: item.markEnd,
-          mark: true,
-        };
+        const source = mapping("replacement", item.markAt, item.markEnd);
+        const mark: Part = { text: `${pad}${item.marker} `, style: STYLE.listMark, source };
         const segments = resolveSegments(parseInline(item.text), item.runs);
-        const restPrefix: Segment = { text: `${pad}  `, style: STYLE.listMark };
+        const restPrefix: Part = { text: `${pad}  `, style: STYLE.listMark, copy: false };
         rows.push(...wrapSegments(segments, width, { firstPrefix: mark, restPrefix, limit: limit - rows.length }));
       }
       return rows;
@@ -1006,13 +993,13 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
       const widths = columnWidths(cells, Math.max(1, width - gap * (block.columns - 1)));
       const rows: Row[] = [];
       for (let r = 0; r < cells.length && rows.length < limit; r++) {
-        const row = cells[r] as Segment[][];
+        const row = cells[r] as Part[][];
         const lines = row.map((segments, c) =>
           wrapSegments(segments, widths[c] as number, { limit: limit - rows.length }),
         );
         const height = Math.max(...lines.map((l) => l.length));
         for (let k = 0; k < height && rows.length < limit; k++) {
-          const segments: Segment[] = [];
+          const segments: Part[] = [];
           for (let c = 0; c < row.length; c++) {
             if (c > 0) segments.push({ text: TABLE_GAP, style: STYLE.tableBorder });
             const cell = lines[c]?.[k];
@@ -1021,17 +1008,16 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
             const before = align === "right" ? pad : align === "center" ? Math.floor(pad / 2) : 0;
             // The last column has no padding after its text, so a copied row ends at its text.
             const after = c + 1 < row.length ? pad - before : 0;
-            if (before > 0) segments.push({ text: " ".repeat(before), style: STYLE.text });
+            if (before > 0) segments.push({ text: " ".repeat(before), style: STYLE.text, copy: false });
             if (cell !== undefined) segments.push(...cell.segments);
-            if (after > 0) segments.push({ text: " ".repeat(after), style: STYLE.text });
+            if (after > 0) segments.push({ text: " ".repeat(after), style: STYLE.text, copy: false });
           }
-          rows.push({ segments });
+          rows.push({ segments, join: "\n" });
         }
         if (r === 0 && rows.length < limit) {
           const rule = widths.map((w) => "─".repeat(w)).join("─┼─");
-          rows.push({
-            segments: [{ text: rule, style: STYLE.tableBorder, src: block.sepAt, srcEnd: block.sepEnd, mark: true }],
-          });
+          const source = mapping("replacement", block.sepAt, block.sepEnd);
+          rows.push({ segments: [{ text: rule, style: STYLE.tableBorder, source }], join: "\n" });
         }
       }
       return rows;
@@ -1047,31 +1033,33 @@ function normalized(text: string): string {
 interface CacheEntry {
   raw: string;
   width: number;
-  rows: Row[];
+  rows: readonly TextRow[];
 }
 
 /**
  * A Markdown text as styled rows. A text that extends the old one parses again only its last two blocks, and another
- * text parses from the start. A segment offset indexes `source()`.
+ * text parses from the start. Each source offset indexes `source()`. The cache shares the rows, so they are read-only.
  */
 export class Markdown {
-  #source: string | undefined;
+  #source = "";
   /** The source text that the last parse read, so an append never slices the whole source. */
   #tail = "";
-  /** The raw input ended in "\r", so a "\n" at the start of the next fragment belongs to that line break. */
+  /** The input ended in "\r", so a "\n" at the start of the next fragment belongs to that line break. */
   #carriageReturn = false;
-  /** The raw input has no "\r", so the source is that input itself. */
-  #raw = true;
   readonly #blocks: Block[] = [];
   readonly #cache = new Map<number, CacheEntry>();
 
+  constructor(text = "") {
+    this.setText(text);
+  }
+
   /** Replace the source, and return `true` when it changed. A text that extends the old one keeps its first blocks. */
   setText(text: string): boolean {
+    if (typeof text !== "string") throw new TypeError("a Markdown text is a string");
     this.#carriageReturn = text.endsWith("\r");
-    this.#raw = !text.includes("\r");
     const source = normalized(text);
     if (source === this.#source) return false;
-    if (this.#source === undefined || !source.startsWith(this.#source)) {
+    if (!source.startsWith(this.#source)) {
       this.#cache.clear();
       this.#blocks.length = 0;
     }
@@ -1080,48 +1068,52 @@ export class Markdown {
     return true;
   }
 
-  /** Add `fragment` at the end of the source. `text` is the whole raw input after the append. */
-  append(fragment: string, text: string): void {
+  /** Add `fragment` at the end of the source. A "\r\n" split between two fragments is one line break. */
+  append(fragment: string): void {
+    if (typeof fragment !== "string") throw new TypeError("a Markdown fragment is a string");
     const raw = this.#carriageReturn && fragment.startsWith("\n") ? fragment.slice(1) : fragment;
     if (fragment !== "") this.#carriageReturn = raw.endsWith("\r");
     if (raw === "") return;
-    this.#raw = this.#raw && !raw.includes("\r");
-    const added = this.#raw ? raw : normalized(raw);
-    this.#source = this.#raw ? text : (this.#source ?? "") + added;
+    const added = normalized(raw);
+    this.#source += added;
     this.#parse(this.#tail + added);
   }
 
-  /** The source after the line break change. Each segment offset indexes this text. */
+  /** The source with each "\r\n" and "\r" as "\n". Each source offset indexes this text. */
   source(): string {
-    return this.#source ?? "";
+    return this.#source;
   }
 
-  /** The kind and the source range of each block, in order. */
-  blocks(): BlockSummary[] {
-    return this.#blocks.map((b) => ({ kind: b.kind, at: b.at, end: b.end }));
+  /** The kind and the source range of each block, in order. A code block has its fence language, or "". */
+  blocks(): readonly MarkdownBlock[] {
+    return this.#blocks.map(
+      (block): MarkdownBlock =>
+        block.kind === "code"
+          ? { kind: block.kind, from: block.at, to: block.end, language: block.language }
+          : { kind: block.kind, from: block.at, to: block.end },
+    );
   }
 
   /**
-   * The rows at `width`, at most `limit`, with an empty row between two blocks. The cache shares the rows, so a caller
-   * must not change them.
+   * The rows at `width`, at most `limit`, with an empty row between two blocks. When the rows end before `limit`, the
+   * last row of the text joins with "".
    */
-  rows(width: number, limit = Number.POSITIVE_INFINITY): readonly Row[] {
+  rows(width: number, limit = Number.POSITIVE_INFINITY): readonly TextRow[] {
     const most = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
-    const out: Row[] = [];
+    const out: TextRow[] = [];
     for (const [index, block] of this.#blocks.entries()) {
-      if (index > 0 && out.length < most) out.push(plainRow(""));
-      for (const row of this.#blockRows(block, width, most - out.length)) {
-        if (out.length >= most) break;
-        out.push(row);
-      }
       if (out.length >= most) break;
+      if (index > 0) out.push(plainRow(""));
+      out.push(...this.#blockRows(block, width, most - out.length));
     }
+    const last = out.at(-1);
+    if (out.length < most && last !== undefined) out[out.length - 1] = { ...last, join: "" };
     return out;
   }
 
   /** Parse again from the block before the last one. `text` is the end of the source, which holds it already. */
   #parse(text: string): void {
-    const source = this.#source ?? "";
+    const source = this.#source;
     const at = source.length - text.length;
     const keep = Math.max(0, this.#blocks.length - 2);
     const from = keep > 0 ? (this.#blocks[keep] as Block).at : 0;
@@ -1134,12 +1126,13 @@ export class Markdown {
   }
 
   /** The rows of `block`. The cache keys on the block offset, and `raw` tells a change under one offset. */
-  #blockRows(block: Block, width: number, limit: number): Row[] {
+  #blockRows(block: Block, width: number, limit: number): readonly TextRow[] {
     if (block.open === true) return renderBlock(block, width, limit);
     const entry = this.#cache.get(block.at);
     const fresh = entry !== undefined && entry.raw === block.raw && entry.width === width;
-    if (limit !== Number.POSITIVE_INFINITY)
+    if (limit !== Number.POSITIVE_INFINITY) {
       return fresh ? entry.rows.slice(0, limit) : renderBlock(block, width, limit);
+    }
     if (fresh) return entry.rows;
     const rows = renderBlock(block, width);
     this.#cache.set(block.at, { raw: block.raw, width, rows });

@@ -441,6 +441,58 @@ declare module "yuke:tui" {
     readonly watch: (attach: (mount: WidgetMount) => Disposer | undefined) => Disposer;
   }
 
+  /**
+   * The source of a segment. A `text` mapping has one source unit for each shown unit, so an offset in the segment
+   * maps to `from` plus that offset. A `replacement` stands for its whole source range, such as a list mark for "- ".
+   */
+  export interface SourceMapping extends OffsetRange {
+    readonly kind: "text" | "replacement";
+  }
+
+  /** A styled piece of a row. A segment with `copy: false`, such as alignment padding, stays out of a copy. */
+  export interface Segment {
+    readonly text: string;
+    readonly style?: string | Style | undefined;
+    /** The source of the segment. A layout segment, such as the indent of a wrapped list item, has none. */
+    readonly source?: SourceMapping | undefined;
+    /** The target of the link that the segment belongs to. */
+    readonly link?: string | undefined;
+    readonly copy?: boolean | undefined;
+  }
+
+  /** One row of rendered text. */
+  export interface TextRow {
+    readonly segments: readonly Segment[];
+    /** The text after this row in a copy: "\n" after a line, " " after a wrap at a space, and "" after a break in a word. */
+    readonly join: string;
+  }
+
+  /** The kind and the source range of one Markdown block. A code block has its fence language, or "". */
+  export type MarkdownBlock = OffsetRange &
+    (
+      | { readonly kind: "code"; readonly language: string }
+      | { readonly kind: "heading" | "paragraph" | "quote" | "rule" | "list" | "table" }
+    );
+
+  /**
+   * A Markdown text as styled rows. `setText` and `append` parse again only the last two blocks when the text grows.
+   * The style groups are `markdown.*`. Each source offset indexes `source()`. Calls share cached rows, so do not change
+   * them.
+   */
+  export class Markdown {
+    constructor(text?: string);
+    /** The source with each "\r\n" and "\r" as "\n". */
+    source(): string;
+    /** Replace the source. `false` when it is the same. */
+    setText(text: string): boolean;
+    /** Add `fragment` at the end. A "\r\n" split between two fragments is one line break. */
+    append(fragment: string): void;
+    /** The blocks in source order. */
+    blocks(): readonly MarkdownBlock[];
+    /** The rows at `width`, at most `limit`, with an empty row between two blocks. */
+    rows(width: number, limit?: number): readonly TextRow[];
+  }
+
   /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
   export interface FocusChange {
     readonly previous: View | undefined;
