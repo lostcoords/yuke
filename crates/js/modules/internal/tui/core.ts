@@ -71,6 +71,7 @@ export class Core {
         // A key sequence belongs to the contexts where it started.
         contextsChanged: () => this.keymap.cancel(),
         report: (text) => report(CORE, text),
+        copy: (text) => driver.copy(text),
       },
       report,
     );

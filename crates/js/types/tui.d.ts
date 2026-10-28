@@ -426,9 +426,115 @@ declare module "yuke:tui" {
     paste(text: string): boolean;
   }
 
+  /** A place in a text document: an offset in the text of one section of one item. */
+  export interface TextPosition {
+    readonly item: string;
+    readonly section: string;
+    readonly offset: number;
+  }
+
+  export interface TextRange {
+    readonly from: TextPosition;
+    readonly to: TextPosition;
+  }
+
+  /**
+   * A part of an item, such as a reply, a tool title, or a tool output. `render` gives its rows at a width, and the
+   * offsets of their sources index `text`. Without `render`, the text wraps plainly. A render with no rows hides it.
+   */
+  export interface TextSection {
+    readonly key: string;
+    /** A `label` is a title line, such as the header of a tool. */
+    readonly kind: "text" | "label";
+    readonly text: string;
+    readonly stops?: readonly number[] | undefined;
+    readonly render?: ((width: number) => readonly TextRow[]) | undefined;
+  }
+
+  /** One entry of a document, such as a message. Its section keys are unique in the item. */
+  export interface TextItem {
+    readonly key: string;
+    readonly sections: readonly TextSection[];
+  }
+
+  /** The content of a text view. Its item keys are unique, and a changed item is a new object. */
+  export interface TextDocument {
+    readonly key: string;
+    readonly items: readonly TextItem[];
+  }
+
+  /** A change of a text view. `revision` grows by one with each change. */
+  export interface TextViewChange {
+    readonly kind: "document" | "layout" | "scroll" | "selection";
+    readonly revision: number;
+  }
+
+  /** The scroll state and moves of a text view. The content changes only through `setDocument`. */
+  export interface ScrollControl {
+    readonly state: ScrollState;
+    scrollBy: (rows: number) => void;
+    scrollTo: (row: number) => void;
+    followTail: () => void;
+    ensureVisible: (key: string, row?: number) => boolean;
+    onChange: (listener: (state: ScrollState) => void, signal: AbortSignal) => Disposer;
+  }
+
+  export interface TextViewOptions {
+    readonly document: TextDocument;
+    /** The default role is `text`. */
+    readonly role?: "transcript" | "text" | undefined;
+    readonly group?: object | undefined;
+    /** The cursor shape of the caret. A text view draws no prompt. */
+    readonly appearance?: TextAppearance | undefined;
+    /** Copy a mouse selection when the button goes up. The default is true. */
+    readonly copyOnRelease?: boolean | undefined;
+    /** Act on a click, such as a fold of a tool or a link. */
+    readonly activate?: ((position: TextPosition) => void) | undefined;
+    readonly followTail?: boolean | undefined;
+    readonly requestOlder?: (() => void | Promise<void>) | undefined;
+  }
+
+  /**
+   * A read-only view of a document of items and sections, on a scroll list. A position stays on its section when other
+   * items change. A drag selects. When `copyOnRelease` is true (the default), the release copies the selection. The
+   * view has no default keys.
+   */
+  export class TextView implements TextWidget<TextPosition, TextViewChange> {
+    constructor(options: TextViewOptions);
+    readonly kind: "textView";
+    readonly role: string;
+    readonly focusable: true;
+    readonly document: TextDocument;
+    readonly revision: number;
+    readonly scroll: ScrollControl;
+    readonly rows: TextCoordinates<TextPosition>;
+    readonly visibleRows: OffsetRange;
+    readonly contexts: readonly string[];
+    caret: TextPosition | undefined;
+    selection: Selection<TextPosition> | undefined;
+    /** Replace the document. With the same document key, a caret or selection end stays while its position is valid. */
+    setDocument(document: TextDocument): void;
+    /** Negative when `first` comes before `second` in the document, 0 when they are equal, else positive. */
+    compare(first: TextPosition, second: TextPosition): number;
+    /** The text of `range`: its display copy (the default), or the source text of its sections. */
+    text(range: TextRange, format?: "display" | "source"): string;
+    /** Call the `activate` option. `false` without it. */
+    activate(position: TextPosition): boolean;
+    extend(signal: AbortSignal): TextExtension<TextPosition, TextViewChange>;
+    hitTest(point: Point): TextPosition | undefined;
+    screenAt(position: TextPosition): Point | undefined;
+    ensureVisible(position: TextPosition): boolean;
+    layout(size: Size): readonly Placement[];
+    draw(canvas: Canvas, focused: boolean): void;
+    cursor(): Cursor | undefined;
+    key(event: KeyEvent): boolean;
+    mouse(event: MouseEvent): boolean;
+    paste(text: string): boolean;
+  }
+
   /** A placed text widget. `signal` aborts when the widget leaves the tree. */
   export interface WidgetMount {
-    readonly widget: TextEditor;
+    readonly widget: TextEditor | TextView;
     readonly pane: Pane | undefined;
     readonly group: object;
     readonly signal: AbortSignal;

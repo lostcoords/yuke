@@ -54,6 +54,6 @@ assert<Equal<typeof got, Tui | undefined>>();
 ctx.provide("tui", tui);
 // A watch takes an inline callback that returns no cleanup.
 const watched = tui.widgets.watch((mount) => {
-  mount.widget.caret = 0;
+  if (mount.widget.kind === "editor") mount.widget.caret = 0;
 });
 void [patch, style, color, command, container, Clock, handler, root, got, watched];

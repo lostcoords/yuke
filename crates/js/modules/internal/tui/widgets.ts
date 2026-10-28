@@ -14,6 +14,7 @@ import type {
   TextAppearance,
   TextEditor,
   TextExtension,
+  TextView,
   View,
   WidgetMount,
 } from "yuke:tui";
@@ -25,6 +26,8 @@ export interface WidgetHost {
   readonly contextsChanged: () => void;
   /** Report a fault of an extension. */
   readonly report: (text: string) => void;
+  /** Send `text` to the clipboard of the terminal. */
+  readonly copy: (text: string) => void;
 }
 
 type KeyPhase = "beforeDefault" | "beforeKeymap";
@@ -155,6 +158,11 @@ export class TextSupport<P, E> {
     this.#host?.requestFrame();
   }
 
+  /** Send `text` to the clipboard. Before the widget is placed, do nothing. */
+  copy(text: string): void {
+    this.#host?.copy(text);
+  }
+
   /** The context atoms of the extensions, in the order of the extensions. */
   contexts(): string[] {
     return this.#parts.flatMap((part) => part.contexts);
@@ -235,10 +243,15 @@ export function isHosted(view: View): boolean {
   return hosts.has(view);
 }
 
-/** The text widgets and their support. A widget registers itself in its constructor. */
-const registered = new WeakMap<View, { readonly widget: TextEditor; readonly support: WidgetSupport }>();
+/** Give `host` to `view`, for a view that a parent draws itself, such as the list inside a text view. */
+export function attachHost(view: View, host: WidgetHost | undefined): void {
+  hosts.get(view)?.(host);
+}
 
-export function registerWidget(widget: TextEditor, support: WidgetSupport): void {
+/** The text widgets and their support. A widget registers itself in its constructor. */
+const registered = new WeakMap<View, { readonly widget: TextEditor | TextView; readonly support: WidgetSupport }>();
+
+export function registerWidget(widget: TextEditor | TextView, support: WidgetSupport): void {
   registered.set(widget, { widget, support });
   registerHost(widget, (host) => support.attach(host));
 }

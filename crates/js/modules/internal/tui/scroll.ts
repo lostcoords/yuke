@@ -132,6 +132,22 @@ export class ScrollList<T extends object> {
     return true;
   }
 
+  /** The item, its row, and the item row at the display row `row`, for a view that draws the list itself. */
+  rowAt(row: number): { readonly item: T; readonly row: number; readonly text: TextRow } | undefined {
+    if (!Number.isInteger(row) || row < 0 || row >= this.#total()) return undefined;
+    const at = this.#entryAt(row);
+    const entry = this.#entries[at] as Entry<T>;
+    const local = row - (this.#prefix[at] as number);
+    return { item: entry.item, row: local, text: entry.rows[local] as TextRow };
+  }
+
+  /** The first display row and the rows of the item `key`, for a view that draws the list itself. */
+  rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined {
+    const at = this.#index.get(key);
+    if (at === undefined) return undefined;
+    return { start: this.#prefix[at] as number, rows: (this.#entries[at] as Entry<T>).rows };
+  }
+
   /** Give each later change of the state to `listener`, until `signal` aborts. */
   onChange(listener: (state: ScrollState) => void, signal: AbortSignal): Disposer {
     if (typeof listener !== "function") throw new TypeError("a scroll listener is a function");

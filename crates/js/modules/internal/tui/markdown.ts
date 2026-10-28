@@ -72,6 +72,11 @@ interface BlockBase {
   open?: boolean;
 }
 
+/** A table cell, with the source offset of the pipe before it when it has one. */
+interface TableCell extends InlineSource {
+  pipe?: number;
+}
+
 interface ListItem extends InlineSource {
   indent: number;
   marker: string;
@@ -87,7 +92,7 @@ type Block = BlockBase &
     | { kind: "quote"; text: string; runs: SourceRun[]; markAt: number; markEnd: number }
     | { kind: "rule" }
     | { kind: "list"; items: ListItem[] }
-    | { kind: "table"; columns: number; rows: InlineSource[][]; align: Align[]; sepAt: number; sepEnd: number }
+    | { kind: "table"; columns: number; rows: TableCell[][]; align: Align[]; sepAt: number; sepEnd: number }
   );
 
 /** The fields of a parsed block, without the fields of `BlockBase` that `segment` adds. */
@@ -315,7 +320,7 @@ function segment(text: string, base: number): Block[] {
     ) {
       let j = i + 2;
       while (j < lines.length && (lines[j] as string).trim() !== "" && !isBlockStart(lines[j] as string)) j++;
-      const rows: InlineSource[][] = [];
+      const rows: TableCell[][] = [];
       for (let k = i; k < j; k++) if (k !== i + 1) rows.push(splitTableRow(lines[k] as string, start(k)));
       const align = separator.map((cell): Align => {
         const right = cell.text.endsWith(":");
@@ -348,17 +353,19 @@ function segment(text: string, base: number): Block[] {
   return blocks;
 }
 
-/** The cells of a table row. `base` is the source offset of the line, so a cell keeps its runs. */
-function splitTableRow(line: string, base: number): InlineSource[] {
+/** The cells of a table row. `base` is the source offset of the line, so a cell keeps its runs and its pipe. */
+function splitTableRow(line: string, base: number): TableCell[] {
   let start = line.length - line.trimStart().length;
   let stop = start + line.trim().length;
   if (line[start] === "|") start++;
   if (stop > start && line[stop - 1] === "|" && !isEscaped(line, stop - 1)) stop--;
-  const cells: InlineSource[] = [];
+  const cells: TableCell[] = [];
   let from = start;
   for (let i = start; i <= stop; i++) {
     if (i === stop || (line[i] === "|" && !isEscaped(line, i))) {
-      cells.push(tableCell(line, from, i, base));
+      const cell: TableCell = tableCell(line, from, i, base);
+      if (cells.length > 0) cell.pipe = base + from - 1;
+      cells.push(cell);
       from = i + 1;
     }
   }
@@ -984,8 +991,10 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
     }
     case "table": {
       // Cells line up in columns. The widest column shrinks first, and a long cell wraps inside its own column.
+      // A gap between two cells stands for the source pipe between them, when the row has one.
+      const pipes = block.rows.map((source) => source.map((cell) => cell.pipe));
       const cells = block.rows.map((source) => {
-        const row = source.slice(0, block.columns);
+        const row: TableCell[] = source.slice(0, block.columns);
         while (row.length < block.columns) row.push({ text: "", runs: [] });
         return row.map((cell) => resolveSegments(parseInline(cell.text), cell.runs));
       });
@@ -1001,7 +1010,15 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
         for (let k = 0; k < height && rows.length < limit; k++) {
           const segments: Part[] = [];
           for (let c = 0; c < row.length; c++) {
-            if (c > 0) segments.push({ text: TABLE_GAP, style: STYLE.tableBorder });
+            const pipe = pipes[r]?.[c];
+            if (c > 0) {
+              const source = pipe === undefined ? undefined : mapping("replacement", pipe, pipe + 1);
+              segments.push(
+                source === undefined
+                  ? { text: TABLE_GAP, style: STYLE.tableBorder }
+                  : { text: TABLE_GAP, style: STYLE.tableBorder, source },
+              );
+            }
             const cell = lines[c]?.[k];
             const pad = (widths[c] as number) - (cell?.width ?? 0);
             const align = block.align[c] ?? "left";

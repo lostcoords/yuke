@@ -71,9 +71,7 @@ test("each block kind has its style", () => {
 
 test("each block marker still opens its block after three spaces", () => {
   const kinds = (source: string) => {
-    const markdown = new Markdown();
-    markdown.setText(source);
-    return markdown
+    return new Markdown(source)
       .blocks()
       .map((b) => b.kind)
       .join(",");
@@ -424,4 +422,12 @@ test("an append after a set text and an empty fragment keep the source", () => {
   split.setText("one\r");
   split.append("\ntwo");
   equal([markdown.source(), copyOf(markdown.rows(80)), split.source()], ["one\ntwo", "one two", "one\ntwo"]);
+});
+
+test("a gap between two table cells maps to the pipe between them", () => {
+  const table = "| a | b |\n|---|---|\n| 1 | 2 |";
+  const gaps = segmentsOf(rowsOf(table, 80))
+    .filter((s) => s.text === " │ ")
+    .map((s) => table.slice(s.source?.from, s.source?.to));
+  equal(gaps, ["|", "|"]);
 });

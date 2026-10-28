@@ -4,7 +4,7 @@
  * each line at the width of the editor. Each position is a source offset.
  */
 import { strokeOf } from "yuke:internal/tui/keys";
-import { graphemes, measure, wrap } from "yuke:internal/tui/text";
+import { graphemes, measure, offsetAtColumn, wrap } from "yuke:internal/tui/text";
 import { checkAppearance, registerWidget, TextSupport } from "yuke:internal/tui/widgets";
 import type {
   Bias,
@@ -548,7 +548,8 @@ export class TextEditor {
         }
         const row = rows[point.row];
         if (row === undefined) return undefined;
-        const display = columnOffset(layout.shown, row, Math.max(0, point.column), unit, bias);
+        const display =
+          row.from + offsetAtColumn(layout.shown.slice(row.from, row.to), Math.max(0, point.column), unit, bias);
         return editor.#toSource(layout, display, bias);
       },
       point(position: number, unit: ColumnUnit = "cell", bias: Bias = "after"): Point | undefined {
@@ -688,20 +689,6 @@ function rowOf(rows: readonly Row[], display: number, bias: Bias): Row {
     return row;
   }
   return rows.at(-1) as Row;
-}
-
-/** The display offset at `column` of `row`: a column in a grapheme snaps to its start, or to its end for `after`. */
-function columnOffset(shown: string, row: Row, column: number, unit: ColumnUnit, bias: Bias): number {
-  const triples = graphemes(shown.slice(row.from, row.to));
-  let cells = 0;
-  for (let at = 0; at < triples.length; at += 3) {
-    const width = unit === "cell" ? (triples[at + 2] as number) : 1;
-    const start = row.from + (triples[at] as number);
-    if (column === cells) return start;
-    if (column < cells + width) return bias === "before" ? start : start + (triples[at + 1] as number);
-    cells += width;
-  }
-  return row.to;
 }
 
 /**
