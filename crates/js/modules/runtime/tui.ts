@@ -4,9 +4,10 @@ import { TextEditor } from "yuke:internal/tui/editor";
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";
 import { stack } from "yuke:internal/tui/layout";
 import { Markdown } from "yuke:internal/tui/markdown";
+import { ScrollList } from "yuke:internal/tui/scroll";
 import { fit, graphemes, measure, wrap } from "yuke:internal/tui/text";
 
-export { fit, graphemes, Markdown, measure, parseKeys, stack, strokeOf, TextEditor, wrap };
+export { fit, graphemes, Markdown, measure, parseKeys, ScrollList, stack, strokeOf, TextEditor, wrap };
 
 // The check against `types/tui.d.ts` keeps this code and the declarations of the authors in step.
 const declared = {
@@ -19,5 +20,6 @@ const declared = {
   stack,
   TextEditor,
   Markdown,
+  ScrollList,
 } satisfies typeof import("yuke:tui");
 void declared;

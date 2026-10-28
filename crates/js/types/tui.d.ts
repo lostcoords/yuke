@@ -463,7 +463,7 @@ declare module "yuke:tui" {
   /** One row of rendered text. */
   export interface TextRow {
     readonly segments: readonly Segment[];
-    /** The text after this row in a copy: "\n" after a line, " " after a wrap at a space, and "" after a break in a word. */
+    /** The text after this row in a copy: "\n" after a line, " " after a wrap at a space, "" in a split word. */
     readonly join: string;
   }
 
@@ -491,6 +491,55 @@ declare module "yuke:tui" {
     blocks(): readonly MarkdownBlock[];
     /** The rows at `width`, at most `limit`, with an empty row between two blocks. */
     rows(width: number, limit?: number): readonly TextRow[];
+  }
+
+  /** The place of a scroll list: `top` is the first shown display row. `total` counts the rows of all items. */
+  export interface ScrollState {
+    readonly top: number;
+    readonly height: number;
+    readonly total: number;
+    /** The view stays at the bottom while items grow. */
+    readonly following: boolean;
+    /** An item below the view changed while the list did not follow the tail. */
+    readonly changedBelow: boolean;
+  }
+
+  export interface ScrollListOptions<T extends object> {
+    readonly items?: readonly T[] | undefined;
+    /** A key that stays the same for one item across updates. Two items cannot share one key. */
+    readonly key: (item: T) => string;
+    /** Give the rows of `item` at `width` cells. The list keeps them while the item object and the width stay. */
+    readonly render: (item: T, width: number) => readonly TextRow[];
+    /** The default is false. */
+    readonly followTail?: boolean | undefined;
+    /**
+     * Load older items when the view shows the top. The list calls it once for each visit of the top or update of the
+     * items there, and not again while a call runs. Return a promise to hold the next call until the load ends.
+     */
+    readonly requestOlder?: (() => void | Promise<void>) | undefined;
+  }
+
+  /**
+   * Items as rows that scroll by display rows. The list paints only the shown rows. The top item and its row stay
+   * across a prepend, an update, and a resize. The wheel scrolls; the owner binds the keys.
+   */
+  export class ScrollList<T extends object> implements View {
+    constructor(options: ScrollListOptions<T>);
+    readonly items: readonly T[];
+    readonly state: ScrollState;
+    /** Replace the items. An item object that stays keeps its rows, so give a new object for a changed item. */
+    setItems(items: readonly T[]): void;
+    scrollBy(rows: number): void;
+    scrollTo(row: number): void;
+    /** Go to the bottom and follow the tail. */
+    followTail(): void;
+    /** Scroll the least to show row `row` of the item `key`. `false` when it cannot show. */
+    ensureVisible(key: string, row?: number): boolean;
+    /** Give each later state to `listener`, until `signal` aborts or the disposer runs. */
+    onChange(listener: (state: ScrollState) => void, signal: AbortSignal): Disposer;
+    layout(size: Size): readonly Placement[];
+    draw(canvas: Canvas, focused: boolean): void;
+    mouse(event: MouseEvent): boolean;
   }
 
   /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */

@@ -209,8 +209,8 @@ export class TextSupport<P, E> {
   }
 }
 
-/** A widget at its place: its pane and the layer that holds it. */
-export interface PlacedWidget {
+/** A hosted view at its place: its pane and the layer that holds it. */
+export interface PlacedView {
   readonly view: View;
   readonly pane: Pane | undefined;
   readonly layer: object;
@@ -223,11 +223,24 @@ interface WidgetSupport {
   key: (event: KeyEvent, phase: KeyPhase) => boolean;
 }
 
+/** The views that can take a host while they are placed, such as a widget that asks for a frame after a change. */
+const hosts = new WeakMap<View, (host: WidgetHost | undefined) => void>();
+
+/** The core calls `attach` with its host when a layout places `view`, and with `undefined` when the view leaves. */
+export function registerHost(view: View, attach: (host: WidgetHost | undefined) => void): void {
+  hosts.set(view, attach);
+}
+
+export function isHosted(view: View): boolean {
+  return hosts.has(view);
+}
+
 /** The text widgets and their support. A widget registers itself in its constructor. */
 const registered = new WeakMap<View, { readonly widget: TextEditor; readonly support: WidgetSupport }>();
 
 export function registerWidget(widget: TextEditor, support: WidgetSupport): void {
   registered.set(widget, { widget, support });
+  registerHost(widget, (host) => support.attach(host));
 }
 
 export function supportOf(view: View): WidgetSupport | undefined {
@@ -247,10 +260,12 @@ interface Watch {
   readonly cleanups: Map<WidgetMount, Disposer | undefined>;
 }
 
-/** The mounts of the placed text widgets. */
+/** The core host of each placed hosted view, and the mounts of the placed text widgets. */
 export class WidgetMounts {
   readonly #host: WidgetHost;
   readonly #report: (source: string, text: string) => void;
+  /** The views that hold the host now. */
+  readonly #hosted = new Set<View>();
   readonly #mounted = new Map<View, Mounted>();
   readonly #watches = new Set<Watch>();
 
@@ -260,16 +275,26 @@ export class WidgetMounts {
   }
 
   /**
-   * Publish the widgets of a layout. A widget that stays in its pane and layer keeps its mount, also under a modal.
-   * The mounts of the widgets that leave or move end first. Then each watch gets each new mount.
+   * Publish the hosted views of a layout. A view that leaves loses the host, and a new one gets it. A widget that stays
+   * in its pane and layer keeps its mount, also under a modal. The mounts of the widgets that leave or move end first.
+   * Then each watch gets each new mount.
    */
-  update(placed: readonly PlacedWidget[]): void {
+  update(placed: readonly PlacedView[]): void {
     const now = new Map(placed.map((entry) => [entry.view, entry]));
+    for (const view of [...this.#hosted]) {
+      if (now.has(view)) continue;
+      this.#hosted.delete(view);
+      hosts.get(view)?.(undefined);
+    }
+    for (const view of now.keys()) {
+      if (this.#hosted.has(view)) continue;
+      this.#hosted.add(view);
+      hosts.get(view)?.(this.#host);
+    }
     for (const [view, mounted] of [...this.#mounted]) {
       const entry = now.get(view);
       if (entry !== undefined && entry.pane === mounted.mount.pane && entry.layer === mounted.layer) continue;
       this.#mounted.delete(view);
-      supportOf(view)?.attach(undefined);
       mounted.controller.abort();
       for (const watch of this.#watches) {
         const cleanup = watch.cleanups.get(mounted.mount);
@@ -289,7 +314,6 @@ export class WidgetMounts {
         signal: controller.signal,
       });
       this.#mounted.set(entry.view, { mount, controller, layer: entry.layer });
-      found.support.attach(this.#host);
       added.push(mount);
     }
     for (const mount of added) {

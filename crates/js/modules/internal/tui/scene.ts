@@ -5,7 +5,7 @@
 import { failureOf } from "yuke:internal/failure";
 import { createCanvas, type DrawCall, intersect, type Screen } from "yuke:internal/tui/canvas";
 import { createMount, startView } from "yuke:internal/tui/mount";
-import { type PlacedWidget, supportOf } from "yuke:internal/tui/widgets";
+import { isHosted, type PlacedView, supportOf } from "yuke:internal/tui/widgets";
 import type {
   Cursor,
   CursorShape,
@@ -40,8 +40,8 @@ export interface SceneHost {
    * the deepest view of the input path changed.
    */
   readonly focusMoved: (rootPath: readonly View[], change: FocusChange | undefined) => void;
-  /** The text widgets of a layout, before its focus resolves. */
-  readonly placed: (widgets: readonly PlacedWidget[]) => void;
+  /** The hosted views of a layout, such as the text widgets, before its focus resolves. */
+  readonly placed: (views: readonly PlacedView[]) => void;
 }
 
 /** A pane of the tree: the plugin of its view, and its handle (none for a placeholder). */
@@ -152,13 +152,13 @@ export class Scene {
       const rect = layer.place === undefined ? screen : this.#placeOverlay(layer, size, screen);
       layer.tree = this.#place(layer.view, layer.owner, undefined, rect, rect, undefined, new Set());
     }
-    const widgets: PlacedWidget[] = [];
+    const hosted: PlacedView[] = [];
     const collect = (target: Target, layer: Layer): void => {
-      if (supportOf(target.view) !== undefined) widgets.push({ view: target.view, pane: target.pane, layer });
+      if (isHosted(target.view)) hosted.push({ view: target.view, pane: target.pane, layer });
       for (const child of target.children) collect(child, layer);
     };
     for (const layer of [this.#root, ...this.#overlays]) if (layer.tree !== undefined) collect(layer.tree, layer);
-    this.#host.placed(widgets);
+    this.#host.placed(hosted);
     // A captured view that left the tree gets its `cancel` now: no release can reach it.
     if (this.#capture !== undefined && this.#find(this.#capture.view) === undefined) this.cancelCapture();
     this.#syncFocus();
