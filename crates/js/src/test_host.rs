@@ -4,9 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, Function, Object, Promise};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use yuke_ai::Blob;
@@ -16,7 +14,7 @@ use yuke_protocol::SessionId;
 use crate::ScriptSession;
 use crate::error::{Barrier, ErrorClass, Report, throw};
 use crate::native::Operation;
-use crate::test_drive::{call_tool, run_point};
+use crate::test_drive::{CallRequest, RunRequest, call_tool, run_point};
 use crate::test_runner::TestError;
 use crate::tools::Json;
 
@@ -106,37 +104,33 @@ pub(crate) fn add<'js>(
         "testHostCreate",
         host,
         consumer,
-        |host, request: serde_json::Value, _token| async move { host.create(request).await },
+        |host, request: Json<serde_json::Value>, _token| async move { host.create(request.0).await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostClose",
         host,
         consumer,
-        |host, (): (), _token| async move { host.close().await },
+        |host, _request: Json<()>, _token| async move { host.close().await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostRun",
         host,
         consumer,
-        |host, (id, point, event): (SessionId, String, serde_json::Value), token| async move {
-            run_point(&*host, id, &point, &event, token).await
-        },
+        |host, request: RunRequest, token| async move { run_point(&*host, request, token).await },
     )?;
     add_operation(
         object,
         "testHostCall",
         host,
         consumer,
-        |host, (id, name, args): (SessionId, String, serde_json::Value), token| async move {
-            call_tool(&*host, id, &name, &args, token).await
-        },
+        |host, request: CallRequest, token| async move { call_tool(&*host, request, token).await },
     )
 }
 
-/// Add the native `name`. It takes its arguments as one JSON value and runs `run` on the runtime of the consumer. It
-/// answers an operation that gives the JSON of the result. A cancel of the operation cancels the token of `run`.
+/// Add the native `name`. The JavaScript thread reads its argument, and `run` runs on the runtime of the consumer. It
+/// answers an operation that gives the result. A cancel of the operation cancels the token of `run`.
 fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
     name: &str,
@@ -145,8 +139,8 @@ fn add_operation<'js, A, T, F>(
     run: impl Fn(Arc<dyn TestHost>, A, CancellationToken) -> F + 'js,
 ) -> rquickjs::Result<()>
 where
-    A: DeserializeOwned + 'js,
-    T: Serialize + Send + 'static,
+    A: FromJs<'js> + Send + 'static,
+    T: IntoJs<'js> + Send + 'static,
     F: Future<Output = Result<T, TestError>> + Send + 'static,
 {
     let (host, consumer) = (host.cloned(), consumer.clone());
@@ -154,11 +148,11 @@ where
         name,
         Function::new(
             object.ctx().clone(),
-            move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
+            move |ctx: Ctx<'js>, argument: A| -> rquickjs::Result<Operation<'js>> {
                 let host = host.clone().ok_or_else(|| throw(&ctx, ErrorClass::Error, NO_HOST))?;
                 Operation::start(&ctx, |ctx, token| {
-                    let task = consumer.spawn(run(host, arguments.0, token));
-                    async move { joined(&ctx, task.await).map(Json) }
+                    let task = consumer.spawn(run(host, argument, token));
+                    async move { joined(&ctx, task.await) }
                 })
             },
         )?,

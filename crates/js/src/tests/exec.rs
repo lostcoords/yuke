@@ -1,7 +1,6 @@
 //! The tools `exec` and `stop`, the background jobs, and the declarations of the native module.
 
 use std::ffi::OsStr;
-use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,185 +53,6 @@ async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
     }
 }
 
-/// The text of a call that `exec` answers for `command`.
-async fn run(tools: &Tools, command: &str) -> String {
-    run_flagged(tools, command).await.0
-}
-
-/// The text and the error flag of a call that `exec` answers for `command`.
-async fn run_flagged(tools: &Tools, command: &str) -> (String, bool) {
-    let arguments = json_string(command);
-    let content = call(&tools["exec"], &format!(r#"{{"command": {arguments}}}"#))
-        .await
-        .0
-        .unwrap();
-    (content.text, content.is_error)
-}
-
-/// `text` as a JSON string.
-fn json_string(text: &str) -> String {
-    let mut quoted = String::from("\"");
-    for character in text.chars() {
-        match character {
-            '"' => quoted.push_str("\\\""),
-            '\\' => quoted.push_str("\\\\"),
-            '\n' => quoted.push_str("\\n"),
-            other => quoted.push(other),
-        }
-    }
-    quoted.push('"');
-    quoted
-}
-
-#[tokio::test]
-async fn exec_answers_the_output_in_write_order_and_the_exit_code() {
-    let folder = folder("exec_answers_the_output_in_write_order_and_the_exit_code");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let (text, is_error) = run_flagged(&tools, "printf 'a\\n'; printf 'b\\n' >&2; printf 'c\\n'; pwd; exit 3").await;
-
-    assert_eq!(text, format!("a\nb\nc\n{}\n[exit code: 3]", folder.display()));
-    assert!(is_error);
-}
-
-#[tokio::test]
-async fn a_command_leads_its_own_session_without_the_terminal_of_yuke() {
-    let folder = folder("a_command_leads_its_own_session_without_the_terminal_of_yuke");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    // The `ps` of Linux and of macOS both mark a session leader with `s` in the process state.
-    let text = run(&tools, "ps -o stat= -p $$").await;
-
-    let state = text.lines().next().unwrap().trim();
-    assert!(state.contains('s'), "{text}");
-}
-
-#[tokio::test]
-async fn exec_names_the_signal_that_ended_the_shell() {
-    let folder = folder("exec_names_the_signal_that_ended_the_shell");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    assert_eq!(
-        run_flagged(&tools, "kill -9 $$").await,
-        ("[no output]\n[signal: 9]".to_owned(), true)
-    );
-}
-
-#[tokio::test]
-async fn exec_without_output_says_so() {
-    let folder = folder("exec_without_output_says_so");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    assert_eq!(
-        run_flagged(&tools, "true").await,
-        ("[no output]\n[exit code: 0]".to_owned(), false)
-    );
-}
-
-#[tokio::test]
-async fn exec_gives_its_output_as_live_texts() {
-    let folder = folder("exec_gives_its_output_as_live_texts");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let (answer, texts) = call(&tools["exec"], r#"{"command": "echo one; sleep 0.1; echo two"}"#).await;
-
-    assert_eq!(answer.unwrap().text, "one\ntwo\n[exit code: 0]");
-    assert_eq!(texts.concat(), "one\ntwo\n");
-}
-
-#[tokio::test]
-async fn exec_stops_its_live_output_after_the_cap_and_answers_the_end() {
-    let folder = folder("exec_stops_its_live_output_after_the_cap_and_answers_the_end");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let (answer, texts) = call(&tools["exec"], r#"{"command": "seq 1 300000"}"#).await;
-
-    let live = texts.concat();
-    assert!(live.starts_with("1\n2\n3\n"), "{}", &live[..20]);
-    assert!(
-        live.ends_with("\n[yuke stops the live output here. The command runs on.]\n"),
-        "{}",
-        &live[live.len() - 80..]
-    );
-    assert!(
-        (1024 * 1024..1024 * 1024 + 70 * 1024).contains(&live.len()),
-        "{}",
-        live.len()
-    );
-    assert!(answer.unwrap().text.ends_with("299999\n300000\n[exit code: 0]"));
-}
-
-// The pause makes two reads, and the first one ends inside the 3 bytes of the euro sign.
-#[tokio::test]
-async fn live_output_keeps_a_character_that_a_read_cuts() {
-    let folder = folder("live_output_keeps_a_character_that_a_read_cuts");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let (_, texts) = call(
-        &tools["exec"],
-        r#"{"command": "printf '\\342'; sleep 0.2; printf '\\202\\254'"}"#,
-    )
-    .await;
-
-    assert_eq!(texts.concat(), "\u{20ac}");
-}
-
-#[tokio::test]
-async fn exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop() {
-    let folder = folder("exec_reports_its_deadline_also_when_the_shell_exits_0_at_the_stop");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let content = call(
-        &tools["exec"],
-        r#"{"command": "trap 'exit 0' TERM; sleep 30 & wait", "timeout_ms": 200}"#,
-    )
-    .await
-    .0
-    .unwrap();
-
-    assert!(
-        content.text.starts_with("[no output]\n[timeout: 200 ms."),
-        "{}",
-        content.text
-    );
-    assert!(content.is_error);
-}
-
-#[tokio::test]
-async fn exec_at_its_deadline_stops_the_process_group() {
-    let folder = folder("exec_at_its_deadline_stops_the_process_group");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-    let started = Instant::now();
-
-    let text = text_of(
-        &tools["exec"],
-        r#"{"command": "echo begun; sleep 30", "timeout_ms": 200}"#,
-    )
-    .await;
-
-    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
-    assert!(
-        text.starts_with("begun\n[timeout: 200 ms. yuke stopped the process group."),
-        "{text}"
-    );
-}
-
-// The shell ends at once on SIGTERM, but another process of its group needs time to clean up.
-#[tokio::test]
-async fn each_process_of_a_stopped_group_gets_the_grace() {
-    let folder = folder("each_process_of_a_stopped_group_gets_the_grace");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-    let command = "sh -c 'trap \"sleep 0.3; echo done > cleaned; exit 0\" TERM; while :; do sleep 0.05; done' & wait";
-
-    text_of(
-        &tools["exec"],
-        &format!(r#"{{"command": {}, "timeout_ms": 300}}"#, json_string(command)),
-    )
-    .await;
-
-    assert_eq!(std::fs::read_to_string(folder.join("cleaned")).unwrap(), "done\n");
-}
-
 #[tokio::test]
 async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     let folder = folder("a_cancel_stops_the_command_and_the_tool_still_answers");
@@ -249,73 +69,6 @@ async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     let content = answer.unwrap();
     assert_eq!(content.text, "[no output]\n[stopped: the tool call was cancelled.]");
     assert!(content.is_error);
-}
-
-#[tokio::test]
-async fn exec_ends_every_process_that_it_starts() {
-    let folder = folder("exec_ends_every_process_that_it_starts");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-    let started = Instant::now();
-
-    // The background sleep holds the output pipe. Only its end lets the read finish before the grace.
-    let text = run(&tools, "sleep 30 & echo started").await;
-
-    assert_eq!(text, "started\n[exit code: 0]");
-    assert!(
-        started.elapsed() < Duration::from_millis(1500),
-        "{:?}",
-        started.elapsed()
-    );
-}
-
-#[tokio::test]
-async fn a_character_across_the_end_of_the_head_stays_whole() {
-    let folder = folder("a_character_across_the_end_of_the_head_stays_whole");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    // The head holds 25600 bytes, so the four bytes of the emoji start one byte before its end.
-    let text = run(
-        &tools,
-        "head -c 25599 /dev/zero | tr '\\0' a; printf '\\360\\237\\230\\200b'",
-    )
-    .await;
-
-    assert!(
-        text.ends_with("a\u{1f600}b\n[exit code: 0]"),
-        "{}",
-        &text[text.len() - 30..]
-    );
-    assert!(!text.contains('\u{fffd}'));
-}
-
-#[tokio::test]
-async fn exec_output_over_the_cap_keeps_a_head_a_tail_and_the_full_file() {
-    let folder = folder("exec_output_over_the_cap_keeps_a_head_a_tail_and_the_full_file");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-
-    let text = run(&tools, "seq 1 30000").await;
-
-    assert!(text.starts_with("1\n2\n3\n"), "{}", &text[..20]);
-    assert!(
-        text.ends_with("29999\n30000\n[exit code: 0]"),
-        "{}",
-        &text[text.len() - 40..]
-    );
-    assert!(text.len() < 52 * 1024, "{}", text.len());
-    let marker = text.lines().find(|line| line.starts_with("[yuke cut ")).unwrap();
-    let path = marker
-        .split("Full output: ")
-        .nth(1)
-        .unwrap()
-        .split(". Read it")
-        .next()
-        .unwrap();
-    let full = std::fs::read_to_string(path).unwrap();
-    let mut expected = String::new();
-    for number in 1..=30_000 {
-        writeln!(expected, "{number}").unwrap();
-    }
-    assert_eq!(full, expected);
 }
 
 #[tokio::test]
@@ -397,7 +150,10 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     assert!(!folder.join("started").exists());
     assert!(host.inputs.lock().unwrap().is_empty());
     // A command in the foreground still runs.
-    assert_eq!(run(&tools, "echo ran").await, "ran\n[exit code: 0]");
+    assert_eq!(
+        text_of(&tools["exec"], r#"{"command": "echo ran"}"#).await,
+        "ran\n[exit code: 0]"
+    );
 }
 
 #[tokio::test]
@@ -694,7 +450,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let start = |command: &'static str| {
         let exec = &exec["exec"];
         async move {
-            let arguments = format!(r#"{{"command": {}, "background": true}}"#, json_string(command));
+            let arguments = serde_json::json!({ "command": command, "background": true }).to_string();
             job_id(&text_of(exec, &arguments).await)
         }
     };

@@ -147,7 +147,7 @@ export interface SessionHandle {
   /** Send `content` as a message of the user. A turn starts when the session is idle. */
   readonly input: (content: readonly Block[]) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
-  readonly notify: (display: string, text: string) => Promise<InputId>;
+  readonly sendNotification: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
   readonly cancel: () => void;
   /**
@@ -257,7 +257,7 @@ export interface PromptBuildAnswer {
 /** One tool call of the model. */
 export interface ToolCall {
   /** The id of the call, from the model. */
-  readonly id: string;
+  readonly callId: string;
   /** The name of the tool. A call of a deferred tool through `tool_call` has the name of the deferred tool. */
   readonly name: string;
   /**

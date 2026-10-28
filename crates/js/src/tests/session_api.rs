@@ -349,7 +349,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &format!(
             "const id = '{}';
              const input = await handle.input([{{ user_text: 'hi' }}]);
-             await handle.notify('shown', 'told');
+             await handle.sendNotification('shown', 'told');
              handle.cancel();
              await sessions.fork(id);
              await sessions.events(id, {{ limit: 3 }});

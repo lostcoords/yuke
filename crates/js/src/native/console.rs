@@ -2,7 +2,6 @@
 
 use rquickjs::{Ctx, Function, Object};
 use tokio::sync::mpsc;
-use yuke_protocol::NoticeLevel;
 
 use crate::error::{ErrorClass, Report, throw};
 
@@ -15,18 +14,12 @@ pub(super) fn add<'js>(
     object.set(
         "writeConsole",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, level: String, text: String| {
-            let level = match level.as_str() {
-                "debug" => NoticeLevel::Debug,
-                "info" => NoticeLevel::Info,
-                "warn" => NoticeLevel::Warn,
-                "error" => NoticeLevel::Error,
-                other => {
-                    return Err(throw(
-                        &ctx,
-                        ErrorClass::TypeError,
-                        &format!("'{other}' is not a console level"),
-                    ));
-                }
+            let Some(level) = super::notice_level(&level) else {
+                return Err(throw(
+                    &ctx,
+                    ErrorClass::TypeError,
+                    &format!("'{level}' is not a console level"),
+                ));
             };
             if reports.send(Report::Console { level, text }).is_err() {
                 // The owner dropped the receiver, so it ignores the console.

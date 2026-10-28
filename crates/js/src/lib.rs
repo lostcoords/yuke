@@ -48,5 +48,8 @@ pub use runtime::{Handle, Options, Runtime};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Sessions, SessionsError, ViewEvent, ViewSink};
 pub use test_host::TestHost;
-pub use test_runner::{TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, run_test_file};
+pub use test_runner::{
+    TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, TestSummary, find_test_files, run_test_file,
+    run_test_files,
+};
 pub use tools::{ScriptTool, SessionHost};

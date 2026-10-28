@@ -1,7 +1,7 @@
 // The `round.retry` hook: its event, its count of retries, its plan, and the kinds of a failure.
 
 import type { PluginSession, RoundFailureKind } from "yuke:plugins";
-import { createFakeModel, createHost, equal, rejects, reply, test } from "yuke:test";
+import { createHost, equal, rejects, reply, test } from "yuke:test";
 
 // The count belongs to one round, so the round after a call counts from zero again.
 test("an answer sends the round again, and each round counts its retries from zero", async () => {
@@ -21,19 +21,19 @@ test("an answer sends the round again, and each round counts its retries from ze
       return { replace: { head: [{ user_text: "summary" }], keep: 0 } };
     });
   };
-  const model = createFakeModel([
+  const replies = [
     reply.overflow(),
     reply.overflow(),
     reply.toolCall("greet", { who: "Ada" }),
     reply.overflow(),
     reply.text("Done."),
-  ]);
+  ];
   await using host = await createHost({
     plugins: [
       { name: "greeter", session: greeter },
       { name: "compact", session: compact },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession();
 
@@ -41,7 +41,7 @@ test("an answer sends the round again, and each round counts its retries from ze
 
   equal(seen, ["context_overflow 0 true", "context_overflow 1 true", "context_overflow 0 true"]);
   equal(
-    model.requests.map((request) => request.messages[0]?.text),
+    host.requests.map((request) => request.messages[0]?.text),
     ["Greet Ada.", "summary", "summary", "summary", "summary"],
   );
   equal(session.transcript.entries.at(-1)?.kind, "end");
@@ -51,14 +51,14 @@ test("without an answer the round does not run again, and the turn fails", async
   const quiet: PluginSession = (s) => {
     s.hook("round.retry", () => undefined);
   };
-  const model = createFakeModel([reply.overflow()]);
-  await using host = await createHost({ plugins: [{ name: "quiet", session: quiet }], model });
+  const replies = [reply.overflow()];
+  await using host = await createHost({ plugins: [{ name: "quiet", session: quiet }], replies });
   const session = await host.openSession();
 
   await session.send("Hi.");
 
   const end = session.transcript.entries.at(-1);
-  equal([end?.kind, end?.kind === "end" && "failed" in end.end, model.requests.length], ["end", true, 1]);
+  equal([end?.kind, end?.kind === "end" && "failed" in end.end, host.requests.length], ["end", true, 1]);
 });
 
 test("round.retry gives undefined without an answer, and the plan with one", async () => {

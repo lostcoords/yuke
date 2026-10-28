@@ -1,6 +1,5 @@
 /** The code of the public module `yuke:fs`. Its declaration is `types/fs.d.ts`, and the check at the end compares the two. */
 
-import { fieldsOf } from "yuke:internal/define";
 import { signalOf, underSignal } from "yuke:internal/events";
 import {
   fsMkdir,
@@ -13,6 +12,7 @@ import {
   fsWriteFile,
   type Operation,
 } from "yuke:internal/native";
+import { fieldsOf } from "yuke:internal/values";
 import { checkUint8Array, domString, usvString } from "yuke:internal/webidl";
 
 export class FileSystemError extends Error {

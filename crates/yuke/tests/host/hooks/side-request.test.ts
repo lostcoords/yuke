@@ -2,7 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import type { Block, Settings } from "yuke:protocol";
-import { createFakeModel, createHost, equal, type FakeModel, type ModelRequest, rejects, reply, test } from "yuke:test";
+import { createHost, equal, type ModelRequest, type Reply, rejects, reply, test } from "yuke:test";
 
 /** The context of the round: an input, an answer, and a second input. */
 const context: Block[] = [{ user_text: "one" }, { assistant_text: "two" }, { user_text: "three" }];
@@ -18,17 +18,24 @@ const settings: Settings = {
 
 const echo = { name: "echo", description: "Echo the text.", inputSchema: '{"type":"object"}', deferLoading: false };
 
-/** Run the `round.before` hooks of `plugins` for a round of `context`. `model` answers the side requests. */
-async function round(plugins: readonly { name: string; session: PluginSession }[], model: FakeModel): Promise<void> {
-  await using host = await createHost({ plugins, model });
+/**
+ * Run the `round.before` hooks of `plugins` for a round of `context`. The fake model answers the side requests with
+ * `replies`. Return the requests that it got.
+ */
+async function round(
+  plugins: readonly { name: string; session: PluginSession }[],
+  replies: readonly Reply[],
+): Promise<readonly ModelRequest[]> {
+  await using host = await createHost({ plugins, replies });
   const session = await host.openSession();
   await session.run("round.before", { context, window: 1000, system: "Be brief.", tools: [echo], settings });
+  return host.requests;
 }
 
-/** The only request of `model`. */
-function only(model: FakeModel): ModelRequest {
-  equal(model.requests.length, 1);
-  return model.requests[0] as ModelRequest;
+/** The only request of `requests`. */
+function only(requests: readonly ModelRequest[]): ModelRequest {
+  equal(requests.length, 1);
+  return requests[0] as ModelRequest;
 }
 
 test("a side request repeats the round with the context that the handler sees, then the prompt", async () => {
@@ -43,21 +50,21 @@ test("a side request repeats the round with the context that the handler sees, t
       return undefined;
     });
   };
-  const model = createFakeModel([reply.text("A summary.", { inputTokens: 900 })]);
+  const replies = [reply.text("A summary.", { inputTokens: 900 })];
 
-  await round(
+  const requests = await round(
     [
       { name: "first", session: first },
       { name: "second", session: second },
     ],
-    model,
+    replies,
   );
 
   equal(answer, [
     '{"text":"A summary.","finishReason":"stop","usage":{"input":900,"output":1,"reasoning":null,"cacheRead":null,"cacheWrite":null}}',
     true,
   ]);
-  const request = only(model);
+  const request = only(requests);
   const body = request.body as { temperature: number; max_tokens: number };
   equal([request.system, request.tools, body.temperature, body.max_tokens], ["Be brief.", ["echo"], 0.5, 100]);
   equal(request.messages, [{ role: "user", text: "summary\nthree\nSummarize." }]);
@@ -70,12 +77,12 @@ test("the blocks option sends only the oldest blocks of the context", async () =
       return undefined;
     });
   };
-  const model = createFakeModel([reply.text("A summary.")]);
+  const replies = [reply.text("A summary.")];
 
-  await round([{ name: "compact", session: compact }], model);
+  const requests = await round([{ name: "compact", session: compact }], replies);
 
   equal(
-    only(model).messages.map((message) => [message.role, message.text]),
+    only(requests).messages.map((message) => [message.role, message.text]),
     [
       ["user", "one"],
       ["assistant", "two"],
@@ -104,16 +111,15 @@ test("bad options throw a type error and send nothing", async () => {
       return undefined;
     });
   };
-  const model = createFakeModel([]);
 
-  await round([{ name: "compact", session: compact }], model);
+  const requests = await round([{ name: "compact", session: compact }], []);
 
   equal(
     errors.map((error) => error.startsWith("TypeError: ")),
     [true, true, true, true, true],
   );
   equal(errors[1]?.endsWith("the option blocks is not a whole number from 0 to 3"), true);
-  equal(model.requests.length, 0);
+  equal(requests.length, 0);
 });
 
 test("an abort stops the request and rejects with the reason of the signal", async () => {
@@ -131,11 +137,11 @@ test("an abort stops the request and rejects with the reason of the signal", asy
       return undefined;
     });
   };
-  const model = createFakeModel([reply.stall("Half")]);
+  const replies = [reply.stall("Half")];
 
-  await round([{ name: "compact", session: compact }], model);
+  const requests = await round([{ name: "compact", session: compact }], replies);
 
-  equal([rejected, model.requests.length], ["too slow", 1]);
+  equal([rejected, requests.length], ["too slow", 1]);
 });
 
 test("a failed request rejects with its text", async () => {
@@ -145,9 +151,9 @@ test("a failed request rejects with its text", async () => {
       return undefined;
     });
   };
-  const model = createFakeModel([reply.failed("Half")]);
+  const replies = [reply.failed("Half")];
 
-  const error = await rejects(round([{ name: "compact", session: compact }], model));
+  const error = await rejects(round([{ name: "compact", session: compact }], replies));
 
   const message = error instanceof Error ? error.message : String(error);
   equal(message.startsWith("round.before of plugin compact failed: Error: "), true);

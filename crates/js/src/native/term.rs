@@ -7,11 +7,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::tools::Json;
 use rquickjs::function::Opt;
 use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
-use yuke_protocol::NoticeLevel;
 use yuke_term::{
     Attributes, BACKGROUND_QUERY, Button, Code, Color, Event, Modifiers, MouseKind, Rgb, Style, graphemes,
 };
@@ -441,13 +441,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
         }),
         Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
         Input::Notice(notice) => kind(ctx, "notice").and_then(|object| {
-            let level = match notice.level {
-                NoticeLevel::Debug => "debug",
-                NoticeLevel::Info => "info",
-                NoticeLevel::Warn => "warn",
-                NoticeLevel::Error => "error",
-            };
-            object.set("level", level)?;
+            object.set("level", Json(notice.level))?;
             object.set("source", notice.source)?;
             object.set("text", notice.message)?;
             Ok(object)

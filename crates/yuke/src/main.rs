@@ -236,7 +236,7 @@ async fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     }
     let work = std::env::temp_dir().join(format!("yuke-test-{}", std::process::id()));
     std::fs::create_dir_all(&work).map_err(|error| format!("{}: {error}", work.display()))?;
-    let summary = test_files::run(&files, &work, false).await;
+    let summary = test_files::run(&files, &work, test_files::TIME_LIMIT, false).await;
     if let Err(error) = std::fs::remove_dir_all(&work) {
         warn(&format!("{}: {error}", work.display()));
     }

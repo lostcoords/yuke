@@ -439,14 +439,6 @@ declare module "yuke:internal/native" {
   export function testHostSettle(): Promise<undefined>;
   /** Run the hook point `point` of the session `id` with `event`. The answer is the decision of the host. */
   export function testHostRun(request: readonly [id: SessionId, point: string, event: unknown]): Operation<unknown>;
-  /** A media item that the test host gives back. The bytes travel in base64. */
-  export interface WireMedia {
-    readonly mimeType: string;
-    readonly size: number;
-    readonly base64: string;
-  }
   /** Call the tool `tool` of the session `id` with `args`. The answer has the live texts of the call in order. */
-  export function testHostCall(
-    request: readonly [id: SessionId, tool: string, args: unknown],
-  ): Operation<Omit<CallOutcome, "media"> & { readonly media: readonly WireMedia[] }>;
+  export function testHostCall(request: readonly [id: SessionId, tool: string, args: unknown]): Operation<CallOutcome>;
 }

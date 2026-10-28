@@ -1,7 +1,7 @@
 // The `round.after` hook: its event, its answers, its count, and its failures.
 
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, rejects, reply, test } from "yuke:test";
+import { createHost, equal, rejects, reply, test } from "yuke:test";
 
 // After a round of calls, the turn goes on, so the reason is `null`, and the text is the text before the calls.
 test("a handler gets the text, the reason, and the count of each round of a turn", async () => {
@@ -21,13 +21,13 @@ test("a handler gets the text, the reason, and the count of each round of a turn
       return undefined;
     });
   };
-  const model = createFakeModel([reply.toolCall("greet", { who: "Ada" }, { text: "checking" }), reply.text("Done.")]);
+  const replies = [reply.toolCall("greet", { who: "Ada" }, { text: "checking" }), reply.text("Done.")];
   await using host = await createHost({
     plugins: [
       { name: "greeter", session: greeter },
       { name: "watch", session: watch },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession();
 
@@ -55,13 +55,13 @@ test("the first answer decides, and a continue is a counted notification of its 
       return { stop: true };
     });
   };
-  const model = createFakeModel(["One.", "Two.", "Three.", "Four."].map((text) => reply.text(text)));
+  const replies = ["One.", "Two.", "Three.", "Four."].map((text) => reply.text(text));
   await using host = await createHost({
     plugins: [
       { name: "tests-guard", session: guard },
       { name: "second", session: stopper },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession();
 
@@ -70,7 +70,7 @@ test("the first answer decides, and a continue is a counted notification of its 
 
   const notice = '<system_notification plugin="tests-guard">Run the tests.</system_notification>';
   equal(
-    model.requests.map((request) => request.messages.at(-1)?.text),
+    host.requests.map((request) => request.messages.at(-1)?.text),
     ["Work.", notice, "More.", notice],
   );
   const inputs = session.transcript.entries.flatMap((entry) =>

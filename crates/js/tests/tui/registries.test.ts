@@ -9,8 +9,11 @@ import { assert, equal, test, throws } from "yuke:test";
 import { type Command, parseKeys, type StylePatch, strokeOf } from "yuke:tui";
 import { key, named } from "./terminal.ts";
 
+/** The wait of a sequence in the keymap of the bench. */
+const WAIT_MS = 20;
+
 /** The time after which a sequence prefix runs alone, with a margin. */
-const AFTER_THE_WAIT_MS = 1200;
+const AFTER_THE_WAIT_MS = 100;
 
 const ROOT = ["global", "root"];
 
@@ -34,7 +37,7 @@ function bench() {
     ran,
     faults,
     commands,
-    keymap: new Keymap(commands, () => {}),
+    keymap: new Keymap(commands, () => {}, WAIT_MS),
     frames: () => frames,
     /** Add the command `name` that records its run. `extra` adds or replaces fields. */
     add: (name: string, extra: Partial<Command> = {}) =>

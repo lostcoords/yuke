@@ -26,11 +26,14 @@ export class Keymap {
   #pending: readonly string[] = [];
   #atoms: readonly string[] = [];
   #timer: ReturnType<typeof setTimeout> | undefined;
+  readonly #wait: number;
 
   /** `changed` asks for a frame when the bindings or the pending keys change. */
-  constructor(commands: Commands, changed: () => void) {
+  /** `wait` is the time in milliseconds that a sequence waits for its next stroke. */
+  constructor(commands: Commands, changed: () => void, wait = SEQUENCE_MS) {
     this.#commands = commands;
     this.#changed = changed;
+    this.#wait = wait;
   }
 
   /** Bind `spec` to the command `command` in the context atom `in` (`root` by default), and return the disposer. */
@@ -111,7 +114,7 @@ export class Keymap {
         const [prefix, prefixAtoms] = [this.#pending, this.#atoms];
         this.cancel();
         this.#run(prefix, prefixAtoms);
-      }, SEQUENCE_MS);
+      }, this.#wait);
       this.#changed();
       return true;
     }

@@ -2,7 +2,7 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createFakeModel, createHost, equal, folder, rejects, reply, type TestSession, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, type TestSession, test } from "yuke:test";
 import { waitFor } from "./wait.ts";
 
 /** The text of the last answer in the transcript of `session`. */
@@ -75,14 +75,14 @@ test("the prompt hook edits the request of each turn from the saved sections", a
       return { sections: { ...event.sections, turn: `number ${count}` } };
     });
   };
-  const model = createFakeModel([reply.text("one"), reply.text("two")]);
-  await using host = await createHost({ plugins: [{ name: "counted", session: counted }], model });
+  const replies = [reply.text("one"), reply.text("two")];
+  await using host = await createHost({ plugins: [{ name: "counted", session: counted }], replies });
   const session = await host.openSession();
 
   await session.send("first");
   await session.send("second");
 
-  const [first, second] = model.requests.map((request) => request.system);
+  const [first, second] = host.requests.map((request) => request.system);
   equal(
     [
       first?.includes("<turn>\nnumber 1\n</turn>"),
@@ -99,8 +99,7 @@ test("a failed prompt hook sends a notice, starts no request, and leaves the inp
       throw new Error("no prompt");
     });
   };
-  const model = createFakeModel([]);
-  await using host = await createHost({ plugins: [{ name: "broken", session: broken }], model });
+  await using host = await createHost({ plugins: [{ name: "broken", session: broken }] });
   const session = await host.openSession();
 
   await session.send("hi");
@@ -109,7 +108,7 @@ test("a failed prompt hook sends a notice, starts no request, and leaves the inp
   equal(notice?.message.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
   // The notice keeps the stack of the throw, which names the module of the plugin.
   equal(notice?.message.includes("turns.test.ts"), true);
-  equal([model.requests.length, session.transcript.pending.size], [0, 1]);
+  equal([host.requests.length, session.transcript.pending.size], [0, 1]);
 });
 
 // The model gets the reason of a block as the error result of that call, and the turn goes on.
@@ -123,13 +122,13 @@ test("a plugin blocks one of two tool calls in an answer, and the other tool cal
     });
   };
   const reads = ["notes.txt", "secret.txt"].map((path) => ({ name: "read", args: { path } }));
-  const model = createFakeModel([reply.toolCalls(reads), reply.text("done")]);
-  await using host = await createHost({ plugins: [{ name: "guard", session: guard }], model });
+  const replies = [reply.toolCalls(reads), reply.text("done")];
+  await using host = await createHost({ plugins: [{ name: "guard", session: guard }], replies });
   const session = await host.openSession();
 
   await session.send("read both");
 
-  const results = model.requests[1]?.messages.map((message) => message.text).join("\n") ?? "";
+  const results = host.requests[1]?.messages.map((message) => message.text).join("\n") ?? "";
   equal(
     [results.includes("the notes"), results.includes("secret.txt is private"), results.includes("the secret")],
     [true, true, false],
@@ -149,13 +148,13 @@ test("a plugin patches a tool result before the model reads it, and the session 
     sessions = ctx.get("sessions");
     return undefined;
   };
-  const model = createFakeModel([reply.toolCall("read", { path: "notes.txt" }), reply.text("done")]);
+  const replies = [reply.toolCall("read", { path: "notes.txt" }), reply.text("done")];
   await using host = await createHost({
     plugins: [
       { name: "redact", session: redact },
       { name: "holder", apply: holder },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession();
 
@@ -170,7 +169,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
     },
   });
 
-  const seen = [JSON.stringify(model.requests[1]?.messages), JSON.stringify(session.transcript.entries), saved];
+  const seen = [JSON.stringify(host.requests[1]?.messages), JSON.stringify(session.transcript.entries), saved];
   equal(
     seen.map((text) => [text.includes("password: ***"), text.includes("hunter2")]),
     [
@@ -189,13 +188,12 @@ test("an input.before handler asks the user, and a refusal removes the input", a
       return sent ? undefined : { block: "the user refused" };
     });
   };
-  const model = createFakeModel([]);
-  await using host = await createHost({ plugins: [{ name: "guard", session: guard }], model, answer: () => false });
+  await using host = await createHost({ plugins: [{ name: "guard", session: guard }], answer: () => false });
   const session = await host.openSession();
 
   await session.send("rm -rf");
 
-  equal([model.requests.length, session.transcript.pending.size], [0, 0]);
+  equal([host.requests.length, session.transcript.pending.size], [0, 0]);
   equal(
     host.questions.map((question) => question.request.title),
     ["Send this input?"],
@@ -248,13 +246,13 @@ test("a plugin creates a session, sends input, and sees the turn of that session
     }, 0);
     return undefined;
   };
-  const model = createFakeModel([reply.text("hello")]);
-  await using host = await createHost({ plugins: [{ name: "driver", apply: driver }], model });
+  const replies = [reply.text("hello")];
+  await using host = await createHost({ plugins: [{ name: "driver", apply: driver }], replies });
 
   await waitFor(() => host.events.length === 1);
 
   equal(host.events[0]?.data, { states: ["running", "idle"], texts: ["hello"], used: "MiniMax-M3", jobs: 0 });
-  equal(model.requests[0]?.messages, [{ role: "user", text: "hi" }]);
+  equal(host.requests[0]?.messages, [{ role: "user", text: "hi" }]);
 });
 
 test("a plugin summarizes the context with the model of the session and replaces the context", async () => {
@@ -272,18 +270,14 @@ test("a plugin summarizes the context with the model of the session and replaces
       return { replace: { head: [{ user_text: `Summary: ${answer.text}` }], keep: 0 } };
     });
   };
-  const model = createFakeModel([
-    reply.toolCall("read", { path: "missing.txt" }),
-    reply.text("They said hi."),
-    reply.text("Done."),
-  ]);
-  await using host = await createHost({ plugins: [{ name: "summary", session: summary }], model });
+  const replies = [reply.toolCall("read", { path: "missing.txt" }), reply.text("They said hi."), reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "summary", session: summary }], replies });
   const session = await host.openSession();
 
   await session.send("Hi.");
   equal(finalText(session), "Done.");
 
-  const [, side, last] = model.requests;
+  const [, side, last] = host.requests;
   equal([side?.system, side?.tools, side?.messages[0]?.text], ["Summarize the conversation.", [], "Hi."]);
   equal(last?.messages, [{ role: "user", text: "Summary: They said hi." }]);
 });
@@ -298,14 +292,14 @@ test("a side request repeats the body of the request of the round with one more 
       return undefined;
     });
   };
-  const model = createFakeModel([reply.text("A summary."), reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "aside", session: aside }], model });
+  const replies = [reply.text("A summary."), reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "aside", session: aside }], replies });
   const session = await host.openSession();
 
   await session.send("Hi.");
   equal(finalText(session), "Done.");
 
-  const [side, round] = model.requests.map((request) => request.body as { messages: { content: unknown[] }[] });
+  const [side, round] = host.requests.map((request) => request.body as { messages: { content: unknown[] }[] });
   const expected = JSON.parse(JSON.stringify(round)) as typeof round;
   expected?.messages[0]?.content.push({ text: "Summarize.", type: "text" });
   equal(JSON.stringify(side), JSON.stringify(expected));
@@ -319,27 +313,26 @@ test("an input that a plugin replaces reaches the model as the new blocks", asyn
       return { replace: { blocks: [{ user_text: "Read PDF files with care." }] } };
     });
   };
-  const model = createFakeModel([reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "skills", session: skills }], model });
+  const replies = [reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "skills", session: skills }], replies });
   const session = await host.openSession();
 
   await session.send("/skill:pdf");
   equal(finalText(session), "Done.");
 
-  equal(model.requests[0]?.messages, [{ role: "user", text: "Read PDF files with care." }]);
+  equal(host.requests[0]?.messages, [{ role: "user", text: "Read PDF files with care." }]);
 });
 
 test("an input that a plugin handles starts no turn", async () => {
   const commands: PluginSession = (s) => {
     s.hook("input.before", () => ({ handled: true }));
   };
-  const model = createFakeModel([]);
-  await using host = await createHost({ plugins: [{ name: "commands", session: commands }], model });
+  await using host = await createHost({ plugins: [{ name: "commands", session: commands }] });
   const session = await host.openSession();
 
   await session.send("/compact");
 
-  equal([model.requests.length, session.transcript.pending.size], [0, 0]);
+  equal([host.requests.length, session.transcript.pending.size], [0, 0]);
 });
 
 test("the skills of a plugin folder come before the skills of the workspace in the system prompt", async () => {
@@ -349,13 +342,13 @@ test("the skills of a plugin folder come before the skills of the workspace in t
   await writeTextFile(`${root}/skills/charts/SKILL.md`, "---\nname: charts\ndescription: Draw charts.\n---\n");
   await mkdir(`${folder()}/.agents/skills/pdf`, { recursive: true });
   await writeTextFile(`${folder()}/.agents/skills/pdf/SKILL.md`, "---\nname: pdf\ndescription: Read PDF files.\n---\n");
-  const model = createFakeModel([reply.text("Hello.")]);
-  await using host = await createHost({ plugins: [{ folder: root }], model });
+  const replies = [reply.text("Hello.")];
+  await using host = await createHost({ plugins: [{ folder: root }], replies });
   const session = await host.openSession();
 
   await session.send("Hi.");
 
-  const system = model.requests[0]?.system ?? "";
+  const system = host.requests[0]?.system ?? "";
   const at = (text: string): number => system.indexOf(text);
   equal(
     [

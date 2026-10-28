@@ -1,7 +1,8 @@
 // The `input.before` hook: its event, its chain, and each answer.
 
+import { writeFile } from "yuke:fs";
 import type { InputBeforeAnswer, PluginSession } from "yuke:plugins";
-import { createHost, equal, test } from "yuke:test";
+import { createHost, equal, folder, test } from "yuke:test";
 
 const typed = (text: string) => ({ source: { kind: "user" }, kind: "message", blocks: [{ user_text: text }] }) as const;
 
@@ -153,6 +154,31 @@ test("a replace keeps a media block, and a later handler sees the bytes of a new
     ],
   );
   equal(size, 3);
+});
+
+test("the event gives the blocks in order, and a media block can name a file", async () => {
+  const kinds: string[] = [];
+  const look: PluginSession = (s) => {
+    s.hook("input.before", (event) => {
+      kinds.push(...event.blocks.map((block) => Object.keys(block)[0] ?? ""));
+      return undefined;
+    });
+  };
+  await using host = await createHost({ plugins: [{ name: "look", session: look }] });
+  const session = await host.openSession();
+  await writeFile(`${folder()}/c.png`, new Uint8Array([2, 3]));
+
+  const decision = await session.run("input.before", {
+    source: { kind: "user" },
+    kind: "message",
+    blocks: [
+      { mimeType: "image/png", bytes: new Uint8Array([1]) },
+      { user_text: "look" },
+      { mimeType: "image/png", path: "c.png" },
+    ],
+  });
+
+  equal([decision, kinds], ["keep", ["media", "user_text", "media"]]);
 });
 
 test("a notification shows its plugin source and its kind", async () => {

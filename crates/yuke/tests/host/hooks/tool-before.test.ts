@@ -3,7 +3,7 @@
 import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, test } from "yuke:test";
 
-const call = { id: "c1", name: "read", arguments: { path: ["src", "main.rs"] } };
+const call = { callId: "c1", name: "read", arguments: { path: ["src", "main.rs"] } };
 
 /** A plugin whose `tool.before` handler runs `body` and gives its answer. */
 const answering =
@@ -54,7 +54,7 @@ test("a handler gets the id, the name, and the parsed arguments of the call", as
   const reader: PluginSession = (s) => {
     s.hook("tool.before", (event) => {
       const path = (event.call.arguments as { path: string[] }).path;
-      return { block: `${event.call.id} ${event.call.name} ${path.join("/")}` };
+      return { block: `${event.call.callId} ${event.call.name} ${path.join("/")}` };
     });
   };
   await using host = await createHost({ plugins: [{ name: "reader", session: reader }] });
@@ -97,7 +97,7 @@ for (const [name, change] of changes) {
     const session = await host.openSession();
 
     const decision = await session.run("tool.before", {
-      call: { id: "c1", name: "write", arguments: { options: { force: false } } },
+      call: { callId: "c1", name: "write", arguments: { options: { force: false } } },
     });
 
     const reason = typeof decision === "object" ? decision.block : "";

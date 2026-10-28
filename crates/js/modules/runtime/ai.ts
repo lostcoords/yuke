@@ -2,9 +2,9 @@
 
 import type { GenerateTextOptions, GenerateTextResult, ObjectOutput } from "yuke:ai";
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
-import { fieldsOf, jsonCopy, mediaOf } from "yuke:internal/define";
 import { signalOf, underStop } from "yuke:internal/events";
 import { aiComplete } from "yuke:internal/native";
+import { fieldsOf, jsonCopy, mediaOf } from "yuke:internal/values";
 import type { FinishReason, Usage } from "yuke:protocol";
 import type { Infer, ObjectSchema, Schema } from "yuke:tools";
 

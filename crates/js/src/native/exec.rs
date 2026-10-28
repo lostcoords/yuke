@@ -1,12 +1,11 @@
 //! `exec` of the session object: run a shell command until it ends, its deadline passes, or its call stops it.
 
-use std::pin::pin;
-
 use rquickjs::{Ctx, Function, Object};
 use tokio::sync::mpsc;
 
 use crate::error::{ErrorClass, throw};
 use crate::processes::{EndCause, Processes, Request};
+use crate::tools::forward;
 
 /// Run the command of `request`. Each chunk of output goes to `on_output`. The stop of the call stops the command. It
 /// answers `{ output, cause }`. The cause is `exit` with `code`, `signal` with `signal`, `timeout`, or `cancelled`.
@@ -16,28 +15,17 @@ pub(crate) async fn exec<'js>(
     request: Request,
     on_output: Function<'js>,
 ) -> rquickjs::Result<Object<'js>> {
-    let (chunks, mut texts) = mpsc::unbounded_channel();
+    let (chunks, texts) = mpsc::unbounded_channel();
     // The command has its own token, so its end stops only this command, not the other commands of the call. When
-    // `on_output` throws, the function drops the wait, and the wait then stops the command.
-    let mut running = pin!(processes.run(
+    // `on_output` throws, the relay drops the run, and the drop stops the command.
+    let running = processes.run(
         Request {
             stop: request.stop.child_token(),
             ..request
         },
         chunks,
-    ));
-
-    let end = loop {
-        tokio::select! {
-            // A chunk before the end shows before it.
-            biased;
-            Some(text) = texts.recv() => on_output.call::<_, ()>((text,))?,
-            end = &mut running => break end,
-        }
-    };
-    while let Ok(text) = texts.try_recv() {
-        on_output.call::<_, ()>((text,))?;
-    }
+    );
+    let end = forward(running, texts, |text| on_output.call::<_, ()>((text,))).await?;
 
     let end = end.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
     let object = Object::new(ctx.clone())?;

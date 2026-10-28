@@ -2,7 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import type { Block, Settings } from "yuke:protocol";
-import { createFakeModel, createHost, equal, type RoundPlan, rejects, reply, test } from "yuke:test";
+import { createHost, equal, type RoundPlan, rejects, reply, test } from "yuke:test";
 
 /** A context of 4 blocks: the input, a call and its result, and a text. */
 const context: Block[] = [
@@ -208,8 +208,7 @@ test("a round of run has the model of the session, and its window unless the eve
     });
   };
   const replies = ["One.", "Two.", "Turn.", "Three."].map((text) => reply.text(text));
-  const model = createFakeModel(replies);
-  await using host = await createHost({ plugins: [{ name: "side", session: side }], model });
+  await using host = await createHost({ plugins: [{ name: "side", session: side }], replies });
   const session = await host.openSession({ model: { provider: "openai", model: "gpt-4.1" } });
 
   await session.run("round.before", { context: [{ user_text: "one" }] });
@@ -219,7 +218,7 @@ test("a round of run has the model of the session, and its window unless the eve
   const [run, named, turn] = windows;
   equal([run === turn, named, typeof turn], [true, 1000, "number"]);
   equal(
-    model.requests.map((request) => (request.body as { model: string }).model),
+    host.requests.map((request) => (request.body as { model: string }).model),
     ["gpt-4.1", "gpt-4.1", "gpt-4.1", "gpt-4.1"],
   );
 });

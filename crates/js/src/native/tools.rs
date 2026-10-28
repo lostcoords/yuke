@@ -8,7 +8,7 @@ use rquickjs::{Ctx, Function, Object};
 use yuke_engine::Concurrency;
 
 use tokio::sync::mpsc;
-use yuke_protocol::{ExtensionEventParams, NoticeLevel, NoticeParams, SessionId};
+use yuke_protocol::{ExtensionEventParams, NoticeParams, SessionId};
 
 use crate::error::{ErrorClass, Report, throw};
 use crate::tools::Registry;
@@ -107,18 +107,12 @@ fn add_reports<'js>(
                   message: String,
                   session_id: Option<String>|
                   -> rquickjs::Result<()> {
-                let level = match level.as_str() {
-                    "debug" => NoticeLevel::Debug,
-                    "info" => NoticeLevel::Info,
-                    "warn" => NoticeLevel::Warn,
-                    "error" => NoticeLevel::Error,
-                    other => {
-                        return Err(throw(
-                            &ctx,
-                            ErrorClass::TypeError,
-                            &format!("notify: '{other}' is not debug, info, warn, or error"),
-                        ));
-                    }
+                let Some(level) = super::notice_level(&level) else {
+                    return Err(throw(
+                        &ctx,
+                        ErrorClass::TypeError,
+                        &format!("notify: '{level}' is not debug, info, warn, or error"),
+                    ));
                 };
                 let session_id = session_of(&ctx, "notify", session_id)?;
                 let notice = NoticeParams {

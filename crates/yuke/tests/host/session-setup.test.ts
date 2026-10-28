@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginSession, SessionContext } from "yuke:plugins";
-import { createFakeModel, createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, test } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 /** A tool `name` with no parameters that answers `answer`. */
@@ -54,13 +54,13 @@ test("every session setup starts before any of them settles", async () => {
     release();
     s.tools.define(tool("second"));
   };
-  const model = createFakeModel([reply.text("Done.")]);
+  const replies = [reply.text("Done.")];
   await using host = await createHost({
     plugins: [
       { name: "waiting", session: waiting },
       { name: "releasing", session: releasing },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession();
 
@@ -68,7 +68,7 @@ test("every session setup starts before any of them settles", async () => {
 
   // The tools come in the order of their definitions, so the second plugin defines first.
   equal(
-    model.requests[0]?.tools.filter((name) => name === "first" || name === "second"),
+    host.requests[0]?.tools.filter((name) => name === "first" || name === "second"),
     ["second", "first"],
   );
 });
@@ -121,7 +121,7 @@ test("the folder of a session stays while a call reads the folder of its start",
   const session = await host.openSession();
   await mkdir(`${folder()}/moved`);
 
-  await session.setSettings({ cwd: `${folder()}/moved` });
+  await session.setSettings({ ...session.settings, cwd: `${folder()}/moved` });
 
   equal((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });

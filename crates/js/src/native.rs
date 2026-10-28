@@ -84,6 +84,11 @@ impl ModuleDef for Native {
 }
 
 /// The export object that [`install`] built. It is the only `Object` that the context keeps as user data.
+/// The protocol notice level of `name`: `debug`, `info`, `warn`, or `error`.
+pub(crate) fn notice_level(name: &str) -> Option<yuke_protocol::NoticeLevel> {
+    serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
+}
+
 fn exports_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     ctx.userdata::<Object<'js>>()
         .map(|object| object.clone())

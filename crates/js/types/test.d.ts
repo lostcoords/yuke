@@ -161,18 +161,6 @@ declare module "yuke:test" {
     readonly body: unknown;
   }
 
-  /**
-   * The fake model of a host. Each request takes the next reply in order. The host writes the reply in the stream
-   * format of the protocol of the request. A request after the last reply fails. A reply without a request fails the
-   * test at the close of the host.
-   */
-  export interface FakeModel {
-    readonly requests: readonly ModelRequest[];
-  }
-
-  /** A fake model that answers with `replies`, in order. */
-  export function createFakeModel(replies: readonly Reply[]): FakeModel;
-
   /** A question that a plugin asked in a session of the host. */
   export interface TestQuestion extends Question {
     readonly sessionId: SessionId;
@@ -182,8 +170,12 @@ declare module "yuke:test" {
   export interface HostOptions {
     /** The plugins under test, in load order. */
     readonly plugins: readonly PluginUnderTest[];
-    /** The model of the sessions. Without it, a model request fails the test. */
-    readonly model?: FakeModel;
+    /**
+     * The replies of the fake model of the sessions, in order. Each request takes the next reply. The host writes the
+     * reply in the stream format of the protocol of the request. A request after the last reply fails. A reply without
+     * a request fails the test at the close of the host.
+     */
+    readonly replies?: readonly Reply[];
     /**
      * The answer to each question. Give `true` or `false` for `confirm`. Give a text for `select` and `input`.
      * `undefined` cancels the question. Without the function, each question gets `undefined`, as with no client. A
@@ -206,6 +198,8 @@ declare module "yuke:test" {
     readonly events: readonly ExtensionEventParams[];
     /** The questions of the plugins so far. */
     readonly questions: readonly TestQuestion[];
+    /** The requests that the fake model got so far. */
+    readonly requests: readonly ModelRequest[];
     /**
      * Create a session and open it. The model defaults to `minimax/MiniMax-M3`. The settings default to the endpoint
      * defaults. The workspace defaults to the folder of the test. The host has no login, so a provider with a login
@@ -328,8 +322,10 @@ declare module "yuke:test" {
     ) => Promise<HookResults[K]>;
     /** Call the tool `tool` with `args`, as a turn does. */
     readonly call: (tool: string, args: unknown, options?: OperationOptions) => Promise<CallOutcome>;
-    /** Save the settings of the session with the fields of `settings` changed. It fails while a turn runs or input waits. */
-    readonly setSettings: (settings: Partial<SessionSettings>) => Promise<void>;
+    /** The settings of the session now. */
+    readonly settings: SessionSettings;
+    /** Save `settings` as the settings of the session. It fails while a turn runs or input waits. */
+    readonly setSettings: (settings: SessionSettings) => Promise<void>;
     /** Close the session, and stop its background jobs. Its tools and its open questions end, and its cleanups run. */
     readonly close: () => Promise<void>;
   }

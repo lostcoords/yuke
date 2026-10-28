@@ -13,6 +13,9 @@ use crate::{Handle, Runtime};
 /// The name of the internal module that loads a plugin.
 const LOADER: &str = "yuke:internal/plugins";
 
+/// The name of the internal module that opens the sessions of the plugins and runs their hooks.
+const HOOKS: &str = "yuke:internal/hooks";
+
 /// One plugin of the list. The consumer checks the names and the order before the load, and the manifest of a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plugin {
@@ -208,8 +211,14 @@ struct PluginSpec {
     provides: Vec<String>,
 }
 
-/// The internal module that loads the plugins and opens their sessions.
+/// The internal module that loads the plugins.
 pub(crate) async fn loader<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     let promise = caught(ctx, Module::import(ctx, LOADER))?;
+    caught(ctx, promise.into_future().await)
+}
+
+/// The internal module that opens the sessions of the plugins and runs their hooks.
+pub(crate) async fn hooks<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
+    let promise = caught(ctx, Module::import(ctx, HOOKS))?;
     caught(ctx, promise.into_future().await)
 }

@@ -1,8 +1,8 @@
 /** The code of the public module `yuke:process`. Its declaration is `types/process.d.ts`, and the check at the end compares the two. */
 
-import { fieldsOf } from "yuke:internal/define";
 import { signalOf, underSignal } from "yuke:internal/events";
 import { type ProcessRequest, processOutput } from "yuke:internal/native";
+import { fieldsOf } from "yuke:internal/values";
 import type { CommandOutput } from "yuke:process";
 
 /** The names of the options of a command. */

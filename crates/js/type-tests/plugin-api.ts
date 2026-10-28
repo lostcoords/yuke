@@ -314,7 +314,7 @@ s.hook("tool.before", (event) => {
 });
 s.hook("tool.before", async ({ call }): Promise<ToolBeforeAnswer | undefined> => {
   await Promise.resolve();
-  return call.id === "" ? { block: "no id" } : undefined;
+  return call.callId === "" ? { block: "no id" } : undefined;
 });
 // @ts-expect-error: a block names its reason as a string.
 s.hook("tool.before", () => ({ block: true }));

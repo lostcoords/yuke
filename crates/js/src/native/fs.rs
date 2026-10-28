@@ -657,3 +657,42 @@ fn remove(path: &Path, recursive: bool, force: bool, stop: &CancellationToken) -
         removed => removed.map_err(fail),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use yuke_engine::CancellationToken;
+
+    use super::{CHUNK, Creation, Failure, Placement, write};
+
+    #[test]
+    fn a_stop_during_an_atomic_write_leaves_the_old_file_and_no_temporary_file() {
+        let folder = yuke_testing::folder(
+            "js",
+            "a_stop_during_an_atomic_write_leaves_the_old_file_and_no_temporary_file",
+        );
+        let path = folder.join("big.bin");
+        fs::write(&path, "old").unwrap();
+        let bytes = vec![0; 64 * CHUNK];
+        let stop = CancellationToken::new();
+
+        let written = std::thread::scope(|scope| {
+            let writing = scope.spawn(|| write(&path, &bytes, Placement::Atomic, Creation::Create, None, &stop));
+            // The temporary file shows that the write passed its first check. A write that ends first fails the test.
+            while !writing.is_finished() && fs::read_dir(&folder).unwrap().count() < 2 {
+                std::thread::yield_now();
+            }
+            stop.cancel();
+            writing.join().unwrap()
+        });
+
+        assert!(matches!(written, Err(Failure::Cancelled)), "{written:?}");
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        let names: Vec<_> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["big.bin"]);
+    }
+}

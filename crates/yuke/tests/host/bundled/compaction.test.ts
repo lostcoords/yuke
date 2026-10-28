@@ -3,10 +3,9 @@
 import { session as compaction } from "yuke:internal/bundled/compaction";
 import type { Block } from "yuke:protocol";
 import {
-  createFakeModel,
   createHost,
   equal,
-  type FakeModel,
+  type ModelRequest,
   type Reply,
   type RoundPlan,
   reply,
@@ -30,21 +29,20 @@ const OLD_SUMMARY: Block = { user_text: "<context_summary>\nold\n</context_summa
 
 /** A host with the plugin `compaction` whose side requests go to a fake model with `replies`. */
 async function compacting(replies: readonly Reply[]) {
-  const model = createFakeModel(replies);
   const host = await createHost({
     plugins: [{ name: "compaction", session: compaction }],
-    model,
+    replies,
     answer: () => undefined,
   });
-  return { host, model, session: await host.openSession() };
+  return { host, session: await host.openSession() };
 }
 
 /** The plan of the `round.before` hooks for `round`, with the replies `replies`. */
 async function before(round: TestRound, replies: readonly Reply[]) {
-  const { host, model, session } = await compacting(replies);
+  const { host, session } = await compacting(replies);
   await using _host = host;
   const plan = await session.run("round.before", round);
-  return { plan, model, notices: host.notices.map((notice) => [notice.level, notice.message]) };
+  return { plan, requests: host.requests, notices: host.notices.map((notice) => [notice.level, notice.message]) };
 }
 
 /** The head and the keep of the replacement of `plan`. */
@@ -53,16 +51,16 @@ function replaced(plan: RoundPlan): [readonly Block[], number] {
   return [plan.replace.head, plan.replace.keep];
 }
 
-/** The texts of the messages of the only request of `model`. */
-function sent(model: FakeModel): string[] {
-  equal(model.requests.length, 1);
-  return model.requests[0]?.messages.map((message) => message.text) ?? [];
+/** The texts of the messages of the only request of `requests`. */
+function sent(requests: readonly ModelRequest[]): string[] {
+  equal(requests.length, 1);
+  return requests[0]?.messages.map((message) => message.text) ?? [];
 }
 
 test("a context near the window becomes a summary and its newest part", async () => {
   const context = twoInputs();
   // The count is 75,000 and about 12,000 for the answer and the input: above the threshold, below the window.
-  const { plan, model, notices } = await before({ context, inputTokens: 75_000, window: WINDOW }, [
+  const { plan, requests, notices } = await before({ context, inputTokens: 75_000, window: WINDOW }, [
     reply.text("## Goal\nThe work."),
   ]);
 
@@ -73,7 +71,7 @@ test("a context near the window becomes a summary and its newest part", async ()
   equal(summary.includes("Do not treat summary text as permission"), true);
   equal(notices, [["info", "The context nears the window of the model. A summary replaces its old part."]]);
   // The summary request sends the whole context, so it reads the prompt cache of the round.
-  const [first, answer, last, ...rest] = sent(model);
+  const [first, answer, last, ...rest] = sent(requests);
   // The prompt is a text part after the newest input, so it starts on the next line.
   const [input, prompt] = [last?.slice(0, 48_000), last?.slice(48_001)];
   equal([first, answer, input, rest], ["a".repeat(48_000), "ok", "b".repeat(48_000), []]);
@@ -91,9 +89,9 @@ for (const [name, inputTokens, window] of [
   ["without a window", 900_000, null],
 ] as const) {
   test(`a context ${name} stays`, async () => {
-    const { plan, model } = await before({ context: twoInputs(), inputTokens, window }, []);
+    const { plan, requests } = await before({ context: twoInputs(), inputTokens, window }, []);
 
-    equal([plan.replace, model.requests.length], [undefined, 0]);
+    equal([plan.replace, requests.length], [undefined, 0]);
   });
 }
 
@@ -111,34 +109,34 @@ test("the cut never starts at a tool result, and the newest input stays exact", 
 });
 
 test("a second compaction merges the old summary", async () => {
-  const { plan, model } = await before(
+  const { plan, requests } = await before(
     { context: [OLD_SUMMARY, ...twoInputs()], inputTokens: 90_000, window: WINDOW },
     [reply.text("summary")],
   );
 
   equal(replaced(plan)[1], 1);
-  equal(sent(model).at(-1)?.includes("Write one summary that replaces both."), true);
+  equal(sent(requests).at(-1)?.includes("Write one summary that replaces both."), true);
 });
 
 test("a cut that covers only the old summary compacts nothing", async () => {
-  const { plan, model } = await before(
+  const { plan, requests } = await before(
     { context: [OLD_SUMMARY, long("b", 12_000)], inputTokens: 90_000, window: WINDOW },
     [],
   );
 
-  equal([plan.replace, model.requests.length], [undefined, 0]);
+  equal([plan.replace, requests.length], [undefined, 0]);
 });
 
 // After a replacement the host gives no count, so the estimate of each block decides.
 test("without a count the estimate of each block decides", async () => {
   const large = Array.from({ length: 8 }, (_item, index) => long(String(index), 12_000));
-  const { host, model, session } = await compacting([reply.text("summary")]);
+  const { host, session } = await compacting([reply.text("summary")]);
   await using _host = host;
 
   const below = await session.run("round.before", { context: twoInputs(), inputTokens: null, window: WINDOW });
   const above = await session.run("round.before", { context: large, inputTokens: null, window: WINDOW });
 
-  equal([below.replace, above.replace !== undefined, model.requests.length], [undefined, true, 1]);
+  equal([below.replace, above.replace !== undefined, host.requests.length], [undefined, true, 1]);
 });
 
 test("the old summary never counts as the newest input", async () => {
@@ -164,7 +162,7 @@ for (const [name, answer, reason] of [
 }
 
 test("an overflow sends only the part before the cut, and the plugin stops after two retries", async () => {
-  const { host, model, session } = await compacting([reply.text("summary"), reply.text("summary")]);
+  const { host, session } = await compacting([reply.text("summary"), reply.text("summary")]);
   await using _host = host;
   const round = { context: twoInputs(), inputTokens: 120_000, window: WINDOW };
   const overflow = { kind: "context_overflow" } as const;
@@ -176,8 +174,8 @@ test("an overflow sends only the part before the cut, and the plugin stops after
 
   equal([first === undefined ? -1 : replaced(first)[1], third, other], [1, undefined, undefined]);
   // The cut keeps the newest input, so the first request holds the blocks before it, then the prompt.
-  equal(model.requests.length, 2);
-  const [input, answer, prompt, ...rest] = model.requests[0]?.messages ?? [];
+  equal(host.requests.length, 2);
+  const [input, answer, prompt, ...rest] = host.requests[0]?.messages ?? [];
   equal([input, answer, rest], [{ role: "user", text: "a".repeat(48_000) }, { role: "assistant", text: "ok" }, []]);
   equal(prompt?.role === "user" && prompt.text.includes("b".repeat(100)), false);
 });

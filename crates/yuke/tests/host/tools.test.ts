@@ -2,7 +2,7 @@
 
 import { mkdir, readDir, writeFile, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, test } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 const empty = { type: "object", properties: {} } as const;
@@ -47,8 +47,8 @@ test("a change of a tool after its definition changes neither its schema nor its
   equal([runs.text, runs.isError, missing.isError, missing.text.startsWith("Set n to ")], ["n=2", false, true, true]);
 });
 
-test("a deferred tool waits for the tool search of the model, and the other tools load at once", async () => {
-  const model = createFakeModel([reply.text("Done.")]);
+test("a deferred tool waits for the tool search of the replies, and the other tools load at once", async () => {
+  const replies = [reply.text("Done.")];
   await using host = await createHost({
     plugins: [
       {
@@ -59,13 +59,13 @@ test("a deferred tool waits for the tool search of the model, and the other tool
         ),
       },
     ],
-    model,
+    replies,
   });
   const session = await host.openSession({ model: { provider: "anthropic", model: "claude-fable-5" } });
 
   await session.send("Hi.");
 
-  const body = model.requests[0]?.body as { tools: { name?: string; defer_loading?: boolean }[] } | undefined;
+  const body = host.requests[0]?.body as { tools: { name?: string; defer_loading?: boolean }[] } | undefined;
   const tools = body?.tools ?? [];
   equal(
     tools
@@ -478,11 +478,11 @@ test("a media path starts in the folder of the start of the call", async () => {
     ),
   );
   await using _host = host;
-  await session.setSettings({ cwd: `${folder()}/first` });
+  await session.setSettings({ ...session.settings, cwd: `${folder()}/first` });
 
   const pending = session.call("later", {});
   await new Promise((resolve) => setTimeout(resolve, 20));
-  await session.setSettings({ cwd: `${folder()}/second` });
+  await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
   release();
 
   equal(plain((await pending).media), [["image/png", [...new TextEncoder().encode("first")]]]);

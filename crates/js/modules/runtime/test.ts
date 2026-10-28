@@ -1,9 +1,9 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
-import { createFakeModel, createHost, reply } from "yuke:internal/host";
+import { createHost, reply } from "yuke:internal/host";
 import { folder, register } from "yuke:internal/test";
 
-export { createFakeModel, createHost, folder, reply };
+export { createHost, folder, reply };
 
 /** The most characters of a value in a failure. */
 const SHOWN = 200;
@@ -137,7 +137,6 @@ const declared = {
   rejects,
   folder,
   createHost,
-  createFakeModel,
   reply,
 } satisfies typeof import("yuke:test");
 void declared;

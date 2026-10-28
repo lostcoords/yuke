@@ -339,12 +339,15 @@ async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
         caught(&ctx, ctx.globals().set("finished", true))
     });
     assert!(tokio::time::timeout(Duration::from_millis(10), call).await.is_err());
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
+    // A timer set later with the same delay fires after the timer of the call.
     assert_eq!(
-        evaluate::<Option<bool>>(&runtime, "return globalThis.finished;")
-            .await
-            .unwrap(),
+        evaluate::<Option<bool>>(
+            &runtime,
+            "await new Promise(resolve => setTimeout(resolve, 100)); return globalThis.finished;"
+        )
+        .await
+        .unwrap(),
         None
     );
 }
@@ -368,13 +371,14 @@ async fn javascript_runs_without_a_time_limit() {
 #[tokio::test]
 async fn a_shutdown_stops_a_loop_without_an_await() {
     let folder = folder("a_shutdown_stops_a_loop_without_an_await");
-    let (runtime, _faults) = start(&folder).await;
+    let (runtime, mut reports) = start(&folder).await;
     let runtime = Arc::new(runtime);
     let looping = tokio::spawn({
         let runtime = Arc::clone(&runtime);
-        async move { evaluate::<()>(&runtime, "for (;;) {}").await }
+        async move { evaluate::<()>(&runtime, "console.log('loops'); for (;;) {}").await }
     });
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The console entry shows that the loop runs.
+    assert!(matches!(next_report(&mut reports).await, Report::Console { .. }));
     looping.abort();
     assert!(looping.await.unwrap_err().is_cancelled());
 
@@ -387,15 +391,16 @@ async fn a_shutdown_stops_a_loop_without_an_await() {
 #[tokio::test]
 async fn a_shutdown_ends_a_call_in_flight_as_stopped() {
     let folder = folder("a_shutdown_ends_a_call_in_flight_as_stopped");
-    let (runtime, _faults) = start(&folder).await;
+    let (runtime, mut reports) = start(&folder).await;
     // A tool keeps a clone of the caller, so its call can outlive the runtime.
     let caller = runtime.caller.clone();
     let looping = tokio::spawn(async move {
         caller
-            .run(async |ctx: Ctx<'_>, _registry| caught(&ctx, ctx.eval::<(), _>("for (;;) {}")))
+            .run(async |ctx: Ctx<'_>, _registry| caught(&ctx, ctx.eval::<(), _>("console.log('loops'); for (;;) {}")))
             .await
     });
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The console entry shows that the loop runs.
+    assert!(matches!(next_report(&mut reports).await, Report::Console { .. }));
 
     tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
         .await

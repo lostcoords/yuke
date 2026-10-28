@@ -1,7 +1,7 @@
 // The order guarantees of the test host: an operation returns after its updates and its reports arrived.
 
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, reply, test } from "yuke:test";
+import { createHost, equal, reply, test } from "yuke:test";
 
 /** The texts `notice 0` to `notice 4999`. */
 const texts = Array.from({ length: 5000 }, (_item, index) => `notice ${index}`);
@@ -9,7 +9,7 @@ const texts = Array.from({ length: 5000 }, (_item, index) => `notice ${index}`);
 // Many updates fill several deliveries of the feed, so only the flush lets `send` see each one.
 test("send returns after the transcript got each update of the turn", async () => {
   const calls = Array.from({ length: 300 }, (_item, index) => ({ name: "noop", args: { index } }));
-  const model = createFakeModel([reply.toolCalls(calls), reply.text("Done.")]);
+  const replies = [reply.toolCalls(calls), reply.text("Done.")];
   const noop: PluginSession = (s) => {
     s.tools.define({
       name: "noop",
@@ -19,7 +19,7 @@ test("send returns after the transcript got each update of the turn", async () =
       execute: () => "ok",
     });
   };
-  await using host = await createHost({ plugins: [{ name: "noop", session: noop }], model });
+  await using host = await createHost({ plugins: [{ name: "noop", session: noop }], replies });
   const session = await host.openSession();
 
   await session.send("Run them.");
@@ -44,7 +44,7 @@ test("run returns after the host recorded each notice of the handlers", async ()
   await using host = await createHost({ plugins: [{ name: "loud", session: loud }] });
   const session = await host.openSession();
 
-  await session.run("tool.before", { call: { id: "c", name: "x", arguments: {} } });
+  await session.run("tool.before", { call: { callId: "c", name: "x", arguments: {} } });
 
   equal(
     host.notices.map((notice) => notice.message),

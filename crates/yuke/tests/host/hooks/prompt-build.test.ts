@@ -1,7 +1,7 @@
 // The `prompt.build` hook: its order, its answers, its checks, and its failures.
 
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, rejects, reply, test } from "yuke:test";
+import { createHost, equal, rejects, reply, test } from "yuke:test";
 
 /** The sections of a new session before any hook. */
 const saved = { base: "You are yuke.", environment: "workspace: /work" };
@@ -69,13 +69,13 @@ test("the order of the answer is the order of the prompt", async () => {
 test("the order of the sections reaches the system prompt of a request", async () => {
   // The prompt joins the sections in order, so a section put first comes before the base of yuke.
   const order = answering((event) => ({ sections: { first: "FIRST SECTION", ...event.sections } }));
-  const model = createFakeModel([reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "order", session: order }], model });
+  const replies = [reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "order", session: order }], replies });
   const session = await host.openSession();
 
   await session.send("Hi.");
 
-  const system = model.requests[0]?.system ?? "";
+  const system = host.requests[0]?.system ?? "";
   equal(system.startsWith("<first>\nFIRST SECTION\n</first>\n\nYou are yuke"), true);
 });
 

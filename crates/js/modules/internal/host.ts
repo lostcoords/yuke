@@ -10,17 +10,15 @@ import {
   testHostRecord,
   testHostRun,
   testHostSettle,
-  type WireMedia,
 } from "yuke:internal/native";
 import { give } from "yuke:internal/plugins";
 import { flush, sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
 import type { Frozen, ViewEvent } from "yuke:plugins";
-import type { Block, InteractionResponse, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
+import type { InteractionResponse, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
 import type {
   CallOutcome,
   CallsOptions,
-  FakeModel,
   HookEvents,
   HookResults,
   Host,
@@ -29,32 +27,16 @@ import type {
   Reply,
   ReplyOptions,
   ScriptedCall,
-  TestMedia,
   TestQuestion,
   TestSession,
-  ToolOutcome,
 } from "yuke:test";
-import type { ToolMedia } from "yuke:tools";
 import { Transcript } from "yuke:transcript";
 
 /** The model of a session when the test names none. The fake model answers each model of a provider with an API key. */
 const TEST_MODEL = { provider: "minimax", model: "MiniMax-M3" } as const;
 
-/** The scripted replies of each fake model. */
-const scripts = new WeakMap<FakeModel, readonly Reply[]>();
-
 /** A test creates one host. */
 let created = false;
-
-export function createFakeModel(replies: readonly Reply[]): FakeModel {
-  const model: FakeModel = Object.freeze({
-    get requests() {
-      return testHostRecord().requests;
-    },
-  });
-  scripts.set(model, [...replies]);
-  return model;
-}
 
 export const reply = Object.freeze({
   text: (text: string, options?: ReplyOptions): Reply => ({
@@ -85,23 +67,6 @@ export const reply = Object.freeze({
 async function settle(): Promise<void> {
   await flush();
   await testHostSettle();
-}
-
-/** The media item `item` for the test host: its path, or its bytes in base64. */
-function wireMedia(item: ToolMedia): { mimeType: string; path: string } | { mimeType: string; base64: string } {
-  if (item.bytes === undefined) return { mimeType: item.mimeType, path: item.path };
-  let binary = "";
-  // A spread of a large array overflows the stack, so the bytes go in parts.
-  for (let start = 0; start < item.bytes.length; start += 32_768) {
-    binary += String.fromCharCode(...item.bytes.subarray(start, start + 32_768));
-  }
-  return { mimeType: item.mimeType, base64: btoa(binary) };
-}
-
-/** The media item `item` of the test host, with its bytes. */
-function testMedia(item: WireMedia): TestMedia {
-  const bytes = Uint8Array.from(atob(item.base64), (char) => char.charCodeAt(0));
-  return Object.freeze({ mimeType: item.mimeType, size: item.size, bytes });
 }
 
 /** The response to `update`, a question of a plugin, from `answer`. */
@@ -140,8 +105,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       provides: plugin.provides ?? [],
     };
   });
-  const replies = options.model === undefined ? [] : (scripts.get(options.model) ?? []);
-  await testHostCreate({ plugins, replies }).promise;
+  await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
   await settle();
 
   const stop = new AbortController();
@@ -156,38 +120,20 @@ export async function createHost(options: HostOptions): Promise<Host> {
     if (update.sessionUpdate !== "interaction_requested") return;
     const question: TestQuestion = Object.freeze({ sessionId: id, source: update.source, request: update.request });
     questions.push(question);
-    const respond = (answer: () => boolean | string | undefined): void => {
-      // A close ends the question, so a later answer has no question to reach.
-      if (closed.has(id) || stop.signal.aborted) return;
+    // A rejection that no code handles is a fault, so a failed answer fails the test.
+    void (async () => {
+      // A close ends the question, so a later answer or failure has no question to reach.
+      const open = (): boolean => !closed.has(id) && !stop.signal.aborted;
       try {
-        sessionRespond([id, update.interactionId, responseOf(update, answer())]);
+        const value = await options.answer?.(question);
+        if (open()) sessionRespond([id, update.interactionId, responseOf(update, value)]);
       } catch (error) {
-        // The cancel ends the operation that asked, and the error fails the test.
+        if (!open()) return;
+        // The cancel ends the operation that asked.
         sessionRespond([id, update.interactionId, { kind: "canceled" }]);
         throw error;
       }
-    };
-    let value: ReturnType<NonNullable<HostOptions["answer"]>>;
-    try {
-      value = options.answer?.(question);
-    } catch (error) {
-      respond(() => {
-        throw error;
-      });
-      return;
-    }
-    if (value instanceof Promise) {
-      // A rejection that no code handles is a fault, so a failed answer fails the test.
-      void value.then(
-        (answer) => respond(() => answer),
-        (error: unknown) =>
-          respond(() => {
-            throw error;
-          }),
-      );
-    } else {
-      respond(() => value);
-    }
+    })();
   };
 
   const openSession = async (settings?: Partial<SessionSettings>): Promise<TestSession> => {
@@ -237,44 +183,25 @@ export async function createHost(options: HostOptions): Promise<Host> {
         event: HookEvents[K],
         operation?: OperationOptions,
       ): Promise<HookResults[K]> {
-        let sent: unknown = event;
-        if (point === "tool.after") {
-          const after = event as HookEvents["tool.after"];
-          sent = { ...after, result: { ...after.result, media: (after.result.media ?? []).map(wireMedia) } };
-        } else if (point === "prompt.build") {
-          sent = { sections: Object.entries((event as HookEvents["prompt.build"]).sections) };
-        } else if (point === "input.before") {
-          const input = event as HookEvents["input.before"];
-          sent = { ...input, blocks: input.blocks.map((block) => ("mimeType" in block ? wireMedia(block) : block)) };
-        }
-        const result = await underSignal(operation?.signal, () => testHostRun([id, point, sent]));
+        const result = await underSignal(operation?.signal, () => testHostRun([id, point, event]));
         await settle();
         // The hook point ends early after a cancel, so its decision is no answer.
         operation?.signal?.throwIfAborted();
-        let answer: unknown = result ?? undefined;
-        if (point === "tool.after") {
-          const outcome = result as Omit<ToolOutcome, "media"> & { readonly media: readonly WireMedia[] };
-          answer = { ...outcome, media: outcome.media.map(testMedia) };
-        } else if (point === "prompt.build") {
-          const pairs = (result as { sections: readonly (readonly [string, string])[] }).sections;
-          answer = { sections: Object.fromEntries(pairs) };
-        } else if (point === "input.before" && typeof result === "object" && result !== null) {
-          const blocks = (result as { replace: { blocks: readonly (Block | WireMedia)[] } }).replace.blocks;
-          answer = { replace: { blocks: blocks.map((block) => ("base64" in block ? testMedia(block) : block)) } };
-        }
-        return answer as HookResults[K];
+        return (result ?? undefined) as HookResults[K];
       },
       async call(tool: string, args: unknown, operation?: OperationOptions): Promise<CallOutcome> {
         const result = await underSignal(operation?.signal, () => testHostCall([id, tool, args]));
         await settle();
         // The tool ends early after a cancel, so its result is no answer.
         operation?.signal?.throwIfAborted();
-        return { ...result, media: result.media.map(testMedia) };
+        return result;
       },
-      async setSettings(changed: Partial<SessionSettings>): Promise<void> {
-        const next = { ...current, ...changed };
-        await handle.setSettings(next);
-        current = next;
+      get settings(): SessionSettings {
+        return current;
+      },
+      async setSettings(settings: SessionSettings): Promise<void> {
+        await handle.setSettings(settings);
+        current = settings;
         await settle();
       },
       async close(): Promise<void> {
@@ -300,6 +227,9 @@ export async function createHost(options: HostOptions): Promise<Host> {
     },
     get events() {
       return testHostRecord().events;
+    },
+    get requests() {
+      return testHostRecord().requests;
     },
     questions,
     openSession,

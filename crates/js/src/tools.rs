@@ -2,6 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
+use std::convert::Infallible;
 use std::fmt;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -231,31 +232,36 @@ impl Tool for ScriptTool {
             context.cancellation_token().clone(),
             output,
         );
-        forward(answer, texts, |text| context.output(text)).await
+        let Ok(content) = forward(answer, texts, |text| {
+            context.output(text);
+            Ok::<_, Infallible>(())
+        })
+        .await;
+        content
     }
 }
 
-/// Await `answer`, and give each text of `texts` to `show` in order. A text that the tool sends after its answer has no
-/// reader.
-pub(crate) async fn forward<T>(
+/// Await `answer`, and give each text of `texts` to `show` in order. A text that the work sends after its answer has no
+/// reader. A failure of `show` ends the wait with that failure, and the drop of `answer` stops the work.
+pub(crate) async fn forward<T, E>(
     answer: impl Future<Output = T>,
     mut texts: mpsc::UnboundedReceiver<String>,
-    show: impl Fn(&str),
-) -> T {
+    mut show: impl FnMut(&str) -> Result<(), E>,
+) -> Result<T, E> {
     let mut answer = pin!(answer);
     let result = loop {
         tokio::select! {
             // A text before the answer shows before it.
             biased;
-            Some(text) = texts.recv() => show(&text),
+            Some(text) = texts.recv() => show(&text)?,
             result = &mut answer => break result,
         }
     };
     // The answer can overtake the last texts.
     while let Ok(text) = texts.try_recv() {
-        show(&text);
+        show(&text)?;
     }
-    result
+    Ok(result)
 }
 
 impl ScriptTool {
@@ -460,13 +466,13 @@ struct Answer {
 /// A media item of a result.
 #[derive(Debug)]
 pub(crate) struct MediaFile {
-    pub(crate) mime_type: String,
-    pub(crate) source: Source,
+    mime_type: String,
+    source: Source,
 }
 
 /// Where the bytes of a media file come from.
 #[derive(Debug)]
-pub(crate) enum Source {
+enum Source {
     /// A file. A relative path starts in the folder of the call.
     Path(String),
     /// The bytes that the tool gave.

@@ -1,7 +1,7 @@
 // The questions of the plugins in a session of the test host.
 
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, reply, test } from "yuke:test";
+import { createHost, equal, reply, test } from "yuke:test";
 import { waitFor } from "./wait.ts";
 
 /** A plugin whose tool `ask` asks the user to confirm, and answers with the answer. */
@@ -37,14 +37,14 @@ test("without an answer function, each question gets undefined as with no client
 });
 
 test("a question during a turn gets its answer before the turn goes on", async () => {
-  const model = createFakeModel([reply.toolCall("ask", {}), reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "asker", session: asker }], model, answer: () => false });
+  const replies = [reply.toolCall("ask", {}), reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "asker", session: asker }], replies, answer: () => false });
   const session = await host.openSession();
 
   await session.send("Ask me.");
 
   equal(
-    model.requests[1]?.messages.some((message) => message.text.includes("false")),
+    host.requests[1]?.messages.some((message) => message.text.includes("false")),
     true,
   );
 });
@@ -142,27 +142,33 @@ test("the close of a session ends its open question with undefined", async () =>
   );
 });
 
-test("an answer that settles after the close of its session reaches no question", async () => {
-  let release = (_value: boolean): void => {};
-  const early: PluginSession = async (s) => {
-    await s.confirm("Start?");
-  };
-  await using host = await createHost({
-    plugins: [{ name: "early", session: early }],
-    answer: () =>
-      new Promise<boolean>((resolve) => {
-        release = resolve;
-      }),
+// A late failure is no fault either: the runner fails a test on any fault.
+for (const [name, settle] of [
+  ["fulfills", (resolve: (value: boolean) => void) => resolve(true)],
+  ["rejects", (_resolve: unknown, reject: (error: Error) => void) => reject(new Error("late"))],
+] as const) {
+  test(`an answer that ${name} after the close of its session reaches no question`, async () => {
+    let release = (): void => {};
+    const early: PluginSession = async (s) => {
+      await s.confirm("Start?");
+    };
+    await using host = await createHost({
+      plugins: [{ name: "early", session: early }],
+      answer: () =>
+        new Promise<boolean>((resolve, reject) => {
+          release = () => settle(resolve, reject);
+        }),
+    });
+    const session = await host.openSession();
+    await waitFor(() => host.questions.length === 1);
+    await session.close();
+
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    equal(host.questions.length, 1);
   });
-  const session = await host.openSession();
-  await waitFor(() => host.questions.length === 1);
-  await session.close();
-
-  release(true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
-
-  equal(host.questions.length, 1);
-});
+}
 
 /** A plugin whose tool `ask` runs `body` with the session context and the signal of the call, and gives its JSON. */
 const asking =

@@ -1,7 +1,10 @@
 //! The runner of the test files of `yuke:test`: each test of a file in a fresh runtime, with a time limit.
 
-use std::fmt;
-use std::path::Path;
+use std::fmt::{self, Write as _};
+use std::io;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::task::Poll;
 use std::time::Duration;
 
 use rquickjs::{Ctx, Function, Module, Object, Promise};
@@ -9,9 +12,6 @@ use tokio::sync::mpsc;
 
 use crate::error::caught;
 use crate::{Error, Report, Runtime, ScriptError};
-
-/// The longest run of the import of a test file, and of one test. A longer run stops the runtime of the test.
-const TIME_LIMIT: Duration = Duration::from_secs(5);
 
 /// The internal module that holds the tests of the file.
 const REGISTRY: &str = "yuke:internal/test";
@@ -67,8 +67,8 @@ pub enum TestStatus {
 pub enum TestFileError {
     /// The runtime of a test failed: it did not start, the import threw, the thread ended, or the shutdown failed.
     Runtime(TestError),
-    /// The import ran longer than the time limit.
-    ImportTimedOut,
+    /// The import ran longer than this time limit.
+    ImportTimedOut(Duration),
     /// The runtime reported this fault during the import.
     Fault(ScriptError),
     /// The file registered no test.
@@ -79,7 +79,7 @@ impl fmt::Display for TestFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(error) => error.fmt(f),
-            Self::ImportTimedOut => write!(f, "the import ran longer than {} seconds", TIME_LIMIT.as_secs()),
+            Self::ImportTimedOut(limit) => write!(f, "the import ran longer than {limit:?}"),
             Self::Fault(error) => write!(f, "the import made a fault: {error}"),
             Self::NoTests => f.write_str("the file registers no test"),
         }
@@ -91,7 +91,7 @@ impl std::error::Error for TestFileError {
         match self {
             // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Runtime(error) => error.source(),
-            Self::ImportTimedOut | Self::Fault(_) | Self::NoTests => None,
+            Self::ImportTimedOut(_) | Self::Fault(_) | Self::NoTests => None,
         }
     }
 }
@@ -104,7 +104,8 @@ impl From<Error> for TestFileError {
 
 /// Run each test of the file `path`, an absolute path, in its own runtime from `start`. For each test, the runner makes
 /// a new folder below `folder`, gives it to `start`, and gives its `scratch` subfolder to the test as `folder()`. A
-/// folder of a test that exists already fails the run. The first import gives the names of the tests.
+/// folder of a test that exists already fails the run. The first import gives the names of the tests. The import, each
+/// test, and the end of each test have the time limit `limit`. A longer run stops the runtime of the test.
 ///
 /// # Errors
 ///
@@ -113,6 +114,7 @@ impl From<Error> for TestFileError {
 pub async fn run_test_file<T: TestRuntime>(
     path: &str,
     folder: &Path,
+    limit: Duration,
     mut start: impl AsyncFnMut(&Path) -> Result<(T, mpsc::UnboundedReceiver<Report>), TestError>,
 ) -> Result<Vec<TestOutcome>, TestFileError> {
     let mut names: Option<Vec<String>> = None;
@@ -130,16 +132,16 @@ pub async fn run_test_file<T: TestRuntime>(
             .map_err(|error| TestFileError::Runtime(Box::new(error)))?;
         let (owner, mut reports) = start(&place).await.map_err(TestFileError::Runtime)?;
         let expected = names.as_ref().and_then(|names| names.get(index)).map(String::as_str);
-        let ran = run_test(owner.runtime(), &mut reports, path, &scratch, index, expected).await;
+        let ran = run_test(owner.runtime(), &mut reports, path, &scratch, index, expected, limit).await;
         let timed_out = matches!(
             ran,
             Ok(Ran {
                 status: TestStatus::TimedOut,
                 ..
-            }) | Err(TestFileError::ImportTimedOut)
+            }) | Err(TestFileError::ImportTimedOut(_))
         );
         // A cleanup that never settles would hold the run, so the end of a test has the time limit too.
-        let stopped = tokio::time::timeout(TIME_LIMIT, owner.shutdown(timed_out)).await;
+        let stopped = tokio::time::timeout(limit, owner.shutdown(timed_out)).await;
         let mut ran = ran?;
         let ended = match stopped {
             Ok(stopped) => {
@@ -161,10 +163,7 @@ pub async fn run_test_file<T: TestRuntime>(
         if !ended && matches!(ran.status, TestStatus::Passed) {
             ran.status = TestStatus::Failed(ScriptError {
                 name: Some("Error".to_owned()),
-                message: format!(
-                    "the end of the test ran longer than {} seconds: a cleanup did not settle",
-                    TIME_LIMIT.as_secs()
-                ),
+                message: format!("the end of the test ran longer than {limit:?}: a cleanup did not settle"),
                 stack: None,
             });
         }
@@ -184,6 +183,133 @@ pub async fn run_test_file<T: TestRuntime>(
     Ok(outcomes)
 }
 
+/// The result of a run of test files.
+#[derive(Debug, Default)]
+pub struct TestSummary {
+    /// The count of the tests that passed.
+    pub passed: usize,
+    /// The count of the tests that failed, and of the files that failed outside of their tests.
+    pub failed: usize,
+    /// The text of each failure, for the user. A failed test gives its file, its name, its error, and its reports. A
+    /// failed file gives its file and its error.
+    pub failures: String,
+}
+
+/// Each `*.test.ts` file below `folder`, in name order.
+///
+/// # Errors
+///
+/// Returns the error of a folder that cannot be read.
+pub fn find_test_files(folder: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut folders = vec![folder.to_owned()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(folder)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if path.to_string_lossy().ends_with(".test.ts") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Run each test of `files` in its own runtime from `start`, with folders below the folder `work` and the time limit
+/// `limit`. The files run in parallel, at most as many as [`std::thread::available_parallelism`] gives. The summary
+/// keeps the order of `files`. See [`run_test_file`].
+pub async fn run_test_files<T: TestRuntime>(
+    files: &[PathBuf],
+    work: &Path,
+    limit: Duration,
+    start: impl AsyncFn(&Path) -> Result<(T, mpsc::UnboundedReceiver<Report>), TestError>,
+) -> TestSummary {
+    let parallel = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let run = async |index: usize, file: &PathBuf| match file.to_str() {
+        Some(path) => run_test_file(path, &work.join(index.to_string()), limit, &start)
+            .await
+            .map_err(|error| error.to_string()),
+        None => Err("the path is not UTF-8".to_owned()),
+    };
+    let mut waiting = files.iter().enumerate();
+    let mut running = Vec::new();
+    let mut ran: Vec<_> = files.iter().map(|_| None).collect();
+    // Each JavaScript runtime has its own thread, so one task can drive all runs.
+    std::future::poll_fn(|cx| {
+        loop {
+            while running.len() < parallel
+                && let Some((index, file)) = waiting.next()
+            {
+                running.push((index, Box::pin(run(index, file))));
+            }
+            if running.is_empty() {
+                return Poll::Ready(());
+            }
+            let before = running.len();
+            running.retain_mut(|(index, future)| match future.as_mut().poll(cx) {
+                Poll::Ready(result) => {
+                    ran[*index] = Some(result);
+                    false
+                }
+                Poll::Pending => true,
+            });
+            // A run that ended frees a place, so the loop starts the next file and polls it once.
+            if running.len() == before {
+                return Poll::Pending;
+            }
+        }
+    })
+    .await;
+
+    let mut passed = 0;
+    let (mut failed, mut failures) = (0, String::new());
+    let mut fail = |text: String| {
+        failed += 1;
+        // A write to a `String` cannot fail.
+        writeln!(failures, "{text}").unwrap_or_else(|_| unreachable!("a write to a String fails"));
+    };
+    for (file, ran) in files.iter().zip(ran) {
+        let name = file.display();
+        let outcomes = match ran.unwrap_or_else(|| unreachable!("the loop ends after the run of each file")) {
+            Ok(outcomes) => outcomes,
+            Err(error) => {
+                fail(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        for outcome in outcomes {
+            let failure = match outcome.status {
+                TestStatus::Passed => {
+                    passed += 1;
+                    continue;
+                }
+                TestStatus::Failed(error) => error.to_string(),
+                TestStatus::TimedOut => "timed out".to_owned(),
+            };
+            let mut text = format!("{name}: {}\n  {}", outcome.name, failure.replace('\n', "\n  "));
+            for report in outcome.reports {
+                let line = match report {
+                    Report::Console { text, .. } => text,
+                    Report::Notice(notice) => format!("{}: {}", notice.source, notice.message),
+                    Report::Fault(error) => error.to_string(),
+                    Report::Event(event) => format!("event {}", event.event),
+                    Report::Barrier(_) => continue,
+                };
+                text.push_str("\n  | ");
+                text.push_str(&line.replace('\n', "\n  | "));
+            }
+            fail(text);
+        }
+    }
+    TestSummary {
+        passed,
+        failed,
+        failures,
+    }
+}
+
 /// The run of one test: its status, its reports so far, and the names of the tests when the runner asked for them.
 struct Ran {
     status: TestStatus,
@@ -200,6 +326,7 @@ async fn run_test(
     scratch: &Path,
     index: usize,
     expected: Option<&str>,
+    limit: Duration,
 ) -> Result<Ran, TestFileError> {
     let scratch = scratch
         .to_str()
@@ -212,10 +339,12 @@ async fn run_test(
             caught(&ctx, set.call::<_, ()>((scratch,)))
         })
         .await?;
-    tokio::time::timeout(TIME_LIMIT, runtime.import(path))
+    tokio::time::timeout(limit, runtime.import(path))
         .await
-        .map_err(|_| TestFileError::ImportTimedOut)??;
-    fence(runtime).await.map_err(|_| TestFileError::ImportTimedOut)??;
+        .map_err(|_| TestFileError::ImportTimedOut(limit))??;
+    fence(runtime, limit)
+        .await
+        .map_err(|_| TestFileError::ImportTimedOut(limit))??;
     if let Some(fault) = drain(reports).into_iter().find_map(|report| match report {
         Report::Fault(error) => Some(error),
         _ => None,
@@ -252,14 +381,14 @@ async fn run_test(
             None => None,
         })
     });
-    let mut status = match tokio::time::timeout(TIME_LIMIT, call).await {
+    let mut status = match tokio::time::timeout(limit, call).await {
         Err(_) => TestStatus::TimedOut,
         Ok(Ok(None)) => TestStatus::Passed,
         Ok(Ok(Some(error))) => TestStatus::Failed(error),
         Ok(Err(error)) => return Err(error.into()),
     };
     // A timer of the test can still block the thread, so the fence has the time limit too.
-    if !matches!(status, TestStatus::TimedOut) && fence(runtime).await.is_err() {
+    if !matches!(status, TestStatus::TimedOut) && fence(runtime, limit).await.is_err() {
         status = TestStatus::TimedOut;
     }
     Ok(Ran {
@@ -275,10 +404,10 @@ async fn registry<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     caught(ctx, promise.into_future().await)
 }
 
-/// Wait for an empty call. The drive sends the faults of a call after the poll that answered it, so after this call
-/// the receiver holds them.
-async fn fence(runtime: &Runtime) -> Result<Result<(), Error>, tokio::time::error::Elapsed> {
-    tokio::time::timeout(TIME_LIMIT, runtime.caller.run(async |_ctx: Ctx<'_>, _registry| Ok(()))).await
+/// Wait up to `limit` for an empty call. The drive sends the faults of a call after the poll that answered it, so after
+/// this call the receiver holds them.
+async fn fence(runtime: &Runtime, limit: Duration) -> Result<Result<(), Error>, tokio::time::error::Elapsed> {
+    tokio::time::timeout(limit, runtime.caller.run(async |_ctx: Ctx<'_>, _registry| Ok(()))).await
 }
 
 /// The reports that wait in `reports`.

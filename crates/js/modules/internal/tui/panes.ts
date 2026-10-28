@@ -81,16 +81,9 @@ export class PaneTree {
   /** Split the active pane along `direction`. The new pane comes after it (right or below) and gets the focus. */
   split(owner: string, create: ViewFactory, direction: Direction): Pane {
     if (direction !== "row" && direction !== "column") throw new TypeError("a split direction is row or column");
-    let leaf: Leaf | undefined;
-    const mount = createMount(() => {
-      if (leaf !== undefined) this.#remove(leaf);
-    });
-    const view = startView(owner, create, mount, this.#host.report);
-    if (view === undefined) return paneOf(mount, this.#host.placeholder(), () => {});
-    const pane = paneOf(mount, view, () => {
-      if (leaf !== undefined && this.#leaves().includes(leaf)) this.#activate(leaf);
-    });
-    leaf = { kind: "leaf", view, pane, owner };
+    const started = this.#startLeaf(owner, create);
+    if ("mount" in started) return paneOf(started.mount, this.#host.placeholder(), () => {});
+    const { leaf, pane } = started;
     const old = this.#active;
     this.#replace(old, { kind: "split", direction, ratio: 0.5, first: old, second: leaf });
     this.#activate(leaf);
@@ -252,18 +245,25 @@ export class PaneTree {
   /** The leaf of a saved view, `undefined` without a factory, or a placeholder when the factory fails. */
   #restoreLeaf(state: unknown, entry: ViewType | undefined): Leaf | undefined {
     if (entry === undefined) return undefined;
+    const started = this.#startLeaf(entry.owner, (given) => entry.restore(state, given));
+    if ("mount" in started) return this.#placeholderLeaf();
+    entry.adopt(started.pane);
+    return started.leaf;
+  }
+
+  /** Start the view of `create` in a new leaf of `owner`. A view that does not start gives the mount of the attempt. */
+  #startLeaf(owner: string, create: ViewFactory): { leaf: Leaf; pane: Pane } | { mount: Mount } {
     let leaf: Leaf | undefined;
     const mount = createMount(() => {
       if (leaf !== undefined) this.#remove(leaf);
     });
-    const view = startView(entry.owner, (given) => entry.restore(state, given), mount, this.#host.report);
-    if (view === undefined) return this.#placeholderLeaf();
+    const view = startView(owner, create, mount, this.#host.report);
+    if (view === undefined) return { mount };
     const pane = paneOf(mount, view, () => {
       if (leaf !== undefined && this.#leaves().includes(leaf)) this.#activate(leaf);
     });
-    leaf = { kind: "leaf", view, pane, owner: entry.owner };
-    entry.adopt(pane);
-    return leaf;
+    leaf = { kind: "leaf", view, pane, owner };
+    return { leaf, pane };
   }
 
   #placeholderLeaf(): Leaf {

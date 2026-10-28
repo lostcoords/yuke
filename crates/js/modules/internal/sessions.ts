@@ -130,7 +130,7 @@ async function open(
       live();
       return sessionInput([id, content]);
     },
-    async notify(display, text) {
+    async sendNotification(display, text) {
       live();
       return sessionNotify([id, plugin, display, text]);
     },

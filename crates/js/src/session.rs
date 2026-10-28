@@ -24,7 +24,7 @@ use crate::error::{Error, caught};
 use crate::models::{Models, merge_settings};
 use crate::native::Operation;
 use crate::native::ai::{Round, context_tokens, side_request, tokens};
-use crate::plugins::loader;
+use crate::plugins::hooks;
 use crate::runtime::{Caller, Handle};
 use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
 
@@ -65,7 +65,7 @@ impl Handle {
         let open = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
-                let open_session: Function<'_> = caught(&ctx, loader(&ctx).await?.get("openSession"))?;
+                let open_session: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("openSession"))?;
                 let open = registry.open();
                 let request = OpenRequest {
                     open,
@@ -106,7 +106,7 @@ impl ScriptSession {
         let entries = self
             .caller
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
-                let ready: Function<'_> = caught(&ctx, loader(&ctx).await?.get("ready"))?;
+                let ready: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("ready"))?;
                 let promise: Promise<'_> = caught(&ctx, ready.call((open,)))?;
                 caught(&ctx, promise.into_future::<()>().await)?;
                 Ok(registry.entries(open))
@@ -244,12 +244,11 @@ impl Hooks for ScriptHooks {
             blocks: round.context.len(),
             round: self.natives(round),
         };
-        let answer: Option<Option<PlannedRound>> =
-            run_hook(&self.caller, "startRoundBefore", request, self.token.clone())
-                .await
-                .map_err(|error| failure_text("round.before", &error))?;
+        let answer: Option<PlannedRound> = run_hook(&self.caller, "startRoundBefore", request, self.token.clone())
+            .await
+            .map_err(|error| failure_text("round.before", &error))?;
         // A cancel ends the turn, so the driver does not read this plan.
-        let Some(Some(planned)) = answer else {
+        let Some(planned) = answer else {
             return Ok(RoundPlan::default());
         };
         Ok(planned.plan(round, &*self.host, "round.before")?)
@@ -277,12 +276,11 @@ impl Hooks for ScriptHooks {
             blocks: round.context.len(),
             round: self.natives(round),
         };
-        let answer: Option<Option<PlannedRound>> =
-            run_hook(&self.caller, "startRoundRetry", request, self.token.clone())
-                .await
-                .map_err(|error| failure_text("round.retry", &error))?;
+        let answer: Option<PlannedRound> = run_hook(&self.caller, "startRoundRetry", request, self.token.clone())
+            .await
+            .map_err(|error| failure_text("round.retry", &error))?;
         // No answer ends the turn with the failure. A cancel ends the turn, so the driver does not read the plan.
-        let Some(Some(planned)) = answer else {
+        let Some(planned) = answer else {
             return Ok(None);
         };
         let plan = planned.plan(round, &*self.host, "round.retry")?;
@@ -301,13 +299,12 @@ impl Hooks for ScriptHooks {
             finish_reason: finish_reason.map(FinishReason::as_str),
             continues: self.continues.load(Ordering::Relaxed),
         };
-        let answer: Option<Option<RoundAnswer>> =
-            run_hook(&self.caller, "startRoundAfter", request, self.token.clone())
-                .await
-                .map_err(|error| failure_text("round.after", &error))?;
+        let answer: Option<RoundAnswer> = run_hook(&self.caller, "startRoundAfter", request, self.token.clone())
+            .await
+            .map_err(|error| failure_text("round.after", &error))?;
         Ok(match answer {
-            Some(Some(RoundAnswer::Stop)) => RoundDecision::Stop,
-            Some(Some(RoundAnswer::Continue { plugin, text })) => {
+            Some(RoundAnswer::Stop) => RoundDecision::Stop,
+            Some(RoundAnswer::Continue { plugin, text }) => {
                 self.continues.fetch_add(1, Ordering::Relaxed);
                 // The request is a notification of the plugin, so the user sees who sent it. The turn takes the
                 // input of the session after this round, together with an input of the user.
@@ -315,7 +312,7 @@ impl Hooks for ScriptHooks {
                 RoundDecision::Proceed
             }
             // A cancel ends the turn, so the driver does not read this answer.
-            Some(None) | None => RoundDecision::Proceed,
+            None => RoundDecision::Proceed,
         })
     }
 
@@ -324,12 +321,12 @@ impl Hooks for ScriptHooks {
             open: self.open,
             call: HookCall::of(call),
         };
-        let answer: Result<Option<Option<String>>, Error> =
+        let answer: Result<Option<String>, Error> =
             run_hook(&self.caller, "startToolBefore", request, self.token.clone()).await;
         match answer {
-            Ok(Some(Some(reason))) => ToolDecision::Block(reason),
+            Ok(Some(reason)) => ToolDecision::Block(reason),
             // A cancel stops the turn, so the driver does not start the call.
-            Ok(Some(None) | None) => ToolDecision::Run,
+            Ok(None) => ToolDecision::Run,
             // A failed check never lets a call run.
             Err(error) => ToolDecision::Block(failure_text("tool.before", &error)),
         }
@@ -352,11 +349,11 @@ impl Hooks for ScriptHooks {
                     .collect(),
             },
         };
-        let answer: Result<Option<Option<ChangedResult>>, Error> =
+        let answer: Result<Option<ChangedResult>, Error> =
             run_hook(&self.caller, "startToolAfter", request, self.token.clone()).await;
         let changed = match answer {
-            Ok(Some(Some(changed))) => self.changed(result, changed).await,
-            Ok(Some(None) | None) => return None,
+            Ok(Some(changed)) => self.changed(result, changed).await,
+            Ok(None) => return None,
             Err(error) => Err(failure_text("tool.after", &error)),
         };
         // A failed hook never shows the original result.
@@ -439,12 +436,11 @@ impl InputHook for ScriptHooks {
             kind: Json(input.input.kind()),
             blocks: Json(input.input.model_content().to_vec()),
         };
-        let answer: Option<Option<PlannedInput>> =
-            run_hook(&self.caller, "startInputBefore", request, self.token.clone())
-                .await
-                .map_err(|error| failure_text("input.before", &error))?;
+        let answer: Option<PlannedInput> = run_hook(&self.caller, "startInputBefore", request, self.token.clone())
+            .await
+            .map_err(|error| failure_text("input.before", &error))?;
         // A cancel ends the turn, so the input stays pending as it is.
-        let Some(Some(planned)) = answer else {
+        let Some(planned) = answer else {
             return Ok(InputDecision::Keep);
         };
         let Some(items) = planned.blocks else {
@@ -522,8 +518,9 @@ struct ToolAfterRequest {
 
 /// One tool call of the model. The arguments cross as their parsed JSON.
 #[derive(IntoJs)]
+#[qjs(rename_all = "camelCase")]
 struct HookCall {
-    id: String,
+    call_id: String,
     name: String,
     arguments: JsonText,
 }
@@ -531,7 +528,7 @@ struct HookCall {
 impl HookCall {
     fn of(call: &ToolCall) -> Self {
         Self {
-            id: call.call_id.clone(),
+            call_id: call.call_id.clone(),
             name: call.name.clone(),
             arguments: JsonText(call.arguments.clone()),
         }
@@ -822,7 +819,8 @@ fn failure_text(point: &str, error: &Error) -> String {
 }
 
 /// Call the loader function `start` with `request` on the JavaScript thread, and return the answer of the run that it
-/// starts. When `token` is cancelled, the run aborts its signal, and the call returns `None`.
+/// starts. A run without an answer gives `None`. When the caller cancels `token`, the run aborts its signal, and the call
+/// returns `None` too, because a cancelled turn reads no answer.
 async fn run_hook<R, T>(
     caller: &Caller,
     start: &'static str,
@@ -837,10 +835,10 @@ where
     let (reply, answer) = oneshot::channel();
     caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
         let answer = async {
-            let function: Function<'_> = caught(&ctx, loader(&ctx).await?.get(start))?;
+            let function: Function<'_> = caught(&ctx, hooks(&ctx).await?.get(start))?;
             let Operation { promise, cancel } = caught(&ctx, function.call((request,)))?;
             tokio::select! {
-                answer = promise.into_future::<T>() => caught(&ctx, answer).map(Some),
+                answer = promise.into_future::<Option<T>>() => caught(&ctx, answer),
                 () = token.cancelled() => {
                     caught(&ctx, cancel.call::<_, ()>(()))?;
                     Ok(None)
@@ -856,7 +854,7 @@ where
 
 /// Close the open session `open` on the JavaScript thread: remove its tools, then await `closeSession`.
 async fn close(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
-    let close_session: Function<'_> = caught(ctx, loader(ctx).await?.get("closeSession"))?;
+    let close_session: Function<'_> = caught(ctx, hooks(ctx).await?.get("closeSession"))?;
     // No await comes between the two steps, so a dropped close cannot remove the tools without the close of the plugins.
     registry.close(open);
     let promise: Promise<'_> = caught(ctx, close_session.call((open,)))?;

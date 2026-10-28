@@ -58,12 +58,11 @@ impl LiveSession {
     ) -> Result<LiveSession, AppError> {
         let host = Arc::new(Host {
             settings: Mutex::new(session.settings().clone()),
-            output: Arc::new(Output {
-                session: session.id(),
-                observer: Arc::clone(&shared.observer),
-                sent: Mutex::default(),
-                last_question: Arc::clone(&shared.last_question),
-            }),
+            output: Arc::new(Output::new(
+                session.id(),
+                Arc::clone(&shared.observer),
+                Arc::clone(&shared.last_question),
+            )),
             shared,
             service,
             wake: Notify::new(),
@@ -182,12 +181,13 @@ impl LiveSession {
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
         let host = &self.parts.host;
         let hold = Hold::start(&host.output);
+        let settings = lock(&host.settings).clone();
         let loaded = host
             .shared
             .store
             .load(host.output.session, EventPage::After(after))
             .await?;
-        hold.release(loaded, || (self.state(), self.jobs(), self.mcp_servers()));
+        hold.release(settings, loaded, || (self.state(), self.jobs(), self.mcp_servers()));
         Ok(())
     }
 
@@ -204,7 +204,7 @@ impl LiveSession {
             limit: tail,
         };
         let loaded = host.shared.store.load(host.output.session, page).await?;
-        host.output.show(&view, settings, loaded, || {
+        host.output.show(view.id, settings, loaded, || {
             (self.state(), self.jobs(), self.mcp_servers())
         });
         Ok(view)
@@ -311,18 +311,19 @@ struct Output {
 /// What the output keeps under its lock.
 #[derive(Default)]
 struct Sent {
-    /// The updates that wait for the end of a load, or `None` while no load runs.
-    held: Option<Vec<SessionUpdate>>,
     /// The inputs that a published commit consumed or a published removal named. An `input_accepted` can come after
     /// them, because the store saves an input before the server publishes it, so the output drops it.
     gone: HashSet<InputId>,
     /// The open questions. A snapshot shows them, so they live under the same lock as the updates.
     questions: BTreeMap<InteractionId, Question>,
-    /// The private listeners of the session.
-    views: Vec<Listener>,
+    /// The listeners of the session: the observer of the app first, then the private views.
+    listeners: Vec<Listener>,
     /// The id of the last view.
     last_view: u64,
 }
+
+/// The id of the listener that gives the updates to the observer of the app. It lives as long as the output.
+const OBSERVER: u64 = 0;
 
 impl Sent {
     /// Whether `update` goes out. A late `input_accepted` of an input that left does not.
@@ -339,6 +340,24 @@ impl Sent {
             _ => {}
         }
         true
+    }
+
+    /// Give `update` to each listener, when [`Sent::admit`] lets it out.
+    fn publish(&mut self, update: SessionUpdate) {
+        if !self.admit(&update) {
+            return;
+        }
+        if let Some((last, others)) = self.listeners.split_last_mut() {
+            for listener in others {
+                listener.deliver(update.clone());
+            }
+            last.deliver(update);
+        }
+    }
+
+    /// The listener of the observer of the app.
+    fn observer(&mut self) -> &mut Listener {
+        &mut self.listeners[0]
     }
 
     /// The updates that show the session: the events and pending inputs of `loaded`, the live state of `now`, and the
@@ -370,12 +389,22 @@ impl Sent {
     }
 }
 
-/// A private listener of a session.
+/// A listener of a session: the observer of the app, or a private view.
 struct Listener {
     id: u64,
     sink: ViewSink,
-    /// The updates that wait for the snapshot of the view, or `None` after the snapshot.
+    /// The updates that wait for the snapshot of a read, or `None` while no read runs.
     waiting: Option<Vec<SessionUpdate>>,
+}
+
+impl Listener {
+    /// Give `update` to the sink, or keep it while a read runs.
+    fn deliver(&mut self, update: SessionUpdate) {
+        match self.waiting.as_mut() {
+            Some(waiting) => waiting.push(update),
+            None => (self.sink)(ViewEvent::Update(update)),
+        }
+    }
 }
 
 /// A private listener of an open session. Its drop ends it.
@@ -387,7 +416,7 @@ pub(crate) struct View {
 impl Drop for View {
     fn drop(&mut self) {
         if let Some(output) = self.output.upgrade() {
-            lock(&output.sent).views.retain(|listener| listener.id != self.id);
+            lock(&output.sent).listeners.retain(|listener| listener.id != self.id);
         }
     }
 }
@@ -419,26 +448,41 @@ struct Question {
 }
 
 impl Output {
-    /// Send `update` to the views and to the observer. The observer gets it after a load that runs.
-    fn publish(&self, update: SessionUpdate) {
-        let mut sent = lock(&self.sent);
-        self.publish_in(&mut sent, update);
+    /// The output of the session `session`. The observer gets each update as its first listener.
+    fn new(session: SessionId, observer: Arc<dyn Observer>, last_question: Arc<AtomicU64>) -> Self {
+        let notified = Arc::clone(&observer);
+        let send = move |update: SessionUpdate| {
+            notified.notify(ServerNotification::SessionUpdate(SessionUpdateParams {
+                session_id: session,
+                update,
+            }));
+        };
+        // The observer reads a snapshot as its updates.
+        let sink: ViewSink = Arc::new(move |event| match event {
+            ViewEvent::Snapshot(snapshot) => snapshot.updates.into_iter().for_each(&send),
+            ViewEvent::Update(update) => send(update),
+            ViewEvent::Closed => {}
+        });
+        let observer_listener = Listener {
+            id: OBSERVER,
+            sink,
+            waiting: None,
+        };
+        Output {
+            session,
+            observer,
+            sent: Mutex::new(Sent {
+                listeners: vec![observer_listener],
+                ..Sent::default()
+            }),
+            last_question,
+        }
     }
 
-    fn publish_in(&self, sent: &mut Sent, update: SessionUpdate) {
-        if !sent.admit(&update) {
-            return;
-        }
-        for view in &mut sent.views {
-            match view.waiting.as_mut() {
-                Some(waiting) => waiting.push(update.clone()),
-                None => (view.sink)(ViewEvent::Update(update.clone())),
-            }
-        }
-        match sent.held.as_mut() {
-            Some(held) => held.push(update),
-            None => self.send(update),
-        }
+    /// Send `update` to each listener. A listener gets it after a read that runs for it.
+    fn publish(&self, update: SessionUpdate) {
+        let mut sent = lock(&self.sent);
+        sent.publish(update);
     }
 
     /// Add a listener with `sink`. It keeps the updates until [`Output::show`] sends its snapshot.
@@ -446,7 +490,7 @@ impl Output {
         let mut sent = lock(&self.sent);
         sent.last_view += 1;
         let id = sent.last_view;
-        sent.views.push(Listener {
+        sent.listeners.push(Listener {
             id,
             sink,
             waiting: Some(Vec::new()),
@@ -457,17 +501,17 @@ impl Output {
         }
     }
 
-    /// Send `view` its snapshot of `settings`, `loaded` and `now`, then the kept updates that add to it. `now` runs
-    /// under the lock, so no update comes between it and the snapshot.
+    /// Send the listener `id` its snapshot of `settings`, `loaded` and `now`, then the kept updates that add to it.
+    /// `now` runs under the lock, so no update comes between it and the snapshot.
     fn show(
         &self,
-        view: &View,
+        id: u64,
         settings: SessionSettings,
         loaded: Loaded,
         now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>),
     ) {
         let mut sent = lock(&self.sent);
-        let Some(listener) = sent.views.iter_mut().find(|listener| listener.id == view.id) else {
+        let Some(listener) = sent.listeners.iter_mut().find(|listener| listener.id == id) else {
             return;
         };
         let (sink, waiting) = (Arc::clone(&listener.sink), listener.waiting.take().unwrap_or_default());
@@ -479,9 +523,12 @@ impl Output {
         }
     }
 
-    /// Send each view its end, and remove it. A later open of the session starts new views.
+    /// Send each view its end, and remove it. A later open of the session starts new views. The observer stays.
     fn end_views(&self) {
-        for view in lock(&self.sent).views.drain(..) {
+        for view in lock(&self.sent)
+            .listeners
+            .extract_if(.., |listener| listener.id != OBSERVER)
+        {
             (view.sink)(ViewEvent::Closed);
         }
     }
@@ -508,7 +555,7 @@ impl Output {
                 answer,
             },
         );
-        self.publish_in(&mut sent, SessionUpdate::Live(update));
+        sent.publish(SessionUpdate::Live(update));
         (id, answered)
     }
 
@@ -517,7 +564,7 @@ impl Output {
         let mut sent = lock(&self.sent);
         if sent.questions.remove(&id).is_some() {
             let update = LiveUpdate::InteractionClosed { interaction_id: id };
-            self.publish_in(&mut sent, SessionUpdate::Live(update));
+            sent.publish(SessionUpdate::Live(update));
         }
     }
 
@@ -530,17 +577,9 @@ impl Output {
         check_answer(&open.get().request, &response)?;
         let question = open.remove();
         let update = LiveUpdate::InteractionClosed { interaction_id: id };
-        self.publish_in(&mut sent, SessionUpdate::Live(update));
+        sent.publish(SessionUpdate::Live(update));
         // The asker closes the question before it stops waiting, so an open question has a receiver.
         question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
-    }
-
-    fn send(&self, update: SessionUpdate) {
-        self.observer
-            .notify(ServerNotification::SessionUpdate(SessionUpdateParams {
-                session_id: self.session,
-                update,
-            }));
     }
 
     /// Tell the observer about the session.
@@ -569,27 +608,27 @@ struct Hold<'a> {
 
 impl<'a> Hold<'a> {
     fn start(output: &'a Output) -> Self {
-        lock(&output.sent).held.get_or_insert_with(Vec::new);
+        lock(&output.sent).observer().waiting.get_or_insert_with(Vec::new);
         Hold { output }
     }
 
-    /// Send the snapshot of `loaded` and `now`, then the kept updates that add to it. `now` runs under the lock, so no
-    /// update comes between it and its send.
-    fn release(self, loaded: Loaded, now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>)) {
-        let mut sent = lock(&self.output.sent);
-        let held = sent.held.take().unwrap_or_default();
-        let kept = after(&loaded, held);
-        for update in sent.snapshot(loaded, now()).into_iter().chain(kept) {
-            self.output.send(update);
-        }
+    /// Send the snapshot of `settings`, `loaded` and `now`, then the kept updates that add to it.
+    fn release(
+        self,
+        settings: SessionSettings,
+        loaded: Loaded,
+        now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>),
+    ) {
+        self.output.show(OBSERVER, settings, loaded, now);
     }
 }
 
 impl Drop for Hold<'_> {
     fn drop(&mut self) {
         let mut sent = lock(&self.output.sent);
-        for update in sent.held.take().unwrap_or_default() {
-            self.output.send(update);
+        let observer = sent.observer();
+        for update in observer.waiting.take().unwrap_or_default() {
+            (observer.sink)(ViewEvent::Update(update));
         }
     }
 }
@@ -991,25 +1030,28 @@ mod tests {
     }
 
     fn output(recorder: &Arc<Recorder>) -> Output {
-        Output {
-            session: SessionId::generate(),
-            observer: Arc::clone(recorder) as Arc<dyn Observer>,
-            sent: Mutex::default(),
-            last_question: Arc::default(),
+        Output::new(
+            SessionId::generate(),
+            Arc::clone(recorder) as Arc<dyn Observer>,
+            Arc::default(),
+        )
+    }
+
+    fn settings() -> SessionSettings {
+        SessionSettings {
+            model: ModelReference {
+                provider: "minimax".to_owned(),
+                model: "MiniMax-M3".to_owned(),
+            },
+            settings: yuke_ai::Settings::new(),
+            cwd: PathBuf::from("/"),
         }
     }
 
     fn stored(number: u64) -> StoredEvent {
         StoredEvent {
             event_number: EventNumber(number),
-            event: SessionEvent::Settings(SessionSettings {
-                model: ModelReference {
-                    provider: "minimax".to_owned(),
-                    model: "MiniMax-M3".to_owned(),
-                },
-                settings: yuke_ai::Settings::new(),
-                cwd: PathBuf::from("/"),
-            }),
+            event: SessionEvent::Settings(settings()),
         }
     }
 
@@ -1079,10 +1121,6 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         let output = Arc::new(output(&recorder));
         let (sink, events) = collector();
-        let settings = match stored(1).event {
-            SessionEvent::Settings(settings) => settings,
-            SessionEvent::Commit { .. } => unreachable!("stored gives a settings event"),
-        };
 
         let view = output.watch(sink);
         // The read holds the event 5 and the pending input 7.
@@ -1096,7 +1134,7 @@ mod tests {
                 input: input(),
             }],
         };
-        output.show(&view, settings.clone(), loaded, || {
+        output.show(view.id, settings(), loaded, || {
             (SessionState::Idle, Vec::new(), Vec::new())
         });
         output.publish(saved(6));
@@ -1107,7 +1145,7 @@ mod tests {
             *lock(&events),
             [
                 ViewEvent::Snapshot(SessionSnapshot {
-                    settings,
+                    settings: settings(),
                     updates: vec![
                         saved(4),
                         saved(5),
@@ -1149,7 +1187,9 @@ mod tests {
                 input: input(),
             }],
         };
-        hold.release(loaded, || (SessionState::Running, vec![running_job()], Vec::new()));
+        hold.release(settings(), loaded, || {
+            (SessionState::Running, vec![running_job()], Vec::new())
+        });
         output.publish(removed(3));
 
         assert_eq!(
@@ -1304,7 +1344,7 @@ mod tests {
             events: Vec::new(),
             pending: Vec::new(),
         };
-        hold.release(loaded, || (SessionState::Idle, Vec::new(), Vec::new()));
+        hold.release(settings(), loaded, || (SessionState::Idle, Vec::new(), Vec::new()));
         output.close_question(first);
 
         assert_eq!(

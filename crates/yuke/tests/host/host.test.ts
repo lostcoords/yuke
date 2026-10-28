@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { assert, createFakeModel, createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, reply, test } from "yuke:test";
 
 const echo: PluginSession = (s) => {
   s.tools.define({
@@ -38,7 +38,7 @@ test("the notices and the events of a plugin are in the records after the operat
   await using host = await createHost({ plugins: [{ name: "loud", session: loud }] });
   const session = await host.openSession();
 
-  await session.run("tool.before", { call: { id: "c", name: "x", arguments: {} } });
+  await session.run("tool.before", { call: { callId: "c", name: "x", arguments: {} } });
 
   equal(
     host.notices.map((notice) => [notice.source, notice.level, notice.message]),
@@ -84,14 +84,14 @@ test("the close runs the cleanups once, and a second close gives the same promis
 });
 
 test("a reply that the model used passes the close", async () => {
-  const model = createFakeModel([reply.text("Hello.")]);
-  const host = await createHost({ plugins: [], model });
+  const replies = [reply.text("Hello.")];
+  const host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   await session.send("Hi.");
 
   await host.close();
 
-  equal(model.requests.length, 1);
+  equal(host.requests.length, 1);
 });
 
 test("a plugin folder must be absolute", async () => {
@@ -166,7 +166,7 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
 
   const called = await rejects(session.call("wait", {}, { signal: abortSoon() }));
   const ran = await rejects(
-    session.run("tool.before", { call: { id: "c", name: "wait", arguments: {} } }, { signal: abortSoon() }),
+    session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: abortSoon() }),
   );
 
   equal(
@@ -186,17 +186,21 @@ test("setSettings changes the folder and the model of an open session", async ()
       execute: (_args, context) => context.folder,
     });
   };
-  const model = createFakeModel([reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "where", session: where }], model });
+  const replies = [reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "where", session: where }], replies });
   const session = await host.openSession();
   await mkdir(`${folder()}/other`);
 
-  await session.setSettings({ cwd: `${folder()}/other`, model: { provider: "openai", model: "gpt-4.1" } });
+  await session.setSettings({
+    ...session.settings,
+    cwd: `${folder()}/other`,
+    model: { provider: "openai", model: "gpt-4.1" },
+  });
   await session.send("Hi.");
 
   equal((await session.call("where", {})).text, `${folder()}/other`);
   equal(
-    model.requests.map((request) => (request.body as { model: string }).model),
+    host.requests.map((request) => (request.body as { model: string }).model),
     ["gpt-4.1"],
   );
 });
@@ -213,21 +217,21 @@ test("close stops the background jobs of the session", async () => {
 });
 
 test("a setSettings that fails during a turn changes nothing", async () => {
-  const model = createFakeModel([reply.stall(), reply.text("Done.")]);
-  await using host = await createHost({ plugins: [], model });
+  const replies = [reply.stall(), reply.text("Done.")];
+  await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
   const sending = rejects(session.send("Wait.", { signal: stop.signal }));
-  while (model.requests.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+  while (host.requests.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
 
-  await rejects(session.setSettings({ model: { provider: "openai", model: "gpt-4.1" } }));
+  await rejects(session.setSettings({ ...session.settings, model: { provider: "openai", model: "gpt-4.1" } }));
   stop.abort(new Error("stop"));
   await sending;
-  await session.setSettings({ cwd: folder() });
+  await session.setSettings({ ...session.settings, cwd: folder() });
   await session.send("Hi.");
 
   equal(
-    model.requests.map((request) => (request.body as { model: string }).model),
+    host.requests.map((request) => (request.body as { model: string }).model),
     ["MiniMax-M3", "MiniMax-M3"],
   );
 });

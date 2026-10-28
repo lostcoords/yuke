@@ -17,9 +17,19 @@ function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
-/** Wait until the process that `file` in `cwd` names is gone, as `kill -0` tells it, for at most three seconds. */
+/** The process id in `file` in `cwd`, after the program writes its line. */
+async function pidOf(cwd: string, file: string): Promise<string> {
+  for (;;) {
+    const line = await fs.readTextFile(file, { baseDir: cwd }).catch(() => "");
+    if (line.endsWith("\n")) return line.trim();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+/** Wait until the process that `file` in `cwd` names is gone, as `kill -0` tells it. After the file holds the id, the wait
+ * stops after four seconds. */
 async function gone(cwd: string, file: string): Promise<boolean> {
-  const pid = (await fs.readTextFile(file, { baseDir: cwd })).trim();
+  const pid = await pidOf(cwd, file);
   // The test has 5 seconds in all, so the wait stops before that limit.
   const deadline = Date.now() + 4000;
   while (Date.now() < deadline) {
@@ -102,7 +112,8 @@ test("an abort before the start rejects and an abort during the run stops the gr
     cwd: base,
     signal: late.signal,
   }).output();
-  setTimeout(() => late.abort(), 300);
+  await pidOf(base, "child");
+  late.abort();
   const out = await running;
   equal([out.success, out.code, out.signal], [false, 143, "SIGTERM"]);
   assert(await gone(base, "child"), "the child of the program still runs");
@@ -113,11 +124,12 @@ test("an abort after the exit stops a left process that holds the output", async
   const controller = new AbortController();
   // The shell exits at once, and its background child keeps stdout open.
   const running = new Command("sh", {
-    args: ["-c", "sleep 30 & echo $! > child; echo done"],
+    args: ["-c", "echo $$ > shell; sleep 30 & echo $! > child; echo done"],
     cwd: base,
     signal: controller.signal,
   }).output();
-  setTimeout(() => controller.abort(), 300);
+  assert(await gone(base, "shell"), "the shell still runs");
+  controller.abort();
   const out = await running;
   equal([text(out.stdout), out.code, out.signal], ["done\n", 0, null]);
   assert(await gone(base, "child"), "the left process still runs");

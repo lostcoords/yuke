@@ -1,6 +1,6 @@
 //! The built-in modules, the tool bridge, and the tools `read`, `write`, `edit`.
 
-use std::cell::RefCell;
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -175,11 +175,14 @@ pub(super) async fn call_with(
     token: CancellationToken,
 ) -> (Result<ToolContent, String>, Vec<String>) {
     let (output, texts) = mpsc::unbounded_channel();
-    let shown = RefCell::new(Vec::new());
+    let mut shown = Vec::new();
     let answer = tool.answer(arguments, "call-1", token, output);
-    let forwarded = forward(answer, texts, |text| shown.borrow_mut().push(text.to_owned()));
-    let answer = tokio::time::timeout(Duration::from_secs(5), forwarded).await.unwrap();
-    (answer, shown.into_inner())
+    let forwarded = forward(answer, texts, |text| {
+        shown.push(text.to_owned());
+        Ok::<_, Infallible>(())
+    });
+    let Ok(answer) = tokio::time::timeout(Duration::from_secs(5), forwarded).await.unwrap();
+    (answer, shown)
 }
 
 /// The text of a call that succeeds.

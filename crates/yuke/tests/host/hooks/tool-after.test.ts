@@ -1,10 +1,10 @@
 // The `tool.after` hook: its chain, its answers, its media, and its failures.
 
-import { writeTextFile } from "yuke:fs";
+import { writeFile, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createFakeModel, createHost, equal, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
+import { createHost, equal, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
 
-const call = { id: "c1", name: "read", arguments: { path: "notes.md" } };
+const call = { callId: "c1", name: "read", arguments: { path: "notes.md" } };
 const png = new Uint8Array([1, 2, 3]);
 const jpeg = new Uint8Array([1, 2, 3, 4, 5]);
 
@@ -60,7 +60,9 @@ test("each handler gets the call and the result after the answers before it", as
   const redact: PluginSession = (s) => {
     s.hook("tool.after", (event) => {
       const path = (event.call.arguments as { path: string }).path;
-      return { text: `${event.call.id} ${event.call.name} ${path}: ${event.result.text.replace("hunter2", "***")}` };
+      return {
+        text: `${event.call.callId} ${event.call.name} ${path}: ${event.result.text.replace("hunter2", "***")}`,
+      };
     });
   };
   const flag: PluginSession = (s) => {
@@ -143,6 +145,39 @@ test("an answer keeps the second of two items with the same bytes", async () => 
   equal(plain(result.media), [["image/webp", [...png]]]);
 });
 
+test("a media item of the event can name a file, and the handler sees the size of each item", async () => {
+  const sizes: unknown[] = [];
+  const measure: PluginSession = (s) => {
+    s.hook("tool.after", (event) => {
+      sizes.push(...event.result.media.map((item) => ("id" in item ? [item.mimeType, item.size] : item)));
+      return undefined;
+    });
+  };
+  await using host = await createHost({ plugins: [{ name: "measure", session: measure }] });
+  const session = await host.openSession();
+  await writeFile(`${folder()}/b.png`, new Uint8Array([4, 5]));
+
+  const result = await session.run("tool.after", {
+    call,
+    result: {
+      ...original,
+      media: [
+        { mimeType: "image/png", bytes: png },
+        { mimeType: "image/png", path: "b.png" },
+      ],
+    },
+  });
+
+  equal(sizes, [
+    ["image/png", 3],
+    ["image/png", 2],
+  ]);
+  equal(plain(result.media), [
+    ["image/png", [...png]],
+    ["image/png", [4, 5]],
+  ]);
+});
+
 // The handlers of a run are fixed at its start, also for the plugins after the one that changes them.
 test("a change of the handlers during a run changes only the next run", async () => {
   let swap = (): void => {};
@@ -190,12 +225,12 @@ test("each of two overlapping calls gets its own answer", async () => {
     });
     s.hook("tool.after", async (event) => {
       await new Promise((resolve) => setTimeout(resolve, event.result.text === "first" ? 30 : 0));
-      return { text: `${event.call.id}: ${event.result.text}` };
+      return { text: `${event.call.callId}: ${event.result.text}` };
     });
   };
   const calls = ["first", "second"].map((text) => ({ name: "echo", args: { text } }));
-  const model = createFakeModel([reply.toolCalls(calls), reply.text("Done.")]);
-  await using host = await createHost({ plugins: [{ name: "slow", session: slow }], model });
+  const replies = [reply.toolCalls(calls), reply.text("Done.")];
+  await using host = await createHost({ plugins: [{ name: "slow", session: slow }], replies });
   const session = await host.openSession();
 
   await session.send("Echo.");

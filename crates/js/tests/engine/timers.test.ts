@@ -22,7 +22,8 @@ test("a deep recursion throws a catchable range error", () => {
 test("timers with one delay fire in the order of their set", async () => {
   const order: number[] = [];
   for (let index = 0; index < 20; index += 1) setTimeout(() => order.push(index), 5);
-  await sleep(50);
+  // A timer set later with the same delay fires after them.
+  await sleep(5);
   equal(
     order,
     Array.from({ length: 20 }, (_item, index) => index),
@@ -36,7 +37,7 @@ test("a promise reaction of a timer callback runs before the next callback", asy
     void Promise.resolve().then(() => order.push("job"));
   }, 5);
   setTimeout(() => order.push("second"), 5);
-  await sleep(50);
+  await sleep(5);
   equal(order, ["first", "job", "second"]);
 });
 
@@ -51,17 +52,23 @@ test("a cleared timer does not fire", async () => {
   later = setTimeout(() => fired.push("later"), 5);
   const never = setTimeout(() => fired.push("never"), 10);
   clearTimeout(never);
-  await sleep(50);
+  await sleep(10);
   equal(fired, ["first"]);
 });
 
 test("an interval repeats until its own callback clears it", async () => {
   let count = 0;
-  const interval = setInterval(() => {
-    count += 1;
-    if (count === 3) clearInterval(interval);
-  }, 2);
-  await sleep(100);
+  await new Promise<void>((resolve) => {
+    const interval = setInterval(() => {
+      count += 1;
+      if (count === 3) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 2);
+  });
+  // A call after the clear would come within the next delays.
+  await sleep(10);
   equal(count, 3);
 });
 
