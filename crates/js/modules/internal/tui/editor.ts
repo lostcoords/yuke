@@ -151,8 +151,8 @@ export class TextEditor {
     if (typeof text !== "string") throw new TypeError("a replacement is a string");
     const inserted = this.#line(text);
     const insertedSpans = checkSpans(inserted, spans);
-    const [effectiveFrom, effectiveTo] =
-      start === end ? [this.#snap(start), this.#snap(start)] : this.#expand(start, end);
+    const snapped = start === end ? this.#snap(start) : undefined;
+    const [effectiveFrom, effectiveTo] = snapped === undefined ? this.#expand(start, end) : [snapped, snapped];
     const old = this.#state;
     const delta = inserted.length - (effectiveTo - effectiveFrom);
     const kept = old.spans.flatMap((span) => {
@@ -186,7 +186,7 @@ export class TextEditor {
   heightFor(width: number): number {
     if (!Number.isInteger(width) || width < 0) throw new RangeError("a width is a whole number of cells");
     if (width === 0) return 0;
-    return this.#rowCount(this.#layoutAt(this.#state, this.#textWidth(width)));
+    return this.#rowCount(this.#layoutAt(this.#textWidth(width)));
   }
 
   submit(): void {
@@ -424,21 +424,16 @@ export class TextEditor {
   /** The range of `from` to `to` grown to whole graphemes and whole spans. */
   #expand(from: number, to: number): [number, number] {
     const { text, spans } = this.#state;
-    let start = from;
-    let end = to;
-    for (;;) {
-      let nextStart = previousBoundary(text, start, true);
-      let nextEnd = nextBoundaryOf(text, end);
-      for (const span of spans) {
-        if (span.from < nextEnd && span.to > nextStart) {
-          nextStart = Math.min(nextStart, span.from);
-          nextEnd = Math.max(nextEnd, span.to);
-        }
+    let start = previousBoundary(text, from, true);
+    let end = nextBoundaryOf(text, to);
+    // Spans end on grapheme edges and do not overlap, so one pass over them is enough.
+    for (const span of spans) {
+      if (span.from < end && span.to > start) {
+        start = Math.min(start, span.from);
+        end = Math.max(end, span.to);
       }
-      if (nextStart === start && nextEnd === end) return [start, end];
-      start = nextStart;
-      end = nextEnd;
     }
+    return [start, end];
   }
 
   /** The boundary one grapheme or one span from `offset`, toward the start for `-1`. */
@@ -477,11 +472,12 @@ export class TextEditor {
   }
 
   #current(): Layout {
-    return this.#layoutAt(this.#state, this.#textWidth(this.#size.width));
+    return this.#layoutAt(this.#textWidth(this.#size.width));
   }
 
-  /** The layout of `state` at `width` text cells. The last one stays for the next call. */
-  #layoutAt(state: EditorState, width: number): Layout {
+  /** The layout of the state at `width` text cells. The last one stays for the next call. */
+  #layoutAt(width: number): Layout {
+    const state = this.#state;
     const cached = this.#layout;
     if (cached !== undefined && cached.state === state && cached.width === width) return cached;
     let shown = "";
@@ -493,7 +489,7 @@ export class TextEditor {
     shown += state.text.slice(at);
     // No line is as wide as the widest width, so its wrap gives the lines alone.
     const layout = { state, width, shown, lines: rowsOf(wrap(shown, UNWRAPPED)), rows: rowsOf(wrap(shown, width)) };
-    if (state === this.#state) this.#layout = layout;
+    this.#layout = layout;
     return layout;
   }
 

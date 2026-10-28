@@ -648,6 +648,72 @@ declare module "yuke:tui" {
     mouse(event: MouseEvent): boolean;
   }
 
+  /** A fuzzy match: a higher score is a better match, and `ranges` mark the matched letters of the text. */
+  export interface FuzzyMatch {
+    readonly score: number;
+    readonly ranges: readonly OffsetRange[];
+  }
+
+  /**
+   * The fuzzy match of `query` in `text`, or `undefined` when the letters of `query` do not appear in order. The match
+   * ignores case. Consecutive letters and the starts of words score higher. Each range covers whole graphemes. The
+   * score values can change between versions; only their order counts.
+   */
+  export function fuzzyMatch(query: string, text: string): FuzzyMatch | undefined;
+
+  /** A ranked item, with the ranges of its label to mark. */
+  export interface PickerMatch<T> {
+    readonly item: T;
+    readonly ranges?: readonly OffsetRange[] | undefined;
+  }
+
+  export interface PickerOptions<T extends object> {
+    readonly items: readonly T[];
+    /** A key that stays the same for one item. The selection follows it. */
+    readonly key: (item: T) => string;
+    readonly label: (item: T) => string;
+    /**
+     * The shown items for a query, in their final order. The picker does not sort them again. The default matches
+     * each label with `fuzzyMatch`: the best score first, ties in input order, and all items for an empty query.
+     */
+    readonly rank?: ((query: string, items: readonly T[]) => readonly PickerMatch<T>[]) | undefined;
+    /** The rows of a match. The default shows the label with its ranges marked. It reverses a selected row. */
+    readonly render?: ((match: PickerMatch<T>, width: number, selected: boolean) => readonly TextRow[]) | undefined;
+    /** The default is true. Without the search field, the owner sets `query`, as a slash menu does. */
+    readonly showSearch?: boolean | undefined;
+    /** Enter chooses the selected item. A left press on a result selects it and chooses it. */
+    readonly choose: (item: T) => void;
+    /** Tab completes the selected item without a choice, as a slash menu fills in a command name. */
+    readonly complete?: ((item: T) => void) | undefined;
+    /** Esc cancels. The owner closes the picker. */
+    readonly cancel: () => void;
+  }
+
+  /**
+   * A search field over a list of ranked items. Up and Down move the selection and stop at the ends. Enter chooses,
+   * Tab completes, and Esc cancels. The picker opens no overlay of its own.
+   */
+  export class Picker<T extends object> implements View {
+    constructor(options: PickerOptions<T>);
+    readonly input: TextEditor;
+    readonly selected: T | undefined;
+    /** True with the search field: the picker takes the focus and gives it to the field. */
+    readonly focusable: boolean;
+    readonly initialFocus: View | undefined;
+    query: string;
+    setItems(items: readonly T[]): void;
+    move(rows: number): void;
+    /** `false` without a selected item. */
+    choose(): boolean;
+    /** `false` without a selected item or a `complete` option. */
+    complete(): boolean;
+    cancel(): void;
+    layout(size: Size): readonly Placement[];
+    draw(canvas: Canvas, focused: boolean): void;
+    key(event: KeyEvent): boolean;
+    mouse(event: MouseEvent): boolean;
+  }
+
   /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
   export interface FocusChange {
     readonly previous: View | undefined;
