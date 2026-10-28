@@ -20,6 +20,7 @@ import type {
   Tui,
   View,
   ViewFactory,
+  WidgetMount,
 } from "yuke:tui";
 
 /** The cleanups of the registrations and mounts of one plugin, newest first at the stop. */
@@ -177,6 +178,13 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     notices: Object.freeze({
       list: live((): readonly Notice[] => core.notices.list()),
       on: live((listener: (notice: Notice) => void): Disposer => scope.own(core.notices.on(listener))),
+    }),
+    widgets: Object.freeze({
+      list: live((): readonly WidgetMount[] => core.widgets.list()),
+      watch: live(
+        (attach: (mount: WidgetMount) => Disposer | undefined): Disposer =>
+          scope.own(core.widgets.watch(owner, attach)),
+      ),
     }),
     views: Object.freeze({
       register: live((type: string, restore: RestoreView): Disposer => {

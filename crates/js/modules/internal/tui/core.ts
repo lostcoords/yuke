@@ -16,7 +16,7 @@ import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/resto
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
-import type { Cursor, Disposer, FocusChange, Style, View } from "yuke:tui";
+import type { CanvasStyle, Cursor, Disposer, FocusChange, Style, View } from "yuke:tui";
 
 /** What the core needs from the terminal. The boot passes `term`; a test passes a fake. */
 export interface Driver {
@@ -85,7 +85,11 @@ export class Core {
         screen: {
           text: driver.text,
           fill: driver.fill,
-          resolve: (style: string | Style | undefined) => (style === undefined ? {} : this.styles.resolve(style)),
+          resolve: (style: CanvasStyle | undefined) => {
+            if (style === undefined) return {};
+            if (!Array.isArray(style)) return this.styles.resolve(style as string | Style);
+            return Object.freeze(Object.assign({}, ...style.map((item) => this.styles.resolve(item))));
+          },
         },
         size: () => ({ width: driver.width(), height: driver.height() }),
         cursor: driver.cursor,

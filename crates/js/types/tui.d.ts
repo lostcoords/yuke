@@ -7,6 +7,7 @@
  */
 declare module "yuke:tui" {
   import type { NoticeLevel } from "yuke:plugins";
+  import type { Media } from "yuke:protocol";
 
   export interface Size {
     readonly width: number;
@@ -203,11 +204,14 @@ declare module "yuke:tui" {
     readonly count: number;
   }
 
+  /** A style group name, a style, or a list of style group names and styles. A later item wins per field. */
+  export type CanvasStyle = string | Style | readonly (string | Style)[];
+
   /** What a view draws on. It is valid only during the draw call that gets it. A draw outside its rect is cut off. */
   export interface Canvas extends Size {
-    /** Write `text` on one row and return the column after it. `style` is a style group name or a style. */
-    readonly text: (column: number, row: number, text: string, style?: string | Style) => number;
-    readonly fill: (column: number, row: number, width: number, height: number, style?: string | Style) => void;
+    /** Write `text` on one row and return the column after it. */
+    readonly text: (column: number, row: number, text: string, style?: CanvasStyle) => number;
+    readonly fill: (column: number, row: number, width: number, height: number, style?: CanvasStyle) => void;
     /** A canvas for a part of this one, cut to this one. */
     readonly region: (column: number, row: number, width: number, height: number) => Canvas;
   }
@@ -282,6 +286,159 @@ declare module "yuke:tui" {
     onPaste: (handler: (text: string) => boolean) => Disposer;
     onChange: (listener: (event: E) => void) => Disposer;
     dispose: () => void;
+  }
+
+  /** A range of UTF-16 offsets. `to` is not in the range. */
+  export interface OffsetRange {
+    readonly from: number;
+    readonly to: number;
+  }
+
+  /** The unit of a column: graphemes, or terminal cells. */
+  export type ColumnUnit = "grapheme" | "cell";
+
+  /** The side of a boundary that a position takes: the end of what comes before it, or the start of what follows. */
+  export type Bias = "before" | "after";
+
+  /**
+   * Rows of a text widget and the map between a position and a point. A column counts cells unless `unit` says
+   * graphemes. A column in a grapheme or a label snaps to its start (`before`) or its end (`after`).
+   */
+  export interface TextCoordinates<P> {
+    readonly count: number;
+    /** The text of `row`, or "" for a row that does not exist. */
+    text: (row: number) => string;
+    /** The position at `point`: `bias` defaults to `before`. A column past the row gives the end of the row. */
+    at: (point: Point, unit?: ColumnUnit, bias?: Bias) => P | undefined;
+    /** The point of `position`: `bias` defaults to `after`, so a position at a soft break goes on the next row. */
+    point: (position: P, unit?: ColumnUnit, bias?: Bias) => Point | undefined;
+  }
+
+  /** A view of text that plugins extend: an editor or a text view. Points are cells local to the widget. */
+  export interface TextWidget<P, E> extends View {
+    readonly role: string;
+    /** The display rows: soft wraps make rows, and a label shows in place of its source. */
+    readonly rows: TextCoordinates<P>;
+    /** The rows that the widget shows. */
+    readonly visibleRows: OffsetRange;
+    /** A new part of the plugin that owns `signal`. */
+    extend: (signal: AbortSignal) => TextExtension<P, E>;
+    /**
+     * The position at a cell of the widget. A column past a row gives the row end. A row outside the text gives
+     * `undefined`.
+     */
+    hitTest: (point: Point) => P | undefined;
+    /** The cell of `position` in the widget, or `undefined` when it does not show. */
+    screenAt: (position: P) => Point | undefined;
+    /** Scroll the least to show `position`. `false` when it cannot show. */
+    ensureVisible: (position: P) => boolean;
+  }
+
+  /** A range of an editor that shows a label and edits as one unit: a long paste, or an image (one U+FFFC). */
+  export type EditorSpan = OffsetRange &
+    (
+      | { readonly kind: "paste"; readonly label: string }
+      | { readonly kind: "image"; readonly label: string; readonly media: Readonly<Media> }
+    );
+
+  /** The draft of an editor: its text, its selection, and its spans. */
+  export interface EditorState {
+    readonly text: string;
+    readonly selection: Selection<number>;
+    readonly spans: readonly EditorSpan[];
+  }
+
+  /** One effective edit: `from` and `to` in the text before it, the inserted text, and its spans from 0. */
+  export interface TextEdit extends OffsetRange {
+    readonly text: string;
+    readonly spans: readonly EditorSpan[];
+  }
+
+  /**
+   * A change of an editor. `reset` puts a new draft, `restore` puts a saved state back, and `selection` moves only the
+   * selection. `changes` holds the edits of an `edit`.
+   */
+  export interface EditorChange {
+    readonly kind: "edit" | "reset" | "restore" | "selection";
+    readonly before: EditorState;
+    readonly after: EditorState;
+    readonly changes: readonly TextEdit[];
+  }
+
+  export interface EditorOptions {
+    /** The default role is `field`. The role is a context atom of the keymap while the editor has the focus. */
+    readonly role?: "composer" | "field" | undefined;
+    /** The group of related widgets, such as a composer and its transcript. The default is a new group. */
+    readonly group?: object | undefined;
+    /** The default is true. A one-line editor writes each line end as a space. */
+    readonly multiline?: boolean | undefined;
+    readonly state?: EditorState | undefined;
+    /** The text that an empty editor shows. */
+    readonly placeholder?: string | undefined;
+    readonly appearance?: TextAppearance | undefined;
+    /** Get the state at Enter. The editor keeps the draft, so the owner resets it when it wants an empty editor. */
+    readonly submit?: ((state: EditorState) => void) | undefined;
+  }
+
+  /**
+   * An editor of text with spans. Offsets are UTF-16 units. An edit keeps whole graphemes and whole spans. The editor
+   * types text and handles backspace, delete, the arrows, home, and end. Shift with a move extends the selection.
+   * Enter calls the `submit` option when it exists. In a multiline editor, shift+enter, alt+enter, and ctrl+j add a
+   * line end.
+   */
+  export class TextEditor implements TextWidget<number, EditorChange> {
+    constructor(options?: EditorOptions);
+    readonly kind: "editor";
+    readonly role: string;
+    readonly focusable: true;
+    readonly state: EditorState;
+    /** The logical lines, split at the line ends. */
+    readonly lines: TextCoordinates<number>;
+    readonly rows: TextCoordinates<number>;
+    readonly visibleRows: OffsetRange;
+    readonly contexts: readonly string[];
+    /** The selection head. A set collapses the selection. */
+    caret: number;
+    selection: Selection<number>;
+    /**
+     * Replace `from` to `to` with `text`. A range grows to whole graphemes and spans, and an insertion goes to the
+     * nearest boundary (a tie goes after). The caret goes to the next whole boundary after `text`. Span offsets start
+     * at 0 in `text`.
+     */
+    replace(from: number, to: number, text: string, spans?: readonly EditorSpan[]): void;
+    /** Put a new draft. */
+    reset(state: EditorState): void;
+    /** Put a saved state back, as an undo does. */
+    restore(state: EditorState): void;
+    /** The count of rows of the text at `width` cells, with the prompt. A width of 0 gives 0. */
+    heightFor(width: number): number;
+    /** Give the state to the `submit` option. Without the option, do nothing. */
+    submit(): void;
+    extend(signal: AbortSignal): TextExtension<number, EditorChange>;
+    hitTest(point: Point): number | undefined;
+    screenAt(position: number): Point | undefined;
+    ensureVisible(position: number): boolean;
+    layout(size: Size): readonly Placement[];
+    draw(canvas: Canvas, focused: boolean): void;
+    cursor(): Cursor | undefined;
+    key(event: KeyEvent): boolean;
+    mouse(event: MouseEvent): boolean;
+    paste(text: string): boolean;
+  }
+
+  /** A placed text widget. `signal` aborts when the widget leaves the tree. */
+  export interface WidgetMount {
+    readonly widget: TextEditor;
+    readonly pane: Pane | undefined;
+    readonly group: object;
+    readonly signal: AbortSignal;
+  }
+
+  /** The placed text widgets of all plugins. */
+  export interface WidgetRegistry {
+    readonly list: () => readonly WidgetMount[];
+    /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
+    readonly watch: (attach: (mount: WidgetMount) => Disposer | undefined) => Disposer;
   }
 
   /** A change of `tui.focused`. `pane` is the pane that holds `current`, or `undefined` outside the panes. */
@@ -382,6 +539,7 @@ declare module "yuke:tui" {
       readonly list: () => readonly Notice[];
       readonly on: (listener: (notice: Notice) => void) => Disposer;
     };
+    readonly widgets: WidgetRegistry;
     readonly views: {
       readonly register: (type: string, restore: RestoreView) => Disposer;
     };

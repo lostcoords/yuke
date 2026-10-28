@@ -1,27 +1,21 @@
 /** The code of the public module `yuke:tui`. Its declaration is `types/tui.d.ts`, and the check at the end compares the two. */
 
-import { termFit, termGraphemes, termMeasure, termWrap } from "yuke:internal/native";
+import { TextEditor } from "yuke:internal/tui/editor";
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";
 import { stack } from "yuke:internal/tui/layout";
+import { fit, graphemes, measure, wrap } from "yuke:internal/tui/text";
 
-export { parseKeys, stack, strokeOf };
-
-export function measure(text: string): number {
-  return termMeasure(String(text).toWellFormed());
-}
-
-export function graphemes(text: string): Int32Array {
-  return termGraphemes(String(text).toWellFormed());
-}
-
-export function fit(text: string, cells: number): number {
-  return termFit(String(text).toWellFormed(), cells);
-}
-
-export function wrap(text: string, width: number, head = 0): Int32Array {
-  return termWrap(String(text).toWellFormed(), width, head);
-}
+export { fit, graphemes, measure, parseKeys, stack, strokeOf, TextEditor, wrap };
 
 // The check against `types/tui.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { measure, graphemes, fit, wrap, parseKeys, strokeOf, stack } satisfies typeof import("yuke:tui");
+const declared = {
+  measure,
+  graphemes,
+  fit,
+  wrap,
+  parseKeys,
+  strokeOf,
+  stack,
+  TextEditor,
+} satisfies typeof import("yuke:tui");
 void declared;

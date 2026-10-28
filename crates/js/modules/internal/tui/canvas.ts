@@ -4,13 +4,14 @@
  */
 import type { TermStyle } from "yuke:internal/native";
 import { termFit, termGraphemes, termMeasure } from "yuke:internal/native";
-import type { Canvas, Rect, Style } from "yuke:tui";
+import type { Canvas, CanvasStyle, Rect } from "yuke:tui";
 
 /** What a canvas writes to: the screen in absolute cells. */
 export interface Screen {
   readonly text: (column: number, row: number, text: string, style: TermStyle) => void;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
-  readonly resolve: (style: string | Style | undefined) => TermStyle;
+  /** Resolve a style, or merge a list of styles: a later style wins per field. */
+  readonly resolve: (style: CanvasStyle | undefined) => TermStyle;
 }
 
 /** The draw call that a canvas belongs to: `open` is false once the call returns. */
@@ -26,14 +27,14 @@ export function createCanvas(screen: Screen, rect: Rect, clip: Rect, call: DrawC
   return Object.freeze({
     width: rect.width,
     height: rect.height,
-    text(column: number, row: number, text: string, style?: string | Style): number {
+    text(column: number, row: number, text: string, style?: CanvasStyle): number {
       checkOpen();
       const value = String(text).toWellFormed();
       const end = column + termMeasure(value);
       writeText(screen, clip, rect.column + column, rect.row + row, value, screen.resolve(style));
       return end;
     },
-    fill(column: number, row: number, width: number, height: number, style?: string | Style): void {
+    fill(column: number, row: number, width: number, height: number, style?: CanvasStyle): void {
       checkOpen();
       const cut = intersect(clip, { column: rect.column + column, row: rect.row + row, width, height });
       if (cut.width > 0 && cut.height > 0) {

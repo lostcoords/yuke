@@ -1,7 +1,7 @@
 // A fake terminal for the tests of the terminal interface: a 20×6 driver with a cell grid, and key and mouse events.
 
 import { Core, type Driver } from "yuke:internal/tui/core";
-import type { KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent, Point } from "yuke:tui";
+import type { Cursor, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent } from "yuke:tui";
 
 const WIDTH = 20;
 const HEIGHT = 6;
@@ -15,7 +15,9 @@ export interface Terminal {
    */
   readonly calls: unknown[];
   /** The cursor of each frame: a point, or `undefined` when the frame hides it. */
-  readonly cursors: (Point | undefined)[];
+  readonly cursors: (Cursor | undefined)[];
+  /** The number of frame requests so far. */
+  readonly requests: () => number;
   /** Draw a frame of `core` on a blank grid, and give its rows, trimmed at the end. */
   readonly screen: (core: Core) => string[];
 }
@@ -24,7 +26,8 @@ export interface Terminal {
 export function fakeTerminal(): Terminal {
   const grid = Array.from({ length: HEIGHT }, () => Array<string>(WIDTH).fill(" "));
   const calls: unknown[] = [];
-  const cursors: (Point | undefined)[] = [];
+  const cursors: (Cursor | undefined)[] = [];
+  let requests = 0;
   const put = (column: number, row: number, character: string): void => {
     const cells = grid[row];
     if (cells !== undefined && column >= 0 && column < WIDTH) cells[column] = character;
@@ -45,7 +48,9 @@ export function fakeTerminal(): Terminal {
     cursor: (point) => {
       cursors.push(point);
     },
-    requestFrame: () => {},
+    requestFrame: () => {
+      requests += 1;
+    },
     quit: () => {
       calls.push("quit");
     },
@@ -63,6 +68,7 @@ export function fakeTerminal(): Terminal {
     driver,
     calls,
     cursors,
+    requests: () => requests,
     screen: (core) => {
       for (const row of grid) row.fill(" ");
       core.draw();
@@ -82,7 +88,10 @@ export function newCore(terminal: Terminal): Core {
 
 const NONE: Modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
-/** The key event of `character` with `modifiers`. `extra` sets other fields, such as `shifted`. */
+/**
+ * The key event of `character` with `modifiers`. It types `character` without ctrl, alt, or super. `extra` sets other
+ * fields, such as `shifted`.
+ */
 export function key(character: string, modifiers: Partial<Modifiers> = {}, extra: Partial<KeyEvent> = {}): KeyEvent {
   return {
     type: "key",
@@ -90,7 +99,7 @@ export function key(character: string, modifiers: Partial<Modifiers> = {}, extra
     character,
     shifted: "",
     baseLayout: "",
-    text: "",
+    text: modifiers.ctrl || modifiers.alt || modifiers.super ? "" : character,
     modifiers: { ...NONE, ...modifiers },
     ...extra,
   };

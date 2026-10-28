@@ -1,7 +1,7 @@
 // The frame test of `yuke:test`: the real core on a grid of cells, with key specs, surfaces, and resizes.
 
 import { createFrame, equal, test } from "yuke:test";
-import type { View } from "yuke:tui";
+import { TextEditor, type View } from "yuke:tui";
 
 test("a frame holds the cells, the styles, and the cursor that the views drew", () => {
   using frame = createFrame({ width: 6, height: 2 }, () => {
@@ -49,4 +49,34 @@ test("a resize changes the frame size and a dispose closes each surface", () => 
   equal([frame.frame.width, frame.frame.height, frame.frame.cells.length, frame.frame.cells[2]?.length], [7, 3, 3, 7]);
   frame[Symbol.dispose]();
   equal(surface.signal.aborted, true);
+});
+
+test("a list of styles merges per field and a later style wins", () => {
+  using frame = createFrame({ width: 4, height: 1 });
+  const surface = frame.surface("demo");
+  surface.tui.styles.set("demo:mark", { fg: 1, bold: true });
+  surface.tui.setRoot(() => ({
+    draw: (canvas) => {
+      canvas.text(0, 0, "a", ["demo:mark", { bold: false, bg: 2 }]);
+    },
+  }));
+  equal(frame.draw().cells[0]?.[0], { text: "a", width: 1, style: { fg: 1, bg: 2 } });
+});
+
+test("a dispose closes the root, so the mounts of its widgets end", () => {
+  const editor = new TextEditor();
+  const frame = createFrame({ width: 4, height: 1 }, () => ({
+    draw() {},
+    layout: () => [{ view: editor, rect: { column: 0, row: 0, width: 4, height: 1 } }],
+  }));
+  const signals: AbortSignal[] = [];
+  frame.surface("demo").tui.widgets.watch((mount) => {
+    signals.push(mount.signal);
+    return undefined;
+  });
+  frame[Symbol.dispose]();
+  equal(
+    signals.map((signal) => signal.aborted),
+    [true],
+  );
 });

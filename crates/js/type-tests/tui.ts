@@ -52,4 +52,8 @@ const got = ctx.get("tui");
 assert<Equal<typeof got, Tui | undefined>>();
 // @ts-expect-error `tui` is a service of yuke: a plugin cannot provide it.
 ctx.provide("tui", tui);
-void [patch, style, color, command, container, Clock, handler, root, got];
+// A watch takes an inline callback that returns no cleanup.
+const watched = tui.widgets.watch((mount) => {
+  mount.widget.caret = 0;
+});
+void [patch, style, color, command, container, Clock, handler, root, got, watched];

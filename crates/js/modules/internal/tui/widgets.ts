@@ -12,8 +12,10 @@ import type {
   MouseEvent,
   Pane,
   TextAppearance,
+  TextEditor,
   TextExtension,
   View,
+  WidgetMount,
 } from "yuke:tui";
 
 /** What a placed widget asks of the core. */
@@ -120,16 +122,9 @@ export class TextSupport<P, E> {
         this.#host?.requestFrame();
       },
       setAppearance: (appearance: TextAppearance): void => {
-        if (typeof appearance !== "object" || appearance === null) throw new TypeError("an appearance is an object");
-        if (appearance.cursorShape !== undefined && !SHAPES.includes(appearance.cursorShape)) {
-          throw new TypeError(`a cursor shape is block, underline, or bar, not ${String(appearance.cursorShape)}`);
-        }
-        if (appearance.prompt !== undefined && typeof appearance.prompt !== "string") {
-          throw new TypeError("a prompt is a string");
-        }
-        if (!isStyle(appearance.promptStyle, true)) throw new TypeError("a prompt style is a style name or a style");
+        const checked = checkAppearance(appearance);
         if (part.disposed) return;
-        part.appearance = Object.freeze({ ...appearance });
+        part.appearance = checked;
         this.#host?.requestFrame();
       },
       setDecorations: (decorations: readonly Decoration<P>[]): void => {
@@ -153,6 +148,11 @@ export class TextSupport<P, E> {
       onChange: (listener: (event: E) => void): Disposer => add(this.#listeners, listener, "change"),
       dispose: part.dispose,
     });
+  }
+
+  /** Ask the core for a frame after a change of the widget. Before the widget is placed, do nothing. */
+  requestFrame(): void {
+    this.#host?.requestFrame();
   }
 
   /** The context atoms of the extensions, in the order of the extensions. */
@@ -209,14 +209,6 @@ export class TextSupport<P, E> {
   }
 }
 
-/** The mount of a placed widget, as a watch gets it. `signal` aborts when the widget leaves the tree. */
-export interface WidgetMount {
-  readonly widget: View;
-  readonly pane: Pane | undefined;
-  readonly group: object;
-  readonly signal: AbortSignal;
-}
-
 /** A widget at its place: its pane and the layer that holds it. */
 export interface PlacedWidget {
   readonly view: View;
@@ -232,14 +224,14 @@ interface WidgetSupport {
 }
 
 /** The text widgets and their support. A widget registers itself in its constructor. */
-const supports = new WeakMap<View, WidgetSupport>();
+const registered = new WeakMap<View, { readonly widget: TextEditor; readonly support: WidgetSupport }>();
 
-export function registerWidget(view: View, support: WidgetSupport): void {
-  supports.set(view, support);
+export function registerWidget(widget: TextEditor, support: WidgetSupport): void {
+  registered.set(widget, { widget, support });
 }
 
 export function supportOf(view: View): WidgetSupport | undefined {
-  return supports.get(view);
+  return registered.get(view)?.support;
 }
 
 interface Mounted {
@@ -287,17 +279,17 @@ export class WidgetMounts {
     }
     const added: WidgetMount[] = [];
     for (const entry of now.values()) {
-      const support = supportOf(entry.view);
-      if (support === undefined || this.#mounted.has(entry.view)) continue;
+      const found = registered.get(entry.view);
+      if (found === undefined || this.#mounted.has(entry.view)) continue;
       const controller = new AbortController();
       const mount = Object.freeze({
-        widget: entry.view,
+        widget: found.widget,
         pane: entry.pane,
-        group: support.group,
+        group: found.support.group,
         signal: controller.signal,
       });
       this.#mounted.set(entry.view, { mount, controller, layer: entry.layer });
-      support.attach(this.#host);
+      found.support.attach(this.#host);
       added.push(mount);
     }
     for (const mount of added) {
@@ -341,6 +333,19 @@ export class WidgetMounts {
       this.#report(owner, `a widget cleanup failed: ${failureOf(error)}`);
     }
   }
+}
+
+/** A frozen copy of `appearance`, with its fields checked. */
+export function checkAppearance(appearance: TextAppearance): TextAppearance {
+  if (typeof appearance !== "object" || appearance === null) throw new TypeError("an appearance is an object");
+  if (appearance.cursorShape !== undefined && !SHAPES.includes(appearance.cursorShape)) {
+    throw new TypeError(`a cursor shape is block, underline, or bar, not ${String(appearance.cursorShape)}`);
+  }
+  if (appearance.prompt !== undefined && typeof appearance.prompt !== "string") {
+    throw new TypeError("a prompt is a string");
+  }
+  if (!isStyle(appearance.promptStyle, true)) throw new TypeError("a prompt style is a style name or a style");
+  return Object.freeze({ ...appearance });
 }
 
 function isStyle(value: unknown, optional: boolean): boolean {

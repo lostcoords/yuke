@@ -25,7 +25,7 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
       background: () => "dark",
       truecolor: () => true,
       text: (column, row, text, style) => {
-        screen.text(column, row, text.toWellFormed(), style);
+        screen.text(column, row, text, style);
       },
       fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
       cursor: (cursor) => screen.cursor(cursor),
@@ -40,7 +40,7 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
     },
     () => ({ draw() {} }),
   );
-  if (create !== undefined) core.scene.setRoot("test", create);
+  const root = create === undefined ? undefined : core.scene.setRoot("test", create);
   let frame: Frame;
   const draw = (): Frame => {
     screen.clear();
@@ -89,6 +89,9 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
     },
     [Symbol.dispose](): void {
       for (const surface of [...surfaces]) surface.close();
+      root?.close();
+      // The layout after the root closes ends the mounts of the widgets that left.
+      core.scene.layout();
     },
   });
 }

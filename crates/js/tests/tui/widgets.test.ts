@@ -1,55 +1,9 @@
 // The core contracts of the text widgets on a fake 20×6 driver: mounts, extensions, and the early key phase.
-// A test widget takes the place of the editor and the text view.
 
 import { createSurface } from "yuke:internal/tui/surface";
-import { registerWidget, TextSupport, type WidgetMount } from "yuke:internal/tui/widgets";
 import { equal, test } from "yuke:test";
-import type { Canvas, Cursor, KeyEvent, TextExtension, View } from "yuke:tui";
+import { TextEditor, type View, type WidgetMount } from "yuke:tui";
 import { atoms, fakeTerminal, key, named, newCore } from "./terminal.ts";
-
-/** A text widget of one line: it types characters and pastes by default, and draws its prompt and cursor shape. */
-class Probe implements View {
-  readonly focusable = true;
-  readonly support: TextSupport<number, string>;
-  text = "";
-
-  constructor(group?: object) {
-    this.support = new TextSupport(group);
-    registerWidget(this, this.support);
-  }
-
-  extend(signal: AbortSignal): TextExtension<number, string> {
-    return this.support.extend(signal);
-  }
-
-  get contexts(): string[] {
-    return ["probe", ...this.support.contexts()];
-  }
-
-  draw(canvas: Canvas): void {
-    canvas.text(0, 0, `${this.support.appearance().prompt ?? ""}${this.text}`);
-  }
-
-  cursor(): Cursor {
-    const appearance = this.support.appearance();
-    const column = (appearance.prompt ?? "").length + this.text.length;
-    return { column, row: 0, ...(appearance.cursorShape === undefined ? {} : { shape: appearance.cursorShape }) };
-  }
-
-  key(event: KeyEvent): boolean {
-    if (this.support.key(event, "beforeDefault")) return true;
-    if (event.code !== "character") return false;
-    this.text += event.character;
-    this.support.emit(this.text);
-    return true;
-  }
-
-  paste(text: string): boolean {
-    if (this.support.paste(text)) return true;
-    this.text += text;
-    return true;
-  }
-}
 
 /** A pane that shows `widget` on its first row. */
 function holder(widget: View): View {
@@ -64,7 +18,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   const terminal = fakeTerminal();
   const core = newCore(terminal);
   const panes = createSurface(core, "chat", new AbortController().signal).panes;
-  const probe = new Probe();
+  const editor = new TextEditor();
   const log: string[] = [];
   const signals: AbortSignal[] = [];
   const watcher = (name: string) => (mount: WidgetMount) => {
@@ -73,7 +27,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
     return () => log.push(`${name} cleanup`);
   };
   core.widgets.watch("early", watcher("early"));
-  const pane = panes.split(() => holder(probe));
+  const pane = panes.split(() => holder(editor));
   terminal.screen(core);
   terminal.screen(core);
   // A modal covers the widget but does not unmount it.
@@ -84,7 +38,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   terminal.screen(core);
   pane.close();
   terminal.screen(core);
-  panes.split(() => holder(probe));
+  panes.split(() => holder(editor));
   terminal.screen(core);
   equal(log, [
     "early attach pane",
@@ -104,8 +58,8 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
 test("a watch that starts inside an attach sees each mount once", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
-  const first = new Probe();
-  const second = new Probe();
+  const first = new TextEditor();
+  const second = new TextEditor();
   core.scene.setRoot("chat", () => ({
     draw() {},
     layout: () => [
@@ -133,8 +87,8 @@ test("a watch that starts inside an attach sees each mount once", () => {
 test("an early handler takes a continuation before the keymap and enter alone reaches the keymap", () => {
   const core = newCore(fakeTerminal());
   const tui = createSurface(core, "chat", new AbortController().signal);
-  const probe = new Probe();
-  tui.panes.split(() => holder(probe));
+  const editor = new TextEditor();
+  tui.panes.split(() => holder(editor));
   let submits = 0;
   tui.commands.add({
     name: "submit",
@@ -143,12 +97,12 @@ test("an early handler takes a continuation before the keymap and enter alone re
     },
   });
   tui.commands.add({ name: "none", run() {} });
-  tui.keys.bind("enter", "submit", { in: "probe" });
-  tui.keys.bind("ctrl+k x", "none", { in: "probe" });
+  tui.keys.bind("enter", "submit", { in: "field" });
+  tui.keys.bind("ctrl+k x", "none", { in: "field" });
   const replaced: string[] = [];
   let pending = false;
   core.widgets.watch("vim", (mount) => {
-    const extension = (mount.widget as Probe).extend(mount.signal);
+    const extension = mount.widget.extend(mount.signal);
     extension.onKey((event) => {
       if (pending) {
         pending = false;
@@ -176,11 +130,11 @@ test("an early handler takes a continuation before the keymap and enter alone re
 test("each extension adds its own part and the stop of one plugin leaves the other", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
-  const probe = new Probe();
-  core.scene.setRoot("chat", () => holder(probe));
+  const editor = new TextEditor();
+  core.scene.setRoot("chat", () => holder(editor));
   const typed: string[] = [];
   const extend = (mount: WidgetMount, name: string, shape: "block" | "bar"): (() => void) => {
-    const extension = (mount.widget as Probe).extend(mount.signal);
+    const extension = mount.widget.extend(mount.signal);
     extension.setContexts([`${name}-mode`]);
     extension.setAppearance({ cursorShape: shape, prompt: `${name}> ` });
     extension.onKey((event) => {
@@ -193,9 +147,9 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
   const stopVim = core.widgets.watch("vim", (mount) => extend(mount, "vim", "block"));
   equal(terminal.screen(core)[0], "vim>");
   core.event(key("a"));
-  equal(atoms(core), ["global", "root", "probe", "other-mode", "vim-mode"]);
+  equal(atoms(core), ["global", "root", "field", "other-mode", "vim-mode"]);
   // The newest handler runs first. A handler that returns false only watches.
-  equal([typed, probe.text], [["vim a", "other a"], "a"]);
+  equal([typed, editor.state.text], [["vim a", "other a"], "a"]);
   stopVim();
   equal(terminal.screen(core)[0], "other> a");
   equal(terminal.cursors.at(-1), { column: 8, row: 0, shape: "bar" });
@@ -207,12 +161,12 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
 test("a contexts change ends a pending sequence and a throwing extension goes", () => {
   const core = newCore(fakeTerminal());
   const tui = createSurface(core, "chat", new AbortController().signal);
-  const probe = new Probe();
-  tui.panes.split(() => holder(probe));
+  const editor = new TextEditor();
+  tui.panes.split(() => holder(editor));
   tui.commands.add({ name: "none", run() {} });
   tui.keys.bind("ctrl+k x", "none");
   core.draw();
-  const extension = probe.extend(new AbortController().signal);
+  const extension = editor.extend(new AbortController().signal);
   core.event(key("k", { ctrl: true }));
   equal(core.keymap.pending(), "ctrl+k");
   extension.setContexts(["vim-insert"]);
@@ -222,16 +176,29 @@ test("a contexts change ends a pending sequence and a throwing extension goes", 
   });
   core.event({ type: "paste", text: "one" });
   core.event({ type: "paste", text: "two" });
-  equal(probe.text, "onetwo");
+  equal(editor.state.text, "onetwo");
   equal(
     core.notices.list().map((notice) => [notice.text.split("\n")[0], notice.count]),
     [["a text widget extension failed and was removed: Error: bad paste", 1]],
   );
-  equal(atoms(core).at(-1), "probe");
+  equal(atoms(core).at(-1), "field");
   // The abort of its signal removes an extension as its dispose does.
   const controller = new AbortController();
-  probe.extend(controller.signal).setContexts(["other-mode"]);
+  editor.extend(controller.signal).setContexts(["other-mode"]);
   equal(atoms(core).at(-1), "other-mode");
   controller.abort();
-  equal(atoms(core).at(-1), "probe");
+  equal(atoms(core).at(-1), "field");
+});
+
+test("a change of a placed editor by code asks for a frame", () => {
+  const terminal = fakeTerminal();
+  const core = newCore(terminal);
+  const editor = new TextEditor();
+  core.scene.setRoot("chat", () => holder(editor));
+  terminal.screen(core);
+  const asked = terminal.requests();
+  editor.replace(0, 0, "a");
+  editor.caret = 0;
+  editor.restore({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
+  equal(terminal.requests() - asked, 3);
 });
