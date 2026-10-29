@@ -4,10 +4,20 @@
  */
 
 import { blocksOf, draftOf, EMPTY, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
+import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
-import type { Input, InputId, ModelInfo, ProviderInfo, SessionId, SessionSettings } from "yuke:protocol";
+import type {
+  Input,
+  InputId,
+  InteractionId,
+  InteractionResponse,
+  ModelInfo,
+  ProviderInfo,
+  SessionId,
+  SessionSettings,
+} from "yuke:protocol";
 import { type Entry, Transcript } from "yuke:transcript";
 import {
   type Canvas,
@@ -81,13 +91,22 @@ export interface PaneActions {
   readonly activate: () => void;
   /** Copy the selection of the transcript. */
   readonly copy: () => void;
+  /** A question of a plugin shows, so the composer takes no message. */
+  readonly asking: () => boolean;
+  /** Answer the shown question with a cancel. */
+  readonly cancelQuestion: () => void;
 }
 
 /** What each pane of the chat shares. */
 export interface Chat {
-  readonly ctx: PluginContext<{ readonly copyOnRelease?: boolean | undefined }>;
+  readonly ctx: PluginContext<{
+    readonly copyOnRelease?: boolean | undefined;
+    readonly questions?: "composer" | "modal" | undefined;
+  }>;
   readonly tui: Tui;
   readonly copyOnRelease: boolean;
+  /** Where a question shows: in the place of the composer, or in a modal above the focused pane. */
+  readonly questions: "composer" | "modal";
   /** The actions of each pane, by its view. */
   readonly panes: WeakMap<View, PaneActions>;
 }
@@ -149,6 +168,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let recalled: InputId | undefined;
   // A recall waits for its removal. Until the removal ends, ↑ does nothing.
   let recalling = false;
+  // The first open question of the session and its view. The others wait in order. A sent answer waits for the close.
+  let asking:
+    | { readonly id: InteractionId; readonly asked: Asked; answered: boolean; overlay: Mount | undefined }
+    | undefined;
   const changed = (): void => {
     dirty = true;
     tui.requestFrame();
@@ -183,18 +206,33 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const event = (update: ViewEvent): void => {
     transcript.apply(update);
     if ("snapshot" in update) opened = true;
+    syncQuestion();
     changed();
     if (transcript.gap !== undefined) void load();
   };
 
   /**
    * Open the session `id` for this pane. A failure before the close of the pane gives one notice and no handle. The
-   * next send then opens the session again.
+   * next send then opens the session again, also after the end of the handle, as by a close from another client.
    */
   const open = (id: SessionId): Promise<SessionHandle | undefined> =>
     sessions.open(id, { tail: TAIL, signal: mount.signal, event }).then(
       (opened) => {
         handle = opened;
+        opened.signal.addEventListener(
+          "abort",
+          () => {
+            // The close of the pane ends its handle too, and then nothing is left to do.
+            if (handle !== opened || mount.signal.aborted) return;
+            handle = undefined;
+            opening = undefined;
+            // No close update comes for the questions of an ended handle, and the next open shows them again.
+            asking?.overlay?.close();
+            asking = undefined;
+            tui.requestFrame();
+          },
+          { once: true },
+        );
         return opened;
       },
       (error: unknown) => {
@@ -203,7 +241,59 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         return undefined;
       },
     );
-  if (session !== undefined) opening = open(session);
+
+  /** Answer the shown question once. A failed answer, as after an answer of another client, gives a notice. */
+  const answer = (response: InteractionResponse): void => {
+    const current = asking;
+    if (current === undefined || current.answered || handle === undefined) return;
+    current.answered = true;
+    try {
+      handle.respond(current.id, response);
+    } catch (error) {
+      current.answered = false;
+      ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`);
+    }
+  };
+
+  /**
+   * Show the first open question, and drop the view of a closed one. A modal question opens only while this pane has
+   * the focus, so it waits for another modal to close.
+   */
+  function syncQuestion(): void {
+    const head = transcript.questions.entries().next().value;
+    if (head?.[0] !== asking?.id) {
+      asking?.overlay?.close();
+      asking =
+        head === undefined
+          ? undefined
+          : {
+              id: head[0],
+              asked: ask(head[1], () => transcript.questions.size, answer),
+              answered: false,
+              overlay: undefined,
+            };
+    }
+    const current = asking;
+    if (current === undefined || chat.questions !== "modal" || current.overlay !== undefined) return;
+    if (tui.focused !== composer && tui.focused !== view) return;
+    const overlay = tui.overlay(() => current.asked.view, {
+      place: (size) => {
+        const height = Math.min(current.asked.rows, size.height);
+        return { column: 0, row: size.height - height, width: size.width, height };
+      },
+    });
+    current.overlay = overlay;
+    const close = (): void => overlay.close();
+    mount.signal.addEventListener("abort", close, { once: true });
+    overlay.signal.addEventListener(
+      "abort",
+      () => {
+        mount.signal.removeEventListener("abort", close);
+        current.overlay = undefined;
+      },
+      { once: true },
+    );
+  }
 
   const group = {};
   const view = new TextView({
@@ -420,6 +510,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
+  // A modal question waits for the focus of this pane.
+  if (chat.questions === "modal") {
+    const stop = tui.onFocus(() => syncQuestion());
+    mount.signal.addEventListener("abort", stop, { once: true });
+  }
+  // The open comes after the views, because its snapshot can show a question.
+  if (session !== undefined) opening = open(session);
+
   /** The waiting messages of the user, oldest first. An input of a plugin stays out of the strip and of a recall. */
   const waiting = (): [InputId, Frozen<Input>][] =>
     [...transcript.pending]
@@ -486,8 +584,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = false;
         view.setDocument(document.project(transcript));
       }
+      // A question in the composer place hides the composer, and the composer keeps its draft.
+      const question = asking !== undefined && chat.questions === "composer" ? asking.asked : undefined;
       // The composer keeps one row in a pane of any size, and at most half of a taller pane.
-      const composerRows = Math.min(composer.heightFor(size.width), Math.max(1, Math.floor(size.height / 2)));
+      const wanted = question?.rows ?? composer.heightFor(size.width);
+      const composerRows = Math.min(wanted, Math.max(1, Math.floor(size.height / 2)));
       const composerRow = Math.max(0, size.height - composerRows);
       ruleRow = composerRow - 1;
       // The strip takes the rows above the rule that its messages need, and the transcript gets the rest. When rows run
@@ -496,7 +597,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       shown = list.slice(Math.max(0, list.length - Math.max(0, ruleRow)));
       const placements = [
         { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, ruleRow - shown.length) } },
-        { view: composer, rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow } },
+        {
+          view: question?.view ?? composer,
+          rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow },
+        },
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
@@ -527,7 +631,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (historyError !== undefined) canvas.text(1, ruleRow, ` ${historyError} `, STYLE.error);
       else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
     },
-    initialFocus: composer,
+    get initialFocus(): View {
+      return asking !== undefined && chat.questions === "composer" ? asking.asked.focus : composer;
+    },
     snapshot: () => {
       const scroll = view.scroll.state;
       const viewport = restore ?? (scroll.following ? undefined : scroll.anchor);
@@ -579,7 +685,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else view.scroll.followTail();
     },
     switchFocus: () => {
-      tui.focus(tui.focused === composer ? view : composer);
+      const input = asking !== undefined && chat.questions === "composer" ? asking.asked.focus : composer;
+      tui.focus(tui.focused === view ? input : view);
     },
     activate: () => {
       const caret = view.caret;
@@ -589,6 +696,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const selection = view.selection;
       if (selection !== undefined) tui.copy(view.text({ from: selection.anchor, to: selection.head }));
     },
+    asking: () => asking !== undefined,
+    cancelQuestion: () => answer({ kind: "canceled" }),
   });
   return pane;
 }

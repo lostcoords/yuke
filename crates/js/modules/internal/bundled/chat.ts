@@ -16,6 +16,12 @@ export const optionsSchema = {
       type: "boolean",
       description: "Copy a mouse selection of the transcript when the button goes up. The default is true.",
     },
+    questions: {
+      type: "string",
+      enum: ["composer", "modal"],
+      description:
+        "Show the question of a plugin in the place of the composer, or in a modal. The default is composer.",
+    },
   },
 } as const;
 
@@ -26,18 +32,25 @@ const COMMANDS: readonly {
   readonly name: string;
   readonly description: string;
   readonly keys: readonly string[];
-  readonly in: "chat" | "composer" | "transcript";
+  readonly in: "chat" | "composer" | "transcript" | "question";
   readonly run: (pane: PaneActions) => void;
   readonly enabled?: (pane: PaneActions) => boolean;
 }[] = [
-  { name: "send", description: "Send the message", keys: ["enter"], in: "composer", run: (pane) => pane.send() },
+  {
+    name: "send",
+    description: "Send the message",
+    keys: ["enter"],
+    in: "composer",
+    run: (pane) => pane.send(),
+    enabled: (pane) => !pane.asking(),
+  },
   {
     name: "older-message",
     description: "Edit a waiting message of yours, or show an older message of yours",
     keys: ["up"],
     in: "composer",
     run: (pane) => pane.older(),
-    enabled: (pane) => pane.canOlder(),
+    enabled: (pane) => !pane.asking() && pane.canOlder(),
   },
   {
     name: "newer-message",
@@ -45,7 +58,7 @@ const COMMANDS: readonly {
     keys: ["down"],
     in: "composer",
     run: (pane) => pane.newer(),
-    enabled: (pane) => pane.browsing(),
+    enabled: (pane) => !pane.asking() && pane.browsing(),
   },
   {
     name: "clear",
@@ -67,6 +80,7 @@ const COMMANDS: readonly {
     keys: ["ctrl+k m"],
     in: "chat",
     run: (pane) => pane.chooseModel(),
+    enabled: (pane) => !pane.asking(),
   },
   {
     name: "toggle-tools",
@@ -112,13 +126,27 @@ const COMMANDS: readonly {
     run: (pane) => pane.activate(),
   },
   { name: "copy", description: "Copy the selection", keys: ["y"], in: "transcript", run: (pane) => pane.copy() },
+  {
+    name: "cancel-question",
+    description: "Cancel the question of a plugin",
+    keys: ["esc", "ctrl+c"],
+    in: "question",
+    run: (pane) => pane.cancelQuestion(),
+    enabled: (pane) => pane.asking(),
+  },
 ];
 
 export function apply(ctx: PluginContext<Options>): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
   for (const [name, style] of Object.entries(STYLES)) tui.styles.set(name, style);
-  const chat: Chat = { ctx, tui, copyOnRelease: ctx.options.copyOnRelease ?? true, panes: new WeakMap() };
+  const chat: Chat = {
+    ctx,
+    tui,
+    copyOnRelease: ctx.options.copyOnRelease ?? true,
+    questions: ctx.options.questions ?? "composer",
+    panes: new WeakMap(),
+  };
   tui.views.register("pane", (state, mount) => chatPane(chat, mount, paneState(state)));
   tui.panes.setDefault((mount, reason) =>
     chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),

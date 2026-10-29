@@ -597,3 +597,16 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
     [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error the message did not come back: Error: disk"]],
   );
 });
+
+test("a send after a close of the session by another client opens the session again", async () => {
+  using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  sessions.close("s1");
+  frame.paste("hi");
+  frame.key("enter");
+  await settle();
+  equal([sessions.opened.map((open) => open.id), sessions.inputs], [["s1", "s1"], [[{ user_text: "hi" }]]]);
+});

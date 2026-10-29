@@ -372,6 +372,8 @@ declare module "yuke:tui" {
     readonly group?: object | undefined;
     /** The default is true. A one-line editor writes each line end as a space. */
     readonly multiline?: boolean | undefined;
+    /** Show one `•` for each grapheme and each span, as for a password. The state keeps the text. */
+    readonly mask?: boolean | undefined;
     readonly state?: EditorState | undefined;
     /** The text that an empty editor shows. */
     readonly placeholder?: string | undefined;

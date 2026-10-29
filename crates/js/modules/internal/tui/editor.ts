@@ -50,6 +50,8 @@ const WORD_MOVES = new Map<string, -1 | 1>([
 /** These keys delete a word or a line. With a selection, they delete the selection only. */
 const DELETE_KEYS = new Set(["ctrl+w", "alt+backspace", "alt+d", "ctrl+u"]);
 const UNWRAPPED = 0x7f_ff_ff_ff;
+/** What a masked editor shows for each grapheme and each span. */
+const MASK = "•";
 
 /** A row of the display text: `from` and `to` are display offsets, and `soft` marks a wrap at its end. */
 interface Row {
@@ -58,10 +60,19 @@ interface Row {
   readonly soft: boolean;
 }
 
-/** The display text of a state at a width: the labels in place of their spans, and its lines and rows. */
+/** A source range that shows `label` in its place. */
+interface Label {
+  readonly from: number;
+  readonly to: number;
+  readonly label: string;
+}
+
+/** The display text of a state at a width: the labels in place of their ranges, and its lines and rows. */
 interface Layout {
   readonly state: EditorState;
   readonly width: number;
+  /** The spans, or in a masked editor each grapheme and each span. */
+  readonly labels: readonly Label[];
   readonly shown: string;
   readonly lines: readonly Row[];
   readonly rows: readonly Row[];
@@ -83,6 +94,7 @@ export class TextEditor {
   readonly rows: TextCoordinates<number>;
   readonly #support: TextSupport<number, EditorChange>;
   readonly #multiline: boolean;
+  readonly #mask: boolean;
   readonly #placeholder: string;
   readonly #appearance: TextAppearance;
   readonly #submit: ((state: EditorState) => void) | undefined;
@@ -107,8 +119,10 @@ export class TextEditor {
     if (options.placeholder !== undefined && typeof options.placeholder !== "string") {
       throw new TypeError("a placeholder is a string");
     }
+    if (options.mask !== undefined && typeof options.mask !== "boolean") throw new TypeError("mask is a boolean");
     this.role = role;
     this.#multiline = options.multiline !== false;
+    this.#mask = options.mask === true;
     this.#placeholder = options.placeholder ?? "";
     this.#submit = options.submit;
     this.#support = new TextSupport(options.group);
@@ -534,15 +548,17 @@ export class TextEditor {
     const state = this.#state;
     const cached = this.#layout;
     if (cached !== undefined && cached.state === state && cached.width === width) return cached;
+    const labels = this.#mask ? masked(state) : state.spans;
     let shown = "";
     let at = 0;
-    for (const span of state.spans) {
-      shown += state.text.slice(at, span.from) + span.label;
-      at = span.to;
+    for (const label of labels) {
+      shown += state.text.slice(at, label.from) + label.label;
+      at = label.to;
     }
     shown += state.text.slice(at);
     // No line is as wide as the widest width, so its wrap gives the lines alone.
-    const layout = { state, width, shown, lines: rowsOf(wrap(shown, UNWRAPPED)), rows: rowsOf(wrap(shown, width)) };
+    const lines = rowsOf(wrap(shown, UNWRAPPED));
+    const layout = { state, width, labels, shown, lines, rows: rowsOf(wrap(shown, width)) };
     this.#layout = layout;
     return layout;
   }
@@ -555,7 +571,7 @@ export class TextEditor {
 
   #toDisplay(layout: Layout, offset: number, bias: Bias): number {
     let shift = 0;
-    for (const span of layout.state.spans) {
+    for (const span of layout.labels) {
       if (offset <= span.from) break;
       if (offset < span.to) return span.from + shift + (bias === "before" ? 0 : span.label.length);
       shift += span.label.length - (span.to - span.from);
@@ -565,7 +581,7 @@ export class TextEditor {
 
   #toSource(layout: Layout, display: number, bias: Bias): number {
     let shift = 0;
-    for (const span of layout.state.spans) {
+    for (const span of layout.labels) {
       const start = span.from + shift;
       if (display <= start) break;
       if (display < start + span.label.length) return bias === "before" ? span.from : span.to;
@@ -621,7 +637,8 @@ export class TextEditor {
   /** The styled runs of the display text: span labels, the selection, then the decorations of the extensions. */
   #marks(layout: Layout): Mark[] {
     const marks: Mark[] = [];
-    for (const span of layout.state.spans) {
+    // A masked editor shows a span as one mask, with no label to mark.
+    for (const span of this.#mask ? [] : layout.state.spans) {
       const from = this.#toDisplay(layout, span.from, "before");
       marks.push({ from, to: from + span.label.length, style: LABEL, wholeRows: false });
     }
@@ -688,6 +705,23 @@ function checkSpans(text: string, spans: readonly EditorSpan[]): readonly Editor
 
 function shifted(span: EditorSpan, delta: number): EditorSpan {
   return Object.freeze({ ...span, from: span.from + delta, to: span.to + delta });
+}
+
+/** One mask for each grapheme outside the spans of `state`, and one mask for each span, in source order. */
+function masked(state: EditorState): Label[] {
+  const labels: Label[] = [];
+  const triples = graphemes(state.text);
+  let next = 0;
+  for (let at = 0; at < triples.length; at += 3) {
+    const from = triples[at] as number;
+    const to = from + (triples[at + 1] as number);
+    const span = state.spans[next];
+    if (span === undefined || from < span.from) labels.push({ from, to, label: MASK });
+    else if (from === span.from) labels.push({ from: span.from, to: span.to, label: MASK });
+    // Spans end on grapheme edges, so the last grapheme of a span ends at its end.
+    if (span !== undefined && to === span.to) next += 1;
+  }
+  return labels;
 }
 
 /** The grapheme starts of `text` and its length. */

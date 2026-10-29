@@ -2,7 +2,15 @@
 
 import { apply } from "yuke:internal/bundled/chat";
 import type { EventsPage, SessionHandle, ViewEvent } from "yuke:plugins";
-import type { Block, Commit, ListCatalogResult, SessionSettings, SessionUpdate, StoredEvent } from "yuke:protocol";
+import type {
+  Block,
+  Commit,
+  InteractionResponse,
+  ListCatalogResult,
+  SessionSettings,
+  SessionUpdate,
+  StoredEvent,
+} from "yuke:protocol";
 import type { FrameTest } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 
@@ -61,10 +69,13 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const inputs: (readonly Block[])[] = [];
   const changes: SessionSettings[] = [];
   const removals: number[] = [];
+  const responses: [number, InteractionResponse][] = [];
+  // The end of each handle, by its open. A close by another client ends the handles of its session.
+  const ends = new Map<Opened, AbortController>();
   /**
    * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
    * `cancels` counts the cancels of the handles. `removal` holds each removal until it settles, and `removed` is its
-   * answer.
+   * answer. `refuseAnswer` makes each answer throw, as for a question that another client answered.
    */
   const state: {
     failing: boolean;
@@ -74,6 +85,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     refuseSettings: boolean;
     removal: Promise<void> | undefined;
     removed: boolean;
+    refuseAnswer: boolean;
   } = {
     failing: false,
     accept: undefined,
@@ -82,6 +94,11 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     refuseSettings: false,
     removal: undefined,
     removed: true,
+    refuseAnswer: false,
+  };
+  /** Give each live handle of session `id` the live update `update`. */
+  const deliver = (id: string, update: SessionUpdate): void => {
+    for (const [entry, end] of ends) if (entry.id === id && !end.signal.aborted) entry.event({ update });
   };
   return {
     opened,
@@ -90,13 +107,18 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     inputs,
     changes,
     removals,
+    responses,
     state,
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);
       return "s-new";
     },
     open(id: string, open: Opened): Promise<Partial<SessionHandle>> {
-      opened.push({ id, tail: open.tail, signal: open.signal, event: open.event });
+      const entry = { id, tail: open.tail, signal: open.signal, event: open.event };
+      opened.push(entry);
+      const end = new AbortController();
+      ends.set(entry, end);
+      open.signal.addEventListener("abort", () => end.abort(), { once: true });
       if (id === "missing") return Promise.reject(new Error("no session missing"));
       if (state.openFails > 0) {
         state.openFails -= 1;
@@ -104,6 +126,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
       }
       open.event({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
       return Promise.resolve({
+        signal: end.signal,
         async input(content: readonly Block[]) {
           inputs.push(content);
           await state.accept;
@@ -120,8 +143,14 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         async removeInput(inputId: number) {
           removals.push(inputId);
           await state.removal;
-          if (state.removed) open.event({ update: { sessionUpdate: "input_removed", inputId } });
+          if (state.removed) deliver(id, { sessionUpdate: "input_removed", inputId });
           return state.removed;
+        },
+        respond(interactionId: number, response: InteractionResponse) {
+          if (state.refuseAnswer) throw new Error(`no open question ${interactionId}`);
+          responses.push([interactionId, response]);
+          // As the host does, the first answer closes the question for each handle, later through the event feed.
+          setTimeout(() => deliver(id, { sessionUpdate: "interaction_closed", interactionId }), 0);
         },
       });
     },
@@ -131,10 +160,14 @@ export function fakeSessions(saved: StoredEvent[] = []) {
       const before = page.before ?? Number.POSITIVE_INFINITY;
       return saved.filter((event) => event.seq < before).slice(-page.limit);
     },
-    /** Give the last handle the live update `update`. */
-    push(update: SessionUpdate): void {
+    /** Give each live handle of session `id`, by default the session of the last open, the live update `update`. */
+    push(update: SessionUpdate, id = opened.at(-1)?.id): void {
       if ("seq" in update) saved.push(update);
-      opened.at(-1)?.event({ update });
+      if (id !== undefined) deliver(id, update);
+    },
+    /** End each handle of session `id`, as a close by another client does. */
+    close(id: string): void {
+      for (const [entry, end] of ends) if (entry.id === id) end.abort();
     },
   };
 }
@@ -142,7 +175,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
 /** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat and each notice. */
 export function loadChat(
   frame: FrameTest,
-  options: { readonly copyOnRelease?: boolean } = {},
+  options: { readonly copyOnRelease?: boolean; readonly questions?: "composer" | "modal" } = {},
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
   catalog: { readonly list: () => Promise<ListCatalogResult> } = { list: async () => CATALOG },
 ) {

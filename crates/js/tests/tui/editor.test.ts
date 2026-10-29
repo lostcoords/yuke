@@ -1,7 +1,7 @@
 // The text editor of `yuke:tui`: whole graphemes and spans, its states and changes, its coordinates, its keys, and its
 // frames.
 
-import { createFrame, equal, test, throws } from "yuke:test";
+import { assert, createFrame, equal, test, throws } from "yuke:test";
 import { type EditorChange, type EditorState, TextEditor, type View } from "yuke:tui";
 
 /** A root view that shows `editor` at `width` by `height` cells from (1, 1), and gives it the first focus. */
@@ -212,6 +212,61 @@ test("the line keys reach the ends of a line past its wraps, and a delete at a l
   const seen = changes.length;
   frame.key("ctrl+u ctrl+w");
   equal(changes.length, seen);
+});
+
+test("a masked editor shows one dot for each grapheme and each span, and its caret counts the dots", () => {
+  // "a", a five-unit emoji, "e" with a combining accent, then a paste span over "xyz".
+  const text = "a👩‍💻e\u0301xyz";
+  const editor = new TextEditor({
+    multiline: false,
+    mask: true,
+    state: state(text, 11, [{ from: 8, to: 11, kind: "paste", label: "[p]" }]),
+  });
+  using frame = createFrame({ width: 10, height: 3 }, () => root(editor, 8, 1));
+  frame.draw();
+  const end = frame.frame.cursor?.column;
+  // A masked span shows a plain dot, with no style of a label.
+  const spanStyle = frame.frame.cells[1]?.[4]?.style;
+  frame.key("left left");
+  frame.draw();
+  equal(spanStyle, {});
+  equal(
+    [
+      row(frame.frame.cells[1], 1, 9),
+      editor.rows.text(0),
+      end,
+      frame.frame.cursor?.column,
+      editor.caret,
+      editor.state.text,
+    ],
+    ["••••    ", "••••", 5, 3, 6, text],
+  );
+  assert(throws(() => new TextEditor({ mask: 1 as unknown as boolean })) instanceof TypeError);
+});
+
+test("a mask covers a span at the start, a span at the end, two spans side by side, and an empty text", () => {
+  const span = (from: number, to: number) => ({ from, to, kind: "paste" as const, label: "[p]" });
+  const cases = [
+    { text: "abc", spans: [span(0, 2)], shown: "••" },
+    { text: "abc", spans: [span(1, 3)], shown: "••" },
+    { text: "abcd", spans: [span(0, 2), span(2, 4)], shown: "••" },
+    { text: "", spans: [], shown: "" },
+  ];
+  const results = cases.map((item) => {
+    const editor = new TextEditor({ multiline: false, mask: true, state: state(item.text, 0, item.spans) });
+    using frame = createFrame({ width: 10, height: 3 }, () => root(editor, 8, 1));
+    frame.draw();
+    // Each dot of the display maps back to the edge of its grapheme or span.
+    const offsets = [...item.shown].map((_, column) => editor.rows.at({ column, row: 0 }));
+    frame.key("end");
+    return [editor.rows.text(0), offsets, editor.caret];
+  });
+  equal(results, [
+    ["••", [0, 2], 3],
+    ["••", [0, 1], 3],
+    ["••", [0, 2], 4],
+    ["", [], 0],
+  ]);
 });
 
 test("a one-line field writes line ends as spaces and passes a newline key on", () => {

@@ -70,7 +70,7 @@ export function plain(key: string, text: string, style: string | undefined): Tex
 }
 
 /** The rows of `text` at `width`, indented, each segment in `style`. */
-export function styledRows(text: string, width: number, style: string | undefined): TextRow[] {
+function styledRows(text: string, width: number, style: string | undefined): TextRow[] {
   return rangedRows(text, width, [{ from: 0, to: text.length, style }]);
 }
 
