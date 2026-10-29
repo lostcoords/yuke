@@ -730,6 +730,12 @@ declare module "yuke:tui" {
     readonly pane: Pane | undefined;
   }
 
+  /** An image of the clipboard as PNG. */
+  export interface ClipboardImage {
+    readonly bytes: Uint8Array;
+    readonly mime: "image/png";
+  }
+
   /** A mounted view. `close()` runs once by any path, and `signal` aborts at the close. */
   export interface Mount {
     readonly close: () => void;
@@ -864,6 +870,12 @@ declare module "yuke:tui" {
     readonly requestFrame: (delay?: number) => void;
     /** Send `text` to the clipboard of the terminal. */
     readonly copy: (text: string) => void;
+    /**
+     * The image of the system clipboard as PNG, or `undefined` when it holds no image, as for text only. It reads a PNG
+     * image, and on macOS also a TIFF image. It needs a display. On Linux, a display that does not answer also gives
+     * `undefined`. The promise rejects when the read fails or when the PNG is over 3,932,160 bytes.
+     */
+    readonly readImage: () => Promise<ClipboardImage | undefined>;
   }
 
   /** A layout of children in a row or a column. Sized children take their cells in order; `fill` shares the rest. */

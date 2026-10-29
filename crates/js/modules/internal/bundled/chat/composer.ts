@@ -11,7 +11,7 @@ import type { EditorSpan, EditorState } from "yuke:tui";
 export const PASTE_SPAN = 300;
 
 /** The character that an image span covers: U+FFFC, the object replacement character. */
-const IMAGE = "￼";
+export const IMAGE = "￼";
 
 /** The empty draft. */
 export const EMPTY: EditorState = Object.freeze({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });

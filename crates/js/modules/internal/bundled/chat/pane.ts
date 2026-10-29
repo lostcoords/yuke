@@ -1,23 +1,14 @@
 /**
  * One chat pane: its transcript, its composer, its folds, and the handle of its session. An unbound pane creates its
- * session at the first send. The model and the reasoning come from `tui.startup`, else from a picker.
+ * session at the first send or image paste. The model and the reasoning come from `tui.startup`, else from a picker.
  */
 
-import { blocksOf, draftOf, EMPTY, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
+import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
-import type {
-  Input,
-  InputId,
-  InteractionId,
-  InteractionResponse,
-  ModelInfo,
-  ProviderInfo,
-  SessionId,
-  SessionSettings,
-} from "yuke:protocol";
+import type { Input, InputId, InteractionId, InteractionResponse, SessionId, SessionSettings } from "yuke:protocol";
 import { type Entry, Transcript } from "yuke:transcript";
 import {
   type Canvas,
@@ -71,6 +62,8 @@ export interface PaneActions {
   readonly send: () => void;
   /** Let the user choose the model and the reasoning of the pane. */
   readonly chooseModel: () => void;
+  /** Put the image of the clipboard at the caret of the composer. */
+  readonly pasteImage: () => void;
   /**
    * Recall the newest waiting message of the user into an empty composer, and each next older one above the recalled
    * text. When no message waits, show an older message of the user.
@@ -157,10 +150,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let historyError: string | undefined;
   // The saved place waits until its item loads.
   let restore = state.viewport;
-  // One send or model choice at a time: the next Enter waits until the session accepts or refuses the input, also
-  // while a picker is open.
+  // One send, model choice, or image paste at a time. Another one does nothing until it ends, also while a picker is
+  // open.
   let busy = false;
-  // The settings that the user chose for the first send of an unbound pane.
+  // The settings that the user chose for the session setup of an unbound pane.
   let chosen: SessionSettings | undefined;
   // The key of the shown message of a browse. A browse starts in an empty composer, so its end empties it again.
   let browse: string | undefined;
@@ -213,7 +206,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   /**
    * Open the session `id` for this pane. A failure before the close of the pane gives one notice and no handle. The
-   * next send then opens the session again, also after the end of the handle, as by a close from another client.
+   * next send, model choice, or image paste opens the session again, also after a close by another client.
    */
   const open = (id: SessionId): Promise<SessionHandle | undefined> =>
     sessions.open(id, { tail: TAIL, signal: mount.signal, event }).then(
@@ -394,9 +387,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    */
   const settingsOf = async (startup: Startup): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
-    const models = providers.flatMap((provider: ProviderInfo) =>
-      provider.models.map((model: ModelInfo) => ({ provider: provider.id, model })),
-    );
+    const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
     const wanted = startup.model;
     const chosen =
       wanted === undefined
@@ -432,7 +423,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
-   * Let the user choose the model and the level. An unbound pane keeps them for its first send. A pane with a session
+   * Let the user choose the model and the level. An unbound pane keeps them for its session setup. A pane with a session
    * saves them in the session. The session keeps its folder and the rest of its settings.
    */
   const chooseModel = async (): Promise<void> => {
@@ -446,10 +437,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         chosen = settings;
         return;
       }
-      opening ??= open(session);
-      const target = handle ?? (await opening);
+      // A failed open gave its notice already.
+      const target = await sessionHandle();
+      if (target === undefined || mount.signal.aborted) return;
       const current = transcript.settings;
-      if (target === undefined || current === undefined) throw new Error(`the session ${session} is not open`);
+      if (current === undefined) throw new Error(`the session ${session} is not open`);
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     } catch (error) {
@@ -460,51 +452,86 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
-   * Send the draft. An unbound pane gets its settings first, and a cancel keeps the draft. Then the composer clears,
-   * so the user can type the next message. A pane without a session creates it. A refused input comes back above the
-   * newer text.
+   * The handle of the session of this pane. A pane without a session creates it with the settings of the user, else
+   * those of `tui.startup` or a picker. `undefined` after a cancel, or after a failure that gave its notice.
+   */
+  const sessionHandle = async (): Promise<SessionHandle | undefined> => {
+    if (session === undefined) {
+      let settings: SessionSettings | undefined;
+      try {
+        settings = chosen ?? (await settingsOf(tui.startup));
+      } catch (error) {
+        if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
+        return undefined;
+      }
+      if (settings === undefined || mount.signal.aborted) return undefined;
+      const id = await sessions.create(settings);
+      if (mount.signal.aborted) return undefined;
+      session = id;
+      document = new ChatDocument(`session:${id}`, document.folds);
+      opening = open(id);
+      changed();
+    }
+    // A failed open opens again here, and the open gives its own notice.
+    opening ??= open(session);
+    return handle ?? (await opening);
+  };
+
+  /**
+   * Send the draft. The pane gets its session first, and a cancel keeps the draft. Then the composer clears, so the
+   * user can type the next message. A refused input comes back above the newer text.
    */
   const send = async (): Promise<void> => {
-    if (busy) return;
-    const draft = composer.state;
-    const blocks = blocksOf(draft);
-    if (blocks.length === 0) return;
+    if (busy || blocksOf(composer.state).length === 0) return;
     busy = true;
+    let draft: EditorState | undefined;
     try {
-      let settings: SessionSettings | undefined;
-      if (session === undefined) {
-        try {
-          settings = chosen ?? (await settingsOf(tui.startup));
-        } catch (error) {
-          if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
-          return;
-        }
-        if (settings === undefined || mount.signal.aborted) return;
-      }
+      const target = await sessionHandle();
+      if (target === undefined || mount.signal.aborted) return;
+      // The draft of the send is the one after the setup, so text typed meanwhile goes with it.
+      draft = composer.state;
+      const blocks = blocksOf(draft);
+      if (blocks.length === 0) return;
       composer.reset(EMPTY);
       browse = undefined;
       recalled = undefined;
-      try {
-        if (settings !== undefined) {
-          const id = await sessions.create(settings);
-          if (mount.signal.aborted) return;
-          session = id;
-          document = new ChatDocument(`session:${id}`, document.folds);
-          opening = open(id);
-          changed();
-        }
-        // A failed open of a bound pane opens again here.
-        opening ??= session === undefined ? undefined : open(session);
-        const target = handle ?? (await opening);
-        if (target === undefined) throw new Error(`the session ${session} is not open`);
-        await target.input(blocks);
-      } catch (error) {
-        if (mount.signal.aborted) return;
+      await target.input(blocks);
+    } catch (error) {
+      if (mount.signal.aborted) return;
+      if (draft !== undefined) {
         browse = undefined;
         recalled = undefined;
         composer.reset(joined(draft, composer.state));
-        ctx.notify("error", `the message did not send: ${String(error)}`);
       }
+      ctx.notify("error", `the message did not send: ${String(error)}`);
+    } finally {
+      busy = false;
+    }
+  };
+
+  /** Put the image of the clipboard at the caret. The pane gets its session first, because the image goes to its store. */
+  const pasteImage = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    try {
+      const image = await tui.readImage();
+      if (mount.signal.aborted) return;
+      if (image === undefined) {
+        ctx.notify("info", "the clipboard holds no image");
+        return;
+      }
+      const target = await sessionHandle();
+      if (target === undefined || mount.signal.aborted) return;
+      const blob = await target.putBlob(image.bytes);
+      if (mount.signal.aborted) return;
+      // The image goes where the caret is now, also after an edit during the paste.
+      const count = composer.state.spans.filter((span) => span.kind === "image").length;
+      const selection = composer.selection;
+      composer.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), IMAGE, [
+        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mime: image.mime } },
+      ]);
+    } catch (error) {
+      if (!mount.signal.aborted) ctx.notify("error", `the image did not attach: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -655,6 +682,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     send: () => void send(),
     chooseModel: () => void chooseModel(),
+    pasteImage: () => void pasteImage(),
     browsing: () => browse !== undefined,
     // A waiting recall keeps ↑, so the key does not move the caret meanwhile.
     canOlder: () => recalling || browse !== undefined || composer.state.text === "" || recallable() !== undefined,

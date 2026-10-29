@@ -63,6 +63,7 @@ export function fakeTerminal(): Terminal {
     copy: (text) => {
       calls.push(["copy", text]);
     },
+    readImage: async () => undefined,
     startup: () => ({ cwd: "/work" }),
   };
   return {

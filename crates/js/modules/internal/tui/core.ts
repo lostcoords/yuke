@@ -18,7 +18,18 @@ import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, CommandItem, Cursor, Disposer, FocusChange, Mount, Startup, Style, View } from "yuke:tui";
+import type {
+  CanvasStyle,
+  ClipboardImage,
+  CommandItem,
+  Cursor,
+  Disposer,
+  FocusChange,
+  Mount,
+  Startup,
+  Style,
+  View,
+} from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -36,6 +47,7 @@ export interface Driver {
   readonly cursor: (cursor: Cursor | undefined) => void;
   readonly requestFrame: (delay?: number) => void;
   readonly copy: (text: string) => void;
+  readonly readImage: () => Promise<ClipboardImage | undefined>;
   readonly quit: () => void;
   readonly suspend: () => void;
   readonly reload: (snapshot: string) => void;

@@ -40,7 +40,7 @@ declare module "yuke:test" {
   } from "yuke:protocol";
   import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Question, Transcript } from "yuke:transcript";
-  import type { Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
+  import type { ClipboardImage, Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
 
   /** A color of a frame cell: a palette index from 0 to 255, or `#` and six lower-case hex digits. */
   export type ScreenColor = number | `#${string}`;
@@ -84,6 +84,8 @@ declare module "yuke:test" {
     readonly frame: Frame;
     /** The texts that `tui.copy` sent, the oldest first. */
     readonly copies: readonly string[];
+    /** The image that `tui.readImage` gives. The default is none. */
+    clipboard: ClipboardImage | undefined;
     /** A new surface for the plugin `name`. */
     surface: (name: string) => TestSurface;
     draw: () => Frame;

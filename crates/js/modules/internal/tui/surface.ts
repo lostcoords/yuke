@@ -4,6 +4,7 @@
  */
 import type { Core } from "yuke:internal/tui/core";
 import type {
+  ClipboardImage,
   Command,
   CommandItem,
   DefaultPane,
@@ -200,5 +201,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
     requestFrame: live((delay?: number): void => core.driver.requestFrame(delay)),
     copy: live((text: string): void => core.driver.copy(String(text))),
+    readImage: live((): Promise<ClipboardImage | undefined> => core.driver.readImage()),
   });
 }

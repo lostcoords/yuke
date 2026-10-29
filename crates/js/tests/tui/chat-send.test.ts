@@ -1,10 +1,10 @@
 // The composer of the bundled chat: the first send, the model picker, a refused input, long pastes, the messages of
 // the user, the strip and the recall of waiting messages, and the keys of a pane.
 
-import type { Block, SessionUpdate, StoredEvent } from "yuke:protocol";
+import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, test } from "yuke:test";
 import { type EditorState, TextEditor } from "yuke:tui";
-import { commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
+import { CATALOG, commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
 
 /** The composer of the chat in `frame`. */
 function composerOf(chat: ReturnType<typeof loadChat>): TextEditor {
@@ -608,4 +608,149 @@ test("a send after a close of the session by another client opens the session ag
   frame.key("enter");
   await settle();
   equal([sessions.opened.map((open) => open.id), sessions.inputs], [["s1", "s1"], [[{ user_text: "hi" }]]]);
+});
+
+const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mime: "image/png" as const });
+
+test("ctrl+v puts the image of the clipboard at the caret with the next number, and a send keeps the order", async () => {
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  frame.clipboard = PNG;
+  frame.paste("see ");
+  frame.key("ctrl+v");
+  await settle();
+  frame.paste(" and ");
+  frame.key("ctrl+v");
+  await settle();
+  const shown = draft(composerOf(chat).state);
+  frame.key("enter");
+  await settle();
+  const media = (digest: string) => ({ media: { blob: { digest, len: 3 }, mime: "image/png" } });
+  equal(
+    [shown, sessions.blobs, sessions.inputs],
+    [
+      [
+        "see ￼ and ￼",
+        [
+          [4, 5, "[image 1]"],
+          [10, 11, "[image 2]"],
+        ],
+      ],
+      [
+        [1, 2, 3],
+        [1, 2, 3],
+      ],
+      [[{ user_text: "see " }, media("d1"), { user_text: " and " }, media("d2")]],
+    ],
+  );
+});
+
+test("ctrl+v without an image gives a notice, a failed store gives a notice, and a new pane creates its session first", async () => {
+  const startup = { cwd: "/w", model: { provider: "p", model: "m" }, reasoning: "high" } as const;
+  using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  frame.key("ctrl+v");
+  await settle();
+  const none = [...chat.notices];
+  frame.clipboard = PNG;
+  sessions.state.store = Promise.reject(new Error("disk full"));
+  frame.key("ctrl+v");
+  await settle();
+  equal(
+    [
+      none,
+      chat.notices.slice(1),
+      sessions.created.length,
+      sessions.opened.map((open) => open.id),
+      composerOf(chat).state.text,
+    ],
+    [["info the clipboard holds no image"], ["error the image did not attach: Error: disk full"], 1, ["s-new"], ""],
+  );
+});
+
+test("a cancel of the model picker or a pane close during ctrl+v puts nothing in the composer", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  frame.clipboard = PNG;
+  const composer = composerOf(chat);
+  frame.key("ctrl+v");
+  await settle();
+  frame.key("esc");
+  await settle();
+  const cancelled = [sessions.created.length, composer.state.text];
+  using other = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  const later = fakeSessions();
+  const closing = loadChat(other, {}, later);
+  other.start();
+  await settle();
+  other.clipboard = PNG;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  later.state.store = promise;
+  const held = composerOf(closing);
+  other.key("ctrl+v");
+  await settle();
+  closing.tui.commands.run("core:close");
+  resolve();
+  await settle();
+  equal([cancelled, held.state.text, closing.notices], [[0, ""], "", []]);
+});
+
+test("text typed while the first send sets up the session goes with the message", async () => {
+  const startup = { cwd: "/w", model: { provider: "p", model: "m" }, reasoning: "high" } as const;
+  using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
+  const sessions = fakeSessions();
+  const { promise, resolve } = Promise.withResolvers<ListCatalogResult>();
+  loadChat(frame, {}, sessions, { list: () => promise });
+  frame.start();
+  frame.paste("fix the ");
+  frame.key("enter");
+  frame.paste("test");
+  resolve(CATALOG);
+  await settle();
+  equal(sessions.inputs, [[{ user_text: "fix the test" }]]);
+});
+
+test("ctrl+k m after a failed open gives the notice of the open only", async () => {
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  sessions.state.openFails = 2;
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  frame.key("ctrl+k m");
+  await settle();
+  frame.key("enter");
+  await settle();
+  frame.key("enter");
+  await settle();
+  equal(chat.notices, [
+    "error the session s1 did not open: Error: busy",
+    "error the session s1 did not open: Error: busy",
+  ]);
+});
+
+test("an image whose store finishes after an edit goes where the caret is then", async () => {
+  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  frame.clipboard = PNG;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  sessions.state.store = promise;
+  frame.paste("ab");
+  frame.key("ctrl+v");
+  await settle();
+  frame.key("home");
+  frame.paste("x");
+  resolve();
+  await settle();
+  equal(draft(composerOf(chat).state), ["x\uFFFCab", [[1, 2, "[image 1]"]]]);
 });

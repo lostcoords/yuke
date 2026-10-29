@@ -70,12 +70,14 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const changes: SessionSettings[] = [];
   const removals: number[] = [];
   const responses: [number, InteractionResponse][] = [];
+  const blobs: number[][] = [];
   // The end of each handle, by its open. A close by another client ends the handles of its session.
   const ends = new Map<Opened, AbortController>();
   /**
    * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
    * `cancels` counts the cancels of the handles. `removal` holds each removal until it settles, and `removed` is its
-   * answer. `refuseAnswer` makes each answer throw, as for a question that another client answered.
+   * answer. `refuseAnswer` makes each answer throw, as for a question that another client answered. `store` holds each
+   * put of a blob until it settles, and a rejection refuses the blob.
    */
   const state: {
     failing: boolean;
@@ -86,6 +88,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     removal: Promise<void> | undefined;
     removed: boolean;
     refuseAnswer: boolean;
+    store: Promise<void> | undefined;
   } = {
     failing: false,
     accept: undefined,
@@ -95,6 +98,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     removal: undefined,
     removed: true,
     refuseAnswer: false,
+    store: undefined,
   };
   /** Give each live handle of session `id` the live update `update`. */
   const deliver = (id: string, update: SessionUpdate): void => {
@@ -108,6 +112,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     changes,
     removals,
     responses,
+    blobs,
     state,
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);
@@ -145,6 +150,11 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           await state.removal;
           if (state.removed) deliver(id, { sessionUpdate: "input_removed", inputId });
           return state.removed;
+        },
+        async putBlob(bytes: Uint8Array) {
+          blobs.push([...bytes]);
+          await state.store;
+          return { digest: `d${blobs.length}`, len: bytes.length };
         },
         respond(interactionId: number, response: InteractionResponse) {
           if (state.refuseAnswer) throw new Error(`no open question ${interactionId}`);

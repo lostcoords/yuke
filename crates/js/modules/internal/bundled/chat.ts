@@ -83,6 +83,14 @@ const COMMANDS: readonly {
     enabled: (pane) => !pane.asking(),
   },
   {
+    name: "paste-image",
+    description: "Put the image of the clipboard in the message",
+    keys: ["ctrl+v"],
+    in: "composer",
+    run: (pane) => pane.pasteImage(),
+    enabled: (pane) => !pane.asking(),
+  },
+  {
     name: "toggle-tools",
     description: "Open or fold the tools",
     keys: ["ctrl+o"],

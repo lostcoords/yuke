@@ -8,7 +8,7 @@ import { parseKeys } from "yuke:internal/tui/keys";
 import { createMount } from "yuke:internal/tui/mount";
 import { createSurface } from "yuke:internal/tui/surface";
 import type { Frame, FrameTest, TestSurface } from "yuke:test";
-import type { KeyCode, KeyEvent, MouseEvent, Size, Startup, ViewFactory } from "yuke:tui";
+import type { ClipboardImage, KeyCode, KeyEvent, MouseEvent, Size, Startup, ViewFactory } from "yuke:tui";
 
 const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false });
 
@@ -17,6 +17,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
   let height = size.height;
   const screen = new TestScreen(width, height);
   const copies: string[] = [];
+  let clipboard: ClipboardImage | undefined;
   const surfaces = new Set<TestSurface>();
   const core = new Core({
     width: () => width,
@@ -33,6 +34,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     copy: (text) => {
       copies.push(text);
     },
+    readImage: async () => clipboard,
     quit: () => {},
     suspend: () => {},
     reload: () => {},
@@ -53,6 +55,12 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
       return frame;
     },
     copies,
+    get clipboard(): ClipboardImage | undefined {
+      return clipboard;
+    },
+    set clipboard(image: ClipboardImage | undefined) {
+      clipboard = image;
+    },
     surface(name: string): TestSurface {
       const mount = createMount(() => surfaces.delete(surface));
       const surface: TestSurface = Object.freeze({

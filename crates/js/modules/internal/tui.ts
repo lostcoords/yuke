@@ -1,4 +1,5 @@
 /** The boot of the terminal interface: the core on the terminal and the keys of the core commands. */
+import { clipboardReadImage } from "yuke:internal/native";
 import { type TermEvent, term } from "yuke:internal/term";
 import { CORE, Core } from "yuke:internal/tui/core";
 import { setSurfaces } from "yuke:internal/tui/host";
@@ -18,6 +19,10 @@ const core = new Core({
   cursor: (cursor) => term.cursor(cursor),
   requestFrame: (delay) => term.requestFrame(delay),
   copy: (text) => term.copy(text),
+  readImage: async () => {
+    const bytes = await clipboardReadImage();
+    return bytes === undefined ? undefined : Object.freeze({ bytes, mime: "image/png" });
+  },
   quit: () => term.quit(),
   suspend: () => term.suspend(),
   reload: (snapshot) => term.reload(snapshot),
