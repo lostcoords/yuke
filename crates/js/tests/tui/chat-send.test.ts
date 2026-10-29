@@ -321,3 +321,65 @@ test("a refusal while the user browses the messages ends the browse, so down kee
   frame.key("down");
   equal(composerOf(chat).state.text, "first\nold");
 });
+
+test("ctrl+k m in a new pane keeps the chosen model and level for the first send, even with a startup model", async () => {
+  const startup = { cwd: "/launch", model: { provider: "p", model: "m" }, reasoning: "off" } as const;
+  using frame = createFrame({ width: 30, height: 14 }, undefined, startup);
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  frame.key("ctrl+k m");
+  await settle();
+  frame.key("down");
+  frame.key("enter");
+  await settle();
+  // A send while the picker is open does nothing.
+  chat.tui.commands.run("chat:send");
+  frame.key("enter");
+  await settle();
+  equal(sessions.created, []);
+  frame.paste("hi");
+  frame.key("enter");
+  await settle();
+  equal(
+    [sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.cwd]), sessions.inputs],
+    [[[{ provider: "p", model: "n" }, { thinking: null, effort: "low" }, "/launch"]], [[{ user_text: "hi" }]]],
+  );
+});
+
+test("ctrl+k m in a pane with a session changes its model and level and keeps its other settings", async () => {
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  // The session has its own folder, model, and output limit, so the change must keep the first and the last.
+  const own = {
+    model: { provider: "q", model: "n" },
+    settings: { ...SETTINGS.settings, maxOutputTokens: 1000 },
+    cwd: "/session",
+  };
+  sessions.push({ seq: 2, sessionUpdate: "settings", ...own });
+  frame.key("ctrl+k m");
+  await settle();
+  frame.key("enter");
+  await settle();
+  frame.key("enter");
+  await settle();
+  equal(sessions.changes, [
+    {
+      model: { provider: "p", model: "m" },
+      settings: { ...own.settings, reasoning: { thinking: "off", effort: null } },
+      cwd: "/session",
+    },
+  ]);
+  // A refused change gives one notice.
+  sessions.state.refuseSettings = true;
+  frame.key("ctrl+k m");
+  await settle();
+  frame.key("enter");
+  await settle();
+  frame.key("enter");
+  await settle();
+  equal(chat.notices, ["error the model did not change: Error: a turn runs"]);
+});

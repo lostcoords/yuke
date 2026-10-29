@@ -59,21 +59,24 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const pages: EventsPage[] = [];
   const created: SessionSettings[] = [];
   const inputs: (readonly Block[])[] = [];
+  const changes: SessionSettings[] = [];
   /**
    * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
    * `cancels` counts the cancels of the handles.
    */
-  const state: { failing: boolean; accept: Promise<void> | undefined; cancels: number; openFails: number } = {
-    failing: false,
-    accept: undefined,
-    cancels: 0,
-    openFails: 0,
-  };
+  const state: {
+    failing: boolean;
+    accept: Promise<void> | undefined;
+    cancels: number;
+    openFails: number;
+    refuseSettings: boolean;
+  } = { failing: false, accept: undefined, cancels: 0, openFails: 0, refuseSettings: false };
   return {
     opened,
     pages,
     created,
     inputs,
+    changes,
     state,
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);
@@ -95,6 +98,10 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         },
         cancel() {
           state.cancels += 1;
+        },
+        async setSettings(settings: SessionSettings) {
+          if (state.refuseSettings) throw new Error("a turn runs");
+          changes.push(settings);
         },
       });
     },
@@ -132,7 +139,7 @@ export function loadChat(
   return { tui: surface.tui, opened: sessions.opened, notices, transcript };
 }
 
-/** One ready provider `p` with the model `m`, which takes the reasoning levels default, off, and high. */
+/** One ready provider `p` with the model `m` (levels default, off, high) and the model `n` (levels default, low). */
 export const CATALOG = {
   providers: [
     {
@@ -147,6 +154,14 @@ export const CATALOG = {
             { level: "default", settings: { thinking: null, effort: null } },
             { level: "off", settings: { thinking: "off", effort: null } },
             { level: "high", settings: { thinking: null, effort: "high" } },
+          ],
+        },
+        {
+          id: "n",
+          name: "N",
+          reasoning: [
+            { level: "default", settings: { thinking: null, effort: null } },
+            { level: "low", settings: { thinking: null, effort: "low" } },
           ],
         },
       ],

@@ -62,6 +62,13 @@ const COMMANDS: readonly {
     run: (pane) => pane.interrupt(),
   },
   {
+    name: "model",
+    title: "Choose the model and the reasoning",
+    keys: ["ctrl+k m"],
+    in: "chat",
+    run: (pane) => pane.chooseModel(),
+  },
+  {
     name: "toggle-tools",
     title: "Open or fold the tools",
     keys: ["ctrl+o"],

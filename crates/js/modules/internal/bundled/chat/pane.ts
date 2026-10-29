@@ -17,6 +17,7 @@ import {
   Picker,
   type Placement,
   type Size,
+  type Startup,
   TextEditor,
   TextView,
   type Tui,
@@ -55,6 +56,8 @@ export interface PaneState {
 export interface PaneActions {
   readonly toggleTools: () => void;
   readonly send: () => void;
+  /** Let the user choose the model and the reasoning of the pane. */
+  readonly chooseModel: () => void;
   /** Show an older (-1) or a newer (1) message of the user in the composer, or the draft after the newest one. */
   readonly browse: (step: -1 | 1) => void;
   /** An empty composer or a browse can show an older message. */
@@ -128,9 +131,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let historyError: string | undefined;
   // The saved place waits until its item loads.
   let restore = state.viewport;
-  // One send at a time: the next Enter waits until the session accepts or refuses the input, also while a picker of
-  // the first send is open.
-  let sending = false;
+  // One send or model choice at a time: the next Enter waits until the session accepts or refuses the input, also
+  // while a picker is open.
+  let busy = false;
+  // The settings that the user chose for the first send of an unbound pane.
+  let chosen: SessionSettings | undefined;
   // The draft before a browse of the messages, and the key of the shown message.
   let browse: { readonly draft: EditorState; readonly key: string } | undefined;
   const changed = (): void => {
@@ -271,11 +276,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     });
 
   /**
-   * The settings of a new session: the model and the reasoning of `tui.startup`, else the choices of the user. Each
-   * level is explicit, so the picker leaves out `default`. `undefined` is a cancel or a model that is not ready.
+   * The settings of a new session in the folder of `startup`. The model and the level come from `startup` when it names
+   * them, else the user chooses them. The picker shows only explicit levels, so `default` is never a choice. A cancel
+   * and a model that is not ready give `undefined`.
    */
-  const settingsOf = async (): Promise<SessionSettings | undefined> => {
-    const startup = tui.startup;
+  const settingsOf = async (startup: Startup): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider: ProviderInfo) =>
       provider.models.map((model: ModelInfo) => ({ provider: provider.id, model })),
@@ -315,21 +320,49 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
+   * Let the user choose the model and the level. An unbound pane keeps them for its first send. A pane with a session
+   * saves them in the session. The session keeps its folder and the rest of its settings.
+   */
+  const chooseModel = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    try {
+      // The user chooses both, also when the startup names them.
+      const settings = await settingsOf({ cwd: tui.startup.cwd });
+      if (settings === undefined || mount.signal.aborted) return;
+      if (session === undefined) {
+        chosen = settings;
+        return;
+      }
+      opening ??= open(session);
+      const target = handle ?? (await opening);
+      const current = transcript.settings;
+      if (target === undefined || current === undefined) throw new Error(`the session ${session} is not open`);
+      const reasoning = settings.settings.reasoning;
+      await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
+    } catch (error) {
+      if (!mount.signal.aborted) ctx.notify("error", `the model did not change: ${String(error)}`);
+    } finally {
+      busy = false;
+    }
+  };
+
+  /**
    * Send the draft. An unbound pane gets its settings first, and a cancel keeps the draft. Then the composer clears,
    * so the user can type the next message. A pane without a session creates it. A refused input comes back above the
    * newer text.
    */
   const send = async (): Promise<void> => {
-    if (sending) return;
+    if (busy) return;
     const draft = composer.state;
     const blocks = blocksOf(draft);
     if (blocks.length === 0) return;
-    sending = true;
+    busy = true;
     try {
       let settings: SessionSettings | undefined;
       if (session === undefined) {
         try {
-          settings = await settingsOf();
+          settings = chosen ?? (await settingsOf(tui.startup));
         } catch (error) {
           if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
           return;
@@ -359,7 +392,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         ctx.notify("error", `the message did not send: ${String(error)}`);
       }
     } finally {
-      sending = false;
+      busy = false;
     }
   };
 
@@ -421,6 +454,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       changed();
     },
     send: () => void send(),
+    chooseModel: () => void chooseModel(),
     browsing: () => browse !== undefined,
     canBrowse: () => browse !== undefined || composer.state.text === "",
     browse: (step) => {
