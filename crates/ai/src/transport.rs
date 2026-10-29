@@ -169,16 +169,6 @@ pub struct Outgoing<'a> {
 }
 
 impl<'a> Outgoing<'a> {
-    /// A request of `url`, `headers`, and one `body`.
-    #[cfg(test)]
-    pub(crate) fn new(url: &'a str, headers: &'a [Header], body: &'a [u8]) -> Self {
-        Outgoing {
-            url,
-            headers,
-            body: [body, &[], &[]],
-        }
-    }
-
     /// A request whose body is three parts, sent in order.
     pub(crate) fn from_parts(url: &'a str, headers: &'a [Header], body: [&'a [u8]; 3]) -> Self {
         Outgoing { url, headers, body }

@@ -409,24 +409,10 @@ mod tests {
             reasoning("check", ReplayKind::ResponsesEncrypted, "sig_1"),
             Block::assistant_text("checking"),
             call("call_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(ToolResult::success("call_1", "ok")),
-        ];
-        expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"ok"}]}"#,
-            "gpt-5",
-            responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
-        );
-    }
-
-    #[test]
-    fn error_result_prefixes_text() {
-        let blocks = [
-            call("call_1", "run", "{}"),
             Block::ToolResult(ToolResult::error("call_1", "no \"x\"")),
         ];
         expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
+            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
             "gpt-5",
             responses(),
             Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
@@ -467,7 +453,7 @@ mod tests {
             ToolDefinition {
                 name: "mcp_read".to_owned(),
                 description: "Read.".to_owned(),
-                input_schema: "{}".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
             }
             .deferred(),
@@ -478,7 +464,7 @@ mod tests {
             Block::ToolResult(ToolResult::success("call_1", "found").with_loaded(tools[1..].to_vec())),
         ];
         expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"tool_search","execution":"client","description":"Find.","parameters":{"type":"object"}},{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"tool_search_call","execution":"client","call_id":"call_1","status":"completed","arguments":{"query":"read"}},{"type":"tool_search_output","execution":"client","call_id":"call_1","status":"completed","tools":[{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{},"strict":false}]}]}"#,
+            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"tool_search","execution":"client","description":"Find.","parameters":{"type":"object"}},{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]},{"type":"tool_search_call","execution":"client","call_id":"call_1","status":"completed","arguments":{"query":"read"}},{"type":"tool_search_output","execution":"client","call_id":"call_1","status":"completed","tools":[{"type":"function","name":"mcp_read","description":"Read.","defer_loading":true,"parameters":{"type":"object"},"strict":false}]}]}"#,
             "gpt-5",
             responses(),
             Request::new(&blocks)
@@ -492,25 +478,6 @@ mod tests {
             responses(),
             Request::new(&blocks)
                 .tools(&tools[..1])
-                .settings(&Settings::new().max_output_tokens(8)),
-        );
-    }
-
-    #[test]
-    fn tool_schema() {
-        let tools = [ToolDefinition {
-            name: "run".to_owned(),
-            description: "run a command".to_owned(),
-            input_schema: r#"{"type":"object"}"#.to_owned(),
-            defer_loading: false,
-        }];
-        let blocks = [Block::user_text("go")];
-        expect_json(
-            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"tools":[{"type":"function","name":"run","description":"run a command","parameters":{"type":"object"},"strict":false}],"tool_choice":"auto","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}]}"#,
-            "gpt-5",
-            responses(),
-            Request::new(&blocks)
-                .tools(&tools)
                 .settings(&Settings::new().max_output_tokens(8)),
         );
     }

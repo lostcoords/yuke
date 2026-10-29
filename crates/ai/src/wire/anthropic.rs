@@ -386,24 +386,10 @@ mod tests {
         let blocks = [
             Block::assistant_text("checking"),
             call("toolu_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(ToolResult::success("toolu_1", "ok")),
-        ];
-        expect_json(
-            r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}]}"#,
-            "claude",
-            anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
-        );
-    }
-
-    #[test]
-    fn error_result_sets_flag() {
-        let blocks = [
-            call("toolu_1", "run", "{}"),
             Block::ToolResult(ToolResult::error("toolu_1", "no")),
         ];
         expect_json(
-            r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"run","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}"#,
+            r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}"#,
             "claude",
             anthropic(8),
             Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
@@ -432,20 +418,20 @@ mod tests {
             ToolDefinition {
                 name: "tool_search".to_owned(),
                 description: "Find.".to_owned(),
-                input_schema: "{}".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
             },
             ToolDefinition {
                 name: "mcp_read".to_owned(),
                 description: "Read.".to_owned(),
-                input_schema: "{}".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
             }
             .deferred(),
             ToolDefinition {
                 name: "mcp_write".to_owned(),
                 description: "Write.".to_owned(),
-                input_schema: "{}".to_owned(),
+                input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
             }
             .deferred(),
@@ -455,7 +441,7 @@ mod tests {
             Block::ToolResult(ToolResult::success("toolu_1", "found").with_loaded(tools[1..].to_vec())),
         ];
         expect_json(
-            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"found"},{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
+            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{"type":"object"}},{"name":"mcp_read","description":"Read.","defer_loading":true,"input_schema":{"type":"object"}},{"name":"mcp_write","description":"Write.","defer_loading":true,"input_schema":{"type":"object"}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"found"},{"type":"tool_reference","tool_name":"mcp_read"},{"type":"tool_reference","tool_name":"mcp_write"}],"is_error":false}]}]}"#,
             "claude",
             anthropic(8),
             Request::new(&blocks)
@@ -464,30 +450,11 @@ mod tests {
         );
         // Without a deferred tool, as on a bridge target, a reference would name an undeclared tool, so none is written.
         expect_json(
-            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"found","is_error":false}]}]}"#,
+            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"tool_search","description":"Find.","input_schema":{"type":"object"}}],"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"tool_search","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"found","is_error":false}]}]}"#,
             "claude",
             anthropic(8),
             Request::new(&blocks)
                 .tools(&tools[..1])
-                .settings(&Settings::new().max_output_tokens(8)),
-        );
-    }
-
-    #[test]
-    fn tool_schema() {
-        let tools = [ToolDefinition {
-            name: "run".to_owned(),
-            description: "run a command".to_owned(),
-            input_schema: r#"{"type":"object"}"#.to_owned(),
-            defer_loading: false,
-        }];
-        let blocks = [Block::user_text("go")];
-        expect_json(
-            r#"{"model":"claude","max_tokens":8,"stream":true,"tools":[{"name":"run","description":"run a command","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
-            "claude",
-            anthropic(8),
-            Request::new(&blocks)
-                .tools(&tools)
                 .settings(&Settings::new().max_output_tokens(8)),
         );
     }

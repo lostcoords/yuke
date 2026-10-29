@@ -506,21 +506,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn replayed_reasoning_joins_across_blocks() {
-        let blocks = [
-            reasoning("say \"hi\"\n"),
-            reasoning("then stop"),
-            Block::assistant_text("answer"),
-        ];
-        expect_json(
-            r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"messages":[{"role":"assistant","content":"answer","reasoning_content":"say \"hi\"\nthen stop"}]}"#,
-            "m",
-            replaying(ReasoningReplayMode::ReasoningContent),
-            request(&blocks),
-        );
-    }
-
     // A message needs content or tool calls ("either content or tool_calls, but not none"), so pi skips one with
     // neither, such as a failed attempt that only reasoned. The system message still separates from what follows.
     #[test]
@@ -662,24 +647,10 @@ mod tests {
         let blocks = [
             Block::assistant_text("checking"),
             call("call_1", "run", r#"{"c":1}"#),
-            Block::ToolResult(ToolResult::success("call_1", "ok")),
-        ];
-        expect_json(
-            r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"ok"}]}"#,
-            "gpt",
-            chat(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
-        );
-    }
-
-    #[test]
-    fn error_result_prefixes_text() {
-        let blocks = [
-            call("call_1", "run", "{}"),
             Block::ToolResult(ToolResult::error("call_1", "no \"x\"")),
         ];
         expect_json(
-            r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}"#,
+            r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}"#,
             "gpt",
             chat(),
             Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),

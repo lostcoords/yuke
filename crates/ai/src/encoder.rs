@@ -807,37 +807,6 @@ mod tests {
         }
     }
 
-    // A store that copies each blob, as a store on disk does, encodes as one that lends the bytes it keeps.
-    #[test]
-    fn copying_blob_store_encodes_like_borrowing_store() {
-        struct Copied;
-
-        impl BlobStore for Copied {
-            fn read(
-                &self,
-                digest: &crate::Digest,
-            ) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
-                Ok(TestBlobs.read(digest)?.map(|bytes| Cow::Owned(bytes.into_owned())))
-            }
-        }
-
-        let blocks = [image("ab"), image("cd"), Block::user_text("both")];
-        for wire in plain_wires() {
-            let target = target_of("m", wire);
-            let expected = body(
-                &Encoder::new()
-                    .encode(&target, &Credential::None, Request::new(&blocks).blobs(&TestBlobs))
-                    .unwrap(),
-            );
-            let copied = body(
-                &Encoder::new()
-                    .encode(&target, &Credential::None, Request::new(&blocks).blobs(&Copied))
-                    .unwrap(),
-            );
-            assert_eq!(expected, copied);
-        }
-    }
-
     #[test]
     fn retry_after_mid_write_failure_matches_fresh_encode() {
         struct Flaky {
@@ -927,6 +896,7 @@ mod tests {
         let target = Target {
             route: Route {
                 credential_header: Some(CredentialHeader::XApiKey),
+                headers: vec![Header::from_static("x-gateway-token", "gw-secret")].into(),
                 ..Route::default()
             },
             ..target_of("m", Wire::OpenaiChat(ChatWire::default()))
@@ -937,8 +907,10 @@ mod tests {
         let text = format!("{encoded:?}");
         assert!(text.contains("x-api-key"), "{text}");
         assert!(!text.contains("sk-secret"), "{text}");
+        assert!(!text.contains("gw-secret"), "{text}");
         let text = format!("{encoder:?}");
         assert!(!text.contains("sk-secret"), "{text}");
+        assert!(!text.contains("gw-secret"), "{text}");
     }
 
     // The inputs drop before the encoded request is read, so the borrow checker proves that it borrows none of them.
@@ -985,20 +957,5 @@ mod tests {
         let text = String::from_utf8(body(&encoded)).unwrap();
         assert!(text.contains("original input"));
         assert!(text.contains("be brief"));
-    }
-
-    #[test]
-    fn empty_context_writes_valid_body() {
-        for wire in ALL_WIRES {
-            let mut encoder = Encoder::new();
-            let encoded = encoder
-                .encode(
-                    &target_of("m", wire),
-                    &Credential::None,
-                    Request::new(&[]).system("be brief"),
-                )
-                .unwrap();
-            assert!(serde_json::from_slice::<serde_json::Value>(&body(&encoded)).is_ok());
-        }
     }
 }

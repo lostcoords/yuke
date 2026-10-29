@@ -1173,24 +1173,4 @@ mod tests {
             assert_eq!(serde_json::from_str::<Settings>(json).unwrap(), settings);
         }
     }
-
-    #[test]
-    fn origin_ignores_trailing_slash() {
-        fn at(model: &str, base_url: &str) -> Target {
-            Target {
-                model: model.to_owned().into(),
-                route: Route {
-                    base_url: base_url.to_owned().into(),
-                    ..Route::default()
-                },
-                wire: Wire::OpenaiChat(ChatWire::default()),
-                tool_search: false,
-            }
-        }
-        let origin = Origin::from(OriginRef::of(&at("m", "https://h/v1/")));
-        assert_eq!("https://h/v1", origin.base_url);
-        assert!(origin.matches(&at("m", "https://h/v1")));
-        assert!(!origin.matches(&at("m", "https://h/v2")));
-        assert!(!origin.matches(&at("n", "https://h/v1")));
-    }
 }

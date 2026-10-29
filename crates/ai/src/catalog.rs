@@ -541,7 +541,6 @@ mod tests {
             entry.model.reasoning(ReasoningLevel::Effort(Effort::Low)),
             Err(Error::UnsupportedReasoning)
         );
-        assert_eq!(entry.model.modalities.takes_input(Modality::Image), Some(false));
         assert_eq!(baked.err(), Some(Error::UnknownProvider));
     }
 

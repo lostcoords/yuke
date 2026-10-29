@@ -174,7 +174,7 @@ mod tests {
     use super::*;
     use crate::encoder::Encoder;
     use crate::failure::ProviderKind;
-    use crate::request::{Block, Protocol, Request, Role, ToolCall};
+    use crate::request::{Block, Protocol, Request, ToolCall};
     use crate::response::{AttemptInfo, FinishReason, ResponseLimits, Usage};
     use crate::route::Credential;
     use crate::testing::{
@@ -299,8 +299,11 @@ mod tests {
         bytes.push_str(&canned_reply()); // The reader never reaches the complete response after the failure.
         let canned = CannedTransport::new(bytes);
         let response = block_on(open_canned(&canned).finish());
+        assert_eq!(canned.closes(), 1);
         let failed = failed(&response);
         assert_eq!(failed.cause, Failure::Provider(ProviderKind::ServerError));
+        assert_eq!(failed.info.status, Some(200));
+        assert_eq!(failed.info.error_body.as_deref(), Some(OVERLOAD_EVENT.as_bytes()));
         // The reply drained the events, so the failure records that output reached the library caller.
         assert!(info(&response).output_seen);
         // A failed reply keeps the stopped reasoning without its signature, the complete call, and the text. It drops the
@@ -436,6 +439,8 @@ mod tests {
             // An open that failed read no head. A read that failed keeps the head it read.
             let request_id = if during_open { None } else { Some("req-exchange") };
             assert_eq!(info(&response).request_id.as_deref(), request_id);
+            assert_eq!(info(&response).status, if during_open { None } else { Some(200) });
+            assert!(!info(&response).output_seen);
             assert_eq!(canned.closes(), usize::from(!during_open));
         }
     }
@@ -449,41 +454,6 @@ mod tests {
         assert_eq!(failed(&response).cause, Failure::Provider(ProviderKind::RateLimited));
         assert_eq!(info(&response).error_body.as_deref(), Some(body.as_bytes()));
         assert_eq!(canned.closes(), 1);
-    }
-
-    #[test]
-    fn failed_reply_closes_opened_body() {
-        let cases = [
-            (interleaved_prefix() + &frame(OVERLOAD_EVENT), Protocol::OpenaiResponses),
-            (frame(OVERLOAD_EVENT), Protocol::AnthropicMessages),
-            (frame("not JSON"), Protocol::AnthropicMessages),
-        ];
-        for (bytes, protocol) in cases {
-            let canned = CannedTransport::new(bytes);
-            let response = generate_text(&canned, &target(protocol), "hello");
-            assert!(response.is_err());
-            assert_eq!(canned.closes(), 1);
-        }
-    }
-
-    #[test]
-    fn refusal_is_separate_content() {
-        let reply = [
-            r#"{"choices":[{"index":0,"delta":{"content":"Sorry. "},"finish_reason":null}]}"#,
-            r#"{"choices":[{"index":0,"delta":{"refusal":"I cannot help"},"finish_reason":"stop"}]}"#,
-        ]
-        .map(frame)
-        .concat()
-            + "data: [DONE]\n\n";
-        let canned = CannedTransport::new(reply);
-        let response = generate_text(&canned, &target(Protocol::OpenaiChat), "hello");
-        let completion = completion(&response);
-        assert_eq!(completion.finish_reason, FinishReason::Refusal);
-        assert_eq!(completion.text(), "Sorry. ");
-        assert_eq!(completion.content[1], Content::Refusal("I cannot help".into()));
-        let replayed = Block::from(completion.content[1].clone());
-        assert_eq!(replayed.role(), Role::Assistant);
-        assert_eq!(replayed, Block::assistant_text("I cannot help"));
     }
 
     #[test]
@@ -526,6 +496,44 @@ mod tests {
                 Options { limits, deadline: None },
             );
             assert_eq!(failed(&response).cause, Failure::ResponseTooLarge);
+        }
+        let arguments = [
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c","name":"read"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"12345678"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"9"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ]
+        .map(frame)
+        .concat();
+        for max_tool_arg_bytes in [8, 9] {
+            let canned = CannedTransport::new(arguments.clone());
+            let response = generate_with(
+                &canned,
+                &target(Protocol::AnthropicMessages),
+                "hello",
+                Options {
+                    limits: ResponseLimits {
+                        max_tool_arg_bytes,
+                        ..ResponseLimits::default()
+                    },
+                    deadline: None,
+                },
+            );
+            if max_tool_arg_bytes == 8 {
+                assert_eq!(failed(&response).cause, Failure::ResponseTooLarge);
+                assert_eq!(failed(&response).partial, []);
+            } else {
+                assert_eq!(
+                    completion(&response).content,
+                    [Content::ToolCall(ToolCall {
+                        call_id: "c".into(),
+                        name: "read".into(),
+                        arguments: "123456789".into(),
+                    })]
+                );
+            }
         }
     }
 
@@ -623,6 +631,11 @@ mod tests {
             })
         );
         assert_eq!(completion.content[3], Content::Refusal("refused".into()));
+        assert_eq!(
+            Block::from(completion.content[3].clone()),
+            Block::assistant_text("refused")
+        );
+        assert_eq!(completion.text(), "AB");
         assert_eq!(completion.content[4], Content::Text("B".into()));
     }
 

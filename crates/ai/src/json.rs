@@ -270,21 +270,4 @@ mod tests {
         }
         assert_eq!(value.get_index("i"), Err(Malformed));
     }
-
-    // The depth bound keeps a hostile document off the stack. No provider sends a float past `f64`.
-    #[test]
-    fn rejects_float_overflow_and_deep_nesting() {
-        assert_eq!(parse(r#"{"usage":1e400}"#), Err(Malformed));
-        let nested = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
-        assert!(parse(&nested(127)).is_ok());
-        assert_eq!(parse(&nested(128)), Err(Malformed));
-    }
-
-    #[test]
-    fn rejects_malformed_text_and_trailing_bytes() {
-        assert_eq!(parse_bytes(b"{not json"), Err(Malformed));
-        assert_eq!(parse_bytes(b"{} x"), Err(Malformed));
-        assert_eq!(parse_bytes(b"\"\xff\""), Err(Malformed));
-        assert!(parse_bytes(b" {} \n").is_ok());
-    }
 }

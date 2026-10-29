@@ -526,27 +526,6 @@ mod tests {
 
     const PROTOCOL: Protocol = Protocol::OpenaiChat;
 
-    #[test]
-    fn text_reply() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
-            r#"{"choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}"#,
-            r#"{"choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}"#,
-            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
-            r#"{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":20}}}"#,
-            "[DONE]",
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 text\n\
-             text_delta 0 \"Hel\"\n\
-             text_delta 0 \"lo\"\n\
-             stop 0 text\n\
-             done stop \"stop\" input=100 output=5 cache_read=20",
-        );
-    }
-
     // DeepSeek documents `insufficient_system_resource` and `aborted` as interrupted generations, and Mistral `error`.
     #[test]
     fn interrupted_finish_fails_and_model_length_is_length() {
@@ -644,7 +623,7 @@ mod tests {
     fn interleaved_channels_keep_one_block_each() {
         let mut h = Harness::new(PROTOCOL);
         h.feed(&[
-            r#"{"choices":[{"index":0,"delta":{"reasoning_content":"how it","role":"assistant"}}]}"#,
+            r#"{"choices":[{"index":0,"delta":{"reasoning":"how it","role":"assistant"}}]}"#,
             r#"{"choices":[{"index":0,"delta":{"content":"The"}}]}"#,
             r#"{"choices":[{"index":0,"delta":{"reasoning_content":" works."}}]}"#,
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"read","arguments":"{}"}}]}}]}"#,
@@ -687,18 +666,6 @@ mod tests {
         );
     }
 
-    // This dialect reports `stop` for a refusal, so only the refusal field marks the draft.
-    #[test]
-    fn refusal_streams_in_own_block() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"choices":[{"index":0,"delta":{"refusal":"I cannot help"},"finish_reason":"stop"}]}"#,
-            "[DONE]",
-        ])
-        .unwrap();
-        h.expect_trace("start 0 refusal\nrefusal_delta 0 \"I cannot help\"\nstop 0 refusal\ndone refusal \"stop\"");
-    }
-
     // The caller acts on a cut-off answer, so a token limit or a filter outranks the refusal, as in the OpenAI SDK.
     #[test]
     fn length_and_filter_outrank_refusal() {
@@ -738,15 +705,6 @@ mod tests {
         ok.feed(&[r#"{"error":null,"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#])
             .unwrap();
         ok.expect_trace("start 0 text\ntext_delta 0 \"hi\"");
-    }
-
-    // The typed read covers the common chunk. These chunks need the tree, and must read as the tree reads them.
-    #[test]
-    fn error_chunk_names_its_kind_without_finish_reason() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[r#"{"error":{"code":"rate_limit_exceeded","message":"slow down"},"choices":[]}"#])
-            .unwrap();
-        h.expect_trace("failed rate_limited");
     }
 
     #[test]
@@ -810,17 +768,6 @@ mod tests {
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"y","arguments":""}}]},"finish_reason":null}]}"#,
         ]);
         assert_eq!(result, Err(DecodeError::TooLarge));
-    }
-
-    #[test]
-    fn openrouter_reasoning_field_reads_as_reasoning() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            // OpenRouter names the field `reasoning`. DeepSeek names it `reasoning_content`.
-            r#"{"choices":[{"index":0,"delta":{"reasoning":"why"}}]}"#,
-        ])
-        .unwrap();
-        h.expect_trace("start 0 reasoning\nreasoning_delta 0 \"why\"");
     }
 
     #[test]

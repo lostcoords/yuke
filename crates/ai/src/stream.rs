@@ -147,12 +147,6 @@ impl Stream {
         stream
     }
 
-    /// The attempt facts, on success and failure.
-    #[cfg(test)]
-    pub(crate) fn info(&self) -> &AttemptInfo {
-        &self.info
-    }
-
     /// Return the next event, the one failure that ends a failed attempt, or `None` after the end. The event borrows
     /// the stream until the next call. A drop of the returned future loses no event, so `select!` can race it.
     pub(crate) async fn next(&mut self) -> Option<Result<Event<'_>, Failure>> {
@@ -164,7 +158,7 @@ impl Stream {
                     let index = self.next_event;
                     self.next_event += 1;
                     let event = self.reducer.draft().event(index, &self.payload);
-                    self.info.output_seen |= event.carries_output();
+                    self.info.output_seen = true;
                     Some(Ok(event))
                 }
                 Ok(false) => None,
@@ -281,10 +275,10 @@ mod tests {
     use crate::Target;
     use crate::encoder::Encoder;
     use crate::request::OriginRef;
-    use crate::request::{Block, Origin, Request};
+    use crate::request::{Block, ReasoningReplay, ReplayKind, Request};
     use crate::route::Credential;
-    use crate::testing::{CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, frame, target};
-    use crate::transport::{Fault, Outgoing};
+    use crate::testing::{CannedTransport, block_on, frame, target};
+    use crate::transport::Outgoing;
     use testing::read_trace;
 
     fn canned_text_reply() -> String {
@@ -308,7 +302,7 @@ mod tests {
 
     fn open_with(canned: &CannedTransport, protocol: Protocol) -> Stream {
         let request = Encoded {
-            http: Outgoing::new("https://example.test/v1/messages", &[], b""),
+            http: Outgoing::from_parts("https://example.test/v1/messages", &[], [b"", &[], &[]]),
             protocol,
             origin: OriginRef {
                 model: "m",
@@ -316,23 +310,6 @@ mod tests {
             },
         };
         block_on(Stream::open(canned, &request, Options::default()))
-    }
-
-    #[test]
-    fn events_survive_fragmented_reads() {
-        // A 7-byte chunk splits SSE events across reads, so the parser holds state across reads.
-        let canned = CannedTransport::new(canned_text_reply()).chunk_size(7);
-        let mut stream = open_canned(&canned);
-        // The cache subsets belong to input.
-        assert_eq!(
-            read_trace(&mut stream),
-            "start 0 text\n\
-             text_delta 0 \"Hel\"\n\
-             text_delta 0 \"lo\"\n\
-             stop 0 text\n\
-             done stop \"end_turn\" input=120 output=5 cache_read=20"
-        );
-        assert_eq!(stream.info().error_body, None);
     }
 
     // Some servers close the stream right after the last `data:` line (openai/openai-node#2725).
@@ -358,33 +335,22 @@ mod tests {
             let canned = CannedTransport::new(bytes.to_owned());
             let mut stream = open_canned(&canned);
             assert_eq!(read_trace(&mut stream), expected);
-            assert_eq!(stream.info().error_body, None);
+            assert_eq!(stream.info.error_body, None);
         }
-    }
-
-    #[test]
-    fn keeps_error_event_bytes() {
-        let failed_event = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
-        let canned = CannedTransport::new(frame(failed_event));
-        let mut stream = open_canned(&canned);
-        assert_eq!(read_trace(&mut stream), "failed server_error");
-        assert_eq!(stream.info().error_body.as_deref(), Some(failed_event.as_bytes()));
-        // The provider answered 200, so only the event names the failure.
-        assert_eq!(stream.info().status, Some(200));
     }
 
     #[test]
     fn output_seen_turns_on_with_the_first_output() {
         let canned = CannedTransport::new(canned_text_reply());
         let mut stream = open_canned(&canned);
-        assert!(!stream.info().output_seen);
+        assert!(!stream.info.output_seen);
         assert!(matches!(block_on(stream.next()), Some(Ok(Event::BlockStarted(_)))));
-        assert!(stream.info().output_seen);
+        assert!(stream.info.output_seen);
 
         let refused = CannedTransport::new("busy").status(503);
         let mut stream = open_canned(&refused);
         assert!(matches!(block_on(stream.next()), Some(Err(_))));
-        assert!(!stream.info().output_seen);
+        assert!(!stream.info.output_seen);
     }
 
     #[test]
@@ -395,58 +361,18 @@ mod tests {
             Protocol::OpenaiChat,
             Protocol::OpenaiResponses,
         ] {
-            for body in [frame("{not json").into_bytes(), b"data: \xff\n\n".to_vec()] {
+            for body in [
+                frame("{not json").into_bytes(),
+                frame("{} x").into_bytes(),
+                b"data: \xff\n\n".to_vec(),
+            ] {
                 let canned = CannedTransport::new(body);
                 let mut stream = open_with(&canned, protocol);
                 assert_eq!(read_trace(&mut stream), "failed Protocol", "{protocol:?}");
-                assert_eq!(stream.info().error_body, None);
+                assert_eq!(stream.info.error_body, None);
+                drop(stream);
+                assert_eq!(canned.closes(), 1);
             }
-        }
-    }
-
-    // The stream keeps the body past the end of the answer, and the drop of the stream closes the body.
-    #[test]
-    fn body_lives_until_drop() {
-        let truncated = frame(r#"{"type":"message_start","message":{"usage":{"input_tokens":1}}}"#);
-        for (bytes, status, early, expected) in [
-            (
-                canned_reply(),
-                200,
-                false,
-                "start 0 text\ntext_delta 0 \"Hello from the mock provider.\"\nstop 0 text\ndone stop \"end_turn\" input=0 output=8",
-            ),
-            (canned_reply(), 200, true, "start 0 text"),
-            (truncated, 200, false, "failed IncompleteStream"),
-            (OVERLOAD_EVENT.to_owned(), 503, false, "failed server_error"),
-        ] {
-            let canned = CannedTransport::new(bytes).status(status);
-            let mut stream = open_canned(&canned);
-            let trace = if early {
-                testing::item_line(&block_on(stream.next()).unwrap())
-            } else {
-                read_trace(&mut stream)
-            };
-            assert_eq!(trace, expected);
-            assert_eq!(canned.opens(), 1);
-            assert_eq!(canned.closes(), 0);
-            drop(stream);
-            assert_eq!(canned.closes(), 1);
-        }
-    }
-
-    #[test]
-    fn an_open_fault_ends_the_stream_with_no_head_facts() {
-        for cause in [Fault::ConnectFailed, Fault::ConnectionLost, Fault::IdleTimeout] {
-            let canned = CannedTransport::new(String::new())
-                .open_error(cause)
-                .request_id("never-read");
-            let mut stream = open_canned(&canned);
-            assert_eq!(block_on(stream.next()), Some(Err(Failure::Transport(cause))));
-            assert_eq!(block_on(stream.next()), None);
-            // No head was read, so nothing of one is known.
-            assert_eq!(stream.info().request_id, None);
-            assert_eq!(stream.info().status, None);
-            assert_eq!(canned.closes(), 0);
         }
     }
 
@@ -480,17 +406,19 @@ mod tests {
         encoder
             .encode(&other, &Credential::None, Request::new(&blocks))
             .unwrap();
-        let mut origin = None;
+        let mut replay = None;
         while let Some(event) = block_on(stream.next()) {
             if let Event::BlockStopped(stopped) = event.unwrap()
-                && let crate::BlockResult::Reasoning(Some(replay)) = stopped.result
+                && let crate::BlockResult::Reasoning(Some(state)) = stopped.result
             {
-                origin = Some(Origin::from(replay.origin));
+                replay = Some(ReasoningReplay::from(state));
             }
         }
-        let origin = origin.unwrap();
-        assert_eq!(origin.model, "test-model");
-        assert_eq!(origin.base_url, "https://example.test/v1");
+        let replay = replay.unwrap();
+        assert_eq!(replay.origin.model, "test-model");
+        assert_eq!(replay.origin.base_url, "https://example.test/v1");
+        assert_eq!(replay.kind, ReplayKind::AnthropicSignature);
+        assert_eq!(replay.data, "sig");
         assert_eq!(canned.opens(), 2);
     }
 

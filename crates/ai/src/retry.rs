@@ -163,7 +163,7 @@ mod tests {
         ]
         .map(Failure::Transport);
         for failure in repeats.into_iter().chain([Failure::IncompleteStream]) {
-            assert!(failed(failure, 1).is_some(), "{failure:?}");
+            assert_eq!(failed(failure, 1), Some(500), "{failure:?}");
         }
         for fault in [Fault::InvalidRequest, Fault::TlsSetupFailed, Fault::CertificateRejected] {
             assert_eq!(failed(Failure::Transport(fault), 1), None, "{fault:?}");
@@ -212,10 +212,12 @@ mod tests {
             output_seen: true,
             ..AttemptInfo::default()
         };
-        assert_eq!(
-            None,
-            decide_with(&info, Failure::Provider(ProviderKind::RateLimited), 1)
-        );
+        for failure in [
+            Failure::Provider(ProviderKind::RateLimited),
+            Failure::Transport(Fault::ConnectionLost),
+        ] {
+            assert_eq!(None, decide_with(&info, failure, 1), "{failure:?}");
+        }
     }
 
     #[test]
@@ -259,21 +261,6 @@ mod tests {
             ..AttemptInfo::default()
         };
         assert_eq!(Some(500), decide_with(&asked, unknown, 1));
-    }
-
-    // The policy repeats a request that may have reached the provider. Output that the caller saw stops the repeat.
-    #[test]
-    fn a_cut_connection_or_stream_repeats_until_the_caller_saw_output() {
-        let cut = Failure::Transport(Fault::ConnectionLost);
-        let unseen = AttemptInfo::default();
-        let shown = AttemptInfo {
-            output_seen: true,
-            ..AttemptInfo::default()
-        };
-
-        assert_eq!(Some(500), decide_with(&unseen, cut, 1));
-        assert_eq!(Some(500), decide_with(&unseen, Failure::IncompleteStream, 1));
-        assert_eq!(None, decide_with(&shown, cut, 1));
     }
 
     #[test]

@@ -415,21 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn complete_thinking_on_start_emits_delta() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"plan the poem","signature":"sig"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 reasoning\n\
-             reasoning_delta 0 \"plan the poem\"\n\
-             stop 0 reasoning anthropic_signature=\"sig\"",
-        );
-    }
-
-    #[test]
     fn thinking_collects_signature() {
         let mut h = Harness::new(PROTOCOL);
         h.feed(&[
@@ -455,17 +440,6 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace("start 0 reasoning\nstop 0 reasoning anthropic_redacted=\"opaque\"");
-    }
-
-    #[test]
-    fn thinking_tokens_count_as_reasoning_usage() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}}"#,
-            r#"{"type":"message_stop"}"#,
-        ])
-        .unwrap();
-        h.expect_trace("done stop \"end_turn\" output=40 reasoning=25");
     }
 
     // Claude 4 returns this when a safety classifier stops the response. It is not a content filter.
@@ -538,22 +512,6 @@ mod tests {
         assert_eq!(result, Err(DecodeError::Protocol));
     }
 
-    // An ignored block reaches no consumer, so no event of it can break the answer.
-    #[test]
-    fn ignored_block_events_are_dropped() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
-            r#"{"type":"message_stop"}"#,
-        ])
-        .unwrap();
-        h.expect_trace("done stop \"end_turn\"");
-    }
-
     // The typed path reads only `content_block_delta`. For that event, it must match the tree path.
     #[test]
     fn delta_shaped_unknown_event_does_nothing() {
@@ -597,6 +555,9 @@ mod tests {
             r#"{"type":"content_block_delta","index":0}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"text":"x"}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
         ])
         .unwrap();
         h.expect_trace("");

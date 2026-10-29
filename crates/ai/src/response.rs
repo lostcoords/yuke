@@ -121,8 +121,7 @@ pub struct AttemptInfo {
     /// The first bytes of the error answer, at most [`ResponseLimits::max_error_body_bytes`]: a non-200 body, or the
     /// stream event that failed a 200 response.
     pub error_body: Option<Vec<u8>>,
-    /// The stream returned an event that a caller can show: a block start or stop, a delta with text, or the end. The
-    /// flag tells what reached the library caller, not what a user saw.
+    /// The stream returned an event to the library caller. This does not mean that a user saw the output.
     pub output_seen: bool,
 }
 
@@ -164,20 +163,6 @@ pub enum Event<'a> {
     BlockStopped(BlockStopped<'a>),
     /// The response ends. The stream reads nothing after it.
     Done(Done<'a>),
-}
-
-impl Event<'_> {
-    /// Report whether a caller can show the event. An empty delta and a section start show nothing.
-    pub(crate) fn carries_output(&self) -> bool {
-        match self {
-            Event::TextDelta(delta)
-            | Event::RefusalDelta(delta)
-            | Event::ReasoningDelta(delta)
-            | Event::ToolInputDelta(delta) => !delta.text.is_empty(),
-            Event::ReasoningSectionStarted(_) => false,
-            Event::BlockStarted(_) | Event::BlockStopped(_) | Event::Done(_) => true,
-        }
-    }
 }
 
 /// The block that an event names, and its kind.
@@ -469,44 +454,6 @@ mod tests {
             assert_eq!(FinishReason::from_name(reason.as_str()), Some(reason));
         }
         assert_eq!(FinishReason::from_name("end_turn"), None);
-    }
-
-    // A retry is safe only before output reached the caller, so an empty event must not close that window.
-    #[test]
-    fn only_events_with_bytes_or_structure_carry_output() {
-        let empty = Delta { block: 0, text: "" };
-        let text = Delta { block: 0, text: "a" };
-        let stopped = BlockStopped {
-            block: 0,
-            result: BlockResult::Text,
-        };
-        let done = Done {
-            finish_reason: FinishReason::Stop,
-            raw_finish_reason: "stop",
-            usage: Usage::default(),
-        };
-        for (event, output) in [
-            (Event::ReasoningSectionStarted(0), false),
-            (Event::TextDelta(empty), false),
-            (Event::RefusalDelta(empty), false),
-            (Event::ReasoningDelta(empty), false),
-            (Event::ToolInputDelta(empty), false),
-            (Event::TextDelta(text), true),
-            (Event::RefusalDelta(text), true),
-            (Event::ReasoningDelta(text), true),
-            (Event::ToolInputDelta(text), true),
-            (Event::BlockStopped(stopped), true),
-            (Event::Done(done), true),
-            (
-                Event::BlockStarted(BlockStarted {
-                    block: 0,
-                    kind: BlockKind::Text,
-                }),
-                true,
-            ),
-        ] {
-            assert_eq!(event.carries_output(), output, "{event:?}");
-        }
     }
 
     fn completion(content: Vec<Content>) -> Completion {

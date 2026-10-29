@@ -128,7 +128,8 @@ impl<'b> JsonWriter<'b> {
     /// Write caller JSON text without a check. An empty text writes `{}`.
     pub(crate) fn raw(&mut self, json: &str) {
         self.value_start();
-        self.out.extend_from_slice(object_text(json).as_bytes());
+        self.out
+            .extend_from_slice(if json.is_empty() { b"{}" } else { json.as_bytes() });
         self.value_done();
     }
 
@@ -189,11 +190,6 @@ impl<'b> JsonWriter<'b> {
             self.float(value);
         }
     }
-}
-
-/// A caller JSON object text, which the caller may leave empty for `{}`.
-pub(crate) fn object_text(text: &str) -> &str {
-    if text.is_empty() { "{}" } else { text }
 }
 
 /// The arguments of a call when they are a JSON object, else `{}`. A model can write arguments that are not a JSON
@@ -289,36 +285,5 @@ mod tests {
             written(|jw| jw.value(&value)),
             r#"{"b":[1,-2,18446744073709551615,1.5,100,true,null,"q\"\u0001é"],"a":{}}"#
         );
-    }
-
-    #[test]
-    fn floats_use_shortest_form() {
-        for (value, want) in [
-            (0.7, "0.7"),
-            (0.0, "0"),
-            (1.0, "1"),
-            (1e21, "1000000000000000000000"),
-            (1e-7, "0.0000001"),
-        ] {
-            assert_eq!(written(|jw| jw.float(value)), want);
-        }
-    }
-
-    #[test]
-    fn commas_at_every_level() {
-        let text = written(|jw| {
-            jw.begin_object();
-            jw.field_str("a", "x");
-            jw.key("b");
-            jw.begin_array();
-            jw.uint(1);
-            jw.begin_object();
-            jw.end_object();
-            jw.raw("");
-            jw.end_array();
-            jw.field_bool("c", true);
-            jw.end_object();
-        });
-        assert_eq!(text, r#"{"a":"x","b":[1,{},{}],"c":true}"#);
     }
 }

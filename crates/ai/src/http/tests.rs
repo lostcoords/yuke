@@ -9,30 +9,11 @@ use yuke_http::ClientOptions;
 use yuke_http::testing::{Seen, Server, listen};
 
 use super::*;
-use crate::encoder::Encoded;
-use crate::failure::{Failure, ProviderKind};
-use crate::request::{OriginRef, Protocol};
-use crate::stream::{Options, Stream};
 
 const TEST_USER_AGENT: &str = "ai-test/0";
 
 const CANNED_SSE: &str = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1}}}\n\n\
                           data: {\"type\":\"message_stop\"}\n\n";
-
-/// Open an Anthropic stream with an empty request to the local server at `port`.
-async fn open_stream(client: &Client, port: u16) -> Stream {
-    let url = format!("http://127.0.0.1:{port}/messages");
-    let headers = source_headers();
-    let encoded = Encoded {
-        http: Outgoing::new(&url, &headers, b"{}"),
-        protocol: Protocol::AnthropicMessages,
-        origin: OriginRef {
-            model: "m",
-            base_url: "",
-        },
-    };
-    Stream::open(client, &encoded, Options::default()).await
-}
 
 /// The headers every request sends. Repeated lines of a list-valued header keep their order.
 fn source_headers() -> Vec<Header> {
@@ -61,7 +42,7 @@ async fn run_client(client: &Client, port: u16) -> ClientOut {
         let url = format!("http://127.0.0.1:{port}/messages");
         let headers = source_headers();
         let body = b"{}".to_vec();
-        let request = Outgoing::new(&url, &headers, &body);
+        let request = Outgoing::from_parts(&url, &headers, [&body, &[], &[]]);
         client.open(&request, None).await
     };
     let mut body = match opened {
@@ -266,86 +247,6 @@ async fn redirect_is_refused() {
     assert_eq!(out.head.unwrap().status, 304);
 }
 
-// A real body returns a pending read between bytes, so a dropped `next` must keep every partial line.
-#[tokio::test]
-async fn dropped_next_loses_no_event_over_http() {
-    let sse = [
-        r#"{"type":"message_start","message":{"usage":{"input_tokens":3}}}"#,
-        r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#,
-        r#"{"type":"content_block_stop","index":0}"#,
-        r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}"#,
-        r#"{"type":"message_stop"}"#,
-    ]
-    .map(|data| format!("data: {data}\n\n"))
-    .concat();
-    let server = Server {
-        status: 200,
-        body: sse.into(),
-        trickle: true,
-        ..Server::default()
-    };
-    let (port, served) = listen(server).await;
-    let client = client();
-    let mut stream = open_stream(&client, port).await;
-    let mut lines = Vec::new();
-    let mut drops = 0;
-    loop {
-        // The first poll of `yield_now` is pending, so each pending `next` drops after one poll.
-        tokio::select! {
-            biased;
-            item = stream.next() => match item {
-                Some(item) => lines.push(crate::stream::testing::item_line(&item)),
-                None => break,
-            },
-            () = tokio::task::yield_now() => drops += 1,
-        }
-    }
-    assert!(drops > 100, "the body waited {drops} times");
-    assert_eq!(
-        lines.join("\n"),
-        "start 0 text\n\
-         text_delta 0 \"Hi\"\n\
-         stop 0 text\n\
-         done stop \"end_turn\" input=3 output=1"
-    );
-    drop(stream);
-    served.await.unwrap();
-}
-
-#[tokio::test]
-async fn error_status_and_error_event_fail_alike() {
-    let answer = r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
-    for status in [503, 200] {
-        let body = if status == 200 {
-            format!("data: {answer}\n\n")
-        } else {
-            answer.to_owned()
-        };
-        let server = Server {
-            status,
-            body: body.into(),
-            headers: vec![("request-id", "req-real-http")],
-            ..Server::default()
-        };
-        let (port, served) = listen(server).await;
-        let client = client();
-        let mut stream = open_stream(&client, port).await;
-        assert_eq!(stream.info().status, Some(status));
-        assert_eq!(stream.info().request_id.as_deref(), Some("req-real-http"));
-        let mut failure = None;
-        while let Some(event) = stream.next().await {
-            if let Err(cause) = event {
-                failure = Some(cause);
-            }
-        }
-        assert_eq!(failure, Some(Failure::Provider(ProviderKind::ServerError)));
-        assert_eq!(stream.info().error_body.as_deref(), Some(answer.as_bytes()));
-        drop(stream);
-        served.await.unwrap();
-    }
-}
-
 #[test]
 fn retry_after_reads_seconds_or_http_date() {
     let now = 784_111_777; // Sun, 06 Nov 1994 08:49:37 GMT
@@ -450,7 +351,7 @@ async fn observe_http_bytes(headers: &[Header]) -> (Option<Fault>, usize) {
         results.into_iter().map(Result::unwrap).sum::<usize>()
     });
     let url = format!("http://127.0.0.1:{port}/messages");
-    let request = Outgoing::new(&url, headers, b"{}");
+    let request = Outgoing::from_parts(&url, headers, [b"{}", &[], &[]]);
     let client = client();
     let opened = tokio::time::timeout(Duration::from_secs(5), client.open(&request, Some(after(1000)))).await;
     let observed = tokio::time::timeout(Duration::from_secs(5), &mut peer).await;

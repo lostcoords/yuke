@@ -184,16 +184,4 @@ mod tests {
         assert!(!key.contains("sk-secret"));
         assert!(!grant.contains("token-secret"));
     }
-
-    // A pinned route header can carry a credential, as a gateway token does.
-    #[test]
-    fn route_debug_redacts_header_values() {
-        let route = Route {
-            headers: vec![Header::from_static("x-gateway-token", "gw-secret")].into(),
-            ..Route::default()
-        };
-        let text = format!("{route:?}");
-        assert!(text.contains("x-gateway-token"));
-        assert!(!text.contains("gw-secret"));
-    }
 }

@@ -452,29 +452,6 @@ mod tests {
     const PROTOCOL: Protocol = Protocol::OpenaiResponses;
 
     #[test]
-    fn text_reply() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.created"}"#,
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            r#"{"type":"response.output_text.delta","output_index":0,"delta":"Hel"}"#,
-            r#"{"type":"response.output_text.delta","output_index":0,"delta":"lo"}"#,
-            r#"{"type":"response.output_text.done","output_index":0}"#,
-            r#"{"type":"response.content_part.done","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":20}}}}"#,
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 text\n\
-             text_delta 0 \"Hel\"\n\
-             text_delta 0 \"lo\"\n\
-             stop 0 text\n\
-             done stop \"completed\" input=100 output=5 cache_read=20",
-        );
-    }
-
-    #[test]
     fn search_call_id_comes_from_first_naming_item() {
         let added_only = r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"tool_search_call","execution":"client","status":"completed","arguments":{}}}"#;
         let other_id = r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"tool_search_call","execution":"client","call_id":"call_8","status":"completed","arguments":{}}}"#;
@@ -574,24 +551,6 @@ mod tests {
             ]).unwrap();
             h.expect_trace(&format!("start 0 tool_call\nargs 0 \"{{\\\"a\\\":1}}\"\nstop 0 tool_call id=\"call_1\" name=\"run\" arguments={arguments:?}"));
         }
-    }
-
-    #[test]
-    fn reasoning_item_captures_encrypted_content() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning"}}"#,
-            r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"delta":"pondering"}"#,
-            r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","encrypted_content":"gAAAAsig"}}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{"output_tokens":7}}}"#,
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 reasoning\n\
-             reasoning_delta 0 \"pondering\"\n\
-             stop 0 reasoning responses_encrypted=\"gAAAAsig\"\n\
-             done stop \"completed\" output=7",
-        );
     }
 
     #[test]
@@ -801,6 +760,7 @@ mod tests {
             r#"{"type":"response.content_part.done","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.output_text.delta","output_index":0,"content_index":1,"delta":"b"}"#,
+            r#"{"type":"response.output_text.done","output_index":0,"content_index":1}"#,
             r#"{"type":"response.content_part.done","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
         ])
@@ -933,27 +893,6 @@ mod tests {
             h.feed(events).unwrap();
             h.expect_trace(expected);
         }
-    }
-
-    // A refusal arrives in its own content part, so it would otherwise commit an empty message.
-    #[test]
-    fn refusal_streams_in_own_block() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"item_id":"msg_1","part":{"type":"refusal"}}"#,
-            r#"{"type":"response.refusal.delta","output_index":0,"content_index":0,"item_id":"msg_1","delta":"I cannot help"}"#,
-            r#"{"type":"response.refusal.done","output_index":0,"content_index":0,"item_id":"msg_1","refusal":"I cannot help"}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
-        ])
-        .unwrap();
-        // The draft reports the refusal, so a caller never reads it as a plain answer.
-        h.expect_trace(
-            "start 0 refusal\n\
-             refusal_delta 0 \"I cannot help\"\n\
-             stop 0 refusal\n\
-             done refusal \"completed\"",
-        );
     }
 
     // The caller acts on a cut-off answer, so a token limit outranks the refusal, as in the OpenAI SDK.

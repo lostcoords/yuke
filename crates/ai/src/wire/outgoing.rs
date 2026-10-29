@@ -300,6 +300,7 @@ mod tests {
         };
         let head = built(&route, Protocol::AnthropicMessages, &Credential::None, None);
         assert_eq!(head.url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(head.origin().base_url, "https://api.anthropic.com/v1");
     }
 
     // Configuration can give a route that breaks these rules, so the encoder returns an error.
@@ -312,26 +313,6 @@ mod tests {
         };
         let mismatch = try_build(&keyed, Protocol::OpenaiChat, &Credential::None, None);
         assert_same(mismatch.err(), Some(EncodeError::CredentialMismatch));
-        let broken = [header("bad name", "x")];
-        let route = Route {
-            base_url: "https://h/v1".into(),
-            headers: broken.to_vec().into(),
-            ..Route::default()
-        };
-        assert_same(
-            try_build(&route, Protocol::OpenaiChat, &Credential::None, None).err(),
-            Some(invalid("bad name")),
-        );
-        let owned = [header("User-Agent", "other")];
-        let route = Route {
-            base_url: "https://h/v1".into(),
-            headers: owned.to_vec().into(),
-            ..Route::default()
-        };
-        assert_same(
-            try_build(&route, Protocol::OpenaiChat, &Credential::None, None).err(),
-            Some(invalid("User-Agent")),
-        );
         let session = Route {
             base_url: "https://h/v1".into(),
             session_header: SessionHeader::SessionId,

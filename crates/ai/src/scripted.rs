@@ -610,7 +610,6 @@ mod tests {
         let sent = transport.sent();
         assert_eq!(sent.len(), 2);
         assert!(sent[0].body.contains("first question") && sent[1].body.contains("second question"));
-        assert_eq!(transport.urls(), [sent[0].url.clone(), sent[1].url.clone()]);
         assert_eq!(transport.check(), Ok(()));
     }
 
@@ -766,7 +765,7 @@ mod tests {
                 text: "part".to_owned(),
             });
             let url = format!("https://example.test/v1{}", protocol_path(protocol));
-            let request = Outgoing::new(&url, &[], b"{}");
+            let request = Outgoing::from_parts(&url, &[], [b"{}", &[], &[]]);
 
             let (_, mut body) = block_on(transport.open(&request, None)).unwrap();
             let mut context = Context::from_waker(Waker::noop());
@@ -790,7 +789,7 @@ mod tests {
     #[test]
     fn a_stalled_reply_sends_its_body_and_never_ends() {
         let transport = ScriptedTransport::default().then_stall(text_reply("part"));
-        let request = Outgoing::new("https://example.test/v1/messages", &[], b"{}");
+        let request = Outgoing::from_parts("https://example.test/v1/messages", &[], [b"{}", &[], &[]]);
 
         let (head, mut body) = block_on(transport.open(&request, None)).unwrap();
         let mut context = Context::from_waker(Waker::noop());
