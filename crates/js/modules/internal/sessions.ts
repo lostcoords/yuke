@@ -148,7 +148,7 @@ async function open(
     },
     async removeInput(inputId) {
       live();
-      await sessionRemoveInput([id, inputId]);
+      return await sessionRemoveInput([id, inputId]);
     },
     respond(interactionId, response) {
       live();

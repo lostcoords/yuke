@@ -129,8 +129,9 @@ impl Sessions for Scripted {
     async fn set_settings(&self, _: SessionId, _: SessionSettings) -> Result<(), SessionsError> {
         Ok(())
     }
-    async fn remove_input(&self, _: SessionId, _: InputId) -> Result<(), SessionsError> {
-        Ok(())
+    async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, SessionsError> {
+        self.record(format!("remove input {id} {}", input_id.0));
+        Ok(false)
     }
     fn respond(&self, _: SessionId, _: InteractionId, _: InteractionResponse) -> Result<(), SessionsError> {
         Err("no open question 4".into())
@@ -349,6 +350,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &format!(
             "const id = '{}';
              const input = await handle.input([{{ user_text: 'hi' }}]);
+             const removed = await handle.removeInput(input);
              await handle.input([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
              await handle.sendNotification('shown', 'told');
              handle.cancel();
@@ -357,7 +359,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              await sessions.list();
              await catalog.list();
              await sessions.close(id, {{ stopJobs: true }});
-             return JSON.stringify([input]);",
+             return JSON.stringify([input, removed]);",
             session()
         ),
     )
@@ -365,11 +367,12 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
     .unwrap();
 
     let id = session();
-    assert_eq!(answers, "[3]");
+    assert_eq!(answers, "[3,false]");
     assert_eq!(
         scripted.calls()[1..],
         [
             format!("input {id} user {:?} [{{\"user_text\":\"hi\"}}]", InputKind::Message),
+            format!("remove input {id} 3"),
             format!(
                 "input {id} user {:?} [{{\"user_text\":\"Review main.rs.\"}}]",
                 InputKind::Message

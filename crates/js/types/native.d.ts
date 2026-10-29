@@ -433,7 +433,7 @@ declare module "yuke:internal/native" {
   ): Promise<InputId>;
   export function sessionIdle(id: SessionId): Promise<null>;
   export function sessionSetSettings(request: readonly [id: SessionId, settings: SessionSettings]): Promise<null>;
-  export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<null>;
+  export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<boolean>;
   export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
   export function sessionClose(request: readonly [id: SessionId, stopJobs: boolean]): Promise<null>;
   export function sessionCancel(id: SessionId): void;

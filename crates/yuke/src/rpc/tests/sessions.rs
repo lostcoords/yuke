@@ -133,6 +133,45 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
 }
 
 #[tokio::test]
+async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answers_not_removed() {
+    let place = Place::new(
+        "rpc",
+        "a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answers_not_removed",
+    );
+    let mut client = Client::initialized(&place, Box::new(Stalled)).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    client.request("session/input", input_params(&session, "hi")).await;
+    client
+        .until(|message| message["params"]["update"]["state"] == "running")
+        .await;
+    // The turn waits for the model, so this input waits for the next round.
+    let input = client
+        .call("session/input", input_params(&session, "later"))
+        .await
+        .unwrap()["inputId"]
+        .clone();
+
+    let params = json!({ "sessionId": session, "inputId": input });
+    let mut messages = Vec::new();
+    for _ in 0..2 {
+        let id = client.request("session/remove_input", params.clone()).await;
+        messages.extend(client.until(|message| message["id"] == json!(id)).await);
+    }
+    client.notify("session/cancel", json!({ "sessionId": session })).await;
+    client.until(is_idle).await;
+
+    let results: Vec<&Value> = messages.iter().filter_map(|message| message.get("result")).collect();
+    assert_eq!(results, [&json!({ "removed": true }), &json!({ "removed": false })]);
+    let removed: Vec<&Value> = messages
+        .iter()
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "input_removed")
+        .map(|message| &message["params"]["update"]["inputId"])
+        .collect();
+    assert_eq!(removed, [&input]);
+    client.end().await;
+}
+
+#[tokio::test]
 async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
     let place = Place::new("rpc", "the_server_builds_the_prompt_of_a_new_session_from_its_folder");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;

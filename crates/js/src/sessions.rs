@@ -113,12 +113,12 @@ pub trait Sessions: Send + Sync {
     /// Returns why the request failed.
     async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), SessionsError>;
 
-    /// Remove the pending input `input_id` of the open session `id`.
+    /// Remove the pending input `input_id` of the open session `id`. Return `false` when the input is not pending.
     ///
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), SessionsError>;
+    async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, SessionsError>;
 
     /// Give `response` to the open question `interaction_id` of session `id`.
     ///

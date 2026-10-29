@@ -86,7 +86,7 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.set_settings(id, settings).await?)
     }
 
-    async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), SessionsError> {
+    async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, SessionsError> {
         Ok(self.service()?.remove_input(id, input_id).await?)
     }
 

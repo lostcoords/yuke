@@ -93,13 +93,19 @@ impl LiveSession {
         self.parts.host.accept(input).await
     }
 
-    /// Remove the pending input `input_id`, and tell the observer.
-    pub(super) async fn remove_input(&self, input_id: InputId) -> Result<(), StoreError> {
+    /// Remove the pending input `input_id`, and tell the observer. Return `false` when the input is not pending.
+    // A removal between the take of a turn and the commit of its input fails that commit. The window is a few store
+    // reads, or an `input.before` hook of a later input, so the session recovers instead of a lock (handoff, 7g).
+    pub(super) async fn remove_input(&self, input_id: InputId) -> Result<bool, StoreError> {
         let host = &self.parts.host;
-        host.shared.store.remove_input(host.output.session, input_id).await?;
+        match host.shared.store.remove_input(host.output.session, input_id).await {
+            Ok(()) => {}
+            Err(StoreError::InputNotPending(_)) => return Ok(false),
+            Err(error) => return Err(error),
+        }
         host.output
             .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
-        Ok(())
+        Ok(true)
     }
 
     /// Wait until the session runs no turn and has handled each input that it accepted before the call, or until its

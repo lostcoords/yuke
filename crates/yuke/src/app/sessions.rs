@@ -555,12 +555,12 @@ impl SessionService {
         Ok(())
     }
 
-    /// Remove the pending input `input_id` of session `id`.
+    /// Remove the pending input `input_id` of session `id`. Return `false` when the input is not pending.
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::NotOpen`], and [`AppError::Store`] when the input is not pending or the store fails.
-    pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<(), AppError> {
+    /// Returns [`AppError::NotOpen`], and [`AppError::Store`] when the store fails.
+    pub(crate) async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, AppError> {
         Ok(self.live(id)?.remove_input(input_id).await?)
     }
 

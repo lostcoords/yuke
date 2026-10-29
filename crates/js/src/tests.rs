@@ -152,7 +152,7 @@ impl crate::Sessions for NoSessions {
         &self,
         _: yuke_protocol::SessionId,
         _: yuke_protocol::InputId,
-    ) -> Result<(), crate::SessionsError> {
+    ) -> Result<bool, crate::SessionsError> {
         no_sessions()
     }
     fn respond(

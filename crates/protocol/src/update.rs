@@ -119,7 +119,7 @@ pub enum LiveUpdate {
         #[serde(flatten)]
         server: McpServer,
     },
-    /// A pending input was removed. A turn that took it before the removal fails its next commit.
+    /// A pending input was removed.
     InputRemoved {
         /// The id of the input.
         input_id: InputId,

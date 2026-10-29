@@ -25,8 +25,8 @@ use yuke_agent::StoreError;
 use yuke_protocol::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, Input, InputKind,
     InputResult, InputSource, InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification,
-    PROTOCOL_VERSION, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionId,
-    SessionResult,
+    PROTOCOL_VERSION, RemoveInputResult, Request, RequestId, Response, ResponseError, ResponseOutcome,
+    ServerNotification, SessionId, SessionResult,
 };
 
 use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
@@ -422,10 +422,9 @@ impl Server {
                     .respond(params.session_id, params.interaction_id, params.response)?;
                 result(&EmptyResult {})
             }
-            ClientRequest::RemoveInput(params) => {
-                app.sessions().remove_input(params.session_id, params.input_id).await?;
-                result(&EmptyResult {})
-            }
+            ClientRequest::RemoveInput(params) => result(&RemoveInputResult {
+                removed: app.sessions().remove_input(params.session_id, params.input_id).await?,
+            }),
             ClientRequest::SetSettings(params) => {
                 app.sessions().set_settings(params.session_id, params.settings).await?;
                 result(&EmptyResult {})

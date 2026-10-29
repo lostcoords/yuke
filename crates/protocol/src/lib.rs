@@ -30,9 +30,9 @@ pub use message::{
     ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ExtensionEventParams,
     ForkSessionParams, GetSessionParams, Implementation, InitializeParams, InitializeResult, InputParams, InputResult,
     Job, JobState, JsonRpc, ListJobsResult, ListSessionsParams, ListSessionsResult, LoadSessionParams, NoticeLevel,
-    NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, RemoveSessionParams, Request, RequestId, Response,
-    ResponseError, ResponseOutcome, ServerNotification, SessionParams, SessionResult, SetSettingsParams, StopJobParams,
-    UpdateCredentialParams,
+    NoticeParams, Notification, PROTOCOL_VERSION, RemoveInputParams, RemoveInputResult, RemoveSessionParams, Request,
+    RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, SessionParams, SessionResult,
+    SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
 pub use update::{

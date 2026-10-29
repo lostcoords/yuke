@@ -83,8 +83,8 @@ pub enum ClientRequest {
     /// the settings of a turn do not change. Result: [`EmptyResult`].
     #[serde(rename = "session/set_settings")]
     SetSettings(SetSettingsParams),
-    /// Remove a pending input of a session. An input that a commit consumed is no longer pending, so its removal
-    /// fails. Result: [`EmptyResult`].
+    /// Remove a pending input of a session. A turn saves its input before the model reads it, so the model never reads
+    /// a removed input. Result: [`RemoveInputResult`].
     #[serde(rename = "session/remove_input")]
     RemoveInput(RemoveInputParams),
     /// List the saved sessions, newest first, in pages. Result: [`ListSessionsResult`].
@@ -598,6 +598,15 @@ pub struct RemoveInputParams {
     pub session_id: SessionId,
     /// The pending input to remove.
     pub input_id: InputId,
+}
+
+/// The result of `session/remove_input`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveInputResult {
+    /// `false` when the input is not pending: a commit consumed it, or a removal came first.
+    pub removed: bool,
 }
 
 /// The params of a request with no data: an empty object.

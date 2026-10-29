@@ -160,8 +160,8 @@ export interface SessionHandle {
   readonly idle: () => Promise<void>;
   /** Save `settings`. It fails while a turn runs or input waits. */
   readonly setSettings: (settings: SessionSettings) => Promise<void>;
-  /** Remove the pending input `inputId`. */
-  readonly removeInput: (inputId: InputId) => Promise<void>;
+  /** Remove the pending input `inputId`. `false` when it is not pending: a turn took it, or a removal came first. */
+  readonly removeInput: (inputId: InputId) => Promise<boolean>;
   /** Answer the open question `interactionId`. */
   readonly respond: (interactionId: InteractionId, response: InteractionResponse) => void;
   /** The running background jobs, oldest first. */
