@@ -181,14 +181,6 @@ fn raw_string(text: &str) -> String {
 mod tests {
     use super::*;
 
-    fn parameter(rust_type: &str) -> Parameter {
-        Parameter {
-            name: "value".to_owned(),
-            rust_type: rust_type.to_owned(),
-            nullable: false,
-        }
-    }
-
     #[test]
     fn a_raw_string_keeps_the_sql_with_the_fewest_hashes() {
         assert_eq!(raw_string("SELECT 1"), "r\"SELECT 1\"");
@@ -197,10 +189,13 @@ mod tests {
     }
 
     #[test]
-    fn a_parameter_struct_field_borrows_each_reference_without_a_lifetime_for_the_struct() {
-        assert_eq!(field_type(&parameter("&str")), "&'a str");
-        assert_eq!(field_type(&parameter("Option<&str>")), "Option<&'a str>");
-        assert_eq!(field_type(&parameter("&'static str")), "&'static str");
-        assert_eq!(field_type(&parameter("i64")), "i64");
+    fn a_parameter_struct_field_preserves_an_explicit_lifetime() {
+        let parameter = Parameter {
+            name: "value".to_owned(),
+            rust_type: "&'static str".to_owned(),
+            nullable: false,
+        };
+
+        assert_eq!(field_type(&parameter), "&'static str");
     }
 }

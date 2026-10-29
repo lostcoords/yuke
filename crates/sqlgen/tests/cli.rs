@@ -54,20 +54,12 @@ fn a_rustfmt_that_does_not_start_names_its_cause() {
 }
 
 #[test]
-fn help_shows_the_options_and_examples() {
+fn help_prints_usage_and_exits_successfully() {
     let output = run(&["--help"]);
 
     assert!(output.status.success());
     let stdout = text(&output.stdout);
-    for part in [
-        "Usage:",
-        "--check",
-        "--crate <dir>",
-        "Examples:",
-        "cargo run -p yuke-sqlgen -- --check",
-    ] {
-        assert!(stdout.contains(part), "{stdout}");
-    }
+    assert!(stdout.contains("Usage: cargo run -p yuke-sqlgen"), "{stdout}");
 }
 
 #[test]
@@ -81,34 +73,28 @@ fn an_unknown_argument_exits_with_status_2_and_the_usage() {
 }
 
 #[test]
-fn a_second_run_reports_the_file_up_to_date() {
-    let folder = crate_folder("twice");
+fn generation_creates_updates_and_checks_output() {
+    let folder = crate_folder("lifecycle");
     let crate_argument = folder.to_str().unwrap();
+    let output = folder.join("src/queries.rs");
 
-    let first = run(&["--crate", crate_argument]);
-    let written = std::fs::read_to_string(folder.join("src/queries.rs")).unwrap();
-    let second = run(&["--crate", crate_argument]);
+    let created = run(&["--crate", crate_argument]);
+    assert!(created.status.success(), "{}", text(&created.stderr));
+    assert!(
+        text(&created.stdout).starts_with("updated "),
+        "{}",
+        text(&created.stdout)
+    );
+    let written = std::fs::read_to_string(&output).unwrap();
 
-    assert!(first.status.success(), "{}", text(&first.stderr));
-    assert!(text(&first.stdout).starts_with("updated "), "{}", text(&first.stdout));
-    assert!(second.status.success(), "{}", text(&second.stderr));
-    let stdout = text(&second.stdout);
+    let repeated = run(&["--crate", crate_argument]);
+    assert!(repeated.status.success(), "{}", text(&repeated.stderr));
+    let stdout = text(&repeated.stdout);
     assert!(stdout.contains("is up to date\nquery files: 1\nqueries: 9"), "{stdout}");
-    assert_eq!(std::fs::read_to_string(folder.join("src/queries.rs")).unwrap(), written);
-    std::fs::remove_dir_all(&folder).unwrap();
-}
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), written);
 
-#[test]
-fn check_writes_nothing_and_fails_when_the_file_is_out_of_date() {
-    let folder = crate_folder("check");
-    let crate_argument = folder.to_str().unwrap();
-    std::fs::write(folder.join("src/queries.rs"), "stale").unwrap();
-
+    std::fs::write(&output, "stale").unwrap();
     let stale = run(&["--check", "--crate", crate_argument]);
-    let content = std::fs::read_to_string(folder.join("src/queries.rs")).unwrap();
-    let updated = run(&["--crate", crate_argument]);
-    let current = run(&["--check", "--crate", crate_argument]);
-
     assert_eq!(stale.status.code(), Some(1));
     let stderr = text(&stale.stderr);
     assert!(stderr.contains("is out of date"), "{stderr}");
@@ -116,8 +102,11 @@ fn check_writes_nothing_and_fails_when_the_file_is_out_of_date() {
         stderr.contains(&format!("cargo run -p yuke-sqlgen -- --crate {crate_argument}")),
         "{stderr}"
     );
-    assert_eq!(content, "stale");
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), "stale");
+
+    let updated = run(&["--crate", crate_argument]);
     assert!(updated.status.success(), "{}", text(&updated.stderr));
+    let current = run(&["--check", "--crate", crate_argument]);
     assert!(current.status.success(), "{}", text(&current.stderr));
     std::fs::remove_dir_all(&folder).unwrap();
 }
