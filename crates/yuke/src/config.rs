@@ -28,7 +28,8 @@ pub(crate) struct Config {
     /// The model of a new chat in the terminal interface, as provider/model. Without it, the first send asks.
     #[serde(default)]
     pub(crate) model: Option<String>,
-    /// The reasoning of a new chat in the terminal interface. Without it, the first send asks.
+    /// The reasoning level of a new chat in the terminal interface, such as "off" or "high". "default" is not allowed.
+    /// Without it, the first send asks.
     #[serde(default)]
     pub(crate) reasoning: Option<yuke_protocol::ReasoningLevel>,
 }

@@ -1,8 +1,8 @@
 // The fixtures of the tests of the bundled chat: a fake session store, a chat in a frame, and the rows of a frame.
 
 import { apply } from "yuke:internal/bundled/chat";
-import type { EventsPage, ViewEvent } from "yuke:plugins";
-import type { Block, Commit, SessionSettings, SessionUpdate, StoredEvent } from "yuke:protocol";
+import type { EventsPage, SessionHandle, ViewEvent } from "yuke:plugins";
+import type { Block, Commit, ListCatalogResult, SessionSettings, SessionUpdate, StoredEvent } from "yuke:protocol";
 import type { FrameTest } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 
@@ -57,16 +57,46 @@ export function replies(last: number): StoredEvent[] {
 export function fakeSessions(saved: StoredEvent[] = []) {
   const opened: Opened[] = [];
   const pages: EventsPage[] = [];
-  const state = { failing: false };
+  const created: SessionSettings[] = [];
+  const inputs: (readonly Block[])[] = [];
+  /**
+   * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
+   * `cancels` counts the cancels of the handles.
+   */
+  const state: { failing: boolean; accept: Promise<void> | undefined; cancels: number; openFails: number } = {
+    failing: false,
+    accept: undefined,
+    cancels: 0,
+    openFails: 0,
+  };
   return {
     opened,
     pages,
+    created,
+    inputs,
     state,
-    open(id: string, open: Opened): Promise<object> {
+    async create(settings: SessionSettings): Promise<string> {
+      created.push(settings);
+      return "s-new";
+    },
+    open(id: string, open: Opened): Promise<Partial<SessionHandle>> {
       opened.push({ id, tail: open.tail, signal: open.signal, event: open.event });
       if (id === "missing") return Promise.reject(new Error("no session missing"));
+      if (state.openFails > 0) {
+        state.openFails -= 1;
+        return Promise.reject(new Error("busy"));
+      }
       open.event({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
-      return Promise.resolve({});
+      return Promise.resolve({
+        async input(content: readonly Block[]) {
+          inputs.push(content);
+          await state.accept;
+          return inputs.length;
+        },
+        cancel() {
+          state.cancels += 1;
+        },
+      });
     },
     async events(_id: string, page: EventsPage): Promise<StoredEvent[]> {
       pages.push(page);
@@ -87,11 +117,13 @@ export function loadChat(
   frame: FrameTest,
   options: { readonly copyOnRelease?: boolean } = {},
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
+  catalog: { readonly list: () => Promise<ListCatalogResult> } = { list: async () => CATALOG },
 ) {
   const surface = frame.surface("chat");
   const notices: string[] = [];
+  const services: Record<string, unknown> = { tui: surface.tui, sessions, catalog };
   apply({
-    get: (name: string) => (name === "tui" ? surface.tui : sessions),
+    get: (name: string) => services[name],
     options,
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),
   } as never);
@@ -99,6 +131,28 @@ export function loadChat(
     surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
   return { tui: surface.tui, opened: sessions.opened, notices, transcript };
 }
+
+/** One ready provider `p` with the model `m`, which takes the reasoning levels default, off, and high. */
+export const CATALOG = {
+  providers: [
+    {
+      id: "p",
+      name: "P",
+      state: "ready",
+      models: [
+        {
+          id: "m",
+          name: "M",
+          reasoning: [
+            { level: "default", settings: { thinking: null, effort: null } },
+            { level: "off", settings: { thinking: "off", effort: null } },
+            { level: "high", settings: { thinking: null, effort: "high" } },
+          ],
+        },
+      ],
+    },
+  ],
+} as unknown as ListCatalogResult;
 
 export const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
 
@@ -118,7 +172,8 @@ export function rows(frame: FrameTest): string[] {
 
 /** The rows of the transcript of `frame` above its rule, which is the row before the last. */
 export function transcriptRows(frame: FrameTest): string[] {
-  return rows(frame).slice(0, -2);
+  const rule = rows(frame).findLastIndex((row) => row.startsWith("─"));
+  return rows(frame).slice(0, rule);
 }
 
 /** Press and release the left button at `row` and `column` of `frame`. */

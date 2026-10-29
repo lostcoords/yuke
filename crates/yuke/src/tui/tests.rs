@@ -304,9 +304,9 @@ async fn a_reload_keeps_the_startup_session_and_reads_the_model_and_the_reasonin
         ))
         .await;
 
-    config("default");
+    config("off");
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    let shown = format!(r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"default"}}"#);
+    let shown = format!(r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"off"}}"#);
     output.shows(&shown).await;
 
     // The model does not take the level low, so the reload keeps the old runtime.
@@ -314,6 +314,23 @@ async fn a_reload_keeps_the_startup_session_and_reads_the_model_and_the_reasonin
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
     assert_eq!(output.rows()[0], shown);
     app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_config_reasoning_of_default_stops_the_start() {
+    let place = Place::new("tui", "startup_default_reasoning");
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    let config = r#"{ "model": "minimax/MiniMax-M3", "reasoning": "default" }"#;
+    std::fs::write(place.paths.config.join("config.json"), config).unwrap();
+    let store = crate::app::open_store(&place.paths.data).await.unwrap();
+    let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])));
+    let (display, _output) = display();
+    let observer = Arc::new(Notices(display));
+    let failed = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer)).await;
+    assert_eq!(
+        failed.err().as_deref(),
+        Some(r#"config.json: reasoning is an explicit level, such as "off" or "high", not "default""#)
+    );
 }
 
 #[tokio::test]

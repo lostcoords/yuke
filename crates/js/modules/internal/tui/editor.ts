@@ -454,7 +454,7 @@ export class TextEditor {
     const point = this.rows.point(this.caret);
     if (point === undefined) return;
     const goal = this.#goal ?? point.column;
-    const row = Math.max(0, Math.min(this.#current().rows.length - 1, point.row + count));
+    const row = Math.max(0, Math.min(this.#rowCount(this.#current()) - 1, point.row + count));
     const target = this.rows.at({ column: goal, row });
     if (target === undefined) return;
     this.selection = { anchor: select ? this.#state.selection.anchor : target, head: target };

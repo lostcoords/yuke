@@ -2,7 +2,7 @@
 
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
-import { createFrame, createHost, equal, type FrameTest, reply, test } from "yuke:test";
+import { createFrame, createHost, equal, type FrameTest, folder, reply, test } from "yuke:test";
 import { waitFor } from "../wait.ts";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
@@ -78,4 +78,35 @@ test("a pane draws the same transcript live and after a reload", async () => {
     "Message…",
   ]);
   equal(rows(reloaded), rows(live));
+});
+
+test("the first send of a pane creates its session with the startup model and gets the answer", async () => {
+  let services: { readonly sessions: Sessions; readonly catalog: unknown } | undefined;
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "keeper",
+        apply: (ctx) => {
+          services = { sessions: ctx.get("sessions"), catalog: ctx.get("catalog") };
+          return undefined;
+        },
+      },
+    ],
+    replies: [reply.text("Hi there.")],
+  });
+  const startup = { cwd: folder(), model: { provider: "minimax", model: "MiniMax-M3" }, reasoning: "high" } as const;
+  using frame = createFrame({ width: 30, height: 10 }, undefined, startup);
+  const surface = frame.surface("chat");
+  const known = services as { readonly sessions: Sessions; readonly catalog: unknown };
+  const get = (name: string) => (name === "tui" ? surface.tui : name === "catalog" ? known.catalog : known.sessions);
+  chat({ get, options: {}, notify() {} } as never);
+  frame.start();
+  frame.paste("hello");
+  frame.key("enter");
+  await waitFor(() => {
+    frame.draw();
+    return rows(frame).includes(" Hi there.");
+  });
+  equal(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
+  equal(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
 });

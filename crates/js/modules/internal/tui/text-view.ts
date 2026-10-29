@@ -82,9 +82,7 @@ export class TextView {
   #selection: Selection<TextPosition> | undefined;
   #size: Size = { width: 0, height: 0 };
   /** The two ends of the pressed grapheme, and whether the mouse moved since the press. */
-  #drag:
-    | { readonly start: TextPosition; readonly end: TextPosition; readonly link: string | undefined; moved: boolean }
-    | undefined;
+  #drag: { readonly start: TextPosition; readonly end: TextPosition; moved: boolean } | undefined;
   /** True while the view changes the list, so the list change gives no `scroll` event of its own. */
   #quiet = false;
 
@@ -252,11 +250,10 @@ export class TextView {
     return out;
   }
 
-  activate(position: TextPosition, link?: string): boolean {
+  activate(position: TextPosition): boolean {
     const checked = this.#position(position);
-    if (link !== undefined && typeof link !== "string") throw new TypeError("a link is a string");
     if (this.#activate === undefined) return false;
-    this.#activate(checked, link);
+    this.#activate(checked, this.#linkOf(checked));
     return true;
   }
 
@@ -351,7 +348,7 @@ export class TextView {
       const start = this.hitTest(event);
       const end = this.#endAt(event) ?? start;
       if (start === undefined || end === undefined) return false;
-      this.#drag = { start, end, link: this.#linkAt(event), moved: false };
+      this.#drag = { start, end, moved: false };
       this.caret = start;
       return true;
     }
@@ -372,15 +369,16 @@ export class TextView {
       const selection = this.#selection;
       if (drag.moved && selection !== undefined) {
         if (this.#copyOnRelease) this.#support.copy(this.text({ from: selection.anchor, to: selection.head }));
-      } else this.activate(drag.start, drag.link);
+      } else this.activate(drag.start);
     }
     return true;
   }
 
-  /** The link of the segment at `point`, or `undefined`. */
-  #linkAt(point: Point): string | undefined {
-    const row = this.#rowAt(point.row + this.#list.state.top);
-    if (row === undefined) return undefined;
+  /** The link of the segment that shows `position`, or `undefined`. */
+  #linkOf(position: TextPosition): string | undefined {
+    const point = this.rows.point(position);
+    const row = point === undefined ? undefined : this.#rowAt(point.row);
+    if (point === undefined || row === undefined) return undefined;
     let column = 0;
     for (const segment of row.segments) {
       column += measure(segment.text);

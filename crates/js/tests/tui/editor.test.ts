@@ -175,6 +175,12 @@ test("a full last row gives the caret a row of its own", () => {
   using frame = createFrame({ width: 6, height: 4 }, () => root(editor, 4, 3));
   equal([editor.heightFor(4), editor.heightFor(5), editor.rows.point(4)], [2, 1, { column: 0, row: 1 }]);
   equal(frame.frame.cursor, { column: 1, row: 2 });
+  // Down from the first row reaches the row of the caret after the full row, and Up goes back to the goal column.
+  editor.caret = 1;
+  frame.key("down");
+  equal(editor.caret, 4);
+  frame.key("up");
+  equal(editor.caret, 1);
 });
 
 test("overlapping decorations merge per field and a whole-row decoration fills its rows", () => {

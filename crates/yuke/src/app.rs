@@ -141,9 +141,15 @@ impl Profile {
     ///
     /// # Errors
     ///
-    /// Returns a text for the user when `providers` does not have the configured model, or when that model does not
-    /// take the configured reasoning level.
+    /// Returns a text for the user when the configured reasoning level is `default`. Returns one when `providers` does
+    /// not have the configured model, and when that model does not take the configured reasoning level.
     fn new(providers: Providers, plugins: &[yuke_js::Plugin], config: &Config) -> Result<Self, String> {
+        // The terminal interface sends an explicit reasoning level, so `default` is no choice here.
+        if config.reasoning == Some(ReasoningLevel::Default) {
+            return Err(
+                "config.json: reasoning is an explicit level, such as \"off\" or \"high\", not \"default\"".to_owned(),
+            );
+        }
         let model = match &config.model {
             None => None,
             Some(selector) => {
