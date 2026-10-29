@@ -11,6 +11,10 @@ export type InputParams = {
  */
 sessionId: SessionId, 
 /**
- * The blocks of the input. The server saves the input with the user as its source.
+ * The blocks that the user sees. The server saves the input with the user as its source.
  */
-content: Array<Block>, };
+content: Array<Block>, 
+/**
+ * The blocks that the model reads in place of the content.
+ */
+modelContent?: Array<Block> | null, };

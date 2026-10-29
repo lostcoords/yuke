@@ -423,8 +423,10 @@ declare module "yuke:internal/native" {
   export function sessionsEvents(
     request: readonly [id: SessionId, before: EventNumber | null, limit: number],
   ): Promise<StoredEvent[]>;
-  /** Send `content` as a message of the user. */
-  export function sessionInput(request: readonly [id: SessionId, content: readonly Block[]]): Promise<InputId>;
+  /** Send `content` as a message of the user. The model reads `modelContent` in place of `content` when it is set. */
+  export function sessionInput(
+    request: readonly [id: SessionId, content: readonly Block[], modelContent: readonly Block[] | null],
+  ): Promise<InputId>;
   /** Send a notification of `plugin`: the user sees `display`, and the model reads `text`. */
   export function sessionNotify(
     request: readonly [id: SessionId, plugin: string, display: string, text: string],

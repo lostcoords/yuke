@@ -144,8 +144,11 @@ export interface SessionHandle {
    * session. Its reason tells which.
    */
   readonly signal: AbortSignal;
-  /** Send `content` as a message of the user. A turn starts when the session is idle. */
-  readonly input: (content: readonly Block[]) => Promise<InputId>;
+  /**
+   * Send `content` as a message of the user. The model reads `modelContent` in place of `content` when it is set. A
+   * turn starts when the session is idle.
+   */
+  readonly input: (content: readonly Block[], modelContent?: readonly Block[]) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
   readonly sendNotification: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */

@@ -37,6 +37,47 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
 }
 
 #[tokio::test]
+async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_content() {
+    let place = Place::new(
+        "rpc",
+        "the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_content",
+    );
+    let transport = ScriptedTransport::new([text_reply("done")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    let content = json!([{ "user_text": "Review @main.rs" }]);
+    let model_content = json!([{ "user_text": "Review main.rs, and read it first." }]);
+
+    let empty = client
+        .call(
+            "session/input",
+            json!({ "sessionId": session, "content": content, "modelContent": [] }),
+        )
+        .await;
+    client
+        .request(
+            "session/input",
+            json!({ "sessionId": session, "content": content, "modelContent": model_content }),
+        )
+        .await;
+    let messages = client.until(is_idle).await;
+
+    let empty = empty.unwrap_err();
+    assert_eq!(empty["code"], json!(ResponseError::INVALID_PARAMS));
+    assert_eq!(empty["message"], "the model content of the input has no block");
+    let accepted = messages
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "input_accepted")
+        .unwrap();
+    assert_eq!(accepted["params"]["update"]["input"]["content"], content);
+    assert_eq!(accepted["params"]["update"]["input"]["modelContent"], model_content);
+    let request = &transport.requests()[0];
+    assert!(request.contains("Review main.rs, and read it first."), "{request}");
+    assert!(!request.contains("Review @main.rs"), "{request}");
+    client.end().await;
+}
+
+#[tokio::test]
 async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
     let place = Place::new(
         "rpc",

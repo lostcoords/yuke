@@ -126,9 +126,9 @@ async function open(
   return Object.freeze({
     id,
     signal: ended.signal,
-    async input(content) {
+    async input(content, modelContent) {
       live();
-      return sessionInput([id, content]);
+      return sessionInput([id, content, modelContent ?? null]);
     },
     async sendNotification(display, text) {
       live();

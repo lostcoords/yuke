@@ -112,6 +112,7 @@ fn each_request_reads_and_writes_its_json() {
                 ClientRequest::Input(yuke_protocol::InputParams {
                     session_id: session(),
                     content: vec![yuke_ai::Block::user_text("hello")],
+                    model_content: None,
                 }),
             ),
         ),
@@ -185,6 +186,24 @@ fn each_job_request_reads_and_writes_its_json() {
     for (json, message) in cases {
         assert_json(&json, &message);
     }
+}
+
+#[test]
+fn an_input_request_reads_and_writes_its_model_content() {
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 5, "method": "session/input", "params": {
+            "sessionId": SESSION, "content": [{ "user_text": "Review @main.rs" }],
+            "modelContent": [{ "user_text": "Review main.rs." }]
+        } }),
+        &request(
+            5,
+            ClientRequest::Input(yuke_protocol::InputParams {
+                session_id: session(),
+                content: vec![yuke_ai::Block::user_text("Review @main.rs")],
+                model_content: Some(vec![yuke_ai::Block::user_text("Review main.rs.")]),
+            }),
+        ),
+    );
 }
 
 #[test]

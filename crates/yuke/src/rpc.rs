@@ -403,16 +403,17 @@ impl Server {
                 app.sessions().stop_job(params.session_id, &params.job_id).await?;
                 result(&EmptyResult {})
             }
-            ClientRequest::Input(params) => result(&InputResult {
-                input_id: app
-                    .sessions()
-                    .input(
-                        params.session_id,
-                        Input::new(InputSource::User, InputKind::Message, params.content)
-                            .map_err(|error| AppError::Invalid(chain_text(&error)))?,
-                    )
-                    .await?,
-            }),
+            ClientRequest::Input(params) => {
+                let input = Input::new(InputSource::User, InputKind::Message, params.content);
+                let input = match params.model_content {
+                    Some(model_content) => input.and_then(|input| input.with_model_content(model_content)),
+                    None => input,
+                }
+                .map_err(|error| AppError::Invalid(chain_text(&error)))?;
+                result(&InputResult {
+                    input_id: app.sessions().input(params.session_id, input).await?,
+                })
+            }
             ClientRequest::ListMcpServers(params) => result(&ListMcpServersResult {
                 servers: app.sessions().mcp_servers(params.session_id)?,
             }),

@@ -561,8 +561,11 @@ impl fmt::Debug for UpdateCredentialParams {
 pub struct InputParams {
     /// The session.
     pub session_id: SessionId,
-    /// The blocks of the input. The server saves the input with the user as its source.
+    /// The blocks that the user sees. The server saves the input with the user as its source.
     pub content: Vec<yuke_ai::Block>,
+    /// The blocks that the model reads in place of the content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_content: Option<Vec<yuke_ai::Block>>,
 }
 
 /// The result of `session/input`.

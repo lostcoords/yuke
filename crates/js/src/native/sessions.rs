@@ -200,8 +200,12 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
     request.add(
         object,
         "sessionInput",
-        |sessions, (id, content): (SessionId, Vec<Block>)| async move {
+        |sessions, (id, content, model_content): (SessionId, Vec<Block>, Option<Vec<Block>>)| async move {
             let input = Input::new(InputSource::User, InputKind::Message, content)?;
+            let input = match model_content {
+                Some(model_content) => input.with_model_content(model_content)?,
+                None => input,
+            };
             sessions.input(id, input).await
         },
     )?;

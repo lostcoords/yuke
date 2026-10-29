@@ -349,6 +349,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &format!(
             "const id = '{}';
              const input = await handle.input([{{ user_text: 'hi' }}]);
+             await handle.input([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
              await handle.sendNotification('shown', 'told');
              handle.cancel();
              await sessions.fork(id);
@@ -369,6 +370,10 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         scripted.calls()[1..],
         [
             format!("input {id} user {:?} [{{\"user_text\":\"hi\"}}]", InputKind::Message),
+            format!(
+                "input {id} user {:?} [{{\"user_text\":\"Review main.rs.\"}}]",
+                InputKind::Message
+            ),
             format!(
                 "input {id} test {:?} [{{\"user_text\":\"<system_notification plugin=\\\"test\\\">told</system_notification>\"}}]",
                 InputKind::Notification
