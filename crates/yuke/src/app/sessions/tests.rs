@@ -49,25 +49,12 @@ async fn until(what: &str, ready: impl Fn() -> bool) {
     }
 }
 
-/// Wait until a countdown closes session `id`: it starts the close within `within` of the paused clock, and the close
-/// ends within [`REAL`].
+/// Wait until a countdown closes session `id`: move the paused clock on by `within`, so the countdown fires in that
+/// time, then wait up to [`REAL`] for the close, which runs on other threads in real time.
 async fn closed(sessions: &SessionService, id: SessionId, within: Duration) {
-    let end = tokio::time::Instant::now() + within;
-    while sessions.live(id).is_ok() {
-        assert!(
-            tokio::time::Instant::now() < end,
-            "the session {id} did not close within {within:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let end = std::time::Instant::now() + REAL;
-    while lock(&sessions.registry).slots.contains_key(&id) {
-        assert!(
-            std::time::Instant::now() < end,
-            "the close of the session {id} did not end"
-        );
-        tokio::time::sleep(Duration::from_millis(1)).await;
-    }
+    tokio::time::advance(within).await;
+    let what = format!("the session {id} did not close within {within:?}");
+    until(&what, || !lock(&sessions.registry).slots.contains_key(&id)).await;
 }
 
 /// Drop `attachment` of session `id`, and wait until its countdown starts.
@@ -441,7 +428,9 @@ async fn a_session_with_a_running_job_waits_the_idle_minutes_then_stops_the_job(
     while transport.requests().len() < 2 || sessions.live(id).unwrap().state() == SessionState::Running {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    assert!(pid.exists() && !sessions.jobs(id).unwrap().is_empty());
+    // The shell of the job writes its pid after the turn can end.
+    until("the job writes its pid", || pid.exists()).await;
+    assert_eq!(sessions.jobs(id).unwrap().len(), 1);
     let process: u32 = std::fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
     tokio::time::pause();
 

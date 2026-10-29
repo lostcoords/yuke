@@ -1,9 +1,9 @@
 // The bundled plugin `chat` on the sessions of a test host: the transcript of a pane, live and after a reload.
 
 import { apply as chat } from "yuke:internal/bundled/chat";
-import { flush } from "yuke:internal/sessions";
 import type { PluginSession, Sessions } from "yuke:plugins";
 import { createFrame, createHost, equal, type FrameTest, reply, test } from "yuke:test";
+import { waitFor } from "../wait.ts";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
@@ -53,11 +53,14 @@ test("a pane draws the same transcript live and after a reload", async () => {
   const service = sessions as Sessions;
   using live = chatFrame(service, session.id);
   await session.send("Greet Ada.");
-  await flush();
-  live.draw();
+  // Each pane opens its session in the background, so its rows come after its own open.
+  const shows = (frame: FrameTest) => (): boolean => {
+    frame.draw();
+    return rows(frame).includes(" Done.");
+  };
+  await waitFor(shows(live));
   using reloaded = chatFrame(service, session.id);
-  await flush();
-  reloaded.draw();
+  await waitFor(shows(reloaded));
   equal(rows(live), [
     "",
     " Greet Ada.",

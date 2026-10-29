@@ -2,6 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, rejects, reply, test } from "yuke:test";
+import { waitFor } from "../wait.ts";
 
 /** The sections of a new session before any hook. */
 const saved = { base: "You are yuke.", environment: "workspace: /work" };
@@ -194,6 +195,7 @@ test("a getter that throws in the answer fails the build, and the error names th
 // The host stops its wait at a cancel, so a handler that rejects later sends no fault. A fault would fail this test.
 test("a build that fails after a cancel sends no fault", async () => {
   let rejected = false;
+  const started = Promise.withResolvers<void>();
   const late: PluginSession = (s) => {
     s.hook(
       "prompt.build",
@@ -205,18 +207,20 @@ test("a build that fails after a cancel sends no fault", async () => {
               reject(new Error("stopped"));
             }, 0),
           );
+          started.resolve();
         }),
     );
   };
   await using host = await createHost({ plugins: [{ name: "late", session: late }] });
   const session = await host.openSession();
   const stop = new AbortController();
-  setTimeout(() => stop.abort(new Error("stop")), 20);
+  const built = session.run("prompt.build", { sections: saved }, { signal: stop.signal });
+  // The cancel comes after the handler listens for it.
+  await started.promise;
+  stop.abort(new Error("stop"));
 
-  await rejects(session.run("prompt.build", { sections: saved }, { signal: stop.signal }));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  equal(rejected, true);
+  await rejects(built);
+  await waitFor(() => rejected);
 });
 
 // A handler can be in a list twice, so a remover removes one entry, and a second call of it removes nothing.

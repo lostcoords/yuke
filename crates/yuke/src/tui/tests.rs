@@ -233,12 +233,11 @@ async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
     app.shutdown().await;
 }
 
-#[tokio::test]
-async fn the_start_pane_opens_the_session_of_the_startup() {
-    let place = Place::new("tui", "start_session");
-    let (first_display, _output) = display();
-    let first = started(&place, &first_display).await;
-    let id = first
+/// A saved session of `place` that no app holds open.
+async fn saved_session(place: &Place) -> SessionId {
+    let (display, _output) = display();
+    let app = started(place, &display).await;
+    let id = app
         .sessions()
         .create(SessionSettings {
             model: ModelReference {
@@ -250,19 +249,30 @@ async fn the_start_pane_opens_the_session_of_the_startup() {
         })
         .await
         .unwrap();
-    first.shutdown().await;
+    app.shutdown().await;
+    id
+}
 
-    let (second_display, _output) = display();
-    let app = started_on(&place, &second_display, Some(id)).await;
-
-    // The session is closed until the chat pane opens it.
+/// Wait until the session `id` is open in `app`. A session is closed until a holder opens it.
+async fn opened(app: &App, id: SessionId) {
     let opened = tokio::time::timeout(Duration::from_secs(10), async {
         while app.sessions().get(id).await.unwrap().activity != SessionActivity::Idle {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await;
-    assert!(opened.is_ok(), "the chat pane did not open {id}");
+    assert!(opened.is_ok(), "the session {id} did not open");
+}
+
+#[tokio::test]
+async fn the_start_pane_opens_the_session_of_the_startup() {
+    let place = Place::new("tui", "start_session");
+    let id = saved_session(&place).await;
+    let (display, _output) = display();
+
+    let app = started_on(&place, &display, Some(id)).await;
+
+    opened(&app, id).await;
     app.shutdown().await;
 }
 
@@ -283,10 +293,11 @@ async fn a_reload_keeps_the_startup_session_and_reads_the_model_and_the_reasonin
     };
     let model = r#""model":{"provider":"minimax","model":"MiniMax-M3"}"#;
     config("high");
+    let id = saved_session(&place).await;
     let (display, output) = display();
-    // The chat pane fails to open a session that does not exist, and the startup keeps it.
-    let id = SessionId::generate();
     let mut app = started_on(&place, &display, Some(id)).await;
+    // A reload fails while a session opens, so the chat pane ends its open first.
+    opened(&app, id).await;
     output
         .shows(&format!(
             r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"high"}}"#
