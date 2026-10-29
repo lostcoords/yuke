@@ -11,7 +11,7 @@ export interface ViewType {
   readonly adopt: (mount: Mount) => void;
 }
 
-/** A saved pane: `null` for a placeholder or a view without `snapshot()`, a typed view, or a split. */
+/** A saved pane: a typed view, a split, or `null`. `null` is an empty pane or a view without a valid snapshot. */
 export type SavedPane =
   | null
   | { readonly type: string; readonly state: JsonValue }

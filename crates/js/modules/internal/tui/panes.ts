@@ -1,16 +1,19 @@
 /**
  * The pane tree of the core: leaves and splits, the active pane, focus by direction and next, and the close of a
- * pane. The last pane stays: its close gives a placeholder pane. The view of the tree places the view of each leaf
- * and draws a one-cell divider between the two parts of each split.
+ * pane. A new pane of the core shows the default pane of a plugin, or an empty view without one. The close of the last
+ * pane gives a new one. The view of the tree places the view of each leaf and draws a one-cell divider between the two
+ * parts of each split.
  */
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { SavedPane, SavedPanes, ViewType } from "yuke:internal/tui/restore";
 import type {
   Canvas,
+  DefaultPane,
   Direction,
   FocusDirection,
   Mount,
   Pane,
+  PaneReason,
   Placement,
   Rect,
   Size,
@@ -21,9 +24,9 @@ import type {
 interface Leaf {
   readonly kind: "leaf";
   readonly view: View;
-  /** The handle of a plugin pane; a placeholder has none. */
+  /** The handle of a plugin pane; an empty pane has none. */
   readonly pane: Pane | undefined;
-  /** The plugin of the pane, or `core` for a placeholder. */
+  /** The plugin of the pane, or `core` for an empty pane. */
   readonly owner: string;
 }
 
@@ -37,10 +40,17 @@ interface Split {
 
 type Node = Leaf | Split;
 
+/** The default pane of a plugin, and the hand-over of each of its panes to that plugin. */
+export interface DefaultPaneEntry {
+  readonly owner: string;
+  readonly create: DefaultPane;
+  readonly adopt: (mount: Mount) => void;
+}
+
 /** What the tree needs from the core. */
 export interface PaneHost {
-  /** A new placeholder view, for the last pane and for a failed factory. */
-  readonly placeholder: () => View;
+  /** The default pane, or `undefined` without one. */
+  readonly defaultPane: () => DefaultPaneEntry | undefined;
   /** Give the focus to `view`, a view of a leaf. */
   readonly focus: (view: View) => void;
   readonly report: (source: string, text: string) => void;
@@ -62,7 +72,7 @@ export class PaneTree {
 
   constructor(host: PaneHost) {
     this.#host = host;
-    this.#active = this.#placeholderLeaf();
+    this.#active = emptyLeaf();
     this.#root = this.#active;
     this.view = Object.freeze({
       layout: (size: Size): readonly Placement[] => this.#layout(size),
@@ -70,7 +80,7 @@ export class PaneTree {
     });
   }
 
-  /** The handle of the active pane, or `undefined` while a placeholder is active. */
+  /** The handle of the active pane, or `undefined` while an empty pane is active. */
   get active(): Pane | undefined {
     return this.#active.pane;
   }
@@ -84,17 +94,35 @@ export class PaneTree {
   split(owner: string, create: ViewFactory, direction: Direction): Pane {
     if (direction !== "row" && direction !== "column") throw new TypeError("a split direction is row or column");
     const started = this.#startLeaf(owner, create);
-    if ("mount" in started) return paneOf(started.mount, this.#host.placeholder(), () => {});
-    const { leaf, pane } = started;
-    const old = this.#active;
-    this.#replace(old, { kind: "split", direction, ratio: 0.5, first: old, second: leaf });
-    this.#activate(leaf);
-    return pane;
+    if ("mount" in started) return paneOf(started.mount, emptyView(), () => {});
+    this.#insert(started.leaf, direction);
+    return started.pane;
+  }
+
+  /** Split the active pane along `direction` with a new default pane, which gets the focus. */
+  splitDefault(direction: Direction): void {
+    this.#insert(this.#defaultLeaf("new"), direction);
   }
 
   /**
-   * The saved tree. `save` gives the saved view of a leaf (the plugin of the pane and its view), or `null` for a
-   * placeholder or a view without a snapshot.
+   * Put the default pane of a start in place of the first empty pane in tree order. The new pane gets the focus of the
+   * empty pane. Return `false` without a default pane.
+   */
+  start(): boolean {
+    if (this.#host.defaultPane() === undefined) return false;
+    const empty = this.#leaves().find((leaf) => leaf.pane === undefined);
+    if (empty !== undefined) {
+      const leaf = this.#defaultLeaf("start");
+      this.#replace(empty, leaf);
+      if (this.#active === empty) this.#activate(leaf);
+      else this.#host.requestFrame();
+    }
+    return true;
+  }
+
+  /**
+   * The saved tree. `save` gives the saved view of a leaf (the plugin of the pane and its view), or `null` for an
+   * empty pane or a view without a snapshot.
    */
   snapshot(save: (view: View, owner: string) => SavedPane): SavedPanes {
     const walk = (node: Node): SavedPane =>
@@ -105,15 +133,16 @@ export class PaneTree {
   }
 
   /**
-   * Replace the tree with `saved`, and close the panes of the tree before. A `null` leaf gives a placeholder; a type
-   * without a factory gives no pane (its plugin is gone); a factory that fails gives a placeholder and one notice.
+   * Replace the tree with `saved`, and close the panes of the tree before. A `null` leaf gives a new default pane. A
+   * type without a factory gives no pane, because its plugin is gone. A factory that fails gives an empty pane and one
+   * notice.
    */
   restore(saved: SavedPanes, factoryOf: (type: string) => ViewType | undefined): void {
     const before = this.#leaves();
     const order: (Leaf | undefined)[] = [];
     const build = (pane: SavedPane): Node | undefined => {
       if (pane === null) {
-        const leaf = this.#placeholderLeaf();
+        const leaf = this.#defaultLeaf("new");
         order.push(leaf);
         return leaf;
       }
@@ -128,12 +157,12 @@ export class PaneTree {
       order.push(leaf);
       return leaf;
     };
-    this.#root = build(saved.tree) ?? this.#placeholderLeaf();
+    this.#root = build(saved.tree) ?? this.#defaultLeaf("new");
     for (const leaf of before) leaf.pane?.close();
     this.#activate(order[saved.focus] ?? firstLeaf(this.#root));
   }
 
-  /** Close the active pane: a plugin pane through its mount, a placeholder at once. The last pane stays. */
+  /** Close the active pane: a plugin pane through its mount, an empty pane at once. */
   closeActive(): void {
     const leaf = this.#active;
     if (leaf.pane !== undefined) leaf.pane.close();
@@ -195,12 +224,12 @@ export class PaneTree {
     this.#host.requestFrame();
   }
 
-  /** Take `leaf` out: its sibling takes the place of their split. The last leaf gives way to a placeholder. */
+  /** Take `leaf` out: its sibling takes the place of their split. The last leaf gives way to a new default pane. */
   #remove(leaf: Leaf): void {
     if (!this.#leaves().includes(leaf)) return;
     let next: Leaf;
     if (this.#root === leaf) {
-      next = this.#placeholderLeaf();
+      next = this.#defaultLeaf("new");
       this.#root = next;
     } else {
       const parent = this.#parentOf(this.#root, leaf);
@@ -211,6 +240,13 @@ export class PaneTree {
     }
     if (this.#active === leaf || !this.#leaves().includes(this.#active)) this.#activate(next);
     else this.#host.requestFrame();
+  }
+
+  /** Put `leaf` after the active pane in a new split along `direction`, and give it the focus. */
+  #insert(leaf: Leaf, direction: Direction): void {
+    const old = this.#active;
+    this.#replace(old, { kind: "split", direction, ratio: 0.5, first: old, second: leaf });
+    this.#activate(leaf);
   }
 
   /** Put `replacement` where `node` is in the tree. */
@@ -244,11 +280,21 @@ export class PaneTree {
     return leaves;
   }
 
-  /** The leaf of a saved view, `undefined` without a factory, or a placeholder when the factory fails. */
+  /** The leaf of a saved view, `undefined` without a factory, or an empty leaf when the factory fails. */
   #restoreLeaf(state: unknown, entry: ViewType | undefined): Leaf | undefined {
     if (entry === undefined) return undefined;
     const started = this.#startLeaf(entry.owner, (given) => entry.restore(state, given));
-    if ("mount" in started) return this.#placeholderLeaf();
+    if ("mount" in started) return emptyLeaf();
+    entry.adopt(started.pane);
+    return started.leaf;
+  }
+
+  /** A new leaf of the default pane, or an empty leaf without one or when it fails. */
+  #defaultLeaf(reason: PaneReason): Leaf {
+    const entry = this.#host.defaultPane();
+    if (entry === undefined) return emptyLeaf();
+    const started = this.#startLeaf(entry.owner, (mount) => entry.create(mount, reason));
+    if ("mount" in started) return emptyLeaf();
     entry.adopt(started.pane);
     return started.leaf;
   }
@@ -266,10 +312,6 @@ export class PaneTree {
     });
     leaf = { kind: "leaf", view, pane, owner };
     return { leaf, pane };
-  }
-
-  #placeholderLeaf(): Leaf {
-    return { kind: "leaf", view: this.#host.placeholder(), pane: undefined, owner: "core" };
   }
 
   /**
@@ -315,6 +357,15 @@ export class PaneTree {
       }
     }
   }
+}
+
+/** A new view that draws nothing. Each leaf has its own view, because the scene finds a leaf by its view. */
+function emptyView(): View {
+  return { draw() {} };
+}
+
+function emptyLeaf(): Leaf {
+  return { kind: "leaf", view: emptyView(), pane: undefined, owner: "core" };
 }
 
 function firstLeaf(node: Node): Leaf {

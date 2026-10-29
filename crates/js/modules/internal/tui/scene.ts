@@ -44,7 +44,7 @@ export interface SceneHost {
   readonly placed: (views: readonly PlacedView[]) => void;
 }
 
-/** A pane of the tree: the plugin of its view, and its handle (none for a placeholder). */
+/** A pane of the tree: the plugin of its view, and its handle (none for an empty pane). */
 export interface PaneLeaf {
   readonly owner: string;
   readonly pane: Pane | undefined;

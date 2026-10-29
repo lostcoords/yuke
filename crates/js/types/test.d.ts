@@ -92,6 +92,10 @@ declare module "yuke:test" {
     mouse: (event: MouseEvent) => void;
     paste: (text: string) => void;
     resize: (size: Size) => void;
+    /** Send the start event of the frame loop. With `snapshot` from `snapshot()`, the saved panes come back. */
+    start: (snapshot?: string) => void;
+    /** The saved panes that a reload gives the start event of the next runtime. */
+    snapshot: () => string;
   }
 
   /** A frame test of `size`. `create` makes the root view; without it, the root is the pane tree. */

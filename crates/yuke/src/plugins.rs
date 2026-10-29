@@ -38,7 +38,10 @@ struct YukeFields {
 
 /// The plugins of the binary, in load order: the name of each one and the `yuke:` name of its entry module. A bundled
 /// plugin uses and provides no service.
-const BUNDLED: &[(&str, &str)] = &[("compaction", "yuke:internal/bundled/compaction")];
+const BUNDLED: &[(&str, &str)] = &[
+    ("compaction", "yuke:internal/bundled/compaction"),
+    ("chat", "yuke:internal/bundled/chat"),
+];
 
 /// The plugins to load, in load order. The bundled plugins come first, without the ones that `config.disable` names.
 /// Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order. A

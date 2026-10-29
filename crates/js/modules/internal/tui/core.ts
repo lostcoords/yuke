@@ -11,12 +11,17 @@ import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
 import { Notices } from "yuke:internal/tui/notices";
-import { PaneTree } from "yuke:internal/tui/panes";
+import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
 import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import type { CanvasStyle, Cursor, Disposer, FocusChange, Style, View } from "yuke:tui";
+
+/** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
+export interface DefaultPaneSlot extends DefaultPaneEntry {
+  readonly signal: AbortSignal;
+}
 
 /** What the core needs from the terminal. The boot passes `term`; a test passes a fake. */
 export interface Driver {
@@ -47,13 +52,13 @@ export class Core {
   readonly scene: Scene;
   readonly widgets: WidgetMounts;
   readonly driver: Driver;
-  readonly #placeholder: () => View;
+  #defaultPane: DefaultPaneSlot | undefined;
+  /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
+  #startWaits = false;
   readonly #focusListeners = new Set<{ readonly owner: string; readonly listener: (change: FocusChange) => void }>();
 
-  /** `placeholder` makes the view of a pane that holds nothing, such as the last pane after its close. */
-  constructor(driver: Driver, placeholder: (core: Core) => View) {
+  constructor(driver: Driver) {
     this.driver = driver;
-    this.#placeholder = () => placeholder(this);
     const frame = (): void => driver.requestFrame();
     const report = (source: string, text: string): void => this.notices.add("error", source, text);
     this.styles = new Styles(driver.truecolor, driver.background, frame);
@@ -76,7 +81,10 @@ export class Core {
       report,
     );
     this.panes = new PaneTree({
-      placeholder: this.#placeholder,
+      defaultPane: () => {
+        const slot = this.#defaultPane;
+        return slot === undefined || slot.signal.aborted ? undefined : slot;
+      },
       focus: (view) => this.scene.focusRoot(view),
       report,
       requestFrame: frame,
@@ -121,6 +129,22 @@ export class Core {
     };
   }
 
+  /**
+   * Make `slot` the default pane. A start that waits gets its first pane now. A second live default pane throws a
+   * `TypeError`.
+   */
+  setDefaultPane(slot: DefaultPaneSlot): Disposer {
+    const current = this.#defaultPane;
+    if (current !== undefined && !current.signal.aborted) {
+      throw new TypeError(`plugin ${current.owner} sets the default pane`);
+    }
+    this.#defaultPane = slot;
+    if (this.#startWaits) this.#startWaits = !this.panes.start();
+    return () => {
+      if (this.#defaultPane === slot) this.#defaultPane = undefined;
+    };
+  }
+
   /** Handle one event of the frame loop. Each one draws a frame after it. */
   event(event: TermEvent): void {
     switch (event.type) {
@@ -153,7 +177,9 @@ export class Core {
         this.notices.add(event.level, event.source, event.text);
         return;
       case "start":
+        // The plugins of a first start load after this event, and those of a reload before it.
         if (event.snapshot !== undefined) this.restore(event.snapshot);
+        else this.#startWaits = !this.panes.start();
         return;
       case "resize":
       case "background":
@@ -222,8 +248,8 @@ export class Core {
     add("quit", "Quit yuke", () => driver.quit());
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
     add("reload", "Reload the plugins", () => driver.reload(this.snapshot()));
-    add("split-right", "Split the pane to the right", () => this.panes.split(CORE, this.#placeholder, "row"));
-    add("split-down", "Split the pane down", () => this.panes.split(CORE, this.#placeholder, "column"));
+    add("split-right", "Split the pane to the right", () => this.panes.splitDefault("row"));
+    add("split-down", "Split the pane down", () => this.panes.splitDefault("column"));
     add("close", "Close the pane", () => this.panes.closeActive());
     for (const direction of ["left", "right", "up", "down"] as const) {
       add(

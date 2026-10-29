@@ -730,6 +730,15 @@ declare module "yuke:tui" {
   /** Make the view of a new mount. A throw closes the mount and gives one fault. */
   export type ViewFactory = (mount: Mount) => View;
 
+  /**
+   * Why the core opens a pane. `start` is the first pane of a start without saved panes. `new` is a split, the pane
+   * after a close of the last pane, or a saved empty pane of a restore.
+   */
+  export type PaneReason = "start" | "new";
+
+  /** Make the view of a pane that the core opens. A throw closes the mount, gives one fault, and leaves the pane empty. */
+  export type DefaultPane = (mount: Mount, reason: PaneReason) => View;
+
   export interface Pane extends Mount {
     readonly view: View;
     readonly focus: () => void;
@@ -741,8 +750,13 @@ declare module "yuke:tui" {
     readonly view: View;
     /** The active pane beneath any modal. */
     readonly active: Pane | undefined;
-    /** Split the active pane. The new pane gets the focus. The last pane stays when it closes. */
+    /** Split the active pane. The new pane gets the focus. The close of the last pane gives a new default pane. */
     readonly split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }) => Pane;
+    /**
+     * Make the view of each pane that the core opens. `PaneReason` names the cases. One plugin at a time sets it, and
+     * a second set throws a `TypeError`. Without it, such a pane is empty.
+     */
+    readonly setDefault: (create: DefaultPane) => Disposer;
     readonly focus: (direction: FocusDirection) => boolean;
     readonly focusNext: () => void;
   }

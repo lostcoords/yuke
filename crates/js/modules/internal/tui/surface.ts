@@ -6,6 +6,7 @@ import type { Core } from "yuke:internal/tui/core";
 import type {
   Command,
   CommandItem,
+  DefaultPane,
   Direction,
   Disposer,
   FocusChange,
@@ -117,6 +118,10 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     ),
     focus: live((direction: FocusDirection): boolean => core.panes.focus(direction)),
     focusNext: live((): void => core.panes.focusNext()),
+    setDefault: live((create: DefaultPane): Disposer => {
+      if (typeof create !== "function") throw new TypeError("a default pane is a function that makes its view");
+      return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
+    }),
   });
 
   return Object.freeze({

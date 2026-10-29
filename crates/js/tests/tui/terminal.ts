@@ -77,13 +77,9 @@ export function fakeTerminal(): Terminal {
   };
 }
 
-/** A new core on the driver of `terminal`. A pane that holds nothing shows `empty`. */
+/** A new core on the driver of `terminal`, without a default pane. */
 export function newCore(terminal: Terminal): Core {
-  return new Core(terminal.driver, () => ({
-    draw: (canvas) => {
-      canvas.text(0, 0, "empty");
-    },
-  }));
+  return new Core(terminal.driver);
 }
 
 const NONE: Modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };

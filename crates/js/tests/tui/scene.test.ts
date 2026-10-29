@@ -209,7 +209,7 @@ test("a press focuses and captures and a modal cancels the capture", () => {
   ]);
 });
 
-test("panes split focus and close and the last pane stays", () => {
+test("panes split focus and close and the last close gives an empty pane without a default", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
   const pane = (name: string) => (): View => ({
@@ -218,11 +218,11 @@ test("panes split focus and close and the last pane stays", () => {
     },
   });
   const panes = createSurface(core, "test", new AbortController().signal).panes;
-  // The first split puts `a` right of the placeholder, the second puts `b` below `a`.
+  // The first split puts `a` right of the empty pane, the second puts `b` below `a`.
   const a = panes.split(pane("a"));
   const b = panes.split(pane("b"), { direction: "column" });
   equal(terminal.screen(core), [
-    "empty     │a",
+    "          │a",
     "          │",
     "          │",
     "          │─────────",
@@ -230,19 +230,19 @@ test("panes split focus and close and the last pane stays", () => {
     "          │",
   ]);
   core.commands.run("core:focus-left");
-  equal(terminal.screen(core)[0], "empty     │a");
+  equal(terminal.screen(core)[0], "          │a");
   // A close goes back to `a`.
   core.commands.run("core:focus-right");
   b.close();
-  equal(terminal.screen(core).slice(0, 3), ["empty     │A", "          │", "          │"]);
+  equal(terminal.screen(core).slice(0, 3), ["          │A", "          │", "          │"]);
   assert(panes.active === a, "the close of b makes a active");
-  // The close of `a` leaves the placeholder; the close of the last pane keeps a placeholder.
+  // The close of `a` leaves the empty pane; without a default pane, a last close gives an empty pane.
   core.commands.run("core:close");
   core.commands.run("core:close");
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
   equal(panes.active, undefined);
   equal(a.signal.aborted, true);
-  // A plugin pane as the last pane gives way to a placeholder too.
+  // A plugin pane as the last pane gives way to an empty pane too.
   const c = panes.split(pane("c"));
   // Focus by direction reads the rects of the last layout, which each key runs first.
   terminal.screen(core);
@@ -250,7 +250,7 @@ test("panes split focus and close and the last pane stays", () => {
   core.commands.run("core:close");
   equal(terminal.screen(core)[0], "C");
   c.close();
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
 });
 
 test("a pane gets its inner focus back and focus changes reach the path", () => {
@@ -448,7 +448,7 @@ test("a new root closes the old one and its close gives the default root back", 
   first.close();
   equal(terminal.screen(core)[0], "second");
   second.close();
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
   equal(second.signal.aborted, true);
 });
 
@@ -505,7 +505,7 @@ test("a factory that closes its own mount mounts nothing", () => {
     mount.close();
     return { draw() {} };
   });
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
   equal([root.signal.aborted, overlay.signal.aborted, pane.signal.aborted], [true, true, true]);
   equal(atoms(core), ["global", "root"]);
 });
@@ -643,8 +643,8 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
   assert(throws(() => tui.commands.add({ name: "late", run() {} })) instanceof TypeError);
   once();
   root.close();
-  // After the stop the pane tree is a placeholder again: the root, the pane, and the overlay of the plugin are gone.
-  equal(terminal.screen(core)[0], "empty");
+  // After the stop the pane tree is an empty pane again: the root, the pane, and the overlay of the plugin are gone.
+  equal(terminal.screen(core)[0], "");
   equal([pane.signal.aborted, overlay.signal.aborted, root.signal.aborted], [true, true, true]);
   equal(
     core.commands.list().some((item) => item.name.startsWith("notes:")),
@@ -720,7 +720,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
   const restored = newCore(terminal);
   createSurface(restored, "notes", new AbortController().signal).views.register("note", restoreNote);
   restored.restore(snapshot);
-  // The placeholder and the view without `snapshot()` save as `null`; the focus is the index of note 1.
+  // The empty pane and the view without `snapshot()` save as `null`; the focus is the index of note 1.
   equal(JSON.parse(snapshot), {
     tree: {
       split: "row",
@@ -741,26 +741,26 @@ test("the panes of a snapshot come back with their views and focus", () => {
     focus: 1,
   });
   equal(before, [
-    "empty     │Note 1",
+    "          │Note 1",
     "          │",
     "          │",
     "          │─────────",
     "          │note│",
     "          │    │────",
   ]);
-  // After the restore the layout and the focus are the same, and the view without a snapshot is a placeholder.
+  // After the restore the layout and the focus are the same, and the view without a snapshot is an empty pane.
   equal(terminal.screen(restored), [
-    "empty     │Note 1",
+    "          │Note 1",
     "          │",
     "          │",
     "          │─────────",
-    "          │note│empt",
+    "          │note│",
     "          │    │────",
   ]);
   equal([cycleNotice?.source, cycleNotice?.text.split(":")[0]], ["notes", "the snapshot of a pane is no JSON value"]);
 });
 
-test("a restore drops a pane without its plugin and keeps a placeholder for a failed one", () => {
+test("a restore drops a pane without its plugin and keeps an empty pane for a failed one", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);
   const notes = new AbortController();
@@ -780,7 +780,7 @@ test("a restore drops a pane without its plugin and keeps a placeholder for a fa
   };
   core.restore(JSON.stringify(saved));
   // `gone:view` has no factory: its pane goes, and note 3 takes its place, with the focus of the gone leaf.
-  equal(terminal.screen(core)[0], "Note 3    │empty");
+  equal(terminal.screen(core)[0], "Note 3    │");
   // The restore closes the panes from before it.
   equal(earlier.signal.aborted, true);
   const fault = core.notices.list().at(-1);
@@ -788,10 +788,10 @@ test("a restore drops a pane without its plugin and keeps a placeholder for a fa
   core.restore("not json");
   equal(core.notices.list().at(-1)?.text.split(":")[0], "the saved panes did not read");
   // A snapshot that does not read gives the default layout: the restored note closes.
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
   // The stop of `notes` closes its restored pane too.
   notes.abort();
-  equal(terminal.screen(core)[0], "empty");
+  equal(terminal.screen(core)[0], "");
 });
 
 test("a focus out of the tree and a state that is no JSON value give a notice", () => {

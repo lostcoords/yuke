@@ -5,7 +5,16 @@ import { emit, notify } from "yuke:internal/native";
 import { catalog, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
-import type { Cleanup, NoticeLevel, PluginContext, PluginSession, ServiceOf, Services, Sessions } from "yuke:plugins";
+import type {
+  Cleanup,
+  NoticeLevel,
+  PluginApply,
+  PluginContext,
+  PluginSession,
+  ServiceOf,
+  Services,
+  Sessions,
+} from "yuke:plugins";
 import type { Tui } from "yuke:tui";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -85,7 +94,7 @@ export async function load(spec: PluginSpec): Promise<void> {
   let sessions: Sessions | undefined;
   let cleanup: Cleanup | undefined;
   try {
-    let apply: unknown;
+    let apply: PluginApply<Options> | undefined;
     let session: PluginSession<Options> | undefined;
     let optionsSchema: unknown;
     // Each source waits one step, as an entry import does, so a failure of the load rejects after the caller waits.
@@ -113,7 +122,7 @@ export async function load(spec: PluginSpec): Promise<void> {
       if (exports.session !== undefined && typeof exports.session !== "function") {
         throw new TypeError("the session export is no function");
       }
-      apply = exports.apply;
+      apply = exports.apply as PluginApply<Options> | undefined;
       session = exports.session as PluginSession<Options> | undefined;
       optionsSchema = exports.optionsSchema;
     }
@@ -154,7 +163,7 @@ export async function load(spec: PluginSpec): Promise<void> {
         emit(spec.name, String(event), JSON.stringify(data) ?? "null", undefined);
       },
     });
-    if (typeof apply === "function") {
+    if (apply !== undefined) {
       const result: unknown = await apply(ctx);
       if (result !== undefined && typeof result !== "function") {
         throw new TypeError("apply must return nothing or a cleanup function");

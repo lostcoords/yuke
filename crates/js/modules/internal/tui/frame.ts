@@ -18,28 +18,25 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
   const screen = new TestScreen(width, height);
   const copies: string[] = [];
   const surfaces = new Set<TestSurface>();
-  const core = new Core(
-    {
-      width: () => width,
-      height: () => height,
-      background: () => "dark",
-      truecolor: () => true,
-      text: (column, row, text, style) => {
-        screen.text(column, row, text, style);
-      },
-      fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
-      cursor: (cursor) => screen.cursor(cursor),
-      // Each input draws a frame after it, and `draw()` draws one on demand.
-      requestFrame: () => {},
-      copy: (text) => {
-        copies.push(text);
-      },
-      quit: () => {},
-      suspend: () => {},
-      reload: () => {},
+  const core = new Core({
+    width: () => width,
+    height: () => height,
+    background: () => "dark",
+    truecolor: () => true,
+    text: (column, row, text, style) => {
+      screen.text(column, row, text, style);
     },
-    () => ({ draw() {} }),
-  );
+    fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
+    cursor: (cursor) => screen.cursor(cursor),
+    // Each input draws a frame after it, and `draw()` draws one on demand.
+    requestFrame: () => {},
+    copy: (text) => {
+      copies.push(text);
+    },
+    quit: () => {},
+    suspend: () => {},
+    reload: () => {},
+  });
   const root = create === undefined ? undefined : core.scene.setRoot("test", create);
   let frame: Frame;
   const draw = (): Frame => {
@@ -87,6 +84,11 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
       core.event({ type: "resize", w: width, h: height });
       draw();
     },
+    start(snapshot?: string): void {
+      core.event(snapshot === undefined ? { type: "start" } : { type: "start", snapshot });
+      draw();
+    },
+    snapshot: () => core.snapshot(),
     [Symbol.dispose](): void {
       for (const surface of [...surfaces]) surface.close();
       root?.close();

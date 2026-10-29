@@ -1,4 +1,4 @@
-//! The interface host on a test display: notices on the screen, and `/reload` with its snapshot.
+//! The interface host on a test display: notices in the core, the chat pane, and `/reload` with its snapshot.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -104,14 +104,32 @@ async fn started(place: &Place, display: &Arc<Display>) -> App {
     app
 }
 
+/// A test plugin whose root view draws the newest notice on the first row and the panes below it. The views of yuke
+/// draw no notice until the toasts come.
+const BOARD: &str = "export function apply(ctx) {
+  const tui = ctx.get('tui');
+  tui.setRoot(() => ({
+    layout: (size) => [{ view: tui.panes.view, rect: { column: 0, row: 1, width: size.width, height: size.height - 1 } }],
+    draw: (canvas) => {
+      const notice = tui.notices.list().at(-1);
+      if (notice !== undefined) canvas.text(0, 0, `${notice.level} ${notice.source}: ${notice.text}`);
+    },
+  }));
+}";
+
 #[tokio::test]
 async fn the_console_of_a_plugin_reaches_the_screen_as_a_notice() {
     let place = Place::new("tui", "console_notice");
+    place.plugin("board", BOARD);
     place.plugin(
         "talker",
         "export function apply() { console.info('hello from a plugin'); }",
     );
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["talker"] }"#).unwrap();
+    std::fs::write(
+        place.paths.config.join("config.json"),
+        r#"{ "plugins": ["board", "talker"] }"#,
+    )
+    .unwrap();
     let (display, output) = display();
 
     let app = started(&place, &display).await;
@@ -139,7 +157,8 @@ async fn a_plugin_pane_comes_back_after_a_reload() {
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["notes"] }"#).unwrap();
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output.shows("yuke 200x4 dark").await;
+    // The bundled chat gives the first pane after the start event.
+    output.shows("Message").await;
 
     let snapshot = r#"{"tree":{"type":"notes:note","state":{"id":4}},"focus":0}"#;
     reload(Some(&mut app), &display, snapshot.to_owned()).await;
@@ -152,18 +171,50 @@ async fn a_plugin_pane_comes_back_after_a_reload() {
 async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
     let place = Place::new("tui", "reload_failure");
     let (display, output) = display();
+    place.plugin("board", BOARD);
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["board"] }"#).unwrap();
     let mut app = started(&place, &display).await;
-    output.shows("yuke 200x4 dark").await;
     place.plugin("broken", "throw new Error('broken on purpose');");
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["broken"] }"#).unwrap();
 
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
 
-    // Only the old runtime draws, so the notice on the screen comes from it.
+    // The new plugins have no board, so the notice on the screen comes from the old runtime.
     output
         .shows("error host:yuke: the reload failed: the reload keeps the old plugins")
         .await;
-    assert_eq!(output.rows()[0], "yuke 200x4 dark");
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
+    let place = Place::new("tui", "chat_options");
+    place.plugin("board", BOARD);
+    let config = |copy: &str| {
+        let text = format!(r#"{{ "plugins": ["board"], "bundled": {{ "chat": {{ "copyOnRelease": {copy} }} }} }}"#);
+        std::fs::write(place.paths.config.join("config.json"), text).unwrap();
+    };
+    config(r#""no""#);
+    let (display, output) = display();
+    let mut app = started(&place, &display).await;
+    output
+        .shows("error host:yuke: plugin chat did not load: TypeError: the options of the plugin: Set copyOnRelease")
+        .await;
+    // Without the chat, the pane stays empty.
+    assert_eq!(output.rows()[1..], ["", "", ""]);
+
+    config("false");
+    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    output.shows("Message").await;
+
+    config(r#""no""#);
+    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    output
+        .shows(concat!(
+            "error host:yuke: the reload failed: the reload keeps the old plugins, because a plugin did not load: ",
+            "plugin chat did not load: TypeError: the options of the plugin: Set copyOnRelease"
+        ))
+        .await;
     app.shutdown().await;
 }
 
