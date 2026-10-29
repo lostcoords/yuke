@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 async-trait = "0.1.92"
+# clipboard-rs reads the image of the clipboard on macOS (PNG or TIFF), X11, and Wayland. `to_png` encodes it.
+clipboard-rs = { version = "0.3.5", default-features = false, features = ["image", "wayland"] }
 # oxc makes a breaking release each week, so each crate pins one exact version. The cache key holds this file too.
 oxc_allocator = "=0.153.0"
 oxc_codegen = { version = "=0.153.0", default-features = false }

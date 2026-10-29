@@ -244,6 +244,9 @@ declare module "yuke:internal/native" {
    */
   export function processOutput(request: ProcessRequest): Operation<ProcessEnd>;
 
+  /** The PNG bytes of the clipboard image, or `undefined` without an image. The read runs off the thread. */
+  export function clipboardReadImage(): Promise<Uint8Array | undefined>;
+
   /**
    * Send one request of a plugin to `model`. `settings` holds the settings that the caller gives; each other setting
    * keeps the default of the endpoint. A block of another shape or a bad setting throws a `TypeError`. A failed request rejects with an

@@ -278,7 +278,7 @@ fn rename_path<'js>(
 }
 
 /// The bytes of a read, which JavaScript gets as a `Uint8Array`.
-struct Bytes(Vec<u8>);
+pub(crate) struct Bytes(pub(crate) Vec<u8>);
 
 impl<'js> IntoJs<'js> for Bytes {
     fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {

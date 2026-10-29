@@ -3,10 +3,11 @@
 
 pub(crate) mod ai;
 pub(crate) mod call;
+mod clipboard;
 mod console;
 mod encoding;
 mod exec;
-mod fs;
+pub(crate) mod fs;
 mod http;
 mod lines;
 mod process;
@@ -83,12 +84,12 @@ impl ModuleDef for Native {
     }
 }
 
-/// The export object that [`install`] built. It is the only `Object` that the context keeps as user data.
 /// The protocol notice level of `name`: `debug`, `info`, `warn`, or `error`.
 pub(crate) fn notice_level(name: &str) -> Option<yuke_protocol::NoticeLevel> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).ok()
 }
 
+/// The export object that [`install`] built. It is the only `Object` that the context keeps as user data.
 fn exports_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
     ctx.userdata::<Object<'js>>()
         .map(|object| object.clone())
@@ -119,6 +120,7 @@ pub(crate) fn install(
     term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
+    clipboard::add(ctx, &object)?;
     http::add(ctx, &object, &options.http)?;
     process::add(ctx, &object, &options.processes)?;
     lines::add(ctx, &object)?;
