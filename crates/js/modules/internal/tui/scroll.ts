@@ -72,6 +72,7 @@ export class ScrollList<T extends object> {
       total: this.#total(),
       following: this.#following,
       changedBelow: this.#changedBelow,
+      anchor: this.#anchor(),
     };
   }
 
@@ -118,6 +119,15 @@ export class ScrollList<T extends object> {
   /** Go to the bottom and follow the tail. */
   followTail(): void {
     this.#moveTo(this.#last());
+  }
+
+  /** Put row `row` of the item `key` at the top, as far as the rows below allow. `false` when the item has no such row. */
+  scrollToItem(key: string, row = 0): boolean {
+    const at = this.#index.get(key);
+    if (at === undefined || !Number.isInteger(row) || row < 0) return false;
+    if (row >= (this.#entries[at] as Entry<T>).rows.length) return false;
+    this.#moveTo((this.#prefix[at] as number) + row);
+    return true;
   }
 
   /** Scroll the least to show row `row` of the item `key`. `false` when it cannot show. */

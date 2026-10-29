@@ -475,6 +475,7 @@ declare module "yuke:tui" {
     scrollBy: (rows: number) => void;
     scrollTo: (row: number) => void;
     followTail: () => void;
+    scrollToItem: (key: string, row?: number) => boolean;
     ensureVisible: (key: string, row?: number) => boolean;
     onChange: (listener: (state: ScrollState) => void, signal: AbortSignal) => Disposer;
   }
@@ -608,6 +609,11 @@ declare module "yuke:tui" {
     readonly following: boolean;
     /** An item below the view changed while the list did not follow the tail. */
     readonly changedBelow: boolean;
+    /**
+     * The item at the top and its row there. A change keeps that item at the top. When the item goes, its nearest
+     * neighbor takes its place. Without rows, it is `undefined`.
+     */
+    readonly anchor: { readonly key: string; readonly row: number } | undefined;
   }
 
   export interface ScrollListOptions<T extends object> {
@@ -639,6 +645,8 @@ declare module "yuke:tui" {
     scrollTo(row: number): void;
     /** Go to the bottom and follow the tail. */
     followTail(): void;
+    /** Put row `row` of the item `key` at the top, as far as the rows below allow. `false` without that row. */
+    scrollToItem(key: string, row?: number): boolean;
     /** Scroll the least to show row `row` of the item `key`. `false` when it cannot show. */
     ensureVisible(key: string, row?: number): boolean;
     /** Give each later state to `listener`, until `signal` aborts or the disposer runs. */

@@ -131,6 +131,22 @@ test("a hidden section has no place, and the caret on it shows no cursor", () =>
   );
 });
 
+test("a press on an item that the document drops activates nothing at the release", () => {
+  const activated: TextPosition[] = [];
+  const view = new TextView({
+    document: document("d", item("draft", ["s", "abc"]), item("next", ["s", "def"])),
+    activate: (position) => activated.push(position),
+  });
+  using frame = createFrame({ width: 10, height: 2 }, () => view);
+  const notices = frame.surface("watch").tui.notices;
+  frame.mouse(mouse(1, 0, "press"));
+  view.setDocument(document("d", item("saved", ["s", "abc"]), item("next", ["s", "def"])));
+  frame.mouse(mouse(2, 0, "drag"));
+  frame.mouse(mouse(2, 0, "release"));
+  // A drag from the removed item would throw in the view, and the core would report a fault.
+  equal([activated, view.selection, frame.copies, notices.list()], [[], undefined, [], []]);
+});
+
 test("a click without a drag activates its position and copies nothing", () => {
   const activated: TextPosition[] = [];
   const view = new TextView({

@@ -58,6 +58,22 @@ test("a prepend keeps the top item at its row", () => {
   equal([screen(frame.draw().cells), scroll.state.top], [["b1", "b2"], 9]);
 });
 
+test("the anchor names the top item and row, and scrollToItem puts that row at the top", () => {
+  const { scroll } = list([item("a", "a0a1a2"), item("b", "b0b1b2"), item("c", "c0c1c2")]);
+  using frame = createFrame({ width: 2, height: 2 }, () => scroll);
+  scroll.scrollTo(4);
+  frame.draw();
+  equal(scroll.state.anchor, { key: "b", row: 1 });
+  // The rows below end the list, so the top stops at the last full view.
+  equal(
+    [scroll.scrollToItem("a", 1), scroll.scrollToItem("c", 2), scroll.state.anchor],
+    [true, true, { key: "c", row: 1 }],
+  );
+  equal([scroll.scrollToItem("b", 3), scroll.scrollToItem("x"), scroll.state.top], [false, false, 7]);
+  equal(scroll.scrollToItem("a", 1), true);
+  equal(screen(frame.draw().cells), ["a1", "a2"]);
+});
+
 test("a top at the first row of an item keeps that item after a prepend", () => {
   const { scroll } = list([item("a", "a0a1a2"), item("b", "b0b1b2")]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);

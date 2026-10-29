@@ -2,6 +2,8 @@
 // options.
 
 import { apply } from "yuke:internal/bundled/chat";
+import type { EventsPage, ViewEvent } from "yuke:plugins";
+import type { Block, SessionSettings, SessionUpdate, StoredEvent, TurnEnd } from "yuke:protocol";
 import { createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 
@@ -11,36 +13,95 @@ function mouse(column: number, row: number, action: MouseEvent["action"]): Mouse
   return { type: "mouse", column, row, button: "left", action, modifiers: MODIFIERS };
 }
 
-/** One call of `sessions.open`: the session and the signal of its handle. */
+/** One call of `sessions.open`: the session, the tail, the signal of its handle, and its event callback. */
 interface Opened {
   readonly id: string;
   readonly tail: number;
   readonly signal: AbortSignal;
+  readonly event: (event: ViewEvent) => void;
+}
+
+const SETTINGS: SessionSettings = {
+  model: { provider: "p", model: "m" },
+  settings: {
+    maxOutputTokens: null,
+    reasoning: { thinking: null, effort: null },
+    temperature: null,
+    topP: null,
+    toolChoice: "auto",
+    outputSchema: null,
+  },
+  cwd: "/w",
+};
+
+/** The saved event `seq` with `blocks`. */
+function commit(seq: number, blocks: Block[], end: TurnEnd | null = null): StoredEvent {
+  return { seq, sessionUpdate: "commit", commit: { replaced: null, blocks, answer: null, end }, consumed: [] };
+}
+
+/** A session with the settings event 1, then a reply `reply <seq>` in each event up to `last`. */
+function replies(last: number): StoredEvent[] {
+  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
+  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
+  return saved;
 }
 
 /**
- * Load the chat into `frame` with `options`. Return the surface of the chat, each open of a session, and each notice.
- * An open of the session `missing` rejects.
+ * Sessions whose saved events are `saved`: an open gives a snapshot of the last `tail`, and `events` gives a page.
+ * An open of the session `missing` rejects. With `failing`, each page rejects.
  */
-function loadChat(frame: FrameTest, options: { readonly copyOnRelease?: boolean } = {}) {
-  const surface = frame.surface("chat");
+function fakeSessions(saved: StoredEvent[] = []) {
   const opened: Opened[] = [];
-  const notices: string[] = [];
-  const sessions = {
-    open: (id: string, open: { readonly tail: number; readonly signal: AbortSignal }) => {
-      opened.push({ id, tail: open.tail, signal: open.signal });
-      return id === "missing" ? Promise.reject(new Error("no session missing")) : Promise.resolve({});
+  const pages: EventsPage[] = [];
+  const state = { failing: false };
+  return {
+    opened,
+    pages,
+    state,
+    open(id: string, open: Opened): Promise<object> {
+      opened.push({ id, tail: open.tail, signal: open.signal, event: open.event });
+      if (id === "missing") return Promise.reject(new Error("no session missing"));
+      open.event({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
+      return Promise.resolve({});
+    },
+    async events(_id: string, page: EventsPage): Promise<StoredEvent[]> {
+      pages.push(page);
+      if (state.failing) throw new Error("disk");
+      const before = page.before ?? Number.POSITIVE_INFINITY;
+      return saved.filter((event) => event.seq < before).slice(-page.limit);
+    },
+    /** Give the last handle the live update `update`. */
+    push(update: SessionUpdate): void {
+      saved.push(update as StoredEvent);
+      opened.at(-1)?.event({ update });
     },
   };
+}
+
+/** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat and each notice. */
+function loadChat(
+  frame: FrameTest,
+  options: { readonly copyOnRelease?: boolean } = {},
+  sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
+) {
+  const surface = frame.surface("chat");
+  const notices: string[] = [];
   apply({
     get: (name: string) => (name === "tui" ? surface.tui : sessions),
     options,
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),
   } as never);
-  return { tui: surface.tui, opened, notices };
+  const transcript = (): TextView =>
+    surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
+  return { tui: surface.tui, opened: sessions.opened, notices, transcript };
 }
 
 const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
+
+/** Wait until each job and timer of now ran, so a page load ends. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function rows(frame: FrameTest): string[] {
   return frame.frame.cells.map((row) =>
@@ -88,18 +149,13 @@ test("a reload keeps the draft of each pane and the focus", () => {
 
 test("the option copyOnRelease turns the copy of a drag over the transcript on and off", () => {
   for (const copyOnRelease of [false, true]) {
-    using frame = createFrame({ width: 10, height: 4 });
-    const chat = loadChat(frame, { copyOnRelease });
+    using frame = createFrame({ width: 10, height: 4 }, undefined, { cwd: "/w", session: "s1" });
+    loadChat(frame, { copyOnRelease }, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
     frame.start();
-    const transcript = chat.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
-    transcript.setDocument({
-      key: "chat",
-      items: [{ key: "i", sections: [{ key: "s", kind: "text", text: "hello" }] }],
-    });
-    frame.draw();
-    frame.mouse(mouse(0, 0, "press"));
-    frame.mouse(mouse(4, 0, "drag"));
-    frame.mouse(mouse(4, 0, "release"));
+    // Row 0 is the gap before the reply, and column 0 is its indent.
+    frame.mouse(mouse(1, 1, "press"));
+    frame.mouse(mouse(5, 1, "drag"));
+    frame.mouse(mouse(5, 1, "release"));
     equal(frame.copies, copyOnRelease ? ["hello"] : []);
   }
 });
@@ -111,7 +167,7 @@ test("the start pane holds the session of the startup, and a split opens a new c
   chat.tui.commands.run("core:split-right");
   equal(
     chat.opened.map((open) => [open.id, open.tail]),
-    [["s1", 0]],
+    [["s1", 200]],
   );
   // The close of the start pane ends its handle. Focus by direction reads the rects of the last frame.
   frame.draw();
@@ -144,4 +200,208 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   await Promise.resolve();
   equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
+});
+
+/** The rows of the transcript of `frame` above its rule, which is the row before the last. */
+function transcriptRows(frame: FrameTest): string[] {
+  return rows(frame).slice(0, -2);
+}
+
+/** Press and release the left button at `row` and `column` of `frame`. */
+function click(frame: FrameTest, column: number, row: number): void {
+  frame.mouse(mouse(column, row, "press"));
+  frame.mouse(mouse(column, row, "release"));
+}
+
+test("each kind of entry draws its rows, and a click on a thought opens it", () => {
+  const user = { kind: "user" } as const;
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    {
+      seq: 2,
+      sessionUpdate: "commit",
+      commit: {
+        replaced: null,
+        blocks: [
+          { user_text: "fix the test" },
+          { reasoning: { text: "the test expects 3" } } as never,
+          { assistant_text: "**Found** it" },
+          { tool_call: { callId: "c1", name: "exec", arguments: "{}" } },
+        ],
+        answer: null,
+        end: null,
+      },
+      consumed: [{ id: 1, source: user, kind: "message", blockCount: 1 }],
+    },
+    {
+      seq: 3,
+      sessionUpdate: "commit",
+      commit: {
+        replaced: null,
+        blocks: [{ user_text: "build done" }, { tool_result: { callId: "c1", content: "ok", isError: false } }],
+        answer: null,
+        end: { failed: "boom" },
+      },
+      consumed: [{ id: 2, source: { kind: "plugin", name: "ci" }, kind: "notification", blockCount: 1 }],
+    },
+    {
+      seq: 4,
+      sessionUpdate: "commit",
+      commit: { replaced: { head: [], keep: 0 }, blocks: [], answer: null, end: { outcome: "stopped" } },
+      consumed: [],
+    },
+  ];
+  using frame = createFrame({ width: 30, height: 22 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(saved);
+  loadChat(frame, {}, sessions);
+  frame.start();
+  sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 2500, error: "overloaded" });
+  frame.draw();
+  const before = transcriptRows(frame);
+  equal(before.slice(0, 20), [
+    "",
+    " fix the test",
+    "",
+    " thought",
+    "",
+    " Found it",
+    "",
+    " exec · done",
+    "",
+    " notification · ci",
+    " build done",
+    "",
+    " failed: boom",
+    "",
+    " context replaced",
+    "",
+    " stopped",
+    "",
+    " retry in 3 s: overloaded",
+    "",
+  ]);
+  click(frame, 2, 3);
+  equal(transcriptRows(frame).slice(3, 6), [" thought", " the test expects 3", ""]);
+  click(frame, 2, 3);
+  equal(transcriptRows(frame), before);
+});
+
+test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
+  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(replies(250));
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  equal(transcriptRows(frame).at(-1), " reply 250");
+  for (let visit = 0; visit < 3; visit += 1) {
+    chat.transcript().scroll.scrollTo(0);
+    frame.draw();
+    const shown = transcriptRows(frame);
+    await settle();
+    frame.draw();
+    // A prepend keeps the item at the top and its row.
+    equal(transcriptRows(frame), shown);
+  }
+  // A live event while the view shows the top asks for no page past the first event.
+  sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
+  frame.draw();
+  await settle();
+  equal(sessions.pages, [
+    { before: 51, limit: 100 },
+    { before: 1, limit: 100 },
+  ]);
+  equal(chat.transcript().document.items[0]?.key, "2:0");
+});
+
+test("a failed page shows its error in the rule and loads no more pages", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(replies(250));
+  sessions.state.failing = true;
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  for (let visit = 0; visit < 2; visit += 1) {
+    chat.transcript().scroll.scrollTo(0);
+    frame.draw();
+    await settle();
+  }
+  sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
+  chat.transcript().scroll.scrollTo(0);
+  frame.draw();
+  await settle();
+  frame.draw();
+  equal(rows(frame).at(-2), "─ the history did not load: Error: disk");
+  equal(sessions.pages.length, 1);
+});
+
+test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", () => {
+  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(replies(30));
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  chat.transcript().scroll.scrollBy(-4);
+  sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
+  frame.draw();
+  equal(rows(frame).at(-2), "─ new output ↓ ─────");
+  chat.transcript().scroll.followTail();
+  frame.draw();
+  equal(rows(frame).at(-2), "────────────────────");
+  sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
+  frame.draw();
+  equal(transcriptRows(frame).at(-1), " reply 32");
+});
+
+test("a reload keeps the folds and the scrolled place of a pane", async () => {
+  const saved = replies(40);
+  saved[1] = commit(2, [{ reasoning: { text: "deep" } } as never, { assistant_text: "ok" }]);
+  using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const chat = loadChat(before, {}, fakeSessions(saved));
+  before.start();
+  chat.transcript().scroll.scrollTo(0);
+  before.draw();
+  click(before, 2, 1);
+  chat.transcript().scroll.scrollBy(1);
+  before.draw();
+  const shown = transcriptRows(before);
+  equal(shown.slice(0, 2), [" thought", " deep"]);
+  using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  loadChat(after, {}, fakeSessions(saved));
+  after.start(before.snapshot());
+  after.draw();
+  await settle();
+  after.draw();
+  equal(transcriptRows(after), shown);
+});
+
+test("a live event after a gap loads the missing events, and an unchanged entry keeps its item", async () => {
+  using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = replies(10);
+  const sessions = fakeSessions(saved);
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  const first = chat.transcript().document.items[0];
+  // The event 11 is saved, but the handle gets only the event 12.
+  saved.push(commit(11, [{ assistant_text: "reply 11" }]));
+  sessions.push(commit(12, [{ assistant_text: "reply 12" }]));
+  frame.draw();
+  await settle();
+  frame.draw();
+  equal(sessions.pages, [{ before: 12, limit: 1 }]);
+  equal(
+    chat
+      .transcript()
+      .document.items.slice(-3)
+      .map((item) => item.key),
+    ["10:0", "11:0", "12:0"],
+  );
+  equal(chat.transcript().document.items[0] === first, true);
+});
+
+test("a saved viewport with a negative row gives an empty pane and one fault", () => {
+  using frame = createFrame({ width: 20, height: 4 });
+  const chat = loadChat(frame);
+  const pane = { type: "chat:pane", state: { draft: EMPTY, viewport: { key: "2:0", row: -1 } } };
+  frame.start(JSON.stringify({ tree: pane, focus: 0 }));
+  equal(
+    chat.tui.notices.list().at(-1)?.text.split("\n")[0],
+    "a view did not start: TypeError: the viewport of a chat pane has a key and a row",
+  );
 });

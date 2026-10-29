@@ -76,7 +76,7 @@ export class TextView {
   readonly #activate: ((position: TextPosition) => void) | undefined;
   #document: TextDocument;
   /** The order of each item key, and of each section key in its item, for `compare`. */
-  #order = new Map<string, { readonly at: number; readonly sections: Map<string, number> }>();
+  #order: Order;
   #revision = 0;
   #caret: TextPosition | undefined;
   #selection: Selection<TextPosition> | undefined;
@@ -104,8 +104,8 @@ export class TextView {
       followTail: options.followTail === true,
       ...(options.requestOlder === undefined ? {} : { requestOlder: options.requestOlder }),
     });
-    this.#document = checkDocument(options.document);
-    this.#order = orderOf(this.#document);
+    this.#order = checkDocument(options.document);
+    this.#document = options.document;
     this.#list.setItems(this.#document.items);
     this.#list.onChange(() => {
       if (!this.#quiet) this.#emit("scroll");
@@ -186,22 +186,25 @@ export class TextView {
   /** Replace the document. With the same key, a caret or a selection end stays while its position is valid. */
   setDocument(document: TextDocument): void {
     if (document === this.#document) return;
-    const next = checkDocument(document);
-    const same = next.key === this.#document.key;
+    const order = checkDocument(document);
+    const same = document.key === this.#document.key;
     this.#quiet = true;
     try {
-      this.#list.setItems(next.items);
+      this.#list.setItems(document.items);
     } finally {
       this.#quiet = false;
     }
-    this.#document = next;
-    this.#order = orderOf(next);
+    this.#document = document;
+    this.#order = order;
     const keep = (position: TextPosition | undefined): TextPosition | undefined =>
       same && position !== undefined && this.#valid(position) ? position : undefined;
     this.#caret = keep(this.#caret);
     const anchor = keep(this.#selection?.anchor);
     const head = keep(this.#selection?.head);
     this.#selection = anchor !== undefined && head !== undefined ? Object.freeze({ anchor, head }) : undefined;
+    // A press keeps its start only while that position stays, so a release never reads a removed item.
+    const drag = this.#drag;
+    if (drag !== undefined && (keep(drag.start) === undefined || keep(drag.end) === undefined)) this.#drag = undefined;
     this.#emit("document");
   }
 
@@ -658,20 +661,24 @@ function samePosition(first: TextPosition | undefined, second: TextPosition | un
 }
 
 /** A checked document: keys are strings, item keys are unique, and section keys are unique in their item. */
-function checkDocument(document: TextDocument): TextDocument {
+/** The place of each item and of each section in its item, by key. */
+type Order = Map<string, { readonly at: number; readonly sections: Map<string, number> }>;
+
+/** Check `document`, and return its order. A document that is not valid throws a `TypeError`. */
+function checkDocument(document: TextDocument): Order {
   if (typeof document !== "object" || document === null || typeof document.key !== "string") {
     throw new TypeError("a text document has a key");
   }
   if (!Array.isArray(document.items)) throw new TypeError("a text document has items");
-  const items = new Set<string>();
-  for (const item of document.items) {
+  const order: Order = new Map();
+  for (const [at, item] of document.items.entries()) {
     if (typeof item !== "object" || item === null || typeof item.key !== "string" || !Array.isArray(item.sections)) {
       throw new TypeError("a text item has a key and sections");
     }
-    if (items.has(item.key)) throw new TypeError(`two text items have the key ${item.key}`);
-    items.add(item.key);
-    const sections = new Set<string>();
-    for (const section of item.sections) {
+    if (order.has(item.key)) throw new TypeError(`two text items have the key ${item.key}`);
+    const sections = new Map<string, number>();
+    order.set(item.key, { at, sections });
+    for (const [index, section] of item.sections.entries()) {
       const valid =
         typeof section === "object" &&
         section !== null &&
@@ -681,17 +688,8 @@ function checkDocument(document: TextDocument): TextDocument {
         (section.render === undefined || typeof section.render === "function");
       if (!valid) throw new TypeError(`a section of the item ${item.key} has a key, a kind, a text, and a render`);
       if (sections.has(section.key)) throw new TypeError(`the item ${item.key} has two sections ${section.key}`);
-      sections.add(section.key);
+      sections.set(section.key, index);
     }
   }
-  return document;
-}
-
-function orderOf(document: TextDocument): Map<string, { readonly at: number; readonly sections: Map<string, number> }> {
-  return new Map(
-    document.items.map((item, at) => [
-      item.key,
-      { at, sections: new Map(item.sections.map((section, index) => [section.key, index])) },
-    ]),
-  );
+  return order;
 }
