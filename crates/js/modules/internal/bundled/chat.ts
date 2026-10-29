@@ -33,18 +33,18 @@ const COMMANDS: readonly {
   { name: "send", description: "Send the message", keys: ["enter"], in: "composer", run: (pane) => pane.send() },
   {
     name: "older-message",
-    description: "Show an older message of yours",
+    description: "Edit a waiting message of yours, or show an older message of yours",
     keys: ["up"],
     in: "composer",
-    run: (pane) => pane.browse(-1),
-    enabled: (pane) => pane.canBrowse(),
+    run: (pane) => pane.older(),
+    enabled: (pane) => pane.canOlder(),
   },
   {
     name: "newer-message",
     description: "Show a newer message of yours",
     keys: ["down"],
     in: "composer",
-    run: (pane) => pane.browse(1),
+    run: (pane) => pane.newer(),
     enabled: (pane) => pane.browsing(),
   },
   {

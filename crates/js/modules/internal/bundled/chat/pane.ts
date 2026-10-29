@@ -5,15 +5,17 @@
 
 import { blocksOf, draftOf, EMPTY, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
-import { ChatDocument } from "yuke:internal/bundled/chat/transcript";
-import type { EventsPage, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
-import type { ModelInfo, ProviderInfo, SessionId, SessionSettings } from "yuke:protocol";
+import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
+import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
+import type { Input, InputId, ModelInfo, ProviderInfo, SessionId, SessionSettings } from "yuke:protocol";
 import { type Entry, Transcript } from "yuke:transcript";
 import {
   type Canvas,
   type EditorState,
+  fit,
   type JsonValue,
   type Mount,
+  measure,
   Picker,
   type Placement,
   type Size,
@@ -59,10 +61,14 @@ export interface PaneActions {
   readonly send: () => void;
   /** Let the user choose the model and the reasoning of the pane. */
   readonly chooseModel: () => void;
-  /** Show an older (-1) or a newer (1) message of the user in the composer, or the draft after the newest one. */
-  readonly browse: (step: -1 | 1) => void;
-  /** An empty composer or a browse can show an older message. */
-  readonly canBrowse: () => boolean;
+  /**
+   * Recall the newest waiting message of the user into an empty composer, and each next older one above the recalled
+   * text. When no message waits, show an older message of the user.
+   */
+  readonly older: () => void;
+  readonly canOlder: () => boolean;
+  /** Show a newer message of the user, or the empty composer after the newest one. */
+  readonly newer: () => void;
   readonly browsing: () => boolean;
   /** Clear the draft. An empty draft cancels the running turn. */
   readonly clear: () => void;
@@ -137,8 +143,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let busy = false;
   // The settings that the user chose for the first send of an unbound pane.
   let chosen: SessionSettings | undefined;
-  // The draft before a browse of the messages, and the key of the shown message.
-  let browse: { readonly draft: EditorState; readonly key: string } | undefined;
+  // The key of the shown message of a browse. A browse starts in an empty composer, so its end empties it again.
+  let browse: string | undefined;
+  // The last recalled pending input. The next ↑ recalls an older one, until an edit or a caret move.
+  let recalled: InputId | undefined;
+  // A recall waits for its removal. Until the removal ends, ↑ does nothing.
+  let recalling = false;
   const changed = (): void => {
     dirty = true;
     tui.requestFrame();
@@ -242,9 +252,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     palette.signal.addEventListener("abort", () => mount.signal.removeEventListener("abort", close), { once: true });
     return true;
   });
-  // An edit of the shown message ends the browse, so the edited text stays.
+  // An edit of the shown message ends the browse, so the edited text stays. An edit or a caret move ends a recall,
+  // so ↑ moves the caret again.
   extension.onChange((change) => {
     if (change.kind === "edit") browse = undefined;
+    if (change.kind === "edit" || change.kind === "selection") recalled = undefined;
   });
 
   /**
@@ -381,6 +393,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       composer.reset(EMPTY);
       browse = undefined;
+      recalled = undefined;
       try {
         if (settings !== undefined) {
           const id = await sessions.create(settings);
@@ -398,6 +411,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       } catch (error) {
         if (mount.signal.aborted) return;
         browse = undefined;
+        recalled = undefined;
         composer.reset(joined(draft, composer.state));
         ctx.notify("error", `the message did not send: ${String(error)}`);
       }
@@ -406,8 +420,65 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
-  // The layout keeps the row of the rule for the draw. Without a free row, the pane draws no rule.
+  /** The waiting messages of the user, oldest first. An input of a plugin stays out of the strip and of a recall. */
+  const waiting = (): [InputId, Frozen<Input>][] =>
+    [...transcript.pending]
+      .filter((entry) => entry[1].source.kind === "user" && entry[1].kind === "message")
+      .sort((a, b) => a[0] - b[0]);
+
+  /**
+   * The message that ↑ recalls. An empty composer recalls the newest one. After a recall, ↑ recalls the next older one,
+   * also after a recall that came too late.
+   */
+  const recallable = (): [InputId, Frozen<Input>] | undefined => {
+    const before = recalled;
+    // A browse starts only when no message is recallable, and new messages wait after the recalled one.
+    if (before === undefined && composer.state.text !== "") return undefined;
+    return waiting().findLast((entry) => before === undefined || entry[0] < before);
+  };
+
+  /** Take the waiting message `id` back into the composer, above its text. A message that a turn took stays sent. */
+  const recall = async (id: InputId, input: Frozen<Input>): Promise<void> => {
+    const target = handle;
+    if (target === undefined) return;
+    recalling = true;
+    recalled = id;
+    try {
+      const removed = await target.removeInput(id);
+      if (mount.signal.aborted) return;
+      if (removed) composer.reset(joined(draftOf(input.content), composer.state));
+      else ctx.notify("info", "the message reached the turn already");
+    } catch (error) {
+      if (!mount.signal.aborted) ctx.notify("error", `the message did not come back: ${String(error)}`);
+    } finally {
+      recalling = false;
+    }
+  };
+
+  /** Show an older (-1) or a newer (1) message of the user, or the empty composer after the newest one. */
+  const browseBy = (step: -1 | 1): void => {
+    // The messages of the user in the transcript, oldest first.
+    const list = transcript.entries.filter(
+      (entry): entry is Extract<Entry, { kind: "input" }> =>
+        entry.kind === "input" && entry.source.kind === "user" && entry.inputKind === "message",
+    );
+    const at = browse === undefined ? list.length : list.findIndex((entry) => entry.key === browse);
+    const next = list[at + step];
+    if (next === undefined) {
+      if (step === 1 && browse !== undefined) {
+        composer.reset(EMPTY);
+        browse = undefined;
+      } else if (step === -1) void load();
+      return;
+    }
+    browse = next.key;
+    composer.reset(draftOf(next.content));
+  };
+
+  // The layout keeps the row of the rule and the shown waiting messages for the draw. Without a free row, the pane
+  // draws no rule.
   let ruleRow = -1;
+  let shown: [InputId, Frozen<Input>][] = [];
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
@@ -419,8 +490,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const composerRows = Math.min(composer.heightFor(size.width), Math.max(1, Math.floor(size.height / 2)));
       const composerRow = Math.max(0, size.height - composerRows);
       ruleRow = composerRow - 1;
+      // The strip takes the rows above the rule that its messages need, and the transcript gets the rest. When rows run
+      // out, the strip keeps the newest messages.
+      const list = waiting();
+      shown = list.slice(Math.max(0, list.length - Math.max(0, ruleRow)));
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, ruleRow) } },
+        { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, ruleRow - shown.length) } },
         { view: composer, rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow } },
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
@@ -438,6 +513,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
+      for (const [at, entry] of shown.entries()) {
+        const row = ruleRow - shown.length + at;
+        const hint = at === shown.length - 1 ? " ↑ edit" : "";
+        const text = inputText(entry[1].content).replaceAll("\n", " ");
+        const room = Math.max(0, canvas.width - 1 - measure(hint));
+        const cut = fit(text, room) === text.length ? text : `${text.slice(0, fit(text, room - 1))}…`;
+        canvas.text(1, row, cut, STYLE.meta);
+        if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
+      }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.
       if (historyError !== undefined) canvas.text(1, ruleRow, ` ${historyError} `, STYLE.error);
@@ -466,30 +550,21 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     send: () => void send(),
     chooseModel: () => void chooseModel(),
     browsing: () => browse !== undefined,
-    canBrowse: () => browse !== undefined || composer.state.text === "",
-    browse: (step) => {
-      // The messages of the user in the transcript, oldest first.
-      const list = transcript.entries.filter(
-        (entry): entry is Extract<Entry, { kind: "input" }> =>
-          entry.kind === "input" && entry.source.kind === "user" && entry.inputKind === "message",
-      );
-      const at = browse === undefined ? list.length : list.findIndex((entry) => entry.key === browse?.key);
-      const next = list[at + step];
-      if (next === undefined) {
-        if (step === 1 && browse !== undefined) {
-          composer.reset(browse.draft);
-          browse = undefined;
-        } else if (step === -1) void load();
-        return;
-      }
-      browse = { draft: browse?.draft ?? composer.state, key: next.key };
-      composer.reset(draftOf(next.content));
+    // A waiting recall keeps ↑, so the key does not move the caret meanwhile.
+    canOlder: () => recalling || browse !== undefined || composer.state.text === "" || recallable() !== undefined,
+    older: () => {
+      if (recalling) return;
+      const next = recallable();
+      if (next !== undefined) void recall(next[0], next[1]);
+      else if (browse !== undefined || composer.state.text === "") browseBy(-1);
     },
+    newer: () => browseBy(1),
     clear: () => {
       if (composer.state.text === "") handle?.cancel();
       else {
         composer.reset(EMPTY);
         browse = undefined;
+        recalled = undefined;
       }
     },
     interrupt: () => {

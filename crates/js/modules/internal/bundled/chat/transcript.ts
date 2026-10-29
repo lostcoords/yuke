@@ -148,7 +148,7 @@ function statusItem(status: Status): TextItem {
 }
 
 /** The text of the blocks of an input, with a label for each media block. */
-function inputText(content: Extract<Entry, { kind: "input" }>["content"]): string {
+export function inputText(content: Extract<Entry, { kind: "input" }>["content"]): string {
   let image = 0;
   return content
     .map((block) => {

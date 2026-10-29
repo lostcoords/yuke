@@ -60,9 +60,11 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const created: SessionSettings[] = [];
   const inputs: (readonly Block[])[] = [];
   const changes: SessionSettings[] = [];
+  const removals: number[] = [];
   /**
    * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
-   * `cancels` counts the cancels of the handles.
+   * `cancels` counts the cancels of the handles. `removal` holds each removal until it settles, and `removed` is its
+   * answer.
    */
   const state: {
     failing: boolean;
@@ -70,13 +72,24 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     cancels: number;
     openFails: number;
     refuseSettings: boolean;
-  } = { failing: false, accept: undefined, cancels: 0, openFails: 0, refuseSettings: false };
+    removal: Promise<void> | undefined;
+    removed: boolean;
+  } = {
+    failing: false,
+    accept: undefined,
+    cancels: 0,
+    openFails: 0,
+    refuseSettings: false,
+    removal: undefined,
+    removed: true,
+  };
   return {
     opened,
     pages,
     created,
     inputs,
     changes,
+    removals,
     state,
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);
@@ -102,6 +115,13 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         async setSettings(settings: SessionSettings) {
           if (state.refuseSettings) throw new Error("a turn runs");
           changes.push(settings);
+        },
+        // As the host does, a removal sends its update before its answer.
+        async removeInput(inputId: number) {
+          removals.push(inputId);
+          await state.removal;
+          if (state.removed) open.event({ update: { sessionUpdate: "input_removed", inputId } });
+          return state.removed;
         },
       });
     },

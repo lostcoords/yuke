@@ -1,7 +1,7 @@
 // The composer of the bundled chat: the first send, the model picker, a refused input, long pastes, the messages of
-// the user, and the keys of a pane.
+// the user, the strip and the recall of waiting messages, and the keys of a pane.
 
-import type { StoredEvent } from "yuke:protocol";
+import type { Block, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, test } from "yuke:test";
 import { type EditorState, TextEditor } from "yuke:tui";
 import { commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
@@ -9,6 +9,18 @@ import { commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows 
 /** The composer of the chat in `frame`. */
 function composerOf(chat: ReturnType<typeof loadChat>): TextEditor {
   return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
+}
+
+/** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
+function accepted(id: number, content: Block[], source: "user" | "plugin" = "user"): SessionUpdate {
+  return {
+    sessionUpdate: "input_accepted",
+    inputId: id,
+    input:
+      source === "user"
+        ? { source: { kind: "user" }, kind: "message", content }
+        : { source: { kind: "plugin", name: "ci" }, kind: "notification", content },
+  };
 }
 
 /** The text and the spans of `state`. */
@@ -185,7 +197,7 @@ test("a paste over 300 characters shows a label, and the input gets the whole te
   equal(sessions.inputs, [[{ user_text: "b".repeat(301) }]]);
 });
 
-test("up in an empty composer shows the older messages of the user, down brings back the draft, and an edit ends it", () => {
+test("up in an empty composer shows the older messages of the user, down past the newest empties it, and an edit ends it", () => {
   const user = { kind: "user" } as const;
   const message = (seq: number, text: string, source: "user" | "plugin" = "user"): StoredEvent => ({
     seq,
@@ -431,4 +443,157 @@ test("the commands of the chat are disabled in a pane of another plugin", () => 
   frame.surface("notes").tui.panes.split(() => ({ draw() {}, focusable: true }));
   frame.draw();
   equal([before, enabled()], [[true], [false]]);
+});
+
+test("the strip shows the waiting messages of the user oldest first, cut to one row, and no input of a plugin", async () => {
+  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  sessions.push(accepted(5, [{ user_text: "fix the test" }]));
+  sessions.push(accepted(6, [{ user_text: "CI failed" }], "plugin"));
+  sessions.push(accepted(7, [{ user_text: "and the docs\nthen push them" }]));
+  frame.draw();
+  equal(rows(frame).slice(3), [
+    "",
+    " fix the test",
+    " and the docs th… ↑ edit",
+    "────────────────────────",
+    "Message…",
+  ]);
+  // The transcript gives the strip its rows.
+  equal(chat.transcript().scroll.state.height, 4);
+});
+
+test("up recalls the newest waiting message with its images, the next up puts the older one above, and an edit or a caret move ends it", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
+  sessions.push(accepted(1, [{ user_text: "first" }]));
+  sessions.push(accepted(3, [{ user_text: "zero" }]));
+  sessions.push(accepted(5, [{ user_text: "one" }]));
+  sessions.push(accepted(6, [{ user_text: "CI failed" }], "plugin"));
+  sessions.push(accepted(9, [{ user_text: "see " }, { media }]));
+  frame.key("up");
+  await settle();
+  const recalled = draft(composerOf(chat).state);
+  frame.key("up");
+  await settle();
+  equal(
+    [recalled, draft(composerOf(chat).state), sessions.removals],
+    [
+      ["see \uFFFC", [[4, 5, "[image 1]"]]],
+      ["one\nsee \uFFFC", [[8, 9, "[image 1]"]]],
+      [9, 5],
+    ],
+  );
+  // An edit ends the recall, so up moves the caret, and the older message waits on.
+  frame.paste("!");
+  frame.key("up");
+  await settle();
+  frame.draw();
+  equal(
+    [sessions.removals, rows(frame).some((row) => row.includes("CI failed")), rows(frame).at(-4)],
+    [[9, 5], false, `${" zero".padEnd(23)} ↑ edit`],
+  );
+  // A caret move ends a recall too.
+  frame.key("ctrl+c");
+  frame.key("up");
+  await settle();
+  frame.key("left up");
+  await settle();
+  equal([composerOf(chat).state.text, sessions.removals], ["zero", [9, 5, 3]]);
+});
+
+test("a message that a turn took stays sent and the next up recalls an older one, up during a recall does nothing, and text typed meanwhile stays", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  sessions.push(accepted(3, [{ user_text: "zero" }]));
+  sessions.push(accepted(5, [{ user_text: "one" }]));
+  sessions.state.removed = false;
+  frame.key("up");
+  await settle();
+  equal([composerOf(chat).state.text, chat.notices], ["", ["info the message reached the turn already"]]);
+  // The next up goes on with the older message, so it never asks for the sent one again.
+  sessions.state.removed = true;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  sessions.state.removal = promise;
+  frame.key("up");
+  frame.key("up");
+  frame.paste("x");
+  resolve();
+  await settle();
+  equal([composerOf(chat).state.text, sessions.removals], ["zero\nx", [5, 3]]);
+});
+
+test("a pane close during a recall leaves the composer and gives no notice", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  const composer = composerOf(chat);
+  sessions.push(accepted(5, [{ user_text: "one" }]));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  sessions.state.removal = promise;
+  frame.key("up");
+  chat.tui.commands.run("core:close");
+  resolve();
+  await settle();
+  equal([composer.state.text, chat.notices, sessions.removals], ["", [], [5]]);
+});
+
+test("up during a browse goes on with the history, and the end of the browse gives up to a recall", async () => {
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    {
+      seq: 2,
+      sessionUpdate: "commit",
+      commit: { replaced: null, blocks: [{ user_text: "old" }], answer: null, end: null },
+      consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
+    },
+  ];
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(saved);
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  frame.key("up");
+  sessions.push(accepted(7, [{ user_text: "wait" }]));
+  frame.key("up");
+  await settle();
+  const browsed = [composerOf(chat).state.text, [...sessions.removals]];
+  frame.key("down up");
+  await settle();
+  equal([browsed, composerOf(chat).state.text, sessions.removals], [["old", []], "wait", [7]]);
+});
+
+test("the strip keeps the newest messages when rows run out, and a failed recall keeps the composer", async () => {
+  using frame = createFrame({ width: 20, height: 4 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  for (const [id, text] of [
+    [9, "c"],
+    [3, "a"],
+    [5, "b"],
+  ] as const)
+    sessions.push(accepted(id, [{ user_text: text }]));
+  frame.draw();
+  const strip = rows(frame).slice(0, 2);
+  sessions.state.removal = Promise.reject(new Error("disk"));
+  frame.key("up");
+  await settle();
+  equal(
+    [strip, composerOf(chat).state.text, chat.notices],
+    [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error the message did not come back: Error: disk"]],
+  );
 });
