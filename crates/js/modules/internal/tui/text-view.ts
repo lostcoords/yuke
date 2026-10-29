@@ -73,7 +73,7 @@ export class TextView {
   readonly #list: ScrollList<TextItem>;
   readonly #appearance: TextAppearance;
   readonly #copyOnRelease: boolean;
-  readonly #activate: ((position: TextPosition) => void) | undefined;
+  readonly #activate: ((position: TextPosition, link: string | undefined) => void) | undefined;
   #document: TextDocument;
   /** The order of each item key, and of each section key in its item, for `compare`. */
   #order: Order;
@@ -82,7 +82,9 @@ export class TextView {
   #selection: Selection<TextPosition> | undefined;
   #size: Size = { width: 0, height: 0 };
   /** The two ends of the pressed grapheme, and whether the mouse moved since the press. */
-  #drag: { readonly start: TextPosition; readonly end: TextPosition; moved: boolean } | undefined;
+  #drag:
+    | { readonly start: TextPosition; readonly end: TextPosition; readonly link: string | undefined; moved: boolean }
+    | undefined;
   /** True while the view changes the list, so the list change gives no `scroll` event of its own. */
   #quiet = false;
 
@@ -250,10 +252,11 @@ export class TextView {
     return out;
   }
 
-  activate(position: TextPosition): boolean {
+  activate(position: TextPosition, link?: string): boolean {
     const checked = this.#position(position);
+    if (link !== undefined && typeof link !== "string") throw new TypeError("a link is a string");
     if (this.#activate === undefined) return false;
-    this.#activate(checked);
+    this.#activate(checked, link);
     return true;
   }
 
@@ -348,7 +351,7 @@ export class TextView {
       const start = this.hitTest(event);
       const end = this.#endAt(event) ?? start;
       if (start === undefined || end === undefined) return false;
-      this.#drag = { start, end, moved: false };
+      this.#drag = { start, end, link: this.#linkAt(event), moved: false };
       this.caret = start;
       return true;
     }
@@ -369,9 +372,21 @@ export class TextView {
       const selection = this.#selection;
       if (drag.moved && selection !== undefined) {
         if (this.#copyOnRelease) this.#support.copy(this.text({ from: selection.anchor, to: selection.head }));
-      } else this.activate(drag.start);
+      } else this.activate(drag.start, drag.link);
     }
     return true;
+  }
+
+  /** The link of the segment at `point`, or `undefined`. */
+  #linkAt(point: Point): string | undefined {
+    const row = this.#rowAt(point.row + this.#list.state.top);
+    if (row === undefined) return undefined;
+    let column = 0;
+    for (const segment of row.segments) {
+      column += measure(segment.text);
+      if (point.column < column) return segment.link;
+    }
+    return undefined;
   }
 
   /**
@@ -660,7 +675,6 @@ function samePosition(first: TextPosition | undefined, second: TextPosition | un
   );
 }
 
-/** A checked document: keys are strings, item keys are unique, and section keys are unique in their item. */
 /** The place of each item and of each section in its item, by key. */
 type Order = Map<string, { readonly at: number; readonly sections: Map<string, number> }>;
 

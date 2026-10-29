@@ -489,8 +489,8 @@ declare module "yuke:tui" {
     readonly appearance?: TextAppearance | undefined;
     /** Copy a mouse selection when the button goes up. The default is true. */
     readonly copyOnRelease?: boolean | undefined;
-    /** Act on a click, such as a fold of a tool or a link. */
-    readonly activate?: ((position: TextPosition) => void) | undefined;
+    /** Act on a click without a drag, such as a fold of a tool. `link` is the target of the clicked segment. */
+    readonly activate?: ((position: TextPosition, link: string | undefined) => void) | undefined;
     readonly followTail?: boolean | undefined;
     readonly requestOlder?: (() => void | Promise<void>) | undefined;
   }
@@ -519,8 +519,8 @@ declare module "yuke:tui" {
     compare(first: TextPosition, second: TextPosition): number;
     /** The text of `range`: its display copy (the default), or the source text of its sections. */
     text(range: TextRange, format?: "display" | "source"): string;
-    /** Call the `activate` option. `false` without it. */
-    activate(position: TextPosition): boolean;
+    /** Call the `activate` option with `position` and `link`. Return `false` without the option. */
+    activate(position: TextPosition, link?: string): boolean;
     extend(signal: AbortSignal): TextExtension<TextPosition, TextViewChange>;
     hitTest(point: Point): TextPosition | undefined;
     screenAt(position: TextPosition): Point | undefined;

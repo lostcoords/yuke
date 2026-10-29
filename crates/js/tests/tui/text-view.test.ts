@@ -8,6 +8,7 @@ import {
   type TextDocument,
   type TextItem,
   type TextPosition,
+  type TextRow,
   TextView,
   type TextViewChange,
 } from "yuke:tui";
@@ -145,6 +146,33 @@ test("a press on an item that the document drops activates nothing at the releas
   frame.mouse(mouse(2, 0, "release"));
   // A drag from the removed item would throw in the view, and the core would report a fault.
   equal([activated, view.selection, frame.copies, notices.list()], [[], undefined, [], []]);
+});
+
+test("a click gives activate the link of the segment under it, or none", () => {
+  const activated: [string, string | undefined][] = [];
+  const linked: TextRow = {
+    segments: [
+      { text: "see ", source: { kind: "text", from: 0, to: 4 } },
+      { text: "docs", source: { kind: "text", from: 4, to: 8 }, link: "https://docs.rs" },
+    ],
+    join: "\n",
+  };
+  const view = new TextView({
+    document: document("d", {
+      key: "i",
+      sections: [{ key: "s", kind: "text", text: "see docs", render: () => [linked] }],
+    }),
+    activate: (position, link) => activated.push([`${position.item}:${position.offset}`, link]),
+  });
+  using frame = createFrame({ width: 10, height: 1 }, () => view);
+  for (const column of [5, 1]) {
+    frame.mouse(mouse(column, 0, "press"));
+    frame.mouse(mouse(column, 0, "release"));
+  }
+  equal(activated, [
+    ["i:5", "https://docs.rs"],
+    ["i:1", undefined],
+  ]);
 });
 
 test("a click without a drag activates its position and copies nothing", () => {

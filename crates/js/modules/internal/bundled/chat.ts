@@ -4,7 +4,8 @@
  * the draft, the folds, and the scroll place of each pane.
  */
 
-import { ChatDocument, STYLE, STYLES } from "yuke:internal/bundled/chat/transcript";
+import { STYLE, STYLES } from "yuke:internal/bundled/chat/rows";
+import { ChatDocument } from "yuke:internal/bundled/chat/transcript";
 import type { EventsPage, PluginContext, ViewEvent } from "yuke:plugins";
 import type { SessionId } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
@@ -64,11 +65,33 @@ export function apply(ctx: PluginContext<Options>): undefined {
   if (tui === undefined) return undefined;
   const copyOnRelease = ctx.options.copyOnRelease ?? true;
   for (const [name, style] of Object.entries(STYLES)) tui.styles.set(name, style);
-  tui.views.register("pane", (state, mount) => chatPane(ctx, tui, copyOnRelease, mount, paneState(state)));
+  const panes: Panes = new WeakMap();
+  const chat = { ctx, tui, copyOnRelease, panes };
+  tui.views.register("pane", (state, mount) => chatPane(chat, mount, paneState(state)));
   tui.panes.setDefault((mount, reason) =>
-    chatPane(ctx, tui, copyOnRelease, mount, { session: reason === "start" ? tui.startup.session : undefined }),
+    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
   );
+  tui.commands.add({
+    name: "toggle-tools",
+    title: "Open or fold the tools of the chat",
+    run: () => {
+      const active = tui.panes.active?.view;
+      if (active !== undefined) panes.get(active)?.();
+    },
+  });
+  tui.keys.bind("ctrl+o", "toggle-tools", { in: "chat" });
   return undefined;
+}
+
+/** The fold of all tools of each chat pane, by its view. The command of the plugin acts on the active pane. */
+type Panes = WeakMap<View, () => void>;
+
+/** What each pane of the chat shares. */
+interface Chat {
+  readonly ctx: PluginContext<Options>;
+  readonly tui: Tui;
+  readonly copyOnRelease: boolean;
+  readonly panes: Panes;
 }
 
 /** Check the session, the folds, and the viewport of a saved `state`. A bad field throws a `TypeError`. The editor checks the draft. */
@@ -95,7 +118,9 @@ function paneState(state: unknown): PaneState {
  * A chat pane: the transcript above a rule and the composer. The composer takes at most half the pane height. A pane
  * with a session holds its own handle until the mount closes.
  */
-function chatPane(ctx: PluginContext<Options>, tui: Tui, copyOnRelease: boolean, mount: Mount, state: PaneState): View {
+function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
+  const ctx = chat.ctx;
+  const tui = chat.tui;
   const session = state.session;
   const transcript = new Transcript();
   const document = new ChatDocument(`session:${session ?? "new"}`, state.folds);
@@ -144,10 +169,20 @@ function chatPane(ctx: PluginContext<Options>, tui: Tui, copyOnRelease: boolean,
     document: document.project(transcript),
     role: "transcript",
     group,
-    copyOnRelease,
+    copyOnRelease: chat.copyOnRelease,
     followTail: true,
-    activate: (position) => {
-      if (position.section === "title" && document.toggle(transcript, position.item)) changed();
+    activate: (position, link) => {
+      if (link === undefined) {
+        if (position.section === "title" && document.toggle(transcript, position.item)) changed();
+        return;
+      }
+      // A relative target starts in the folder of its tool call, else in the folder of the session, else at the start.
+      const entry = transcript.entries.find((candidate) => candidate.key === position.item);
+      const folder = (entry?.kind === "tool" ? entry.folder : undefined) ?? transcript.settings?.cwd ?? tui.startup.cwd;
+      const absolute = /^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("/");
+      const target = absolute ? link : `${folder.replace(/\/$/, "")}/${link}`;
+      tui.copy(target);
+      ctx.notify("info", `copied ${target}`);
     },
     requestOlder: load,
   });
@@ -176,7 +211,8 @@ function chatPane(ctx: PluginContext<Options>, tui: Tui, copyOnRelease: boolean,
 
   // The layout keeps the row of the rule for the draw.
   let ruleRow = 0;
-  return {
+  const pane: View = {
+    contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
       if (dirty) {
         dirty = false;
@@ -223,4 +259,9 @@ function chatPane(ctx: PluginContext<Options>, tui: Tui, copyOnRelease: boolean,
       };
     },
   };
+  chat.panes.set(pane, () => {
+    document.toggleTools(transcript);
+    changed();
+  });
+  return pane;
 }

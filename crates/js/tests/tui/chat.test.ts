@@ -1,116 +1,21 @@
 // The bundled chat pane in a frame: the default pane of each split, its own draft and session handle, a reload, and its
 // options.
 
-import { apply } from "yuke:internal/bundled/chat";
-import type { EventsPage, ViewEvent } from "yuke:plugins";
-import type { Block, SessionSettings, SessionUpdate, StoredEvent, TurnEnd } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, test } from "yuke:test";
-import { type MouseEvent, TextView } from "yuke:tui";
-
-const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
-
-function mouse(column: number, row: number, action: MouseEvent["action"]): MouseEvent {
-  return { type: "mouse", column, row, button: "left", action, modifiers: MODIFIERS };
-}
-
-/** One call of `sessions.open`: the session, the tail, the signal of its handle, and its event callback. */
-interface Opened {
-  readonly id: string;
-  readonly tail: number;
-  readonly signal: AbortSignal;
-  readonly event: (event: ViewEvent) => void;
-}
-
-const SETTINGS: SessionSettings = {
-  model: { provider: "p", model: "m" },
-  settings: {
-    maxOutputTokens: null,
-    reasoning: { thinking: null, effort: null },
-    temperature: null,
-    topP: null,
-    toolChoice: "auto",
-    outputSchema: null,
-  },
-  cwd: "/w",
-};
-
-/** The saved event `seq` with `blocks`. */
-function commit(seq: number, blocks: Block[], end: TurnEnd | null = null): StoredEvent {
-  return { seq, sessionUpdate: "commit", commit: { replaced: null, blocks, answer: null, end }, consumed: [] };
-}
-
-/** A session with the settings event 1, then a reply `reply <seq>` in each event up to `last`. */
-function replies(last: number): StoredEvent[] {
-  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
-  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
-  return saved;
-}
-
-/**
- * Sessions whose saved events are `saved`: an open gives a snapshot of the last `tail`, and `events` gives a page.
- * An open of the session `missing` rejects. With `failing`, each page rejects.
- */
-function fakeSessions(saved: StoredEvent[] = []) {
-  const opened: Opened[] = [];
-  const pages: EventsPage[] = [];
-  const state = { failing: false };
-  return {
-    opened,
-    pages,
-    state,
-    open(id: string, open: Opened): Promise<object> {
-      opened.push({ id, tail: open.tail, signal: open.signal, event: open.event });
-      if (id === "missing") return Promise.reject(new Error("no session missing"));
-      open.event({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
-      return Promise.resolve({});
-    },
-    async events(_id: string, page: EventsPage): Promise<StoredEvent[]> {
-      pages.push(page);
-      if (state.failing) throw new Error("disk");
-      const before = page.before ?? Number.POSITIVE_INFINITY;
-      return saved.filter((event) => event.seq < before).slice(-page.limit);
-    },
-    /** Give the last handle the live update `update`. */
-    push(update: SessionUpdate): void {
-      saved.push(update as StoredEvent);
-      opened.at(-1)?.event({ update });
-    },
-  };
-}
-
-/** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat and each notice. */
-function loadChat(
-  frame: FrameTest,
-  options: { readonly copyOnRelease?: boolean } = {},
-  sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
-) {
-  const surface = frame.surface("chat");
-  const notices: string[] = [];
-  apply({
-    get: (name: string) => (name === "tui" ? surface.tui : sessions),
-    options,
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-  } as never);
-  const transcript = (): TextView =>
-    surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
-  return { tui: surface.tui, opened: sessions.opened, notices, transcript };
-}
-
-const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
-
-/** Wait until each job and timer of now ran, so a page load ends. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function rows(frame: FrameTest): string[] {
-  return frame.frame.cells.map((row) =>
-    row
-      .map((cell) => cell.text || " ")
-      .join("")
-      .trimEnd(),
-  );
-}
+import type { StoredEvent } from "yuke:protocol";
+import { createFrame, equal, test } from "yuke:test";
+import {
+  click,
+  commit,
+  EMPTY,
+  fakeSessions,
+  loadChat,
+  mouse,
+  replies,
+  rows,
+  SETTINGS,
+  settle,
+  transcriptRows,
+} from "./chat.ts";
 
 test("a split opens a new empty chat with its own draft", () => {
   using frame = createFrame({ width: 21, height: 4 });
@@ -202,17 +107,6 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
 
-/** The rows of the transcript of `frame` above its rule, which is the row before the last. */
-function transcriptRows(frame: FrameTest): string[] {
-  return rows(frame).slice(0, -2);
-}
-
-/** Press and release the left button at `row` and `column` of `frame`. */
-function click(frame: FrameTest, column: number, row: number): void {
-  frame.mouse(mouse(column, row, "press"));
-  frame.mouse(mouse(column, row, "release"));
-}
-
 test("each kind of entry draws its rows, and a click on a thought opens it", () => {
   const user = { kind: "user" } as const;
   const saved: StoredEvent[] = [
@@ -251,14 +145,14 @@ test("each kind of entry draws its rows, and a click on a thought opens it", () 
       consumed: [],
     },
   ];
-  using frame = createFrame({ width: 30, height: 22 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 23 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
   loadChat(frame, {}, sessions);
   frame.start();
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 2500, error: "overloaded" });
   frame.draw();
   const before = transcriptRows(frame);
-  equal(before.slice(0, 20), [
+  equal(before.slice(0, 21), [
     "",
     " fix the test",
     "",
@@ -266,7 +160,8 @@ test("each kind of entry draws its rows, and a click on a thought opens it", () 
     "",
     " Found it",
     "",
-    " exec · done",
+    " exec",
+    " ok",
     "",
     " notification · ci",
     " build done",
