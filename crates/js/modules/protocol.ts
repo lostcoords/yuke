@@ -200,6 +200,27 @@ event: string,
 data: unknown, };
 
 /**
+ * The params of `extension/request`.
+ */
+export type ExtensionRequestParams = { 
+/**
+ * The session of the plugin.
+ */
+sessionId: SessionId, 
+/**
+ * The name that the host gives the plugin.
+ */
+extension: string, 
+/**
+ * The name of the request. The plugin chooses it.
+ */
+request: string, 
+/**
+ * The data of the request. The plugin chooses its shape.
+ */
+data: unknown, };
+
+/**
  * Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
  * `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
  */

@@ -28,6 +28,7 @@ declare module "yuke:test" {
   import type {
     Block,
     ExtensionEventParams,
+    ExtensionRequestParams,
     FinishReason,
     InputKind,
     InputSource,
@@ -246,6 +247,13 @@ declare module "yuke:test" {
      * promise keeps the question open until it settles.
      */
     readonly answer?: (question: TestQuestion) => boolean | string | undefined | Promise<boolean | string | undefined>;
+    /**
+     * The answer to each request of a plugin to the client. The plugin gets a JSON copy of the return, and
+     * `undefined` gives `null`. A throw of an `ExtensionRequestError` is the error answer. Another throw or rejection
+     * fails the test. Without the function, each request rejects at once, as with no client. A promise keeps the
+     * request open until it settles.
+     */
+    readonly respond?: (request: ExtensionRequestParams) => unknown;
   }
 
   /**

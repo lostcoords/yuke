@@ -19,6 +19,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "DisplayBlock",
     "EventNumber",
     "ExtensionEventParams",
+    "ExtensionRequestParams",
     "FinishReason",
     "InputId",
     "InputKind",

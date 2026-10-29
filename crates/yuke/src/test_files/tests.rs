@@ -177,6 +177,42 @@ async fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
     }
 }
 
+#[tokio::test]
+async fn a_respond_that_throws_another_error_fails_the_test() {
+    let summary = ran(
+        "a_respond_that_throws_another_error_fails_the_test",
+        r#"import { createHost, test } from "yuke:test";
+           test("thrown", async () => {
+             await using host = await createHost({
+               plugins: [{
+                 name: "reader",
+                 session: (s) => {
+                   s.tools.define({
+                     name: "read_session",
+                     description: "Read a session.",
+                     concurrency: "serial",
+                     parameters: { type: "object", properties: {} },
+                     execute: (_args, context) => s.request("session.read", null, { signal: context.signal }),
+                   });
+                 },
+               }],
+               respond: () => { throw new TypeError("no fixture"); },
+             });
+             const session = await host.openSession();
+             await session.call("read_session", {});
+           });"#,
+        TIME_LIMIT,
+    )
+    .await;
+
+    assert_eq!((summary.passed, summary.failed), (0, 1));
+    assert!(
+        summary.failures.contains("thrown\n  TypeError: no fixture"),
+        "{}",
+        summary.failures
+    );
+}
+
 // The first file waits for a mark of the second file, so the files must run in parallel and the first file ends last.
 #[tokio::test]
 async fn the_failures_keep_the_order_of_the_files() {

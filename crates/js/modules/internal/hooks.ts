@@ -27,7 +27,7 @@ import type {
   ToolCallResult,
 } from "yuke:plugins";
 import { ExtensionRequestError } from "yuke:plugins";
-import type { Block, ModelReference } from "yuke:protocol";
+import type { Block, ExtensionRequestParams, ModelReference } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The form of a prompt section key. */
@@ -75,6 +75,14 @@ type Ask = (source: string, question: Question) => Operation<boolean | string | 
  * result. A failure rejects with a record `{ code?, message, data? }`. A cancel rejects with `{ cancelled: true }`.
  */
 type SendRequest = (source: string, request: string, data: string) => Operation<unknown>;
+
+/** Answers the requests of the plugins in place of the client: the `respond` of `createHost` in a test. */
+let responder: ((request: ExtensionRequestParams) => Operation<unknown>) | undefined;
+
+/** Answer the requests of the plugins with `respond`, which gives what the native gives. `undefined` restores it. */
+export function setResponder(respond: typeof responder): void {
+  responder = respond;
+}
 
 /**
  * What `openSession` gets: the open number of the host, the id of the session, its workspace folder, and the natives
@@ -771,8 +779,14 @@ function start(
       const text = JSON.stringify(data) ?? "null";
       const ended = endedBy(options?.signal);
       ended.throwIfAborted();
+      const start = (): Operation<unknown> =>
+        responder === undefined
+          ? send(plugin, String(request), text)
+          : responder(
+              Object.freeze({ sessionId, extension: plugin, request: String(request), data: JSON.parse(text) }),
+            );
       try {
-        return await underSignal(ended, () => send(plugin, String(request), text));
+        return await underSignal(ended, start);
       } catch (error) {
         throw requestFailureOf(error, ended);
       }

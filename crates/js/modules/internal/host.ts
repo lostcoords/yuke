@@ -2,7 +2,9 @@
 // fake model. The app of the test does the work through the natives of the test host.
 
 import { underSignal } from "yuke:internal/events";
+import { setResponder } from "yuke:internal/hooks";
 import {
+  type Operation,
   sessionRespond,
   testHostCall,
   testHostClose,
@@ -14,8 +16,15 @@ import {
 import { give } from "yuke:internal/plugins";
 import { flush, sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
-import type { Frozen, ViewEvent } from "yuke:plugins";
-import type { InteractionResponse, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
+import { jsonCopy } from "yuke:internal/values";
+import { ExtensionRequestError, type Frozen, type ViewEvent } from "yuke:plugins";
+import type {
+  ExtensionRequestParams,
+  InteractionResponse,
+  SessionId,
+  SessionSettings,
+  SessionUpdate,
+} from "yuke:protocol";
 import type {
   CallOutcome,
   CallsOptions,
@@ -69,6 +78,34 @@ async function settle(): Promise<void> {
   await testHostSettle();
 }
 
+/**
+ * The operation of a plugin request that `respond` answers. It gives a JSON copy of the result, or a failure record as
+ * the native does. A cancel ends the wait of the plugin, and a late answer has no effect.
+ */
+function responderOf(respond: NonNullable<HostOptions["respond"]>) {
+  return (request: ExtensionRequestParams): Operation<unknown> => {
+    let cancel = (): void => undefined;
+    const promise = new Promise<unknown>((resolve, reject) => {
+      cancel = () => reject({ cancelled: true });
+      void (async () => {
+        try {
+          resolve(jsonCopy((await respond(request)) ?? null, "the result of respond"));
+        } catch (error) {
+          if (error instanceof ExtensionRequestError) {
+            const data = error.data === undefined ? undefined : jsonCopy(error.data, "the error data of respond");
+            reject({ code: error.code, message: error.message, data });
+            return;
+          }
+          reject({ code: -32_603, message: String(error) });
+          // A rejection that no code handles is a fault, so a failed respond fails the test.
+          throw error;
+        }
+      })();
+    });
+    return { promise, cancel };
+  };
+}
+
 /** The response to `update`, a question of a plugin, from `answer`. */
 function responseOf(
   update: Frozen<Extract<SessionUpdate, { sessionUpdate: "interaction_requested" }>>,
@@ -105,6 +142,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
       provides: plugin.provides ?? [],
     };
   });
+  // A plugin can send a request while the host loads it.
+  if (options.respond !== undefined) setResponder(responderOf(options.respond));
   await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
   await settle();
 
@@ -215,6 +254,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
   const close = (): Promise<void> => {
     closing ??= (async () => {
       stop.abort(new Error("the host closed"));
+      setResponder(undefined);
       await testHostClose(null).promise;
       await settle();
     })();
