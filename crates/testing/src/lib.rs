@@ -4,12 +4,12 @@
 #![expect(
     clippy::unwrap_used,
     clippy::missing_panics_doc,
+    clippy::panic,
     reason = "a fixture fails its test by panicking"
 )]
 
 use std::sync::Arc;
 
-use serde_json::Value;
 use yuke_ai::route::{Credential, Route};
 use yuke_ai::{AnthropicWire, Origin, OriginRef, Target, ToolDefinition, Wire};
 use yuke_engine::Model;
@@ -60,27 +60,35 @@ pub fn model_of(target: Target) -> Model {
 }
 
 /// Assert that each of `texts` appears as a JSON string in `body`, in order.
+/// Each entry consumes a separate occurrence. This checks encoded text, not JSON structure.
 #[track_caller]
 pub fn assert_in_order(body: &str, texts: &[&str]) {
-    let positions: Vec<Option<usize>> = texts
-        .iter()
-        .map(|text| body.find(&Value::from(*text).to_string()))
-        .collect();
-    assert!(positions.iter().all(Option::is_some), "{body}");
-    assert!(positions.is_sorted(), "{body}");
+    let mut remaining = body;
+    for (index, text) in texts.iter().enumerate() {
+        let encoded = serde_json::to_string(text).unwrap();
+        let Some(position) = remaining.find(&encoded) else {
+            panic!("expected JSON string at index {index}: {encoded}\nbody: {body}");
+        };
+        remaining = &remaining[position + encoded.len()..];
+    }
 }
 
-/// A new empty folder for the test `name` of the test group `group`, as a canonical path. The process id keeps two test
-/// runs at once apart.
+/// Create an empty folder for the test `name` in `group` and return its canonical path.
+/// The same group and name use the same path within a process. Each call deletes the old contents.
+/// The process ID separates concurrent processes. The folder remains after the returned path is dropped.
+/// Filesystem failures cause a panic that reports the operation and path.
 pub fn folder(group: &str, name: &str) -> std::path::PathBuf {
     let folder = std::env::temp_dir()
         .join(format!("yuke-{group}-tests-{}", std::process::id()))
         .join(name);
     match std::fs::remove_dir_all(&folder) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        result => result.unwrap(),
+        result => result.unwrap_or_else(|error| panic!("cannot remove test folder {}: {error}", folder.display())),
     }
-    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::create_dir_all(&folder)
+        .unwrap_or_else(|error| panic!("cannot create test folder {}: {error}", folder.display()));
     // On macOS, the temporary folder is a symbolic link. A command reports the canonical path of its working folder.
-    folder.canonicalize().unwrap()
+    folder
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("cannot canonicalize test folder {}: {error}", folder.display()))
 }

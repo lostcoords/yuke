@@ -2864,8 +2864,6 @@ dependencies = [
 name = "yuke-testing"
 version = "0.0.1-dev"
 dependencies = [
- "async-trait",
- "bytes",
  "serde_json",
  "yuke-ai",
  "yuke-engine",
