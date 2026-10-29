@@ -595,6 +595,27 @@ export interface SessionHooks {
   "round.after": (event: RoundAfterEvent) => undefined | RoundAfterAnswer | Promise<undefined | RoundAfterAnswer>;
 }
 
+/** The options of `request`. */
+export interface RequestOptions {
+  /** An abort of this signal ends the wait, and the request rejects with the abort reason. */
+  readonly signal?: AbortSignal | undefined;
+}
+
+/** The error answer of the client to `request`. `message` is the message of the client. */
+export class ExtensionRequestError extends Error {
+  /** The JSON-RPC error code of the client. */
+  readonly code: number;
+  /** More facts about the error, when the client gave them. */
+  readonly data: unknown;
+
+  constructor(message: string, details: { readonly code: number; readonly data: unknown }) {
+    super(message);
+    this.code = details.code;
+    this.data = details.data;
+  }
+}
+ExtensionRequestError.prototype.name = "ExtensionRequestError";
+
 /** The options of a question to the user. */
 export interface AskOptions {
   /** An abort of this signal closes the question, and the question answers `undefined`. */
@@ -640,6 +661,19 @@ export interface SessionContext<O = Record<string, never>> {
   readonly notify: (level: NoticeLevel, message: string) => void;
   /** Send an event of this session. See {@link Emit}. */
   readonly emit: Emit;
+  /**
+   * Send the request `request` with `data` to the active client of `yuke --rpc`, and wait for the answer.
+   * - The extension of the request is the name of this plugin. A client answers an extension that it does not know
+   *   with the code -32601.
+   * - `data` follows `JSON.stringify`, as for `emit`. The promise gives the result of the client.
+   * - An error answer of the client rejects with an `ExtensionRequestError`.
+   * - With no client, as in `yuke -p` and in the interface, the request rejects with an `Error` at once. A disconnect of
+   *   the client rejects with an `Error` too.
+   * - An abort of the signal or the close of the session rejects with the abort reason. A request that the client got
+   *   and did not answer sends a cancel to the client.
+   * - The host sets no time limit. Pass the signal of the tool or the hook, so that a cancel of the turn ends the wait.
+   */
+  readonly request: (request: string, data?: unknown, options?: RequestOptions) => Promise<unknown>;
   /**
    * Ask the user a yes or no question with this plugin as its source, and wait for the answer.
    * - The answer is `undefined` when the user cancels, the signal aborts, the session closes, or no client can answer,

@@ -21,13 +21,15 @@ use yuke_protocol::{
     Input, InputKind, InputSource, InteractionRequest, InteractionResponse, ModelReference, PendingInput,
 };
 
-use crate::error::{Error, caught};
+use crate::error::{Error, ErrorClass, caught, throw};
 use crate::models::{Models, merge_settings};
-use crate::native::Operation;
 use crate::native::ai::{Round, context_tokens, side_request, tokens};
+use crate::native::{Cancelled, Operation};
 use crate::plugins::hooks;
 use crate::runtime::{Caller, Handle};
-use crate::tools::{Json, JsonText, MediaFile, Registry, ScriptTool, SessionHost, error_text, store_media};
+use crate::tools::{
+    Json, JsonText, MediaFile, Registry, RequestFailure, ScriptTool, SessionHost, error_text, store_media,
+};
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
 /// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
@@ -62,6 +64,7 @@ impl Handle {
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
         let ask_host = Arc::clone(&host);
+        let request_host = Arc::clone(&host);
         let model_host = Arc::clone(&host);
         let open = self
             .caller
@@ -73,6 +76,7 @@ impl Handle {
                     session_id,
                     folder,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
+                    request: caught(&ctx, request_function(&ctx, request_host))?,
                     model: caught(
                         &ctx,
                         Function::new(ctx.clone(), move || Json(model_host.model_reference())),
@@ -478,6 +482,8 @@ struct OpenRequest<'js> {
     folder: String,
     /// The native `ask(source, question)` of the session.
     ask: Function<'js>,
+    /// The native `request(source, request, data)` of the session.
+    request: Function<'js>,
     /// The native `model()` of the session, which gives the model that the settings name now.
     model: Function<'js>,
 }
@@ -502,6 +508,53 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
             })
         },
     )
+}
+
+/// The native `request(source, request, data)` of the session of `host`, with `data` as JSON text. It answers an
+/// operation whose promise gives the result of the client. A failure rejects with a [`RequestError`], and a cancel with
+/// `{ cancelled: true }`. A cancel drops the wait, and the drop cancels the request.
+fn request_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, source: String, request: String, data: String| -> rquickjs::Result<Operation<'js>> {
+            let data = serde_json::from_str(&data).map_err(|error| {
+                throw(
+                    &ctx,
+                    ErrorClass::TypeError,
+                    &format!("request: the data is not JSON: {error}"),
+                )
+            })?;
+            let host = Arc::clone(&host);
+            Operation::start(&ctx, move |ctx, stop| async move {
+                let answer = tokio::select! {
+                    answer = host.request(&source, request, data) => answer,
+                    () = stop.cancelled() => return Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?)),
+                };
+                let failure = match answer {
+                    Ok(value) => return Json(value).into_js(&ctx),
+                    Err(RequestFailure::Refused(error)) => RequestError {
+                        code: Some(error.code),
+                        message: error.message,
+                        data: error.data.map(Json),
+                    },
+                    Err(failure) => RequestError {
+                        code: None,
+                        message: failure.to_string(),
+                        data: None,
+                    },
+                };
+                Err(ctx.throw(failure.into_js(&ctx)?))
+            })
+        },
+    )
+}
+
+/// The record of a failed request: the error of the client with its code, or a failure of yuke without one.
+#[derive(IntoJs)]
+struct RequestError {
+    code: Option<i32>,
+    message: String,
+    data: Option<Json<serde_json::Value>>,
 }
 
 /// What `startPromptBuild` gets.

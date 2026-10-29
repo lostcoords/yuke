@@ -19,17 +19,17 @@ use std::time::Duration;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, Lines};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
 use yuke_protocol::{
-    ClientNotification, ClientRequest, EmptyParams, EmptyResult, Implementation, InitializeResult, Input, InputKind,
-    InputResult, InputSource, InstanceId, JsonRpc, ListJobsResult, ListMcpServersResult, Notification,
-    PROTOCOL_VERSION, RemoveInputResult, Request, RequestId, Response, ResponseError, ResponseOutcome,
-    ServerNotification, SessionId, SessionResult,
+    ClientNotification, ClientRequest, EmptyParams, EmptyResult, ExtensionCancelParams, ExtensionRequestParams,
+    Implementation, InitializeResult, Input, InputKind, InputResult, InputSource, InstanceId, JsonRpc, ListJobsResult,
+    ListMcpServersResult, Notification, PROTOCOL_VERSION, RemoveInputResult, Request, RequestId, Response,
+    ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
 };
 
-use crate::app::{App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
+use crate::app::{Answer, App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
@@ -156,13 +156,13 @@ pub(crate) async fn serve(
     clients: Clients,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), String> {
-    let outbox = Arc::new(Outbox::default());
+    let active = Arc::new(ActiveClient::default());
     // The one client connects before the start, so it gets the notices of the start.
     let (mut current, socket) = match clients {
-        Clients::One(stream) => (Some(Connection::open(stream, &outbox)), None),
+        Clients::One(stream) => (Some(Connection::open(stream, &active)), None),
         Clients::Socket(socket) => (None, Some(socket)),
     };
-    let observer = Arc::clone(&outbox) as Arc<dyn Observer>;
+    let observer = Arc::clone(&active) as Arc<dyn Observer>;
     let started = async {
         let store = open_store(&machine.paths.data).await?;
         App::start(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await
@@ -170,7 +170,7 @@ pub(crate) async fn serve(
     let app = match started.await {
         Ok(app) => app,
         Err(error) => {
-            outbox.detach();
+            active.detach();
             if let Some(connection) = current {
                 connection.close(drain_limit).await;
             }
@@ -179,27 +179,28 @@ pub(crate) async fn serve(
     };
     let mut server = Server {
         app,
+        active: Arc::clone(&active),
         instance_id: InstanceId::generate(),
         attachments: HashMap::new(),
     };
     tokio::pin!(shutdown);
     // Each request runs to its end before the next client or the shutdown, because the methods of the app are not cancel
-    // safe.
+    // safe. The answers of the client wait behind it too, so a method must not wait for a plugin request.
     loop {
         tokio::select! {
             () = &mut shutdown => break,
             stream = accept(socket.as_ref()) => {
                 if let Some(old) = current.take() {
-                    old.retire(&outbox, drain_limit);
+                    old.retire(&active, drain_limit);
                 }
-                current = Some(Connection::open(stream, &outbox));
+                current = Some(Connection::open(stream, &active));
             }
             line = next_line(&mut current) => match (line, current.as_mut()) {
                 (Some(line), Some(connection)) => server.handle(connection, &line).await,
                 _ if socket.is_none() => break,
                 _ => {
                     if let Some(old) = current.take() {
-                        old.retire(&outbox, drain_limit);
+                        old.retire(&active, drain_limit);
                     }
                 }
             },
@@ -208,7 +209,7 @@ pub(crate) async fn serve(
     // No client comes during the shutdown.
     drop(socket);
     server.app.shutdown().await;
-    outbox.detach();
+    active.detach();
     if let Some(connection) = current {
         connection.close(drain_limit).await;
     }
@@ -277,6 +278,8 @@ pub(crate) async fn connect(
 /// Answers the requests of the clients with the app.
 struct Server {
     app: App,
+    /// Gets the answers of the client to the requests of the plugins.
+    active: Arc<ActiveClient>,
     instance_id: InstanceId,
     /// The sessions that the clients created, forked, or loaded. A client holds each one until `session/close`, also
     /// after it disconnects.
@@ -284,7 +287,7 @@ struct Server {
 }
 
 impl Server {
-    /// Answer one line: a request gets a response, and a notification gets none.
+    /// Answer one line: a request gets a response. A notification, and an answer to a request of a plugin, get none.
     async fn handle(&mut self, connection: &mut Connection, line: &str) {
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
@@ -308,6 +311,13 @@ impl Server {
             }
             return;
         }
+        if value.get("method").is_none() && (value.get("result").is_some() || value.get("error").is_some()) {
+            match serde_json::from_value::<Response>(value) {
+                Ok(response) => self.active.answer(response),
+                Err(error) => warn(&format!("an answer does not read: {error}")),
+            }
+            return;
+        }
         let id = value
             .get("id")
             .cloned()
@@ -316,7 +326,7 @@ impl Server {
             .get("method")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|method| !ClientRequest::METHODS.contains(&method));
-        let request = match serde_json::from_value::<Request>(value) {
+        let request = match serde_json::from_value::<Request<ClientRequest>>(value) {
             Ok(request) => request,
             Err(error) => {
                 let code = if unknown_method {
@@ -450,10 +460,10 @@ struct Connection {
 }
 
 impl Connection {
-    /// Start writing to the output of `stream`, and make it the receiver of the notifications of `outbox`.
-    fn open(stream: Stream, outbox: &Outbox) -> Connection {
+    /// Start writing to the output of `stream`, and make it the connection of `active`.
+    fn open(stream: Stream, active: &ActiveClient) -> Connection {
         let (writer, written) = Writer::start(stream.output);
-        outbox.attach(writer.clone());
+        active.attach(writer.clone());
         Connection {
             lines: BufReader::new(stream.input).lines(),
             writer,
@@ -473,13 +483,13 @@ impl Connection {
         });
     }
 
-    /// Stop the notifications of `outbox` to this connection, and close it in the background.
-    fn retire(self, outbox: &Outbox, drain_limit: Duration) {
-        outbox.detach();
+    /// Take this connection from `active`, and close it in the background.
+    fn retire(self, active: &ActiveClient, drain_limit: Duration) {
+        active.detach();
         tokio::spawn(self.close(drain_limit));
     }
 
-    /// Write the messages that wait, and end the connection. The outbox must not hold its writer.
+    /// Write the messages that wait, and end the connection. The active client must not hold its writer.
     async fn close(self, drain_limit: Duration) {
         let Connection {
             writer, mut written, ..
@@ -502,27 +512,57 @@ impl Connection {
     }
 }
 
-/// Sends the notifications of the app to the active client. With no active client, a notice goes to stderr. A session
-/// update, an extension event, or a login end is dropped. `session/load` sends the saved events again, and
-/// `catalog/list` gives the state of a login.
+/// The active client: the writer of its connection, and the requests of the plugins that wait for its answer. With no
+/// active client, a notice goes to stderr, and a request fails at once. A session update, an extension event, or a
+/// login end is dropped. `session/load` sends the saved events again, and `catalog/list` gives the state of a login.
 #[derive(Default)]
-struct Outbox {
-    writer: Mutex<Option<Writer>>,
+struct ActiveClient {
+    state: Mutex<ClientState>,
 }
 
-impl Outbox {
+/// The state of the active client. One lock holds it, so a detach and a request do not race.
+#[derive(Default)]
+struct ClientState {
+    writer: Option<Writer>,
+    /// The sender of the answer of each waiting request, by its id.
+    pending: HashMap<i64, oneshot::Sender<Answer>>,
+    /// The id of the last request. The ids go on across clients, so a late answer never names a new request.
+    last_request: i64,
+}
+
+impl ActiveClient {
     fn attach(&self, writer: Writer) {
-        *lock(&self.writer) = Some(writer);
+        lock(&self.state).writer = Some(writer);
     }
 
+    /// Forget the writer, and fail each waiting request: the drop of its sender fails its receiver.
     fn detach(&self) {
-        *lock(&self.writer) = None;
+        let mut state = lock(&self.state);
+        state.writer = None;
+        state.pending.clear();
+    }
+
+    /// Give `response` to its waiting request. A late answer after a cancel, or an unknown id, gets no response.
+    fn answer(&self, response: Response) {
+        let Some(RequestId::Number(id)) = response.id else {
+            return;
+        };
+        let Some(sender) = lock(&self.state).pending.remove(&id) else {
+            return;
+        };
+        let answer = match response.outcome {
+            ResponseOutcome::Result(value) => Ok(value),
+            ResponseOutcome::Error(error) => Err(error),
+        };
+        if sender.send(answer).is_err() {
+            // The plugin stopped waiting, and its cancel comes next.
+        }
     }
 }
 
-impl Observer for Outbox {
+impl Observer for ActiveClient {
     fn notify(&self, notification: ServerNotification) {
-        let writer = lock(&self.writer).clone();
+        let writer = lock(&self.state).writer.clone();
         match (writer, notification) {
             (Some(writer), notification) => writer.send(&Notification {
                 jsonrpc: JsonRpc::V2,
@@ -533,8 +573,39 @@ impl Observer for Outbox {
                 None,
                 ServerNotification::SessionUpdate(_)
                 | ServerNotification::ExtensionEvent(_)
+                | ServerNotification::ExtensionCancel(_)
                 | ServerNotification::LoginFinished(_),
             ) => {}
+        }
+    }
+
+    fn request(&self, params: ExtensionRequestParams) -> Option<(i64, oneshot::Receiver<Answer>)> {
+        let mut state = lock(&self.state);
+        let writer = state.writer.clone()?;
+        state.last_request += 1;
+        let id = state.last_request;
+        let (sender, receiver) = oneshot::channel();
+        state.pending.insert(id, sender);
+        writer.send(&Request {
+            jsonrpc: JsonRpc::V2,
+            id: RequestId::Number(id),
+            call: ServerRequest::ExtensionRequest(params),
+        });
+        Some((id, receiver))
+    }
+
+    fn cancel_request(&self, id: i64) {
+        let mut state = lock(&self.state);
+        if state.pending.remove(&id).is_none() {
+            return;
+        }
+        if let Some(writer) = &state.writer {
+            writer.send(&Notification {
+                jsonrpc: JsonRpc::V2,
+                message: ServerNotification::ExtensionCancel(ExtensionCancelParams {
+                    request_id: RequestId::Number(id),
+                }),
+            });
         }
     }
 }
@@ -630,8 +701,9 @@ fn response_error(error: &AppError) -> ResponseError {
         AppError::Store(error) => match error {
             StoreError::NotFound => ResponseError::SESSION_NOT_FOUND,
             StoreError::Owned => ResponseError::SESSION_OWNED,
-            StoreError::NotACompletedTurn => ResponseError::NOT_A_COMPLETED_TURN,
-            StoreError::InputNotPending(_) | StoreError::InputBlocksExceedCommit => ResponseError::INVALID_PARAMS,
+            StoreError::NotACompletedTurn | StoreError::InputNotPending(_) | StoreError::InputBlocksExceedCommit => {
+                ResponseError::INVALID_PARAMS
+            }
             StoreError::Failed(_) => ResponseError::INTERNAL_ERROR,
         },
         AppError::Internal(_) => ResponseError::INTERNAL_ERROR,

@@ -5,7 +5,7 @@
  */
 export type ResponseError = { 
 /**
- * The kind of the error: one of the constants of this type.
+ * The kind of the error. A server error is one of the constants of this type.
  */
 code: number, 
 /**
@@ -13,6 +13,6 @@ code: number,
  */
 message: string, 
 /**
- * More facts about the error, when the server has them.
+ * More facts about the error, when the sender has them.
  */
 data?: unknown, };

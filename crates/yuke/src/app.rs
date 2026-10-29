@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use yuke_agent::{Session, SessionError, Store, StoreError};
 use yuke_ai::catalog::Auth;
@@ -32,9 +32,9 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
-    InteractionId, ListCatalogResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference,
-    NoticeLevel, NoticeParams, ProviderState, ReasoningLevel, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, StoredEvent, UpdateCredentialParams,
+    ExtensionRequestParams, InteractionId, ListCatalogResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult,
+    ModelReference, NoticeLevel, NoticeParams, ProviderState, ReasoningLevel, ResponseError, ServerNotification,
+    SessionEvent, SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -86,11 +86,24 @@ pub(crate) enum Mode {
     Print,
 }
 
-/// Receives the notifications of the app: the updates of each open session, and the notices.
+/// Receives the notifications of the app: the updates of each open session, and the notices. It also sends the
+/// requests of the plugins to the client.
 pub(crate) trait Observer: Send + Sync {
     /// Receive one notification. A call must not block, because a turn waits for it.
     fn notify(&self, notification: ServerNotification);
+
+    /// Send `params` to the client as a request, and give its id and the receiver of the answer. Give `None` when no
+    /// client can answer. The receiver fails when the client disconnects first. A call must not block.
+    fn request(&self, _params: ExtensionRequestParams) -> Option<(i64, oneshot::Receiver<Answer>)> {
+        None
+    }
+
+    /// Forget the request `id`. When the request still waits for its answer, tell the client.
+    fn cancel_request(&self, _id: i64) {}
 }
+
+/// The answer of a client to a request: its result or its error.
+pub(crate) type Answer = Result<serde_json::Value, ResponseError>;
 
 /// The parts of the app that each open session uses.
 struct Shared {
@@ -1051,6 +1064,7 @@ mod tests {
                 ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.message.clone()),
                 other @ (ServerNotification::SessionUpdate(_)
                 | ServerNotification::ExtensionEvent(_)
+                | ServerNotification::ExtensionCancel(_)
                 | ServerNotification::LoginFinished(_)) => {
                     panic!("expected a notice, got {other:?}")
                 }

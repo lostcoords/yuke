@@ -14,6 +14,7 @@ import type {
   InputOptions,
   InputSource,
   NoticeLevel,
+  RequestOptions,
   ResultMedia,
   RoundAfterEvent,
   RoundBeforeEvent,
@@ -25,6 +26,7 @@ import type {
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
+import { ExtensionRequestError } from "yuke:plugins";
 import type { Block, ModelReference } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
@@ -69,6 +71,12 @@ type Question =
 type Ask = (source: string, question: Question) => Operation<boolean | string | undefined>;
 
 /**
+ * Send the request `request` of the plugin `source` with the JSON text `data` to the client. The promise gives the
+ * result. A failure rejects with a record `{ code?, message, data? }`. A cancel rejects with `{ cancelled: true }`.
+ */
+type SendRequest = (source: string, request: string, data: string) => Operation<unknown>;
+
+/**
  * What `openSession` gets: the open number of the host, the id of the session, its workspace folder, and the natives
  * of the session.
  */
@@ -77,6 +85,7 @@ interface OpenRequest {
   readonly sessionId: string;
   readonly folder: string;
   readonly ask: Ask;
+  readonly request: SendRequest;
   /** The model that the settings of the session name now. */
   readonly model: () => ModelReference;
 }
@@ -87,7 +96,7 @@ interface OpenRequest {
  */
 export function openSession(request: OpenRequest): void {
   const { open, sessionId, folder, ask, model } = request;
-  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, model, entry));
+  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, request.request, model, entry));
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
@@ -659,25 +668,40 @@ export async function closeSession(open: number): Promise<void> {
   );
 }
 
+/** The value that a failed request rejects with, from the record of the native, or `error` as it is. */
+function requestFailureOf(error: unknown, signal: AbortSignal): unknown {
+  if (typeof error !== "object" || error === null || error instanceof Error) return error;
+  const record = error as Readonly<Record<string, unknown>>;
+  if (record.cancelled === true) return signal.reason;
+  const message = String(record.message);
+  if (typeof record.code !== "number") return new Error(message);
+  return new ExtensionRequestError(message, { code: record.code, data: record.data });
+}
+
 /** Run `session(s)` of the plugin of `entry` in its own scope. */
 function start(
   open: number,
   sessionId: string,
   folder: string,
   ask: Ask,
+  send: SendRequest,
   model: () => ModelReference,
   entry: (typeof sessionExports)[number],
 ): Scope {
   const { plugin, session, options } = entry;
   const { signal, abort } = hostSignal();
-  // The end of the scope and an abort of `stop` close the question, and it answers `undefined`.
+  // The end of the scope and an abort of `stop` end a wait of the plugin.
+  const endedBy = (stop: AbortSignal | undefined): AbortSignal => {
+    const caller = signalOf(stop);
+    return caller === undefined ? signal : AbortSignal.any([signal, caller]);
+  };
+  // An ended wait closes the question, and it answers `undefined`.
   const question = async <T extends boolean | string>(
     asked: Question,
     stop: AbortSignal | undefined,
   ): Promise<T | undefined> => {
-    const caller = signalOf(stop);
-    if (scope.closed || caller?.aborted) return undefined;
-    const ended = caller === undefined ? signal : AbortSignal.any([signal, caller]);
+    const ended = endedBy(stop);
+    if (ended.aborted) return undefined;
     // The host answers with the type of the kind of the question.
     return (await underSignal(ended, () => ask(plugin, asked))) as T | undefined;
   };
@@ -742,6 +766,16 @@ function start(
     },
     emit(event: string, data?: unknown): void {
       emit(plugin, String(event), JSON.stringify(data) ?? "null", sessionId);
+    },
+    async request(request: string, data?: unknown, options?: RequestOptions): Promise<unknown> {
+      const text = JSON.stringify(data) ?? "null";
+      const ended = endedBy(options?.signal);
+      ended.throwIfAborted();
+      try {
+        return await underSignal(ended, () => send(plugin, String(request), text));
+      } catch (error) {
+        throw requestFailureOf(error, ended);
+      }
     },
     confirm(title: string, message?: string, options?: AskOptions): Promise<boolean | undefined> {
       return question<boolean>({ kind: "confirm", title, message: message ?? "" }, options?.signal);

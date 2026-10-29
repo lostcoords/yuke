@@ -59,14 +59,23 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
   `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
   from `host:jobs`, after its `job` update.
-- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`, and
-  `auth/login_finished` from the server.
+- Server requests: `extension/request`. A client answers each one. It answers -32601 for a method or an extension
+  that it does not know. The server numbers its requests from 1, apart from the ids of the client.
+- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`, `extension/cancel`,
+  and `auth/login_finished` from the server.
 - `notice` is a message for the user, for the whole process or one session. It is not part of session history.
 - `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
   host gives the plugin. The plugin chooses `event` and `data`, and it puts a version in `data` when the shape
   changes. A client ignores an extension that it does not know. The event is not part of session history, and
   `session/load` does not send it again. The events and notices of the plugins keep their order, but they have no
   order against the session updates.
+- `extension/request { sessionId, extension, request, data }` is a request of a plugin to the active client. The
+  plugin chooses `request` and `data`, and the client chooses the result or the error. With no client, the request
+  fails at once in the plugin. A new client or a disconnect fails each request that waits, and no client gets it again. The server sets no
+  time limit. The request has no order against the events, the notices, and the session updates.
+- `extension/cancel { requestId }` tells the client that the plugin stopped waiting: a cancel of the plugin or the
+  close of its session. The client can stop its work. Its answer is optional, and the server ignores it. An answer and
+  a cancel can cross, so a client ignores a cancel of a request that it answered.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
 - The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
   commit names it in `consumed`, or when `input_removed` names it.

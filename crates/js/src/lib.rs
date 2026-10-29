@@ -52,4 +52,4 @@ pub use test_runner::{
     TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, TestSummary, find_test_files, run_test_file,
     run_test_files,
 };
-pub use tools::{ScriptTool, SessionHost};
+pub use tools::{RequestFailure, ScriptTool, SessionHost};

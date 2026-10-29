@@ -25,6 +25,7 @@ impl Observer for Notices {
             ServerNotification::Notice(notice) => self.0.send(Input::Notice(notice)),
             ServerNotification::SessionUpdate(_)
             | ServerNotification::ExtensionEvent(_)
+            | ServerNotification::ExtensionCancel(_)
             | ServerNotification::LoginFinished(_) => {}
         }
     }

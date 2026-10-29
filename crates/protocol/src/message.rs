@@ -1,5 +1,5 @@
-//! The JSON-RPC 2.0 messages: the requests and notifications of a client, the notifications of a server, and the
-//! responses. Each type holds one message, a JSON object with `"jsonrpc": "2.0"`. The protocol has no batches.
+//! The JSON-RPC 2.0 messages: the requests and notifications of a client and of a server, and the responses. Each type
+//! holds one message, a JSON object with `"jsonrpc": "2.0"`. The protocol has no batches.
 //!
 //! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
 //! and ts-rs marks the field optional only with both.
@@ -24,7 +24,7 @@ pub enum JsonRpc {
     V2,
 }
 
-/// The id of a request: a number or a text, as the client chose it.
+/// The id of a request: a number or a text, as its sender chose it. The ids of each direction are separate.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(untagged)]
@@ -35,10 +35,10 @@ pub enum RequestId {
     Text(String),
 }
 
-/// A request of a client. The server answers it with one [`Response`] of the same id.
+/// A request: a [`ClientRequest`] or a [`ServerRequest`]. The receiver answers it with one [`Response`] of the same id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-pub struct Request {
+pub struct Request<Call> {
     /// The version, `"2.0"`.
     #[cfg_attr(test, ts(type = "\"2.0\""))]
     pub jsonrpc: JsonRpc,
@@ -46,7 +46,7 @@ pub struct Request {
     pub id: RequestId,
     /// The method and its params.
     #[serde(flatten)]
-    pub call: ClientRequest,
+    pub call: Call,
 }
 
 /// The method and the params of a client request.
@@ -198,6 +198,18 @@ pub enum ClientNotification {
     Cancel(SessionParams),
 }
 
+/// The method and the params of a server request. A client answers each one. It answers
+/// [`ResponseError::METHOD_NOT_FOUND`] for a method or an extension that it does not know.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "method", content = "params")]
+pub enum ServerRequest {
+    /// A request of a plugin. The plugin chooses `request` and `data`, and the client chooses the result or the error. An
+    /// `extension/cancel` can end it.
+    #[serde(rename = "extension/request")]
+    ExtensionRequest(ExtensionRequestParams),
+}
+
 /// The method and the params of a server notification.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -212,6 +224,10 @@ pub enum ServerNotification {
     /// An event of a plugin. It is not part of session history. A client ignores an extension that it does not know.
     #[serde(rename = "extension/event")]
     ExtensionEvent(ExtensionEventParams),
+    /// The plugin of an `extension/request` stopped waiting for the answer. The client can stop its work. The answer is
+    /// optional, and the server ignores it.
+    #[serde(rename = "extension/cancel")]
+    ExtensionCancel(ExtensionCancelParams),
     /// The end of a login of `auth/login`.
     #[serde(rename = "auth/login_finished")]
     LoginFinished(crate::LoginFinishedParams),
@@ -265,6 +281,31 @@ pub struct ExtensionEventParams {
     pub data: serde_json::Value,
 }
 
+/// The params of `extension/request`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionRequestParams {
+    /// The session of the plugin.
+    pub session_id: SessionId,
+    /// The name that the host gives the plugin.
+    pub extension: String,
+    /// The name of the request. The plugin chooses it.
+    pub request: String,
+    /// The data of the request. The plugin chooses its shape.
+    #[cfg_attr(test, ts(type = "unknown"))]
+    pub data: serde_json::Value,
+}
+
+/// The params of `extension/cancel`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionCancelParams {
+    /// The id of the `extension/request`.
+    pub request_id: RequestId,
+}
+
 /// The answer to a request: its result or its error.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -272,7 +313,7 @@ pub struct Response {
     /// The version, `"2.0"`.
     #[cfg_attr(test, ts(type = "\"2.0\""))]
     pub jsonrpc: JsonRpc,
-    /// The id of the request. It is null when the server cannot read the id, as after a parse error.
+    /// The id of the request. It is null when the receiver cannot read the id, as after a parse error.
     pub id: Option<RequestId>,
     /// The result or the error.
     #[serde(flatten)]
@@ -294,11 +335,11 @@ pub enum ResponseOutcome {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ResponseError {
-    /// The kind of the error: one of the constants of this type.
+    /// The kind of the error. A server error is one of the constants of this type.
     pub code: i32,
     /// A short text for a person.
     pub message: String,
-    /// More facts about the error, when the server has them.
+    /// More facts about the error, when the sender has them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(type = "unknown"))]
     pub data: Option<serde_json::Value>,
@@ -313,8 +354,6 @@ impl ResponseError {
     pub const METHOD_NOT_FOUND: i32 = -32_601;
     /// The params do not fit the method.
     pub const INVALID_PARAMS: i32 = -32_602;
-    /// The fork point is no end of a completed turn: a kind of [`ResponseError::INVALID_PARAMS`].
-    pub const NOT_A_COMPLETED_TURN: i32 = Self::INVALID_PARAMS;
     /// The server failed.
     pub const INTERNAL_ERROR: i32 = -32_603;
     /// The server has no session with this id.

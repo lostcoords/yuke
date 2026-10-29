@@ -29,8 +29,8 @@ use crate::tools::Registry;
 
 /// The record that the promise of a native rejects with after a call of `cancel`.
 #[derive(rquickjs::IntoJs)]
-struct Cancelled {
-    cancelled: bool,
+pub(crate) struct Cancelled {
+    pub(crate) cancelled: bool,
 }
 
 /// A started operation: the promise of its value, and the function that stops it. Rust gives one to JavaScript for a

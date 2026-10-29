@@ -57,6 +57,20 @@ pub trait SessionHost: MediaStore {
         cancel: CancellationToken,
     ) -> yuke_protocol::InteractionResponse;
 
+    /// Send the request `request` of the plugin `extension` with `data` to the client, and wait for the answer. A drop of
+    /// the future cancels the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RequestFailure`] when the client answers an error, when no client can answer, or when the client
+    /// disconnects before its answer.
+    async fn request(
+        &self,
+        extension: &str,
+        request: String,
+        data: serde_json::Value,
+    ) -> Result<serde_json::Value, RequestFailure>;
+
     /// The model of `reference`, with the credential of its provider, for one round that a `round.before` hook plans.
     ///
     /// # Errors
@@ -67,6 +81,29 @@ pub trait SessionHost: MediaStore {
     /// The model that the session settings name now. A saved change of the settings takes effect at once.
     fn model_reference(&self) -> yuke_protocol::ModelReference;
 }
+
+/// Why a request of a plugin to the client failed.
+#[derive(Debug)]
+pub enum RequestFailure {
+    /// The client answered with this error.
+    Refused(yuke_protocol::ResponseError),
+    /// No client can answer, as in `yuke -p`.
+    NoClient,
+    /// The client disconnected before its answer.
+    Disconnected,
+}
+
+impl fmt::Display for RequestFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Refused(error) => f.write_str(&error.message),
+            Self::NoClient => f.write_str("no client can answer the request"),
+            Self::Disconnected => f.write_str("the client disconnected before its answer"),
+        }
+    }
+}
+
+impl std::error::Error for RequestFailure {}
 
 /// The state of the JavaScript thread: the tools that the JavaScript defined, the open sessions, and the processes that
 /// the calls start.

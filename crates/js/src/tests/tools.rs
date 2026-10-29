@@ -13,7 +13,7 @@ use yuke_protocol::{InteractionRequest, InteractionResponse, SessionId};
 
 use super::{evaluate, folder, load_entry, module, next_fault, script_error, start, write};
 use crate::tools::forward;
-use crate::{Runtime, ScriptSession, ScriptTool, SessionHost, baked};
+use crate::{RequestFailure, Runtime, ScriptSession, ScriptTool, SessionHost, baked};
 
 /// A session host that keeps the bytes of each stored attachment and each input.
 #[derive(Debug)]
@@ -87,6 +87,15 @@ impl SessionHost for TestHost {
     async fn ask(&self, _source: &str, _request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
         cancel.cancelled().await;
         InteractionResponse::Canceled
+    }
+
+    async fn request(
+        &self,
+        _extension: &str,
+        _request: String,
+        _data: serde_json::Value,
+    ) -> Result<serde_json::Value, RequestFailure> {
+        Err(RequestFailure::NoClient)
     }
 
     fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String> {

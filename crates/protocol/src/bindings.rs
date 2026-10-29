@@ -10,7 +10,7 @@ use ts_rs::{Config, TS};
 use crate::{
     ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult,
     ListMcpServersResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response,
-    ServerNotification, SessionResult, SessionRow, SessionSnapshot,
+    ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
@@ -78,8 +78,10 @@ fn plugin_module(bindings: &BTreeMap<PathBuf, String>) -> String {
 fn export(folder: &Path) {
     // serde writes a `u64` as a JSON number, and ts-rs writes it as `bigint` unless the config says `number`.
     let config = Config::new().with_large_int("number").with_out_dir(folder);
-    Request::export_all(&config).unwrap();
+    Request::<ClientRequest>::export_all(&config).unwrap();
+    // The export of the generic `Request` writes no file for its argument.
     ClientRequest::export_all(&config).unwrap();
+    ServerRequest::export_all(&config).unwrap();
     Response::export_all(&config).unwrap();
     Notification::<ClientNotification>::export_all(&config).unwrap();
     // The export of the generic `Notification` writes no file for its argument.

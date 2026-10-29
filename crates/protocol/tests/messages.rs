@@ -9,10 +9,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, CommitDisplay, Outcome, TurnEnd};
 use yuke_protocol::{
-    ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionEventParams, Input, InputError, InputId,
-    InputKind, InputSource, JobState, ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState,
-    ModelReference, NoticeLevel, NoticeParams, Notification, Request, Response, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionCancelParams, ExtensionEventParams,
+    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobState, ListMcpServersResult,
+    LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel, NoticeParams, Notification,
+    Request, Response, ServerNotification, ServerRequest, SessionEvent, SessionId, SessionSettings, SessionUpdate,
+    SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -50,7 +51,7 @@ fn assert_json<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(js
     assert_eq!(&serde_json::to_value(message).unwrap(), json);
 }
 
-fn request(id: i64, call: ClientRequest) -> Request {
+fn request(id: i64, call: ClientRequest) -> Request<ClientRequest> {
     Request {
         jsonrpc: yuke_protocol::JsonRpc::V2,
         id: yuke_protocol::RequestId::Number(id),
@@ -211,8 +212,8 @@ fn a_request_with_an_unknown_method_or_another_version_does_not_read() {
     let unknown = json!({ "jsonrpc": "2.0", "id": 1, "method": "session/delete", "params": { "sessionId": SESSION } });
     let version = json!({ "jsonrpc": "1.0", "id": 1, "method": "session/load", "params": { "sessionId": SESSION } });
 
-    assert!(serde_json::from_value::<Request>(unknown).is_err());
-    assert!(serde_json::from_value::<Request>(version).is_err());
+    assert!(serde_json::from_value::<Request<ClientRequest>>(unknown).is_err());
+    assert!(serde_json::from_value::<Request<ClientRequest>>(version).is_err());
 }
 
 #[test]
@@ -512,6 +513,34 @@ fn an_extension_event_notification_reads_and_writes_its_json() {
             event: "cleared".to_owned(),
             data: Value::Null,
         })),
+    );
+}
+
+#[test]
+fn a_plugin_request_and_its_cancel_read_and_write_their_json() {
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 7, "method": "extension/request", "params": {
+            "sessionId": SESSION, "extension": "boarhat", "request": "session.read", "data": { "id": "S-42" }
+        } }),
+        &Request {
+            jsonrpc: yuke_protocol::JsonRpc::V2,
+            id: yuke_protocol::RequestId::Number(7),
+            call: ServerRequest::ExtensionRequest(ExtensionRequestParams {
+                session_id: session(),
+                extension: "boarhat".to_owned(),
+                request: "session.read".to_owned(),
+                data: json!({ "id": "S-42" }),
+            }),
+        },
+    );
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "method": "extension/cancel", "params": { "requestId": 7 } }),
+        &Notification {
+            jsonrpc: yuke_protocol::JsonRpc::V2,
+            message: ServerNotification::ExtensionCancel(ExtensionCancelParams {
+                request_id: yuke_protocol::RequestId::Number(7),
+            }),
+        },
     );
 }
 

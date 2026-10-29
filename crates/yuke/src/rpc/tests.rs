@@ -143,7 +143,7 @@ impl Client {
     /// Send a request, and answer its result, or its error.
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, Value> {
         let id = self.request(method, params).await;
-        let response = self.until(|message| message["id"] == json!(id)).await.pop().unwrap();
+        let response = self.until(|message| is_response(message, id)).await.pop().unwrap();
         match response.get("result") {
             Some(result) => Ok(result.clone()),
             None => Err(response["error"].clone()),
@@ -246,7 +246,7 @@ impl Client {
             params[key] = value.clone();
         }
         let id = self.request("session/load", params).await;
-        let messages = self.until(|message| message["id"] == json!(id)).await;
+        let messages = self.until(|message| is_response(message, id)).await;
         assert_eq!(messages.last().unwrap()["result"], json!({}), "{messages:?}");
         let updates = |kind: &str| -> Vec<Value> {
             messages
@@ -272,7 +272,7 @@ impl Client {
 
 /// A short name of a message, so a test can compare whole sequences. Model deltas have no name.
 fn label(message: &Value) -> Option<String> {
-    if message.get("id").is_some() {
+    if message.get("id").is_some() && message.get("method").is_none() {
         return Some("response".to_owned());
     }
     let update = &message["params"]["update"];
@@ -282,6 +282,11 @@ fn label(message: &Value) -> Option<String> {
         "commit" => Some(format!("saved {}", update["seq"])),
         other => Some(other.to_owned()),
     }
+}
+
+/// Whether `message` answers the request `id` of the client. A request of the server has an id too, and a method.
+fn is_response(message: &Value, id: i64) -> bool {
+    message["id"] == json!(id) && message.get("method").is_none()
 }
 
 fn is_idle(message: &Value) -> bool {
@@ -303,5 +308,6 @@ mod jobs;
 mod mcp;
 mod questions;
 mod reload;
+mod requests;
 mod sessions;
 mod transport;

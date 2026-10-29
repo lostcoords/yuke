@@ -355,7 +355,9 @@ impl Observer for Watcher {
             }
             ServerNotification::Notice(notice) => warn(&format!("{}: {}", notice.source, notice.message)),
             // A run has no client for the events of plugins, and it starts no login of `auth/login`.
-            ServerNotification::ExtensionEvent(_) | ServerNotification::LoginFinished(_) => {}
+            ServerNotification::ExtensionEvent(_)
+            | ServerNotification::ExtensionCancel(_)
+            | ServerNotification::LoginFinished(_) => {}
         }
     }
 }

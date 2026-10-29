@@ -11,6 +11,6 @@ export type Response = {
  */
 jsonrpc: "2.0", 
 /**
- * The id of the request. It is null when the server cannot read the id, as after a parse error.
+ * The id of the request. It is null when the receiver cannot read the id, as after a parse error.
  */
 id: RequestId | null, } & ({ "result": unknown } | { "error": ResponseError });

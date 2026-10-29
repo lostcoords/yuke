@@ -12,12 +12,12 @@ use tokio::task::JoinHandle;
 use yuke_agent::{EventPage, Loaded, Session, SessionError, SessionObserver, StoreError};
 use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
-use yuke_js::{Handle, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
+use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
 use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job, LiveUpdate, McpServer,
-    ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings,
-    SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    EventNumber, ExtensionRequestParams, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job,
+    LiveUpdate, McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::sessions::SessionService;
@@ -172,7 +172,7 @@ impl LiveSession {
 
     /// Give `response` to the open question `id`.
     pub(super) fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
-        self.parts.host.output.answer(id, response)
+        self.parts.host.output.answer_question(id, response)
     }
 
     /// Cancel the running turn.
@@ -540,7 +540,7 @@ impl Output {
     }
 
     /// Open the question `request` of `source`, and return its id and the receiver of its answer.
-    fn ask(
+    fn open_question(
         &self,
         source: &str,
         request: InteractionRequest,
@@ -575,7 +575,7 @@ impl Output {
     }
 
     /// End the open question `id` with `response`.
-    fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
+    fn answer_question(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
         let mut sent = lock(&self.sent);
         let Entry::Occupied(open) = sent.questions.entry(id) else {
             return Err(AppError::NoInteraction(id));
@@ -883,14 +883,26 @@ async fn trust_of(host: Arc<Host>, folder: PathBuf, project: yuke_mcp::Config) -
 }
 
 /// Closes an open question when its asker stops waiting.
-struct Open<'a> {
+struct OpenQuestion<'a> {
     output: &'a Output,
     id: InteractionId,
 }
 
-impl Drop for Open<'_> {
+impl Drop for OpenQuestion<'_> {
     fn drop(&mut self) {
         self.output.close_question(self.id);
+    }
+}
+
+/// Cancels a request of a plugin when its waiter stops waiting.
+struct PendingRequest<'a> {
+    observer: &'a dyn Observer,
+    id: i64,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        self.observer.cancel_request(self.id);
     }
 }
 
@@ -992,9 +1004,9 @@ impl SessionHost for Host {
             );
             return InteractionResponse::Canceled;
         }
-        let (id, answered) = output.ask(source, request);
+        let (id, answered) = output.open_question(source, request);
         // A dropped wait closes the question too, so an open question always has a waiter.
-        let open = Open { output, id };
+        let open = OpenQuestion { output, id };
         let response = tokio::select! {
             answered = answered => answered.unwrap_or(InteractionResponse::Canceled),
             () = cancel.cancelled() => InteractionResponse::Canceled,
@@ -1002,6 +1014,30 @@ impl SessionHost for Host {
         };
         drop(open);
         response
+    }
+
+    async fn request(
+        &self,
+        extension: &str,
+        request: String,
+        data: serde_json::Value,
+    ) -> Result<serde_json::Value, RequestFailure> {
+        let params = ExtensionRequestParams {
+            session_id: self.output.session,
+            extension: extension.to_owned(),
+            request,
+            data,
+        };
+        let observer = self.output.observer.as_ref();
+        let (id, answer) = observer.request(params).ok_or(RequestFailure::NoClient)?;
+        // A dropped wait cancels the request. After an answer, the observer has forgotten the id.
+        let pending = PendingRequest { observer, id };
+        let answer = answer.await;
+        drop(pending);
+        match answer {
+            Ok(answer) => answer.map_err(RequestFailure::Refused),
+            Err(_) => Err(RequestFailure::Disconnected),
+        }
     }
 
     fn model(&self, reference: &ModelReference) -> Result<Model, String> {
@@ -1271,9 +1307,9 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         let output = output(&recorder);
 
-        let (id, mut answered) = output.ask("guard", confirm());
-        let first = output.answer(id, InteractionResponse::Confirm { value: true });
-        let second = output.answer(id, InteractionResponse::Confirm { value: false });
+        let (id, mut answered) = output.open_question("guard", confirm());
+        let first = output.answer_question(id, InteractionResponse::Confirm { value: true });
+        let second = output.answer_question(id, InteractionResponse::Confirm { value: false });
 
         assert!(first.is_ok(), "{first:?}");
         assert!(
@@ -1293,15 +1329,15 @@ mod tests {
             options: vec!["staging".to_owned(), "production".to_owned()],
         };
 
-        let (id, mut answered) = output.ask("guard", select.clone());
-        let other_kind = output.answer(id, InteractionResponse::Confirm { value: true });
-        let other_option = output.answer(
+        let (id, mut answered) = output.open_question("guard", select.clone());
+        let other_kind = output.answer_question(id, InteractionResponse::Confirm { value: true });
+        let other_option = output.answer_question(
             id,
             InteractionResponse::Select {
                 value: "local".to_owned(),
             },
         );
-        let fitting = output.answer(
+        let fitting = output.answer_question(
             id,
             InteractionResponse::Select {
                 value: "staging".to_owned(),
@@ -1324,9 +1360,9 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         let output = output(&recorder);
 
-        let (id, _answered) = output.ask("guard", confirm());
-        drop(Open { output: &output, id });
-        let late = output.answer(id, InteractionResponse::Canceled);
+        let (id, _answered) = output.open_question("guard", confirm());
+        drop(OpenQuestion { output: &output, id });
+        let late = output.answer_question(id, InteractionResponse::Canceled);
 
         assert!(matches!(late, Err(AppError::NoInteraction(_))), "{late:?}");
         assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
@@ -1337,11 +1373,11 @@ mod tests {
         let recorder = Arc::new(Recorder::default());
         let output = output(&recorder);
 
-        let (first, _first) = output.ask("guard", confirm());
+        let (first, _first) = output.open_question("guard", confirm());
         let hold = Hold::start(&output);
         // The second question opens during the load, and the third opens and closes during it.
-        let (_second, _second_answer) = output.ask("guard", confirm());
-        let (third, _third_answer) = output.ask("guard", confirm());
+        let (_second, _second_answer) = output.open_question("guard", confirm());
+        let (third, _third_answer) = output.open_question("guard", confirm());
         output.close_question(third);
         let loaded = Loaded {
             events: Vec::new(),
