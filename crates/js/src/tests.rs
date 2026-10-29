@@ -148,6 +148,9 @@ impl crate::Sessions for NoSessions {
     ) -> Result<(), crate::SessionsError> {
         no_sessions()
     }
+    async fn put_blob(&self, _: yuke_protocol::SessionId, _: Vec<u8>) -> Result<yuke_ai::Blob, crate::SessionsError> {
+        no_sessions()
+    }
     async fn remove_input(
         &self,
         _: yuke_protocol::SessionId,

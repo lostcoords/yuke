@@ -10,6 +10,7 @@ import {
   sessionJobs,
   sessionMcpServers,
   sessionNotify,
+  sessionPutBlob,
   sessionRemoveInput,
   sessionRespond,
   sessionSetSettings,
@@ -145,6 +146,10 @@ async function open(
     async setSettings(settings) {
       live();
       await sessionSetSettings([id, settings]);
+    },
+    async putBlob(bytes) {
+      live();
+      return await sessionPutBlob(id, bytes);
     },
     async removeInput(inputId) {
       live();

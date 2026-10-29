@@ -481,15 +481,14 @@ test("up recalls the newest waiting message with its images, the next up puts th
   frame.key("up");
   await settle();
   const recalled = draft(composerOf(chat).state);
+  // The image span keeps the blob of the recalled input, not only its label.
+  const span = composerOf(chat).state.spans[0];
+  const blob = span?.kind === "image" ? span.media : undefined;
   frame.key("up");
   await settle();
   equal(
-    [recalled, draft(composerOf(chat).state), sessions.removals],
-    [
-      ["see \uFFFC", [[4, 5, "[image 1]"]]],
-      ["one\nsee \uFFFC", [[8, 9, "[image 1]"]]],
-      [9, 5],
-    ],
+    [recalled, blob, draft(composerOf(chat).state), sessions.removals],
+    [["see \uFFFC", [[4, 5, "[image 1]"]]], media, ["one\nsee \uFFFC", [[8, 9, "[image 1]"]]], [9, 5]],
   );
   // An edit ends the recall, so up moves the caret, and the older message waits on.
   frame.paste("!");

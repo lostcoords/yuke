@@ -86,6 +86,10 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.set_settings(id, settings).await?)
     }
 
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {
+        Ok(self.service()?.put_blob(id, bytes).await?)
+    }
+
     async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, SessionsError> {
         Ok(self.service()?.remove_input(id, input_id).await?)
     }

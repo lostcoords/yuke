@@ -113,6 +113,13 @@ pub trait Sessions: Send + Sync {
     /// Returns why the request failed.
     async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), SessionsError>;
 
+    /// Save `bytes` in the store of the open session `id`, and return the blob that names them.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError>;
+
     /// Remove the pending input `input_id` of the open session `id`. Return `false` when the input is not pending.
     ///
     /// # Errors

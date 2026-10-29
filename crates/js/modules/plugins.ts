@@ -13,6 +13,7 @@
  * - A notice only informs the user. It fails no tool and no turn.
  */
 import type {
+  Blob,
   Block,
   EventNumber,
   FinishReason,
@@ -42,6 +43,7 @@ import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 import type { Tui } from "yuke:tui";
 
 export type {
+  Blob,
   Block,
   EventNumber,
   FinishReason,
@@ -160,6 +162,12 @@ export interface SessionHandle {
   readonly idle: () => Promise<void>;
   /** Save `settings`. It fails while a turn runs or input waits. */
   readonly setSettings: (settings: SessionSettings) => Promise<void>;
+  /**
+   * Save `bytes` in the store of the session, and get the blob that names them, as for the image of an input. The
+   * blob stays until the session is removed. For bytes over the limit of an attachment (3,932,160), the promise
+   * rejects.
+   */
+  readonly putBlob: (bytes: Uint8Array) => Promise<Blob>;
   /** Remove the pending input `inputId`. `false` when it is not pending: a turn took it, or a removal came first. */
   readonly removeInput: (inputId: InputId) => Promise<boolean>;
   /** Answer the open question `interactionId`. */

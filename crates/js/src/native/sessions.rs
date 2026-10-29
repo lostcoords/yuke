@@ -7,12 +7,12 @@ use std::future::Future;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rquickjs::{Ctx, Function, Object, Promise};
+use rquickjs::{Ctx, Function, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, mpsc, oneshot};
-use yuke_ai::Block;
+use yuke_ai::{Block, MAX_MEDIA_BYTES};
 use yuke_engine::chain_text;
 use yuke_protocol::{
     EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, ListSessionsParams,
@@ -165,6 +165,7 @@ pub(super) fn add<'js>(
 
 /// Add the asynchronous requests, which run on the runtime of the consumer.
 fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Handle) -> rquickjs::Result<()> {
+    add_put_blob(object, sessions, consumer)?;
     let request = Requests {
         sessions: Arc::clone(sessions),
         consumer: consumer.clone(),
@@ -306,6 +307,29 @@ async fn deliver_events<'js>(
         feed.end_flushes();
         tokio::task::yield_now().await;
     }
+}
+
+/// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
+/// task runs. Bytes over the limit of an attachment throw before the store sees them.
+fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, consumer: &Handle) -> rquickjs::Result<()> {
+    let (sessions, consumer) = (Arc::clone(sessions), consumer.clone());
+    object.set(
+        "sessionPutBlob",
+        Function::new(
+            object.ctx().clone(),
+            move |ctx: Ctx<'js>, id: Json<SessionId>, bytes: TypedArray<'js, u8>| -> rquickjs::Result<Promise<'js>> {
+                let bytes = crate::bytes::copy(&bytes)?;
+                if bytes.len() as u64 > MAX_MEDIA_BYTES {
+                    let text = format!("the blob is larger than the limit of {MAX_MEDIA_BYTES} bytes");
+                    return Err(throw(&ctx, ErrorClass::Error, &text));
+                }
+                let sessions = Arc::clone(&sessions);
+                let task = consumer.spawn(async move { sessions.put_blob(id.0, bytes).await });
+                let error_ctx = ctx.clone();
+                Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
+            },
+        )?,
+    )
 }
 
 /// The answer of a request task for JavaScript: its value, or a throw with the text of its failure.

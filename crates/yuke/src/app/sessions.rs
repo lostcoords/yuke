@@ -555,6 +555,15 @@ impl SessionService {
         Ok(())
     }
 
+    /// Save `bytes` in the store of session `id`, and return the blob that names them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] when the store fails, as for an unknown session.
+    pub(crate) async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, AppError> {
+        Ok(self.shared.store.put_blob(id, bytes).await?)
+    }
+
     /// Remove the pending input `input_id` of session `id`. Return `false` when the input is not pending.
     ///
     /// # Errors

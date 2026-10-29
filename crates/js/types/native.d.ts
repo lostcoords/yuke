@@ -3,6 +3,7 @@
 declare module "yuke:internal/native" {
   import type { NoticeLevel } from "yuke:plugins";
   import type {
+    Blob,
     Block,
     DisplayBlock,
     EventNumber,
@@ -434,6 +435,8 @@ declare module "yuke:internal/native" {
   export function sessionIdle(id: SessionId): Promise<null>;
   export function sessionSetSettings(request: readonly [id: SessionId, settings: SessionSettings]): Promise<null>;
   export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<boolean>;
+  /** Save `bytes` in the store of session `id`. Bytes over the attachment limit throw before the store gets them. */
+  export function sessionPutBlob(id: SessionId, bytes: Uint8Array): Promise<Blob>;
   export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
   export function sessionClose(request: readonly [id: SessionId, stopJobs: boolean]): Promise<null>;
   export function sessionCancel(id: SessionId): void;

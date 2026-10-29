@@ -129,6 +129,11 @@ impl Sessions for Scripted {
     async fn set_settings(&self, _: SessionId, _: SessionSettings) -> Result<(), SessionsError> {
         Ok(())
     }
+    async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {
+        // The digest of the answer proves the bytes, so the record keeps their count.
+        self.record(format!("put blob {id} {}", bytes.len()));
+        Ok(yuke_agent::blob_of(&bytes))
+    }
     async fn remove_input(&self, id: SessionId, input_id: InputId) -> Result<bool, SessionsError> {
         self.record(format!("remove input {id} {}", input_id.0));
         Ok(false)
@@ -389,6 +394,43 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             format!("close {id} true"),
         ]
     );
+}
+
+#[tokio::test]
+async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit_throw_at_once() {
+    let scripted = Arc::new(Scripted::default());
+    let runtime = started(
+        "a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit_throw_at_once",
+        &scripted,
+    )
+    .await;
+    open(&runtime, "undefined").await;
+
+    let answers = evaluate::<String>(
+        &runtime,
+        "const buffer = new Uint8Array([9, 1, 2, 3, 9]);
+         const put = handle.putBlob(buffer.subarray(1, 4));
+         buffer[2] = 7;
+         const blob = await put;
+         let refused;
+         try { await handle.putBlob(new Uint8Array(3932161)); } catch (error) { refused = error.message; }
+         const limit = await handle.putBlob(new Uint8Array(3932160));
+         return JSON.stringify([blob, refused, limit.len]);",
+    )
+    .await
+    .unwrap();
+
+    let id = session();
+    assert_eq!(
+        answers,
+        r#"[{"digest":"039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81","len":3},"the blob is larger than the limit of 3932160 bytes",3932160]"#
+    );
+    let puts: Vec<String> = scripted
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("put blob"))
+        .collect();
+    assert_eq!(puts, [format!("put blob {id} 3"), format!("put blob {id} 3932160")]);
 }
 
 #[tokio::test]
