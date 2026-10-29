@@ -377,11 +377,19 @@ async fn serve_calls(
                 // The drive ends only with the runtime, and the runtime outlives it.
                 let polled = drive.as_mut().poll(context);
                 debug_assert!(polled.is_pending());
-                // A rejection that got no handler in this poll is a fault. A later handler comes too late.
-                for (_, error) in engine.rejections.pending.take() {
+                // A poll can end before it runs each job: the lock is busy, or the futures yield. So a rejection gets
+                // the next poll too, and a handler that comes in it is in time. A rejection that waits wakes the drive.
+                let mut pending = engine.rejections.pending.borrow_mut();
+                for (_, error, _) in pending.extract_if(.., |(_, _, seen)| *seen) {
                     if reports.send(Report::Fault(error)).is_err() {
                         // The owner dropped the receiver, so it ignores faults.
                     }
+                }
+                if !pending.is_empty() {
+                    for (_, _, seen) in pending.iter_mut() {
+                        *seen = true;
+                    }
+                    context.waker().wake_by_ref();
                 }
                 Poll::Pending
             }) => {}
@@ -474,22 +482,24 @@ impl Drop for Engine {
     }
 }
 
-/// The promise rejections that no handler took yet.
+/// The promise rejections that no handler took yet, each with a mark that one poll of the drive ended after it.
 #[derive(Debug, Default)]
 struct Rejections {
-    pending: RefCell<Vec<(Persistent<Value<'static>>, ScriptError)>>,
+    pending: RefCell<Vec<(Persistent<Value<'static>>, ScriptError, bool)>>,
 }
 
 impl Rejections {
     fn track<'js>(&self, ctx: &Ctx<'js>, promise: Value<'js>, reason: &Value<'js>, handled: bool) {
         let promise = Persistent::save(ctx, promise);
         if handled {
-            self.pending.borrow_mut().retain(|(rejected, _)| *rejected != promise);
+            self.pending
+                .borrow_mut()
+                .retain(|(rejected, _, _)| *rejected != promise);
         } else {
             // The conversion can run a getter that rejects another promise and calls this function again. So the
             // conversion comes before the borrow of `pending`.
             let error = ScriptError::from_value(ctx, reason);
-            self.pending.borrow_mut().push((promise, error));
+            self.pending.borrow_mut().push((promise, error, false));
         }
     }
 }
