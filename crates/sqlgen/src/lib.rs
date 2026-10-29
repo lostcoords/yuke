@@ -50,7 +50,7 @@ use std::process::{Command, Stdio};
 /// fails a check, or rustfmt fails.
 pub fn generate(crate_folder: &Path) -> Result<Generated, Error> {
     let connection = rusqlite::Connection::open_in_memory()
-        .map_err(|error| Error::caused("the in-memory database does not open".to_owned(), error))?;
+        .map_err(|error| Error::caused("the in-memory database does not open", error))?;
     let mut migrations = Vec::new();
     for (place, file) in sql_files(&crate_folder.join("migrations"))?.into_iter().enumerate() {
         let name = migration_name(&file, place + 1)?;
@@ -67,8 +67,7 @@ pub fn generate(crate_folder: &Path) -> Result<Generated, Error> {
         let parsed = parse::parse(&source).map_err(|message| Error::new(format!("{}: {message}", file.display())))?;
         modules.push(resolve::resolve(&connection, &file, parsed)?);
     }
-    let code = emit::emit(&migrations, &modules)
-        .map_err(|error| format_error("yuke-sqlgen cannot write the generated code", error))?;
+    let code = emit::emit(&migrations, &modules);
     Ok(Generated {
         code: format(&code, crate_folder)?,
         files: modules.len(),
@@ -87,8 +86,7 @@ pub struct Generated {
     pub queries: usize,
 }
 
-/// The failure of [`generate`]: a text that names the file, and the query when one query fails, and the error under it
-/// when one exists.
+/// A failure of [`generate`]. The display text gives context. The source error gives the cause, when one exists.
 #[derive(Debug)]
 pub struct Error {
     message: String,
@@ -100,9 +98,9 @@ impl Error {
         Error { message, source: None }
     }
 
-    fn caused(message: String, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+    fn caused(message: impl Into<String>, source: impl std::error::Error + Send + Sync + 'static) -> Self {
         Error {
-            message,
+            message: message.into(),
             source: Some(Box::new(source)),
         }
     }
@@ -170,7 +168,7 @@ fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format_error("rustfmt does not start", error))?;
+        .map_err(|error| Error::caused("rustfmt does not start", error))?;
     // rustfmt reads until the end of its input, so the input closes before the wait. The wait comes before any error
     // return, so no child outlives the call.
     let written = match child.stdin.take() {
@@ -179,18 +177,13 @@ fn format(code: &str, crate_folder: &Path) -> Result<String, Error> {
     };
     let output = child
         .wait_with_output()
-        .map_err(|error| format_error("rustfmt does not end", error))?;
+        .map_err(|error| Error::caused("rustfmt does not end", error))?;
     if !output.status.success() {
         return Err(Error::new(format!(
             "rustfmt refused the generated code: {}",
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    written.map_err(|error| format_error("the generated code does not reach rustfmt", error))?;
-    String::from_utf8(output.stdout).map_err(|error| format_error("rustfmt writes no UTF-8 text", error))
-}
-
-/// The error of the failed format `step`, with `source` as its cause.
-fn format_error(step: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Error {
-    Error::caused(step.to_owned(), source)
+    written.map_err(|error| Error::caused("the generated code does not reach rustfmt", error))?;
+    String::from_utf8(output.stdout).map_err(|error| Error::caused("rustfmt writes no UTF-8 text", error))
 }

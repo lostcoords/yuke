@@ -223,15 +223,3 @@ fn origin(statement: &rusqlite::Statement<'_>, index: usize) -> Result<Option<Or
         can_be_null: !not_null,
     }))
 }
-
-/// `note_by_id` as `NoteById`.
-pub(crate) fn pascal_case(name: &str) -> String {
-    name.split('_')
-        .map(|word| {
-            let mut characters = word.chars();
-            characters.next().map_or_else(String::new, |first| {
-                first.to_ascii_uppercase().to_string() + characters.as_str()
-            })
-        })
-        .collect()
-}

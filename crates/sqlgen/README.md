@@ -72,8 +72,9 @@ The command writes `<dir>/src/queries.rs` from `<dir>/migrations` and `<dir>/que
 | `mise exec -- cargo run -p yuke-sqlgen -- --crate crates/sqlgen/tests/fixture` | Writes the output of the fixture. |
 | `mise exec -- cargo run -p yuke-sqlgen -- --help` | Shows the options and examples. |
 
-On success, the command prints the file and its counts, for example `queries: 7`. An error names the file, the query,
-and the fix. A usage error exits with status 2.
+On success, the command prints the file and its counts, for example `queries: 7`.
+On failure, the command prints the error and its source chain. Query validation errors identify the file, query, and reason.
+A usage error exits with status 2.
 
 ## Drift
 

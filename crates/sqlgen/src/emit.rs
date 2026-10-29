@@ -1,11 +1,13 @@
 //! The Rust text of the checked queries. rustfmt formats it after, so the text only needs to be valid Rust.
+#![expect(
+    clippy::format_push_string,
+    reason = "temporary strings keep code generation infallible without a formatting wrapper"
+)]
 
-use std::fmt::{self, Write as _};
-
-use crate::resolve::{Column, Module, Parameter, Query, pascal_case};
+use crate::resolve::{Column, Module, Parameter, Query};
 
 /// The generated file for `modules`. `migrations` holds the migration file names in number order.
-pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, fmt::Error> {
+pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> String {
     let mut code = String::from("//! Generated from the query files by `yuke-sqlgen`. Do not edit.\n\n");
     // `include_str!` finds a path from the file that calls it. The generated file is `src/queries.rs` of the crate.
     code.push_str(
@@ -14,17 +16,20 @@ pub(crate) fn emit(migrations: &[String], modules: &[Module]) -> Result<String, 
          pub(crate) const MIGRATIONS: &[&str] = &[",
     );
     for name in migrations {
-        write!(code, "include_str!({}),", raw_string(&format!("../migrations/{name}")))?;
+        code.push_str(&format!(
+            "include_str!({}),",
+            raw_string(&format!("../migrations/{name}"))
+        ));
     }
     code.push_str("];\n\n");
     for module in modules {
-        emit_module(&mut code, module)?;
+        emit_module(&mut code, module);
     }
-    Ok(code)
+    code
 }
 
-fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
-    writeln!(code, "pub(crate) mod {} {{", module.name)?;
+fn emit_module(code: &mut String, module: &Module) {
+    code.push_str(&format!("pub(crate) mod {} {{\n", module.name));
     // The module imports each name that it uses, so no path in it can be shorter, whatever the parent imports.
     let reads = module.queries.iter().any(|query| !query.columns.is_empty());
     let executes = module.queries.iter().any(|query| query.columns.is_empty());
@@ -42,31 +47,29 @@ fn emit_module(code: &mut String, module: &Module) -> fmt::Result {
     }
     for (path, names) in [("yuke_sql", runtime), ("yuke_sql::rusqlite", sqlite)] {
         if !names.is_empty() {
-            writeln!(code, "use {path}::{{{}}};", names.join(", "))?;
+            code.push_str(&format!("use {path}::{{{}}};\n", names.join(", ")));
         }
     }
     code.push('\n');
     // A query of one column gives the value of that column, so only a query of several columns needs a row struct.
     for query in module.queries.iter().filter(|query| query.columns.len() > 1) {
-        emit_row(code, &pascal_case(&query.name), &query.columns)?;
+        emit_row(code, &pascal_case(&query.name), &query.columns);
     }
     for query in &module.queries {
-        emit_query(code, query)?;
+        emit_query(code, query);
     }
     code.push_str("}\n\n");
-    Ok(())
 }
 
-fn emit_row(code: &mut String, name: &str, columns: &[Column]) -> fmt::Result {
-    writeln!(code, "#[derive(Debug, PartialEq)]\npub(crate) struct {name} {{")?;
+fn emit_row(code: &mut String, name: &str, columns: &[Column]) {
+    code.push_str(&format!("#[derive(Debug, PartialEq)]\npub(crate) struct {name} {{\n"));
     for column in columns {
-        writeln!(code, "pub(crate) {}: {},", column.name, column.rust_type)?;
+        code.push_str(&format!("pub(crate) {}: {},\n", column.name, column.rust_type));
     }
     code.push_str("}\n\n");
-    Ok(())
 }
 
-fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
+fn emit_query(code: &mut String, query: &Query) {
     let parameter_struct = (query.parameters.len() > 1).then(|| format!("{}Params", pascal_case(&query.name)));
     // A parameter struct with a reference needs a lifetime.
     let borrows = query
@@ -75,15 +78,15 @@ fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
         .any(|parameter| parameter.rust_type.contains('&'));
     if let Some(name) = &parameter_struct {
         let lifetime = if borrows { "<'a>" } else { "" };
-        writeln!(code, "#[derive(Debug)]\npub(crate) struct {name}{lifetime} {{")?;
+        code.push_str(&format!("#[derive(Debug)]\npub(crate) struct {name}{lifetime} {{\n"));
         for parameter in &query.parameters {
-            writeln!(code, "pub(crate) {}: {},", parameter.name, field_type(parameter))?;
+            code.push_str(&format!("pub(crate) {}: {},\n", parameter.name, field_type(parameter)));
         }
         code.push_str("}\n\n");
     }
 
     for line in &query.doc {
-        writeln!(code, "///{line}")?;
+        code.push_str(&format!("///{line}\n"));
     }
     // The query borrows the connection. Elision covers that when the connection is the only reference argument.
     let other_references = parameter_struct.is_some() || borrows;
@@ -108,39 +111,36 @@ fn emit_query(code: &mut String, query: &Query) -> fmt::Result {
         Some(value) => ("", "&", format!("Query<'_, {value}>")),
         None => ("", "&", "Result<usize>".to_owned()),
     };
-    write!(
-        code,
+    code.push_str(&format!(
         "pub(crate) fn {}{lifetime}(connection: {connection} Connection",
         query.name
-    )?;
+    ));
     let mut bindings = Vec::new();
     match &parameter_struct {
         Some(name) => {
             let lifetime = if borrows { "<'_>" } else { "" };
-            write!(code, ", params: &{name}{lifetime}")?;
+            code.push_str(&format!(", params: &{name}{lifetime}"));
             for parameter in &query.parameters {
                 bindings.push(format!("(\":{0}\", &params.{0})", parameter.name));
             }
         }
         None => {
             for parameter in &query.parameters {
-                write!(
-                    code,
+                code.push_str(&format!(
                     ", {}: {}",
                     parameter.name,
                     nullable(parameter, &parameter.rust_type)
-                )?;
+                ));
                 bindings.push(format!("(\":{0}\", &{0})", parameter.name));
             }
         }
     }
     let call = if value.is_some() { "Query::new" } else { "execute" };
-    writeln!(
-        code,
-        ") -> {output} {{\n{call}(connection, {}, &[{}]{read})\n}}\n",
+    code.push_str(&format!(
+        ") -> {output} {{\n{call}(connection, {}, &[{}]{read})\n}}\n\n",
         raw_string(&query.sql),
         bindings.join(", ")
-    )
+    ));
 }
 
 /// The type of a parameter as a field of a parameter struct. Each reference without a lifetime borrows for the
@@ -175,6 +175,18 @@ fn raw_string(text: &str) -> String {
         hashes.push('#');
     }
     format!("r{hashes}\"{text}\"{hashes}")
+}
+
+/// `note_by_id` as `NoteById`.
+fn pascal_case(name: &str) -> String {
+    name.split('_')
+        .map(|word| {
+            let mut characters = word.chars();
+            characters.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + characters.as_str()
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
