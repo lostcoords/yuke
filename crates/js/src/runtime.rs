@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::display::Display;
+use crate::display::Interface;
 use crate::error::{Error, Report, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
 use crate::models::{Models, OnConsumer};
@@ -58,9 +58,9 @@ pub struct Options {
     /// The client of `fetch`. The consumer chooses its idle timeout. With none, only the signal stops a slow fetch.
     pub http: Arc<yuke_http::Client>,
 
-    /// The display of the terminal interface, or `None` for a runtime with no view, such as `yuke -p`. The runtime
-    /// draws its frames on it; give each runtime of a reload the same display.
-    pub display: Option<Arc<Display>>,
+    /// The terminal interface, or `None` for a runtime with no view, such as `yuke -p`. The runtime draws its frames
+    /// on its display.
+    pub interface: Option<Interface>,
 
     /// Let every module import the `yuke:internal/` modules. Only the runner of the tests of yuke sets it; a plugin
     /// can never import them.
@@ -76,7 +76,7 @@ impl fmt::Debug for Options {
             .field("cache", &self.cache)
             .field("processes", &self.processes)
             .field("http", &self.http)
-            .field("display", &self.display)
+            .field("interface", &self.interface)
             .field("internal_imports", &self.internal_imports)
             .field("test_host", &self.test_host.is_some())
             .finish_non_exhaustive()
@@ -434,7 +434,7 @@ impl Engine {
         let context = AsyncContext::full(&runtime).await.map_err(engine_error)?;
         let timers = Rc::new(Timers::default());
         let registry = Rc::new(Registry::new(Arc::clone(&options.processes)));
-        let frames = Rc::new(Frames::new(options.display.clone()));
+        let frames = Rc::new(Frames::new(options.interface.clone()));
         context
             .with(|ctx| {
                 timers::install(&ctx, &timers, reports.clone())?;

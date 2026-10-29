@@ -11,7 +11,7 @@ use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size
 
 use super::{NAMES, evaluate, folder, next_fault, options, start, wait_until};
 use crate::error::caught;
-use crate::{Display, Input, Processes, Report, Request, Runtime};
+use crate::{Display, Input, Interface, Processes, Report, Request, Runtime, Startup};
 
 /// An output that keeps what the frames write.
 #[derive(Clone, Default)]
@@ -48,6 +48,19 @@ async fn global_term(runtime: &Runtime) {
         .unwrap();
 }
 
+/// The interface of `display`. It starts in `/` with no session.
+fn interface(display: Arc<Display>) -> Interface {
+    Interface {
+        display,
+        startup: Startup {
+            cwd: "/".to_owned(),
+            session: None,
+            model: None,
+            reasoning: None,
+        },
+    }
+}
+
 /// Run `body` in a new runtime with no display and the global `term`, as the body of an async function.
 async fn run_without_display(name: &str, body: &str) -> String {
     let (runtime, _reports) = start(&folder(name)).await;
@@ -72,7 +85,7 @@ async fn hidden(name: &str) -> Started {
     let size = Size { columns: 20, rows: 3 };
     let (display, requests) = Display::new(size, Box::new(output.clone()), None, true, false);
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
-    options.display = Some(Arc::clone(&display));
+    options.interface = Some(interface(Arc::clone(&display)));
     let (runtime, reports) = Runtime::start(options).await.unwrap();
     global_term(&runtime).await;
     evaluate::<()>(
@@ -352,7 +365,7 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
         false,
     );
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
-    options.display = Some(Arc::clone(&display));
+    options.interface = Some(interface(Arc::clone(&display)));
     let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
     runtime.show(None);
     global_term(&runtime).await;
@@ -462,7 +475,7 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
         false,
     );
     let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
-    options.display = Some(display);
+    options.interface = Some(interface(display));
     let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
     runtime.show(None);
     global_term(&runtime).await;

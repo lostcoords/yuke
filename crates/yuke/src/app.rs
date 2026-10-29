@@ -33,8 +33,8 @@ use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text}
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
     InteractionId, ListCatalogResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult, ModelReference,
-    NoticeLevel, NoticeParams, ProviderState, ServerNotification, SessionEvent, SessionId, SessionSettings,
-    StoredEvent, UpdateCredentialParams,
+    NoticeLevel, NoticeParams, ProviderState, ReasoningLevel, ServerNotification, SessionEvent, SessionId,
+    SessionSettings, StoredEvent, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -69,8 +69,9 @@ pub(crate) struct Machine {
     pub(crate) exchange: Arc<dyn Exchange>,
     /// Sends the requests of `fetch` in the plugins. It has no idle timeout, so only the signal stops a slow fetch.
     pub(crate) fetch: Arc<yuke_http::Client>,
-    /// The display of the terminal interface, or `None` with no view. Each runtime of a reload draws on it.
-    pub(crate) display: Option<Arc<yuke_js::Display>>,
+    /// The terminal interface, or `None` with no view. Each runtime of a reload draws on its display. Each runtime gets
+    /// its startup with the model and the reasoning of the profile at that time.
+    pub(crate) interface: Option<yuke_js::Interface>,
     /// What the app of a test needs beyond production, or `None` outside a test.
     pub(crate) test: Option<TestSetup>,
 }
@@ -129,12 +130,44 @@ struct Profile {
     plugin_folders: Arc<[PathBuf]>,
     /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
     session_idle: Duration,
+    /// The `model` of `config.json`. `providers` has this model.
+    model: Option<ModelReference>,
+    /// The `reasoning` of `config.json`. When `model` is set, that model takes this level.
+    reasoning: Option<ReasoningLevel>,
 }
 
 impl Profile {
-    /// The profile of `providers`, the folders of `plugins`, and the session wait of `config`.
-    fn new(providers: Providers, plugins: &[yuke_js::Plugin], config: &Config) -> Self {
-        Profile {
+    /// The profile of `providers`, the folders of `plugins`, and the session wait, model, and reasoning of `config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text for the user when `providers` does not have the configured model, or when that model does not
+    /// take the configured reasoning level.
+    fn new(providers: Providers, plugins: &[yuke_js::Plugin], config: &Config) -> Result<Self, String> {
+        let model = match &config.model {
+            None => None,
+            Some(selector) => {
+                let entry = providers
+                    .lookup(selector)
+                    .map_err(|error| format!("config.json: model {selector}: {error}"))?;
+                if let Some(level) = config.reasoning
+                    && !catalog::reasoning_choices(entry.model)
+                        .iter()
+                        .any(|choice| choice.level == level)
+                {
+                    return Err(format!(
+                        "config.json: the model {selector} does not take that reasoning level"
+                    ));
+                }
+                Some(ModelReference {
+                    provider: entry.provider.id.to_string(),
+                    model: entry.model.id.to_string(),
+                })
+            }
+        };
+        Ok(Profile {
+            model,
+            reasoning: config.reasoning,
             providers: Arc::new(providers),
             plugin_folders: plugins
                 .iter()
@@ -146,7 +179,7 @@ impl Profile {
             session_idle: Duration::from_secs(
                 60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
             ),
-        }
+        })
     }
 }
 
@@ -293,7 +326,7 @@ impl App {
         });
         let shared = Arc::new(Shared {
             machine,
-            profile: RwLock::new(Profile::new(providers, &plugins, &config)),
+            profile: RwLock::new(Profile::new(providers, &plugins, &config)?),
             store,
             timer,
             processes,
@@ -376,9 +409,10 @@ impl App {
             .unwrap_or_default();
         let plugins = plugins::plugins(&paths.config, &config, &paths.data).map_err(AppError::Invalid)?;
         // The new plugins use the new providers, for example in a model request of their `apply`.
+        let profile = Profile::new(providers, &plugins, &config).map_err(AppError::Invalid)?;
         let old_profile = std::mem::replace(
             &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
-            Profile::new(providers, &plugins, &config),
+            profile,
         );
         // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
         let (runtime, reporter) = match start_runtime(&self.shared, &self.sessions).await {
@@ -724,7 +758,17 @@ async fn start_runtime(
             shared: Arc::clone(shared),
         }),
         http: Arc::clone(&shared.machine.fetch),
-        display: shared.machine.display.clone(),
+        interface: shared.machine.interface.as_ref().map(|interface| {
+            let profile = shared.profile.read().unwrap_or_else(PoisonError::into_inner);
+            yuke_js::Interface {
+                display: Arc::clone(&interface.display),
+                startup: yuke_js::Startup {
+                    model: profile.model.clone(),
+                    reasoning: profile.reasoning,
+                    ..interface.startup.clone()
+                },
+            }
+        }),
         internal_imports: test.is_some_and(|test| test.internal_imports),
         test_host: test.map(|test| Arc::clone(&test.host) as Arc<dyn yuke_js::TestHost>),
     })
@@ -736,7 +780,7 @@ async fn start_runtime(
         return Err(error);
     }
     // The interface runs in the plugin runtime, so a plugin reaches it, and each reload draws it again.
-    if shared.machine.display.is_some()
+    if shared.machine.interface.is_some()
         && let Err(error) = runtime.import("yuke:internal/tui").await
     {
         stop_runtime(shared, runtime, reporter).await;

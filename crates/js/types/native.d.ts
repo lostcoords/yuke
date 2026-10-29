@@ -394,6 +394,8 @@ declare module "yuke:internal/native" {
   export function termBackground(): "dark" | "light";
   /** True when the terminal draws 24-bit color. */
   export function termTruecolor(): boolean;
+  /** How the terminal interface started, as the JSON text of a `Startup` of `yuke:tui`. */
+  export function termStartup(): string;
   /** The cells of `text`, a well-formed string. */
   export function termMeasure(text: string): number;
   /** The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`. */

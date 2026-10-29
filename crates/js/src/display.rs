@@ -6,9 +6,37 @@ use std::fmt;
 use std::io::Write;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use serde::Serialize;
 use tokio::sync::{Notify, mpsc};
-use yuke_protocol::NoticeParams;
+use yuke_protocol::{ModelReference, NoticeParams, ReasoningLevel, SessionId};
 use yuke_term::{Event, Rgb, Screen, Size};
+
+/// The terminal interface of a runtime: the display, and how yuke started. Give each runtime of a reload the same
+/// display.
+#[derive(Debug, Clone)]
+pub struct Interface {
+    /// The display that the frames draw on.
+    pub display: Arc<Display>,
+    /// The value of `tui.startup`.
+    pub startup: Startup,
+}
+
+/// How the terminal interface started: the value of `tui.startup`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Startup {
+    /// The folder that yuke started in.
+    pub cwd: String,
+    /// The session of `--continue` or `--session`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionId>,
+    /// The `model` of `config.json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelReference>,
+    /// The `reasoning` of `config.json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningLevel>,
+}
 
 /// What the host gives the display.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +61,7 @@ pub enum Request {
 }
 
 /// The cell grid of the terminal interface, its output, the queue of [`Input`], and the sender of [`Request`]. Give it
-/// to the runtimes in [`Options::display`](crate::Options::display).
+/// to the runtimes in [`Options::interface`](crate::Options::interface).
 pub struct Display {
     frame: Mutex<Frame>,
     inputs: Mutex<VecDeque<Input>>,

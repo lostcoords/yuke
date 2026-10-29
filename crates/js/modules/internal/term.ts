@@ -18,12 +18,13 @@ import {
   termRequestFrame,
   termRun,
   termSize,
+  termStartup,
   termSuspend,
   termText,
   termTruecolor,
   termWrap,
 } from "yuke:internal/native";
-import type { Cursor, KeyEvent, MouseEvent } from "yuke:tui";
+import type { Cursor, KeyEvent, MouseEvent, Startup } from "yuke:tui";
 
 export type Style = TermStyle;
 
@@ -128,5 +129,9 @@ export const term = {
   /** True when the terminal draws 24-bit color. */
   get truecolor(): boolean {
     return termTruecolor();
+  },
+  /** How the terminal interface started. Each read parses it again. */
+  get startup(): Startup {
+    return JSON.parse(termStartup()) as Startup;
   },
 };

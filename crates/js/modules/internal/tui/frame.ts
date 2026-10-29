@@ -8,11 +8,11 @@ import { parseKeys } from "yuke:internal/tui/keys";
 import { createMount } from "yuke:internal/tui/mount";
 import { createSurface } from "yuke:internal/tui/surface";
 import type { Frame, FrameTest, TestSurface } from "yuke:test";
-import type { KeyCode, KeyEvent, MouseEvent, Size, ViewFactory } from "yuke:tui";
+import type { KeyCode, KeyEvent, MouseEvent, Size, Startup, ViewFactory } from "yuke:tui";
 
 const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false });
 
-export function createFrame(size: Size, create?: ViewFactory): FrameTest {
+export function createFrame(size: Size, create?: ViewFactory, startup: Startup = { cwd: "/" }): FrameTest {
   let width = size.width;
   let height = size.height;
   const screen = new TestScreen(width, height);
@@ -36,6 +36,7 @@ export function createFrame(size: Size, create?: ViewFactory): FrameTest {
     quit: () => {},
     suspend: () => {},
     reload: () => {},
+    startup: () => startup,
   });
   const root = create === undefined ? undefined : core.scene.setRoot("test", create);
   let frame: Frame;

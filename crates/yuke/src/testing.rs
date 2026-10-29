@@ -154,7 +154,7 @@ impl Place {
                 })
                 .unwrap(),
             ),
-            display: None,
+            interface: None,
             test: None,
         }
     }

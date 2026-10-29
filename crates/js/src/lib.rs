@@ -39,7 +39,7 @@ mod timers;
 mod tools;
 mod typescript;
 
-pub use display::{Display, Input, Request};
+pub use display::{Display, Input, Interface, Request, Startup};
 pub use error::{Barrier, Error, Report, ScriptError};
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};

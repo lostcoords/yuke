@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use yuke_ai::scripted::ScriptedTransport;
-use yuke_js::Display;
+use yuke_js::{Display, Interface, Startup};
+use yuke_protocol::{ModelReference, SessionActivity, SessionId, SessionSettings};
 use yuke_term::Size;
 
 use super::{Notices, reload};
@@ -90,8 +91,22 @@ fn display() -> (Arc<Display>, Output) {
 
 /// Start the app of `place` on `display` as the interface does: show the runtime, then load the plugins.
 async fn started(place: &Place, display: &Arc<Display>) -> App {
+    started_on(place, display, None).await
+}
+
+/// [`started`] with `session` as the session of the startup.
+async fn started_on(place: &Place, display: &Arc<Display>, session: Option<SessionId>) -> App {
+    let startup = Startup {
+        cwd: "/work".to_owned(),
+        session,
+        model: None,
+        reasoning: None,
+    };
     let machine = crate::app::Machine {
-        display: Some(Arc::clone(display)),
+        interface: Some(Interface {
+            display: Arc::clone(display),
+            startup,
+        }),
         ..place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])))
     };
     let store = crate::app::open_store(&place.paths.data).await.unwrap();
@@ -216,6 +231,97 @@ async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
         ))
         .await;
     app.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_start_pane_opens_the_session_of_the_startup() {
+    let place = Place::new("tui", "start_session");
+    let (first_display, _output) = display();
+    let first = started(&place, &first_display).await;
+    let id = first
+        .sessions()
+        .create(SessionSettings {
+            model: ModelReference {
+                provider: "minimax".to_owned(),
+                model: "MiniMax-M3".to_owned(),
+            },
+            settings: yuke_ai::Settings::new(),
+            cwd: place.work.clone(),
+        })
+        .await
+        .unwrap();
+    first.shutdown().await;
+
+    let (second_display, _output) = display();
+    let app = started_on(&place, &second_display, Some(id)).await;
+
+    // The session is closed until the chat pane opens it.
+    let opened = tokio::time::timeout(Duration::from_secs(10), async {
+        while app.sessions().get(id).await.unwrap().activity != SessionActivity::Idle {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(opened.is_ok(), "the chat pane did not open {id}");
+    app.shutdown().await;
+}
+
+/// A test plugin whose root view draws `tui.startup` as JSON.
+const STARTUP: &str = "export function apply(ctx) {
+  const tui = ctx.get('tui');
+  tui.setRoot(() => ({ draw: (canvas) => { canvas.text(0, 0, JSON.stringify(tui.startup)); } }));
+}";
+
+#[tokio::test]
+async fn a_reload_keeps_the_startup_session_and_reads_the_model_and_the_reasoning_again() {
+    let place = Place::new("tui", "startup_config");
+    place.plugin("startup", STARTUP);
+    let config = |reasoning: &str| {
+        let text =
+            format!(r#"{{ "plugins": ["startup"], "model": "minimax/MiniMax-M3", "reasoning": "{reasoning}" }}"#);
+        std::fs::write(place.paths.config.join("config.json"), text).unwrap();
+    };
+    let model = r#""model":{"provider":"minimax","model":"MiniMax-M3"}"#;
+    config("high");
+    let (display, output) = display();
+    // The chat pane fails to open a session that does not exist, and the startup keeps it.
+    let id = SessionId::generate();
+    let mut app = started_on(&place, &display, Some(id)).await;
+    output
+        .shows(&format!(
+            r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"high"}}"#
+        ))
+        .await;
+
+    config("default");
+    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    let shown = format!(r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"default"}}"#);
+    output.shows(&shown).await;
+
+    // The model does not take the level low, so the reload keeps the old runtime.
+    config("low");
+    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
+    assert_eq!(output.rows()[0], shown);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_config_model_that_the_providers_do_not_have_stops_the_start() {
+    let place = Place::new("tui", "startup_unknown_model");
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "model": "nobody/none" }"#).unwrap();
+    let store = crate::app::open_store(&place.paths.data).await.unwrap();
+    let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])));
+    let (display, _output) = display();
+    let observer = Arc::new(Notices(display));
+    let failed = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer)).await;
+    assert!(
+        failed
+            .as_ref()
+            .is_err_and(|error| error.starts_with("config.json: model nobody/none: ")),
+        "{:?}",
+        failed.err()
+    );
 }
 
 #[tokio::test]

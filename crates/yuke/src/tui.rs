@@ -6,12 +6,14 @@ use std::sync::Arc;
 
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
+use yuke_agent::Store;
 use yuke_engine::{CancellationToken, chain_text};
-use yuke_js::{Display, Input, Request};
+use yuke_js::{Display, Input, Interface, Request, Startup};
 use yuke_protocol::{NoticeLevel, NoticeParams, ServerNotification};
 use yuke_term::Terminal;
 
 use crate::app::{App, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
+use crate::print::{SessionChoice, newest_session};
 
 /// Gives each notice to the display. The interface shows no session update yet. Its plugins share data through services,
 /// so it ignores extension events.
@@ -28,10 +30,30 @@ impl Observer for Notices {
     }
 }
 
-/// Run the interface on the terminal of the process until a quit or `shutdown`. The drop of the terminal restores
-/// the device, also on an error. Then the notices that no frame loop took go to stderr.
-pub(crate) async fn run(machine: Machine, shutdown: CancellationToken) -> Result<(), String> {
+/// Run the interface on the terminal of the process until a quit or `shutdown`. The start pane shows the session of
+/// `choice`. The drop of the terminal restores the device, also after an error. Then each unread notice goes to stderr.
+pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: CancellationToken) -> Result<(), String> {
     let failed = |what: &'static str| move |error: io::Error| format!("{what}: {error}");
+    // A bad choice fails before the terminal opens, so its error is the only output.
+    let cwd = std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .map_err(failed("the current folder"))?;
+    let store = open_store(&machine.paths.data).await?;
+    let session = match choice {
+        SessionChoice::New => None,
+        SessionChoice::Id(id) => {
+            store
+                .session_summary(id)
+                .await
+                .map_err(|error| format!("--session {id}: {}", chain_text(&error)))?;
+            Some(id)
+        }
+        SessionChoice::Newest => Some(newest_session(store.as_ref(), &cwd).await?),
+    };
+    let cwd = cwd
+        .into_os_string()
+        .into_string()
+        .map_err(|folder| format!("the current folder {} is not UTF-8", folder.display()))?;
     // The stream registers before the app starts, so a resize while the app starts wakes the loop later.
     let resizes = signal(SignalKind::window_change()).map_err(failed("SIGWINCH"))?;
     let terminal = Terminal::open().map_err(failed("the terminal did not open"))?;
@@ -51,7 +73,13 @@ pub(crate) async fn run(machine: Machine, shutdown: CancellationToken) -> Result
         resizes,
         ended: Arc::new(Notify::new()),
     };
-    let ended = serve(&mut host, machine, &shutdown).await;
+    let startup = Startup {
+        cwd,
+        session,
+        model: None,
+        reasoning: None,
+    };
+    let ended = serve(&mut host, machine, store, startup, &shutdown).await;
     drop(host);
     for notice in display.take_notices() {
         warn(&format!("{}: {}", notice.source, notice.message));
@@ -59,16 +87,25 @@ pub(crate) async fn run(machine: Machine, shutdown: CancellationToken) -> Result
     ended
 }
 
-/// Start the app on the display of `host`, and serve the host until a quit or `shutdown`.
-async fn serve(host: &mut Host, machine: Machine, shutdown: &CancellationToken) -> Result<(), String> {
+/// Start the app on the display of `host` with `store` and `startup`, and serve the host until a quit or `shutdown`.
+/// The app fills the model and the reasoning of `startup` from the profile.
+async fn serve(
+    host: &mut Host,
+    machine: Machine,
+    store: Arc<dyn Store>,
+    startup: Startup,
+    shutdown: &CancellationToken,
+) -> Result<(), String> {
     host.start_reader()
         .map_err(|error| format!("the terminal input: {error}"))?;
     let machine = Machine {
-        display: Some(Arc::clone(&host.display)),
+        interface: Some(Interface {
+            display: Arc::clone(&host.display),
+            startup,
+        }),
         ..machine
     };
     let observer = Arc::new(Notices(Arc::clone(&host.display)));
-    let store = open_store(&machine.paths.data).await?;
     let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await?;
     app.show(None);
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold

@@ -39,7 +39,7 @@ declare module "yuke:test" {
   } from "yuke:protocol";
   import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Question, Transcript } from "yuke:transcript";
-  import type { Cursor, KeyEvent, Mount, MouseEvent, Size, Tui, ViewFactory } from "yuke:tui";
+  import type { Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
 
   /** A color of a frame cell: a palette index from 0 to 255, or `#` and six lower-case hex digits. */
   export type ScreenColor = number | `#${string}`;
@@ -98,8 +98,11 @@ declare module "yuke:test" {
     snapshot: () => string;
   }
 
-  /** A frame test of `size`. `create` makes the root view; without it, the root is the pane tree. */
-  export function createFrame(size: Size, create?: ViewFactory): FrameTest;
+  /**
+   * A frame test of `size`. `create` makes the root view. Without it, the root is the pane tree. `startup` is the
+   * `tui.startup` of each surface. The default is `{ cwd: "/" }`.
+   */
+  export function createFrame(size: Size, create?: ViewFactory, startup?: Startup): FrameTest;
 
   /** Add the test `name`. The runner awaits the promise of `fn`. */
   export function test(name: string, fn: () => void | Promise<void>): void;

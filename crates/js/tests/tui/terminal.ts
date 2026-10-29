@@ -63,6 +63,7 @@ export function fakeTerminal(): Terminal {
     copy: (text) => {
       calls.push(["copy", text]);
     },
+    startup: () => ({ cwd: "/work" }),
   };
   return {
     driver,

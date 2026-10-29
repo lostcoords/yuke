@@ -6,8 +6,8 @@
  * strings.
  */
 declare module "yuke:tui" {
-  import type { NoticeLevel } from "yuke:plugins";
-  import type { Media } from "yuke:protocol";
+  import type { Frozen, NoticeLevel } from "yuke:plugins";
+  import type { Media, ModelReference, ReasoningLevel, SessionId } from "yuke:protocol";
 
   export interface Size {
     readonly width: number;
@@ -794,10 +794,26 @@ declare module "yuke:tui" {
   /** Make a view from its saved state. The state can come from an older version of the plugin. */
   export type RestoreView = (state: unknown, mount: Mount) => View;
 
+  /**
+   * How the terminal interface started. A reload keeps `cwd` and `session`, and it reads `model` and `reasoning` from
+   * `config.json` again.
+   */
+  export interface Startup {
+    /** The folder that yuke started in. */
+    readonly cwd: string;
+    /** The session of `--continue` or `--session`. The start pane shows it. A restored pane keeps its saved session. */
+    readonly session?: SessionId | undefined;
+    /** The `model` of `config.json`. yuke checks it against `providers.json`. */
+    readonly model?: Frozen<ModelReference> | undefined;
+    /** The `reasoning` of `config.json`. When `model` is set, that model takes this level. */
+    readonly reasoning?: ReasoningLevel | undefined;
+  }
+
   /** The surface of one plugin: `ctx.get("tui")`. Each registration and mount belongs to the plugin. */
   export interface Tui extends Size {
     readonly background: "dark" | "light";
     readonly truecolor: boolean;
+    readonly startup: Startup;
     readonly panes: Panes;
     /** The deepest view on the focus path. */
     readonly focused: View | undefined;

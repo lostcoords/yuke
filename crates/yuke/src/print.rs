@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tokio::sync::Notify;
-use yuke_agent::StoreError;
+use yuke_agent::{Store, StoreError};
 use yuke_ai::catalog::ReasoningLevel;
 use yuke_ai::{Block, Effort, answer_text};
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
@@ -65,7 +65,7 @@ impl Reasoning {
     }
 }
 
-/// The session that a run continues.
+/// The session that a run or the terminal interface opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SessionChoice {
     /// A new session in the current folder.
@@ -74,6 +74,22 @@ pub(crate) enum SessionChoice {
     Id(SessionId),
     /// The session of the current folder with the newest event.
     Newest,
+}
+
+/// Find the session of `cwd` with the newest event.
+///
+/// # Errors
+///
+/// Returns a text for the user when `cwd` has no session, or when the store fails.
+pub(crate) async fn newest_session(store: &dyn Store, cwd: &Path) -> Result<SessionId, String> {
+    let page = store
+        .list_sessions(Some(cwd), None, 1)
+        .await
+        .map_err(|error| chain_text(&error))?;
+    page.sessions
+        .first()
+        .map(|session| session.session_id)
+        .ok_or_else(|| format!("no session works in {}", cwd.display()))
 }
 
 /// A run that reached its turn. With `--json`, yuke writes this value.
@@ -131,19 +147,7 @@ async fn run_turn(
                 .map_err(|error| chain_text(&error))?
         }
         SessionChoice::Id(id) => existing_session(task, id, app).await?,
-        SessionChoice::Newest => {
-            let page = app
-                .store()
-                .list_sessions(Some(cwd), None, 1)
-                .await
-                .map_err(|error| chain_text(&error))?;
-            let id = page
-                .sessions
-                .first()
-                .map(|session| session.session_id)
-                .ok_or_else(|| format!("no session works in {}", cwd.display()))?;
-            existing_session(task, id, app).await?
-        }
+        SessionChoice::Newest => existing_session(task, newest_session(app.store(), cwd).await?, app).await?,
     };
 
     let input_id = app

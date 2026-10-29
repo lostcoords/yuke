@@ -82,11 +82,11 @@ struct Cli {
     reasoning: Option<Reasoning>,
 
     /// Continue the session with this id.
-    #[arg(long, value_name = "ID", conflicts_with = "continue_newest", requires = "prompt")]
+    #[arg(long, value_name = "ID", conflicts_with = "continue_newest")]
     session: Option<SessionId>,
 
     /// Continue the session of the current folder with the newest event.
-    #[arg(short = 'c', long = "continue", requires = "prompt")]
+    #[arg(short = 'c', long = "continue")]
     continue_newest: bool,
 }
 
@@ -115,8 +115,8 @@ enum Command {
 /// What the program runs.
 #[derive(Debug, PartialEq)]
 enum Mode {
-    /// The terminal interface.
-    Tui,
+    /// The terminal interface. Its start pane shows the session of the choice.
+    Tui(SessionChoice),
     /// The protocol server on the Unix socket at `listen`, or else on stdin and stdout.
     Rpc { listen: Option<PathBuf> },
     /// The bridge from stdin and stdout to the server of the Unix socket at this path.
@@ -155,19 +155,20 @@ impl Cli {
             };
         }
 
+        let session = match (self.session, self.continue_newest) {
+            (Some(id), _) => SessionChoice::Id(id),
+            (None, true) => SessionChoice::Newest,
+            (None, false) => SessionChoice::New,
+        };
         let Some(prompt) = self.prompt else {
-            return Mode::Tui;
+            return Mode::Tui(session);
         };
 
         let task = Task {
             prompt,
             model: self.model,
             reasoning: self.reasoning,
-            session: match (self.session, self.continue_newest) {
-                (Some(id), _) => SessionChoice::Id(id),
-                (None, true) => SessionChoice::Newest,
-                (None, false) => SessionChoice::New,
-            },
+            session,
         };
 
         Mode::Print { task, json: self.json }
@@ -184,7 +185,7 @@ fn main() -> ExitCode {
     };
     let code = runtime.block_on(async {
         let ran = match Cli::parse().into_mode() {
-            Mode::Tui => run_tui().await,
+            Mode::Tui(session) => run_tui(session).await,
             Mode::Rpc { listen } => serve_rpc(listen).await,
             Mode::Connect(path) => rpc::connect(&path, tokio::io::stdin(), tokio::io::stdout())
                 .await
@@ -308,10 +309,10 @@ async fn serve_rpc(listen: Option<PathBuf>) -> Result<ExitCode, String> {
     }
 }
 
-/// Run the terminal interface until a quit or a signal.
-async fn run_tui() -> Result<ExitCode, String> {
+/// Run the terminal interface until a quit or a signal. Its start pane shows the session of `session`.
+async fn run_tui(session: SessionChoice) -> Result<ExitCode, String> {
     let shutdown = CancellationToken::new();
-    match run_until_signal(tui::run(machine()?, shutdown.clone()), &shutdown).await? {
+    match run_until_signal(tui::run(machine()?, session, shutdown.clone()), &shutdown).await? {
         Signaled::Ended(ended, signal_number) => {
             ended?;
             Ok(signal_number.map_or(ExitCode::SUCCESS, signal_exit))
@@ -347,7 +348,7 @@ fn machine() -> Result<Machine, String> {
         transport: Arc::clone(&http) as Arc<dyn yuke_ai::transport::Transport>,
         exchange: http,
         fetch: Arc::new(fetch),
-        display: None,
+        interface: None,
         test: None,
     })
 }
@@ -480,7 +481,7 @@ mod tests {
 
     #[test]
     fn no_mode_flag_starts_the_terminal_interface_and_rpc_starts_the_server() {
-        assert_eq!(mode(&[]), Ok(Mode::Tui));
+        assert_eq!(mode(&[]), Ok(Mode::Tui(SessionChoice::New)));
         assert_eq!(mode(&["--rpc"]), Ok(Mode::Rpc { listen: None }));
     }
 
@@ -557,7 +558,7 @@ mod tests {
     #[test]
     fn rpc_with_a_print_flag_is_a_conflict_and_each_print_flag_needs_print() {
         assert_eq!(mode(&["--rpc", "-p", "Hi."]), Err(ErrorKind::ArgumentConflict));
-        for flag in [&["--json"][..], &["--model", "a/b"], &["--reasoning", "off"], &["-c"]] {
+        for flag in [&["--json"][..], &["--model", "a/b"], &["--reasoning", "off"]] {
             assert_eq!(mode(flag), Err(ErrorKind::MissingRequiredArgument), "{flag:?}");
             assert_eq!(
                 mode(&[&["--rpc"][..], flag].concat()),
@@ -566,6 +567,26 @@ mod tests {
             );
         }
         let id = SessionId::generate().to_string();
-        assert_eq!(mode(&["--session", &id]), Err(ErrorKind::MissingRequiredArgument));
+        for flag in [&["-c"][..], &["--session", &id]] {
+            assert_eq!(
+                mode(&[&["--rpc"][..], flag].concat()),
+                Err(ErrorKind::ArgumentConflict),
+                "{flag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn continue_and_session_choose_the_start_session_of_the_terminal_interface() {
+        let id = SessionId::generate();
+        assert_eq!(mode(&["-c"]), Ok(Mode::Tui(SessionChoice::Newest)));
+        assert_eq!(
+            mode(&["--session", &id.to_string()]),
+            Ok(Mode::Tui(SessionChoice::Id(id)))
+        );
+        assert_eq!(
+            mode(&["-c", "--session", &id.to_string()]),
+            Err(ErrorKind::ArgumentConflict)
+        );
     }
 }

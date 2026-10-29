@@ -49,7 +49,7 @@ fn model_info(model: &Model) -> ModelInfo {
 
 /// The reasoning choices of `model`: the endpoint default, then off and each effort of the catalog that the model
 /// takes, each once. An effort that the catalog does not list is not a choice.
-fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
+pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
     let mut choices = vec![ReasoningChoice {
         level: Level::Default,
         settings: ReasoningSettings::default(),

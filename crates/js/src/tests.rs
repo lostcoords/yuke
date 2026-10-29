@@ -194,7 +194,7 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
             })
             .unwrap(),
         ),
-        display: None,
+        interface: None,
         internal_imports: false,
         test_host: None,
     }

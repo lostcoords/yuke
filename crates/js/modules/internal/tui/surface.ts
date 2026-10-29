@@ -17,6 +17,7 @@ import type {
   Pane,
   Panes,
   RestoreView,
+  Startup,
   StylePatch,
   Tui,
   View,
@@ -140,6 +141,10 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     get truecolor(): boolean {
       scope.check();
       return core.driver.truecolor();
+    },
+    get startup(): Startup {
+      scope.check();
+      return core.startup;
     },
     panes,
     get focused(): View | undefined {

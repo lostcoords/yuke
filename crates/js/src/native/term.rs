@@ -17,7 +17,7 @@ use yuke_term::{
     graphemes,
 };
 
-use crate::display::{Display, Frame, Input, Request, Scheme, scheme_of};
+use crate::display::{Display, Frame, Input, Interface, Request, Scheme, scheme_of};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
 
 /// The shortest time between two asked frames: at most 120 frames each second, as in Codex. A frame after input does
@@ -27,7 +27,7 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(8_334);
 /// The frame loop state of one runtime.
 #[derive(Debug)]
 pub(crate) struct Frames {
-    display: Option<Arc<Display>>,
+    interface: Option<Interface>,
     handler: RefCell<Option<Handler>>,
     /// The time of the earliest asked frame.
     deadline: Cell<Option<Instant>>,
@@ -44,9 +44,9 @@ struct Handler {
 }
 
 impl Frames {
-    pub(crate) fn new(display: Option<Arc<Display>>) -> Self {
+    pub(crate) fn new(interface: Option<Interface>) -> Self {
         Self {
-            display,
+            interface,
             handler: RefCell::new(None),
             deadline: Cell::new(None),
             last: Cell::new(None),
@@ -59,10 +59,14 @@ impl Frames {
         self.handler.take();
     }
 
-    fn display(&self, ctx: &Ctx<'_>) -> rquickjs::Result<&Arc<Display>> {
-        self.display
+    fn interface(&self, ctx: &Ctx<'_>) -> rquickjs::Result<&Interface> {
+        self.interface
             .as_ref()
             .ok_or_else(|| throw(ctx, ErrorClass::Error, "the runtime has no terminal display"))
+    }
+
+    fn display(&self, ctx: &Ctx<'_>) -> rquickjs::Result<&Arc<Display>> {
+        Ok(&self.interface(ctx)?.display)
     }
 
     /// The time of the next asked frame, no earlier than one interval after the last frame.
@@ -247,6 +251,15 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
         Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
             Ok(held.display(&ctx)?.frame().truecolor)
         })?,
+    )?;
+
+    let held = Rc::clone(frames);
+    set(
+        "termStartup",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
+            let startup = &held.interface(&ctx)?.startup;
+            serde_json::to_string(startup).map_err(|error| throw(&ctx, ErrorClass::Error, &error.to_string()))
+        })?,
     )
 }
 
@@ -305,7 +318,11 @@ pub(crate) async fn drive(
     shown: oneshot::Receiver<Option<String>>,
     faults: mpsc::UnboundedSender<Report>,
 ) {
-    let Some(display) = frames.display.clone() else {
+    let Some(display) = frames
+        .interface
+        .as_ref()
+        .map(|interface| Arc::clone(&interface.display))
+    else {
         return;
     };
     // A runtime that is not shown waits here, so it takes no input and draws nothing while another runtime draws.

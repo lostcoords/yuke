@@ -431,7 +431,7 @@ impl TestPlace {
             transport: Arc::new(host.transport.clone()),
             exchange: Arc::clone(&fetch) as _,
             fetch,
-            display: None,
+            interface: None,
             test: Some(TestSetup {
                 cache: cache.to_owned(),
                 internal_imports,

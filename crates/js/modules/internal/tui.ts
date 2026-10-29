@@ -21,6 +21,7 @@ const core = new Core({
   quit: () => term.quit(),
   suspend: () => term.suspend(),
   reload: (snapshot) => term.reload(snapshot),
+  startup: () => term.startup,
 });
 
 const bindings: readonly (readonly [string, string])[] = [

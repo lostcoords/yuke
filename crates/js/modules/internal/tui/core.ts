@@ -16,7 +16,8 @@ import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/resto
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
-import type { CanvasStyle, Cursor, Disposer, FocusChange, Style, View } from "yuke:tui";
+import { frozen } from "yuke:internal/values";
+import type { CanvasStyle, Cursor, Disposer, FocusChange, Startup, Style, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -37,6 +38,8 @@ export interface Driver {
   readonly quit: () => void;
   readonly suspend: () => void;
   readonly reload: (snapshot: string) => void;
+  /** How the terminal interface started. The core reads it once. */
+  readonly startup: () => Startup;
 }
 
 /** The source of the faults and the commands of the core itself. */
@@ -52,6 +55,7 @@ export class Core {
   readonly scene: Scene;
   readonly widgets: WidgetMounts;
   readonly driver: Driver;
+  readonly startup: Startup;
   #defaultPane: DefaultPaneSlot | undefined;
   /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
   #startWaits = false;
@@ -59,6 +63,7 @@ export class Core {
 
   constructor(driver: Driver) {
     this.driver = driver;
+    this.startup = frozen(driver.startup());
     const frame = (): void => driver.requestFrame();
     const report = (source: string, text: string): void => this.notices.add("error", source, text);
     this.styles = new Styles(driver.truecolor, driver.background, frame);
