@@ -157,19 +157,15 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
+    palette: live((options?: { readonly cancel?: (() => void) | undefined }): Mount => {
+      const cancel = options?.cancel;
+      if (cancel !== undefined && typeof cancel !== "function") throw new TypeError("a palette cancel is a function");
+      return mounted(core.palette(owner, cancel));
+    }),
     commands: Object.freeze({
       add: live((command: Command): Disposer => {
         if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");
-        const { name, title, enabled } = command;
-        // The wrapper calls through the object, so a command of a class keeps its `this`.
-        return scope.own(
-          core.commands.add({
-            name: own(name),
-            ...(title === undefined ? {} : { title }),
-            run: (args) => command.run(args),
-            ...(enabled === undefined ? {} : { enabled: () => command.enabled?.() === true }),
-          }),
-        );
+        return scope.own(core.commands.add(command, own(command.name)));
       }),
       run: live((name: string, args?: unknown): boolean => core.commands.run(lookup(name), args)),
       list: live((): readonly CommandItem[] => core.commands.list()),

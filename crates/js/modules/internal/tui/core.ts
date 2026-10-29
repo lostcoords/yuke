@@ -12,12 +12,13 @@ import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
 import { Notices } from "yuke:internal/tui/notices";
 import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
+import { Picker } from "yuke:internal/tui/picker";
 import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, Cursor, Disposer, FocusChange, Startup, Style, View } from "yuke:tui";
+import type { CanvasStyle, CommandItem, Cursor, Disposer, FocusChange, Mount, Startup, Style, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -44,6 +45,9 @@ export interface Driver {
 
 /** The source of the faults and the commands of the core itself. */
 export const CORE = "core";
+
+/** The row limit of the palette. The search field counts as a row. */
+const PALETTE_ROWS = 12;
 
 export class Core {
   readonly notices = new Notices();
@@ -192,6 +196,43 @@ export class Core {
     }
   }
 
+  /**
+   * Open the command palette for `owner`: a modal picker of the enabled commands at the bottom. A choice closes the
+   * palette, gives the focus back, and then runs the command. Esc closes the palette and calls `cancel`.
+   */
+  palette(owner: string, cancel?: () => void): Mount {
+    const prefix = `${CORE}:`;
+    const mount = this.scene.overlay(
+      owner,
+      () =>
+        new Picker<CommandItem>({
+          items: this.commands.list().filter((item) => item.enabled),
+          key: (item) => item.name,
+          // The core commands are the base set, so they show without their prefix.
+          label: (item) => `/${item.name.startsWith(prefix) ? item.name.slice(prefix.length) : item.name}`,
+          detail: (item) =>
+            [item.description ?? "", this.keymap.keysOf(item.name).join(", ")].filter(Boolean).join(" · "),
+          choose: (item) => {
+            mount.close();
+            // The command runs with the focus that the palette took, not in the palette.
+            this.scene.layout();
+            this.commands.run(item.name);
+          },
+          cancel: () => {
+            mount.close();
+            cancel?.();
+          },
+        }),
+      {
+        place: (size) => {
+          const height = Math.min(PALETTE_ROWS, size.height);
+          return { column: 0, row: size.height - height, width: size.width, height };
+        },
+      },
+    );
+    return mount;
+  }
+
   /** The saved panes for a reload: the tree, the split ratios, the focus, and the saved view of each pane. */
   snapshot(): string {
     return JSON.stringify(this.panes.snapshot((view, owner) => this.#save(view, owner)));
@@ -247,8 +288,8 @@ export class Core {
 
   #addCommands(): void {
     const driver = this.driver;
-    const add = (name: string, title: string, run: () => void): void => {
-      this.commands.add({ name: `${CORE}:${name}`, title, run });
+    const add = (name: string, description: string, run: () => void): void => {
+      this.commands.add({ name: `${CORE}:${name}`, description, run });
     };
     add("quit", "Quit yuke", () => driver.quit());
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
@@ -266,5 +307,8 @@ export class Core {
       );
     }
     add("focus-next", "Focus the next pane", () => this.panes.focusNext());
+    add("palette", "Open the command palette", () => {
+      this.palette(CORE);
+    });
   }
 }

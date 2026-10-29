@@ -257,7 +257,7 @@ test("keys of a command and each disposer remove only their own binding", () => 
 
 test("commands check their names and run with args", () => {
   const keys = bench();
-  const dispose = keys.add("notes:open", { title: "Open a note" });
+  const dispose = keys.add("notes:open", { description: "Open a note" });
   keys.add("off", { enabled: () => false });
   const bad = [
     () => keys.add("notes:open"),
@@ -265,13 +265,13 @@ test("commands check their names and run with args", () => {
     () => keys.add(""),
     // @ts-expect-error: a command has a run function.
     () => keys.commands.add({ name: "x" }),
-    // @ts-expect-error: a title is a string.
-    () => keys.add("t", { title: 7 }),
+    // @ts-expect-error: a description is a string.
+    () => keys.add("t", { description: 7 }),
     // @ts-expect-error: an enabled check is a function.
     () => keys.add("e", { enabled: true }),
   ];
   for (const call of bad) assert(throws(call) instanceof TypeError);
-  // A later change of the object changes neither the name nor the title.
+  // A later change of the object changes neither the name nor the description.
   const renamed = {
     name: "first",
     run: () => {
@@ -292,9 +292,9 @@ test("commands check their names and run with args", () => {
   );
   equal(keys.ran, [["notes:open", { id: 3 }], "first"]);
   equal(keys.commands.list(), [
-    { name: "notes:open", title: "Open a note", enabled: true },
-    { name: "off", title: "off", enabled: false },
-    { name: "first", title: "first", enabled: true },
+    { name: "notes:open", description: "Open a note", enabled: true },
+    { name: "off", enabled: false },
+    { name: "first", enabled: true },
   ]);
   dispose();
   dispose();

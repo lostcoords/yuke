@@ -180,8 +180,8 @@ declare module "yuke:tui" {
   export interface Command {
     /** The name: letters, digits, and `:`, `-`, `_`, `.`. */
     readonly name: string;
-    /** The text of the palette. */
-    readonly title?: string | undefined;
+    /** One line for the palette, beside the name. */
+    readonly description?: string | undefined;
     /** Run the command. The keymap does not wait for a promise, so the keys go on during the run. */
     readonly run: (args: unknown) => void | Promise<void>;
     /** False when the command cannot run now. A disabled command passes its key on. */
@@ -191,7 +191,7 @@ declare module "yuke:tui" {
   /** A command as the palette lists it. */
   export interface CommandItem {
     readonly name: string;
-    readonly title: string;
+    readonly description?: string | undefined;
     readonly enabled: boolean;
   }
 
@@ -680,41 +680,40 @@ declare module "yuke:tui" {
     /** A key that stays the same for one item. The selection follows it. */
     readonly key: (item: T) => string;
     readonly label: (item: T) => string;
+    /** The picker shows this dim text after the label. The default rank does not match it. */
+    readonly detail?: ((item: T) => string) | undefined;
     /**
      * The shown items for a query, in their final order. The picker does not sort them again. The default matches
      * each label with `fuzzyMatch`: the best score first, ties in input order, and all items for an empty query.
      */
     readonly rank?: ((query: string, items: readonly T[]) => readonly PickerMatch<T>[]) | undefined;
-    /** The rows of a match. The default shows the label with its ranges marked. It reverses a selected row. */
+    /**
+     * The rows of a match. The default shows the label with its ranges marked, then the detail. It reverses a selected
+     * row.
+     */
     readonly render?: ((match: PickerMatch<T>, width: number, selected: boolean) => readonly TextRow[]) | undefined;
-    /** The default is true. Without the search field, the owner sets `query`, as a slash menu does. */
-    readonly showSearch?: boolean | undefined;
     /** Enter chooses the selected item. A left press on a result selects it and chooses it. */
     readonly choose: (item: T) => void;
-    /** Tab completes the selected item without a choice, as a slash menu fills in a command name. */
-    readonly complete?: ((item: T) => void) | undefined;
     /** Esc cancels. The owner closes the picker. */
     readonly cancel: () => void;
   }
 
   /**
    * A search field over a list of ranked items. Up and Down move the selection and stop at the ends. Enter chooses,
-   * Tab completes, and Esc cancels. The picker opens no overlay of its own.
+   * and Esc cancels. The picker opens no overlay of its own.
    */
   export class Picker<T extends object> implements View {
     constructor(options: PickerOptions<T>);
     readonly input: TextEditor;
     readonly selected: T | undefined;
-    /** True with the search field: the picker takes the focus and gives it to the field. */
+    /** The picker takes the focus and gives it to its search field. */
     readonly focusable: boolean;
-    readonly initialFocus: View | undefined;
+    readonly initialFocus: View;
     query: string;
     setItems(items: readonly T[]): void;
     move(rows: number): void;
     /** `false` without a selected item. */
     choose(): boolean;
-    /** `false` without a selected item or a `complete` option. */
-    complete(): boolean;
     cancel(): void;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -831,6 +830,11 @@ declare module "yuke:tui" {
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
+    /**
+     * Open the command palette: the enabled commands in a modal picker. A choice closes it, gives the focus back, and
+     * then runs the command. Esc closes it and calls `cancel`.
+     */
+    readonly palette: (options?: { readonly cancel?: (() => void) | undefined }) => Mount;
     readonly commands: {
       readonly add: (command: Command) => Disposer;
       /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */

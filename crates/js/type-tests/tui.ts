@@ -24,7 +24,7 @@ const style: Style = { fg: null };
 // @ts-expect-error A color names the base palette or is an index, `#rrggbb`, or `reset`.
 const color: Style = { fg: "red" };
 
-// A command needs a name and a run function; `title` and `enabled` are optional.
+// A command needs a name and a run function; `description` and `enabled` are optional.
 const command: Command = { name: "open", run: async () => {} };
 
 // A container is an object with a layout; a class implements the interface too.

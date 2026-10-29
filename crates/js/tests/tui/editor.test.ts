@@ -161,6 +161,59 @@ test("the keys type, select, delete, add a line, and submit without a clear", ()
   equal(editor.state.text, "ho\nx\nyk");
 });
 
+test("the word keys step over whole graphemes and spans, stop at a line end, and delete a selection first", () => {
+  // "P Q" is one paste span, so a word move does not stop at its space.
+  const editor = new TextEditor({
+    state: state("ab cd\n👩‍💻eP Q  fg", 19, [{ from: 12, to: 15, kind: "paste", label: "[p]" }]),
+  });
+  using frame = createFrame({ width: 20, height: 4 }, () => root(editor, 18, 3));
+  const carets: number[] = [];
+  for (const key of ["alt+b", "alt+b", "ctrl+left", "alt+f", "ctrl+right"]) {
+    frame.key(key);
+    carets.push(editor.caret);
+  }
+  equal(carets, [17, 6, 3, 5, 15]);
+  frame.key("ctrl+shift+left");
+  equal(editor.selection, { anchor: 15, head: 6 });
+  frame.key("ctrl+w");
+  equal([editor.state.text, editor.caret], ["ab cd\n  fg", 6]);
+  frame.key("alt+d");
+  equal(editor.state.text, "ab cd\n");
+  frame.key("ctrl+w");
+  equal(editor.state.text, "ab ");
+  frame.key("alt+backspace");
+  equal(editor.state.text, "");
+});
+
+test("a word move stops at each end of the text, and a word delete takes a CRLF whole", () => {
+  const editor = new TextEditor({ state: state("a\r\nb", 0) });
+  using frame = createFrame({ width: 10, height: 4 }, () => root(editor, 8, 3));
+  frame.key("alt+b");
+  const start = editor.caret;
+  frame.key("alt+f alt+f alt+f");
+  const end = editor.caret;
+  frame.key("ctrl+w");
+  const word = editor.state.text;
+  frame.key("ctrl+w");
+  equal([start, end, word, editor.state.text], [0, 4, "a\r\n", ""]);
+});
+
+test("the line keys reach the ends of a line past its wraps, and a delete at a line start changes nothing", () => {
+  const editor = new TextEditor({ state: state("ab cd efgh\nxy", 7) });
+  using frame = createFrame({ width: 6, height: 5 }, () => root(editor, 4, 4));
+  const changes: EditorChange[] = [];
+  editor.extend(new AbortController().signal).onChange((change) => changes.push(change));
+  frame.key("ctrl+a");
+  const start = editor.caret;
+  frame.key("ctrl+e");
+  const end = editor.caret;
+  frame.key("ctrl+u");
+  equal([start, end, editor.state.text, editor.caret], [0, 10, "\nxy", 0]);
+  const seen = changes.length;
+  frame.key("ctrl+u ctrl+w");
+  equal(changes.length, seen);
+});
+
 test("a one-line field writes line ends as spaces and passes a newline key on", () => {
   const field = new TextEditor({ multiline: false });
   using frame = createFrame({ width: 12, height: 3 }, () => root(field, 10, 1));

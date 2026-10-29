@@ -21,19 +21,19 @@ export const optionsSchema = {
 
 type Options = Infer<typeof optionsSchema>;
 
-/** The commands of the chat: the name, the title, the keys, their context, and the action. Each action uses the active pane. */
+/** The commands of the chat: the name, the description, the keys, their context, and the action. Each action uses the active pane. */
 const COMMANDS: readonly {
   readonly name: string;
-  readonly title: string;
+  readonly description: string;
   readonly keys: readonly string[];
   readonly in: "chat" | "composer" | "transcript";
   readonly run: (pane: PaneActions) => void;
   readonly enabled?: (pane: PaneActions) => boolean;
 }[] = [
-  { name: "send", title: "Send the message", keys: ["enter"], in: "composer", run: (pane) => pane.send() },
+  { name: "send", description: "Send the message", keys: ["enter"], in: "composer", run: (pane) => pane.send() },
   {
     name: "older-message",
-    title: "Show an older message of yours",
+    description: "Show an older message of yours",
     keys: ["up"],
     in: "composer",
     run: (pane) => pane.browse(-1),
@@ -41,7 +41,7 @@ const COMMANDS: readonly {
   },
   {
     name: "newer-message",
-    title: "Show a newer message of yours",
+    description: "Show a newer message of yours",
     keys: ["down"],
     in: "composer",
     run: (pane) => pane.browse(1),
@@ -49,57 +49,69 @@ const COMMANDS: readonly {
   },
   {
     name: "clear",
-    title: "Clear the draft, or stop the turn",
+    description: "Clear the draft, or stop the turn",
     keys: ["ctrl+c"],
     in: "chat",
     run: (pane) => pane.clear(),
   },
   {
     name: "interrupt",
-    title: "Drop the selection, or stop the turn",
+    description: "Drop the selection, or stop the turn",
     keys: ["esc"],
     in: "chat",
     run: (pane) => pane.interrupt(),
   },
   {
     name: "model",
-    title: "Choose the model and the reasoning",
+    description: "Choose the model and the reasoning",
     keys: ["ctrl+k m"],
     in: "chat",
     run: (pane) => pane.chooseModel(),
   },
   {
     name: "toggle-tools",
-    title: "Open or fold the tools",
+    description: "Open or fold the tools",
     keys: ["ctrl+o"],
     in: "chat",
     run: (pane) => pane.toggleTools(),
   },
-  { name: "page-up", title: "Scroll up one page", keys: ["page_up"], in: "chat", run: (pane) => pane.scroll("pageUp") },
+  {
+    name: "page-up",
+    description: "Scroll up one page",
+    keys: ["page_up"],
+    in: "chat",
+    run: (pane) => pane.scroll("pageUp"),
+  },
   {
     name: "page-down",
-    title: "Scroll down one page",
+    description: "Scroll down one page",
     keys: ["page_down"],
     in: "chat",
     run: (pane) => pane.scroll("pageDown"),
   },
-  { name: "top", title: "Scroll to the top", keys: ["ctrl+home"], in: "chat", run: (pane) => pane.scroll("top") },
+  { name: "top", description: "Scroll to the top", keys: ["ctrl+home"], in: "chat", run: (pane) => pane.scroll("top") },
   {
     name: "bottom",
-    title: "Scroll to the bottom",
+    description: "Scroll to the bottom",
     keys: ["ctrl+end"],
     in: "chat",
     run: (pane) => pane.scroll("bottom"),
   },
   {
     name: "switch-focus",
-    title: "Move the focus between the composer and the transcript",
+    description: "Move the focus between the composer and the transcript",
     keys: ["tab", "shift+tab"],
     in: "chat",
     run: (pane) => pane.switchFocus(),
   },
-  { name: "activate", title: "Act on the caret", keys: ["enter"], in: "transcript", run: (pane) => pane.activate() },
-  { name: "copy", title: "Copy the selection", keys: ["y"], in: "transcript", run: (pane) => pane.copy() },
+  {
+    name: "activate",
+    description: "Act on the caret",
+    keys: ["enter"],
+    in: "transcript",
+    run: (pane) => pane.activate(),
+  },
+  { name: "copy", description: "Copy the selection", keys: ["y"], in: "transcript", run: (pane) => pane.copy() },
 ];
 
 export function apply(ctx: PluginContext<Options>): undefined {
@@ -116,22 +128,18 @@ export function apply(ctx: PluginContext<Options>): undefined {
     return view === undefined ? undefined : chat.panes.get(view);
   };
   for (const command of COMMANDS) {
-    const enabled = command.enabled;
     tui.commands.add({
       name: command.name,
-      title: command.title,
+      description: command.description,
       run: () => {
         const pane = active();
         if (pane !== undefined) command.run(pane);
       },
-      ...(enabled === undefined
-        ? {}
-        : {
-            enabled: () => {
-              const pane = active();
-              return pane !== undefined && enabled(pane);
-            },
-          }),
+      // A command of the chat runs only in a chat pane, so the palette of another pane leaves it out.
+      enabled: () => {
+        const pane = active();
+        return pane !== undefined && (command.enabled?.(pane) ?? true);
+      },
     });
     for (const key of command.keys) tui.keys.bind(key, command.name, { in: command.in });
   }

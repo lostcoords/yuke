@@ -3,21 +3,14 @@
  * async: the caller does not wait, so the keys go on during a dialog of the command.
  */
 import { failureOf } from "yuke:internal/failure";
-import type { Command } from "yuke:tui";
+import type { Command, CommandItem } from "yuke:tui";
 
 const NAME = /^[A-Za-z0-9:._-]+$/;
 
-/** A command as the palette lists it. */
-export interface CommandItem {
-  readonly name: string;
-  readonly title: string;
-  readonly enabled: boolean;
-}
-
-/** A command and its title at the time of its add, so a later change of the object changes neither. */
+/** A command and its description at the add. A later change of the command object does not change the entry. */
 interface Entry {
   readonly command: Command;
-  readonly title: string;
+  readonly description: string | undefined;
   /** True after a throw of `enabled` gave its one fault. */
   faulted: boolean;
 }
@@ -36,19 +29,24 @@ export class Commands {
     this.#changed = changed;
   }
 
-  /** Add `command` and return its disposer. A name that another command has throws a `TypeError`. */
-  add(command: Command): () => void {
-    const { name, title, run, enabled } = command;
+  /**
+   * Add `command` under `name` and return its disposer. `name` is the name of the command, or the qualified form from a
+   * plugin surface. A duplicate name throws a `TypeError`. A run is a method call, so a class command keeps its `this`.
+   */
+  add(command: Command, name: string = command.name): () => void {
+    const { description, run, enabled } = command;
     if (typeof name !== "string" || !NAME.test(name)) {
       throw new TypeError(`'${String(name)}' is no command name: letters, digits, and : . _ -`);
     }
     if (typeof run !== "function") throw new TypeError(`the command ${name} has no run function`);
-    if (title !== undefined && typeof title !== "string") throw new TypeError(`the title of ${name} is a string`);
+    if (description !== undefined && typeof description !== "string") {
+      throw new TypeError(`the description of ${name} is a string`);
+    }
     if (enabled !== undefined && typeof enabled !== "function") {
       throw new TypeError(`the enabled check of ${name} is a function`);
     }
     if (this.#commands.has(name)) throw new TypeError(`the command ${name} exists`);
-    const entry: Entry = { command, title: title ?? name, faulted: false };
+    const entry: Entry = { command, description, faulted: false };
     this.#commands.set(name, entry);
     this.#changed();
     return () => {
@@ -95,7 +93,7 @@ export class Commands {
   list(): CommandItem[] {
     return [...this.#commands].map(([name, entry]) => ({
       name,
-      title: entry.title,
+      ...(entry.description === undefined ? {} : { description: entry.description }),
       enabled: this.#enabled(name, entry),
     }));
   }

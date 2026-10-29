@@ -383,3 +383,52 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   await settle();
   equal(chat.notices, ["error the model did not change: Error: a turn runs"]);
 });
+
+test("a slash in an empty composer opens the palette, Esc gives the slash back, and a pasted slash stays text", async () => {
+  using frame = createFrame({ width: 60, height: 14 });
+  const chat = loadChat(frame);
+  frame.start();
+  const composer = composerOf(chat);
+  frame.key("/ m o d e l");
+  frame.draw();
+  equal(rows(frame).slice(2, 4), ["model", "/chat:model  Choose the model and the reasoning · ctrl+k m"]);
+  // A choice runs the command in the pane and leaves no slash.
+  frame.key("enter");
+  await settle();
+  frame.draw();
+  equal([rows(frame).includes("p/m"), composer.state.text], [true, ""]);
+  frame.key("esc");
+  frame.key("/ m o d e l");
+  frame.key("esc");
+  equal([composer.state.text, composer.caret], ["/", 1]);
+  frame.key("/");
+  frame.key("ctrl+c");
+  frame.paste("/a");
+  equal(composer.state.text, "/a");
+});
+
+test("a pane close with an open palette closes it and puts no slash in the composer", () => {
+  using frame = createFrame({ width: 30, height: 14 });
+  const chat = loadChat(frame);
+  frame.start();
+  const composer = composerOf(chat);
+  frame.key("/");
+  chat.tui.commands.run("core:close");
+  frame.draw();
+  equal([composer.state.text, rows(frame).some((row) => row.startsWith("/quit"))], ["", false]);
+});
+
+test("the commands of the chat are disabled in a pane of another plugin", () => {
+  using frame = createFrame({ width: 30, height: 6 });
+  const chat = loadChat(frame);
+  frame.start();
+  const enabled = (): boolean[] =>
+    chat.tui.commands
+      .list()
+      .filter((command) => command.name === "chat:model")
+      .map((command) => command.enabled);
+  const before = enabled();
+  frame.surface("notes").tui.panes.split(() => ({ draw() {}, focusable: true }));
+  frame.draw();
+  equal([before, enabled()], [[true], [false]]);
+});

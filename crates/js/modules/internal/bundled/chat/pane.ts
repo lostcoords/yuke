@@ -18,6 +18,7 @@ import {
   type Placement,
   type Size,
   type Startup,
+  strokeOf,
   TextEditor,
   TextView,
   type Tui,
@@ -230,6 +231,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     composer.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), text, [
       { from: 0, to: text.length, kind: "paste", label: `[Pasted text · ${text.length} chars]` },
     ]);
+    return true;
+  });
+  // A slash in an empty composer opens the palette. Esc gives the slash back, so a message can start with one.
+  extension.onKey((event) => {
+    if (strokeOf(event) !== "/" || composer.state.text !== "") return false;
+    const palette = tui.palette({ cancel: () => composer.replace(0, 0, "/") });
+    const close = (): void => palette.close();
+    mount.signal.addEventListener("abort", close, { once: true });
+    palette.signal.addEventListener("abort", () => mount.signal.removeEventListener("abort", close), { once: true });
     return true;
   });
   // An edit of the shown message ends the browse, so the edited text stays.

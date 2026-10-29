@@ -33,6 +33,22 @@ const SELECTION: CanvasStyle = [{ reverse: true }, "editor.selection"];
 const LABEL: CanvasStyle = [{ fg: "accent" }, "editor.label"];
 const PLACEHOLDER: CanvasStyle = [{ dim: true }, "editor.placeholder"];
 const NEWLINE_KEYS = new Set(["shift+enter", "alt+enter", "ctrl+j"]);
+/** The readline forms of Home and End. */
+const LINE_KEYS = new Map([
+  ["ctrl+a", "home"],
+  ["ctrl+e", "end"],
+]);
+/** The word moves go toward the start for -1. Only the shifted arrow forms select. */
+const WORD_MOVES = new Map<string, -1 | 1>([
+  ["alt+b", -1],
+  ["alt+f", 1],
+  ["ctrl+left", -1],
+  ["ctrl+right", 1],
+  ["ctrl+shift+left", -1],
+  ["ctrl+shift+right", 1],
+]);
+/** These keys delete a word or a line. With a selection, they delete the selection only. */
+const DELETE_KEYS = new Set(["ctrl+w", "alt+backspace", "alt+d", "ctrl+u"]);
 const UNWRAPPED = 0x7f_ff_ff_ff;
 
 /** A row of the display text: `from` and `to` are display offsets, and `soft` marks a wrap at its end. */
@@ -281,7 +297,7 @@ export class TextEditor {
     if (this.#support.key(event, "beforeDefault")) return true;
     const stroke = strokeOf(event);
     const select = stroke.startsWith("shift+");
-    const move = select ? stroke.slice("shift+".length) : stroke;
+    const move = select ? stroke.slice("shift+".length) : (LINE_KEYS.get(stroke) ?? stroke);
     const { anchor, head } = this.#state.selection;
     const [low, high] = anchor < head ? [anchor, head] : [head, anchor];
     switch (move) {
@@ -297,17 +313,25 @@ export class TextEditor {
         this.#vertical(move === "up" ? -1 : 1, select);
         return true;
       case "home":
-      case "end": {
-        const layout = this.#current();
-        const line = rowOf(layout.lines, this.#toDisplay(layout, head, "after"), "after");
-        const target = this.#toSource(
-          layout,
-          move === "home" ? line.from : line.to,
-          move === "home" ? "before" : "after",
-        );
-        this.#moveTo(target, select);
+      case "end":
+        this.#moveTo(this.#lineEdge(head, move === "home" ? -1 : 1), select);
         return true;
-      }
+    }
+    const word = WORD_MOVES.get(stroke);
+    if (word !== undefined) {
+      this.#moveTo(this.#word(head, word), stroke.includes("shift+"));
+      return true;
+    }
+    if (DELETE_KEYS.has(stroke)) {
+      const [from, to] =
+        low !== high
+          ? [low, high]
+          : stroke === "alt+d"
+            ? [head, this.#word(head, 1)]
+            : [stroke === "ctrl+u" ? this.#lineEdge(head, -1) : this.#word(head, -1), head];
+      // An empty edit still notifies the change listeners.
+      if (from < to) this.replace(from, to, "");
+      return true;
     }
     if (stroke === "backspace" || stroke === "delete") {
       if (low !== high) this.replace(low, high, "");
@@ -442,6 +466,36 @@ export class TextEditor {
     const span = spans.find((item) => (direction < 0 ? item.to === offset : item.from === offset));
     if (span !== undefined) return direction < 0 ? span.from : span.to;
     return direction < 0 ? previousBoundary(text, offset, false) : nextBoundaryOf(text, offset + 1);
+  }
+
+  /** Return the start (-1) or the end (1) of the logical line at `offset`. A wrap does not end the line. */
+  #lineEdge(offset: number, direction: -1 | 1): number {
+    const layout = this.#current();
+    const line = rowOf(layout.lines, this.#toDisplay(layout, offset, "after"), "after");
+    return direction < 0 ? this.#toSource(layout, line.from, "before") : this.#toSource(layout, line.to, "after");
+  }
+
+  /**
+   * Return the far edge of the word before `offset` (-1) or after it (1). The move skips the white space before the
+   * word. A word is a run without white space. A step takes a whole grapheme or a whole span.
+   */
+  #word(offset: number, direction: -1 | 1): number {
+    const { text, spans } = this.#state;
+    // The move reads the grapheme starts once, so a long word costs one pass.
+    const starts = boundaries(text);
+    let index = starts.indexOf(offset);
+    let inWord = false;
+    while (index + direction >= 0 && index + direction < starts.length) {
+      const at = starts[index] as number;
+      const span = spans.find((item) => (direction < 0 ? item.to === at : item.from === at));
+      const next = span === undefined ? index + direction : starts.indexOf(direction < 0 ? span.from : span.to);
+      const [from, to] = direction < 0 ? [starts[next], at] : [at, starts[next]];
+      const blank = /^\s+$/u.test(text.slice(from, to));
+      if (blank && inWord) break;
+      inWord ||= !blank;
+      index = next;
+    }
+    return starts[index] as number;
   }
 
   #moveTo(target: number, select: boolean): void {

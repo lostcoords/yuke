@@ -1,8 +1,7 @@
-// The fuzzy match and the picker of `yuke:tui`: ranges, ranking, selection by key, the keys, and a palette and a slash
-// menu on the same widget.
+// The fuzzy match and the picker of `yuke:tui`: ranges, ranking, selection by key, and the keys.
 
 import { createFrame, equal, test } from "yuke:test";
-import { fuzzyMatch, Picker, type PickerOptions, TextEditor, type View } from "yuke:tui";
+import { fuzzyMatch, Picker, type PickerOptions } from "yuke:tui";
 
 interface Command {
   readonly name: string;
@@ -19,7 +18,6 @@ function picker(
     key: (command) => command.name,
     label: (command) => command.name,
     choose: (command) => log.push(`choose ${command.name}`),
-    complete: (command) => log.push(`complete ${command.name}`),
     cancel: () => log.push("cancel"),
     ...options,
   });
@@ -101,7 +99,7 @@ test("the selection follows its key and goes to the first result when its key le
   void frame;
 });
 
-test("Tab completes without a choice, Esc cancels, Up stops at the top, and an empty result chooses nothing", () => {
+test("Esc cancels, Up and Down stop at the ends, and an empty result chooses nothing", () => {
   const log: string[] = [];
   const view = picker(["open", "close"], log);
   using frame = createFrame({ width: 10, height: 3 }, () => view);
@@ -109,11 +107,11 @@ test("Tab completes without a choice, Esc cancels, Up stops at the top, and an e
   const top = view.selected;
   frame.key("down down");
   const bottom = view.selected;
-  frame.key("tab esc");
-  frame.key("z z enter tab");
+  frame.key("esc");
+  frame.key("z z enter");
   equal(
     [top, bottom, log, view.selected, view.choose()],
-    [{ name: "open" }, { name: "close" }, ["complete close", "cancel"], undefined, false],
+    [{ name: "open" }, { name: "close" }, ["cancel"], undefined, false],
   );
 });
 
@@ -133,33 +131,6 @@ test("the selected row shows reversed and its matched letters marked, and a clic
   const modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
   frame.mouse({ type: "mouse", column: 1, row: 2, button: "left", action: "press", modifiers });
   equal(log, ["choose beta"]);
-});
-
-test("a palette and a slash menu use the same widget, and the menu keeps the focus in the composer", () => {
-  const log: string[] = [];
-  const composer = new TextEditor({ role: "composer", submit: (state) => log.push(`send ${state.text}`) });
-  const root: View = {
-    draw() {},
-    initialFocus: composer,
-    layout: (size) => [{ view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } }],
-  };
-  using frame = createFrame({ width: 20, height: 4 }, () => root);
-  const surface = frame.surface("chat");
-  // The palette: a modal with its own search field.
-  const palette = picker(["split", "close"], log);
-  const modal = surface.tui.overlay(() => palette);
-  frame.key("c l enter");
-  modal.close();
-  // The slash menu: a float without a search field; the composer text gives its query.
-  const menu = picker(["split", "close"], log, { showSearch: false });
-  surface.tui.overlay(() => menu, {
-    modal: false,
-    place: (size) => ({ column: 0, row: 0, width: size.width, height: 2 }),
-  });
-  frame.key("/ s");
-  menu.query = composer.state.text.slice(1);
-  frame.key("enter");
-  equal([log, frame.frame.cursor?.row, composer.state.text], [["choose close", "choose split"], 3, "/s"]);
 });
 
 test("a selected row pads by cells, and a picker with its field takes the focus", () => {
