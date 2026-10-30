@@ -5,9 +5,9 @@
  * shows a session in a pane for other plugins.
  */
 
+import { chatStyles } from "yuke:chat";
 import { readTextFile } from "yuke:fs";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
-import { STYLES } from "yuke:internal/bundled/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo, ModelReference, ReasoningLevel } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
@@ -179,7 +179,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
     },
   });
   if (tui === undefined) return undefined;
-  for (const [name, style] of Object.entries(STYLES)) tui.styles.set(name, style);
+  for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style);
   const chat: Chat = {
     ctx,
     tui,

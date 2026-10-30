@@ -3,7 +3,7 @@
  * gives the path and the patch as they are.
  */
 
-import { type Range, rangedRows, STYLE } from "yuke:internal/bundled/chat/rows";
+import { type Range, rangedRows, STYLE } from "yuke:internal/chat/rows";
 import type { TextRow } from "yuke:tui";
 
 /** The source of the block `path` with `patch`: the path on the first line, then the patch. */

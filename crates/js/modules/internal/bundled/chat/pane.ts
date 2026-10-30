@@ -4,13 +4,13 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import { ChatSession } from "yuke:chat";
+import { ChatDocument, ChatSession } from "yuke:chat";
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
 import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
-import { STYLE } from "yuke:internal/bundled/chat/rows";
-import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
+import { inputText } from "yuke:internal/chat/document";
+import { STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type {

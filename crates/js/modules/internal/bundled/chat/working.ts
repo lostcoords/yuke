@@ -1,6 +1,6 @@
 /** The working row of a chat pane: a spinner, the phase of the turn, the elapsed time, and the cancel key. */
 
-import { argument } from "yuke:internal/bundled/chat/tools";
+import { argument } from "yuke:internal/chat/tools";
 import type { Transcript } from "yuke:transcript";
 
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";

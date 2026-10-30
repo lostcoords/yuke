@@ -4,8 +4,8 @@
  * the preview of its hints.
  */
 
-import { diffRows, diffSource } from "yuke:internal/bundled/chat/diff";
-import { indented, item, plain, type Range, rangedRows, STYLE, shifted } from "yuke:internal/bundled/chat/rows";
+import { diffRows, diffSource } from "yuke:internal/chat/diff";
+import { indented, item, plain, type Range, rangedRows, STYLE, shifted } from "yuke:internal/chat/rows";
 import type { Entry } from "yuke:transcript";
 import { Markdown, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 

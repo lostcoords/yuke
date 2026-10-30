@@ -1,11 +1,11 @@
 /**
- * The document of one chat pane: one item for each entry of the transcript of its session, with the folds of the
- * pane, and one item after them for a failure of the running turn. An item stays the same object while its entry and
- * its fold stay, so the view keeps its rows.
+ * `ChatDocument` of `yuke:chat`: one item for each entry of a transcript, with its folds, and one item after them for a
+ * failure of the running turn. An item stays the same object while its entry and its fold stay, so the view keeps its
+ * rows.
  */
 
-import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/bundled/chat/rows";
-import { toolItem } from "yuke:internal/bundled/chat/tools";
+import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
+import { toolItem } from "yuke:internal/chat/tools";
 import type { Entry, Status, Transcript } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
 

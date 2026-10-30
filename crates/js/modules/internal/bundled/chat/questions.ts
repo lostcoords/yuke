@@ -4,7 +4,7 @@
  * masks a secret. The keymap of the chat cancels a question with Esc or Ctrl+C.
  */
 
-import { STYLE } from "yuke:internal/bundled/chat/rows";
+import { STYLE } from "yuke:internal/chat/rows";
 import type { InteractionResponse } from "yuke:protocol";
 import type { Question } from "yuke:transcript";
 import { type Canvas, Picker, type Placement, type Size, strokeOf, TextEditor, type View } from "yuke:tui";
