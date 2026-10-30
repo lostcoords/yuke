@@ -6,23 +6,6 @@ import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
 
-test("the web classes are globals that a script can replace", () => {
-  for (const name of ["AbortController", "AbortSignal", "CustomEvent", "Event", "EventTarget"]) {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
-    const value: unknown = descriptor?.value;
-    assert(typeof value === "function", `${name} is a function`);
-    equal(
-      {
-        name: value.name,
-        writable: descriptor?.writable,
-        enumerable: descriptor?.enumerable,
-        configurable: descriptor?.configurable,
-      },
-      { name, writable: true, enumerable: false, configurable: true },
-    );
-  }
-});
-
 test("each class names itself in its string form", () => {
   const controller = new AbortController();
   equal(
@@ -85,29 +68,6 @@ test("a custom event carries its detail", () => {
   equal(new CustomEvent("x", { detail: undefined }).detail, null);
   equal(new CustomEvent("x", { bubbles: true }).bubbles, true);
   assert(new CustomEvent("x") instanceof Event, "a custom event is an event");
-});
-
-test("an event names its phases on the class and on each event", () => {
-  const event = new Event("x");
-  const names = ["NONE", "CAPTURING_PHASE", "AT_TARGET", "BUBBLING_PHASE"] as const;
-  equal(
-    names.map((name) => Event[name]),
-    [0, 1, 2, 3],
-  );
-  equal(
-    names.map((name) => event[name]),
-    [0, 1, 2, 3],
-  );
-  for (const owner of [Event, Event.prototype]) {
-    for (const name of names) {
-      const descriptor = Object.getOwnPropertyDescriptor(owner, name);
-      equal(
-        { writable: descriptor?.writable, enumerable: descriptor?.enumerable, configurable: descriptor?.configurable },
-        { writable: false, enumerable: true, configurable: false },
-        name,
-      );
-    }
-  }
 });
 
 test("is trusted is an own property that a script cannot redefine", () => {

@@ -178,15 +178,13 @@ export class ReadableStream<R = unknown> {
   }
 
   /**
-   * An async iterator of the chunks that holds the stream. A `break` or a `return` cancels the stream, unless
-   * `preventCancel` is true.
+   * An async iterator of chunks. Iteration holds the stream.
+   * An early loop exit cancels the stream unless `preventCancel` is true.
    */
   values(options?: { readonly preventCancel?: boolean | undefined }): ReadableStreamAsyncIterator<R> {
-    streamState(this);
     const preventCancel = Boolean(dictionary(options, "the options").preventCancel);
-    // The prototype chain gives `[Symbol.asyncIterator]` and `[Symbol.asyncDispose]`, which the class does not declare.
-    const iterator = new StreamIterator(new ReadableStreamDefaultReader<R>(this), preventCancel, CREATE);
-    return iterator as unknown as ReadableStreamAsyncIterator<R>;
+    // The reader holds the stream at once, so a second consumer fails at its call.
+    return chunksOf(new ReadableStreamDefaultReader<R>(this), preventCancel);
   }
 
   declare [Symbol.asyncIterator]: (options?: {
@@ -194,64 +192,22 @@ export class ReadableStream<R = unknown> {
   }) => ReadableStreamAsyncIterator<R>;
 }
 
-/** The prototype of each async iterator of the language, which gives `[Symbol.asyncIterator]` that returns `this`. */
-const AsyncIteratorPrototype: object = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
-
-/**
- * The async iterator of a stream, as Web IDL defines one: each call waits for the call before it. The reader releases
- * the stream at the end, at an error, and at a `return`.
- */
-class StreamIterator<R> {
-  readonly #reader: ReadableStreamDefaultReader<R>;
-  readonly #preventCancel: boolean;
-  #finished = false;
-  /** The promise of the last call, or `undefined` once a read settles. */
-  #ongoing: Promise<unknown> | undefined;
-
-  constructor(reader: ReadableStreamDefaultReader<R>, preventCancel: boolean, key?: unknown) {
-    if (key !== CREATE) throw new TypeError("the async iterator of a ReadableStream has no public constructor");
-    this.#reader = reader;
-    this.#preventCancel = preventCancel;
-  }
-
-  next(): Promise<IteratorResult<R, undefined>> {
-    if (!(#reader in this)) return Promise.reject(new TypeError("the value is not an async iterator of a stream"));
-    const step = (): Promise<IteratorResult<R, undefined>> => {
-      if (this.#finished) return Promise.resolve({ done: true, value: undefined });
-      return this.#reader.read().then(
-        (result) => {
-          this.#ongoing = undefined;
-          if (!result.done) return result;
-          this.#finished = true;
-          this.#reader.releaseLock();
-          return { done: true, value: undefined };
-        },
-        (error: unknown) => {
-          this.#ongoing = undefined;
-          this.#finished = true;
-          this.#reader.releaseLock();
-          throw error;
-        },
-      );
-    };
-    const result = this.#ongoing === undefined ? step() : this.#ongoing.then(step, step);
-    this.#ongoing = result;
-    return result;
-  }
-
-  return(value?: unknown): Promise<IteratorResult<R, undefined>> {
-    if (!(#reader in this)) return Promise.reject(new TypeError("the value is not an async iterator of a stream"));
-    const step = (): Promise<undefined> => {
-      if (this.#finished) return Promise.resolve(undefined);
-      this.#finished = true;
-      // The standard starts the cancel and then releases the stream, so the release does not wait for the source.
-      const cancelled = this.#preventCancel ? Promise.resolve(undefined) : this.#reader.cancel(value);
-      this.#reader.releaseLock();
-      return cancelled;
-    };
-    const returned = this.#ongoing === undefined ? step() : this.#ongoing.then(step, step);
-    this.#ongoing = returned;
-    return returned.then(() => ({ done: true, value: value as undefined }));
+/** The chunks of `reader`. The end of the iteration releases the stream, and an early exit cancels it first. */
+async function* chunksOf<R>(
+  reader: ReadableStreamDefaultReader<R>,
+  preventCancel: boolean,
+): ReadableStreamAsyncIterator<R> {
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) return;
+      yield result.value;
+    }
+  } finally {
+    // The standard starts the cancel and then releases the stream, so the release does not wait for the source.
+    const cancelled = preventCancel ? undefined : reader.cancel();
+    reader.releaseLock();
+    await cancelled;
   }
 }
 
@@ -502,8 +458,6 @@ export function isDisturbed(stream: ReadableStream): boolean {
 webClass(ReadableStream, "ReadableStream");
 webClass(ReadableStreamDefaultController, "ReadableStreamDefaultController");
 webClass(ReadableStreamDefaultReader, "ReadableStreamDefaultReader");
-webClass(StreamIterator, "ReadableStream AsyncIterator");
-Object.setPrototypeOf(StreamIterator.prototype, AsyncIteratorPrototype);
 // Web IDL gives the async iterator of an async iterable the function of `values`, and the property is not enumerable.
 Object.defineProperty(ReadableStream.prototype, Symbol.asyncIterator, {
   value: ReadableStream.prototype.values,

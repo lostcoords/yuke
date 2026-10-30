@@ -389,7 +389,6 @@ s.hook("round.after", () => ({ stop: false }));
 assert<Equal<typeof DOMException.ABORT_ERR, 20>>();
 assert<Equal<typeof Event.AT_TARGET, 2>>();
 new TextDecoder("utf8");
-// @ts-expect-error: the decoder decodes UTF-8 only.
 new TextDecoder("utf-16le");
 
 // The options of a plugin have the type of its `optionsSchema`, and both contexts read them.

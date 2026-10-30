@@ -162,12 +162,9 @@ declare class TextEncoder {
   encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
 }
 
-/** The labels of UTF-8 in the Encoding Standard. The runtime also accepts them in another case or with ASCII spaces. */
-type Utf8Label = "unicode-1-1-utf-8" | "unicode11utf8" | "unicode20utf8" | "utf-8" | "utf8" | "x-unicode20utf8";
-
 /** A decoder of UTF-8 bytes to text. yuke decodes UTF-8 only: another encoding label throws a `RangeError`. */
 declare class TextDecoder {
-  constructor(label?: Utf8Label, options?: { fatal?: boolean | undefined; ignoreBOM?: boolean | undefined });
+  constructor(label?: string, options?: { fatal?: boolean | undefined; ignoreBOM?: boolean | undefined });
   readonly encoding: "utf-8";
   /** Whether an invalid sequence throws a `TypeError`. Otherwise it becomes U+FFFD. */
   readonly fatal: boolean;
@@ -277,7 +274,7 @@ interface QueuingStrategy<R = unknown> {
 /** The result of a read: a chunk, or `done` after the last chunk. */
 type ReadableStreamReadResult<T> = { done: false; value: T } | { done: true; value: undefined };
 
-/** An async iterator of the chunks of a stream. A `return` cancels the stream, unless `preventCancel` is true. */
+/** An async iterator of stream chunks. An early loop exit cancels the stream unless `preventCancel` is true. */
 interface ReadableStreamAsyncIterator<T> extends AsyncIteratorObject<T, undefined, unknown> {
   [Symbol.asyncIterator]: () => ReadableStreamAsyncIterator<T>;
 }
@@ -296,8 +293,8 @@ declare class ReadableStream<R = unknown> {
   /** A reader that holds the stream until `releaseLock`. A locked stream or a `mode` throws a `TypeError`. */
   getReader(options?: { mode?: undefined }): ReadableStreamDefaultReader<R>;
   /**
-   * An async iterator of the chunks that holds the stream. A `break` or a `return` cancels the stream, unless
-   * `preventCancel` is true.
+   * An async iterator of chunks. Iteration holds the stream.
+   * An early loop exit cancels the stream unless `preventCancel` is true.
    */
   values(options?: { preventCancel?: boolean | undefined }): ReadableStreamAsyncIterator<R>;
   [Symbol.asyncIterator](options?: { preventCancel?: boolean | undefined }): ReadableStreamAsyncIterator<R>;
@@ -387,8 +384,6 @@ type RequestRedirect = "follow" | "error" | "manual";
 interface RequestInit {
   /** A string, bytes, or a `URLSearchParams`. A `GET` or a `HEAD` request with a body throws a `TypeError`. */
   body?: string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView | URLSearchParams | null;
-  /** Only `half` is valid. yuke sends the whole body, so the value has no effect. */
-  duplex?: "half";
   /** A `Headers` gives its header list as it is. Another init gives its pairs. */
   headers?: HeadersInit;
   /**

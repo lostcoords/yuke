@@ -189,9 +189,6 @@ export class Request {
     const init = dictionary(args[1], "the request init");
     const initBody = init.body;
     const extracted = initBody === undefined || initBody === null ? undefined : extractBody(initBody, true);
-    if (init.duplex !== undefined && `${init.duplex as string}` !== "half") {
-      throw new TypeError("the duplex of a request is half");
-    }
     // A `Headers` gives its header list as it is, without the combined values of its iteration.
     const initHeaders =
       init.headers === undefined

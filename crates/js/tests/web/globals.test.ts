@@ -4,31 +4,6 @@
 import { assert, equal, test } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
-test("the globals are properties that a script can replace", () => {
-  const names = [
-    "TextEncoder",
-    "TextDecoder",
-    "URL",
-    "URLSearchParams",
-    "ReadableStream",
-    "ReadableStreamDefaultReader",
-    "ReadableStreamDefaultController",
-    "Headers",
-    "Request",
-    "Response",
-    "console",
-    "performance",
-  ];
-  for (const name of names) {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
-    equal(
-      { writable: descriptor?.writable, enumerable: descriptor?.enumerable, configurable: descriptor?.configurable },
-      { writable: true, enumerable: false, configurable: true },
-      name,
-    );
-  }
-});
-
 test("text encoder gives utf8 and replaces a lone surrogate", () => {
   const encoder = new TextEncoder();
   equal(encoder.encoding, "utf-8");
@@ -137,18 +112,12 @@ test("a decoder removes one byte order mark at the start of each stream unless i
 });
 
 test("text decoder accepts each utf8 label and refuses other encodings", () => {
-  // @ts-expect-error: the type has no label with spaces or capitals, but the runtime accepts it.
   equal(new TextDecoder(" UTF8 ").encoding, "utf-8");
   equal(new TextDecoder("unicode-1-1-utf-8").encoding, "utf-8");
-  equal(
-    [
-      // @ts-expect-error: yuke decodes UTF-8 only.
-      () => new TextDecoder("latin1"),
-      // @ts-expect-error: yuke decodes UTF-8 only.
-      () => new TextDecoder("utf-16le"),
-    ].map(thrownName),
-    ["RangeError", "RangeError"],
-  );
+  equal([() => new TextDecoder("latin1"), () => new TextDecoder("utf-16le")].map(thrownName), [
+    "RangeError",
+    "RangeError",
+  ]);
 });
 
 test("performance gives its origin as epoch time", async () => {

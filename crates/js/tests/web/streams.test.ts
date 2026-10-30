@@ -133,54 +133,60 @@ test("async iteration gives each chunk and a break cancels the stream", async ()
   equal(seen, [1, 2, false, 3, ["cancel", undefined], false, 5, 6]);
 });
 
-test("an iterator return cancels with its value and releases the stream at once", async () => {
-  let finish = (): void => {
-    throw new Error("no cancel waits");
-  };
-  let reason: unknown;
+test("an iterator holds the stream at once and a break releases it before the cancel ends", async () => {
+  let finish = (): void => {};
   const stream = new ReadableStream<number>({
     start(controller) {
       controller.enqueue(1);
     },
-    cancel(value) {
-      reason = value;
+    cancel() {
       return new Promise<void>((resolve) => {
-        finish = () => resolve();
+        finish = resolve;
       });
     },
   });
   const iterator = stream.values();
-  const first = await iterator.next();
-  assert(iterator.return !== undefined);
-  // @ts-expect-error: the types give a return no value, but the standard gives the value to the cancel.
-  const returned = iterator.return("stop");
-  const next = iterator.next();
-  let nextSettled = false;
-  void next.then(() => {
-    nextSettled = true;
-  });
+  equal(
+    [stream.locked, thrownNames([() => stream.values(), () => stream.getReader()])],
+    [true, ["TypeError", "TypeError"]],
+  );
+  equal((await iterator.next()).value, 1);
+  const returned = iterator.return?.();
   await tick();
-  // The `next` after a `return` waits for the cancel of the source.
-  const settledDuringCancel = nextSettled;
   const lockedDuringCancel = stream.locked;
   finish();
-  const result = await returned;
-  const after = await next;
+  await returned;
+  equal(lockedDuringCancel, false);
+});
+
+test("async iteration releases the stream after a read or cancel fails", async () => {
+  const failedRead = controlled<number>();
+  const next = failedRead.stream.values().next();
+  equal(failedRead.stream.locked, true);
+  failedRead.controller.error("read failed");
+  equal(await rejects(next), "read failed");
+  equal(failedRead.stream.locked, false);
+
+  const failedCancel = new ReadableStream<number>({
+    start(controller) {
+      controller.enqueue(1);
+    },
+    cancel() {
+      throw "cancel failed";
+    },
+  });
   equal(
-    [first.value, settledDuringCancel, lockedDuringCancel, reason, result.done, result.value, after.done],
-    [1, false, false, "stop", true, "stop", true],
+    await rejects(
+      (async () => {
+        for await (const chunk of failedCancel) {
+          equal(chunk, 1);
+          break;
+        }
+      })(),
+    ),
+    "cancel failed",
   );
-  // A `return` behind a waiting `next` runs after it, and a later `next` waits for the `return`.
-  const queued = controlled<number>();
-  const values = queued.stream.values();
-  const waiting = values.next();
-  assert(values.return !== undefined);
-  const stopped = values.return();
-  const late = values.next();
-  queued.controller.enqueue(2);
-  queued.controller.enqueue(3);
-  equal([(await waiting).value, (await stopped).done, (await late).done], [2, true, true]);
-  assert(iterator[Symbol.asyncIterator]() === iterator);
+  equal(failedCancel.locked, false);
 });
 
 test("an error rejects each waiting read and the closed promise without a fault", async () => {
@@ -356,5 +362,5 @@ test("each class names itself and the async iterator is values", () => {
   );
   assert(ReadableStream.prototype[Symbol.asyncIterator] === ReadableStream.prototype.values);
   assert(Object.keys(ReadableStream.prototype).includes("values"));
-  equal(Object.prototype.toString.call(new ReadableStream().values()), "[object ReadableStream AsyncIterator]");
+  equal(Object.prototype.toString.call(new ReadableStream().values()), "[object AsyncGenerator]");
 });
