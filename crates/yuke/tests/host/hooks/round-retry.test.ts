@@ -1,7 +1,7 @@
 // The `round.retry` hook: its event, its count of retries, its plan, and the kinds of a failure.
 
 import type { PluginSession, RoundFailureKind } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test } from "yuke:test";
+import { createHost, equal, reply, test } from "yuke:test";
 
 // The count belongs to one round, so the round after a call counts from zero again.
 test("an answer sends the round again, and each round counts its retries from zero", async () => {
@@ -108,21 +108,6 @@ test("round.retry gets each failure kind as a turn gives it", async () => {
   for (const kind of kinds) await session.run("round.retry", { context: [], failure: { kind } });
 
   equal(seen, kinds);
-});
-
-test("a bad answer fails the hook and names the point and the plugin", async () => {
-  const broken: PluginSession = (s) => {
-    s.hook("round.retry", () => ({ model: { provider: "nope" } }) as never);
-  };
-  await using host = await createHost({ plugins: [{ name: "broken", session: broken }] });
-  const session = await host.openSession();
-
-  const failure = await rejects(
-    session.run("round.retry", { context: [{ user_text: "one" }], failure: { kind: "context_overflow" } }),
-  );
-
-  const message = failure instanceof Error ? failure.message : String(failure);
-  equal(message.startsWith("round.retry of plugin broken failed"), true);
 });
 
 test("a handler gets the window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {

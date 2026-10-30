@@ -105,35 +105,16 @@ test("round.after stops the turn, and a continue answer adds its input to the se
   );
 });
 
-for (const [name, body, error] of [
-  [
-    "a throw",
-    () => {
+test("a throw fails the turn and names the plugin", async () => {
+  const judge: PluginSession = (s) => {
+    s.hook("round.after", () => {
       throw new Error("no verdict");
-    },
-    "Error: no verdict",
-  ],
-  ["an empty answer", () => ({}), "TypeError: the answer needs exactly one of stop and continue"],
-  [
-    "two decisions",
-    () => ({ stop: true, continue: "x" }),
-    "TypeError: the answer needs exactly one of stop and continue",
-  ],
-  ["a stop that is not true", () => ({ stop: false }), "TypeError: the stop of the answer is not true"],
-  ["a continue that is no text", () => ({ continue: 1 }), "TypeError: the continue of the answer is not a string"],
-  ["an empty continue", () => ({ continue: "" }), "TypeError: the continue of the answer is empty"],
-  ["an unknown field", () => ({ stop: true, why: "x" }), "TypeError: the answer has the unknown field 'why'"],
-  ["a text", () => "stop", "TypeError: the answer is not an object"],
-] as const) {
-  test(`${name} fails the turn and names the plugin`, async () => {
-    const judge: PluginSession = (s) => {
-      s.hook("round.after", body as () => undefined);
-    };
-    await using host = await createHost({ plugins: [{ name: "judge", session: judge }] });
-    const session = await host.openSession();
+    });
+  };
+  await using host = await createHost({ plugins: [{ name: "judge", session: judge }] });
+  const session = await host.openSession();
 
-    const failure = await rejects(session.run("round.after", { text: "first part", finishReason: "stop" }));
+  const failure = await rejects(session.run("round.after", { text: "first part", finishReason: "stop" }));
 
-    equal(failure instanceof Error ? failure.message : failure, `round.after of plugin judge failed: ${error}`);
-  });
-}
+  equal(failure instanceof Error ? failure.message : failure, "round.after of plugin judge failed: Error: no verdict");
+});

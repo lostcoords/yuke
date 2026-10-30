@@ -91,37 +91,6 @@ test("the blocks option sends only the oldest blocks of the context", async () =
   );
 });
 
-test("bad options throw a type error and send nothing", async () => {
-  const errors: string[] = [];
-  const compact: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
-      for (const options of [
-        {},
-        { prompt: "x", blocks: 4 },
-        { prompt: "x", blocks: 1.5 },
-        { prompt: "x", maxOutputTokens: 0 },
-        { prompt: "x", model: "other" },
-      ]) {
-        try {
-          await event.sideRequest(options as never);
-        } catch (error) {
-          errors.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-        }
-      }
-      return undefined;
-    });
-  };
-
-  const requests = await round([{ name: "compact", session: compact }], []);
-
-  equal(
-    errors.map((error) => error.startsWith("TypeError: ")),
-    [true, true, true, true, true],
-  );
-  equal(errors[1]?.endsWith("the option blocks is not a whole number from 0 to 3"), true);
-  equal(requests.length, 0);
-});
-
 test("an abort stops the request and rejects with the reason of the signal", async () => {
   let rejected = "";
   const compact: PluginSession = (s) => {

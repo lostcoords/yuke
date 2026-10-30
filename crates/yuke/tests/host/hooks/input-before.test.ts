@@ -8,9 +8,9 @@ const typed = (text: string) => ({ source: { kind: "user" }, kind: "message", bl
 
 /** A plugin whose `input.before` handler gives `answer`. */
 const answering =
-  (answer: unknown): PluginSession =>
+  (answer: InputBeforeAnswer | undefined): PluginSession =>
   (s) => {
-    s.hook("input.before", () => answer as undefined);
+    s.hook("input.before", () => answer);
   };
 
 test("an input without an answer stays as it is", async () => {
@@ -86,42 +86,22 @@ test("handled removes the input with no notice", async () => {
   equal(host.notices, []);
 });
 
-for (const [name, answer, level, expected] of [
-  ["a throw", undefined, "error", "Error: boom"],
-  [
-    "an answer with two decisions",
-    { block: undefined, handled: true },
-    "error",
-    "TypeError: the answer needs exactly one of block, replace, and handled",
-  ],
-  ["an empty answer", {}, "error", "TypeError: the answer needs exactly one of block, replace, and handled"],
-  [
-    "an empty replace",
-    { replace: { blocks: [] } },
-    "error",
-    "TypeError: the blocks of the replace are not a list with a block",
-  ],
-] as const) {
-  test(`${name} removes the input, and an error notice names the plugin`, async () => {
-    const check: PluginSession =
-      answer === undefined
-        ? (s) => {
-            s.hook("input.before", () => {
-              throw new Error("boom");
-            });
-          }
-        : answering(answer);
-    await using host = await createHost({ plugins: [{ name: "check", session: check }] });
-    const session = await host.openSession();
+test("a throw removes the input, and an error notice names the plugin", async () => {
+  const check: PluginSession = (s) => {
+    s.hook("input.before", () => {
+      throw new Error("boom");
+    });
+  };
+  await using host = await createHost({ plugins: [{ name: "check", session: check }] });
+  const session = await host.openSession();
 
-    const decision = await session.run("input.before", typed("hi"));
+  const decision = await session.run("input.before", typed("hi"));
 
-    equal(
-      [decision, host.notices.map((notice) => [notice.source, notice.level, notice.message])],
-      ["remove", [["host:plugins", level, `input.before of plugin check failed: ${expected}`]]],
-    );
-  });
-}
+  equal(
+    [decision, host.notices.map((notice) => [notice.source, notice.level, notice.message])],
+    ["remove", [["host:plugins", "error", "input.before of plugin check failed: Error: boom"]]],
+  );
+});
 
 test("a replace keeps a media block, and a later handler sees the bytes of a new media item", async () => {
   let size = 0;

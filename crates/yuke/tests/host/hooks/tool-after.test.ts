@@ -1,7 +1,7 @@
 // The `tool.after` hook: its chain, its answers, its media, and its failures.
 
 import { writeFile, writeTextFile } from "yuke:fs";
-import type { PluginSession, ToolAfterAnswer } from "yuke:plugins";
+import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
 
 const call = { callId: "c1", name: "read", arguments: { path: "notes.md" } };
@@ -242,56 +242,19 @@ test("each of two overlapping calls gets its own answer", async () => {
   );
 });
 
-for (const [name, body, error] of [
-  [
-    "a throw",
-    () => {
+test("a throw gives an error result that names the plugin", async () => {
+  const check: PluginSession = (s) => {
+    s.hook("tool.after", () => {
       throw new Error("no redaction today");
-    },
-    "Error: no redaction today",
-  ],
-  ["a text that is no text", () => ({ text: 1 }), "TypeError: the text of the answer is not a string"],
-  [
-    "an isError that is no boolean",
-    () => ({ isError: "yes" }),
-    "TypeError: the isError of the answer is not a boolean",
-  ],
-  ["an unknown field", () => ({ txt: "x" }), "TypeError: the answer has the unknown field 'txt'"],
-  ["a text", () => "x", "TypeError: the answer is not an object"],
-  ["null", () => null, "TypeError: the answer is not an object"],
-  [
-    "an id of no item",
-    () => ({ media: [{ id: "00" }] }),
-    "TypeError: the answer media[0].id names no media item of the result",
-  ],
-  [
-    "a kept item of another media type",
-    (event: { result: { media: readonly object[] } }) => ({
-      media: [event.result.media[0], { ...event.result.media[0], mimeType: "image/gif" }],
-    }),
-    "TypeError: the answer media[1].mimeType differs from the kept item",
-  ],
-  [
-    "a kept item of another size",
-    (event: { result: { media: readonly object[] } }) => ({ media: [{ ...event.result.media[1], size: 1 }] }),
-    "TypeError: the answer media[0].size differs from the kept item",
-  ],
-  [
-    "a kept item with a path",
-    (event: { result: { media: readonly object[] } }) => ({ media: [{ ...event.result.media[0], path: "a.png" }] }),
-    "TypeError: the answer media[0] has the unknown field 'path'",
-  ],
-] as const) {
-  test(`${name} gives an error result that names the plugin`, async () => {
-    const check: PluginSession = (s) => {
-      s.hook("tool.after", body as never);
-    };
+    });
+  };
 
-    equal(await after([{ name: "check", session: check }]), failed(`tool.after of plugin check failed: ${error}`));
-  });
-}
+  equal(
+    await after([{ name: "check", session: check }]),
+    failed("tool.after of plugin check failed: Error: no redaction today"),
+  );
+});
 
-// A handler that changes the event or the result in place would skip the checks of an answer.
 for (const [name, change] of [
   [
     "the text",
@@ -392,11 +355,10 @@ for (const [name, answer, expected] of [
     { text: "secret: ***", display: [{ kind: "markdown", text: "secret: ***" }] },
     [{ kind: "markdown", text: "secret: ***" }],
   ],
-  ["fails on a display that is no list, so the display goes", { display: "x" }, []],
 ] as const) {
   test(`a handler that ${name}`, async () => {
     const redact: PluginSession = (s) => {
-      s.hook("tool.after", () => answer as ToolAfterAnswer);
+      s.hook("tool.after", () => answer);
     };
     await using host = await createHost({ plugins: [{ name: "redact", session: redact }], answer: () => undefined });
     const session = await host.openSession();

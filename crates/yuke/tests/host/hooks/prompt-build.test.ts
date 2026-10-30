@@ -1,6 +1,6 @@
-// The `prompt.build` hook: its order, its answers, its checks, and its failures.
+// The `prompt.build` hook: its order, its answers, and its failures.
 
-import type { PluginSession } from "yuke:plugins";
+import type { PluginSession, SessionHooks } from "yuke:plugins";
 import { createHost, equal, rejects, reply, test } from "yuke:test";
 import { waitFor } from "../wait.ts";
 
@@ -22,9 +22,9 @@ async function failure(plugins: readonly { name: string; session: PluginSession 
 
 /** A plugin whose `prompt.build` handler runs `body`. */
 const answering =
-  (body: (event: { sections: Readonly<Record<string, string>> }) => unknown): PluginSession =>
+  (body: SessionHooks["prompt.build"]): PluginSession =>
   (s) => {
-    s.hook("prompt.build", body as () => undefined);
+    s.hook("prompt.build", body);
   };
 
 test("a session without a hook keeps its sections", async () => {
@@ -120,26 +120,6 @@ test("a handler that throws fails the build, and the error names the plugin", as
   equal(error instanceof Error && error.stack?.includes("prompt-build.test.ts"), true);
 });
 
-const key = "does not match /^[a-z][a-z0-9_-]*$/";
-for (const [name, answer, problem] of [
-  ["an upper case key", { sections: { Rules: "x" } }, `the section key 'Rules' ${key}`],
-  ["a key with a digit first", { sections: { "1st": "x" } }, `the section key '1st' ${key}`],
-  ["a text that is no text", { sections: { rules: 1 } }, "the text of the section 'rules' is not a string"],
-  ["a list of sections", { sections: ["x"] }, "the sections of the answer are not an object"],
-  ["an empty answer", {}, "the sections of the answer are not an object"],
-  ["an unknown field", { section: {} }, "the answer has the unknown field 'section'"],
-  ["a text", "done", "the answer is not an object"],
-] as const) {
-  test(`${name} fails the build, and the error names the plugin`, async () => {
-    equal(
-      await failure([{ name: "check", session: answering(() => answer) }]),
-      `prompt.build of plugin check failed: TypeError: ${problem}`,
-    );
-  });
-}
-
-// A handler that changes the event in place would skip the check of an answer. The second handler gets the sections
-// of the answer before it.
 for (const [name, answers, change] of [
   [
     "a section",
@@ -249,38 +229,23 @@ test("a remover removes one entry once, and the handler of a failed session does
   );
 });
 
-test("hook refuses an unknown point, a handler that is no function, and a closed session", async () => {
-  const refusals: string[] = [];
+test("a closed session refuses a new hook", async () => {
   let kept: Parameters<PluginSession>[0] | undefined;
   const refused: PluginSession = (s) => {
     kept = s;
-    for (const add of [
-      () => s.hook("turn.start" as "prompt.build", () => undefined),
-      () => s.hook("prompt.build", "x" as never),
-    ]) {
-      try {
-        add();
-        refusals.push("added");
-      } catch (error) {
-        refusals.push(error instanceof Error ? error.message : String(error));
-      }
-    }
   };
   await using host = await createHost({ plugins: [{ name: "refused", session: refused }] });
   const session = await host.openSession();
 
   await session.close();
+  let refusal = "";
   try {
     kept?.hook("prompt.build", () => undefined);
   } catch (error) {
-    refusals.push(error instanceof Error ? error.message : String(error));
+    refusal = error instanceof Error ? error.message : String(error);
   }
 
-  equal(refusals, [
-    "hook: 'turn.start' is no hook point",
-    "hook: the handler is no function",
-    "plugin refused adds a hook after the end of its session",
-  ]);
+  equal(refusal, "plugin refused adds a hook after the end of its session");
 });
 
 test("prompt.build gives the sections after each handler, in the order of the prompt", async () => {

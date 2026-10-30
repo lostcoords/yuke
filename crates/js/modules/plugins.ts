@@ -256,9 +256,10 @@ export interface PromptBuildEvent {
 /** The answer of a `prompt.build` handler that changes the system prompt. */
 export interface PromptBuildAnswer {
   /**
-   * The new sections, by key. Their order is the order of the prompt. Each key matches `^[a-z][a-z0-9_-]*$`, and each
-   * text is a string. The model reads each section between `<key>` and `</key>`, except `base`. An empty text adds
-   * nothing.
+   * The new sections, by key.
+   * Their order is the order of the prompt.
+   * The model reads each section between `<key>` and `</key>`, except `base`.
+   * An empty text adds nothing.
    */
   readonly sections: Readonly<Record<string, string>>;
 }
@@ -528,7 +529,7 @@ export interface RoundAfterEvent {
  * - `{ stop: true }` ends the turn. The input that the user sent during the turn stays for the next turn.
  * - `{ continue }` gives the session the text as a notification of the plugin, and the turn goes on with it. The user
  *   sees the text as a notice of the plugin. The model reads it in `<system_notification plugin="name">`.
- * - Input that the user sent during the turn goes with the text in the same request. The text is not empty.
+ * - Input that the user sent during the turn goes with the text in the same request. Give a text that is not empty.
  */
 export type RoundAfterAnswer =
   | { readonly stop: true; readonly continue?: never }
@@ -538,7 +539,8 @@ export type RoundAfterAnswer =
  * The hooks of a session, by point.
  * - Each handler gets one frozen event, and the host awaits it.
  * - The handler returns `undefined` for no change, or an answer.
- * - A throw, or an answer of another shape, is a failure of the handler. Its error names the point and the plugin.
+ * - A throw is a failure of the handler. Its error names the point and the plugin.
+ * - The host trusts the declared answer type.
  */
 export interface SessionHooks {
   /**

@@ -91,7 +91,7 @@ pub(crate) struct Round {
     pub(crate) context: Vec<Block>,
 }
 
-/// The request of `sideRequest`, as the round event builds it after its checks.
+/// The request of `sideRequest` from the round event.
 #[derive(FromJs)]
 #[qjs(rename_all = "camelCase")]
 struct SideOptions {
