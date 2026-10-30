@@ -3,7 +3,6 @@
 import { argument } from "yuke:internal/bundled/chat/tools";
 import type { Transcript } from "yuke:transcript";
 
-/** The frames of the spinner. */
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
 /** The time of one frame of the spinner, in milliseconds. */

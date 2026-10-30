@@ -23,8 +23,6 @@ export class ChatSession {
   #opening: Promise<void> | undefined;
   // The running `ensure`, so a second call shares its first session.
   #ensuring: Promise<SessionHandle | undefined> | undefined;
-  // The transcript has a snapshot, so a page can load.
-  #ready = false;
   #loading = false;
   #complete = false;
   #historyError: unknown;
@@ -90,7 +88,6 @@ export class ChatSession {
               this.#handle = undefined;
               this.#transcript = transcript;
               this.#release = release;
-              this.#ready = true;
               this.#loading = false;
               this.#complete = false;
               this.#historyError = undefined;
@@ -156,7 +153,8 @@ export class ChatSession {
 
   async older(): Promise<void> {
     const id = this.#id;
-    if (id === undefined || !this.#ready || this.#loading || this.#historyError !== undefined) return;
+    // Before a snapshot, the transcript has no first event and no gap, so no page loads.
+    if (id === undefined || this.#loading || this.#historyError !== undefined) return;
     const transcript = this.#transcript;
     const gap = transcript.gap;
     const first = transcript.first;

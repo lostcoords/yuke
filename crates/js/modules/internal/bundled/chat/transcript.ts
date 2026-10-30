@@ -16,14 +16,14 @@ interface Cached {
   readonly entry: Entry;
   readonly open: boolean;
   readonly item: TextItem;
+  /** The parser of a text entry. A text that grows parses only its last two blocks again. */
+  readonly markdown: Markdown | undefined;
 }
 
 export class ChatDocument {
   /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
   #cache = new Map<string, Cached>();
-  /** The parser of each text entry, by key. A text that grows parses only its last two blocks again. */
-  #markdown = new Map<string, Markdown>();
   #status: { readonly status: Status; readonly item: TextItem } | undefined;
   #document: TextDocument;
 
@@ -58,18 +58,14 @@ export class ChatDocument {
   /** The document of `transcript`. The same document object comes back while no item changed. */
   project(transcript: Transcript): TextDocument {
     const cache = new Map<string, Cached>();
-    const markdown = new Map<string, Markdown>();
     const items: TextItem[] = [];
     for (const entry of transcript.entries) {
       const open = this.#open(entry);
       let cached = this.#cache.get(entry.key);
-      if (entry.kind === "text") {
-        const parser = this.#markdown.get(entry.key) ?? new Markdown();
-        markdown.set(entry.key, parser);
-        if (cached?.entry !== entry) parser.setText(entry.text);
-      }
       if (cached?.entry !== entry || cached.open !== open) {
-        cached = { entry, open, item: itemOf(entry, open, markdown.get(entry.key)) };
+        const markdown = entry.kind === "text" ? (cached?.markdown ?? new Markdown()) : undefined;
+        if (entry.kind === "text" && cached?.entry !== entry) markdown?.setText(entry.text);
+        cached = { entry, open, item: itemOf(entry, open, markdown), markdown };
       }
       cache.set(entry.key, cached);
       items.push(cached.item);
@@ -80,7 +76,6 @@ export class ChatDocument {
       items.push(this.#status.item);
     } else this.#status = undefined;
     this.#cache = cache;
-    this.#markdown = markdown;
     const before = this.#document.items;
     if (before.length !== items.length || before.some((item, at) => item !== items[at])) {
       this.#document = Object.freeze({ key: this.#document.key, items });

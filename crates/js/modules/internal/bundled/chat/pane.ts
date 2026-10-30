@@ -135,7 +135,6 @@ export interface Chat {
     readonly questions?: "composer" | "modal" | undefined;
   }>;
   readonly tui: Tui;
-  readonly copyOnRelease: boolean;
   /** Where a question shows: in the place of the composer, or in a modal above the focused pane. */
   readonly questions: "composer" | "modal";
   /** The actions of each pane, by its view. */
@@ -203,9 +202,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     tui.requestFrame();
     chat.refresh();
   };
-
-  /** Load one page of history. */
-  const load = (): Promise<void> => chatSession.older();
 
   // The pane follows each change of its session: the working row, the question, and the next layout.
   chatSession.onChange(() => {
@@ -300,7 +296,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     document: document.project(chatSession.transcript),
     role: "transcript",
     group,
-    copyOnRelease: chat.copyOnRelease,
+    copyOnRelease: chat.ctx.options.copyOnRelease,
     followTail: true,
     activate: (position, link) => {
       const transcript = chatSession.transcript;
@@ -316,7 +312,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       tui.copy(target);
       ctx.notify("info", `copied ${target}`);
     },
-    requestOlder: load,
+    requestOlder: () => chatSession.older(),
   });
   const composer = new TextEditor({
     role: "composer",
@@ -634,7 +630,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (step === 1 && browse !== undefined) {
         composer.reset(EMPTY);
         browse = undefined;
-      } else if (step === -1) void load();
+      } else if (step === -1) void chatSession.older();
       return;
     }
     browse = next.key;
@@ -684,7 +680,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
           if (!view.scroll.scrollToItem(key, restore.row)) view.scroll.scrollToItem(key);
           restore = undefined;
         } else if (chatSession.complete || chatSession.historyError !== undefined) restore = undefined;
-        else void load();
+        else void chatSession.older();
       }
       return placements;
     },

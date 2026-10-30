@@ -13,7 +13,6 @@ export const PASTE_SPAN = 300;
 /** The character that an image span covers: U+FFFC, the object replacement character. */
 export const IMAGE = "￼";
 
-/** The empty draft. */
 export const EMPTY: EditorState = Object.freeze({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
 
 /** The blocks of `draft`: its text between its images, each image a media block. A draft of white space has none. */

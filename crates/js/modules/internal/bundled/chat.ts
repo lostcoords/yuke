@@ -183,7 +183,6 @@ export function apply(ctx: PluginContext<Options>): undefined {
   const chat: Chat = {
     ctx,
     tui,
-    copyOnRelease: ctx.options.copyOnRelease ?? true,
     questions: ctx.options.questions ?? "composer",
     panes,
     refresh: () => publish(),
