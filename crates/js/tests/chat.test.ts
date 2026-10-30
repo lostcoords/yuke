@@ -1,7 +1,7 @@
-// `ChatSession` and `ChatComposer` of `yuke:chat`: the open of a session in place of another, the first session of a
-// chat, pages, and the send and the recall of a draft in a bare editor.
+// The tests use the blocks of `yuke:chat` without a pane. They cover the sessions, the pages, the composer, and the
+// questions.
 
-import { ChatComposer, ChatSession } from "yuke:chat";
+import { ChatComposer, ChatQuestions, ChatSession } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
 import { equal, test } from "yuke:test";
@@ -161,4 +161,54 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   sessions.state.removed = false;
   const taken = await composer.older();
   equal([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
+});
+
+test("the questions show the first open one, a cancel answers it once, and a refused answer goes to failed and stays open", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  const failures: string[] = [];
+  const questions = new ChatQuestions(chat, { signal: owner.signal, failed: (error) => failures.push(String(error)) });
+  let changes = 0;
+  questions.onChange(() => {
+    changes += 1;
+  });
+  const ask = (id: number) =>
+    sessions.push({
+      sessionUpdate: "interaction_requested",
+      interactionId: id,
+      source: "guard",
+      request: { kind: "confirm", title: `Step ${id}?`, message: "" },
+    });
+  ask(7);
+  ask(8);
+  const first = questions.current;
+  questions.cancel();
+  questions.cancel();
+  sessions.state.refuseAnswer = true;
+  await settle();
+  const second = questions.current;
+  // A refused answer leaves the question open for the next answer.
+  questions.cancel();
+  questions.cancel();
+  equal(
+    [first !== undefined, second !== undefined && second !== first, sessions.responses, failures, changes],
+    [true, true, [[7, { kind: "canceled" }]], ["Error: no open question 8", "Error: no open question 8"], 2],
+  );
+});
+
+test("questions that start after a question opened show it at once", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  sessions.push({
+    sessionUpdate: "interaction_requested",
+    interactionId: 3,
+    source: "guard",
+    request: { kind: "confirm", title: "Go?", message: "" },
+  });
+  const questions = new ChatQuestions(chat, { signal: owner.signal, failed: () => {} });
+  equal(questions.current !== undefined, true);
 });

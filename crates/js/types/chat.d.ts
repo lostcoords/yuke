@@ -94,6 +94,42 @@ declare module "yuke:chat" {
     setDraft(draft: EditorState): void;
   }
 
+  export interface ChatQuestionsOptions {
+    /** Its abort ends the watch of the chat session. */
+    readonly signal: AbortSignal;
+    /** Gets the failure of an answer, as after an answer of another client. The question then takes an answer again. */
+    readonly failed: (error: unknown) => void;
+  }
+
+  /** The view of a question: `view` to place, `focus` to take the keys, and the most rows that it needs. */
+  export interface ChatQuestion {
+    readonly view: View;
+    readonly focus: View;
+    readonly rows: number;
+  }
+
+  /**
+   * The first open question of a plugin in a chat session, as a view: a confirm takes `y` or `n`, a select is a picker,
+   * and an input is a field that masks a secret. The chat places the view, as in the place of the composer or in a
+   * modal. A view answers once, and a refused answer can come again. The others wait in order. A question of an ended
+   * handle shows after the next open.
+   *
+   * ```ts
+   * const questions = new ChatQuestions(chat, { signal: mount.signal, failed: (error) => ctx.notify("error", String(error)) });
+   * place(questions.current); // a question that is open already
+   * questions.onChange(() => place(questions.current));
+   * ```
+   */
+  export class ChatQuestions {
+    constructor(chat: ChatSession, options: ChatQuestionsOptions);
+    /** The view of the first open question, or `undefined` without one. */
+    get current(): ChatQuestion | undefined;
+    /** Answer the shown question with a cancel. */
+    cancel(): void;
+    /** Call `listener` after each change of `current`. */
+    onChange(listener: () => void): () => void;
+  }
+
   /**
    * The default look of the style groups that `ChatDocument` draws with, such as `chat.user` and `chat.title`. A chat
    * without the bundled chat sets them: `for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style)`.

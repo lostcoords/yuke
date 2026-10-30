@@ -4,24 +4,15 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import { ChatComposer, ChatDocument, ChatSession } from "yuke:chat";
+import { ChatComposer, ChatDocument, type ChatQuestion, ChatQuestions, ChatSession } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
 import { EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
-import type {
-  Input,
-  InputId,
-  InteractionId,
-  InteractionResponse,
-  SessionId,
-  SessionSettings,
-  Usage,
-} from "yuke:protocol";
+import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import type { Status } from "yuke:transcript";
 import {
   type Canvas,
@@ -167,15 +158,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
   // until it ends, also while a picker is open, and a show rejects.
   let busy = false;
-  // The first open question of the session and its view. The others wait in order. A sent answer waits for the close.
   // The start of the running turn on the clock of the tui, and the end of the wait of a scheduled retry.
   let working: number | undefined;
   let retryAt: number | undefined;
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
-  let asking:
-    | { readonly id: InteractionId; readonly asked: Asked; answered: boolean; overlay: Mount | undefined }
-    | undefined;
+  // The modal of the shown question, when questions show in a modal.
+  let modal: { readonly asked: ChatQuestion; readonly mount: Mount } | undefined;
   /** Draw the working row again at the next frame of its spinner, while the turn runs. */
   const tick = (): void => {
     stopTick = working === undefined || mount.signal.aborted ? undefined : tui.after(FRAME_MS, tick);
@@ -220,7 +209,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     const next = transcript.status;
     if (next !== status && next?.kind === "retry_scheduled") retryAt = tui.now() + next.afterMs;
     status = next;
-    syncQuestion();
     changed();
   });
 
@@ -231,53 +219,24 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     });
   };
 
-  /** Answer the shown question once. A failed answer, as after an answer of another client, gives a notice. */
-  const answer = (response: InteractionResponse): void => {
-    const current = asking;
-    const handle = chatSession.handle;
-    if (current === undefined || current.answered || handle === undefined) return;
-    current.answered = true;
-    try {
-      handle.respond(current.id, response);
-    } catch (error) {
-      current.answered = false;
-      ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`);
-    }
-  };
-
   /**
-   * Show the first open question, and drop the view of a closed one. A modal question opens only while this pane has
-   * the focus, so it waits for another modal to close. The questions of an ended handle show again after the next open.
+   * Show the first open question in a modal, and close the modal of a closed one. A modal opens only while this pane
+   * has the focus, so it waits for another modal to close.
    */
-  function syncQuestion(): void {
-    const transcript = chatSession.transcript;
-    const head = chatSession.handle === undefined ? undefined : transcript.questions.entries().next().value;
-    if (head?.[0] !== asking?.id) {
-      asking?.overlay?.close();
-      asking =
-        head === undefined
-          ? undefined
-          : {
-              id: head[0],
-              asked: ask(head[1], () => transcript.questions.size, answer),
-              answered: false,
-              overlay: undefined,
-            };
-    }
-    const current = asking;
-    if (current === undefined || chat.questions !== "modal" || current.overlay !== undefined) return;
+  function placeQuestion(): void {
+    const asked = questions.current;
+    if (modal !== undefined && modal.asked !== asked) modal.mount.close();
+    if (asked === undefined || chat.questions !== "modal" || modal !== undefined) return;
     if (tui.focused !== composer && tui.focused !== view) return;
-    const overlay = tui.overlay(() => current.asked.view, {
-      place: (size) => bottom(size, current.asked.rows),
-    });
-    current.overlay = overlay;
+    const overlay = tui.overlay(() => asked.view, { place: (size) => bottom(size, asked.rows) });
+    modal = { asked, mount: overlay };
     const close = (): void => overlay.close();
     mount.signal.addEventListener("abort", close, { once: true });
     overlay.signal.addEventListener(
       "abort",
       () => {
         mount.signal.removeEventListener("abort", close);
-        current.overlay = undefined;
+        if (modal?.mount === overlay) modal = undefined;
       },
       { once: true },
     );
@@ -329,7 +288,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   /** The enabled commands that match the slash word of the draft, the best first. */
   const slashMatches = (): readonly CommandItem[] => {
     const text = composer.state.text;
-    if (!SLASH_WORD.test(text) || text === slashHidden || asking !== undefined) return [];
+    if (!SLASH_WORD.test(text) || text === slashHidden || questions.current !== undefined) return [];
     const ranked = tui.commands.list().flatMap((item, index) => {
       const match = item.enabled ? fuzzyMatch(text, commandLabel(item.name)) : undefined;
       return match === undefined ? [] : [{ item, score: match.score, index }];
@@ -544,9 +503,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
+  const questions = new ChatQuestions(chatSession, {
+    signal: mount.signal,
+    failed: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
+  });
+  questions.onChange(() => {
+    placeQuestion();
+    changed();
+  });
   // A modal question waits for the focus of this pane.
   if (chat.questions === "modal") {
-    const stop = tui.onFocus(() => syncQuestion());
+    const stop = tui.onFocus(() => placeQuestion());
     mount.signal.addEventListener("abort", stop, { once: true });
   }
   // The open comes after the views, because its snapshot can show a question.
@@ -565,7 +532,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         view.setDocument(document.project(chatSession.transcript));
       }
       // A question in the composer place hides the composer, and the composer keeps its draft.
-      const question = asking !== undefined && chat.questions === "composer" ? asking.asked : undefined;
+      const question = chat.questions === "composer" ? questions.current : undefined;
       // The composer keeps one row in a pane of any size, and at most half of a taller pane.
       const wanted = question?.rows ?? composer.heightFor(size.width);
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(size.height / 2)));
@@ -649,7 +616,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       } else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
     },
     get initialFocus(): View {
-      return asking !== undefined && chat.questions === "composer" ? asking.asked.focus : composer;
+      return (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
     },
     snapshot: () => {
       const scroll = view.scroll.state;
@@ -724,7 +691,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else view.scroll.followTail();
     },
     switchFocus: () => {
-      const input = asking !== undefined && chat.questions === "composer" ? asking.asked.focus : composer;
+      const input = (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
       tui.focus(tui.focused === view ? input : view);
     },
     activate: () => {
@@ -735,8 +702,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const selection = view.selection;
       if (selection !== undefined) tui.copy(view.text({ from: selection.anchor, to: selection.head }));
     },
-    asking: () => asking !== undefined,
-    cancelQuestion: () => answer({ kind: "canceled" }),
+    asking: () => questions.current !== undefined,
+    cancelQuestion: () => questions.cancel(),
   });
   return pane;
 }

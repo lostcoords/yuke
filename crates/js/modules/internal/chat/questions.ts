@@ -1,11 +1,12 @@
 /**
- * The view of the question of a plugin. A header row shows the plugin, the title, and the count of open questions. The
- * answer widget comes below it. A confirm takes `y` or `n`. A select is a picker. An input is a one-line field, and it
- * masks a secret. The keymap of the chat cancels a question with Esc or Ctrl+C.
+ * This module holds `ChatQuestions` of `yuke:chat` and the view of a question of a plugin. The view has a header row
+ * with the plugin, the title, and the count of open questions. The answer widget comes below it. A confirm takes `y`
+ * or `n`. A select is a picker. An input is a one-line field, and it masks a secret.
  */
 
+import type { ChatQuestionsOptions, ChatSession } from "yuke:chat";
 import { STYLE } from "yuke:internal/chat/rows";
-import type { InteractionResponse } from "yuke:protocol";
+import type { InteractionId, InteractionResponse } from "yuke:protocol";
 import type { Question } from "yuke:transcript";
 import { type Canvas, Picker, type Placement, type Size, strokeOf, TextEditor, type View } from "yuke:tui";
 
@@ -72,4 +73,67 @@ export function ask(question: Question, count: () => number, answer: (response: 
     },
   };
   return { view, focus: focus ?? view, rows };
+}
+
+export class ChatQuestions {
+  readonly #chat: ChatSession;
+  readonly #options: ChatQuestionsOptions;
+  readonly #listeners = new Set<() => void>();
+  // The first open question and its view. The others wait in order. A sent answer waits for the close.
+  #current: { readonly id: InteractionId; readonly asked: Asked; answered: boolean } | undefined;
+
+  constructor(chat: ChatSession, options: ChatQuestionsOptions) {
+    this.#chat = chat;
+    this.#options = options;
+    const stop = chat.onChange(() => this.#sync());
+    options.signal.addEventListener("abort", stop, { once: true });
+    this.#sync();
+  }
+
+  get current(): Asked | undefined {
+    return this.#current?.asked;
+  }
+
+  cancel(): void {
+    this.#answer({ kind: "canceled" });
+  }
+
+  onChange(listener: () => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  /** Answer the shown question once. A failed answer, as after an answer of another client, goes to `failed`. */
+  #answer(response: InteractionResponse): void {
+    const current = this.#current;
+    const handle = this.#chat.handle;
+    if (current === undefined || current.answered || handle === undefined) return;
+    current.answered = true;
+    try {
+      handle.respond(current.id, response);
+    } catch (error) {
+      current.answered = false;
+      this.#options.failed(error);
+    }
+  }
+
+  /** Take the first open question. The questions of an ended handle show again after the next open. */
+  #sync(): void {
+    const transcript = this.#chat.transcript;
+    const head = this.#chat.handle === undefined ? undefined : transcript.questions.entries().next().value;
+    if (head?.[0] === this.#current?.id) return;
+    this.#current =
+      head === undefined
+        ? undefined
+        : {
+            id: head[0],
+            asked: ask(
+              head[1],
+              () => transcript.questions.size,
+              (response) => this.#answer(response),
+            ),
+            answered: false,
+          };
+    for (const listener of this.#listeners) listener();
+  }
 }

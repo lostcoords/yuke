@@ -2,10 +2,11 @@
 
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
+import { ChatQuestions } from "yuke:internal/chat/questions";
 import { STYLES as chatStyles } from "yuke:internal/chat/rows";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 
-export { ChatComposer, ChatDocument, chatStyles };
+export { ChatComposer, ChatDocument, ChatQuestions, chatStyles };
 
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
@@ -199,5 +200,11 @@ export class ChatSession {
 }
 
 // The check against `types/chat.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { ChatSession, ChatComposer, ChatDocument, chatStyles } satisfies typeof import("yuke:chat");
+const declared = {
+  ChatSession,
+  ChatComposer,
+  ChatDocument,
+  ChatQuestions,
+  chatStyles,
+} satisfies typeof import("yuke:chat");
 void declared;
