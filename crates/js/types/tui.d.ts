@@ -195,6 +195,23 @@ declare module "yuke:tui" {
     readonly enabled: boolean;
   }
 
+  /** An item of the status bar: plain data that a bar plugin draws. */
+  export interface StatusEntry {
+    readonly text: string;
+    readonly side: "left" | "right";
+    /** A lower order comes first on its side. */
+    readonly order: number;
+    /** A bar that has no room drops the item of the lowest priority first. The default is 0. */
+    readonly priority?: number | undefined;
+    readonly style?: CanvasStyle | undefined;
+  }
+
+  /** An item of the status bar with its key, `<plugin>:<key>`. */
+  export interface StatusItem extends StatusEntry {
+    readonly key: string;
+    readonly priority: number;
+  }
+
   /**
    * A notice of the host or of a plugin. A notice with the level, source, text, and session of the last one raises
    * `count`.
@@ -882,6 +899,19 @@ declare module "yuke:tui" {
     readonly notices: {
       readonly list: () => readonly Notice[];
       readonly on: (listener: (notice: Notice) => void) => Disposer;
+    };
+    /**
+     * The items of the status bar. A bare key gets the prefix of the plugin. When the plugin stops, the core deletes its
+     * items. The core sets `core:keys` while a key sequence waits for its next stroke.
+     */
+    readonly status: {
+      /** Set the item `key`. The same key replaces the item. */
+      readonly set: (key: string, entry: StatusEntry) => void;
+      readonly delete: (key: string) => void;
+      /** Each item of each plugin. */
+      readonly list: () => readonly StatusItem[];
+      /** Call `listener` after each later change of the items. A throw removes the listener and reports the error. */
+      readonly on: (listener: () => void) => Disposer;
     };
     readonly widgets: WidgetRegistry;
     readonly views: {

@@ -16,6 +16,7 @@ import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
 import { Picker } from "yuke:internal/tui/picker";
 import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
+import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
@@ -61,11 +62,15 @@ export interface Driver {
 /** The source of the faults and the commands of the core itself. */
 export const CORE = "core";
 
+/** The status item of the pending keys of a sequence. */
+const KEYS_ITEM = `${CORE}:keys`;
+
 /** The row limit of the palette. The search field counts as a row. */
 const PALETTE_ROWS = 12;
 
 export class Core {
   readonly notices = new Notices();
+  readonly status: StatusItems;
   readonly views = new ViewTypes();
   readonly styles: Styles;
   readonly commands: Commands;
@@ -93,7 +98,18 @@ export class Core {
       (name, text) => report(name.includes(":") ? name.slice(0, name.indexOf(":")) : CORE, text),
       frame,
     );
-    this.keymap = new Keymap(this.commands, frame, driver.after);
+    this.status = new StatusItems(frame);
+    this.keymap = new Keymap(
+      this.commands,
+      () => {
+        frame();
+        // The keys of a sequence wait for their next stroke, so the bar shows them.
+        const pending = this.keymap.pending();
+        if (pending === "") this.status.delete(KEYS_ITEM);
+        else this.status.set(KEYS_ITEM, { text: pending, side: "right", order: -1, priority: 100 });
+      },
+      driver.after,
+    );
     this.widgets = new WidgetMounts(
       {
         requestFrame: frame,

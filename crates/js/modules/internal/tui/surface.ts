@@ -19,6 +19,8 @@ import type {
   Panes,
   RestoreView,
   Startup,
+  StatusEntry,
+  StatusItem,
   StylePatch,
   Tui,
   View,
@@ -82,6 +84,8 @@ class Scope {
 /** The surface of the plugin `owner`, which stops with `signal`. */
 export function createSurface(core: Core, owner: string, signal: AbortSignal): Tui {
   const scope = new Scope(owner, signal, (text) => core.notices.add("error", owner, text));
+  // The stop of the plugin deletes its status items.
+  scope.own(() => core.status.deleteOwned(owner));
   const prefix = `${owner}:`;
   /** The qualified form of `name`: a bare name gets the prefix of this plugin. */
   const lookup = (name: string): string => {
@@ -191,6 +195,12 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
     styles: Object.freeze({
       set: live((name: string, patch: StylePatch): Disposer => scope.own(core.styles.set(name, patch))),
+    }),
+    status: Object.freeze({
+      set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),
+      delete: live((key: string): void => core.status.delete(own(key))),
+      list: live((): readonly StatusItem[] => core.status.list()),
+      on: live((listener: () => void): Disposer => scope.own(core.status.on(listener))),
     }),
     notices: Object.freeze({
       list: live((): readonly Notice[] => core.notices.list()),
