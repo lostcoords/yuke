@@ -42,6 +42,7 @@ const BUNDLED: &[(&str, &str)] = &[
     ("compaction", "yuke:internal/bundled/compaction"),
     ("chat", "yuke:internal/bundled/chat"),
     ("bar", "yuke:internal/bundled/bar"),
+    ("toasts", "yuke:internal/bundled/toasts"),
 ];
 
 /// The plugins to load, in load order. The bundled plugins come first, without the ones that `config.disable` names.

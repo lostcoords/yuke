@@ -213,8 +213,12 @@ async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
     output
         .shows("error host:yuke: plugin chat did not load: TypeError: the options of the plugin: Set copyOnRelease")
         .await;
-    // Without the chat, the pane stays empty.
-    assert_eq!(output.rows()[1..], ["", "", ""]);
+    // Without the chat, the pane has no composer. The toast of the error shows at the right.
+    assert!(
+        output.rows().iter().all(|row| !row.contains("Message")),
+        "{:?}",
+        output.rows()
+    );
 
     config("false");
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;

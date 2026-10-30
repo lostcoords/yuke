@@ -24,7 +24,7 @@
  * ```
  */
 declare module "yuke:test" {
-  import type { PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
+  import type { NoticeLevel, PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
   import type {
     Block,
     ExtensionEventParams,
@@ -75,6 +75,14 @@ declare module "yuke:test" {
     readonly tui: Tui;
   }
 
+  /** `FrameTest.notice` sends this notice. */
+  export interface FrameNotice {
+    readonly level: NoticeLevel;
+    readonly source: string;
+    readonly text: string;
+    readonly sessionId?: SessionId | undefined;
+  }
+
   /**
    * A terminal interface in a test: the real core, keymap, scene, and styles on a grid of cells. Each input method
    * handles its event, then draws a frame. `[Symbol.dispose]()` closes each surface.
@@ -99,6 +107,8 @@ declare module "yuke:test" {
     start: (snapshot?: string) => void;
     /** The saved panes that a reload gives the start event of the next runtime. */
     snapshot: () => string;
+    /** Send a notice of the host or of a plugin, as the terminal does. */
+    notice: (notice: FrameNotice) => void;
     /**
      * Move the clock of the frame by `ms` milliseconds. Each due `tui.after` callback and key sequence timeout runs in
      * time order. Then the frame draws. Other timers run on real time.

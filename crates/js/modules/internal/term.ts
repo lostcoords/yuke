@@ -46,7 +46,7 @@ export type TermEvent =
       readonly source: string;
       readonly text: string;
       /** The session of the notice, when it has one. */
-      readonly sessionId?: SessionId;
+      readonly sessionId?: SessionId | undefined;
     };
 
 /** What `term.run` takes. */
