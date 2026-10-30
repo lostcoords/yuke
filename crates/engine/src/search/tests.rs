@@ -58,3 +58,20 @@ fn bm25_ranks_word_matches_and_drops_tools_without_one() {
     let names: Vec<&str> = found.iter().map(|tool| tool.name.as_str()).collect();
     assert_eq!(names, ["createIssue", "list_issues", "comment"]);
 }
+
+// The search tool tells the model to search by a name of the deferred_tools section.
+#[test]
+fn bm25_ranks_the_tool_of_an_exact_name_first() {
+    let tools = [
+        tool("mcp__github__list_issues", "List the issues.", "{}"),
+        tool("mcp__github__create_pull_request", "Create a pull request.", "{}"),
+        tool("mcp__gitea__create_issue", "Create an issue.", "{}"),
+        tool("mcp__github__create_issue", "Create an issue.", "{}"),
+    ];
+    let borrowed: Vec<&ToolDefinition> = tools.iter().collect();
+
+    let found = bm25("mcp__github__create_issue", &borrowed, 5);
+
+    // Equal scores sort by name, so only the word `github` puts the GitHub tool before the Gitea tool.
+    assert_eq!(found[0].name, "mcp__github__create_issue");
+}

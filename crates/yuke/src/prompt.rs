@@ -36,8 +36,8 @@ pub(crate) fn deferred_tools(toolset: &Toolset) -> Option<PromptSection> {
     }
     let search = yuke_ai::SEARCH_TOOL_NAME;
     let lead = format!(
-        "These tools exist. Their definitions load only through {search}. Search with {search} before you call one. \
-         Do not say that a tool is missing before you search."
+        "These tools are not in your tool list yet. Find a tool with {search} before you call it. Do not say that a \
+         tool is missing before you search."
     );
     Some(PromptSection::new(
         "deferred_tools",

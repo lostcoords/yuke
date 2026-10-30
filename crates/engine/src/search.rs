@@ -185,8 +185,8 @@ const CALL_SCHEMA: &str = r#"{"type":"object","properties":{"name":{"type":"stri
 /// The search tool of a target with a native search. A match becomes callable by its name.
 static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
     name: SEARCH_TOOL_NAME.into(),
-    description: "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
-         keywords. Each match becomes callable by its name."
+    description: "Load deferred tools. The deferred_tools section of the system prompt names them. Search by \
+         keywords or by a tool name. Each match becomes callable by its name."
         .to_owned(),
     input_schema: search_schema(),
     defer_loading: false,
@@ -195,8 +195,8 @@ static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition
 /// The search tool of a target without a native search. A match is callable through [`TOOL_CALL_NAME`].
 static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
     name: SEARCH_TOOL_NAME.into(),
-    description: "Find more tools. Many tools are not listed here. When no listed tool fits the task, search them by \
-         keywords. The result shows each match with its input schema. Call a match with tool_call."
+    description: "Find deferred tools. The deferred_tools section of the system prompt names them. Search by \
+         keywords or by a tool name. The result shows each match with its input schema. Call a match with tool_call."
         .to_owned(),
     input_schema: search_schema(),
     defer_loading: false,
