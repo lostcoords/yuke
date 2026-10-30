@@ -11,6 +11,8 @@ import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
+import { commandLabel } from "yuke:internal/tui/core";
+import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type {
   Input,
@@ -26,8 +28,10 @@ import type {
 import type { Entry, Status } from "yuke:transcript";
 import {
   type Canvas,
+  type CommandItem,
   type EditorState,
   fit,
+  fuzzyMatch,
   type JsonValue,
   type Mount,
   measure,
@@ -43,8 +47,17 @@ import {
 
 const RULE = Object.freeze({ dim: true });
 
+/** The selected command of the list above the composer. */
+const SELECTED = Object.freeze({ reverse: true });
+
 /** The most rows of a picker of a pane. */
 const PICKER_ROWS = 12;
+
+/** The most rows of the command list above the composer. */
+const SLASH_ROWS = 6;
+
+/** A draft of one slash word, such as `/mod`. */
+const SLASH_WORD = /^\/\S*$/;
 
 /** The item at the top of a scrolled transcript, and its row there. */
 interface Viewport {
@@ -263,10 +276,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (current === undefined || chat.questions !== "modal" || current.overlay !== undefined) return;
     if (tui.focused !== composer && tui.focused !== view) return;
     const overlay = tui.overlay(() => current.asked.view, {
-      place: (size) => {
-        const height = Math.min(current.asked.rows, size.height);
-        return { column: 0, row: size.height - height, width: size.width, height };
-      },
+      place: (size) => bottom(size, current.asked.rows),
     });
     current.overlay = overlay;
     const close = (): void => overlay.close();
@@ -320,18 +330,53 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     ]);
     return true;
   });
-  // A slash in an empty composer opens the palette. Esc gives the slash back, so a message can start with one.
+  // A draft of one slash word shows the commands that match it above the composer. Its keys come before the keymap of
+  // the chat. Esc hides the list until the next edit, and a draft with no match stays a message.
+  let slashHidden: string | undefined;
+  let slashAt = 0;
+  /** The enabled commands that match the slash word of the draft, the best first. */
+  const slashMatches = (): readonly CommandItem[] => {
+    const text = composer.state.text;
+    if (!SLASH_WORD.test(text) || text === slashHidden || asking !== undefined) return [];
+    const ranked = tui.commands.list().flatMap((item, index) => {
+      const match = item.enabled ? fuzzyMatch(text, commandLabel(item.name)) : undefined;
+      return match === undefined ? [] : [{ item, score: match.score, index }];
+    });
+    return ranked.sort((a, b) => b.score - a.score || a.index - b.index).map((entry) => entry.item);
+  };
   extension.onKey((event) => {
-    if (strokeOf(event) !== "/" || composer.state.text !== "") return false;
-    const palette = tui.palette({ cancel: () => composer.replace(0, 0, "/") });
-    const close = (): void => palette.close();
-    mount.signal.addEventListener("abort", close, { once: true });
-    palette.signal.addEventListener("abort", () => mount.signal.removeEventListener("abort", close), { once: true });
+    const matches = slashMatches();
+    // A pane without a row above the rule shows no list, so the list takes no key.
+    if (matches.length === 0 || ruleRow <= 0) return false;
+    const stroke = strokeOf(event);
+    if (stroke === "up" || stroke === "down") {
+      slashAt = Math.max(
+        0,
+        Math.min(matches.length - 1, Math.min(slashAt, matches.length - 1) + (stroke === "up" ? -1 : 1)),
+      );
+      tui.requestFrame();
+      return true;
+    }
+    if (stroke === "esc") {
+      slashHidden = composer.state.text;
+      tui.requestFrame();
+      return true;
+    }
+    if (stroke !== "enter") return false;
+    const command = matches[Math.min(slashAt, matches.length - 1)];
+    if (command === undefined) return false;
+    const draft = composer.state;
+    composer.reset(EMPTY);
+    // A command that left the registry runs nothing, so the draft comes back.
+    if (!tui.commands.run(command.name)) composer.reset(draft);
     return true;
-  });
+  }, "beforeKeymap");
   // An edit of the shown message ends the browse, so the edited text stays. An edit or a caret move ends a recall,
   // so ↑ moves the caret again.
   extension.onChange((change) => {
+    if (change.kind !== "selection") slashAt = 0;
+    // A cleared or changed draft ends the hide, so the same word typed again shows the list.
+    if (composer.state.text !== slashHidden) slashHidden = undefined;
     if (change.kind === "edit") browse = undefined;
     if (change.kind === "edit" || change.kind === "selection") recalled = undefined;
   });
@@ -360,10 +405,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
             cancel: () => overlay.close(),
           }),
         {
-          place: (size) => {
-            const height = Math.min(PICKER_ROWS, size.height);
-            return { column: 0, row: size.height - height, width: size.width, height };
-          },
+          place: (size) => bottom(size, PICKER_ROWS),
         },
       );
       const close = (): void => overlay.close();
@@ -598,6 +640,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // The layout keeps the row of the rule and the shown waiting messages for the draw. Without a free row, the pane
   // draws no rule.
   let ruleRow = -1;
+  let slashRows = 0;
   let shown: [InputId, Frozen<Input>][] = [];
   const pane: View = {
     contexts: ["chat"],
@@ -613,12 +656,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(size.height / 2)));
       const composerRow = Math.max(0, size.height - composerRows);
       ruleRow = composerRow - 1;
-      // The working row sits on the rule while a turn runs.
-      const workingRows = working !== undefined && ruleRow > 0 ? 1 : 0;
+      // The command list sits on the rule, and the working row sits on the list while a turn runs.
+      slashRows = Math.min(SLASH_ROWS, slashMatches().length, Math.max(0, ruleRow));
+      const workingRows = working !== undefined && ruleRow - slashRows > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
       // rows run out, the strip keeps the newest messages.
       const list = waiting();
-      const above = Math.max(0, ruleRow - workingRows);
+      const above = Math.max(0, ruleRow - slashRows - workingRows);
       shown = list.slice(Math.max(0, list.length - above));
       const placements = [
         { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, above - shown.length) } },
@@ -642,9 +686,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
-      const workingRows = working !== undefined && ruleRow > 0 ? 1 : 0;
+      const workingRows = working !== undefined && ruleRow - slashRows > 0 ? 1 : 0;
+      const slashRow = ruleRow - slashRows;
       for (const [at, entry] of shown.entries()) {
-        const row = ruleRow - workingRows - shown.length + at;
+        const row = slashRow - workingRows - shown.length + at;
         const hint = at === shown.length - 1 ? " ↑ edit" : "";
         const text = inputText(entry[1].content).replaceAll("\n", " ");
         const room = Math.max(0, canvas.width - 1 - measure(hint));
@@ -653,13 +698,33 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
       if (working !== undefined && workingRows === 1) {
-        const key = tui.keys.keysOf("chat:interrupt")[0];
+        // While the list shows, Esc hides the list, so the row shows no cancel key.
+        const key = slashRows > 0 ? undefined : tui.keys.keysOf("chat:interrupt")[0];
         const row = workingText(chatSession.transcript, working, tui.now(), retryAt, key);
-        canvas.text(0, ruleRow - 1, row.spinner, STYLE.hint);
+        canvas.text(0, slashRow - 1, row.spinner, STYLE.hint);
         const room = Math.max(0, canvas.width - 2);
         const text =
           fit(row.text, room) === row.text.length ? row.text : `${row.text.slice(0, fit(row.text, room - 1))}…`;
-        canvas.text(2, ruleRow - 1, text, STYLE.meta);
+        canvas.text(2, slashRow - 1, text, STYLE.meta);
+      }
+      // The list scrolls so the selected command stays in sight.
+      const matches = slashRows === 0 ? [] : slashMatches();
+      const selected = Math.min(slashAt, matches.length - 1);
+      const first = Math.max(0, selected - slashRows + 1);
+      const width = Math.max(0, ...matches.map((item) => measure(commandLabel(item.name))));
+      for (const [at, item] of matches.slice(first, first + slashRows).entries()) {
+        const style = first + at === selected ? SELECTED : undefined;
+        const label = commandLabel(item.name).padEnd(width);
+        const text = `${label}  ${item.description ?? ""}`;
+        const cut =
+          fit(text, canvas.width - 1) === text.length ? text : `${text.slice(0, fit(text, canvas.width - 2))}…`;
+        canvas.text(1, slashRow + at, cut.slice(0, label.length), style);
+        canvas.text(
+          1 + measure(label),
+          slashRow + at,
+          cut.slice(label.length),
+          style === undefined ? STYLE.meta : style,
+        );
       }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.

@@ -3,6 +3,7 @@
  * an error stays until a dismissal, and debug shows no toast.
  */
 
+import { bottom } from "yuke:internal/tui/layout";
 import type { PluginContext } from "yuke:plugins";
 import { fit, type Notice, type PaletteColor, Picker, type Size, type Style, type View, wrap } from "yuke:tui";
 
@@ -156,10 +157,7 @@ export function apply(ctx: PluginContext): undefined {
             cancel: () => mount.close(),
           }),
         {
-          place: (size) => {
-            const height = Math.min(HISTORY_ROWS, size.height);
-            return { column: 0, row: size.height - height, width: size.width, height };
-          },
+          place: (size) => bottom(size, HISTORY_ROWS),
         },
       );
     },

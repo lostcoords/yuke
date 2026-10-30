@@ -107,3 +107,19 @@ test("a close of the session by another client takes the working row away", asyn
   frame.draw();
   equal([running, rows(frame).some((text) => text.includes("to interrupt"))], [true, false]);
 });
+
+test("the working row shows no cancel key while the command list takes esc", async () => {
+  const sessions = fakeSessions(replies(2));
+  using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  sessions.push({ sessionUpdate: "state", state: "running" });
+  frame.key("/ m o d e l");
+  frame.draw();
+  const listed = rows(frame).find((text) => text.includes("Waiting…"));
+  frame.key("esc");
+  frame.draw();
+  const hidden = rows(frame).find((text) => text.includes("Waiting…"));
+  equal([listed, hidden], ["⠋ Waiting… (0s)", "⠋ Waiting… (0s · esc to interrupt)"]);
+});

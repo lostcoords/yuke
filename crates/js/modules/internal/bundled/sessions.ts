@@ -4,6 +4,7 @@
  * switches to the sessions of every folder.
  */
 
+import { bottom } from "yuke:internal/tui/layout";
 import type { PluginContext } from "yuke:plugins";
 import type { SessionActivity, SessionRow } from "yuke:protocol";
 import { fuzzyMatch, Picker, type PickerMatch, strokeOf, type Tui, type View } from "yuke:tui";
@@ -116,10 +117,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     initialFocus: picker.input,
   };
   const overlay = tui.overlay(() => view, {
-    place: (size) => {
-      const height = Math.min(ROWS, size.height);
-      return { column: 0, row: size.height - height, width: size.width, height };
-    },
+    place: (size) => bottom(size, ROWS),
   });
   /** Load the list of the scope. A failure closes the list and gives a notice. */
   const load = async (): Promise<void> => {

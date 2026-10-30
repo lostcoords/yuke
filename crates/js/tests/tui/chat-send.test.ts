@@ -5,7 +5,7 @@ import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, type FrameTest, folder, test } from "yuke:test";
 import { type EditorState, TextEditor } from "yuke:tui";
-import { CATALOG, commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
+import { CATALOG, commit, fakeSessions, loadChat, replies, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
 
 /** The composer of the chat in `frame`. */
 function composerOf(chat: ReturnType<typeof loadChat>): TextEditor {
@@ -500,38 +500,87 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   equal(chat.notices, ["error the model did not change: Error: a turn runs"]);
 });
 
-test("a slash in an empty composer opens the palette, Esc gives the slash back, and a pasted slash stays text", async () => {
+test("a slash word lists the matching commands above the composer, and enter runs the selected one", async () => {
   using frame = createFrame({ width: 60, height: 14 });
   const chat = loadChat(frame);
   frame.start();
   const composer = composerOf(chat);
   frame.key("/ m o d e l");
   frame.draw();
-  equal(rows(frame).slice(2, 4), ["model", "/chat:model  Choose the model and the reasoning · ctrl+k m"]);
-  // A choice runs the command in the pane and leaves no slash.
+  const listed = rows(frame).slice(-3, -2);
   frame.key("enter");
   await settle();
   frame.draw();
-  equal([rows(frame).includes("p/m"), composer.state.text], [true, ""]);
-  frame.key("esc");
-  frame.key("/ m o d e l");
-  frame.key("esc");
-  equal([composer.state.text, composer.caret], ["/", 1]);
-  frame.key("/");
-  frame.key("ctrl+c");
-  frame.paste("/a");
-  equal(composer.state.text, "/a");
+  equal(
+    [listed, rows(frame).includes("p/m"), composer.state.text],
+    [[" /chat:model  Choose the model and the reasoning"], true, ""],
+  );
 });
 
-test("a pane close with an open palette closes it and puts no slash in the composer", () => {
-  using frame = createFrame({ width: 30, height: 14 });
+test("up and down move through the enabled commands, and enter runs the selected one", () => {
+  using frame = createFrame({ width: 60, height: 14 });
   const chat = loadChat(frame);
+  const ran: string[] = [];
+  chat.tui.commands.add({ name: "alp0", run: () => {}, enabled: () => false });
+  chat.tui.commands.add({
+    name: "alpha",
+    run: () => {
+      ran.push("alpha");
+    },
+  });
+  chat.tui.commands.add({
+    name: "alpine",
+    run: () => {
+      ran.push("alpine");
+    },
+  });
   frame.start();
-  const composer = composerOf(chat);
-  frame.key("/");
-  chat.tui.commands.run("core:close");
+  frame.key("/ a l p");
+  frame.key("up");
+  frame.key("down");
+  frame.key("enter");
+  equal([ran, composerOf(chat).state.text], [["alpine"], ""]);
+});
+
+test("a pane with no row above the rule shows no commands, and the list takes no key", () => {
+  using frame = createFrame({ width: 60, height: 2 });
+  const chat = loadChat(frame);
+  const ran: string[] = [];
+  chat.tui.commands.add({
+    name: "alpha",
+    run: () => {
+      ran.push("alpha");
+    },
+  });
+  frame.start();
   frame.draw();
-  equal([composer.state.text, rows(frame).some((row) => row.startsWith("/quit"))], ["", false]);
+  frame.key("/ a l p h a");
+  frame.key("enter");
+  equal(ran, []);
+});
+
+test("esc hides the commands until the draft changes, and a draft with no command sends as a message", async () => {
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(replies(2));
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  await settle();
+  const listed = (): boolean => {
+    frame.draw();
+    return rows(frame).some((line) => line.includes("/chat:model"));
+  };
+  frame.key("/ m o");
+  frame.key("esc");
+  const hidden = [listed(), composerOf(chat).state.text];
+  frame.key("ctrl+c");
+  frame.key("/ m o");
+  const back = listed();
+  frame.key("ctrl+c");
+  frame.paste("/etc/hosts is wrong");
+  const path = listed();
+  frame.key("enter");
+  await settle();
+  equal([hidden, back, path, sessions.inputs], [[false, "/mo"], true, false, [[{ user_text: "/etc/hosts is wrong" }]]]);
 });
 
 test("the commands of the chat are disabled in a pane of another plugin", () => {

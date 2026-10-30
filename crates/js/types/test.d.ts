@@ -250,7 +250,7 @@ declare module "yuke:test" {
 
   /** What `createHost` gets. */
   export interface HostOptions {
-    /** The plugins under test, in load order. */
+    /** The plugins under test, in list order. A provider loads before the plugins that use it. */
     readonly plugins: readonly PluginUnderTest[];
     /**
      * The replies of the fake model of the sessions, in order. Each request takes the next reply. The host writes the

@@ -11,6 +11,7 @@ import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
+import { bottom } from "yuke:internal/tui/layout";
 import { Notices } from "yuke:internal/tui/notices";
 import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
 import { Picker } from "yuke:internal/tui/picker";
@@ -63,6 +64,11 @@ export interface Driver {
 
 /** The source of the faults and the commands of the core itself. */
 export const CORE = "core";
+
+/** The label of the command `name` in a list: a slash, and the name. A core command shows without its prefix. */
+export function commandLabel(name: string): string {
+  return `/${name.startsWith(`${CORE}:`) ? name.slice(CORE.length + 1) : name}`;
+}
 
 /** The status item of the pending keys of a sequence. */
 const KEYS_ITEM = `${CORE}:keys`;
@@ -245,15 +251,13 @@ export class Core {
    * palette, gives the focus back, and then runs the command. Esc closes the palette and calls `cancel`.
    */
   palette(owner: string, cancel?: () => void): Mount {
-    const prefix = `${CORE}:`;
     const mount = this.scene.overlay(
       owner,
       () =>
         new Picker<CommandItem>({
           items: this.commands.list().filter((item) => item.enabled),
           key: (item) => item.name,
-          // The core commands are the base set, so they show without their prefix.
-          label: (item) => `/${item.name.startsWith(prefix) ? item.name.slice(prefix.length) : item.name}`,
+          label: (item) => commandLabel(item.name),
           detail: (item) =>
             [item.description ?? "", this.keymap.keysOf(item.name).join(", ")].filter(Boolean).join(" · "),
           choose: (item) => {
@@ -268,10 +272,7 @@ export class Core {
           },
         }),
       {
-        place: (size) => {
-          const height = Math.min(PALETTE_ROWS, size.height);
-          return { column: 0, row: size.height - height, width: size.width, height };
-        },
+        place: (size) => bottom(size, PALETTE_ROWS),
       },
     );
     return mount;
