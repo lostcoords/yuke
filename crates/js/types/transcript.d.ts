@@ -27,6 +27,7 @@ declare module "yuke:transcript" {
     ToolHints,
     ToolResult,
     TurnEnd,
+    Usage,
   } from "yuke:protocol";
 
   /** A message of the user or a notification of a plugin, from the commit that consumed it. */
@@ -106,6 +107,11 @@ declare module "yuke:transcript" {
     get settings(): Frozen<SessionSettings> | undefined;
     /** The last failure of the running turn, until its next draft or its end. */
     get status(): Status | undefined;
+    /**
+     * The token counts of the last saved answer of the model. A replacement of the context, such as a compaction,
+     * clears them until the next answer. An older page that loads later does not change them.
+     */
+    get usage(): Frozen<Usage> | undefined;
     /** The first saved event that the transcript holds: the `before` of the next older page. */
     get first(): EventNumber | undefined;
     /** Saved events that are missing between the held ones. Give the result of `sessions.events` to `insert`. */

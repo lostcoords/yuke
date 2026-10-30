@@ -21,7 +21,12 @@ const greeter: PluginSession = (s) => {
 function chatFrame(sessions: Sessions, id: string): FrameTest {
   const frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: id });
   const surface = frame.surface("chat");
-  chat({ get: (name: string) => (name === "tui" ? surface.tui : sessions), options: {}, notify() {} } as never);
+  const services: Record<string, unknown> = {
+    tui: surface.tui,
+    sessions,
+    catalog: { list: async () => ({ providers: [] }) },
+  };
+  chat({ get: (name: string) => services[name], options: {}, signal: surface.signal, notify() {} } as never);
   frame.start();
   return frame;
 }
@@ -103,7 +108,7 @@ test("the first send of a pane with a saved choice creates its session and gets 
   const surface = frame.surface("chat");
   const known = services as { readonly sessions: Sessions; readonly catalog: unknown };
   const get = (name: string) => (name === "tui" ? surface.tui : name === "catalog" ? known.catalog : known.sessions);
-  chat({ get, options: {}, dataDir: folder(), notify() {} } as never);
+  chat({ get, options: {}, signal: surface.signal, dataDir: folder(), notify() {} } as never);
   frame.start();
   frame.paste("hello");
   frame.key("enter");

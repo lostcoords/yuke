@@ -6,6 +6,7 @@ import type {
   Block,
   Commit,
   InteractionResponse,
+  Job,
   ListCatalogResult,
   SessionSettings,
   SessionUpdate,
@@ -77,7 +78,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
    * `failing` fails each page. `accept` holds each input until it settles, and a rejection refuses the input.
    * `cancels` counts the cancels of the handles. `removal` holds each removal until it settles, and `removed` is its
    * answer. `refuseAnswer` makes each answer throw, as for a question that another client answered. `store` holds each
-   * put of a blob until it settles, and a rejection refuses the blob.
+   * put of a blob until it settles, and a rejection refuses the blob. `jobs` are the running jobs of each handle.
    */
   const state: {
     failing: boolean;
@@ -89,6 +90,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     removed: boolean;
     refuseAnswer: boolean;
     store: Promise<void> | undefined;
+    jobs: readonly Job[];
   } = {
     failing: false,
     accept: undefined,
@@ -98,6 +100,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     removal: undefined,
     removed: true,
     refuseAnswer: false,
+    jobs: [],
     store: undefined,
   };
   /** Give each live handle of session `id` the live update `update`. */
@@ -140,6 +143,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         cancel() {
           state.cancels += 1;
         },
+        jobs: () => state.jobs,
         async setSettings(settings: SessionSettings) {
           if (state.refuseSettings) throw new Error("a turn runs");
           changes.push(settings);
@@ -195,6 +199,7 @@ export function loadChat(
   apply({
     get: (name: string) => services[name],
     options,
+    signal: surface.signal,
     dataDir: folder(),
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),
   } as never);

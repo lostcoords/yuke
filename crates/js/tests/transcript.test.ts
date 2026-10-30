@@ -363,3 +363,20 @@ test("a deferred tool shows the tool that its bridge call names", () => {
   const transcript = opened([commit(1, { blocks: [{ tool_call: bridge }], answer: answer("tool_calls") })]);
   equal([tool(transcript, 0).name, tool(transcript, 0).arguments], ["grep", '{"pattern":"x"}']);
 });
+
+test("usage is the token counts of the last saved answer, and a replaced context or a snapshot clears it", () => {
+  const counts = (input: number) => ({ input, output: 10, reasoning: null, cacheRead: null, cacheWrite: null });
+  const withUsage = (input: number): Answer => ({ ...answer("stop"), usage: counts(input) });
+  const transcript = new Transcript();
+  transcript.apply({ snapshot: { settings, updates: [commit(2, { answer: withUsage(100) })] } });
+  const first = transcript.usage?.input;
+  transcript.apply({ update: commit(3, { answer: withUsage(200) }) });
+  transcript.apply({ update: commit(4, { blocks: [userText] }) });
+  const last = transcript.usage?.input;
+  transcript.apply({ update: commit(5, { replaced: { head: [userText], keep: 0 } }) });
+  const compacted = transcript.usage;
+  transcript.apply({ update: commit(6, { answer: withUsage(300) }) });
+  const next = transcript.usage?.input;
+  transcript.apply({ snapshot: { settings, updates: [] } });
+  equal([first, last, compacted, next, transcript.usage], [100, 200, undefined, 300, undefined]);
+});

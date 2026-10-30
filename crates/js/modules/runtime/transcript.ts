@@ -12,6 +12,7 @@ import type {
   StoredEvent,
   ToolCall,
   ToolHints,
+  Usage,
 } from "yuke:protocol";
 import type { Entry, Question, Status } from "yuke:transcript";
 
@@ -48,6 +49,7 @@ export class Transcript {
   #state: SessionState = "idle";
   #settings: Frozen<SessionSettings> | undefined;
   #status: Status | undefined;
+  #usage: Frozen<Usage> | undefined;
   #gap: EventsPage | undefined;
   /** The saved events, by number. */
   #saved: Saved[] = [];
@@ -72,6 +74,10 @@ export class Transcript {
     return this.#status;
   }
 
+  get usage(): Frozen<Usage> | undefined {
+    return this.#usage;
+  }
+
   get first(): number | undefined {
     return this.#saved[0]?.seq;
   }
@@ -91,6 +97,7 @@ export class Transcript {
     this.#state = "idle";
     this.#settings = event.snapshot.settings;
     this.#status = undefined;
+    this.#usage = undefined;
     this.#gap = undefined;
     this.#saved = [];
     this.#index.clear();
@@ -228,6 +235,9 @@ export class Transcript {
   #fold(event: Saved): void {
     if (event.sessionUpdate === "settings") return;
     const commit = event.commit;
+    // A replaced context makes the counts of the earlier answer stale, until the next answer.
+    if (commit.replaced !== null) this.#usage = undefined;
+    if (commit.answer !== null) this.#usage = commit.answer.usage;
     if (commit.replaced !== null) this.#put({ kind: "compaction", key: `${event.seq}:replaced` });
     let offset = 0;
     for (const input of event.consumed) {

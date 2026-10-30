@@ -19,6 +19,7 @@ import type {
   ReasoningLevel,
   SessionId,
   SessionSettings,
+  Usage,
 } from "yuke:protocol";
 import { type Entry, Transcript } from "yuke:transcript";
 import {
@@ -98,6 +99,12 @@ export interface PaneActions {
   readonly asking: () => boolean;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
+  /** What the status bar shows of the session of the pane. */
+  readonly status: () => {
+    readonly settings: Frozen<SessionSettings> | undefined;
+    readonly usage: Frozen<Usage> | undefined;
+    readonly jobs: number;
+  };
 }
 
 /** What each pane of the chat shares. */
@@ -112,6 +119,8 @@ export interface Chat {
   readonly questions: "composer" | "modal";
   /** The actions of each pane, by its view. */
   readonly panes: WeakMap<View, PaneActions>;
+  /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
+  readonly refresh: () => void;
 }
 
 /**
@@ -154,6 +163,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const changed = (): void => {
     dirty = true;
     tui.requestFrame();
+    chat.refresh();
   };
 
   /** Load one page: the newest part of a gap first, else the page before the first held event. */
@@ -198,6 +208,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     sessions.open(id, { tail: TAIL, signal: mount.signal, event }).then(
       (opened) => {
         handle = opened;
+        // The snapshot came before the handle, so its jobs show only now.
+        chat.refresh();
         opened.signal.addEventListener(
           "abort",
           () => {
@@ -209,6 +221,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
             asking?.overlay?.close();
             asking = undefined;
             tui.requestFrame();
+            chat.refresh();
           },
           { once: true },
         );
@@ -669,6 +682,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
   };
   chat.panes.set(pane, {
+    status: () => ({ settings: transcript.settings, usage: transcript.usage, jobs: handle?.jobs().length ?? 0 }),
     toggleTools: () => {
       document.toggleTools(transcript);
       changed();

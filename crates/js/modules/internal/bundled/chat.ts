@@ -7,6 +7,7 @@
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import { STYLES } from "yuke:internal/bundled/chat/rows";
 import type { PluginContext } from "yuke:plugins";
+import type { ModelInfo } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
 
 export const optionsSchema = {
@@ -26,6 +27,9 @@ export const optionsSchema = {
 } as const;
 
 type Options = Infer<typeof optionsSchema>;
+
+/** The cells of the gauge of the token share of the last answer. */
+const GAUGE = 6;
 
 /** The commands of the chat: the name, the description, the keys, their context, and the action. Each action uses the active pane. */
 const COMMANDS: readonly {
@@ -154,15 +158,68 @@ export function apply(ctx: PluginContext<Options>): undefined {
     copyOnRelease: ctx.options.copyOnRelease ?? true,
     questions: ctx.options.questions ?? "composer",
     panes: new WeakMap(),
+    refresh: () => publish(),
   };
-  tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
-  tui.panes.setDefault((mount, reason) =>
-    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
-  );
   const active = (): PaneActions | undefined => {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
+  // The catalog names the context window and the reasoning levels of each model, by provider/model.
+  let models: ReadonlyMap<string, ModelInfo> | undefined;
+  ctx
+    .get("catalog")
+    .list()
+    .then(
+      (catalog) => {
+        models = new Map(
+          catalog.providers.flatMap((provider) =>
+            provider.models.map((model) => [`${provider.id}/${model.id}`, model]),
+          ),
+        );
+        publish();
+      },
+      // Without the catalog, the model item has no level, and the context item is a token count.
+      () => {},
+    );
+  /** Show the model, the token share of the last answer, and the jobs of the focused chat pane, or nothing. */
+  const publish = (): void => {
+    // The catalog and the end of a handle can come after the stop of the plugin, when its tui takes no more calls.
+    if (ctx.signal.aborted) return;
+    const status = active()?.status();
+    const settings = status?.settings;
+    if (status === undefined || settings === undefined) {
+      for (const key of ["model", "context", "jobs"]) tui.status.delete(key);
+      return;
+    }
+    const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
+    const { thinking, effort } = settings.settings.reasoning;
+    const level = model?.reasoning.find(
+      (choice) =>
+        choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
+    )?.level;
+    const name = level === undefined ? settings.model.model : `${settings.model.model} ${level}`;
+    tui.status.set("model", { text: name, side: "right", order: 10 });
+    const usage = status.usage;
+    // A count that the provider did not send is unknown, not zero.
+    if (usage === undefined || usage.input === null) tui.status.delete("context");
+    else {
+      const used = usage.input + (usage.output ?? 0);
+      const window = model?.contextWindow ?? undefined;
+      const share = window === undefined ? undefined : Math.min(1, used / window);
+      const text =
+        share === undefined
+          ? `${(used / 1000).toFixed(1)}k tokens`
+          : `${"▰".repeat(Math.round(share * GAUGE))}${"▱".repeat(GAUGE - Math.round(share * GAUGE))} ${Math.round(share * 100)}%`;
+      tui.status.set("context", { text, side: "right", order: 20, priority: 1 });
+    }
+    if (status.jobs === 0) tui.status.delete("jobs");
+    else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
+  };
+  tui.onFocus(() => publish());
+  tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
+  tui.panes.setDefault((mount, reason) =>
+    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
+  );
   for (const command of COMMANDS) {
     tui.commands.add({
       name: command.name,
