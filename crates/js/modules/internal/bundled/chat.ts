@@ -1,7 +1,8 @@
 /**
  * The bundled plugin `chat`: the default pane of the terminal interface. Each pane has its own transcript, composer,
  * folds, and handle of its session. The start pane shows the session of `tui.startup`. A reload keeps the session,
- * the draft, the folds, and the scroll place of each pane. Each command acts on the active pane.
+ * the draft, the folds, and the scroll place of each pane. Each command acts on the active pane. The service `chat`
+ * shows a session in a pane for other plugins.
  */
 
 import { readTextFile } from "yuke:fs";
@@ -10,6 +11,7 @@ import { STYLES } from "yuke:internal/bundled/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo, ModelReference, ReasoningLevel } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
+import type { View } from "yuke:tui";
 
 export const optionsSchema = {
   type: "object",
@@ -151,6 +153,31 @@ const COMMANDS: readonly {
 
 export function apply(ctx: PluginContext<Options>): undefined {
   const tui = ctx.get("tui");
+  const listeners = new Set<(view: View) => void>();
+  const panes = new WeakMap<View, PaneActions>();
+  ctx.provide("chat", {
+    show: async (id) => {
+      if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
+      const pane = active();
+      if (pane !== undefined) return pane.show(id);
+      // A focused pane of another plugin keeps its place, and a new chat pane shows the session. A failed open closes
+      // the new pane again.
+      const created = tui.panes.split((mount) => chatPane(chat, mount, {}));
+      try {
+        const actions = panes.get(created.view);
+        if (actions === undefined) throw new Error("the new chat pane did not open");
+        await actions.show(id);
+      } catch (error) {
+        created.close();
+        throw error;
+      }
+    },
+    session: (view) => panes.get(view)?.session(),
+    onChange: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  });
   if (tui === undefined) return undefined;
   for (const [name, style] of Object.entries(STYLES)) tui.styles.set(name, style);
   const chat: Chat = {
@@ -158,11 +185,22 @@ export function apply(ctx: PluginContext<Options>): undefined {
     tui,
     copyOnRelease: ctx.options.copyOnRelease ?? true,
     questions: ctx.options.questions ?? "composer",
-    panes: new WeakMap(),
+    panes,
     refresh: () => publish(),
     chosen: (choice) => {
       saved = choice;
       publish();
+    },
+    drafts: new Map(),
+    moved: (view) => {
+      for (const listener of listeners) {
+        try {
+          listener(view);
+        } catch (error) {
+          listeners.delete(listener);
+          ctx.notify("error", `a listener of the chat failed: ${String(error)}`);
+        }
+      }
     },
   };
   // The first send of a pane without a session uses this pick, so the bar shows it.

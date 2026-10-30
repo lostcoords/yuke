@@ -36,13 +36,13 @@ struct YukeFields {
     provides: Vec<String>,
 }
 
-/// The plugins of the binary, in load order: the name of each one and the `yuke:` name of its entry module. A bundled
-/// plugin uses and provides no service.
-const BUNDLED: &[(&str, &str)] = &[
-    ("compaction", "yuke:internal/bundled/compaction"),
-    ("chat", "yuke:internal/bundled/chat"),
-    ("bar", "yuke:internal/bundled/bar"),
-    ("toasts", "yuke:internal/bundled/toasts"),
+/// The plugins of the binary, in load order: the name of each one, the `yuke:` name of its entry module, and the
+/// services that it provides. A bundled plugin uses no service.
+const BUNDLED: &[(&str, &str, &[&str])] = &[
+    ("compaction", "yuke:internal/bundled/compaction", &[]),
+    ("chat", "yuke:internal/bundled/chat", &["chat"]),
+    ("bar", "yuke:internal/bundled/bar", &[]),
+    ("toasts", "yuke:internal/bundled/toasts", &[]),
 ];
 
 /// The plugins to load, in load order. The bundled plugins come first, without the ones that `config.disable` names.
@@ -60,12 +60,12 @@ pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Res
 
 /// [`plugins`] with the bundled plugins `bundled`.
 fn with_bundled(
-    bundled: &[(&str, &str)],
+    bundled: &[(&str, &str, &[&str])],
     config_folder: &Path,
     config: &Config,
     data: &Path,
 ) -> Result<Vec<Plugin>, String> {
-    let known = |name: &str| bundled.iter().any(|&(bundled, _)| bundled == name);
+    let known = |name: &str| bundled.iter().any(|&(bundled, _, _)| bundled == name);
     if let Some(name) = config.disable.iter().find(|name| !known(name)) {
         return Err(format!(
             "config.json: disable names '{name}', which is not a bundled plugin"
@@ -78,8 +78,8 @@ fn with_bundled(
     }
     let mut plugins: Vec<Plugin> = bundled
         .iter()
-        .filter(|(name, _)| !config.disable.iter().any(|disabled| disabled == name))
-        .map(|&(name, module)| Plugin {
+        .filter(|(name, _, _)| !config.disable.iter().any(|disabled| disabled == name))
+        .map(|&(name, module, provides)| Plugin {
             name: name.to_owned(),
             origin: Origin::Bundled {
                 module: module.to_owned(),
@@ -87,7 +87,7 @@ fn with_bundled(
             data_dir: data.join("plugins").join(name),
             options: config.bundled.get(name).cloned().unwrap_or_default(),
             uses: Vec::new(),
-            provides: Vec::new(),
+            provides: provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
     let mut roots = HashSet::new();

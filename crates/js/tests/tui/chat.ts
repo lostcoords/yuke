@@ -1,5 +1,6 @@
 // The fixtures of the tests of the bundled chat: a fake session store, a chat in a frame, and the rows of a frame.
 
+import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
 import type { EventsPage, SessionHandle, ViewEvent } from "yuke:plugins";
 import type {
@@ -186,7 +187,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   };
 }
 
-/** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat and each notice. */
+/** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat, each notice, and its service. */
 export function loadChat(
   frame: FrameTest,
   options: { readonly copyOnRelease?: boolean; readonly questions?: "composer" | "modal" } = {},
@@ -196,8 +197,10 @@ export function loadChat(
   const surface = frame.surface("chat");
   const notices: string[] = [];
   const services: Record<string, unknown> = { tui: surface.tui, sessions, catalog };
+  const provided = new Map<string, unknown>();
   apply({
     get: (name: string) => services[name],
+    provide: (name: string, value: unknown) => provided.set(name, value),
     options,
     signal: surface.signal,
     dataDir: folder(),
@@ -205,7 +208,8 @@ export function loadChat(
   } as never);
   const transcript = (): TextView =>
     surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
-  return { tui: surface.tui, opened: sessions.opened, notices, transcript };
+  const chat = provided.get("chat") as ChatService;
+  return { tui: surface.tui, opened: sessions.opened, notices, transcript, chat };
 }
 
 /** One ready provider `p` with the model `m` (levels default, off, high) and the model `n` (levels default, low). */

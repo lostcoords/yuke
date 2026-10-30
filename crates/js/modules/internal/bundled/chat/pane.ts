@@ -1,16 +1,17 @@
 /**
- * One chat pane: its transcript, its composer, its folds, and the handle of its session.
+ * One chat pane: its transcript, its composer, its folds, and the `ChatSession` of its session.
  * An unbound pane creates its session at the first send or image paste.
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
+import { ChatSession } from "yuke:chat";
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
 import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
-import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
+import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type {
   Input,
   InputId,
@@ -22,7 +23,7 @@ import type {
   SessionSettings,
   Usage,
 } from "yuke:protocol";
-import { type Entry, Transcript } from "yuke:transcript";
+import type { Entry, Status } from "yuke:transcript";
 import {
   type Canvas,
   type EditorState,
@@ -41,12 +42,6 @@ import {
 } from "yuke:tui";
 
 const RULE = Object.freeze({ dim: true });
-
-/** The count of saved events that a pane gets when it opens its session. Older events come in pages. */
-const TAIL = 200;
-
-/** The most saved events of one page of history. */
-const PAGE = 100;
 
 /** The most rows of a picker of a pane. */
 const PICKER_ROWS = 12;
@@ -100,6 +95,13 @@ export interface PaneActions {
   readonly asking: () => boolean;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
+  /** The session of the pane. */
+  readonly session: () => SessionId | undefined;
+  /**
+   * Show the session `id`. The draft stays with the old session, and the draft of `id` comes back. It rejects when the
+   * open fails or a send, a model choice, an image paste, or a recall runs.
+   */
+  readonly show: (id: SessionId) => Promise<void>;
   /** What the status bar shows of the session of the pane. `bound` is true when the pane has a session. */
   readonly status: () => {
     readonly bound: boolean;
@@ -125,6 +127,10 @@ export interface Chat {
   readonly refresh: () => void;
   /** Take `choice` as the saved pick. The pane calls it after a save of `choice.json` succeeds. */
   readonly chosen: (choice: { readonly model: ModelReference; readonly reasoning: ReasoningLevel }) => void;
+  /** The draft of each session that a pane left by `show`. */
+  readonly drafts: Map<SessionId, EditorState>;
+  /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
+  readonly moved: (view: View) => void;
 }
 
 /**
@@ -134,21 +140,14 @@ export interface Chat {
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
-  const sessions = ctx.get("sessions");
-  let session = state.session;
-  let handle: SessionHandle | undefined;
-  // The open of the session, so a send waits for it.
-  let opening: Promise<SessionHandle | undefined> | undefined;
-  const transcript = new Transcript();
-  let document = new ChatDocument(`session:${session ?? "new"}`, state.folds);
+  const chatSession = new ChatSession(ctx.get("sessions"), mount.signal, state.session);
+  // The session that the document belongs to.
+  let bound = chatSession.id;
+  let document = new ChatDocument(`session:${bound ?? "new"}`, state.folds);
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
-  // The first snapshot came, so a page can load.
-  let opened = false;
-  let loading = false;
-  // The oldest saved event is in the transcript.
-  let complete = false;
-  let historyError: string | undefined;
+  // The status of the transcript at the last change, so a new retry starts its countdown once.
+  let status: Status | undefined;
   // The saved place waits until its item loads.
   let restore = state.viewport;
   // One send, model choice, or image paste at a time. Another one does nothing until it ends, also while a picker is
@@ -188,37 +187,26 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     chat.refresh();
   };
 
-  /** Load one page: the newest part of a gap first, else the page before the first held event. */
-  const load = async (): Promise<void> => {
-    if (session === undefined || !opened || loading || historyError !== undefined) return;
-    const id = session;
-    const gap = transcript.gap;
-    const first = transcript.first;
-    let page: EventsPage;
-    if (gap !== undefined) page = { ...gap, limit: Math.min(PAGE, gap.limit) };
-    else if (complete || first === undefined) return;
-    else page = { before: first, limit: PAGE };
-    loading = true;
-    try {
-      const events = await sessions.events(id, page);
-      if (mount.signal.aborted) return;
-      transcript.insert(events);
-      // A page that adds nothing older ends the history, so a load never repeats it.
-      if (gap === undefined && transcript.first === first) complete = true;
-    } catch (error) {
-      if (mount.signal.aborted) return;
-      historyError = `the history did not load: ${String(error)}`;
-    } finally {
-      loading = false;
-    }
-    changed();
-  };
+  /** Load one page of history. */
+  const load = (): Promise<void> => chatSession.older();
 
-  const event = (update: ViewEvent): void => {
-    const status = transcript.status;
-    transcript.apply(update);
+  // The pane follows each change of its session: the working row, the question, and the next layout.
+  chatSession.onChange(() => {
+    const transcript = chatSession.transcript;
+    if (chatSession.id !== bound) {
+      // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
+      document = new ChatDocument(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
+      if (bound !== undefined) {
+        restore = undefined;
+        view.scroll.followTail();
+      }
+      bound = chatSession.id;
+      stopWorking();
+      chat.moved(pane);
+    }
     // The working row counts from the first running state that the pane sees, and a retry counts down from its event.
-    if (transcript.state === "running") {
+    // An ended handle gets no more events, so its last state does not count.
+    if (chatSession.handle !== undefined && transcript.state === "running") {
       if (working === undefined) {
         working = tui.now();
         tick();
@@ -226,50 +214,22 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     } else stopWorking();
     const next = transcript.status;
     if (next !== status && next?.kind === "retry_scheduled") retryAt = tui.now() + next.afterMs;
-    if ("snapshot" in update) opened = true;
+    status = next;
     syncQuestion();
     changed();
-    if (transcript.gap !== undefined) void load();
-  };
+  });
 
-  /**
-   * Open the session `id` for this pane. A failure before the close of the pane gives one notice and no handle. The
-   * next send, model choice, or image paste opens the session again, also after a close by another client.
-   */
-  const open = (id: SessionId): Promise<SessionHandle | undefined> =>
-    sessions.open(id, { tail: TAIL, signal: mount.signal, event }).then(
-      (opened) => {
-        handle = opened;
-        // The snapshot came before the handle, so its jobs show only now.
-        chat.refresh();
-        opened.signal.addEventListener(
-          "abort",
-          () => {
-            // The close of the pane ends its handle too, and then nothing is left to do.
-            if (handle !== opened || mount.signal.aborted) return;
-            handle = undefined;
-            opening = undefined;
-            stopWorking();
-            // No close update comes for the questions of an ended handle, and the next open shows them again.
-            asking?.overlay?.close();
-            asking = undefined;
-            tui.requestFrame();
-            chat.refresh();
-          },
-          { once: true },
-        );
-        return opened;
-      },
-      (error: unknown) => {
-        opening = undefined;
-        if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not open: ${String(error)}`);
-        return undefined;
-      },
-    );
+  /** Open the session `id` of a restored pane. A failure gives one notice, and the next send opens it again. */
+  const openSaved = (id: SessionId): void => {
+    chatSession.open(id).catch((error: unknown) => {
+      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not open: ${String(error)}`);
+    });
+  };
 
   /** Answer the shown question once. A failed answer, as after an answer of another client, gives a notice. */
   const answer = (response: InteractionResponse): void => {
     const current = asking;
+    const handle = chatSession.handle;
     if (current === undefined || current.answered || handle === undefined) return;
     current.answered = true;
     try {
@@ -282,10 +242,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   /**
    * Show the first open question, and drop the view of a closed one. A modal question opens only while this pane has
-   * the focus, so it waits for another modal to close.
+   * the focus, so it waits for another modal to close. The questions of an ended handle show again after the next open.
    */
   function syncQuestion(): void {
-    const head = transcript.questions.entries().next().value;
+    const transcript = chatSession.transcript;
+    const head = chatSession.handle === undefined ? undefined : transcript.questions.entries().next().value;
     if (head?.[0] !== asking?.id) {
       asking?.overlay?.close();
       asking =
@@ -322,12 +283,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   const group = {};
   const view = new TextView({
-    document: document.project(transcript),
+    document: document.project(chatSession.transcript),
     role: "transcript",
     group,
     copyOnRelease: chat.copyOnRelease,
     followTail: true,
     activate: (position, link) => {
+      const transcript = chatSession.transcript;
       if (link === undefined) {
         if (position.section === "title" && document.toggle(transcript, position.item)) changed();
         return;
@@ -472,12 +434,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     try {
       const settings = await settingsOf(true);
       if (settings === undefined || mount.signal.aborted) return;
-      if (session === undefined) return;
-      // A failed open gave its notice already.
+      const id = chatSession.id;
+      if (id === undefined) return;
       const target = await sessionHandle();
       if (target === undefined || mount.signal.aborted) return;
-      const current = transcript.settings;
-      if (current === undefined) throw new Error(`the session ${session} is not open`);
+      const current = chatSession.transcript.settings;
+      if (current === undefined) throw new Error(`the session ${id} is not open`);
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     } catch (error) {
@@ -488,30 +450,26 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
-   * The handle of the session of this pane.
-   * A pane without a session uses the saved choice, else a picker.
-   * Return `undefined` after a cancel, or after a failure that gave its notice.
+   * The handle of the session of this pane. A pane without a session uses the saved choice, else a picker. Return
+   * `undefined` after a cancel, or after a failure of the models or of the open that gave its notice.
    */
   const sessionHandle = async (): Promise<SessionHandle | undefined> => {
-    if (session === undefined) {
-      let settings: SessionSettings | undefined;
-      try {
-        settings = await settingsOf(false);
-      } catch (error) {
-        if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
-        return undefined;
-      }
-      if (settings === undefined || mount.signal.aborted) return undefined;
-      const id = await sessions.create(settings);
-      if (mount.signal.aborted) return undefined;
-      session = id;
-      document = new ChatDocument(`session:${id}`, document.folds);
-      opening = open(id);
-      changed();
+    const id = chatSession.id;
+    try {
+      return await chatSession.ensure(async () => {
+        try {
+          return await settingsOf(false);
+        } catch (error) {
+          if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
+          return undefined;
+        }
+      });
+    } catch (error) {
+      // The failure of a new session goes to the caller.
+      if (id === undefined) throw error;
+      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not open: ${String(error)}`);
+      return undefined;
     }
-    // A failed open opens again here, and the open gives its own notice.
-    opening ??= open(session);
-    return handle ?? (await opening);
   };
 
   /**
@@ -580,11 +538,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     mount.signal.addEventListener("abort", stop, { once: true });
   }
   // The open comes after the views, because its snapshot can show a question.
-  if (session !== undefined) opening = open(session);
+  if (chatSession.id !== undefined) openSaved(chatSession.id);
 
   /** The waiting messages of the user, oldest first. An input of a plugin stays out of the strip and of a recall. */
   const waiting = (): [InputId, Frozen<Input>][] =>
-    [...transcript.pending]
+    [...chatSession.transcript.pending]
       .filter((entry) => entry[1].source.kind === "user" && entry[1].kind === "message")
       .sort((a, b) => a[0] - b[0]);
 
@@ -601,7 +559,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   /** Take the waiting message `id` back into the composer, above its text. A message that a turn took stays sent. */
   const recall = async (id: InputId, input: Frozen<Input>): Promise<void> => {
-    const target = handle;
+    const target = chatSession.handle;
     if (target === undefined) return;
     recalling = true;
     recalled = id;
@@ -620,7 +578,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   /** Show an older (-1) or a newer (1) message of the user, or the empty composer after the newest one. */
   const browseBy = (step: -1 | 1): void => {
     // The messages of the user in the transcript, oldest first.
-    const list = transcript.entries.filter(
+    const list = chatSession.transcript.entries.filter(
       (entry): entry is Extract<Entry, { kind: "input" }> =>
         entry.kind === "input" && entry.source.kind === "user" && entry.inputKind === "message",
     );
@@ -646,7 +604,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     layout(size: Size): readonly Placement[] {
       if (dirty) {
         dirty = false;
-        view.setDocument(document.project(transcript));
+        view.setDocument(document.project(chatSession.transcript));
       }
       // A question in the composer place hides the composer, and the composer keeps its draft.
       const question = asking !== undefined && chat.questions === "composer" ? asking.asked : undefined;
@@ -671,13 +629,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
-      if (restore !== undefined && opened && view.scroll.state.height > 0) {
+      if (restore !== undefined && chatSession.handle !== undefined && view.scroll.state.height > 0) {
         const key = restore.key;
         if (view.document.items.some((item) => item.key === key)) {
           // A row past the end of a changed item gives its first row.
           if (!view.scroll.scrollToItem(key, restore.row)) view.scroll.scrollToItem(key);
           restore = undefined;
-        } else if (complete || historyError !== undefined) restore = undefined;
+        } else if (chatSession.complete || chatSession.historyError !== undefined) restore = undefined;
         else void load();
       }
       return placements;
@@ -696,7 +654,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       if (working !== undefined && workingRows === 1) {
         const key = tui.keys.keysOf("chat:interrupt")[0];
-        const row = workingText(transcript, working, tui.now(), retryAt, key);
+        const row = workingText(chatSession.transcript, working, tui.now(), retryAt, key);
         canvas.text(0, ruleRow - 1, row.spinner, STYLE.hint);
         const room = Math.max(0, canvas.width - 2);
         const text =
@@ -705,8 +663,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.
-      if (historyError !== undefined) canvas.text(1, ruleRow, ` ${historyError} `, STYLE.error);
-      else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
+      const historyError = chatSession.historyError;
+      if (historyError !== undefined) {
+        canvas.text(1, ruleRow, ` the history did not load: ${String(historyError)} `, STYLE.error);
+      } else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
     },
     get initialFocus(): View {
       return asking !== undefined && chat.questions === "composer" ? asking.asked.focus : composer;
@@ -717,7 +677,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return {
         type: "pane",
         state: {
-          ...(session === undefined ? {} : { session }),
+          ...(chatSession.id === undefined ? {} : { session: chatSession.id }),
           draft: composer.state as unknown as JsonValue,
           folds: document.folds,
           ...(viewport === undefined ? {} : { viewport: { key: viewport.key, row: viewport.row } }),
@@ -726,14 +686,42 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
   };
   chat.panes.set(pane, {
+    session: () => chatSession.id,
+    show: async (id) => {
+      if (busy || recalling) throw new Error("the pane is busy");
+      const before = chatSession.id;
+      busy = true;
+      try {
+        await chatSession.open(id);
+      } finally {
+        busy = false;
+      }
+      // A show of the shown session only opens it again after the end of its handle.
+      if (mount.signal.aborted || id === before) return;
+      // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
+      // draft goes with the pane, below the saved draft of `id`.
+      const draft = composer.state;
+      const saved = chat.drafts.get(id);
+      chat.drafts.delete(id);
+      if (before === undefined) {
+        if (saved !== undefined) composer.reset(joined(saved, draft));
+      } else {
+        // Another pane can leave a draft of the same session, and both drafts stay.
+        const other = chat.drafts.get(before);
+        if (draft.text !== "") chat.drafts.set(before, other === undefined ? draft : joined(other, draft));
+        composer.reset(saved ?? EMPTY);
+      }
+      browse = undefined;
+      recalled = undefined;
+    },
     status: () => ({
-      bound: session !== undefined,
-      settings: transcript.settings,
-      usage: transcript.usage,
-      jobs: handle?.jobs().length ?? 0,
+      bound: chatSession.id !== undefined,
+      settings: chatSession.transcript.settings,
+      usage: chatSession.transcript.usage,
+      jobs: chatSession.handle?.jobs().length ?? 0,
     }),
     toggleTools: () => {
-      document.toggleTools(transcript);
+      document.toggleTools(chatSession.transcript);
       changed();
     },
     send: () => void send(),
@@ -750,7 +738,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     newer: () => browseBy(1),
     clear: () => {
-      if (composer.state.text === "") handle?.cancel();
+      if (composer.state.text === "") chatSession.handle?.cancel();
       else {
         composer.reset(EMPTY);
         browse = undefined;
@@ -759,7 +747,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     interrupt: () => {
       if (view.selection !== undefined) view.selection = undefined;
-      else handle?.cancel();
+      else chatSession.handle?.cancel();
     },
     scroll: (to) => {
       const step = Math.max(1, view.scroll.state.height - 1);

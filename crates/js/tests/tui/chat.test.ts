@@ -102,7 +102,7 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   using other = createFrame({ width: 21, height: 4 });
   const failed = loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
-  await Promise.resolve();
+  await settle();
   equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });

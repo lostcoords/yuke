@@ -12,6 +12,7 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
+import type { ChatService } from "yuke:chat";
 import type {
   Blob,
   Block,
@@ -77,11 +78,15 @@ export type {
  * - `tui`: the terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`.
  * - `sessions`: the sessions, in each mode.
  * - `catalog`: the providers and their models, in each mode.
+ *
+ * The bundled chat provides `chat`, the chat panes of the terminal interface. A plugin that uses it needs a `uses`
+ * entry.
  */
 export interface Services {
   readonly tui: Tui | undefined;
   readonly sessions: Sessions;
   readonly catalog: Catalog;
+  readonly chat: ChatService;
 }
 
 /**

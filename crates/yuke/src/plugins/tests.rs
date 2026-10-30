@@ -33,7 +33,12 @@ fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
 }
 
 /// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
-fn load_with(bundled: &[(&str, &str)], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
+fn load_with(
+    bundled: &[(&str, &str, &[&str])],
+    root: &Path,
+    list: &[&str],
+    disable: &[&str],
+) -> Result<Vec<Plugin>, String> {
     let config = Config {
         plugins: list
             .iter()
@@ -213,10 +218,10 @@ fn the_order_of_the_list_is_the_load_order_so_a_provider_comes_first() {
     assert_eq!(load(&root, &["notes", "reader"]).map(|plugins| plugins.len()), Ok(2));
 }
 
-/// Two bundled plugins of a test.
-const BUNDLED_PAIR: &[(&str, &str)] = &[
-    ("first", "yuke:internal/bundled/first"),
-    ("second", "yuke:internal/bundled/second"),
+/// Two bundled plugins of a test. The second one provides `pairs`.
+const BUNDLED_PAIR: &[(&str, &str, &[&str])] = &[
+    ("first", "yuke:internal/bundled/first", &[]),
+    ("second", "yuke:internal/bundled/second", &["pairs"]),
 ];
 
 #[test]
@@ -238,10 +243,25 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
             data_dir: root.join("data/plugins/second"),
             options: Map::new(),
             uses: Vec::new(),
-            provides: Vec::new(),
+            provides: vec!["pairs".to_owned()],
         }
     );
     assert!(root.join("data/plugins/second").is_dir());
+}
+
+#[test]
+fn a_profile_plugin_uses_the_service_of_a_bundled_plugin_until_its_disable() {
+    let root = place("bundled_service");
+    write_plugin(&root, "config/mine", &manifest("mine", &json!({ "uses": ["pairs"] })));
+
+    let loaded = load_with(BUNDLED_PAIR, &root, &["mine"], &[]).map(|plugins| plugins.len());
+    let refused = load_with(BUNDLED_PAIR, &root, &["mine"], &["second"]);
+
+    assert_eq!(loaded, Ok(3));
+    assert_eq!(
+        refused,
+        Err("plugin mine: it uses 'pairs', and no plugin of the list provides it".to_owned())
+    );
 }
 
 #[test]
