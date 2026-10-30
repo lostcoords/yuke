@@ -5,7 +5,7 @@
  */
 
 import { ChatComposer, ChatDocument, ChatSession } from "yuke:chat";
-import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
+import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
 import { EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/chat/composer";
@@ -18,8 +18,6 @@ import type {
   InputId,
   InteractionId,
   InteractionResponse,
-  ModelReference,
-  ReasoningLevel,
   SessionId,
   SessionSettings,
   Usage,
@@ -141,8 +139,8 @@ export interface Chat {
   readonly panes: WeakMap<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
   readonly refresh: () => void;
-  /** Take `choice` as the saved pick. The pane calls it after a save of `choice.json` succeeds. */
-  readonly chosen: (choice: { readonly model: ModelReference; readonly reasoning: ReasoningLevel }) => void;
+  /** The saved pick of a new session. */
+  readonly choice: SavedChoice;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
 }
@@ -414,18 +412,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
-    let saved: { model: ModelReference; reasoning: ReasoningLevel } | undefined;
-    if (!pick) {
-      try {
-        saved = JSON.parse(await readTextFile("choice.json", { baseDir: ctx.dataDir, fatal: true }));
-      } catch (error) {
-        if (!(error instanceof FileSystemError && error.code === "ENOENT")) {
-          ctx.notify("error", `the model choice did not load: ${String(error)}`);
-        }
-      }
-    }
+    const saved = pick ? undefined : await chat.choice.loaded();
     let chosen = models.find(
-      (entry) => entry.provider === saved?.model?.provider && entry.model.id === saved?.model?.model,
+      (entry) => entry.provider === saved?.model.provider && entry.model.id === saved?.model.model,
     );
     let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
     if (chosen === undefined || reasoning === undefined) {
@@ -435,8 +424,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (reasoning === undefined) return undefined;
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
-        await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: ctx.dataDir, atomic: true });
-        chat.chosen(choice);
+        await chat.choice.save(choice);
       } catch (error) {
         // The session can start without the saved choice. The next new pane asks again.
         ctx.notify("error", `the model choice did not save: ${String(error)}`);

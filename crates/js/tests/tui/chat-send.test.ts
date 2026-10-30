@@ -114,6 +114,7 @@ test("without a saved choice the first send asks for the model and level, and a 
 for (const choice of [
   { model: { provider: "p", model: "gone" }, reasoning: "high" },
   { model: { provider: "p", model: "m" }, reasoning: "low" },
+  { reasoning: "high" },
 ]) {
   test(`a stale choice ${JSON.stringify(choice)} opens the picker without a notice`, async () => {
     await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: folder() });
@@ -184,9 +185,16 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   await settle();
   frame.key("enter");
   await waitFor(() => sessions.inputs.length === 1);
+  // A new pane without a session shows no pick, because the pick did not save.
+  chat.tui.commands.run("core:split-right");
+  frame.draw();
   equal(
-    [chat.notices.map((notice) => notice.split(":")[0]), sessions.inputs],
-    [["error the model choice did not load", "error the model choice did not save"], [[{ user_text: "hi" }]]],
+    [
+      chat.notices.map((notice) => notice.split(":")[0]),
+      sessions.inputs,
+      chat.tui.status.list().some((item) => item.key === "chat:model"),
+    ],
+    [["error the model choice did not load", "error the model choice did not save"], [[{ user_text: "hi" }]], false],
   );
 });
 

@@ -6,10 +6,10 @@
  */
 
 import { chatStyles } from "yuke:chat";
-import { readTextFile } from "yuke:fs";
+import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
-import type { ModelInfo, ModelReference, ReasoningLevel } from "yuke:protocol";
+import type { ModelInfo } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
 import type { View } from "yuke:tui";
 
@@ -186,10 +186,10 @@ export function apply(ctx: PluginContext<Options>): undefined {
     questions: ctx.options.questions ?? "composer",
     panes,
     refresh: () => publish(),
-    chosen: (choice) => {
-      saved = choice;
-      publish();
-    },
+    // The read can end after the stop of the plugin, and then no notice comes.
+    choice: new SavedChoice(ctx.dataDir, (error) => {
+      if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
+    }),
     moved: (view) => {
       for (const listener of listeners) {
         try {
@@ -201,19 +201,8 @@ export function apply(ctx: PluginContext<Options>): undefined {
       }
     },
   };
-  // The first send of a pane without a session uses this pick, so the bar shows it.
-  let saved: { readonly model: ModelReference; readonly reasoning: ReasoningLevel } | undefined;
-  readTextFile("choice.json", { baseDir: ctx.dataDir, fatal: true })
-    .then((text) => JSON.parse(text))
-    .then(
-      (choice) => {
-        // A pick of the user can come before the end of this read, and the newer pick wins.
-        saved ??= choice;
-        publish();
-      },
-      // A missing file shows no model. The first send reports a broken file.
-      () => {},
-    );
+  // The first send of a pane without a session uses the saved pick, so the bar shows it.
+  chat.choice.onChange(() => publish());
   const active = (): PaneActions | undefined => {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
@@ -244,7 +233,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
     if (status === undefined || settings === undefined) {
       for (const key of ["context", "jobs"]) tui.status.delete(key);
       // A pane without a session shows the saved pick that its first send uses, while the catalog still has it.
-      const pick = status === undefined || status.bound ? undefined : saved;
+      const pick = status === undefined || status.bound ? undefined : chat.choice.current;
       const level = models
         ?.get(`${pick?.model.provider}/${pick?.model.model}`)
         ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
