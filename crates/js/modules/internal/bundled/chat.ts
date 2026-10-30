@@ -4,10 +4,11 @@
  * the draft, the folds, and the scroll place of each pane. Each command acts on the active pane.
  */
 
+import { readTextFile } from "yuke:fs";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import { STYLES } from "yuke:internal/bundled/chat/rows";
 import type { PluginContext } from "yuke:plugins";
-import type { ModelInfo } from "yuke:protocol";
+import type { ModelInfo, ModelReference, ReasoningLevel } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
 
 export const optionsSchema = {
@@ -159,7 +160,24 @@ export function apply(ctx: PluginContext<Options>): undefined {
     questions: ctx.options.questions ?? "composer",
     panes: new WeakMap(),
     refresh: () => publish(),
+    chosen: (choice) => {
+      saved = choice;
+      publish();
+    },
   };
+  // The first send of a pane without a session uses this pick, so the bar shows it.
+  let saved: { readonly model: ModelReference; readonly reasoning: ReasoningLevel } | undefined;
+  readTextFile("choice.json", { baseDir: ctx.dataDir, fatal: true })
+    .then((text) => JSON.parse(text))
+    .then(
+      (choice) => {
+        // A pick of the user can come before the end of this read, and the newer pick wins.
+        saved ??= choice;
+        publish();
+      },
+      // A missing file shows no model. The first send reports a broken file.
+      () => {},
+    );
   const active = (): PaneActions | undefined => {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
@@ -188,7 +206,14 @@ export function apply(ctx: PluginContext<Options>): undefined {
     const status = active()?.status();
     const settings = status?.settings;
     if (status === undefined || settings === undefined) {
-      for (const key of ["model", "context", "jobs"]) tui.status.delete(key);
+      for (const key of ["context", "jobs"]) tui.status.delete(key);
+      // A pane without a session shows the saved pick that its first send uses, while the catalog still has it.
+      const pick = status === undefined || status.bound ? undefined : saved;
+      const level = models
+        ?.get(`${pick?.model.provider}/${pick?.model.model}`)
+        ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
+      if (pick === undefined || level === undefined) tui.status.delete("model");
+      else tui.status.set("model", { text: `${pick.model.model} ${level}`, side: "right", order: 10 });
       return;
     }
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);

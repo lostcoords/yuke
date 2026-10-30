@@ -122,3 +122,59 @@ test("the first send of a new pane shows the jobs of its session once the handle
     ["chat:model", "chat:jobs"],
   );
 });
+
+/** The keys of the status items of `chat` and their texts. */
+function shownItems(chat: ReturnType<typeof loadChat>): string[][] {
+  return chat.tui.status.list().map((item) => [item.key, item.text]);
+}
+
+/** Wait until `done` holds. A file operation ends on another thread. */
+async function until(done: () => boolean): Promise<void> {
+  while (!done()) await new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+test("a pane without a session shows the saved pick, and a new pick replaces it", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w" });
+  const chat = loadChat(frame);
+  frame.start();
+  await until(() => shownItems(chat).length > 0);
+  const first = shownItems(chat);
+  frame.key("ctrl+k m");
+  await settle();
+  frame.key("down");
+  frame.key("enter");
+  await settle();
+  frame.key("down");
+  frame.key("enter");
+  await until(() => shownItems(chat)[0]?.[1] !== "m high");
+  equal([first, shownItems(chat)], [[["chat:model", "m high"]], [["chat:model", "n low"]]]);
+});
+
+test("a saved pick that the catalog no longer has shows nothing", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"low"}', { baseDir: folder() });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w" });
+  const chat = loadChat(frame);
+  frame.start();
+  // Nothing shows when the check works, so the test gives the read of the file a bounded time.
+  for (let tries = 0; tries < 50 && shownItems(chat).length === 0; tries += 1) await settle();
+  equal(shownItems(chat), []);
+});
+
+test("a pane whose session does not open shows no saved pick", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "missing" });
+  const chat = loadChat(frame);
+  frame.start();
+  // A new pane without a session shows the pick when the read of the file ends.
+  chat.tui.commands.run("core:split-right");
+  frame.draw();
+  await until(() => shownItems(chat).length > 0);
+  chat.tui.commands.run("core:focus-left");
+  frame.draw();
+  equal(shownItems(chat), []);
+});

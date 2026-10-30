@@ -99,8 +99,9 @@ export interface PaneActions {
   readonly asking: () => boolean;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
-  /** What the status bar shows of the session of the pane. */
+  /** What the status bar shows of the session of the pane. `bound` is true when the pane has a session. */
   readonly status: () => {
+    readonly bound: boolean;
     readonly settings: Frozen<SessionSettings> | undefined;
     readonly usage: Frozen<Usage> | undefined;
     readonly jobs: number;
@@ -121,6 +122,8 @@ export interface Chat {
   readonly panes: WeakMap<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
   readonly refresh: () => void;
+  /** Take `choice` as the saved pick. The pane calls it after a save of `choice.json` succeeds. */
+  readonly chosen: (choice: { readonly model: ModelReference; readonly reasoning: ReasoningLevel }) => void;
 }
 
 /**
@@ -405,12 +408,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (chosen === undefined) return undefined;
       reasoning = await choose(chosen.model.reasoning, (choice) => choice.level);
       if (reasoning === undefined) return undefined;
+      const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
-        await writeTextFile(
-          "choice.json",
-          JSON.stringify({ model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level }),
-          { baseDir: ctx.dataDir, atomic: true },
-        );
+        await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: ctx.dataDir, atomic: true });
+        chat.chosen(choice);
       } catch (error) {
         // The session can start without the saved choice. The next new pane asks again.
         ctx.notify("error", `the model choice did not save: ${String(error)}`);
@@ -682,7 +683,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
   };
   chat.panes.set(pane, {
-    status: () => ({ settings: transcript.settings, usage: transcript.usage, jobs: handle?.jobs().length ?? 0 }),
+    status: () => ({
+      bound: session !== undefined,
+      settings: transcript.settings,
+      usage: transcript.usage,
+      jobs: handle?.jobs().length ?? 0,
+    }),
     toggleTools: () => {
       document.toggleTools(transcript);
       changed();
