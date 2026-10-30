@@ -1,10 +1,12 @@
-// `ChatSession` of `yuke:chat`: the open of a session in place of another, the first session of a chat, and pages.
+// `ChatSession` and `ChatComposer` of `yuke:chat`: the open of a session in place of another, the first session of a
+// chat, pages, and the send and the recall of a draft in a bare editor.
 
-import { ChatSession } from "yuke:chat";
+import { ChatComposer, ChatSession } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
 import { equal, test } from "yuke:test";
-import { commit, fakeSessions, replies, SETTINGS } from "./tui/chat.ts";
+import { TextEditor } from "yuke:tui";
+import { commit, fakeSessions, replies, SETTINGS, settle } from "./tui/chat.ts";
 
 /** The texts of the replies in the transcript of `chat`. */
 function texts(chat: ChatSession): string[] {
@@ -111,4 +113,52 @@ test("the end of the owner ends the handle and its hold", async () => {
   await chat.open("s1");
   owner.abort();
   equal([chat.handle, sessions.opened.map((open) => open.signal.aborted)], [undefined, [true]]);
+});
+
+test("a composer sends the draft, and a refused input comes back above newer text and rejects", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  const editor = new TextEditor();
+  const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
+  editor.replace(0, 0, "first");
+  await composer.send();
+  const { promise, reject } = Promise.withResolvers<void>();
+  sessions.state.accept = promise;
+  editor.replace(0, 0, "second");
+  const sending = composer.send().then(
+    () => "",
+    (error: unknown) => String(error),
+  );
+  // The send takes the draft after the handle comes, so later text stays in the editor.
+  await settle();
+  editor.replace(0, 0, "newer");
+  reject(new Error("refused"));
+  equal(
+    [sessions.inputs, await sending, editor.state.text],
+    [[[{ user_text: "first" }], [{ user_text: "second" }]], "Error: refused", "second\nnewer"],
+  );
+});
+
+test("older recalls the newest waiting message, and gives taken when a turn took it first", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  const editor = new TextEditor();
+  const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
+  const waiting = (id: number, text: string) =>
+    sessions.push({
+      sessionUpdate: "input_accepted",
+      inputId: id,
+      input: { source: { kind: "user" }, kind: "message", content: [{ user_text: text }] },
+    });
+  waiting(5, "older");
+  waiting(6, "newest");
+  const recalled = await composer.older();
+  const text = editor.state.text;
+  sessions.state.removed = false;
+  const taken = await composer.older();
+  equal([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
 });

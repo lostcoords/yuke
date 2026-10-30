@@ -10,10 +10,10 @@
  * ```
  */
 declare module "yuke:chat" {
-  import type { SessionHandle, Sessions } from "yuke:plugins";
-  import type { SessionId, SessionSettings } from "yuke:protocol";
+  import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
+  import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { StylePatch, TextDocument, View } from "yuke:tui";
+  import type { EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
 
   /**
    * The session of one chat view, with no terminal interface: its id, its handle, its transcript, and the pages of its
@@ -48,6 +48,50 @@ declare module "yuke:chat" {
     older(): Promise<void>;
     /** Call `listener` after each change: an open, an event, the end of the handle, or a page. */
     onChange(listener: () => void): () => void;
+  }
+
+  export interface ChatComposerOptions {
+    /** The handle for a send. `undefined` cancels the send, and the draft stays. */
+    readonly handle: () => Promise<SessionHandle | undefined>;
+    /** Its abort removes the watch of the editor by the composer. */
+    readonly signal: AbortSignal;
+  }
+
+  /**
+   * The behavior of a composer on a `TextEditor`: the send of its draft, the recall of a waiting message, and the
+   * history of the messages of the user. It gives no notices: a failure rejects to the caller. One composer owns its
+   * editor: two composers on one editor send one draft twice.
+   *
+   * ```ts
+   * const composer = new ChatComposer(chat, editor, { handle: () => chat.ensure(pick), signal: mount.signal });
+   * // enter: composer.send()   up: composer.older()   down: composer.newer()
+   * ```
+   */
+  export class ChatComposer {
+    constructor(chat: ChatSession, editor: TextEditor, options: ChatComposerOptions);
+    /** A send or a recall runs. */
+    get busy(): boolean;
+    /** The editor shows an older message of the user. */
+    get browsing(): boolean;
+    /** `older()` has something to do: a recall, a browse, or an empty editor. */
+    get canOlder(): boolean;
+    /** The waiting messages of the user, oldest first. An input of a plugin is not one of them. */
+    get waiting(): [InputId, Frozen<Input>][];
+    /**
+     * Send the draft. The draft of the send is the one after `handle()`, and the editor then empties. A refused input
+     * comes back above the newer text, and the promise rejects. An empty draft or a running send does nothing.
+     */
+    send(): Promise<void>;
+    /**
+     * Recall the newest waiting message into an empty editor, and each next older one above the recalled text. Without a
+     * recall, an empty editor or a shown message gets an older message of the user. `"taken"` when a turn took the
+     * message first.
+     */
+    older(): Promise<"taken" | undefined>;
+    /** Show a newer message of the user, or the empty editor after the newest one. */
+    newer(): void;
+    /** Put `draft` in the editor, and end a browse. A running recall puts its message above `draft` when it ends. */
+    setDraft(draft: EditorState): void;
   }
 
   /**

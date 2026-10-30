@@ -4,11 +4,11 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import { ChatDocument, ChatSession } from "yuke:chat";
+import { ChatComposer, ChatDocument, ChatSession } from "yuke:chat";
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
-import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
+import { EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
@@ -24,7 +24,7 @@ import type {
   SessionSettings,
   Usage,
 } from "yuke:protocol";
-import type { Entry, Status } from "yuke:transcript";
+import type { Status } from "yuke:transcript";
 import {
   type Canvas,
   type CommandItem,
@@ -166,15 +166,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let status: Status | undefined;
   // The saved place waits until its item loads.
   let restore = state.viewport;
-  // One send, model choice, or image paste at a time. Another one does nothing until it ends, also while a picker is
-  // open.
+  // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
+  // until it ends, also while a picker is open, and a show rejects.
   let busy = false;
-  // The key of the shown message of a browse. A browse starts in an empty composer, so its end empties it again.
-  let browse: string | undefined;
-  // The last recalled pending input. The next ↑ recalls an older one, until an edit or a caret move.
-  let recalled: InputId | undefined;
-  // A recall waits for its removal. Until the removal ends, ↑ does nothing.
-  let recalling = false;
   // The first open question of the session and its view. The others wait in order. A sent answer waits for the close.
   // The start of the running turn on the clock of the tui, and the end of the wait of a scheduled retry.
   let working: number | undefined;
@@ -371,15 +365,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (!tui.commands.run(command.name)) composer.reset(draft);
     return true;
   }, "beforeKeymap");
-  // An edit of the shown message ends the browse, so the edited text stays. An edit or a caret move ends a recall,
-  // so ↑ moves the caret again.
   extension.onChange((change) => {
     if (change.kind !== "selection") slashAt = 0;
     // A cleared or changed draft ends the hide, so the same word typed again shows the list.
     if (composer.state.text !== slashHidden) slashHidden = undefined;
-    if (change.kind === "edit") browse = undefined;
-    if (change.kind === "edit" || change.kind === "selection") recalled = undefined;
   });
+  const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
   /**
    * Let the user choose one of `items` in a picker above the composer. Return `undefined` when no item is chosen. The
@@ -514,35 +505,26 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
-  /**
-   * Send the draft. The pane gets its session first, and a cancel keeps the draft. Then the composer clears, so the
-   * user can type the next message. A refused input comes back above the newer text.
-   */
+  /** Send the draft. A refused input comes back in the composer, with a notice. */
   const send = async (): Promise<void> => {
-    if (busy || blocksOf(composer.state).length === 0) return;
+    if (busy) return;
     busy = true;
-    let draft: EditorState | undefined;
     try {
-      const target = await sessionHandle();
-      if (target === undefined || mount.signal.aborted) return;
-      // The draft of the send is the one after the setup, so text typed meanwhile goes with it.
-      draft = composer.state;
-      const blocks = blocksOf(draft);
-      if (blocks.length === 0) return;
-      composer.reset(EMPTY);
-      browse = undefined;
-      recalled = undefined;
-      await target.input(blocks);
+      await chatComposer.send();
     } catch (error) {
-      if (mount.signal.aborted) return;
-      if (draft !== undefined) {
-        browse = undefined;
-        recalled = undefined;
-        composer.reset(joined(draft, composer.state));
-      }
-      ctx.notify("error", `the message did not send: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `the message did not send: ${String(error)}`);
     } finally {
       busy = false;
+    }
+  };
+
+  /** Recall a waiting message or show an older message. A failed recall or a message that a turn took gives a notice. */
+  const older = async (): Promise<void> => {
+    try {
+      const result = await chatComposer.older();
+      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "the message reached the turn already");
+    } catch (error) {
+      if (!mount.signal.aborted) ctx.notify("error", `the message did not come back: ${String(error)}`);
     }
   };
 
@@ -582,61 +564,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // The open comes after the views, because its snapshot can show a question.
   if (chatSession.id !== undefined) openSaved(chatSession.id);
 
-  /** The waiting messages of the user, oldest first. An input of a plugin stays out of the strip and of a recall. */
-  const waiting = (): [InputId, Frozen<Input>][] =>
-    [...chatSession.transcript.pending]
-      .filter((entry) => entry[1].source.kind === "user" && entry[1].kind === "message")
-      .sort((a, b) => a[0] - b[0]);
-
-  /**
-   * The message that ↑ recalls. An empty composer recalls the newest one. After a recall, ↑ recalls the next older one,
-   * also after a recall that came too late.
-   */
-  const recallable = (): [InputId, Frozen<Input>] | undefined => {
-    const before = recalled;
-    // A browse starts only when no message is recallable, and new messages wait after the recalled one.
-    if (before === undefined && composer.state.text !== "") return undefined;
-    return waiting().findLast((entry) => before === undefined || entry[0] < before);
-  };
-
-  /** Take the waiting message `id` back into the composer, above its text. A message that a turn took stays sent. */
-  const recall = async (id: InputId, input: Frozen<Input>): Promise<void> => {
-    const target = chatSession.handle;
-    if (target === undefined) return;
-    recalling = true;
-    recalled = id;
-    try {
-      const removed = await target.removeInput(id);
-      if (mount.signal.aborted) return;
-      if (removed) composer.reset(joined(draftOf(input.content), composer.state));
-      else ctx.notify("info", "the message reached the turn already");
-    } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the message did not come back: ${String(error)}`);
-    } finally {
-      recalling = false;
-    }
-  };
-
-  /** Show an older (-1) or a newer (1) message of the user, or the empty composer after the newest one. */
-  const browseBy = (step: -1 | 1): void => {
-    // The messages of the user in the transcript, oldest first.
-    const list = chatSession.transcript.entries.filter(
-      (entry): entry is Extract<Entry, { kind: "input" }> =>
-        entry.kind === "input" && entry.source.kind === "user" && entry.inputKind === "message",
-    );
-    const at = browse === undefined ? list.length : list.findIndex((entry) => entry.key === browse);
-    const next = list[at + step];
-    if (next === undefined) {
-      if (step === 1 && browse !== undefined) {
-        composer.reset(EMPTY);
-        browse = undefined;
-      } else if (step === -1) void chatSession.older();
-      return;
-    }
-    browse = next.key;
-    composer.reset(draftOf(next.content));
-  };
-
   // The layout keeps the row of the rule and the shown waiting messages for the draw. Without a free row, the pane
   // draws no rule.
   let ruleRow = -1;
@@ -661,7 +588,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const workingRows = working !== undefined && ruleRow - slashRows > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
       // rows run out, the strip keeps the newest messages.
-      const list = waiting();
+      const list = chatComposer.waiting;
       const above = Math.max(0, ruleRow - slashRows - workingRows);
       shown = list.slice(Math.max(0, list.length - above));
       const placements = [
@@ -753,7 +680,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   chat.panes.set(pane, {
     session: () => chatSession.id,
     show: async (id) => {
-      if (busy || recalling) throw new Error("the pane is busy");
+      if (busy || chatComposer.busy) throw new Error("the pane is busy");
       const before = chatSession.id;
       busy = true;
       try {
@@ -769,13 +696,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const saved = drafts.get(id);
       drafts.delete(id);
       if (before === undefined) {
-        if (saved !== undefined) composer.reset(joined(saved, draft));
+        if (saved !== undefined) chatComposer.setDraft(joined(saved, draft));
       } else {
         if (draft.text !== "") drafts.set(before, draft);
-        composer.reset(saved ?? EMPTY);
+        chatComposer.setDraft(saved ?? EMPTY);
       }
-      browse = undefined;
-      recalled = undefined;
     },
     status: () => ({
       bound: chatSession.id !== undefined,
@@ -790,23 +715,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     send: () => void send(),
     chooseModel: () => void chooseModel(),
     pasteImage: () => void pasteImage(),
-    browsing: () => browse !== undefined,
+    browsing: () => chatComposer.browsing,
     // A waiting recall keeps ↑, so the key does not move the caret meanwhile.
-    canOlder: () => recalling || browse !== undefined || composer.state.text === "" || recallable() !== undefined,
-    older: () => {
-      if (recalling) return;
-      const next = recallable();
-      if (next !== undefined) void recall(next[0], next[1]);
-      else if (browse !== undefined || composer.state.text === "") browseBy(-1);
-    },
-    newer: () => browseBy(1),
+    canOlder: () => chatComposer.canOlder,
+    older: () => void older(),
+    newer: () => chatComposer.newer(),
     clear: () => {
       if (composer.state.text === "") chatSession.handle?.cancel();
-      else {
-        composer.reset(EMPTY);
-        browse = undefined;
-        recalled = undefined;
-      }
+      else chatComposer.setDraft(EMPTY);
     },
     interrupt: () => {
       if (view.selection !== undefined) view.selection = undefined;
