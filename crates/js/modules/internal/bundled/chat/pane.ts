@@ -143,8 +143,6 @@ export interface Chat {
   readonly refresh: () => void;
   /** Take `choice` as the saved pick. The pane calls it after a save of `choice.json` succeeds. */
   readonly chosen: (choice: { readonly model: ModelReference; readonly reasoning: ReasoningLevel }) => void;
-  /** The draft of each session that a pane left by `show`. */
-  readonly drafts: Map<SessionId, EditorState>;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
 }
@@ -157,6 +155,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
   const chatSession = new ChatSession(ctx.get("sessions"), mount.signal, state.session);
+  // The draft of each session that this pane left by `show`, for the return to it.
+  const drafts = new Map<SessionId, EditorState>();
   // The session that the document belongs to.
   let bound = chatSession.id;
   let document = new ChatDocument(`session:${bound ?? "new"}`, state.folds);
@@ -766,14 +766,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
       // draft goes with the pane, below the saved draft of `id`.
       const draft = composer.state;
-      const saved = chat.drafts.get(id);
-      chat.drafts.delete(id);
+      const saved = drafts.get(id);
+      drafts.delete(id);
       if (before === undefined) {
         if (saved !== undefined) composer.reset(joined(saved, draft));
       } else {
-        // Another pane can leave a draft of the same session, and both drafts stay.
-        const other = chat.drafts.get(before);
-        if (draft.text !== "") chat.drafts.set(before, other === undefined ? draft : joined(other, draft));
+        if (draft.text !== "") drafts.set(before, draft);
         composer.reset(saved ?? EMPTY);
       }
       browse = undefined;

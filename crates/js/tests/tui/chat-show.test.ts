@@ -143,7 +143,7 @@ test("a show of the shown session opens it again after a close by another client
   );
 });
 
-test("two panes that leave one session keep both drafts for the return", async () => {
+test("each pane keeps its own draft of a session that it leaves", async () => {
   using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = loadChat(frame, {}, fakeSessions(replies(2)));
   frame.start();
@@ -157,7 +157,10 @@ test("two panes that leave one session keep both drafts for the return", async (
   chat.tui.commands.run("core:focus-left");
   await chat.chat.show("s2");
   await chat.chat.show("s1");
-  equal(composerOf(chat).state.text, "right\nleft");
+  const left = composerOf(chat).state.text;
+  chat.tui.commands.run("core:focus-right");
+  await chat.chat.show("s1");
+  equal([left, composerOf(chat).state.text], ["left", "right"]);
 });
 
 test("without the terminal interface the service shows no pane", async () => {

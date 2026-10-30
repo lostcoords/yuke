@@ -190,7 +190,6 @@ export function apply(ctx: PluginContext<Options>): undefined {
       saved = choice;
       publish();
     },
-    drafts: new Map(),
     moved: (view) => {
       for (const listener of listeners) {
         try {
