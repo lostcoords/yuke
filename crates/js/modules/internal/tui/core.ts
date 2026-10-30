@@ -142,7 +142,6 @@ export class Core {
 
   /** Give each later change of `tui.focused` to `listener` of the plugin `owner`. A throw reports and removes it. */
   onFocus(owner: string, listener: (change: FocusChange) => void): Disposer {
-    if (typeof listener !== "function") throw new TypeError("a focus listener is a function");
     const entry = { owner, listener };
     this.#focusListeners.add(entry);
     return () => {
@@ -166,7 +165,7 @@ export class Core {
     };
   }
 
-  /** Handle one event of the frame loop. Each one draws a frame after it. */
+  /** Handle one event of the frame loop. The frame loop draws once after a batch of events. */
   event(event: TermEvent): void {
     switch (event.type) {
       case "key": {

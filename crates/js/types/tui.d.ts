@@ -198,7 +198,7 @@ declare module "yuke:tui" {
   /** A notice of the host or of a plugin. A notice with the level, source, and text of the last one raises `count`. */
   export interface Notice {
     readonly level: NoticeLevel;
-    /** The plugin name, `console`, or `host:…`. */
+    /** The plugin name, `console`, `core`, or `host:…`. */
     readonly source: string;
     readonly text: string;
     readonly count: number;

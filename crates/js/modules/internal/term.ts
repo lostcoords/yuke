@@ -61,7 +61,7 @@ export const term = {
       () => draw.call(handler),
     );
   },
-  /** Ask for a frame in `delay` milliseconds. Many asks give one frame, and a frame comes at most 120 times a second. */
+  /** Ask for a frame in `delay` milliseconds. Many asks give one frame, and asked frames come at most 120 times a second. */
   requestFrame(delay = 0): void {
     termRequestFrame(delay);
   },
