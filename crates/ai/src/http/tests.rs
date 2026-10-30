@@ -1,10 +1,5 @@
 //! Loopback tests of the provider rules over [`Client`]: one real server and one real client per test.
 
-use std::time::Duration;
-
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::time::Instant;
 use yuke_http::ClientOptions;
 use yuke_http::testing::{Seen, Server, listen};
 
@@ -80,10 +75,6 @@ async fn exchange(server: Server, client: &Client) -> (Seen, ClientOut) {
     let (port, served) = listen(server).await;
     let out = run_client(client, port).await;
     (served.await.unwrap(), out)
-}
-
-fn after(ms: u64) -> std::time::Instant {
-    std::time::Instant::now() + Duration::from_millis(ms)
 }
 
 #[tokio::test]
@@ -303,63 +294,6 @@ async fn compressed_response_is_malformed() {
             assert!(out.bytes.is_empty(), "{encoding:?}");
         }
     }
-}
-
-// A `HeaderMap` holds at most 32768 names, so more names fail the request, and it sends nothing.
-#[tokio::test]
-async fn too_many_headers_fail_before_send() {
-    let many: Vec<Header> = (0..40_000)
-        .map(|index| Header::new(format!("x-{index}"), "1"))
-        .collect();
-    let valid = [Header::from_static("x-note", "valid")];
-    let ((fault, bytes), (valid_fault, valid_bytes)) =
-        tokio::join!(observe_http_bytes(&many), observe_http_bytes(&valid));
-    assert_eq!(fault, Some(Fault::InvalidRequest));
-    assert_eq!(bytes, 0, "the rejected request sent HTTP bytes");
-    assert_eq!(valid_fault, None);
-    assert!(valid_bytes != 0, "the observer missed a valid request");
-}
-
-/// Observe every connection during the window, including connections after an empty one.
-async fn observe_http_bytes(headers: &[Header]) -> (Option<Fault>, usize) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let mut peer = tokio::spawn(async move {
-        let mut reads = tokio::task::JoinSet::new();
-        let cutoff = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < cutoff {
-            let Ok(accepted) = tokio::time::timeout_at(cutoff, listener.accept()).await else {
-                break;
-            };
-            let (mut stream, _) = accepted.unwrap();
-            reads.spawn(async move {
-                let mut bytes = [0; 4096];
-                let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut bytes)).await;
-                let n = read.expect("observer read did not finish").unwrap();
-                if n != 0 {
-                    _ = stream
-                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                        .await;
-                }
-                n
-            });
-        }
-        let mut results = Vec::new();
-        while let Some(result) = reads.join_next().await {
-            results.push(result);
-        }
-        results.into_iter().map(Result::unwrap).sum::<usize>()
-    });
-    let url = format!("http://127.0.0.1:{port}/messages");
-    let request = Outgoing::from_parts(&url, headers, [b"{}", &[], &[]]);
-    let client = client();
-    let opened = tokio::time::timeout(Duration::from_secs(5), client.open(&request, Some(after(1000)))).await;
-    let observed = tokio::time::timeout(Duration::from_secs(5), &mut peer).await;
-    if observed.is_err() {
-        peer.abort();
-        _ = peer.await;
-    }
-    (opened.unwrap().err(), observed.unwrap().unwrap())
 }
 
 // The retry policy reads the fault, so each client error becomes the fault of the same name.

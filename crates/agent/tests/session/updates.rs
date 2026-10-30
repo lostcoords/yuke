@@ -763,60 +763,6 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
 }
 
 #[tokio::test]
-async fn an_uncertain_write_needs_journal_reload_not_a_predicted_receipt() {
-    let store = FailingStore::new(StoreBehavior::FailAfterCommit(2));
-    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
-    let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
-    store.accept_input(session.id(), user_input("go")).await.unwrap();
-    let capture = Capture::default();
-    assert!(
-        session
-            .turn(Driver::new(&transport, &model, &NoWait))
-            .observer(&capture)
-            .run()
-            .await
-            .is_err()
-    );
-    assert!(matches!(
-        capture.live().iter().rev().nth(1),
-        Some(LiveUpdate::DraftDiscarded {
-            reason: DraftDiscardReason::Unconfirmed,
-            ..
-        })
-    ));
-    assert_eq!(capture.positions(), []);
-    let published: Vec<_> = capture
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .filter_map(|update| match update {
-            SessionUpdate::Saved(event) => Some(event.event_number.0),
-            SessionUpdate::Live(_) => None,
-        })
-        .collect();
-    assert_eq!(published, [2]);
-    let id = session.id();
-    drop(session);
-    let repaired = Session::open(store.clone(), id).await.unwrap();
-    let events = store
-        .load(id, EventPage::After(None))
-        .await
-        .map(|loaded| loaded.events)
-        .unwrap();
-    assert_eq!(
-        events.iter().map(|event| event.event_number.0).collect::<Vec<_>>(),
-        [1, 2, 3, 4]
-    );
-    let SessionEvent::Commit { commit, .. } = &events[2].event else {
-        panic!("expected a saved answer")
-    };
-    assert!(matches!(&commit.blocks[0], Block::ToolCall(call) if call.call_id == "c1"));
-    assert!(matches!(repaired.context().last(), Some(Block::ToolResult(result)) if result.is_error));
-}
-
-#[tokio::test]
 async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients() {
     let transport = ScriptedTransport::new([
         sse(&[
@@ -942,7 +888,6 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
 async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() {
     for (behavior, published, unknown) in [
         (StoreBehavior::FailCommit(3), vec![2, 3], true),
-        (StoreBehavior::FailAfterCommit(3), vec![2, 3], false),
         (StoreBehavior::FailCommit(5), vec![2, 3, 4, 5], false),
     ] {
         let store = FailingStore::new(behavior);

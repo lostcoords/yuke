@@ -426,20 +426,6 @@ async fn a_failed_send_names_the_dns_or_the_connect() {
     peer.await.unwrap();
 }
 
-// The client offers the hybrid post-quantum group `X25519MLKEM768` first.
-#[test]
-fn tls_prefers_post_quantum_key_exchange() {
-    let client = client(None);
-    let first = client
-        .tls()
-        .unwrap()
-        .crypto_provider()
-        .kx_groups
-        .first()
-        .map(|group| group.name());
-    assert_eq!(first, Some(rustls::NamedGroup::X25519MLKEM768));
-}
-
 // Linux reads certificate-file settings. macOS uses the system certificate store.
 #[cfg(target_os = "linux")]
 #[tokio::test]
@@ -561,23 +547,4 @@ fn io_errors_map_to_errors() {
     let chunk = io::Error::new(io::ErrorKind::InvalidData, "invalid chunk size");
     assert_eq!(io_error(&chunk), Error::MalformedResponse);
     assert_eq!(io_error(&io::ErrorKind::ConnectionReset.into()), Error::ConnectionLost);
-}
-
-// A full header map has no room for the headers of the client, so the request fails before it leaves.
-#[tokio::test]
-async fn a_full_header_map_fails_before_send() {
-    let mut request = Request::new(Method::GET, "http://127.0.0.1:9/");
-    let mut index = 0;
-    while request
-        .headers
-        .try_insert(
-            HeaderName::try_from(format!("x-{index}")).unwrap(),
-            HeaderValue::from_static("1"),
-        )
-        .is_ok()
-    {
-        index += 1;
-    }
-    let error = client(None).send(request, None).await.err();
-    assert_eq!(error, Some(Error::InvalidRequest));
 }

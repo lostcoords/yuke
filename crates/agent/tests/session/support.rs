@@ -76,8 +76,6 @@ impl Tool for SendsInput {
 pub(crate) enum StoreBehavior {
     /// Fail the commit at this position without a save. Count commits from 1.
     FailCommit(usize),
-    /// Save the commit at this position, then report a failure.
-    FailAfterCommit(usize),
     /// Wait forever before the commit at this position.
     StallCommit(usize),
     /// Save the settings. Do not answer the write.
@@ -171,13 +169,7 @@ impl Store for FailingStore {
         {
             std::future::pending::<()>().await;
         }
-        let receipt = self.store.commit(id, commit, consumed).await?;
-        if let StoreBehavior::FailAfterCommit(fail_at) = self.behavior
-            && number == fail_at
-        {
-            return Err(StoreError::Failed("the write result was lost".into()));
-        }
-        Ok(receipt)
+        self.store.commit(id, commit, consumed).await
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {

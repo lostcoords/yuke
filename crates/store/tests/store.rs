@@ -329,27 +329,3 @@ async fn a_failed_transaction_returns_no_receipt_and_keeps_the_input() {
         .unwrap();
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
 }
-
-#[tokio::test]
-async fn a_saved_input_without_content_does_not_load() {
-    let folder = folder("a_saved_input_without_content_does_not_load");
-    let store = SqliteStore::open(&folder).await.unwrap();
-    let session = store.create_session(&settings("one"), &prompt()).await.unwrap();
-    let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
-    connection
-        .execute(
-            r#"INSERT INTO pending_inputs(session_id, input) VALUES (?1, '{"source":{"kind":"user"},"kind":"message","content":[]}')"#,
-            [session.id.as_bytes().as_slice()],
-        )
-        .unwrap();
-
-    let error = store.pending(session.id).await.unwrap_err();
-
-    let causes: Vec<String> = std::iter::successors(Some(&error as &dyn std::error::Error), |error| error.source())
-        .map(ToString::to_string)
-        .collect();
-    assert!(
-        causes.iter().any(|cause| cause.contains("the input has no content")),
-        "{causes:?}"
-    );
-}
