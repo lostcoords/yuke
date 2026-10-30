@@ -363,7 +363,7 @@ impl Toolset {
 
     /// The definitions that stay out of the model's context until a search finds them, in the order of
     /// [`Toolset::add`].
-    pub(crate) fn deferred(&self) -> impl Iterator<Item = &yuke_ai::ToolDefinition> {
+    pub fn deferred(&self) -> impl Iterator<Item = &yuke_ai::ToolDefinition> {
         self.definitions.iter().filter(|definition| definition.defer_loading)
     }
 

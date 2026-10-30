@@ -14,6 +14,9 @@ The MCP client of yuke, on [rmcp](https://crates.io/crates/rmcp). Each open sess
 - yuke starts stdio servers only. An entry with a `url` fails with a message.
 - Each tool of a server is a deferred tool named `mcp__<server>__<tool>`. A name over 64 characters, or a name that an
   earlier tool has, ends in a hash.
+- The system prompt of each turn names each deferred tool in a `deferred_tools` section, so the model knows what
+  `tool_search` can find. The saved prompt of the session does not hold the section. A plugin can change the section
+  in `prompt.build`.
 - The first turn waits until each server has started, and until the user answers the question of the project. In
   `yuke -p`, no client can answer, so the project servers stay off. A cancel of a call sends `notifications/cancelled` to the server.
 - The tests need the feature `test-server`, which builds the MCP server of the tests.

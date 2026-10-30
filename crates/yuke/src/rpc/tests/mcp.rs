@@ -67,7 +67,10 @@ async fn a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_clie
     );
     let requests = transport.requests();
     assert!(
-        !requests[0].contains("mcp__sh__ping") && requests[0].contains("tool_search"),
+        // The prompt names the tool, but the first request does not declare it.
+        !requests[0].contains("\"mcp__sh__ping\"")
+            && requests[0].contains("- mcp__sh__ping")
+            && requests[0].contains("tool_search"),
         "{}",
         requests[0]
     );

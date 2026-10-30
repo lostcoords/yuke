@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use yuke_agent::PromptSection;
+use yuke_engine::Toolset;
 
 use crate::skills::{self, Catalog};
 
@@ -22,6 +23,27 @@ const SKILLS_LEAD: &str = "Skills are specialized instructions for specific task
 
 const INSTRUCTIONS_LEAD: &str = "Project instructions follow. Explicit user instructions take precedence. Workspace \
                                  instructions override global instructions where they conflict.";
+
+/// The section that names the deferred tools of `toolset` in the order of the toolset, or `None` without one. Each turn
+/// adds it, because the tools load after the creation of the saved prompt.
+pub(crate) fn deferred_tools(toolset: &Toolset) -> Option<PromptSection> {
+    let names: Vec<String> = toolset
+        .deferred()
+        .map(|definition| format!("- {}", definition.name))
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let search = yuke_ai::SEARCH_TOOL_NAME;
+    let lead = format!(
+        "These tools exist. Their definitions load only through {search}. Search with {search} before you call one. \
+         Do not say that a tool is missing before you search."
+    );
+    Some(PromptSection::new(
+        "deferred_tools",
+        format!("{lead}\n{}", names.join("\n")),
+    ))
+}
 
 /// The facts of the machine that the prompt states.
 #[derive(Debug)]

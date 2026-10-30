@@ -78,6 +78,35 @@ test("a deferred tool waits for the tool search of the replies, and the other to
   );
 });
 
+test("the system prompt names each deferred tool after the saved sections", async () => {
+  const deferred = defining(
+    { ...tool("rare", () => "x"), deferLoading: true },
+    tool("common", () => "x"),
+  );
+  await using host = await createHost({
+    plugins: [{ name: "deferred", session: deferred }],
+    replies: [reply.text("Done.")],
+  });
+
+  await (await host.openSession()).send("Hi.");
+
+  const system = host.requests[0]?.system ?? "";
+  equal(system.endsWith("before you search.\n- rare\n</deferred_tools>"), true);
+  equal(system.includes("- common"), false);
+});
+
+test("a session without a deferred tool has no deferred_tools section", async () => {
+  const common = defining(tool("common", () => "x"));
+  await using host = await createHost({
+    plugins: [{ name: "plain", session: common }],
+    replies: [reply.text("Done.")],
+  });
+
+  await (await host.openSession()).send("Hi.");
+
+  equal(host.requests[0]?.system.includes("<deferred_tools>"), false);
+});
+
 for (const [name, definition, expected] of [
   [
     "no concurrency",

@@ -24,6 +24,7 @@ use super::sessions::SessionService;
 use super::trust;
 use super::{AppError, Mode, Observer, SOURCE, Shared, lock, model_of, save_settings};
 use crate::config::read_json;
+use crate::prompt::deferred_tools;
 
 /// An open session.
 pub(super) struct LiveSession {
@@ -737,11 +738,15 @@ impl Parts {
             let script = Arc::clone(&lock(&self.script));
             let toolset = self.toolset(&script, &token).await;
             let prepared = match toolset {
-                Ok(toolset) => script
-                    .build_prompt(session.prompt(), &token)
-                    .await
-                    .map(|prompt| (toolset, prompt))
-                    .map_err(|error| chain_text(&error)),
+                Ok(toolset) => {
+                    let mut sections = session.prompt().to_vec();
+                    sections.extend(deferred_tools(&toolset));
+                    script
+                        .build_prompt(&sections, &token)
+                        .await
+                        .map(|prompt| (toolset, prompt))
+                        .map_err(|error| chain_text(&error))
+                }
                 Err(error) => Err(error),
             };
             let ended = match prepared {
