@@ -716,7 +716,7 @@ declare module "yuke:tui" {
 
   export interface PickerOptions<T extends object> {
     readonly items: readonly T[];
-    /** A key that stays the same for one item. The selection follows it. */
+    /** A key that stays the same for one item. New items keep the selection on it; a new query selects the first result. */
     readonly key: (item: T) => string;
     readonly label: (item: T) => string;
     /** The picker shows this dim text after the label. The default rank does not match it. */

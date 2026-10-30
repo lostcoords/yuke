@@ -146,3 +146,18 @@ test("a selected row pads by cells, and a picker with its field takes the focus"
     [{ reverse: true }, { reverse: true }, true, true],
   );
 });
+
+test("a new query selects its best result, and new items keep the selection", () => {
+  const log: string[] = [];
+  const list = picker(["save", "send", "search", "sessions"], log);
+  list.query = "s";
+  list.move(2);
+  const moved = list.selected?.name;
+  // "search" still matches "se", but "send" is the best result.
+  list.query = "se";
+  const typed = list.selected?.name;
+  list.move(1);
+  const before = list.selected?.name;
+  list.setItems([{ name: "save" }, { name: "send" }, { name: "search" }, { name: "sessions" }, { name: "set" }]);
+  equal([moved, typed, before, list.selected?.name], ["search", "send", "search", "search"]);
+});

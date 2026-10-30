@@ -61,7 +61,8 @@ export class Picker<T extends object> {
     const extension = this.input.extend(new AbortController().signal);
     extension.onKey((event) => this.key(event));
     extension.onChange((change) => {
-      if (change.before.text !== change.after.text) this.#rank();
+      // A new query selects its best result, as the user expects at the top.
+      if (change.before.text !== change.after.text) this.#rank(true);
     });
     this.#list = new ScrollList<Entry<T>>({
       key: (entry) => entry.key,
@@ -170,8 +171,8 @@ export class Picker<T extends object> {
     return true;
   }
 
-  /** Rank the items for the query, keep the selected key when it stays, else select the first result. */
-  #rank(): void {
+  /** Rank the items for the query. With `top`, or when the selected key leaves, select the first result. */
+  #rank(top = false): void {
     const query = this.query;
     const matches =
       this.#options.rank === undefined
@@ -179,7 +180,7 @@ export class Picker<T extends object> {
         : this.#options.rank(query, this.#items);
     if (!Array.isArray(matches)) throw new TypeError("a picker rank gives an array of matches");
     const keys = matches.map((match) => this.#options.key(match.item));
-    const selected = this.#selected !== undefined && keys.includes(this.#selected) ? this.#selected : keys[0];
+    const selected = !top && this.#selected !== undefined && keys.includes(this.#selected) ? this.#selected : keys[0];
     this.#selected = selected;
     this.#entries = matches.map((match, at) => ({ match, key: keys[at] as string, selected: keys[at] === selected }));
     this.#list.setItems(this.#entries);
