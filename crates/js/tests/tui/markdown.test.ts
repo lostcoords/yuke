@@ -2,7 +2,7 @@
 // source.
 
 import { assert, equal, test } from "yuke:test";
-import { Markdown, type Segment, type TextRow } from "yuke:tui";
+import { Markdown, type MarkdownBlock, type Segment, type TextRow } from "yuke:tui";
 
 function rowsOf(source: string, width: number): readonly TextRow[] {
   return new Markdown(source).rows(width);
@@ -154,31 +154,85 @@ test("an open fence stays code and renders again as it grows", () => {
   equal([first, has(markdown.rows(80), "markdown.codeBlock", "x=2")], [true, true]);
 });
 
-// Every block kind, with look-ahead: a setext heading, a table, and a fence that closes late.
-test("each prefix of a stream renders as a fresh parse of it", () => {
-  const text =
-    "Intro para\nsecond line\n\n# Head\n\nSetext\n===\n\n- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" +
-    "a | b\n:--|--:\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n---\n\nlast **bold** [a](b) para\nwith a|pipe\n---|---\nx|y\n";
-  const stream = new Markdown();
-  const appended = new Markdown();
-  const differs: (number | string)[] = [];
-  for (let n = 1; n <= text.length; n++) {
-    const head = text.slice(0, n);
-    stream.setText(head);
-    appended.append(text.slice(n - 1, n));
+/** Compare the public block fields without serializing each prefix. */
+function sameBlocks(actual: readonly MarkdownBlock[], expected: readonly MarkdownBlock[]): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((block, index) => {
+      const other = expected[index] as MarkdownBlock;
+      return (
+        block.kind === other.kind &&
+        block.from === other.from &&
+        block.to === other.to &&
+        (block.kind !== "code" || (other.kind === "code" && block.language === other.language))
+      );
+    })
+  );
+}
+
+/** Compare the public row fields without serializing each prefix. */
+function sameRows(actual: readonly TextRow[], expected: readonly TextRow[]): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((row, index) => {
+      const other = expected[index] as TextRow;
+      return (
+        row.join === other.join &&
+        row.segments.length === other.segments.length &&
+        row.segments.every((segment, index) => {
+          const otherSegment = other.segments[index] as Segment;
+          return (
+            segment.text === otherSegment.text &&
+            segment.style === otherSegment.style &&
+            segment.link === otherSegment.link &&
+            segment.copy === otherSegment.copy &&
+            segment.source?.kind === otherSegment.source?.kind &&
+            segment.source?.from === otherSegment.source?.from &&
+            segment.source?.to === otherSegment.source?.to
+          );
+        })
+      );
+    })
+  );
+}
+
+// Keep every prefix and its earlier blocks, but bound each test's work under the wall-time limit.
+const streamParts = [
+  { name: "headings", text: "Intro para\nsecond line\n\n# Head\n\nSetext\n===\n\n" },
+  { name: "lists and quotes", text: "- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" },
+  { name: "a table and a fence", text: "a | b\n:--|--:\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n" },
+  { name: "a rule and inline markup", text: "---\n\nlast **bold** [a](b) para\nwith a|pipe\n---|---\nx|y\n" },
+];
+let preceding = "";
+for (const part of streamParts) {
+  const prefix = preceding;
+  const text = prefix + part.text;
+  preceding = text;
+  test(`each prefix of a stream renders as a fresh parse of it through ${part.name}`, () => {
+    const stream = new Markdown(prefix);
+    const appended = new Markdown(prefix);
+    const differs: (number | string)[] = [];
+    for (let n = prefix.length + 1; n <= text.length; n++) {
+      const head = text.slice(0, n);
+      stream.setText(head);
+      appended.append(text.slice(n - 1, n));
+      const fresh = new Markdown();
+      fresh.setText(head);
+      const expectedBlocks = fresh.blocks();
+      const expectedRows = fresh.rows(24);
+      if (!sameBlocks(stream.blocks(), expectedBlocks) || !sameRows(stream.rows(24), expectedRows)) differs.push(n);
+      if (!sameBlocks(appended.blocks(), expectedBlocks) || !sameRows(appended.rows(24), expectedRows)) {
+        differs.push(`append ${n}`);
+      }
+    }
+    // A change that is no append parses from the start again.
+    stream.setText(`changed\n\n${text}`);
     const fresh = new Markdown();
-    fresh.setText(head);
-    const expected = JSON.stringify([fresh.blocks(), fresh.rows(24)]);
-    if (JSON.stringify([stream.blocks(), stream.rows(24)]) !== expected) differs.push(n);
-    if (JSON.stringify([appended.blocks(), appended.rows(24)]) !== expected) differs.push(`append ${n}`);
-  }
-  // A change that is no append parses from the start again.
-  stream.setText(`changed\n\n${text}`);
-  const fresh = new Markdown();
-  fresh.setText(`changed\n\n${text}`);
-  if (JSON.stringify(stream.rows(24)) !== JSON.stringify(fresh.rows(24))) differs.push("rewrite");
-  equal(differs, []);
-});
+    fresh.setText(`changed\n\n${text}`);
+    if (!sameRows(stream.rows(24), fresh.rows(24))) differs.push("rewrite");
+    equal(differs, []);
+  });
+}
 
 // Each source stays inside the text. A text source has one source unit for each shown unit: the same text, or a blank
 // for a shown blank. A replacement, such as an escape or a list mark, stands for its whole source.
