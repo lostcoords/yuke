@@ -971,12 +971,8 @@ impl Host {
 
 #[async_trait]
 impl MediaStore for Host {
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
-        self.shared
-            .store
-            .put_blob(self.output.session, bytes)
-            .await
-            .map_err(|error| chain_text(&error))
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.shared.store.put_blob(self.output.session, bytes).await?)
     }
 }
 
@@ -1045,8 +1041,8 @@ impl SessionHost for Host {
         }
     }
 
-    fn model(&self, reference: &ModelReference) -> Result<Model, String> {
-        model_of(reference, &self.shared).map_err(|error| chain_text(&error))
+    fn model(&self, reference: &ModelReference) -> Result<Model, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(model_of(reference, &self.shared)?)
     }
 
     fn model_reference(&self) -> ModelReference {

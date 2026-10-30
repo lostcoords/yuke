@@ -30,6 +30,7 @@ pub(super) struct TestHost {
     pub(super) inputs: Mutex<Vec<yuke_protocol::Input>>,
     /// The model of the session. A test can change it.
     pub(super) model: Mutex<yuke_protocol::ModelReference>,
+    pub(super) failure: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
 
 impl TestHost {
@@ -46,13 +47,17 @@ impl TestHost {
                 provider: "test".to_owned(),
                 model: "test-model".to_owned(),
             }),
+            failure: None,
         }
     }
 }
 
 #[async_trait]
 impl MediaStore for TestHost {
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String> {
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(error) = &self.failure {
+            return Err(Arc::clone(error).into());
+        }
         let blob = yuke_ai::Blob {
             digest: [7; 32],
             len: bytes.len(),
@@ -98,10 +103,16 @@ impl SessionHost for TestHost {
         Err(RequestFailure::NoClient)
     }
 
-    fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String> {
+    fn model(
+        &self,
+        reference: &yuke_protocol::ModelReference,
+    ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(error) = &self.failure {
+            return Err(Arc::clone(error).into());
+        }
         // The test catalog knows one other model.
         if (reference.provider.as_str(), reference.model.as_str()) != ("test", "other-model") {
-            return Err(format!("no model {}/{}", reference.provider, reference.model));
+            return Err(format!("no model {}/{}", reference.provider, reference.model).into());
         }
         Ok(yuke_testing::model_of(yuke_ai::Target {
             model: "other-model".into(),
@@ -174,7 +185,13 @@ pub(super) async fn tools_in(
     (runtime, host, tools)
 }
 
-pub(super) async fn call(tool: &ScriptTool, arguments: &str) -> (Result<ToolContent, String>, Vec<String>) {
+pub(super) async fn call(
+    tool: &ScriptTool,
+    arguments: &str,
+) -> (
+    Result<ToolContent, Box<dyn std::error::Error + Send + Sync>>,
+    Vec<String>,
+) {
     call_with(tool, arguments, CancellationToken::new()).await
 }
 
@@ -182,7 +199,10 @@ pub(super) async fn call_with(
     tool: &ScriptTool,
     arguments: &str,
     token: CancellationToken,
-) -> (Result<ToolContent, String>, Vec<String>) {
+) -> (
+    Result<ToolContent, Box<dyn std::error::Error + Send + Sync>>,
+    Vec<String>,
+) {
     let (output, texts) = mpsc::unbounded_channel();
     let mut shown = Vec::new();
     let answer = tool.answer(arguments, "call-1", token, output);
@@ -201,7 +221,56 @@ pub(super) async fn text_of(tool: &ScriptTool, arguments: &str) -> String {
 
 /// The error of a call that fails.
 pub(super) async fn error_of(tool: &ScriptTool, arguments: &str) -> String {
-    call(tool, arguments).await.0.unwrap_err()
+    yuke_engine::chain_text(call(tool, arguments).await.0.unwrap_err().as_ref())
+}
+
+#[tokio::test]
+async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
+    use yuke_engine::{Hooks, RoundStart};
+
+    let folder = folder("host_errors_keep_their_causes_in_tool_and_hook_results");
+    write(
+        &folder,
+        &[(
+            "tools.ts",
+            "export function session(s) {
+        s.tools.define({ name: 'image', description: 'd', concurrency: 'serial',
+            parameters: { type: 'object', properties: {} },
+            execute() { return { text: 'image', media: [{ bytes: new Uint8Array([1]), mimeType: 'image/png' }] }; } });
+        s.hook('round.before', () => ({ model: { provider: 'test', model: 'other-model' } }));
+    }",
+        )],
+    );
+    let (runtime, _faults) = start(&folder).await;
+    let host = Arc::new(TestHost {
+        failure: Some(Arc::new(crate::Error::Thread(std::io::Error::other("the cause")))),
+        ..TestHost::new(&folder)
+    });
+    let (_runtime, _host, tools) = tools_in(runtime, host, &[&module(&folder, "tools.ts")]).await;
+
+    assert_eq!(
+        error_of(&tools["image"], "{}").await,
+        "the JavaScript thread did not start: the cause"
+    );
+    let model = yuke_testing::model();
+    let settings = yuke_ai::Settings::new();
+    let error = tools
+        .session
+        .hooks(CancellationToken::new())
+        .before_round(&RoundStart {
+            context: &[],
+            model: &model,
+            settings: &settings,
+            system: "",
+            tools: &[],
+            input_tokens: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(
+        yuke_engine::chain_text(error.as_ref()),
+        "round.before of plugin test failed: the JavaScript thread did not start: the cause"
+    );
 }
 
 #[tokio::test]

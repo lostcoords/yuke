@@ -27,7 +27,11 @@ impl Tool for Uppercase {
         Concurrency::Parallel
     }
 
-    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        _: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         let arguments: UppercaseArguments = parse_arguments(arguments)?;
         Ok(arguments.text.to_uppercase().into())
     }

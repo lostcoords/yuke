@@ -71,7 +71,11 @@ struct EchoArguments {
 
 #[async_trait]
 impl Tool for Echo {
-    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        _: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         let arguments: EchoArguments = parse_arguments(arguments)?;
         self.runs.fetch_add(1, Ordering::Relaxed);
         Ok(format!("echo {}", arguments.text).into())
@@ -111,12 +115,59 @@ fn a_parse_error_reaches_the_model_and_the_tool_body_does_not_run() {
     assert_eq!(echo.runs.load(Ordering::Relaxed), 0);
 }
 
+#[derive(Debug)]
+struct WriteFailed(std::io::Error);
+
+impl std::fmt::Display for WriteFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the write failed")
+    }
+}
+
+impl std::error::Error for WriteFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+struct Fails;
+
+#[async_trait]
+impl Tool for Fails {
+    async fn call(
+        &self,
+        _: &str,
+        _: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
+        Err(WriteFailed(std::io::Error::other("disk full")).into())
+    }
+}
+
+#[test]
+fn a_tool_error_reaches_the_model_with_each_cause() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "write", "{}")]), text_reply("done")]);
+    let model = model();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("write"), Fails).unwrap();
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
+
+    assert_eq!(
+        results_in_context(driver),
+        [ToolResult::error("c1", "the write failed: disk full")]
+    );
+    assert!(transport.requests()[1].contains("the write failed: disk full"));
+}
+
 /// A tool that shows two lines of live output, and answers the call id that it saw.
 struct Prints;
 
 #[async_trait]
 impl Tool for Prints {
-    async fn call(&self, _: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        _: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         context.output("line 1\n");
         context.output("line 2\n");
         Ok(format!("printed for {}", context.call_id()).into())

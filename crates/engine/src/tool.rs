@@ -39,10 +39,15 @@ pub trait Tool: Send + Sync {
     /// Run one call with its raw `arguments`.
     /// The tool parses the arguments, for example with [`parse_arguments`].
     /// `Err` reaches the model as an error result, and the turn continues.
+    /// The result text includes each cause of the error.
     ///
     /// When the cancellation token of `context` is cancelled, stop the work. Return a result that describes the
     /// stopped work, for example the output so far and "Command aborted". The driver waits for the return.
-    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String>;
+    async fn call(
+        &self,
+        arguments: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn Error + Send + Sync>>;
 }
 
 /// Parse the JSON `arguments` of a call into `T`. A tool calls it first, and `?` returns the parse error to the
@@ -239,8 +244,8 @@ pub trait MediaStore: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns the text of the failure. The model reads it in place of the attachment.
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, String>;
+    /// Returns why the store failed.
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, Box<dyn Error + Send + Sync>>;
 }
 
 /// Check that a tool can have `name`: it matches `^[a-zA-Z0-9_-]{1,64}$`, and the engine does not own it.
@@ -395,7 +400,7 @@ impl Toolset {
                 .with_media(content.media),
                 display: content.display,
             },
-            Err(content) => ToolResult::error(&call.call_id, content).into(),
+            Err(error) => ToolResult::error(&call.call_id, crate::chain_text(error.as_ref())).into(),
         }
     }
 }

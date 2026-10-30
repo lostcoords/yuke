@@ -506,11 +506,15 @@ struct CancelDuringCall(CancellationToken);
 
 #[async_trait]
 impl Tool for CancelDuringCall {
-    async fn call(&self, _: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        _: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         self.0.cancel();
         assert!(context.cancellation_token().is_cancelled());
         yield_once().await;
-        Err("step 1 done\nCommand aborted".to_owned())
+        Err("step 1 done\nCommand aborted".into())
     }
 }
 

@@ -457,7 +457,11 @@ impl Tool for McpTool {
         }
     }
 
-    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         let arguments: JsonObject = parse_arguments(arguments)?;
         let params = CallToolRequestParams::new(self.name.clone()).with_arguments(arguments);
         let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
@@ -482,9 +486,9 @@ impl Tool for McpTool {
         };
         match answer {
             Ok(Ok(ServerResult::CallToolResult(result))) => Ok(content(result, &*self.media).await),
-            Ok(Ok(_)) => Err("The server answered with another kind of result.".to_owned()),
-            Ok(Err(error)) => Err(format!("The server failed: {error}")),
-            Err(_) => Err("The server closed before its answer.".to_owned()),
+            Ok(Ok(_)) => Err("The server answered with another kind of result.".into()),
+            Ok(Err(error)) => Err(format!("The server failed: {error}").into()),
+            Err(_) => Err("The server closed before its answer.".into()),
         }
     }
 }
@@ -499,7 +503,11 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
             ContentBlock::Text(text) => texts.push(text.text),
             ContentBlock::Image(image) => match image_of(&image.data, media).await {
                 Ok(blob) => attachments.push(Media::new(blob, image.mime_type)),
-                Err(error) => texts.push(format!("[an image of type {} was lost: {error}]", image.mime_type)),
+                Err(error) => texts.push(format!(
+                    "[an image of type {} was lost: {}]",
+                    image.mime_type,
+                    yuke_engine::chain_text(error.as_ref())
+                )),
             },
             ContentBlock::Audio(audio) => texts.push(format!("[audio of type {}]", audio.mime_type)),
             ContentBlock::Resource(resource) => texts.push(match resource.resource {
@@ -527,10 +535,10 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
 }
 
 /// Store the base64 image `data`.
-async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, String> {
+async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
     let bytes = yuke_ai::decode_base64(data.as_bytes()).ok_or("its data is not base64")?;
     if bytes.len() as u64 > MAX_MEDIA_BYTES {
-        return Err(format!("it is larger than the limit of {MAX_MEDIA_BYTES} bytes"));
+        return Err(format!("it is larger than the limit of {MAX_MEDIA_BYTES} bytes").into());
     }
     media.put_media(bytes).await
 }

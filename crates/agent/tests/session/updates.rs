@@ -217,7 +217,11 @@ impl Tool for Echo {
     fn concurrency(&self) -> Concurrency {
         Concurrency::Parallel
     }
-    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         if arguments == r#"{"wait":true}"# {
             tokio::task::yield_now().await;
         }

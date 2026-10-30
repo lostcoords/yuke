@@ -36,7 +36,11 @@ impl Tool for Show {
         hints()
     }
 
-    async fn call(&self, _arguments: &str, _context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        _arguments: &str,
+        _context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(token) = &self.0 {
             token.cancel();
         }

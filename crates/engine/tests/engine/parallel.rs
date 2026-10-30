@@ -54,7 +54,11 @@ impl Tool for Track {
         self.concurrency
     }
 
-    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         let arguments: TrackArguments = parse_arguments(arguments)?;
         let call_id = context.call_id();
         self.log.push(format!("start {call_id}"));

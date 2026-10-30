@@ -407,7 +407,7 @@ impl ScriptHooks {
         }
         let mut stored = store_media(&*self.host, files, &self.host.folder())
             .await
-            .map_err(|error| format!("the {point} hooks failed: {error}"))?
+            .map_err(|error| format!("the {point} hooks failed: {}", chain_text(error.as_ref())))?
             .into_iter();
         Ok(order
             .into_iter()
@@ -753,7 +753,10 @@ impl PlannedRound {
                 model,
             }) => {
                 let reference = ModelReference { provider, model };
-                Some(host.model(&reference).map_err(|error| failed(&plugin, &error))?)
+                Some(
+                    host.model(&reference)
+                        .map_err(|error| failed(&plugin, &chain_text(error.as_ref())))?,
+                )
             }
             None => None,
         };
@@ -876,8 +879,8 @@ impl<'js> FromJs<'js> for ChangedMedia {
 /// The text of a failed run of the `point` hooks. The message of a failed handler names the point and its plugin.
 fn failure_text(point: &str, error: &Error) -> String {
     match error {
-        Error::Script(_) => error_text(error),
-        other => format!("the {point} hooks failed: {other}"),
+        Error::Script(error) => error_text(error),
+        other => format!("the {point} hooks failed: {}", chain_text(other)),
     }
 }
 

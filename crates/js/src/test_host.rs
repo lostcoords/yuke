@@ -166,8 +166,29 @@ fn joined<T>(ctx: &Ctx<'_>, joined: Result<Result<T, TestError>, tokio::task::Jo
         // A throw of a plugin keeps its name, its message, and its stack, as in the plugin.
         Ok(Err(error)) => Err(match error.downcast_ref::<crate::Error>() {
             Some(crate::Error::Script(script)) => script.rethrow(ctx),
-            _ => throw(ctx, ErrorClass::Error, &error.to_string()),
+            _ => throw(ctx, ErrorClass::Error, &yuke_engine::chain_text(error.as_ref())),
         }),
         Err(error) => Err(throw(ctx, ErrorClass::Error, &error.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::joined;
+
+    #[test]
+    fn a_host_task_error_reaches_javascript_with_each_cause() {
+        let runtime = rquickjs::Runtime::new().unwrap();
+        let context = rquickjs::Context::full(&runtime).unwrap();
+        context.with(|ctx| {
+            let failure = crate::Error::Thread(std::io::Error::other("the cause"));
+            let result = joined::<()>(&ctx, Ok(Err(failure.into())));
+            let error = crate::error::caught(&ctx, result).unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                "Error: the JavaScript thread did not start: the cause"
+            );
+        });
     }
 }

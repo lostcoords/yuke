@@ -213,7 +213,7 @@ struct CancelTurn(CancellationToken);
 
 #[async_trait]
 impl Tool for CancelTurn {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         self.0.cancel();
         Ok("partly done".into())
     }
@@ -257,7 +257,7 @@ struct SeesItsCall {
 
 #[async_trait]
 impl Tool for SeesItsCall {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         let saved = self.journal.context().contains(&call("c1"));
         *self.saw.lock().unwrap() = Some(saved);
         Ok("ran".into())

@@ -62,11 +62,12 @@ pub(crate) struct SendsInput {
 
 #[async_trait]
 impl Tool for SendsInput {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        self.store
-            .accept_input(self.session, user_input(self.text))
-            .await
-            .map_err(|error| error.to_string())?;
+    async fn call(
+        &self,
+        _: &str,
+        _: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
+        self.store.accept_input(self.session, user_input(self.text)).await?;
         Ok("sent".into())
     }
 }

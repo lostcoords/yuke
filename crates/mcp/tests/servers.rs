@@ -33,7 +33,7 @@ impl yuke_ai::BlobStore for Recorded {
 
 #[async_trait]
 impl MediaStore for Recorded {
-    async fn put_media(&self, bytes: Vec<u8>) -> Result<Blob, String> {
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
         let blob = Blob {
             digest: [7; 32],
             len: bytes.len(),

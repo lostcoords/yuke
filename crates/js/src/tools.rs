@@ -75,8 +75,11 @@ pub trait SessionHost: MediaStore {
     ///
     /// # Errors
     ///
-    /// Returns a text for the user when the catalog has no such model, or when its provider has no credential.
-    fn model(&self, reference: &yuke_protocol::ModelReference) -> Result<yuke_engine::Model, String>;
+    /// Returns an error when the catalog has no such model, or when its provider has no credential.
+    fn model(
+        &self,
+        reference: &yuke_protocol::ModelReference,
+    ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>>;
 
     /// The model that the session settings name now. A saved change of the settings takes effect at once.
     fn model_reference(&self) -> yuke_protocol::ModelReference;
@@ -284,7 +287,11 @@ impl Tool for ScriptTool {
         self.hints.clone()
     }
 
-    async fn call(&self, arguments: &str, context: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(
+        &self,
+        arguments: &str,
+        context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         let (output, texts) = mpsc::unbounded_channel();
         let answer = self.answer(
             arguments,
@@ -333,11 +340,11 @@ impl ScriptTool {
         call_id: &str,
         token: CancellationToken,
         output: mpsc::UnboundedSender<String>,
-    ) -> Result<ToolContent, String> {
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         // One folder for the whole call: the context, the commands, and the media paths of the answer.
         let folder = self.host.folder();
         let Some(folder_text) = folder.to_str().map(str::to_owned) else {
-            return Err(format!("the workspace folder {} is not UTF-8", folder.display()));
+            return Err(Error::Folder(folder).into());
         };
         let (id, open) = (self.id, self.open);
         let host = Arc::clone(&self.host);
@@ -385,13 +392,22 @@ impl ScriptTool {
                 }
             })
             .await
-            .map_err(|error| error_text(&error))?;
+            .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> {
+                match error {
+                    Error::Script(error) => error_text(&error).into(),
+                    other => other.into(),
+                }
+            })?;
         self.content(answer, &folder).await
     }
 
     /// The engine content of the result `answer`: its text, its error flag, and each media item stored through the
     /// host. A relative media path starts in `folder`.
-    async fn content(&self, answer: Answer, folder: &Path) -> Result<ToolContent, String> {
+    async fn content(
+        &self,
+        answer: Answer,
+        folder: &Path,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         Ok(ToolContent {
             text: answer.text,
             media: store_media(&*self.host, answer.media, folder).await?,
@@ -406,7 +422,7 @@ pub(crate) async fn store_media(
     host: &dyn SessionHost,
     files: Vec<MediaFile>,
     folder: &Path,
-) -> Result<Vec<yuke_ai::Media>, String> {
+) -> Result<Vec<yuke_ai::Media>, Box<dyn std::error::Error + Send + Sync>> {
     // Each read comes before the first store, so a failed read leaves no blob without a reference.
     let read = read_media(files, folder).await?;
     let mut media = Vec::with_capacity(read.len());
@@ -455,11 +471,11 @@ async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
 }
 
 /// The text of a failed call for the model: the message of a thrown error.
-pub(crate) fn error_text(error: &Error) -> String {
-    match error {
-        Error::Script(error) if !error.message.is_empty() => error.message.clone(),
-        Error::Script(error) => error.name.clone().unwrap_or_else(|| "the tool failed".to_owned()),
-        other => other.to_string(),
+pub(crate) fn error_text(error: &crate::ScriptError) -> String {
+    if error.message.is_empty() {
+        error.name.clone().unwrap_or_else(|| "the tool failed".to_owned())
+    } else {
+        error.message.clone()
     }
 }
 

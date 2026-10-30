@@ -30,7 +30,7 @@ impl Recorder {
 
 #[async_trait]
 impl Tool for Recorder {
-    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
+    async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         let mut calls = self.calls.lock().unwrap();
         calls.push(arguments.to_owned());
         Ok(format!("result {}", calls.len()).into())
@@ -42,8 +42,8 @@ pub(crate) struct Fixed(pub(crate) Result<ToolContent, String>);
 
 #[async_trait]
 impl Tool for Fixed {
-    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, String> {
-        self.0.clone()
+    async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
+        self.0.clone().map_err(Into::into)
     }
 }
 

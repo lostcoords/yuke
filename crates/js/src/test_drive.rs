@@ -290,7 +290,7 @@ impl<'js> IntoJs<'js> for Decision {
 
 /// Store each item of `media` in the session of `script`, as for a tool result or a hook answer.
 async fn stored(script: &ScriptSession, media: Vec<MediaFile>) -> Result<Vec<Media>, TestError> {
-    Ok(store_media(&*script.host, media, &script.host.folder()).await?)
+    store_media(&*script.host, media, &script.host.folder()).await
 }
 
 /// Read the bytes of each item of `media` of the session `id` from the store.
@@ -525,8 +525,8 @@ pub(crate) async fn call_tool(
             display: content.display,
             output,
         },
-        Err(text) => Decision::Outcome {
-            text,
+        Err(error) => Decision::Outcome {
+            text: yuke_engine::chain_text(error.as_ref()),
             is_error: true,
             media: Vec::new(),
             display: Vec::new(),
