@@ -809,3 +809,85 @@ async fn a_session_that_a_client_created_stays_open_after_its_turn() {
     assert_eq!(row["activity"], "idle");
     client.end().await;
 }
+
+#[tokio::test]
+async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close() {
+    let place = Place::new(
+        "rpc",
+        "a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close",
+    );
+    let transport = ScriptedTransport::new([text_reply("seen")]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    // "AQID" is the base64 of the bytes 1, 2, 3.
+    let blob = client
+        .call("blob/put", json!({ "sessionId": session, "data": "AQID" }))
+        .await
+        .unwrap();
+    let content = json!([{ "user_text": "see" }, { "media": { "blob": blob, "mime": "image/png" } }]);
+    client
+        .request("session/input", json!({ "sessionId": session, "content": content }))
+        .await;
+    client.until(is_idle).await;
+    client
+        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .await
+        .unwrap();
+    let read = client
+        .call("blob/get", json!({ "sessionId": session, "blob": blob }))
+        .await;
+    client.end().await;
+
+    assert_eq!(blob["len"], json!(3));
+    let request = &transport.requests()[0];
+    assert!(request.contains("AQID"), "{request}");
+    assert_eq!(read.unwrap(), json!({ "data": "AQID" }));
+}
+
+#[tokio::test]
+async fn a_blob_request_refuses_bad_base64_too_many_bytes_and_an_unknown_blob_or_session() {
+    let place = Place::new(
+        "rpc",
+        "a_blob_request_refuses_bad_base64_too_many_bytes_and_an_unknown_blob_or_session",
+    );
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    let mut over_limit = Vec::new();
+    yuke_ai::encode_base64_into(&mut over_limit, &vec![0; 3_932_161]);
+    let unknown_blob = json!({ "digest": "00".repeat(32), "len": 3 });
+
+    let not_base64 = client
+        .call("blob/put", json!({ "sessionId": session, "data": "AQ*D" }))
+        .await;
+    let too_large = client
+        .call(
+            "blob/put",
+            json!({ "sessionId": session, "data": String::from_utf8(over_limit).unwrap() }),
+        )
+        .await;
+    let no_blob = client
+        .call("blob/get", json!({ "sessionId": session, "blob": unknown_blob }))
+        .await;
+    let no_session = client
+        .call(
+            "blob/get",
+            json!({ "sessionId": SessionId::generate(), "blob": unknown_blob }),
+        )
+        .await;
+    client.end().await;
+
+    let not_base64 = not_base64.unwrap_err();
+    assert_eq!(not_base64["code"], json!(ResponseError::INVALID_PARAMS));
+    let message = not_base64["message"].as_str().unwrap();
+    assert!(message.contains("the data is not standard base64"), "{message}");
+    let too_large = too_large.unwrap_err();
+    assert_eq!(too_large["code"], json!(ResponseError::INVALID_PARAMS));
+    let message = too_large["message"].as_str().unwrap();
+    assert!(
+        message.contains("the blob is larger than the limit of 3932160 bytes"),
+        "{message}"
+    );
+    assert_eq!(no_blob.unwrap_err()["code"], json!(ResponseError::BLOB_NOT_FOUND));
+    assert_eq!(no_session.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
+}

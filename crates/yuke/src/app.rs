@@ -707,6 +707,8 @@ pub(crate) enum AppError {
     NoInteraction(InteractionId),
     /// No login with this id is in progress.
     NoLogin(LoginId),
+    /// The session has no blob with the requested digest.
+    NoBlob,
     /// Another call opens or closes the session now.
     Changing(SessionId),
     /// A reload runs, so no session opens or closes.
@@ -735,6 +737,7 @@ impl fmt::Display for AppError {
             AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
             AppError::NoInteraction(id) => write!(f, "the session has no open question {}", id.0),
             AppError::NoLogin(id) => write!(f, "no login {} is in progress", id.0),
+            AppError::NoBlob => f.write_str("the session has no blob with this digest"),
             AppError::Changing(id) => write!(
                 f,
                 "another call opens or closes the session {id}: try again when that call ends"

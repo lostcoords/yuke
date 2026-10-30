@@ -24,9 +24,9 @@ use tokio::task::{AbortHandle, JoinHandle};
 use yuke_agent::StoreError;
 use yuke_protocol::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, ExtensionCancelParams, ExtensionRequestParams,
-    Implementation, InitializeResult, Input, InputKind, InputResult, InputSource, InstanceId, JsonRpc, ListJobsResult,
-    ListMcpServersResult, Notification, PROTOCOL_VERSION, RemoveInputResult, Request, RequestId, Response,
-    ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
+    GetBlobResult, Implementation, InitializeResult, Input, InputKind, InputResult, InputSource, InstanceId, JsonRpc,
+    ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, RemoveInputResult, Request, RequestId,
+    Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
 };
 
 use crate::app::{Answer, App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
@@ -349,6 +349,7 @@ impl Server {
     }
 
     /// Do what `call` asks of the app, and answer its result.
+    #[expect(clippy::too_many_lines, reason = "one short arm per method of the protocol")]
     async fn dispatch(&mut self, call: ClientRequest) -> Result<serde_json::Value, AppError> {
         let app = &self.app;
         match call {
@@ -447,6 +448,10 @@ impl Server {
                 self.app.reload().await?;
                 result(&EmptyResult {})
             }
+            ClientRequest::PutBlob(params) => result(&app.sessions().put_blob(params.session_id, params.data).await?),
+            ClientRequest::GetBlob(params) => result(&GetBlobResult {
+                data: app.sessions().read_blob(params.session_id, params.blob).await?,
+            }),
         }
     }
 }
@@ -698,6 +703,7 @@ fn response_error(error: &AppError) -> ResponseError {
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::NoLogin(_) => ResponseError::LOGIN_NOT_FOUND,
+        AppError::NoBlob => ResponseError::BLOB_NOT_FOUND,
         AppError::Store(error) => match error {
             StoreError::NotFound => ResponseError::SESSION_NOT_FOUND,
             StoreError::Owned => ResponseError::SESSION_OWNED,

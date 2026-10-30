@@ -146,11 +146,18 @@ pub enum ClientRequest {
     /// - The next request of an open session can miss the prompt cache when the reload changes the tools of that session.
     #[serde(rename = "profile/reload")]
     ReloadProfile(EmptyParams),
+    /// Save bytes in the store of a saved session, as for the image of an input. The same bytes give the same blob.
+    /// The blob stays until `session/remove`. Result: [`Blob`](yuke_ai::Blob).
+    #[serde(rename = "blob/put")]
+    PutBlob(PutBlobParams),
+    /// The bytes of a blob of a saved session, which can be closed. Result: [`GetBlobResult`].
+    #[serde(rename = "blob/get")]
+    GetBlob(GetBlobParams),
 }
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 22] = [
+    pub const METHODS: [&str; 24] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -173,6 +180,8 @@ impl ClientRequest {
         "interaction/respond",
         "mcp/list",
         "profile/reload",
+        "blob/put",
+        "blob/get",
     ];
 }
 
@@ -366,6 +375,8 @@ impl ResponseError {
     pub const INTERACTION_NOT_FOUND: i32 = -32_005;
     /// The server has no login in progress with this id: the id is unknown, or the login has ended.
     pub const LOGIN_NOT_FOUND: i32 = -32_006;
+    /// The session has no blob with this digest.
+    pub const BLOB_NOT_FOUND: i32 = -32_007;
 }
 
 /// The name, an optional title, and the version of a client or a server.
@@ -646,6 +657,67 @@ pub struct RemoveInputParams {
 pub struct RemoveInputResult {
     /// `false` when the input is not pending: a commit consumed it, or a removal came first.
     pub removed: bool,
+}
+
+/// The params of `blob/put`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct PutBlobParams {
+    /// The saved session that keeps the bytes. Only this session reads the blob.
+    pub session_id: SessionId,
+    /// The bytes, at most [`yuke_ai::MAX_MEDIA_BYTES`]. JSON holds them as standard base64.
+    #[serde(with = "media_bytes")]
+    #[cfg_attr(test, ts(type = "string"))]
+    pub data: Vec<u8>,
+}
+
+/// The params of `blob/get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GetBlobParams {
+    /// The saved session of the blob.
+    pub session_id: SessionId,
+    /// The blob of a media block. The server reads it by its digest.
+    pub blob: yuke_ai::Blob,
+}
+
+/// The result of `blob/get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct GetBlobResult {
+    /// The bytes. JSON holds them as standard base64.
+    #[serde(with = "media_bytes")]
+    #[cfg_attr(test, ts(type = "string"))]
+    pub data: Vec<u8>,
+}
+
+/// Write the bytes of a blob to JSON as standard padded base64, and read them back. A read of more than
+/// [`yuke_ai::MAX_MEDIA_BYTES`] fails, because no blob is larger.
+mod media_bytes {
+    use serde::de::Error;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use yuke_ai::MAX_MEDIA_BYTES;
+
+    pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        let mut text = Vec::new();
+        yuke_ai::encode_base64_into(&mut text, bytes);
+        serializer.serialize_str(str::from_utf8(&text).map_err(serde::ser::Error::custom)?)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        // An owned text, because a JSON text with an escape, or a buffered message, has no borrowed form.
+        let text = String::deserialize(deserializer)?;
+        let bytes = yuke_ai::decode_base64(text.as_bytes())
+            .ok_or_else(|| D::Error::custom("the data is not standard base64"))?;
+        if bytes.len() as u64 > MAX_MEDIA_BYTES {
+            let text = format!("the blob is larger than the limit of {MAX_MEDIA_BYTES} bytes");
+            return Err(D::Error::custom(text));
+        }
+        Ok(bytes)
+    }
 }
 
 /// The params of a request with no data: an empty object.

@@ -13,7 +13,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
   `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
   `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
-  `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`.
+  `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`, `blob/put`, `blob/get`.
+- `blob/put { sessionId, data }` decodes the base64 `data` and saves at most 3,932,160 bytes in a saved session. It
+  answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
+  as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the
+  session has no such blob. `session/remove` deletes the blobs.
 - `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.

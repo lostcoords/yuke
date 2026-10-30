@@ -564,6 +564,17 @@ impl SessionService {
         Ok(self.shared.store.put_blob(id, bytes).await?)
     }
 
+    /// The bytes of `blob` in the saved session `id`, which can be closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoBlob`] when the session has no such blob, and [`AppError::Store`] for an unknown session or
+    /// when the store fails.
+    pub(crate) async fn read_blob(&self, id: SessionId, blob: yuke_ai::Blob) -> Result<Vec<u8>, AppError> {
+        let store = Arc::clone(&self.shared.store);
+        super::blocking(move || store.read_blob(id, &blob.digest)?.ok_or(AppError::NoBlob)).await
+    }
+
     /// Remove the pending input `input_id` of session `id`. Return `false` when the input is not pending.
     ///
     /// # Errors

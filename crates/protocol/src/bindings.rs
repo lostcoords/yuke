@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::{
-    ClientNotification, ClientRequest, EmptyResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult,
-    ListMcpServersResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response,
-    ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot,
+    ClientNotification, ClientRequest, EmptyResult, GetBlobResult, InitializeResult, InputResult, ListCatalogResult,
+    ListJobsResult, ListMcpServersResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request,
+    Response, ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
@@ -99,6 +99,7 @@ fn export(folder: &Path) {
     ListMcpServersResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
     RemoveInputResult::export_all(&config).unwrap();
+    GetBlobResult::export_all(&config).unwrap();
     // The plugins see a session as a snapshot, then updates.
     SessionSnapshot::export_all(&config).unwrap();
 }
