@@ -404,10 +404,17 @@ async fn registry<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     caught(ctx, promise.into_future().await)
 }
 
-/// Wait up to `limit` for an empty call. The drive sends the faults of a call after the poll that answered it, so after
-/// this call the receiver holds them.
+/// Wait up to `limit` for a call that ends two polls of the drive later. After this call the receiver holds the faults
+/// of the earlier calls.
 async fn fence(runtime: &Runtime, limit: Duration) -> Result<Result<(), Error>, tokio::time::error::Elapsed> {
-    tokio::time::timeout(limit, runtime.caller.run(async |_ctx: Ctx<'_>, _registry| Ok(()))).await
+    let call = runtime.caller.run(async |_ctx: Ctx<'_>, _registry| {
+        // The drive reports a rejection at the end of the poll after the poll that saw it. In the runtime of the
+        // thread, `yield_now` wakes the call only after the current poll of the drive ends.
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        Ok(())
+    });
+    tokio::time::timeout(limit, call).await
 }
 
 /// The reports that wait in `reports`.
