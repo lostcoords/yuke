@@ -72,9 +72,9 @@ impl Default for Policy {
     }
 }
 
-/// Return the delay before the next attempt, or `None` when the request must stop. `number` is the number of the
-/// attempt that failed with `attempt_error`, from 1. `jitter` is a draw in `[0, 1)`. A value outside counts as its
-/// nearest bound, and NaN counts as 0.
+/// Return the delay before the next attempt, or `None` when the request must stop.
+/// `number` is the number of the attempt that failed with `attempt_error`, from 1.
+/// `jitter` is a draw in `[0, 1)`.
 pub fn decide(policy: Policy, attempt_error: &AttemptError, number: NonZeroU32, jitter: f64) -> Option<Duration> {
     let info = &attempt_error.info;
     // The caller got an event of the attempt, so a repeat would show it again.
@@ -111,7 +111,6 @@ fn backoff(policy: Policy, number: NonZeroU32, jitter: f64) -> Duration {
     let capped = policy.base.saturating_mul(1 << shift).min(policy.cap);
     // Keep 75% to 100% of the delay, as the SDKs do. The AWS form `random(0, cap)` differs. A cut of at most a quarter
     // cannot overflow.
-    let jitter = if jitter.is_nan() { 0.0 } else { jitter.clamp(0.0, 1.0) };
     capped.saturating_sub(capped.mul_f64(jitter * 0.25))
 }
 
@@ -188,15 +187,13 @@ mod tests {
             assert_eq!(Some(8000), millis(decide(policy, &server, nth(number), 0.0)));
         }
 
-        // A base above the cap waits the cap. A jitter outside `[0, 1)` counts as its nearest bound, and NaN as 0.
+        // A base above the cap waits the cap.
         let inverted = Policy {
             base: Duration::from_secs(10),
             cap: Duration::from_secs(2),
             ..Policy::default()
         };
-        assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), -3.0)));
-        assert_eq!(Some(1500), millis(decide(inverted, &server, nth(1), 7.0)));
-        assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), f64::NAN)));
+        assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), 0.0)));
         let largest = Policy {
             base: Duration::MAX,
             cap: Duration::MAX,

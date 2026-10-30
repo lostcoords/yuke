@@ -1,13 +1,14 @@
-//! A borrowed JSON tree and lenient field readers. A duplicate key rejects the document. An integer that fits `i64` is
-//! an integer. A string without an escape borrows the input.
+//! A borrowed JSON tree and lenient field readers.
+//! An integer that fits `i64` is an integer.
+//! A string without an escape borrows the input.
 
 use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
-use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 
-/// The input is no JSON document, or a document with a duplicate key.
+/// The input is no JSON document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Malformed;
 
@@ -24,7 +25,7 @@ pub(crate) enum Value<'a> {
     Float(f64),
     String(Cow<'a, str>),
     Array(Vec<Value<'a>>),
-    /// The members in document order. No two members share a key.
+    /// The members in document order.
     Object(Vec<(Cow<'a, str>, Value<'a>)>),
 }
 
@@ -106,9 +107,6 @@ impl<'de> Deserialize<'de> for Value<'de> {
 
 struct ValueVisitor;
 
-/// The member count up to which an object checks each new key against the earlier ones.
-const SHORT_OBJECT: usize = 16;
-
 impl<'de> Visitor<'de> for ValueVisitor {
     type Value = Value<'de>;
 
@@ -159,19 +157,7 @@ impl<'de> Visitor<'de> for ValueVisitor {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut members: Vec<(Cow<'de, str>, Value<'de>)> = Vec::new();
         while let Some(Text(key)) = map.next_key()? {
-            // A short object checks each key at once. A long one sorts its keys at the end, so a hostile object
-            // costs `n log n` and not `n * n`.
-            if members.len() < SHORT_OBJECT && members.iter().any(|(name, _)| *name == key) {
-                return Err(de::Error::custom("duplicate field"));
-            }
             members.push((key, map.next_value()?));
-        }
-        if members.len() > SHORT_OBJECT {
-            let mut keys: Vec<&str> = members.iter().map(|(name, _)| &**name).collect();
-            keys.sort_unstable();
-            if keys.windows(2).any(|pair| pair[0] == pair[1]) {
-                return Err(de::Error::custom("duplicate field"));
-            }
         }
         Ok(Value::Object(members))
     }
@@ -220,25 +206,6 @@ impl<'de: 'a, 'a> Visitor<'de> for TextVisitor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rejects_duplicate_keys() {
-        assert_eq!(parse_bytes(br#"{"a":1,"a":2}"#), Err(Malformed));
-        assert_eq!(parse_bytes(br#"{"x":{"a":1,"a":2}}"#), Err(Malformed));
-        assert!(parse_bytes(br#"{"a":{"a":1}}"#).is_ok());
-        // A long object finds its duplicate key at the end, wherever the two members stand.
-        for (first, second) in [(0, 39), (20, 21), (3, 9)] {
-            let mut members: Vec<String> = (0..40).map(|i| format!("\"k{i}\":{i}")).collect();
-            members[second] = members[first].clone();
-            assert_eq!(
-                parse(&format!("{{{}}}", members.join(","))),
-                Err(Malformed),
-                "{first} {second}"
-            );
-        }
-        let distinct: Vec<String> = (0..40).map(|i| format!("\"k{i}\":{i}")).collect();
-        assert!(parse(&format!("{{{}}}", distinct.join(","))).is_ok());
-    }
 
     #[test]
     fn unescaped_strings_borrow_input() {

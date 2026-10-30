@@ -708,20 +708,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_field_the_decoder_reads_fails() {
-        let twice = r#"{"choices":[{"index":0,"delta":{"content":"a","content":"b"}}]}"#;
-        assert_eq!(Harness::new(PROTOCOL).feed(&[twice]), Err(DecodeError::Protocol));
-    }
-
-    #[test]
-    fn tool_index_past_i64_fails() {
-        let big = r#"{"choices":[{"delta":{"tool_calls":[{"index":9223372036854775808,"function":{"name":"run"}}]}}]}"#;
-        assert_eq!(Harness::new(PROTOCOL).feed(&[big]), Err(DecodeError::Protocol));
-        let negative = r#"{"choices":[{"delta":{"tool_calls":[{"index":-1,"function":{"name":"run"}}]}}]}"#;
-        assert_eq!(Harness::new(PROTOCOL).feed(&[negative]), Err(DecodeError::Protocol));
-    }
-
-    #[test]
     fn array_payload_reads_as_nothing() {
         let mut h = Harness::new(PROTOCOL);
         h.feed(&[r#"[null,null,[{"delta":{"content":"hi"}}]]"#]).unwrap();

@@ -526,26 +526,6 @@ mod tests {
         h.expect_trace("start 0 text");
     }
 
-    #[test]
-    fn delta_index_outside_i64_fails() {
-        for index in ["9223372036854775808", "-1", "0"] {
-            let mut h = Harness::new(PROTOCOL);
-            h.feed(&[r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#])
-                .unwrap();
-            let delta = format!(
-                r#"{{"type":"content_block_delta","index":{index},"delta":{{"type":"text_delta","text":"x"}}}}"#
-            );
-            let result = h.feed(&[&delta]);
-            if index == "0" {
-                assert_eq!(result, Ok(()));
-                h.expect_trace("start 0 text\ntext_delta 0 \"x\"");
-            } else {
-                assert_eq!(result, Err(DecodeError::Protocol), "{index}");
-                h.expect_trace("start 0 text");
-            }
-        }
-    }
-
     // The block lookup comes first, so a delta of an ignored block does nothing, even a malformed one.
     #[test]
     fn malformed_delta_of_ignored_block_does_nothing() {

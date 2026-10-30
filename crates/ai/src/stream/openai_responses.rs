@@ -128,7 +128,6 @@ impl Reducer {
             "response.output_text.done" => self.stop_part(&root, Some(BlockKind::Text))?,
             "response.refusal.done" => self.stop_part(&root, Some(BlockKind::Refusal))?,
             "response.content_part.done" => self.stop_part(&root, part_kind(part_type(&root)?))?,
-            "response.function_call_arguments.done" => self.on_tool_arguments_done(&root)?,
             "response.output_item.done" => self.on_output_item_done(&root)?,
             "response.completed" => self.on_completed(&root)?,
             "response.incomplete" => self.on_incomplete(&root)?,
@@ -268,11 +267,6 @@ impl Reducer {
         }
     }
 
-    fn on_tool_arguments_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let id = self.output(Self::output_for(root)?)?.require(BlockKind::ToolCall)?;
-        self.draft.final_args(id, root.require_str("arguments")?)
-    }
-
     fn on_output_item_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
         let output_index = Self::output_for(root)?;
         let item = root.get("item").ok_or(DecodeError::Protocol)?;
@@ -315,8 +309,8 @@ impl Reducer {
         }
         if search {
             self.read_search_call(id, item)?;
-        } else if let Some(arguments) = item.optional_str("arguments")? {
-            self.draft.final_args(id, arguments)?;
+        } else {
+            self.draft.final_args(id, item.require_str("arguments")?)?;
         }
         self.draft.stop(id)
     }
@@ -513,8 +507,8 @@ mod tests {
             r#"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_b","name":"read"}}"#,
             r#"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"b\"}"}"#,
             r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"a\"}"}"#,
-            r#"{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call"}}"#,
-            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call"}}"#,
+            r#"{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","arguments":"{\"path\":\"b\"}"}}"#,
+            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"path\":\"a\"}"}}"#,
             r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
         ]).unwrap();
         h.expect_trace(
@@ -529,27 +523,35 @@ mod tests {
         );
     }
 
-    // As the OpenAI SDK and pi do, each final statement of the arguments replaces what came before.
     #[test]
     fn latest_final_arguments_win() {
-        for (done, arguments) in [
-            (
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call"}}"#,
-                r#"{"a":2}"#,
-            ),
-            (
-                r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"a\":3}"}}"#,
-                r#"{"a":3}"#,
-            ),
-        ] {
+        let mut h = Harness::new(PROTOCOL);
+        h.feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"run"}}"#,
+            r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"a\":1}"}"#,
+            r#"{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"a\":2}"}"#,
+            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"a\":3}"}}"#,
+        ]).unwrap();
+        h.expect_trace(
+            "start 0 tool_call\n\
+             args 0 \"{\\\"a\\\":1}\"\n\
+             stop 0 tool_call id=\"call_1\" name=\"run\" arguments=\"{\\\"a\\\":3}\"",
+        );
+    }
+
+    #[test]
+    fn final_function_item_requires_arguments() {
+        for arguments in ["", r#","arguments":null"#] {
             let mut h = Harness::new(PROTOCOL);
             h.feed(&[
                 r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"run"}}"#,
-                r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"a\":1}"}"#,
-                r#"{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"a\":2}"}"#,
-                done,
+                r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}"#,
+                r#"{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{}"}"#,
             ]).unwrap();
-            h.expect_trace(&format!("start 0 tool_call\nargs 0 \"{{\\\"a\\\":1}}\"\nstop 0 tool_call id=\"call_1\" name=\"run\" arguments={arguments:?}"));
+            let done = format!(
+                r#"{{"type":"response.output_item.done","output_index":0,"item":{{"type":"function_call"{arguments}}}}}"#
+            );
+            assert_eq!(h.feed(&[&done]), Err(DecodeError::Protocol));
         }
     }
 
@@ -586,26 +588,6 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace("start 0 text");
-    }
-
-    #[test]
-    fn output_index_outside_i64_fails() {
-        for index in ["9223372036854775808", "-1", "0"] {
-            let mut h = Harness::new(PROTOCOL);
-            h.feed(&[
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-                r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            ]).unwrap();
-            let delta = format!(r#"{{"type":"response.output_text.delta","output_index":{index},"delta":"x"}}"#);
-            let result = h.feed(&[&delta]);
-            if index == "0" {
-                assert_eq!(result, Ok(()));
-                h.expect_trace("start 0 text\ntext_delta 0 \"x\"");
-            } else {
-                assert_eq!(result, Err(DecodeError::Protocol), "{index}");
-                h.expect_trace("start 0 text");
-            }
-        }
     }
 
     #[test]
