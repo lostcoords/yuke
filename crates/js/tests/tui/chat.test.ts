@@ -289,14 +289,3 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   );
   equal(chat.transcript().document.items[0] === first, true);
 });
-
-test("a saved viewport with a negative row gives an empty pane and one fault", () => {
-  using frame = createFrame({ width: 20, height: 4 });
-  const chat = loadChat(frame);
-  const pane = { type: "chat:pane", state: { draft: EMPTY, viewport: { key: "2:0", row: -1 } } };
-  frame.start(JSON.stringify({ tree: pane, focus: 0 }));
-  equal(
-    chat.tui.notices.list().at(-1)?.text.split("\n")[0],
-    "a view did not start: TypeError: the viewport of a chat pane has a key and a row",
-  );
-});

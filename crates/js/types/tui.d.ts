@@ -207,7 +207,11 @@ declare module "yuke:tui" {
   /** A style group name, a style, or a list of style group names and styles. A later item wins per field. */
   export type CanvasStyle = string | Style | readonly (string | Style)[];
 
-  /** What a view draws on. It is valid only during the draw call that gets it. A draw outside its rect is cut off. */
+  /**
+   * What a view draws on.
+   * Use it only during the draw call that gets it.
+   * A draw outside its rect is cut off.
+   */
   export interface Canvas extends Size {
     /** Write `text` on one row and return the column after it. */
     readonly text: (column: number, row: number, text: string, style?: CanvasStyle) => number;

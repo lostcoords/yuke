@@ -104,28 +104,6 @@ export interface Chat {
   readonly panes: WeakMap<View, PaneActions>;
 }
 
-/** Check the session, the folds, and the viewport of a saved `state`. A bad field throws a `TypeError`. */
-export function paneState(state: unknown): PaneState {
-  if (typeof state !== "object" || state === null) throw new TypeError("the state of a chat pane is an object");
-  const saved = state as { readonly session?: unknown; readonly folds?: unknown; readonly viewport?: unknown };
-  if (saved.session !== undefined && typeof saved.session !== "string") {
-    throw new TypeError("the session of a chat pane is a session id");
-  }
-  const folds = saved.folds ?? [];
-  const fold = (pair: unknown): boolean =>
-    Array.isArray(pair) && pair.length === 2 && typeof pair[0] === "string" && typeof pair[1] === "boolean";
-  if (!Array.isArray(folds) || !folds.every(fold)) {
-    throw new TypeError("the folds of a chat pane are [key, open] pairs");
-  }
-  const viewport = saved.viewport as Partial<Viewport> | undefined;
-  const row = viewport?.row;
-  if (viewport !== undefined && (typeof viewport.key !== "string" || !Number.isInteger(row) || (row as number) < 0)) {
-    throw new TypeError("the viewport of a chat pane has a key and a row");
-  }
-  // The editor checks the draft.
-  return state as PaneState;
-}
-
 /**
  * A chat pane: the transcript above a rule and the composer. The composer takes at most half the pane height. A pane
  * with a session holds its own handle until the mount closes.

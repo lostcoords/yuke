@@ -4,7 +4,7 @@
  * the draft, the folds, and the scroll place of each pane. Each command acts on the active pane.
  */
 
-import { type Chat, chatPane, type PaneActions, paneState } from "yuke:internal/bundled/chat/pane";
+import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import { STYLES } from "yuke:internal/bundled/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { Infer } from "yuke:tools";
@@ -155,7 +155,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
     questions: ctx.options.questions ?? "composer",
     panes: new WeakMap(),
   };
-  tui.views.register("pane", (state, mount) => chatPane(chat, mount, paneState(state)));
+  tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
     chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
   );

@@ -13,7 +13,7 @@ import { strokeOf } from "yuke:internal/tui/keys";
 import { Notices } from "yuke:internal/tui/notices";
 import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
 import { Picker } from "yuke:internal/tui/picker";
-import { readSnapshot, type SavedPane, ViewTypes } from "yuke:internal/tui/restore";
+import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
@@ -252,9 +252,9 @@ export class Core {
 
   /** Rebuild the panes of a snapshot. A snapshot that does not read gives the default layout and one notice. */
   restore(text: string): void {
-    let saved: ReturnType<typeof readSnapshot>;
+    let saved: SavedPanes;
     try {
-      saved = readSnapshot(text);
+      saved = JSON.parse(text) as SavedPanes;
     } catch (error) {
       this.notices.add("error", CORE, `the saved panes did not read: ${failureOf(error)}`);
       saved = { tree: null, focus: 0 };
@@ -269,22 +269,14 @@ export class Core {
   }
 
   /**
-   * The saved view of a pane of `owner`, or `null` without a valid snapshot; a state that is no JSON value gives a
-   * notice too. A bare type gets the prefix of `owner`.
+   * The saved view of a pane of `owner`, or `null` without a snapshot or after a fault.
+   * A bare type gets the prefix of `owner`.
    */
   #save(view: View, owner: string): SavedPane {
     if (view.snapshot === undefined) return null;
     const saved = this.scene.guard(view, owner, undefined, () => view.snapshot?.());
-    if (typeof saved !== "object" || saved === null || typeof saved.type !== "string") return null;
-    try {
-      // A copy through JSON keeps only what the new runtime can read, and a cycle throws here.
-      const text = JSON.stringify(saved.state);
-      if (text === undefined) throw new TypeError(`the state is ${typeof saved.state}`);
-      return { type: saved.type.includes(":") ? saved.type : `${owner}:${saved.type}`, state: JSON.parse(text) };
-    } catch (error) {
-      this.notices.add("error", owner, `the snapshot of a pane is no JSON value: ${failureOf(error)}`);
-      return null;
-    }
+    if (saved === undefined) return null;
+    return { type: saved.type.includes(":") ? saved.type : `${owner}:${saved.type}`, state: saved.state };
   }
 
   #focusChanged(change: FocusChange): void {

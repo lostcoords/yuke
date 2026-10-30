@@ -1,6 +1,6 @@
 /**
- * The canvas of a view: local cells over a screen origin, cut to a clip rect. A view gets a canvas for one draw call,
- * and the canvas throws after that call.
+ * The canvas of a view: local cells over a screen origin, cut to a clip rect.
+ * A view uses a canvas during its draw call.
  */
 import type { TermStyle } from "yuke:internal/native";
 import { termFit, termGraphemes, termMeasure } from "yuke:internal/native";
@@ -14,42 +14,31 @@ export interface Screen {
   readonly resolve: (style: CanvasStyle | undefined) => TermStyle;
 }
 
-/** The draw call that a canvas belongs to: `open` is false once the call returns. */
-export interface DrawCall {
-  open: boolean;
-}
-
 /** The canvas of the screen rect `rect`, cut to `clip`, both in absolute cells. */
-export function createCanvas(screen: Screen, rect: Rect, clip: Rect, call: DrawCall): Canvas {
-  const checkOpen = (): void => {
-    if (!call.open) throw new TypeError("a canvas is valid only during the draw call that gets it");
-  };
+export function createCanvas(screen: Screen, rect: Rect, clip: Rect): Canvas {
   return Object.freeze({
     width: rect.width,
     height: rect.height,
     text(column: number, row: number, text: string, style?: CanvasStyle): number {
-      checkOpen();
       const value = String(text).toWellFormed();
       const end = column + termMeasure(value);
       writeText(screen, clip, rect.column + column, rect.row + row, value, screen.resolve(style));
       return end;
     },
     fill(column: number, row: number, width: number, height: number, style?: CanvasStyle): void {
-      checkOpen();
       const cut = intersect(clip, { column: rect.column + column, row: rect.row + row, width, height });
       if (cut.width > 0 && cut.height > 0) {
         screen.fill(cut.column, cut.row, cut.width, cut.height, screen.resolve(style));
       }
     },
     region(column: number, row: number, width: number, height: number): Canvas {
-      checkOpen();
       const part = {
         column: rect.column + column,
         row: rect.row + row,
         width: Math.max(0, width),
         height: Math.max(0, height),
       };
-      return createCanvas(screen, part, intersect(clip, part), call);
+      return createCanvas(screen, part, intersect(clip, part));
     },
   });
 }

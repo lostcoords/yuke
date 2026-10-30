@@ -708,15 +708,10 @@ test("the panes of a snapshot come back with their views and focus", () => {
   const one = tui.panes.split(() => note({ id: 1 }));
   tui.panes.split(() => note({ id: 2 }), { direction: "column" });
   tui.panes.split(() => ({ draw() {} }));
-  // A state that is no JSON value saves as `null`, with a notice.
-  const cycle: { id: number; self?: unknown } = { id: 3 };
-  cycle.self = cycle;
-  tui.panes.split(() => note(cycle), { direction: "column" });
   terminal.screen(core);
   one.focus();
   const before = terminal.screen(core);
   const snapshot = core.snapshot();
-  const cycleNotice = core.notices.list().at(-1);
   const restored = newCore(terminal);
   createSurface(restored, "notes", new AbortController().signal).views.register("note", restoreNote);
   restored.restore(snapshot);
@@ -734,7 +729,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
           split: "row",
           ratio: 0.5,
           first: { type: "notes:note", state: { id: 2 } },
-          second: { split: "column", ratio: 0.5, first: null, second: null },
+          second: null,
         },
       },
     },
@@ -746,7 +741,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
     "          │",
     "          │─────────",
     "          │note│",
-    "          │    │────",
+    "          │    │",
   ]);
   // After the restore the layout and the focus are the same, and the view without a snapshot is an empty pane.
   equal(terminal.screen(restored), [
@@ -755,9 +750,8 @@ test("the panes of a snapshot come back with their views and focus", () => {
     "          │",
     "          │─────────",
     "          │note│",
-    "          │    │────",
+    "          │    │",
   ]);
-  equal([cycleNotice?.source, cycleNotice?.text.split(":")[0]], ["notes", "the snapshot of a pane is no JSON value"]);
 });
 
 test("a restore drops a pane without its plugin and keeps an empty pane for a failed one", () => {
@@ -794,16 +788,23 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   equal(terminal.screen(core)[0], "");
 });
 
-test("a focus out of the tree and a state that is no JSON value give a notice", () => {
-  const core = newCore(fakeTerminal());
+test("a state that cannot serialize fails the snapshot", () => {
+  const terminal = fakeTerminal();
+  const core = newCore(terminal);
   const tui = createSurface(core, "notes", new AbortController().signal);
-  // @ts-expect-error: the state `undefined` is no JSON value.
-  tui.panes.split(() => ({ draw() {}, snapshot: () => ({ type: "note", state: undefined }) }));
-  equal(JSON.parse(core.snapshot()), { tree: { split: "row", ratio: 0.5, first: null, second: null }, focus: 1 });
-  equal(core.notices.list().at(-1)?.text.split(":")[0], "the snapshot of a pane is no JSON value");
-  core.restore(JSON.stringify({ tree: null, focus: 1 }));
+  const state: { id: number; self?: unknown } = { id: 3 };
+  state.self = state;
+  const pane = tui.panes.split(() => note(state));
+  assert(throws(() => core.snapshot()) instanceof TypeError);
+  core.commands.run("core:reload");
   equal(
-    core.notices.list().at(-1)?.text.split("\n")[0],
-    "the saved panes did not read: TypeError: the focus of a snapshot is the index of a leaf",
+    core.notices
+      .list()
+      .map((notice) => [notice.source, notice.text.startsWith("the command core:reload failed: TypeError:")]),
+    [["core", true]],
   );
+  equal(terminal.calls, []);
+  pane.close();
+  core.commands.run("core:reload");
+  equal(terminal.calls, [["reload", { tree: null, focus: 0 }]]);
 });

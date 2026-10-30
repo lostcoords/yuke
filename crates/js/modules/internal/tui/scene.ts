@@ -3,7 +3,7 @@
  * routing, the mouse capture, drawing, and the fault boundary of each view callback.
  */
 import { failureOf } from "yuke:internal/failure";
-import { createCanvas, type DrawCall, intersect, type Screen } from "yuke:internal/tui/canvas";
+import { createCanvas, intersect, type Screen } from "yuke:internal/tui/canvas";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import { isHosted, type PlacedView, supportOf } from "yuke:internal/tui/widgets";
 import type {
@@ -327,8 +327,7 @@ export class Scene {
   }
 
   #drawTarget(target: Target, focused: Set<View>): void {
-    const call: DrawCall = { open: true };
-    const canvas = createCanvas(this.#host.screen, target.rect, target.clip, call);
+    const canvas = createCanvas(this.#host.screen, target.rect, target.clip);
     const failure = this.#failed.get(target.view);
     if (failure === undefined) {
       this.#call(target, undefined, () => target.view.draw(canvas, focused.has(target.view)));
@@ -338,7 +337,6 @@ export class Scene {
       canvas.fill(0, 0, canvas.width, canvas.height);
       canvas.text(0, 0, `${target.owner}: ${shown.split("\n")[0] ?? ""}`, ERROR_STYLE);
     }
-    call.open = false;
     if (shown === undefined) for (const child of target.children) this.#drawTarget(child, focused);
   }
 
