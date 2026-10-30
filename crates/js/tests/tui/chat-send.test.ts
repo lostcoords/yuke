@@ -1,14 +1,26 @@
 // The composer of the bundled chat: the first send, the model picker, a refused input, long pastes, the messages of
 // the user, the strip and the recall of waiting messages, and the keys of a pane.
 
+import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, folder, test } from "yuke:test";
 import { type EditorState, TextEditor } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, rows, SETTINGS, settle, transcriptRows } from "./chat.ts";
 
 /** The composer of the chat in `frame`. */
 function composerOf(chat: ReturnType<typeof loadChat>): TextEditor {
   return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
+}
+
+/** Wait until `done` holds. The time limit of the test ends a wait that never ends. */
+async function waitFor(done: () => boolean | Promise<boolean>): Promise<void> {
+  while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+/** Draw the frame and report whether the model picker shows. */
+function showsModelPicker(frame: FrameTest): boolean {
+  frame.draw();
+  return rows(frame).includes("p/m");
 }
 
 /** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
@@ -28,15 +40,18 @@ function draft(state: EditorState): [string, [number, number, string][]] {
   return [state.text, state.spans.map((span) => [span.from, span.to, span.label])];
 }
 
-test("the first send with the model and the reasoning of the startup creates the session and sends the draft", async () => {
-  const startup = { cwd: "/launch", model: { provider: "p", model: "m" }, reasoning: "high" } as const;
+test("a saved choice skips the picker on the first send and sends the draft", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 6 }, undefined, startup);
   const sessions = fakeSessions();
   const chat = loadChat(frame, {}, sessions);
   frame.start();
   frame.paste("hello");
   frame.key("enter");
-  await settle();
+  await waitFor(() => sessions.inputs.length === 1);
   equal(sessions.created, [
     {
       model: { provider: "p", model: "m" },
@@ -60,37 +75,118 @@ test("the first send with the model and the reasoning of the startup creates the
   equal(chat.transcript().document.key, "session:s-new");
 });
 
-test("without a model the first send asks for the model, then for an explicit level, and a cancel keeps the draft", async () => {
+test("without a saved choice the first send asks for the model and level, and a cancel keeps the draft", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();
   const chat = loadChat(frame, {}, sessions);
   frame.start();
   frame.paste("hi");
   frame.key("enter");
-  await settle();
-  frame.draw();
-  equal(rows(frame).includes("p/m"), true, rows(frame).join("\n"));
+  await waitFor(() => showsModelPicker(frame));
   frame.key("enter");
   await settle();
   frame.draw();
-  // The levels leave out default.
   equal(
     rows(frame).filter((row) => row === "off" || row === "high" || row === "default"),
-    ["off", "high"],
+    ["default", "off", "high"],
   );
   frame.key("esc");
   await settle();
   equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
   frame.key("enter");
-  await settle();
+  await waitFor(() => showsModelPicker(frame));
   frame.key("enter");
   await settle();
-  frame.key("down");
+  frame.key("down down");
   frame.key("enter");
-  await settle();
+  await waitFor(() => sessions.inputs.length === 1);
   equal(
     [sessions.created.map((settings) => settings.settings.reasoning), sessions.inputs],
     [[{ thinking: null, effort: "high" }], [[{ user_text: "hi" }]]],
+  );
+  equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+    model: { provider: "p", model: "m" },
+    reasoning: "high",
+  });
+  equal(chat.notices, []);
+});
+
+for (const choice of [
+  { model: { provider: "p", model: "gone" }, reasoning: "high" },
+  { model: { provider: "p", model: "m" }, reasoning: "low" },
+]) {
+  test(`a stale choice ${JSON.stringify(choice)} opens the picker without a notice`, async () => {
+    await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: folder() });
+    using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
+    const sessions = fakeSessions();
+    const chat = loadChat(frame, {}, sessions);
+    frame.start();
+    frame.paste("hi");
+    frame.key("enter");
+    await waitFor(() => showsModelPicker(frame));
+    frame.draw();
+    equal([rows(frame).includes("p/m"), chat.notices, composerOf(chat).state.text], [true, [], "hi"]);
+    frame.key("enter");
+    await settle();
+    frame.key("enter");
+    await waitFor(() => sessions.inputs.length === 1);
+    equal(
+      [sessions.created.map((settings) => [settings.model, settings.settings.reasoning]), sessions.inputs],
+      [
+        [
+          [
+            { provider: "p", model: "m" },
+            { thinking: null, effort: null },
+          ],
+        ],
+        [[{ user_text: "hi" }]],
+      ],
+    );
+    equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+      model: { provider: "p", model: "m" },
+      reasoning: "default",
+    });
+  });
+}
+
+for (const failure of ["read", "parse"]) {
+  test(`a choice file ${failure} failure gives one notice and opens the picker`, async () => {
+    if (failure === "read") await mkdir("choice.json", { baseDir: folder() });
+    else await writeTextFile("choice.json", "{", { baseDir: folder() });
+    using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
+    const chat = loadChat(frame);
+    frame.start();
+    frame.paste("hi");
+    frame.key("enter");
+    await waitFor(() => showsModelPicker(frame));
+    frame.draw();
+    equal(
+      [
+        rows(frame).includes("p/m"),
+        chat.notices.length,
+        chat.notices[0]?.startsWith("error the model choice did not load:"),
+      ],
+      [true, 1, true],
+    );
+  });
+}
+
+test("a choice that does not save gives a notice and the send goes on", async () => {
+  await mkdir("choice.json", { baseDir: folder() });
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
+  const sessions = fakeSessions();
+  const chat = loadChat(frame, {}, sessions);
+  frame.start();
+  frame.paste("hi");
+  frame.key("enter");
+  await waitFor(() => showsModelPicker(frame));
+  frame.key("enter");
+  await settle();
+  frame.key("enter");
+  await waitFor(() => sessions.inputs.length === 1);
+  equal(
+    [chat.notices.map((notice) => notice.split(":")[0]), sessions.inputs],
+    [["error the model choice did not load", "error the model choice did not save"], [[{ user_text: "hi" }]]],
   );
 });
 
@@ -153,13 +249,13 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.start();
   frame.paste("hi");
   frame.key("enter");
-  await settle();
+  await waitFor(() => showsModelPicker(frame));
   frame.key("esc");
   await settle();
   equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
   // A close of the pane closes its open picker.
   frame.key("enter");
-  await settle();
+  await waitFor(() => showsModelPicker(frame));
   frame.draw();
   equal(rows(frame).includes("p/m"), true);
   chat.tui.commands.run("core:close");
@@ -334,8 +430,9 @@ test("a refusal while the user browses the messages ends the browse, so down kee
   equal(composerOf(chat).state.text, "first\nold");
 });
 
-test("ctrl+k m in a new pane keeps the chosen model and level for the first send, even with a startup model", async () => {
-  const startup = { cwd: "/launch", model: { provider: "p", model: "m" }, reasoning: "off" } as const;
+test("ctrl+k m in a new pane saves a new choice for the first send", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', { baseDir: folder() });
+  const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 14 }, undefined, startup);
   const sessions = fakeSessions();
   const chat = loadChat(frame, {}, sessions);
@@ -347,12 +444,19 @@ test("ctrl+k m in a new pane keeps the chosen model and level for the first send
   await settle();
   // A send while the picker is open does nothing.
   chat.tui.commands.run("chat:send");
+  frame.key("down");
   frame.key("enter");
+  await settle();
+  await waitFor(async () => JSON.parse(await readTextFile("choice.json", { baseDir: folder() })).model.model === "n");
   await settle();
   equal(sessions.created, []);
+  equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+    model: { provider: "p", model: "n" },
+    reasoning: "low",
+  });
   frame.paste("hi");
   frame.key("enter");
-  await settle();
+  await waitFor(() => sessions.inputs.length === 1);
   equal(
     [sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.cwd]), sessions.inputs],
     [[[{ provider: "p", model: "n" }, { thinking: null, effort: "low" }, "/launch"]], [[{ user_text: "hi" }]]],
@@ -377,11 +481,11 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   frame.key("enter");
   await settle();
   frame.key("enter");
-  await settle();
+  await waitFor(() => sessions.changes.length === 1);
   equal(sessions.changes, [
     {
       model: { provider: "p", model: "m" },
-      settings: { ...own.settings, reasoning: { thinking: "off", effort: null } },
+      settings: { ...own.settings, reasoning: { thinking: null, effort: null } },
       cwd: "/session",
     },
   ]);
@@ -392,7 +496,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   frame.key("enter");
   await settle();
   frame.key("enter");
-  await settle();
+  await waitFor(() => chat.notices.length === 1);
   equal(chat.notices, ["error the model did not change: Error: a turn runs"]);
 });
 
@@ -649,7 +753,10 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
 });
 
 test("ctrl+v without an image gives a notice, a failed store gives a notice, and a new pane creates its session first", async () => {
-  const startup = { cwd: "/w", model: { provider: "p", model: "m" }, reasoning: "high" } as const;
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  const startup = { cwd: "/w" };
   using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
   const sessions = fakeSessions();
   const chat = loadChat(frame, {}, sessions);
@@ -658,9 +765,12 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
   await settle();
   const none = [...chat.notices];
   frame.clipboard = PNG;
-  sessions.state.store = Promise.reject(new Error("disk full"));
+  const store = Promise.withResolvers<void>();
+  sessions.state.store = store.promise;
   frame.key("ctrl+v");
-  await settle();
+  await waitFor(() => sessions.blobs.length === 1);
+  store.reject(new Error("disk full"));
+  await waitFor(() => chat.notices.length === 2);
   equal(
     [
       none,
@@ -681,7 +791,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   frame.clipboard = PNG;
   const composer = composerOf(chat);
   frame.key("ctrl+v");
-  await settle();
+  await waitFor(() => showsModelPicker(frame));
   frame.key("esc");
   await settle();
   const cancelled = [sessions.created.length, composer.state.text];
@@ -703,7 +813,10 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
 });
 
 test("text typed while the first send sets up the session goes with the message", async () => {
-  const startup = { cwd: "/w", model: { provider: "p", model: "m" }, reasoning: "high" } as const;
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  const startup = { cwd: "/w" };
   using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
   const sessions = fakeSessions();
   const { promise, resolve } = Promise.withResolvers<ListCatalogResult>();
@@ -713,7 +826,7 @@ test("text typed while the first send sets up the session goes with the message"
   frame.key("enter");
   frame.paste("test");
   resolve(CATALOG);
-  await settle();
+  await waitFor(() => sessions.inputs.length === 1);
   equal(sessions.inputs, [[{ user_text: "fix the test" }]]);
 });
 
@@ -729,7 +842,7 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
   frame.key("enter");
   await settle();
   frame.key("enter");
-  await settle();
+  await waitFor(() => chat.notices.length === 2);
   equal(chat.notices, [
     "error the session s1 did not open: Error: busy",
     "error the session s1 did not open: Error: busy",

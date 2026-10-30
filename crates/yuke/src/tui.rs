@@ -74,12 +74,7 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
         resizes,
         ended: Arc::new(Notify::new()),
     };
-    let startup = Startup {
-        cwd,
-        session,
-        model: None,
-        reasoning: None,
-    };
+    let startup = Startup { cwd, session };
     let ended = serve(&mut host, machine, store, startup, &shutdown).await;
     drop(host);
     for notice in display.take_notices() {
@@ -89,7 +84,6 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
 }
 
 /// Start the app on the display of `host` with `store` and `startup`, and serve the host until a quit or `shutdown`.
-/// The app fills the model and the reasoning of `startup` from the profile.
 async fn serve(
     host: &mut Host,
     machine: Machine,

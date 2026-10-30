@@ -11,7 +11,7 @@ import type {
   SessionUpdate,
   StoredEvent,
 } from "yuke:protocol";
-import type { FrameTest } from "yuke:test";
+import { type FrameTest, folder } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 
 export const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
@@ -195,6 +195,7 @@ export function loadChat(
   apply({
     get: (name: string) => services[name],
     options,
+    dataDir: folder(),
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),
   } as never);
   const transcript = (): TextView =>

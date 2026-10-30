@@ -1,14 +1,25 @@
 /**
- * One chat pane: its transcript, its composer, its folds, and the handle of its session. An unbound pane creates its
- * session at the first send or image paste. The model and the reasoning come from `tui.startup`, else from a picker.
+ * One chat pane: its transcript, its composer, its folds, and the handle of its session.
+ * An unbound pane creates its session at the first send or image paste.
+ * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
+import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
 import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/bundled/chat/composer";
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
-import type { Input, InputId, InteractionId, InteractionResponse, SessionId, SessionSettings } from "yuke:protocol";
+import type {
+  Input,
+  InputId,
+  InteractionId,
+  InteractionResponse,
+  ModelReference,
+  ReasoningLevel,
+  SessionId,
+  SessionSettings,
+} from "yuke:protocol";
 import { type Entry, Transcript } from "yuke:transcript";
 import {
   type Canvas,
@@ -20,7 +31,6 @@ import {
   Picker,
   type Placement,
   type Size,
-  type Startup,
   strokeOf,
   TextEditor,
   TextView,
@@ -131,8 +141,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // One send, model choice, or image paste at a time. Another one does nothing until it ends, also while a picker is
   // open.
   let busy = false;
-  // The settings that the user chose for the session setup of an unbound pane.
-  let chosen: SessionSettings | undefined;
   // The key of the shown message of a browse. A browse starts in an empty composer, so its end empties it again.
   let browse: string | undefined;
   // The last recalled pending input. The next ↑ recalls an older one, until an edit or a caret move.
@@ -359,32 +367,41 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     });
 
   /**
-   * The settings of a new session in the folder of `startup`. The model and the level come from `startup` when it names
-   * them, else the user chooses them. The picker shows only explicit levels, so `default` is never a choice. A cancel
-   * and a model that is not ready give `undefined`.
+   * Return the settings of the saved choice, else the settings that the user picks.
+   * With `pick`, the picker opens and the saved choice does not count.
    */
-  const settingsOf = async (startup: Startup): Promise<SessionSettings | undefined> => {
+  const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
-    const wanted = startup.model;
-    const chosen =
-      wanted === undefined
-        ? await choose(models, (entry) => `${entry.provider}/${entry.model.id}`)
-        : models.find((entry) => entry.provider === wanted.provider && entry.model.id === wanted.model);
-    if (chosen === undefined) {
-      if (wanted !== undefined) ctx.notify("error", `the model ${wanted.provider}/${wanted.model} is not ready`);
-      return undefined;
-    }
-    const levels = chosen.model.reasoning.filter((choice) => choice.level !== "default");
-    const reasoning =
-      startup.reasoning === undefined
-        ? await choose(levels, (choice) => choice.level)
-        : levels.find((choice) => choice.level === startup.reasoning);
-    if (reasoning === undefined) {
-      if (startup.reasoning !== undefined) {
-        ctx.notify("error", `the model ${chosen.provider}/${chosen.model.id} does not take ${startup.reasoning}`);
+    let saved: { model: ModelReference; reasoning: ReasoningLevel } | undefined;
+    if (!pick) {
+      try {
+        saved = JSON.parse(await readTextFile("choice.json", { baseDir: ctx.dataDir, fatal: true }));
+      } catch (error) {
+        if (!(error instanceof FileSystemError && error.code === "ENOENT")) {
+          ctx.notify("error", `the model choice did not load: ${String(error)}`);
+        }
       }
-      return undefined;
+    }
+    let chosen = models.find(
+      (entry) => entry.provider === saved?.model?.provider && entry.model.id === saved?.model?.model,
+    );
+    let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
+    if (chosen === undefined || reasoning === undefined) {
+      chosen = await choose(models, (entry) => `${entry.provider}/${entry.model.id}`);
+      if (chosen === undefined) return undefined;
+      reasoning = await choose(chosen.model.reasoning, (choice) => choice.level);
+      if (reasoning === undefined) return undefined;
+      try {
+        await writeTextFile(
+          "choice.json",
+          JSON.stringify({ model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level }),
+          { baseDir: ctx.dataDir, atomic: true },
+        );
+      } catch (error) {
+        // The session can start without the saved choice. The next new pane asks again.
+        ctx.notify("error", `the model choice did not save: ${String(error)}`);
+      }
     }
     return {
       model: { provider: chosen.provider, model: chosen.model.id },
@@ -396,25 +413,22 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         toolChoice: "auto",
         outputSchema: null,
       },
-      cwd: startup.cwd,
+      cwd: tui.startup.cwd,
     };
   };
 
   /**
-   * Let the user choose the model and the level. An unbound pane keeps them for its session setup. A pane with a session
-   * saves them in the session. The session keeps its folder and the rest of its settings.
+   * Let the user choose the model and the level, and save the choice for new panes.
+   * A pane with a session also saves them in the session.
+   * The session keeps its folder and the rest of its settings.
    */
   const chooseModel = async (): Promise<void> => {
     if (busy) return;
     busy = true;
     try {
-      // The user chooses both, also when the startup names them.
-      const settings = await settingsOf({ cwd: tui.startup.cwd });
+      const settings = await settingsOf(true);
       if (settings === undefined || mount.signal.aborted) return;
-      if (session === undefined) {
-        chosen = settings;
-        return;
-      }
+      if (session === undefined) return;
       // A failed open gave its notice already.
       const target = await sessionHandle();
       if (target === undefined || mount.signal.aborted) return;
@@ -430,14 +444,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /**
-   * The handle of the session of this pane. A pane without a session creates it with the settings of the user, else
-   * those of `tui.startup` or a picker. `undefined` after a cancel, or after a failure that gave its notice.
+   * The handle of the session of this pane.
+   * A pane without a session uses the saved choice, else a picker.
+   * Return `undefined` after a cancel, or after a failure that gave its notice.
    */
   const sessionHandle = async (): Promise<SessionHandle | undefined> => {
     if (session === undefined) {
       let settings: SessionSettings | undefined;
       try {
-        settings = chosen ?? (await settingsOf(tui.startup));
+        settings = await settingsOf(false);
       } catch (error) {
         if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
         return undefined;

@@ -25,13 +25,6 @@ pub(crate) struct Config {
     /// default is 30.
     #[serde(default, rename = "sessionIdleMinutes")]
     pub(crate) session_idle_minutes: Option<u32>,
-    /// The model of a new chat in the terminal interface, as provider/model. Without it, the first send asks.
-    #[serde(default)]
-    pub(crate) model: Option<String>,
-    /// The reasoning level of a new chat in the terminal interface, such as "off" or "high". "default" is not allowed.
-    /// Without it, the first send asks.
-    #[serde(default)]
-    pub(crate) reasoning: Option<yuke_protocol::ReasoningLevel>,
 }
 
 /// One item of `plugins`: a folder path, or an object with `path` and `options`.

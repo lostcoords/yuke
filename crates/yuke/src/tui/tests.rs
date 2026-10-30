@@ -99,8 +99,6 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
     let startup = Startup {
         cwd: "/work".to_owned(),
         session,
-        model: None,
-        reasoning: None,
     };
     let machine = crate::app::Machine {
         interface: Some(Interface {
@@ -283,73 +281,15 @@ const STARTUP: &str = "export function apply(ctx) {
 }";
 
 #[tokio::test]
-async fn a_reload_keeps_the_startup_session_and_reads_the_model_and_the_reasoning_again() {
+async fn the_startup_gives_the_folder_and_the_session_of_the_start() {
     let place = Place::new("tui", "startup_config");
     place.plugin("startup", STARTUP);
-    let config = |reasoning: &str| {
-        let text =
-            format!(r#"{{ "plugins": ["startup"], "model": "minimax/MiniMax-M3", "reasoning": "{reasoning}" }}"#);
-        std::fs::write(place.paths.config.join("config.json"), text).unwrap();
-    };
-    let model = r#""model":{"provider":"minimax","model":"MiniMax-M3"}"#;
-    config("high");
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["startup"] }"#).unwrap();
     let id = saved_session(&place).await;
     let (display, output) = display();
-    let mut app = started_on(&place, &display, Some(id)).await;
-    // A reload fails while a session opens, so the chat pane ends its open first.
-    opened(&app, id).await;
-    output
-        .shows(&format!(
-            r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"high"}}"#
-        ))
-        .await;
-
-    config("off");
-    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    let shown = format!(r#"{{"cwd":"/work","session":"{id}",{model},"reasoning":"off"}}"#);
-    output.shows(&shown).await;
-
-    // The model does not take the level low, so the reload keeps the old runtime.
-    config("low");
-    reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    assert_eq!(output.rows()[0], shown);
+    let app = started_on(&place, &display, Some(id)).await;
+    output.shows(&format!(r#"{{"cwd":"/work","session":"{id}"}}"#)).await;
     app.shutdown().await;
-}
-
-#[tokio::test]
-async fn a_config_reasoning_of_default_stops_the_start() {
-    let place = Place::new("tui", "startup_default_reasoning");
-    std::fs::create_dir_all(&place.paths.config).unwrap();
-    let config = r#"{ "model": "minimax/MiniMax-M3", "reasoning": "default" }"#;
-    std::fs::write(place.paths.config.join("config.json"), config).unwrap();
-    let store = crate::app::open_store(&place.paths.data).await.unwrap();
-    let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])));
-    let (display, _output) = display();
-    let observer = Arc::new(Notices(display));
-    let failed = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer)).await;
-    assert_eq!(
-        failed.err().as_deref(),
-        Some(r#"config.json: reasoning is an explicit level, such as "off" or "high", not "default""#)
-    );
-}
-
-#[tokio::test]
-async fn a_config_model_that_the_providers_do_not_have_stops_the_start() {
-    let place = Place::new("tui", "startup_unknown_model");
-    std::fs::create_dir_all(&place.paths.config).unwrap();
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "model": "nobody/none" }"#).unwrap();
-    let store = crate::app::open_store(&place.paths.data).await.unwrap();
-    let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])));
-    let (display, _output) = display();
-    let observer = Arc::new(Notices(display));
-    let failed = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer)).await;
-    assert!(
-        failed
-            .as_ref()
-            .is_err_and(|error| error.starts_with("config.json: model nobody/none: ")),
-        "{:?}",
-        failed.err()
-    );
 }
 
 #[tokio::test]

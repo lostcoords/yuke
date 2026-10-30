@@ -6,8 +6,8 @@
  * strings.
  */
 declare module "yuke:tui" {
-  import type { Frozen, NoticeLevel } from "yuke:plugins";
-  import type { Media, ModelReference, ReasoningLevel, SessionId } from "yuke:protocol";
+  import type { NoticeLevel } from "yuke:plugins";
+  import type { Media, SessionId } from "yuke:protocol";
 
   export interface Size {
     readonly width: number;
@@ -825,18 +825,14 @@ declare module "yuke:tui" {
   export type RestoreView = (state: unknown, mount: Mount) => View;
 
   /**
-   * How the terminal interface started. A reload keeps `cwd` and `session`, and it reads `model` and `reasoning` from
-   * `config.json` again.
+   * How the terminal interface started.
+   * A reload keeps the folder and the session.
    */
   export interface Startup {
     /** The folder that yuke started in. */
     readonly cwd: string;
     /** The session of `--continue` or `--session`. The start pane shows it. A restored pane keeps its saved session. */
     readonly session?: SessionId | undefined;
-    /** The `model` of `config.json`. yuke checks it against `providers.json`. */
-    readonly model?: Frozen<ModelReference> | undefined;
-    /** The `reasoning` of `config.json`. When `model` is set, that model takes this level. */
-    readonly reasoning?: ReasoningLevel | undefined;
   }
 
   /** The surface of one plugin: `ctx.get("tui")`. Each registration and mount belongs to the plugin. */

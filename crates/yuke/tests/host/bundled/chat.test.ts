@@ -1,5 +1,6 @@
 // The bundled plugin `chat` on the sessions of a test host: the transcript of a pane, live and after a reload.
 
+import { writeTextFile } from "yuke:fs";
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
 import { createFrame, createHost, equal, type FrameTest, folder, reply, test } from "yuke:test";
@@ -80,7 +81,7 @@ test("a pane draws the same transcript live and after a reload", async () => {
   equal(rows(reloaded), rows(live));
 });
 
-test("the first send of a pane creates its session with the startup model and gets the answer", async () => {
+test("the first send of a pane with a saved choice creates its session and gets the answer", async () => {
   let services: { readonly sessions: Sessions; readonly catalog: unknown } | undefined;
   await using host = await createHost({
     plugins: [
@@ -94,12 +95,15 @@ test("the first send of a pane creates its session with the startup model and ge
     ],
     replies: [reply.text("Hi there.")],
   });
-  const startup = { cwd: folder(), model: { provider: "minimax", model: "MiniMax-M3" }, reasoning: "high" } as const;
+  await writeTextFile("choice.json", '{"model":{"provider":"minimax","model":"MiniMax-M3"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  const startup = { cwd: folder() };
   using frame = createFrame({ width: 30, height: 10 }, undefined, startup);
   const surface = frame.surface("chat");
   const known = services as { readonly sessions: Sessions; readonly catalog: unknown };
   const get = (name: string) => (name === "tui" ? surface.tui : name === "catalog" ? known.catalog : known.sessions);
-  chat({ get, options: {}, notify() {} } as never);
+  chat({ get, options: {}, dataDir: folder(), notify() {} } as never);
   frame.start();
   frame.paste("hello");
   frame.key("enter");

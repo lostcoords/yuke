@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::Serialize;
 use tokio::sync::{Notify, mpsc};
-use yuke_protocol::{ModelReference, NoticeParams, ReasoningLevel, SessionId};
+use yuke_protocol::{NoticeParams, SessionId};
 use yuke_term::{Event, Rgb, Screen, Size};
 
 /// The terminal interface of a runtime: the display, and how yuke started. Give each runtime of a reload the same
@@ -30,12 +30,6 @@ pub struct Startup {
     /// The session of `--continue` or `--session`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionId>,
-    /// The `model` of `config.json`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<ModelReference>,
-    /// The `reasoning` of `config.json`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<ReasoningLevel>,
 }
 
 /// What the host gives the display.

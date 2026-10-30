@@ -55,8 +55,6 @@ fn interface(display: Arc<Display>) -> Interface {
         startup: Startup {
             cwd: "/".to_owned(),
             session: None,
-            model: None,
-            reasoning: None,
         },
     }
 }
