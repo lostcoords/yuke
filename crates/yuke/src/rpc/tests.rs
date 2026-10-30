@@ -18,7 +18,7 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
 use crate::app::Machine;
 use crate::providers::Providers;
-use crate::testing::{Answers, PanicsOnce, Place, with_key};
+use crate::testing::{Answers, Place, with_key};
 
 /// Settings of a session in the work folder of `place`.
 fn settings(place: &Place) -> Value {

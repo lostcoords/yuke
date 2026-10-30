@@ -267,7 +267,7 @@ async fn login(id: &str) -> Result<ExitCode, String> {
     let logged_in = auth::login(id, flow, machine.paths.data.clone(), &*machine.exchange, show);
     tokio::select! {
         result = logged_in => {
-            result.map_err(|error| chain_text(&error))?;
+            result.map_err(|error| error.to_string())?;
             warn(&format!("logged in to {}", provider.name));
             Ok(ExitCode::SUCCESS)
         }
@@ -283,7 +283,7 @@ async fn logout(id: &str) -> Result<ExitCode, String> {
     let provider = providers.get(id)?;
     auth::logout(id, machine.paths.data.clone())
         .await
-        .map_err(|error| chain_text(&error))?;
+        .map_err(|error| error.to_string())?;
     warn(&format!("logged out of {}", provider.name));
     Ok(ExitCode::SUCCESS)
 }

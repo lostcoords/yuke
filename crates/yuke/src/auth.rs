@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use yuke_ai::oauth::{Flow, Grant, OAuthError, PendingLogin, Poll};
 use yuke_ai::route::Credential;
 use yuke_ai::transport::Exchange;
-use yuke_engine::CredentialSource;
+use yuke_engine::{CredentialSource, chain_text};
 use yuke_protocol::UpdateCredentialParams;
 
 use crate::app::lock;
@@ -161,73 +161,6 @@ pub(crate) fn millis(time: SystemTime) -> u64 {
         .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
-/// Why no credential or no login came.
-#[derive(Debug)]
-pub(crate) enum AuthError {
-    /// No login of the provider exists.
-    NoLogin(String),
-    /// The token that the client gave for the provider expired.
-    PushExpired(String),
-    /// The login ended, or its refresh token can be spent.
-    Ended(String),
-    /// The login expired, and its refresh failed for now.
-    Unavailable { provider: String, cause: OAuthError },
-    /// Another process held the lock past the limit, and the access token expired.
-    Locked(PathBuf),
-    /// The provider did not start a login.
-    NotStarted(OAuthError),
-    /// The provider refused the login, or its answer was not readable.
-    Refused(OAuthError),
-    /// The user did not approve the login in time.
-    Expired,
-    /// The provider gave no refresh token, so the login cannot last.
-    NoRefreshToken,
-    /// A file operation failed.
-    File { path: PathBuf, error: io::Error },
-    /// `auth.json` holds no valid content.
-    Invalid { path: PathBuf, error: serde_json::Error },
-    /// The thread of a file call stopped.
-    Task(tokio::task::JoinError),
-}
-
-impl fmt::Display for AuthError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoLogin(provider) => write!(f, "no login for {provider}: run `yuke login {provider}`"),
-            Self::PushExpired(provider) => write!(
-                f,
-                "the accessToken of credential/update for {provider} expired: send a new credential/update"
-            ),
-            Self::Ended(provider) => write!(f, "the login for {provider} ended: run `yuke login {provider}` again"),
-            Self::Unavailable { provider, .. } => write!(f, "the login for {provider} expired and did not refresh"),
-            Self::Locked(path) => write!(f, "{}: another process holds the lock", path.display()),
-            Self::NotStarted(_) => f.write_str("the login did not start"),
-            Self::Refused(_) => f.write_str("the login did not complete"),
-            Self::Expired => f.write_str("the login expired before its approval"),
-            Self::NoRefreshToken => f.write_str("the provider gave no refresh token, so the login cannot last"),
-            Self::File { path, .. } | Self::Invalid { path, .. } => write!(f, "{}", path.display()),
-            Self::Task(_) => f.write_str("a file call of the login stopped"),
-        }
-    }
-}
-
-impl Error for AuthError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Unavailable { cause, .. } | Self::NotStarted(cause) | Self::Refused(cause) => Some(cause),
-            Self::File { error, .. } => Some(error),
-            Self::Invalid { error, .. } => Some(error),
-            Self::Task(error) => Some(error),
-            Self::NoLogin(_)
-            | Self::PushExpired(_)
-            | Self::Ended(_)
-            | Self::Locked(_)
-            | Self::Expired
-            | Self::NoRefreshToken => None,
-        }
-    }
-}
-
 /// The files of the credentials in one data folder.
 #[derive(Debug, Clone)]
 struct Files {
@@ -239,24 +172,24 @@ impl Files {
         self.folder.join(name)
     }
 
-    fn file_error(&self, name: &str) -> impl FnOnce(io::Error) -> AuthError {
+    fn file_error(&self, name: &str) -> impl FnOnce(io::Error) -> Box<dyn Error + Send + Sync> {
         let path = self.path(name);
-        move |error| AuthError::File { path, error }
+        move |error| format!("{}: {}", path.display(), chain_text(&error)).into()
     }
 
     /// The entries of `auth.json`. A missing file has none.
-    fn read(&self) -> Result<BTreeMap<String, Stored>, AuthError> {
+    fn read(&self) -> Result<BTreeMap<String, Stored>, Box<dyn Error + Send + Sync>> {
         let path = self.path(FILE);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
-            Err(error) => return Err(AuthError::File { path, error }),
+            Err(error) => return Err(self.file_error(FILE)(error)),
         };
-        serde_json::from_slice(&bytes).map_err(|error| AuthError::Invalid { path, error })
+        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {}", path.display(), chain_text(&error)).into())
     }
 
     /// The login of `provider`.
-    fn login(&self, provider: &str) -> Result<Option<StoredLogin>, AuthError> {
+    fn login(&self, provider: &str) -> Result<Option<StoredLogin>, Box<dyn Error + Send + Sync>> {
         match self.read()?.remove(provider) {
             Some(Stored::Login(login)) => Ok(Some(login)),
             Some(Stored::ApiKey { .. }) | None => Ok(None),
@@ -264,7 +197,7 @@ impl Files {
     }
 
     /// Take the lock, and wait at most `limit`. `None` when another holder keeps it longer.
-    fn lock(&self, limit: Duration) -> Result<Option<LockedFiles>, AuthError> {
+    fn lock(&self, limit: Duration) -> Result<Option<LockedFiles>, Box<dyn Error + Send + Sync>> {
         fs::create_dir_all(&self.folder).map_err(self.file_error(""))?;
         // The lock is its own file, because the rename of `auth.json` changes the file of that name.
         let file = OpenOptions::new()
@@ -306,7 +239,7 @@ struct LockedFiles {
 
 impl LockedFiles {
     /// Set the entry of `provider` to `entry`, or remove it. A removal of a missing entry writes nothing.
-    fn set(&self, provider: &str, entry: Option<Stored>) -> Result<(), AuthError> {
+    fn set(&self, provider: &str, entry: Option<Stored>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut entries = self.files.read()?;
         match entry {
             Some(entry) => {
@@ -323,12 +256,10 @@ impl LockedFiles {
 
     /// Replace `auth.json` with `entries`. The new file is whole or absent after a crash, and only the user can read
     /// it.
-    fn write(&self, entries: &BTreeMap<String, Stored>) -> Result<(), AuthError> {
+    fn write(&self, entries: &BTreeMap<String, Stored>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let files = &self.files;
-        let bytes = serde_json::to_vec_pretty(entries).map_err(|error| AuthError::Invalid {
-            path: files.path(FILE),
-            error,
-        })?;
+        let bytes = serde_json::to_vec_pretty(entries)
+            .map_err(|error| format!("{}: {}", files.path(FILE).display(), chain_text(&error)))?;
         let temporary = files.path(TEMPORARY);
         let mut file = OpenOptions::new()
             .write(true)
@@ -355,8 +286,8 @@ impl LockedFiles {
 ///
 /// # Errors
 ///
-/// Returns an [`AuthError`] when the lock waits too long, or the file does not read or write.
-pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), AuthError> {
+/// Returns an error when the lock waits too long, or the file does not read or write.
+pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), Box<dyn Error + Send + Sync>> {
     write_entry(provider, None, folder).await
 }
 
@@ -364,8 +295,12 @@ pub(crate) async fn logout(provider: &str, folder: PathBuf) -> Result<(), AuthEr
 ///
 /// # Errors
 ///
-/// Returns an [`AuthError`] when the lock waits too long, or the file does not read or write.
-pub(crate) async fn set_api_key(provider: &str, api_key: String, folder: PathBuf) -> Result<(), AuthError> {
+/// Returns an error when the lock waits too long, or the file does not read or write.
+pub(crate) async fn set_api_key(
+    provider: &str,
+    api_key: String,
+    folder: PathBuf,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     write_entry(provider, Some(Stored::ApiKey { api_key }), folder).await
 }
 
@@ -374,8 +309,8 @@ pub(crate) async fn set_api_key(provider: &str, api_key: String, folder: PathBuf
 ///
 /// # Errors
 ///
-/// Returns an [`AuthError`] when the file does not read or holds no valid content.
-pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>, AuthError> {
+/// Returns an error when the file does not read or holds no valid content.
+pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>, Box<dyn Error + Send + Sync>> {
     match (Files { folder }).read()?.remove(provider) {
         Some(Stored::ApiKey { api_key }) => Ok(Some(api_key)),
         Some(Stored::Login(_)) | None => Ok(None),
@@ -386,8 +321,8 @@ pub(crate) fn api_key(provider: &str, folder: PathBuf) -> Result<Option<String>,
 ///
 /// # Errors
 ///
-/// Returns an [`AuthError`] when the file does not read or holds no valid content.
-pub(crate) async fn stored_kinds(folder: PathBuf) -> Result<HashMap<String, StoredKind>, AuthError> {
+/// Returns an error when the file does not read or holds no valid content.
+pub(crate) async fn stored_kinds(folder: PathBuf) -> Result<HashMap<String, StoredKind>, Box<dyn Error + Send + Sync>> {
     let entries = blocking(move || Files { folder }.read()).await?;
     let kind = |entry| match entry {
         Stored::Login(_) => StoredKind::Login,
@@ -400,12 +335,16 @@ pub(crate) async fn stored_kinds(folder: PathBuf) -> Result<HashMap<String, Stor
 }
 
 /// Set the entry of `provider` in `auth.json` in the data folder `folder` to `entry`, or remove it, under the lock.
-async fn write_entry(provider: &str, entry: Option<Stored>, folder: PathBuf) -> Result<(), AuthError> {
+async fn write_entry(
+    provider: &str,
+    entry: Option<Stored>,
+    folder: PathBuf,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let files = Files { folder };
     let provider = provider.to_owned();
     blocking(move || {
         let Some(locked) = files.lock(LOCK_LIMIT)? else {
-            return Err(AuthError::Locked(files.path(LOCK)));
+            return Err(format!("{}: another process holds the lock", files.path(LOCK).display()).into());
         };
         locked.set(&provider, entry)
     })
@@ -414,9 +353,11 @@ async fn write_entry(provider: &str, entry: Option<Stored>, folder: PathBuf) -> 
 
 /// Run `f` on a blocking thread of tokio, because the file calls block.
 async fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, AuthError> + Send + 'static,
-) -> Result<T, AuthError> {
-    tokio::task::spawn_blocking(f).await.map_err(AuthError::Task)?
+    f: impl FnOnce() -> Result<T, Box<dyn Error + Send + Sync>> + Send + 'static,
+) -> Result<T, Box<dyn Error + Send + Sync>> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|error| format!("a file call of the login stopped: {}", chain_text(&error)))?
 }
 
 /// The credential of a provider with a login. It reads `auth.json` before each attempt, and it refreshes a login that
@@ -483,16 +424,16 @@ impl LoginSource {
 
 impl Login {
     /// The login of the provider in `auth.json`.
-    async fn stored(&self) -> Result<StoredLogin, AuthError> {
+    async fn stored(&self) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
         let files = self.files.clone();
         let provider = self.provider.clone();
         blocking(move || files.login(&provider))
             .await?
-            .ok_or_else(|| AuthError::NoLogin(self.provider.clone()))
+            .ok_or_else(|| format!("no login for {}: run `yuke login {}`", self.provider, self.provider).into())
     }
 
     /// The login of the next attempt.
-    async fn current(&self) -> Result<StoredLogin, AuthError> {
+    async fn current(&self) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
         let stored = self.stored().await?;
         if stored.valid(SystemTime::now(), MARGIN) {
             return Ok(stored);
@@ -505,13 +446,13 @@ impl Login {
             if stored.valid(SystemTime::now(), Duration::ZERO) {
                 return Ok(stored);
             }
-            return Err(AuthError::Locked(self.files.path(LOCK)));
+            return Err(format!("{}: another process holds the lock", self.files.path(LOCK).display()).into());
         };
         self.refresh(locked).await
     }
 
     /// Refresh the login while `locked` holds the lock.
-    async fn refresh(&self, locked: LockedFiles) -> Result<StoredLogin, AuthError> {
+    async fn refresh(&self, locked: LockedFiles) -> Result<StoredLogin, Box<dyn Error + Send + Sync>> {
         // Another process can have refreshed during the wait for the lock, so the file holds the truth.
         let stored = self.stored().await?;
         let now = SystemTime::now();
@@ -536,10 +477,12 @@ impl Login {
             }
             // The refresh can take long, so the token is checked again at its end.
             Err(OAuthError::Transient(_)) if stored.valid(SystemTime::now(), Duration::ZERO) => Ok(stored),
-            Err(cause @ OAuthError::Transient(_)) => Err(AuthError::Unavailable {
-                provider: self.provider.clone(),
-                cause,
-            }),
+            Err(cause @ OAuthError::Transient(_)) => Err(format!(
+                "the login for {} expired and did not refresh: {}",
+                self.provider,
+                chain_text(&cause)
+            )
+            .into()),
             // The login is gone, or its token can be spent: only a new login recovers it.
             Err(OAuthError::Permanent | OAuthError::Ambiguous(_) | OAuthError::BadResponse) => {
                 if self.save(locked, None).await.is_err() {
@@ -551,13 +494,17 @@ impl Login {
     }
 
     /// Set the login of the provider to `login`, or remove it. The lock ends after the write.
-    async fn save(&self, locked: LockedFiles, login: Option<StoredLogin>) -> Result<(), AuthError> {
+    async fn save(&self, locked: LockedFiles, login: Option<StoredLogin>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let provider = self.provider.clone();
         blocking(move || locked.set(&provider, login.map(Stored::Login))).await
     }
 
-    fn ended(&self) -> AuthError {
-        AuthError::Ended(self.provider.clone())
+    fn ended(&self) -> Box<dyn Error + Send + Sync> {
+        format!(
+            "the login for {} ended: run `yuke login {}` again",
+            self.provider, self.provider
+        )
+        .into()
     }
 }
 
@@ -568,7 +515,11 @@ impl CredentialSource for LoginSource {
         let pushed = lock(&self.0.pushed).clone();
         if let Some(pushed) = pushed {
             if pushed.expires_at <= millis(SystemTime::now()) {
-                return Err(Box::new(AuthError::PushExpired(self.0.provider.clone())));
+                return Err(format!(
+                    "the accessToken of credential/update for {} expired: send a new credential/update",
+                    self.0.provider
+                )
+                .into());
             }
             return Ok(self.0.flow.credential(pushed.access_token, pushed.account_id));
         }
@@ -589,14 +540,14 @@ impl CredentialSource for LoginSource {
 ///
 /// # Errors
 ///
-/// Returns [`AuthError`] when the provider refuses, the login expires, or the save fails.
+/// Returns an error when the provider refuses, the login expires, or the save fails.
 pub(crate) async fn login(
     provider: &str,
     flow: Flow,
     folder: PathBuf,
     exchange: &dyn Exchange,
     show: impl FnOnce(&PendingLogin),
-) -> Result<(), AuthError> {
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let started = tokio::time::Instant::now();
     let pending = start_login(flow, exchange).await?;
     show(&pending);
@@ -608,9 +559,14 @@ pub(crate) async fn login(
 ///
 /// # Errors
 ///
-/// Returns [`AuthError::NotStarted`] when the provider does not start the login.
-pub(crate) async fn start_login(flow: Flow, exchange: &dyn Exchange) -> Result<PendingLogin, AuthError> {
-    flow.start(exchange).await.map_err(AuthError::NotStarted)
+/// Returns an error when the provider does not start the login.
+pub(crate) async fn start_login(
+    flow: Flow,
+    exchange: &dyn Exchange,
+) -> Result<PendingLogin, Box<dyn Error + Send + Sync>> {
+    flow.start(exchange)
+        .await
+        .map_err(|error| format!("the login did not start: {}", chain_text(&error)).into())
 }
 
 /// Poll the provider until the user approves `pending`, and give the grant. Before each wait, the function checks
@@ -618,12 +574,12 @@ pub(crate) async fn start_login(flow: Flow, exchange: &dyn Exchange) -> Result<P
 ///
 /// # Errors
 ///
-/// Returns [`AuthError`] when the provider refuses or the login expires.
+/// Returns an error when the provider refuses or the login expires.
 pub(crate) async fn poll_login(
     pending: &PendingLogin,
     started: tokio::time::Instant,
     exchange: &dyn Exchange,
-) -> Result<Grant, AuthError> {
+) -> Result<Grant, Box<dyn Error + Send + Sync>> {
     // The check counts the waits and the polls before it, so a slow provider cannot outlast the limit by much.
     let mut interval = pending.interval.max(MIN_INTERVAL);
     let mut backoff = Duration::ZERO;
@@ -631,7 +587,7 @@ pub(crate) async fn poll_login(
     let mut delay = interval;
     loop {
         if started.elapsed() + delay > LOGIN_LIMIT {
-            return Err(AuthError::Expired);
+            return Err("the login expired before its approval".into());
         }
         tokio::time::sleep(delay).await;
         match pending.poll(exchange, SystemTime::now()).await {
@@ -649,7 +605,7 @@ pub(crate) async fn poll_login(
                 backoff = (backoff * 2).clamp(interval, MAX_BACKOFF.max(interval));
                 delay = backoff;
             }
-            Err(error) => return Err(AuthError::Refused(error)),
+            Err(error) => return Err(format!("the login did not complete: {}", chain_text(&error)).into()),
         }
     }
 }
@@ -658,9 +614,16 @@ pub(crate) async fn poll_login(
 ///
 /// # Errors
 ///
-/// Returns [`AuthError`] when the grant has no refresh token or the save fails.
-pub(crate) async fn save_login(provider: &str, mut grant: Grant, folder: PathBuf) -> Result<(), AuthError> {
-    let refresh_token = grant.refresh_token.take().ok_or(AuthError::NoRefreshToken)?;
+/// Returns an error when the grant has no refresh token or the save fails.
+pub(crate) async fn save_login(
+    provider: &str,
+    mut grant: Grant,
+    folder: PathBuf,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let refresh_token = grant
+        .refresh_token
+        .take()
+        .ok_or("the provider gave no refresh token, so the login cannot last")?;
     let login = StoredLogin::from_grant(grant, refresh_token, None);
     write_entry(provider, Some(Stored::Login(login)), folder).await
 }

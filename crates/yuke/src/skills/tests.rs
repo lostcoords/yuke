@@ -173,48 +173,6 @@ fn a_name_that_differs_from_its_folder_loads_with_a_warning_and_no_name_takes_th
 }
 
 #[test]
-fn a_folder_with_more_than_256_skill_folders_loads_the_first_256_with_a_warning() {
-    let root = folder("many");
-    let skills = root.join("skills");
-    for index in 0..=MAX_PER_ROOT {
-        let name = format!("s{index:03}");
-        write(&skills, &name, &skill_file(&name, "A skill."));
-    }
-
-    let catalog = catalog(std::slice::from_ref(&skills));
-
-    assert_eq!(catalog.skills.len(), MAX_PER_ROOT);
-    assert_eq!(catalog.skills.last().unwrap().name, "s255");
-    assert_eq!(
-        catalog.warnings,
-        [format!(
-            "yuke loads only the first 256 skill folders of {}: it holds 257",
-            skills.display()
-        )]
-    );
-}
-
-#[test]
-fn a_file_over_the_size_limit_is_skipped() {
-    let root = folder("large");
-    let skills = root.join("skills");
-    let mut text = skill_file("large", "A skill.");
-    text.push_str(&"x".repeat(256 * 1024));
-    let location = write(&skills, "large", &text);
-
-    let catalog = catalog(&[skills]);
-
-    assert_eq!(catalog.skills, []);
-    assert_eq!(
-        catalog.warnings,
-        [format!(
-            "yuke skipped the skill at {}: the file exceeds 256 KiB",
-            location.display()
-        )]
-    );
-}
-
-#[test]
 fn a_comment_after_a_quoted_value_and_a_comment_alone_do_not_count() {
     let fields =
         frontmatter("---\nname: \"pdf\" # the name\ndescription: 'It''s here' # a note\nlicense: # none\n---\n");

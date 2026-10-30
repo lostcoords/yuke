@@ -558,56 +558,6 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     client.end().await;
 }
 
-#[tokio::test]
-async fn a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it() {
-    let place = Place::new(
-        "rpc",
-        "a_panic_in_a_turn_ends_the_turn_and_the_next_input_runs_with_a_note_about_it",
-    );
-    let transport = PanicsOnce::new([text_reply("back")]);
-    let mut client = Client::initialized(&place, Box::new(transport)).await;
-    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    client.request("session/input", input_params(&session, "first")).await;
-
-    let failed = client.until(|message| message["method"] == "notice").await;
-    // The recovery ends the turn that the panic left open, and the client sees that end.
-    let repaired = client
-        .until(|message| message["params"]["update"]["sessionUpdate"] == "commit")
-        .await;
-    client
-        .call("session/input", input_params(&session, "second"))
-        .await
-        .unwrap();
-    let again = client.until(is_idle).await;
-
-    let labels: Vec<String> = failed.iter().filter_map(label).collect();
-    assert!(labels.contains(&"state running".to_owned()), "{labels:?}");
-    // The unwind drops the turn, which tells the client that its provisional state is gone.
-    assert_eq!(labels[labels.len() - 2..], ["turn_unconfirmed", "state idle"]);
-    let notice = &failed.last().unwrap()["params"];
-    assert!(
-        notice["message"].as_str().unwrap().starts_with("the turn failed:"),
-        "{notice}"
-    );
-    assert_eq!(notice["level"], "error");
-    let end = &repaired.last().unwrap()["params"]["update"]["commit"]["end"];
-    assert_eq!(end["failed"], "the turn stopped before it saved its end", "{end}");
-    let saved: Vec<&Value> = again
-        .iter()
-        .filter(|message| message["params"]["update"]["sessionUpdate"] == "commit")
-        .collect();
-    let first = saved.first().unwrap()["params"]["update"].to_string();
-    assert!(
-        first.contains(r#"<system_notification plugin=\"host:session\">The previous turn ended with an error: the turn stopped before it saved its end</system_notification>"#),
-        "{first}"
-    );
-    assert!(
-        saved.iter().any(|message| message.to_string().contains("back")),
-        "{again:?}"
-    );
-    client.end().await;
-}
-
 /// The activity of each row of `listed`, a `session/list` result, by session id.
 fn activities(listed: &Value) -> BTreeMap<String, String> {
     listed["sessions"]

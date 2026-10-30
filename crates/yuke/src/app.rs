@@ -196,7 +196,7 @@ impl Shared {
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
         let stored = crate::auth::stored_kinds(self.machine.paths.data.clone())
             .await
-            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+            .map_err(|error| AppError::Internal(error.to_string()))?;
         let providers = self.providers();
         let logins = lock(&self.logins);
         let providers = providers
@@ -472,7 +472,7 @@ impl App {
         let started = tokio::time::Instant::now();
         let pending = crate::auth::start_login(flow, &*self.shared.machine.exchange)
             .await
-            .map_err(|error| AppError::Internal(chain_text(&error)))?;
+            .map_err(|error| AppError::Internal(error.to_string()))?;
         let login_id = LoginId(self.shared.last_login.fetch_add(1, Ordering::Relaxed) + 1);
         let stop = CancellationToken::new();
         let result = LoginResult {
@@ -494,13 +494,13 @@ impl App {
             let outcome = match polled {
                 None => LoginOutcome::Cancelled,
                 Some(Err(error)) => LoginOutcome::Failed {
-                    message: chain_text(&error),
+                    message: error.to_string(),
                 },
                 Some(Ok(grant)) => {
                     match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
                         Ok(()) => LoginOutcome::Succeeded,
                         Err(error) => LoginOutcome::Failed {
-                            message: chain_text(&error),
+                            message: error.to_string(),
                         },
                     }
                 }
@@ -571,7 +571,7 @@ impl App {
         }
         crate::auth::logout(provider, self.shared.machine.paths.data.clone())
             .await
-            .map_err(|error| AppError::Internal(chain_text(&error)))
+            .map_err(|error| AppError::Internal(error.to_string()))
     }
 
     /// Store `api_key` in `auth.json` as the API key of `provider`. The variable of the provider wins when it is set and
@@ -599,7 +599,7 @@ impl App {
         }
         crate::auth::set_api_key(provider, api_key, self.shared.machine.paths.data.clone())
             .await
-            .map_err(|error| AppError::Internal(chain_text(&error)))
+            .map_err(|error| AppError::Internal(error.to_string()))
     }
 
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
@@ -841,7 +841,7 @@ fn api_key(shared: &Shared, id: &str, name: &str) -> Result<Option<String>, AppE
     if let Some(key) = variable_key(shared, name) {
         return Ok(Some(key));
     }
-    crate::auth::api_key(id, shared.machine.paths.data.clone()).map_err(|error| AppError::Internal(chain_text(&error)))
+    crate::auth::api_key(id, shared.machine.paths.data.clone()).map_err(|error| AppError::Internal(error.to_string()))
 }
 
 /// The API key in the environment variable `name`, when it is set, UTF-8, and not empty.

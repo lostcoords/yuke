@@ -3,12 +3,11 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use yuke_ai::scripted::ScriptedTransport;
 use yuke_ai::transport::{
     Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport,
 };
@@ -39,35 +38,6 @@ impl Body for OneChunk {
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<Bytes, Fault>>> {
         std::task::Poll::Ready(self.0.take().map(Ok))
-    }
-}
-
-/// Panics at its first request, as a provider path with a bug, and then answers as its script.
-pub(crate) struct PanicsOnce {
-    panicked: AtomicBool,
-    script: ScriptedTransport,
-}
-
-impl PanicsOnce {
-    pub(crate) fn new(replies: impl IntoIterator<Item = String>) -> Self {
-        PanicsOnce {
-            panicked: AtomicBool::new(false),
-            script: ScriptedTransport::new(replies),
-        }
-    }
-}
-
-impl Transport for PanicsOnce {
-    fn open<'a>(
-        &'a self,
-        request: &'a Outgoing<'_>,
-        deadline: Option<Instant>,
-    ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        assert!(
-            self.panicked.swap(true, Ordering::SeqCst),
-            "the first request panics on purpose"
-        );
-        self.script.open(request, deadline)
     }
 }
 

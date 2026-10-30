@@ -9,7 +9,6 @@ use yuke_ai::transport::{Answer, BoxFuture, ExchangeRequest, Fault};
 
 use super::*;
 use crate::testing::Answers;
-use yuke_engine::chain_text;
 
 const PROVIDER: &str = "xai-grok";
 
@@ -173,12 +172,40 @@ async fn a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing() {
     let denied = login(PROVIDER, Flow::Xai, folder.clone(), &answers, |_| {}).await;
     let no_refresh = login(PROVIDER, Flow::Xai, folder.clone(), &answers, |_| {}).await;
 
-    assert!(
-        matches!(denied, Err(AuthError::Refused(OAuthError::Permanent))),
-        "{denied:?}"
+    assert_eq!(
+        denied.unwrap_err().to_string(),
+        "the login did not complete: the login ended"
     );
-    assert!(matches!(no_refresh, Err(AuthError::NoRefreshToken)), "{no_refresh:?}");
+    assert_eq!(
+        no_refresh.unwrap_err().to_string(),
+        "the provider gave no refresh token, so the login cannot last"
+    );
     assert_eq!(file(&folder), json!({}));
+}
+
+#[tokio::test(start_paused = true)]
+async fn login_errors_keep_the_complete_transport_cause_text() {
+    let folder = folder("login_errors_keep_the_complete_transport_cause_text");
+    let answers = Answers::default();
+    answers.push_fault(Fault::DnsFailed);
+    answers.push_fault(Fault::DnsFailed);
+
+    let start = start_login(Flow::Xai, &answers).await.unwrap_err();
+    save(&folder, "at", "rt", -1);
+    let refresh = token_of(&source(&folder, answers, LOCK_LIMIT)).await;
+
+    assert_eq!(
+        start.to_string(),
+        "the login did not start: the login provider failed for now: the provider host did not resolve"
+    );
+    assert_eq!(
+        refresh,
+        Err(
+            "the login for xai-grok expired and did not refresh: the login provider failed for now: the provider host did not resolve"
+                .to_owned()
+        )
+    );
+    assert_eq!(saved(&folder), Some(("at".to_owned(), "rt".to_owned())));
 }
 
 #[tokio::test(start_paused = true)]
@@ -196,7 +223,10 @@ async fn a_login_without_an_approval_ends_at_its_limit() {
 
     let expired = login(PROVIDER, Flow::Xai, folder, &answers, |_| {}).await;
 
-    assert!(matches!(expired, Err(AuthError::Expired)), "{expired:?}");
+    assert_eq!(
+        expired.unwrap_err().to_string(),
+        "the login expired before its approval"
+    );
     assert_eq!(answers.bodies().len(), 4);
 }
 
@@ -218,7 +248,10 @@ async fn the_login_limit_counts_the_time_of_the_requests() {
 
     let expired = login(PROVIDER, Flow::Xai, folder, &slow, |_| {}).await;
 
-    assert!(matches!(expired, Err(AuthError::Expired)), "{expired:?}");
+    assert_eq!(
+        expired.unwrap_err().to_string(),
+        "the login expired before its approval"
+    );
     assert_eq!(slow.script.bodies().len(), 3);
 }
 

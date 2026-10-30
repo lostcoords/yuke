@@ -36,7 +36,7 @@ pub(super) struct LiveSession {
 /// The parts of an open session that the app and the task of the session share.
 struct Parts {
     /// A turn holds the lock for its whole run, so new settings never meet a turn.
-    session: Arc<tokio::sync::Mutex<Session>>,
+    session: tokio::sync::Mutex<Session>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
     turn: Mutex<Option<CancellationToken>>,
     /// The host of the tools. The jobs of the session belong to the host. The `closed` token of the host ends the task,
@@ -77,7 +77,7 @@ impl LiveSession {
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
         let servers = start_servers(&host, &session.settings().cwd);
         let parts = Arc::new(Parts {
-            session: Arc::new(tokio::sync::Mutex::new(session)),
+            session: tokio::sync::Mutex::new(session),
             turn: Mutex::default(),
             host,
             script: Mutex::new(Arc::new(script)),
@@ -715,7 +715,7 @@ impl Parts {
                     return;
                 }
             }
-            let mut session = Arc::clone(&self.session).lock_owned().await;
+            let mut session = self.session.lock().await;
             if session.is_stale()
                 && let Err(error) = recover(&mut session, output).await
             {
@@ -750,54 +750,41 @@ impl Parts {
                 Err(error) => Err(error),
             };
             let ended = match prepared {
-                // The turn runs in its own task, so a panic of the turn cannot leave the session running.
                 Ok((toolset, prompt)) => {
                     let hooks = script.hooks(token.clone());
-                    let shared = Arc::clone(&self.host.shared);
-                    let output = Arc::clone(output);
+                    let shared = &self.host.shared;
+                    let driver = Driver::new(&*shared.machine.transport, &model, &*shared.timer)
+                        .toolset(&toolset)
+                        .hooks(&hooks);
                     // The session saves a round failure as the end of the turn.
-                    let turn = async move {
-                        let mut session = session;
-                        let driver = Driver::new(&*shared.machine.transport, &model, &*shared.timer)
-                            .toolset(&toolset)
-                            .hooks(&hooks);
+                    Some(
                         session
                             .turn(driver)
                             .input_hook(&hooks)
                             .prompt(prompt)
-                            .observer(&*output)
+                            .observer(output.as_ref())
                             .cancellation_token(token)
                             .run()
-                            .await
-                    };
-                    Some(tokio::spawn(turn).await)
+                            .await,
+                    )
                 }
                 Err(error) => {
                     output.notice(NoticeLevel::Error, &error);
                     None
                 }
             };
+            drop(session);
             self.finish_turn();
             // Without a turn, the input that waits runs at the next wake.
             let Some(ended) = ended else {
                 return;
             };
             match ended {
-                Ok(Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput)) => {}
+                Ok(_) | Err(SessionError::Round(_) | SessionError::NoInput) => {}
                 // A stale session recovers at the next wake, so a store failure does not repeat at once. A failed input
                 // hook leaves its input pending for the next wake too.
-                Ok(Err(error @ (SessionError::Store(_) | SessionError::Stale | SessionError::InputHook(_)))) => {
+                Err(error @ (SessionError::Store(_) | SessionError::Stale | SessionError::InputHook(_))) => {
                     output.notice(NoticeLevel::Error, &chain_text(&error));
-                    return;
-                }
-                // The session in memory can be wrong after a panic, so it opens again from the store at once. The
-                // input that waits runs at the next wake, so a panic does not repeat at once.
-                Err(error) => {
-                    output.notice(NoticeLevel::Error, &format!("the turn failed: {error}"));
-                    let mut session = self.session.lock().await;
-                    if let Err(error) = recover(&mut session, output).await {
-                        output.notice(NoticeLevel::Error, &chain_text(&error));
-                    }
                     return;
                 }
             }
@@ -805,8 +792,8 @@ impl Parts {
     }
 }
 
-/// Open `session` again from the store after a failed write or a panic, and publish the end of a turn that the store
-/// held as open.
+/// Open `session` again from the store after a failed write.
+/// Publish the end of a turn that the store held as open.
 async fn recover(session: &mut Session, output: &Output) -> Result<(), AppError> {
     if let Some(event) = session.recover().await? {
         output.publish(SessionUpdate::Saved(event));

@@ -4,15 +4,6 @@ use std::collections::HashSet;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-/// The scan reads at most this many bytes of a `SKILL.md`, so the frontmatter must end inside them.
-const FRONTMATTER_BYTES: u64 = 16 * 1024;
-
-/// The largest `SKILL.md`.
-const MAX_FILE_BYTES: u64 = 256 * 1024;
-
-/// The scan loads at most this many skill folders of one folder. A folder with more is likely not a skill folder.
-const MAX_PER_ROOT: usize = 256;
-
 const MAX_NAME_BYTES: usize = 64;
 
 const MAX_DESCRIPTION_CHARS: usize = 1024;
@@ -85,14 +76,6 @@ pub(crate) fn catalog(roots: &[PathBuf]) -> Catalog {
         }
         // The order of a folder listing is not stable, so the first folder of a name is the first in byte order.
         folders.sort();
-        if folders.len() > MAX_PER_ROOT {
-            catalog.warnings.push(format!(
-                "yuke loads only the first {MAX_PER_ROOT} skill folders of {}: it holds {}",
-                root.display(),
-                folders.len()
-            ));
-            folders.truncate(MAX_PER_ROOT);
-        }
         for (folder_name, folder) in folders {
             let location = folder.join("SKILL.md");
             // Two links to one file give one skill.
@@ -137,24 +120,14 @@ fn skipped(location: &Path, reason: &str) -> String {
 
 /// The skill of the `SKILL.md` at `location` in the folder `folder_name`, or why it is no skill.
 fn skill(folder_name: &str, location: &Path) -> Result<Skill, String> {
-    let file = std::fs::File::open(location).map_err(|error| error.to_string())?;
+    let mut file = std::fs::File::open(location).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     if !metadata.is_file() {
         return Err("the source is not a regular file".to_owned());
     }
-    if metadata.len() > MAX_FILE_BYTES {
-        return Err("the file exceeds 256 KiB".to_owned());
-    }
-    let mut bytes = Vec::new();
-    file.take(FRONTMATTER_BYTES)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    // A cut can split the last character, so only the valid start counts.
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(text) => text,
-        Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).unwrap_or_default(),
-    };
-    let fields = frontmatter(text).ok_or("the file has no frontmatter")?;
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(|error| error.to_string())?;
+    let fields = frontmatter(&text).ok_or("the file has no frontmatter")?;
     let name = fields.name.unwrap_or_else(|| folder_name.to_owned());
     check_name(&name)?;
     let description = fields.description.unwrap_or_default();
