@@ -543,11 +543,20 @@ export class TextEditor {
     return this.#layoutAt(this.#textWidth(this.#size.width));
   }
 
-  /** The layout of the state at `width` text cells. The last one stays for the next call. */
+  /**
+   * The layout of the text and spans at `width` text cells.
+   * The last layout stays for the next call.
+   */
   #layoutAt(width: number): Layout {
     const state = this.#state;
     const cached = this.#layout;
-    if (cached !== undefined && cached.state === state && cached.width === width) return cached;
+    if (
+      cached !== undefined &&
+      cached.state.text === state.text &&
+      cached.state.spans === state.spans &&
+      cached.width === width
+    )
+      return cached;
     const labels = this.#mask ? masked(state) : state.spans;
     let shown = "";
     let at = 0;
@@ -642,7 +651,7 @@ export class TextEditor {
       const from = this.#toDisplay(layout, span.from, "before");
       marks.push({ from, to: from + span.label.length, style: LABEL, wholeRows: false });
     }
-    const { anchor, head } = layout.state.selection;
+    const { anchor, head } = this.#state.selection;
     const range = (from: number, to: number, style: CanvasStyle, wholeRows: boolean): void => {
       const low = this.#toDisplay(layout, Math.min(from, to), "before");
       const high = this.#toDisplay(layout, Math.max(from, to), "after");

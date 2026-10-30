@@ -142,7 +142,11 @@ export class ScrollList<T extends object> {
     return true;
   }
 
-  /** The item, its row, and the item row at the display row `row`, for a view that draws the list itself. */
+  /**
+   * The item at absolute display row `row`, counted from the start of the list.
+   * The result has the item-local row index and its text.
+   * Return `undefined` when `row` is not a display row.
+   */
   rowAt(row: number): { readonly item: T; readonly row: number; readonly text: TextRow } | undefined {
     if (!Number.isInteger(row) || row < 0 || row >= this.#total()) return undefined;
     const at = this.#entryAt(row);
@@ -151,7 +155,10 @@ export class ScrollList<T extends object> {
     return { item: entry.item, row: local, text: entry.rows[local] as TextRow };
   }
 
-  /** The first display row and the rows of the item `key`, for a view that draws the list itself. */
+  /**
+   * The first absolute display row and the rows of the item `key`.
+   * Return `undefined` when the key is absent.
+   */
   rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined {
     const at = this.#index.get(key);
     if (at === undefined) return undefined;

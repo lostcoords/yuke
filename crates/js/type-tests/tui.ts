@@ -2,7 +2,19 @@
 
 import type { TermEvent } from "yuke:internal/term";
 import type { PluginContext } from "yuke:plugins";
-import type { Canvas, Command, KeyEvent, Placement, Size, Style, StylePatch, Tui, View } from "yuke:tui";
+import type {
+  Canvas,
+  Command,
+  KeyEvent,
+  Placement,
+  ScrollList,
+  Size,
+  Style,
+  StylePatch,
+  TextRow,
+  Tui,
+  View,
+} from "yuke:tui";
 import type * as Runtime from "../modules/runtime/tui.ts";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -13,6 +25,15 @@ declare function assert<T extends true>(): void;
 
 // The runtime module exports exactly the declared values, so no export is missing and none is extra.
 assert<Equal<keyof typeof Runtime, keyof typeof import("yuke:tui")>>();
+
+// A plugin can read a display row or all rows of an item, with `undefined` for a missing row or key.
+declare const list: ScrollList<{ key: string }>;
+const displayRow = list.rowAt(0);
+const itemRows = list.rowsOf("a");
+assert<
+  Equal<typeof displayRow, { readonly item: { key: string }; readonly row: number; readonly text: TextRow } | undefined>
+>();
+assert<Equal<typeof itemRows, { readonly start: number; readonly rows: readonly TextRow[] } | undefined>>();
 
 // The frame loop gives the public key event, so a view gets what the host sends.
 assert<Equal<KeyEvent, Extract<TermEvent, { type: "key" }>>>();

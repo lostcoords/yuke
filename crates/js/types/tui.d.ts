@@ -655,6 +655,17 @@ declare module "yuke:tui" {
     scrollToItem(key: string, row?: number): boolean;
     /** Scroll the least to show row `row` of the item `key`. `false` when it cannot show. */
     ensureVisible(key: string, row?: number): boolean;
+    /**
+     * The item at absolute display row `row`, counted from the start of the list.
+     * The result has the item-local row index and its text.
+     * Return `undefined` when `row` is not a display row.
+     */
+    rowAt(row: number): { readonly item: T; readonly row: number; readonly text: TextRow } | undefined;
+    /**
+     * The first absolute display row and the rows of the item `key`.
+     * Return `undefined` when the key is absent.
+     */
+    rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined;
     /** Give each later state to `listener`, until `signal` aborts or the disposer runs. */
     onChange(listener: (state: ScrollState) => void, signal: AbortSignal): Disposer;
     layout(size: Size): readonly Placement[];
