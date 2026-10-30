@@ -9,6 +9,8 @@ import type {
   InteractionResponse,
   Job,
   ListCatalogResult,
+  ListSessionsParams,
+  SessionRow,
   SessionSettings,
   SessionUpdate,
   StoredEvent,
@@ -73,6 +75,9 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   const removals: number[] = [];
   const responses: [number, InteractionResponse][] = [];
   const blobs: number[][] = [];
+  // The saved sessions of `list` and `get`, newest first, and the params of each list.
+  const rows: SessionRow[] = [];
+  const lists: ListSessionsParams[] = [];
   // The end of each handle, by its open. A close by another client ends the handles of its session.
   const ends = new Map<Opened, AbortController>();
   /**
@@ -118,6 +123,20 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     responses,
     blobs,
     state,
+    rows,
+    lists,
+    /** The rows of the folder `params.cwd`, or of each folder. A list gives at most `params.limit` rows, else 50. */
+    async list(params: ListSessionsParams = {}): Promise<{ sessions: SessionRow[] }> {
+      lists.push(params);
+      const cwd = params.cwd;
+      const shown = rows.filter((row) => cwd === undefined || cwd === null || row.session.cwd === cwd);
+      return { sessions: shown.slice(0, params.limit ?? 50) };
+    },
+    async get(id: string): Promise<SessionRow> {
+      const row = rows.find((candidate) => candidate.session.sessionId === id);
+      if (row === undefined) throw new Error(`no session ${id}`);
+      return row;
+    },
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);
       return "s-new";

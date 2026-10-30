@@ -200,11 +200,31 @@ async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
 }
 
 #[tokio::test]
+async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat() {
+    let place = Place::new("tui", "sessions_list");
+    place.plugin(
+        "opener",
+        "export function apply(ctx) { const tui = ctx.get('tui'); setTimeout(() => tui.commands.run('sessions:open'), 0); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["opener"] }"#).unwrap();
+    let (display, output) = display();
+
+    let app = started(&place, &display).await;
+
+    // The screen of the test reads bytes, so it matches the ASCII start of the head row: the folder of the list.
+    output.shows(" /work ").await;
+    app.shutdown().await;
+}
+
+#[tokio::test]
 async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
     let place = Place::new("tui", "chat_options");
     place.plugin("board", BOARD);
+    // The sessions plugin needs the chat, and its own load error would hide the error of the chat.
     let config = |copy: &str| {
-        let text = format!(r#"{{ "plugins": ["board"], "bundled": {{ "chat": {{ "copyOnRelease": {copy} }} }} }}"#);
+        let text = format!(
+            r#"{{ "plugins": ["board"], "disable": ["sessions"], "bundled": {{ "chat": {{ "copyOnRelease": {copy} }} }} }}"#
+        );
         std::fs::write(place.paths.config.join("config.json"), text).unwrap();
     };
     config(r#""no""#);

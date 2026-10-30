@@ -33,12 +33,7 @@ fn load(root: &Path, list: &[&str]) -> Result<Vec<Plugin>, String> {
 }
 
 /// The bundled plugins `bundled` that `disable` does not name, then the plugins of the folders `list`.
-fn load_with(
-    bundled: &[(&str, &str, &[&str])],
-    root: &Path,
-    list: &[&str],
-    disable: &[&str],
-) -> Result<Vec<Plugin>, String> {
+fn load_with(bundled: &[Bundled], root: &Path, list: &[&str], disable: &[&str]) -> Result<Vec<Plugin>, String> {
     let config = Config {
         plugins: list
             .iter()
@@ -226,10 +221,50 @@ fn a_provider_loads_before_its_users_and_the_rest_keeps_the_list_order() {
 }
 
 /// Two bundled plugins of a test. The second one provides `pairs`.
-const BUNDLED_PAIR: &[(&str, &str, &[&str])] = &[
-    ("first", "yuke:internal/bundled/first", &[]),
-    ("second", "yuke:internal/bundled/second", &["pairs"]),
+const BUNDLED_PAIR: &[Bundled] = &[
+    Bundled {
+        name: "first",
+        module: "yuke:internal/bundled/first",
+        uses: &[],
+        provides: &[],
+    },
+    Bundled {
+        name: "second",
+        module: "yuke:internal/bundled/second",
+        uses: &[],
+        provides: &["pairs"],
+    },
 ];
+
+#[test]
+fn a_bundled_plugin_uses_the_service_of_a_profile_plugin_that_replaces_its_provider() {
+    let root = place("bundled_user");
+    write_plugin(
+        &root,
+        "config/mine",
+        &manifest("mine", &json!({ "entry": "i.ts", "provides": ["pairs"] })),
+    );
+    let bundled = [
+        Bundled {
+            name: "user",
+            module: "yuke:internal/bundled/user",
+            uses: &["pairs"],
+            provides: &[],
+        },
+        Bundled {
+            name: "second",
+            module: "yuke:internal/bundled/second",
+            uses: &[],
+            provides: &["pairs"],
+        },
+    ];
+
+    let plugins = load_with(&bundled, &root, &["mine"], &["second"]).unwrap();
+
+    let names: Vec<&str> = plugins.iter().map(|plugin| plugin.name.as_str()).collect();
+    assert_eq!(names, ["mine", "user"]);
+    assert_eq!(plugins[1].uses, ["pairs"]);
+}
 
 #[test]
 fn plugins_that_use_the_services_of_each_other_stop_the_start() {
