@@ -6,7 +6,8 @@ use std::process::{Command, Output};
 
 /// A crate folder with the migrations and the queries of the fixture, and an empty `src`.
 fn crate_folder(test: &str) -> PathBuf {
-    let folder = std::env::temp_dir().join(format!("yuke-sqlgen-cli-{test}"));
+    // Two runs of the tests at one time get their own folders.
+    let folder = std::env::temp_dir().join(format!("yuke-sqlgen-cli-{test}-{}", std::process::id()));
     // A panic in an earlier run can leave the folder, so its old files go first.
     match std::fs::remove_dir_all(&folder) {
         Ok(()) => {}

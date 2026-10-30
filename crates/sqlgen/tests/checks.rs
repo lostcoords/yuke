@@ -17,7 +17,8 @@ fn error_of(test: &str, queries: &str) -> String {
 /// Generate from the `migrations`, each a file name and its SQL, and the query file `notes.sql` with `queries`, and
 /// return the error text.
 fn error_with_migrations(test: &str, migrations: &[(&str, &str)], queries: &str) -> String {
-    let folder: PathBuf = std::env::temp_dir().join(format!("yuke-sqlgen-{test}"));
+    // Two runs of the tests at one time get their own folders.
+    let folder: PathBuf = std::env::temp_dir().join(format!("yuke-sqlgen-{test}-{}", std::process::id()));
     // A panic in an earlier run can leave the folder, so its old files go first.
     match std::fs::remove_dir_all(&folder) {
         Ok(()) => {}
