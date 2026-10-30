@@ -9,6 +9,7 @@ import { blocksOf, draftOf, EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:intern
 import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
+import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
 import type { EventsPage, Frozen, PluginContext, SessionHandle, ViewEvent } from "yuke:plugins";
 import type {
   Input,
@@ -160,9 +161,27 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // A recall waits for its removal. Until the removal ends, ↑ does nothing.
   let recalling = false;
   // The first open question of the session and its view. The others wait in order. A sent answer waits for the close.
+  // The start of the running turn on the clock of the tui, and the end of the wait of a scheduled retry.
+  let working: number | undefined;
+  let retryAt: number | undefined;
+  // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
+  let stopTick: (() => void) | undefined;
   let asking:
     | { readonly id: InteractionId; readonly asked: Asked; answered: boolean; overlay: Mount | undefined }
     | undefined;
+  /** Draw the working row again at the next frame of its spinner, while the turn runs. */
+  const tick = (): void => {
+    stopTick = working === undefined || mount.signal.aborted ? undefined : tui.after(FRAME_MS, tick);
+  };
+  /** Hide the working row and stop its spinner, at the end of a turn or of the handle. */
+  const stopWorking = (): void => {
+    working = undefined;
+    // The retry status of the transcript can outlive its turn, so the next turn shows no old countdown.
+    retryAt = undefined;
+    stopTick?.();
+    stopTick = undefined;
+  };
+
   const changed = (): void => {
     dirty = true;
     tui.requestFrame();
@@ -196,7 +215,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   const event = (update: ViewEvent): void => {
+    const status = transcript.status;
     transcript.apply(update);
+    // The working row counts from the first running state that the pane sees, and a retry counts down from its event.
+    if (transcript.state === "running") {
+      if (working === undefined) {
+        working = tui.now();
+        tick();
+      }
+    } else stopWorking();
+    const next = transcript.status;
+    if (next !== status && next?.kind === "retry_scheduled") retryAt = tui.now() + next.afterMs;
     if ("snapshot" in update) opened = true;
     syncQuestion();
     changed();
@@ -220,6 +249,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
             if (handle !== opened || mount.signal.aborted) return;
             handle = undefined;
             opening = undefined;
+            stopWorking();
             // No close update comes for the questions of an ended handle, and the next open shows them again.
             asking?.overlay?.close();
             asking = undefined;
@@ -625,12 +655,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(size.height / 2)));
       const composerRow = Math.max(0, size.height - composerRows);
       ruleRow = composerRow - 1;
-      // The strip takes the rows above the rule that its messages need, and the transcript gets the rest. When rows run
-      // out, the strip keeps the newest messages.
+      // The working row sits on the rule while a turn runs.
+      const workingRows = working !== undefined && ruleRow > 0 ? 1 : 0;
+      // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
+      // rows run out, the strip keeps the newest messages.
       const list = waiting();
-      shown = list.slice(Math.max(0, list.length - Math.max(0, ruleRow)));
+      const above = Math.max(0, ruleRow - workingRows);
+      shown = list.slice(Math.max(0, list.length - above));
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, ruleRow - shown.length) } },
+        { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, above - shown.length) } },
         {
           view: question?.view ?? composer,
           rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow },
@@ -651,14 +684,24 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
+      const workingRows = working !== undefined && ruleRow > 0 ? 1 : 0;
       for (const [at, entry] of shown.entries()) {
-        const row = ruleRow - shown.length + at;
+        const row = ruleRow - workingRows - shown.length + at;
         const hint = at === shown.length - 1 ? " ↑ edit" : "";
         const text = inputText(entry[1].content).replaceAll("\n", " ");
         const room = Math.max(0, canvas.width - 1 - measure(hint));
         const cut = fit(text, room) === text.length ? text : `${text.slice(0, fit(text, room - 1))}…`;
         canvas.text(1, row, cut, STYLE.meta);
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
+      }
+      if (working !== undefined && workingRows === 1) {
+        const key = tui.keys.keysOf("chat:interrupt")[0];
+        const row = workingText(transcript, working, tui.now(), retryAt, key);
+        canvas.text(0, ruleRow - 1, row.spinner, STYLE.hint);
+        const room = Math.max(0, canvas.width - 2);
+        const text =
+          fit(row.text, room) === row.text.length ? row.text : `${row.text.slice(0, fit(row.text, room - 1))}…`;
+        canvas.text(2, ruleRow - 1, text, STYLE.meta);
       }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.

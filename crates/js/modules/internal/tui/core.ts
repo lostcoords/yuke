@@ -50,6 +50,8 @@ export interface Driver {
   readonly requestFrame: (delay?: number) => void;
   /** Call `callback` once after `delay` milliseconds. The returned function cancels the call. */
   readonly after: After;
+  /** The time in milliseconds of the clock of `after`. */
+  readonly now: () => number;
   readonly copy: (text: string) => void;
   readonly readImage: () => Promise<ClipboardImage | undefined>;
   readonly quit: () => void;

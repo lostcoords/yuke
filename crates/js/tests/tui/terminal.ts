@@ -56,6 +56,7 @@ export function fakeTerminal(): Terminal {
       requests += 1;
     },
     after: clock.after,
+    now: clock.now,
     quit: () => {
       calls.push("quit");
     },

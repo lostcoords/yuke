@@ -34,6 +34,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     // Each input and each `advance` draws a frame after it, and `draw()` draws one on demand.
     requestFrame: () => {},
     after: clock.after,
+    now: clock.now,
     copy: (text) => {
       copies.push(text);
     },

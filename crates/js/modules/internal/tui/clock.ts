@@ -18,6 +18,9 @@ export class ManualClock {
     };
   };
 
+  /** The time in milliseconds since the start of the clock. */
+  readonly now = (): number => this.#now;
+
   /** Move the time by `ms`, and run each due callback in time order. A due timer that a callback adds runs too. */
   advance(ms: number): void {
     const end = this.#now + ms;

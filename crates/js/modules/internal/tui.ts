@@ -22,6 +22,8 @@ const core = new Core({
     const timer = setTimeout(callback, delay);
     return () => clearTimeout(timer);
   },
+  // A monotonic clock, so a change of the system time does not move a duration.
+  now: () => performance.now(),
   copy: (text) => term.copy(text),
   readImage: async () => {
     const bytes = await clipboardReadImage();

@@ -873,6 +873,8 @@ declare module "yuke:tui" {
      * stop of the plugin cancels it too. A frame test moves this time with `advance`.
      */
     readonly after: (delay: number, callback: () => void) => Disposer;
+    /** The time in milliseconds on the clock of `after`. The difference of two times is a duration. `advance` moves it. */
+    readonly now: () => number;
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;

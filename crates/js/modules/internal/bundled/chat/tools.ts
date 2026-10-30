@@ -67,7 +67,7 @@ function stateOf(entry: ToolEntry): string | undefined {
 }
 
 /** The string argument `name` of the JSON `text`. A call that still streams has no complete JSON yet. */
-function argument(text: string, name: string): string | undefined {
+export function argument(text: string, name: string): string | undefined {
   try {
     const value: unknown = JSON.parse(text);
     if (typeof value !== "object" || value === null) return undefined;
