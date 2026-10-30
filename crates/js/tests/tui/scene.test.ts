@@ -341,6 +341,57 @@ test("a pane starts at its initial focus and each focus change names the view an
   ]);
 });
 
+test("a timer runs once in time order, asks for a frame, and its disposer or the stop of its plugin cancels it", () => {
+  const terminal = fakeTerminal();
+  const core = newCore(terminal);
+  const stop = new AbortController();
+  const tui = createSurface(core, "timers", stop.signal);
+  const ran: string[] = [];
+  tui.after(100, () => ran.push("late"));
+  const cancel = tui.after(100, () => ran.push("cancelled"));
+  tui.after(50, () => ran.push("early"));
+  cancel();
+  const requests = terminal.requests();
+  terminal.clock.advance(99);
+  const before = [[...ran], terminal.requests() - requests];
+  terminal.clock.advance(1);
+  equal([before, ran, terminal.requests() - requests], [[["early"], 1], ["early", "late"], 2]);
+  terminal.clock.advance(1000);
+  equal(ran, ["early", "late"]);
+  tui.after(10, () => ran.push("stopped"));
+  stop.abort();
+  terminal.clock.advance(10);
+  equal(ran, ["early", "late"]);
+});
+
+test("one advance runs the due timers in time order, also a timer that a timer sets", () => {
+  const terminal = fakeTerminal();
+  const tui = createSurface(newCore(terminal), "timers", new AbortController().signal);
+  const ran: string[] = [];
+  tui.after(30, () => ran.push("30"));
+  tui.after(20, () => ran.push("20"));
+  tui.after(10, () => {
+    ran.push("10");
+    tui.after(5, () => ran.push("15"));
+  });
+  terminal.clock.advance(30);
+  equal(ran, ["10", "15", "20", "30"]);
+});
+
+test("a throwing timer is reported under its plugin", () => {
+  const terminal = fakeTerminal();
+  const core = newCore(terminal);
+  const tui = createSurface(core, "timers", new AbortController().signal);
+  tui.after(0, () => {
+    throw new Error("bad timer");
+  });
+  terminal.clock.advance(0);
+  equal(
+    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
+    [["timers", "a timer failed: Error: bad timer"]],
+  );
+});
+
 test("a throwing focus listener is reported under its plugin and removed", () => {
   const core = newCore(fakeTerminal());
   const tui = createSurface(core, "watcher", new AbortController().signal);

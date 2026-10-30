@@ -1,5 +1,6 @@
 // A fake terminal for the tests of the terminal interface: a 20×6 driver with a cell grid, and key and mouse events.
 
+import { ManualClock } from "yuke:internal/tui/clock";
 import { Core, type Driver } from "yuke:internal/tui/core";
 import type { Cursor, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent } from "yuke:tui";
 
@@ -18,6 +19,8 @@ export interface Terminal {
   readonly cursors: (Cursor | undefined)[];
   /** The number of frame requests so far. */
   readonly requests: () => number;
+  /** The clock of the timers of the core. */
+  readonly clock: ManualClock;
   /** Draw a frame of `core` on a blank grid, and give its rows, trimmed at the end. */
   readonly screen: (core: Core) => string[];
 }
@@ -28,6 +31,7 @@ export function fakeTerminal(): Terminal {
   const calls: unknown[] = [];
   const cursors: (Cursor | undefined)[] = [];
   let requests = 0;
+  const clock = new ManualClock();
   const put = (column: number, row: number, character: string): void => {
     const cells = grid[row];
     if (cells !== undefined && column >= 0 && column < WIDTH) cells[column] = character;
@@ -51,6 +55,7 @@ export function fakeTerminal(): Terminal {
     requestFrame: () => {
       requests += 1;
     },
+    after: clock.after,
     quit: () => {
       calls.push("quit");
     },
@@ -71,6 +76,7 @@ export function fakeTerminal(): Terminal {
     calls,
     cursors,
     requests: () => requests,
+    clock,
     screen: (core) => {
       for (const row of grid) row.fill(" ");
       core.draw();

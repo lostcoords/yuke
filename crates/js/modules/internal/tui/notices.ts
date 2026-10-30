@@ -3,6 +3,7 @@
  * them. The history serves a listener that starts late.
  */
 import type { NoticeLevel } from "yuke:plugins";
+import type { SessionId } from "yuke:protocol";
 import type { Notice } from "yuke:tui";
 
 /** The notices that the history keeps. */
@@ -14,17 +15,23 @@ export class Notices {
   readonly #listeners = new Set<{ readonly listener: (notice: Notice) => void }>();
 
   /**
-   * Add a notice and give it to each listener. A notice with the level, source, and text of the last one raises its
-   * count.
+   * Add a notice and give it to each listener. A notice with the level, source, text, and session of the last one
+   * raises its count.
    */
-  add(level: NoticeLevel, source: string, text: string): void {
+  add(level: NoticeLevel, source: string, text: string, sessionId?: SessionId): void {
     const last = this.#entries.at(-1);
     let notice: Notice;
-    if (last !== undefined && last.level === level && last.source === source && last.text === text) {
+    if (
+      last !== undefined &&
+      last.level === level &&
+      last.source === source &&
+      last.text === text &&
+      last.sessionId === sessionId
+    ) {
       notice = Object.freeze({ ...last, count: last.count + 1 });
       this.#entries[this.#entries.length - 1] = notice;
     } else {
-      notice = Object.freeze({ level, source, text, count: 1 });
+      notice = Object.freeze({ level, source, text, ...(sessionId === undefined ? {} : { sessionId }), count: 1 });
       this.#entries.push(notice);
       if (this.#entries.length > HISTORY) this.#entries.shift();
     }

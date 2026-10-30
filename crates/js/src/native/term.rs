@@ -459,6 +459,9 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             object.set("level", Json(notice.level))?;
             object.set("source", notice.source)?;
             object.set("text", notice.message)?;
+            if let Some(session) = notice.session_id {
+                object.set("sessionId", Json(session))?;
+            }
             Ok(object)
         }),
         Input::Event(Event::Paste(text)) => kind(ctx, "paste").and_then(|object| {

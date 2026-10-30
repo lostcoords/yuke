@@ -1,6 +1,7 @@
 // The registries of the core of the terminal interface: the keys, the keymap, the commands, the styles, and the
 // notices.
 
+import { ManualClock } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { Notices } from "yuke:internal/tui/notices";
@@ -9,19 +10,18 @@ import { assert, equal, test, throws } from "yuke:test";
 import { type Command, parseKeys, type StylePatch, strokeOf } from "yuke:tui";
 import { key, named } from "./terminal.ts";
 
-/** The wait of a sequence in the keymap of the bench. */
-const WAIT_MS = 20;
-
-/** The time after which a sequence prefix runs alone, with a margin. */
-const AFTER_THE_WAIT_MS = 100;
+/** The wait of a sequence for its next stroke. */
+const WAIT_MS = 1000;
 
 const ROOT = ["global", "root"];
 
 /**
- * Commands and a keymap that record what they do: `ran` holds the name of each run, or the name and the args; `faults`
- * holds the text of each fault; `frames()` counts the asks for a frame of the commands.
+ * Commands and a keymap that record what they do. `ran` holds the name of each run, or the name and the args.
+ * `faults` holds the text of each fault. `frames()` counts the asks for a frame of the commands. `clock` times the
+ * keymap.
  */
 function bench() {
+  const clock = new ManualClock();
   const ran: unknown[] = [];
   const faults: string[] = [];
   let frames = 0;
@@ -37,7 +37,8 @@ function bench() {
     ran,
     faults,
     commands,
-    keymap: new Keymap(commands, () => {}, WAIT_MS),
+    clock,
+    keymap: new Keymap(commands, () => {}, clock.after),
     frames: () => frames,
     /** Add the command `name` that records its run. `extra` adds or replaces fields. */
     add: (name: string, extra: Partial<Command> = {}) =>
@@ -49,10 +50,6 @@ function bench() {
         ...extra,
       }),
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 test("a spec and an event fold to the same stroke", () => {
@@ -162,23 +159,20 @@ test("a sequence waits for its next stroke", () => {
   equal(keys.keymap.pending(), "");
 });
 
-test("a sequence prefix runs alone after the wait", async () => {
+test("a sequence prefix runs alone after the wait", () => {
   const keys = bench();
   keys.add("one");
   keys.add("top");
   keys.keymap.bind("g", "one");
   keys.keymap.bind("g g", "top");
   keys.keymap.key(key("g"), ROOT);
-  equal(keys.ran, []);
-  equal(keys.keymap.pending(), "g");
-  // A busy runtime can fire the timer late, so the test waits for the run, not for a fixed time.
-  const deadline = Date.now() + 4000;
-  while (keys.ran.length === 0 && Date.now() < deadline) await sleep(20);
-  equal(keys.ran, ["one"]);
-  equal(keys.keymap.pending(), "");
+  keys.clock.advance(WAIT_MS - 1);
+  equal([keys.ran, keys.keymap.pending()], [[], "g"]);
+  keys.clock.advance(1);
+  equal([keys.ran, keys.keymap.pending()], [["one"], ""]);
 });
 
-test("escape cancels a sequence and an unmatched stroke goes on as a new key", async () => {
+test("escape cancels a sequence and an unmatched stroke goes on as a new key", () => {
   const keys = bench();
   keys.add("save");
   keys.add("alpha");
@@ -197,7 +191,7 @@ test("escape cancels a sequence and an unmatched stroke goes on as a new key", a
   equal([escaped, unmatched, after], [true, true, false]);
   equal(keys.ran, ["alpha"]);
   equal(keys.keymap.pending(), "");
-  await sleep(AFTER_THE_WAIT_MS);
+  keys.clock.advance(WAIT_MS);
   equal(keys.ran, ["alpha"]);
 });
 
@@ -490,12 +484,28 @@ test("notices keep the last hundred and count a repeat", () => {
   assert(Object.isFrozen(list[0]), "a notice is frozen");
 });
 
+test("a notice of another session is no repeat", () => {
+  const notices = new Notices();
+  notices.add("warn", "lint", "3 errors", "a");
+  notices.add("warn", "lint", "3 errors", "b");
+  notices.add("warn", "lint", "3 errors", "b");
+  notices.add("warn", "lint", "3 errors");
+  equal(
+    notices.list().map((notice) => [notice.sessionId, notice.count]),
+    [
+      ["a", 1],
+      ["b", 2],
+      [undefined, 1],
+    ],
+  );
+});
+
 test("each registration and its disposer ask for a frame", () => {
   let asked = 0;
   const ask = () => {
     asked += 1;
   };
-  const keymap = new Keymap(bench().commands, ask);
+  const keymap = new Keymap(bench().commands, ask, new ManualClock().after);
   const styles = new Styles(
     () => true,
     () => "dark",

@@ -195,12 +195,17 @@ declare module "yuke:tui" {
     readonly enabled: boolean;
   }
 
-  /** A notice of the host or of a plugin. A notice with the level, source, and text of the last one raises `count`. */
+  /**
+   * A notice of the host or of a plugin. A notice with the level, source, text, and session of the last one raises
+   * `count`.
+   */
   export interface Notice {
     readonly level: NoticeLevel;
     /** The plugin name, `console`, `core`, or `host:…`. */
     readonly source: string;
     readonly text: string;
+    /** The session of the notice, when it has one. */
+    readonly sessionId?: SessionId | undefined;
     readonly count: number;
   }
 
@@ -846,6 +851,11 @@ declare module "yuke:tui" {
     readonly focus: (view: View) => boolean;
     /** Give each later change of `focused` to `listener`. */
     readonly onFocus: (listener: (change: FocusChange) => void) => Disposer;
+    /**
+     * Call `callback` once after `delay` milliseconds, and draw a frame after it. The disposer cancels the call, and the
+     * stop of the plugin cancels it too. A frame test moves this time with `advance`.
+     */
+    readonly after: (delay: number, callback: () => void) => Disposer;
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;

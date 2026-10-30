@@ -99,6 +99,11 @@ declare module "yuke:test" {
     start: (snapshot?: string) => void;
     /** The saved panes that a reload gives the start event of the next runtime. */
     snapshot: () => string;
+    /**
+     * Move the clock of the frame by `ms` milliseconds. Each due `tui.after` callback and key sequence timeout runs in
+     * time order. Then the frame draws. Other timers run on real time.
+     */
+    advance: (ms: number) => void;
   }
 
   /**

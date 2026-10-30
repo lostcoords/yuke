@@ -24,6 +24,7 @@ import {
   termTruecolor,
   termWrap,
 } from "yuke:internal/native";
+import type { SessionId } from "yuke:protocol";
 import type { Cursor, KeyEvent, MouseEvent, Startup } from "yuke:tui";
 
 export type Style = TermStyle;
@@ -44,6 +45,8 @@ export type TermEvent =
       readonly level: "debug" | "info" | "warn" | "error";
       readonly source: string;
       readonly text: string;
+      /** The session of the notice, when it has one. */
+      readonly sessionId?: SessionId;
     };
 
 /** What `term.run` takes. */

@@ -30,6 +30,22 @@ test("a frame holds the cells, the styles, and the cursor that the views drew", 
   equal(frame.frame.cursor, { column: 3, row: 0, shape: "bar" });
 });
 
+test("advance runs the due timers of the frame and draws a frame", () => {
+  let text = "wait";
+  using frame = createFrame({ width: 6, height: 1 }, () => ({
+    draw: (canvas) => {
+      canvas.text(0, 0, text);
+    },
+  }));
+  frame.surface("clock").tui.after(1000, () => {
+    text = "done";
+  });
+  frame.advance(999);
+  const before = frame.frame.cells[0]?.[0]?.text;
+  frame.advance(1);
+  equal([before, frame.frame.cells[0]?.[0]?.text], ["w", "d"]);
+});
+
 test("keys of a spec reach the bindings of a surface and the stop of a surface removes them", () => {
   using frame = createFrame({ width: 8, height: 1 });
   const surface = frame.surface("demo");

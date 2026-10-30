@@ -1,8 +1,9 @@
 /**
  * `createFrame` of `yuke:test`: the real core on a `TestScreen` instead of the terminal. Each input goes to
- * `Core.event`, and a frame follows each input.
+ * `Core.event`, and a frame follows each input. The timers of the core run on a manual clock that `advance` moves.
  */
 import { TestScreen } from "yuke:internal/native";
+import { ManualClock } from "yuke:internal/tui/clock";
 import { Core } from "yuke:internal/tui/core";
 import { parseKeys } from "yuke:internal/tui/keys";
 import { createMount } from "yuke:internal/tui/mount";
@@ -19,6 +20,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
   const copies: string[] = [];
   let clipboard: ClipboardImage | undefined;
   const surfaces = new Set<TestSurface>();
+  const clock = new ManualClock();
   const core = new Core({
     width: () => width,
     height: () => height,
@@ -29,8 +31,9 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     },
     fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
     cursor: (cursor) => screen.cursor(cursor),
-    // Each input draws a frame after it, and `draw()` draws one on demand.
+    // Each input and each `advance` draws a frame after it, and `draw()` draws one on demand.
     requestFrame: () => {},
+    after: clock.after,
     copy: (text) => {
       copies.push(text);
     },
@@ -98,6 +101,10 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
       draw();
     },
     snapshot: () => core.snapshot(),
+    advance(ms: number): void {
+      clock.advance(ms);
+      draw();
+    },
     [Symbol.dispose](): void {
       for (const surface of [...surfaces]) surface.close();
       root?.close();

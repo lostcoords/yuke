@@ -154,6 +154,16 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
     onFocus: live((listener: (change: FocusChange) => void): Disposer => scope.own(core.onFocus(owner, listener))),
+    after: live((delay: number, callback: () => void): Disposer => {
+      // A fired timer leaves the scope, so a callback that calls `after` again leaves no old disposer.
+      const cancel: Disposer = scope.own(
+        core.after(owner, delay, () => {
+          cancel();
+          callback();
+        }),
+      );
+      return cancel;
+    }),
     setRoot: live((create: ViewFactory): Mount => mounted(core.scene.setRoot(owner, create))),
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),

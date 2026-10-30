@@ -7,6 +7,7 @@
 import { failureOf } from "yuke:internal/failure";
 import type { TermStyle } from "yuke:internal/native";
 import type { TermEvent } from "yuke:internal/term";
+import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
@@ -46,6 +47,8 @@ export interface Driver {
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
   readonly cursor: (cursor: Cursor | undefined) => void;
   readonly requestFrame: (delay?: number) => void;
+  /** Call `callback` once after `delay` milliseconds. The returned function cancels the call. */
+  readonly after: After;
   readonly copy: (text: string) => void;
   readonly readImage: () => Promise<ClipboardImage | undefined>;
   readonly quit: () => void;
@@ -90,7 +93,7 @@ export class Core {
       (name, text) => report(name.includes(":") ? name.slice(0, name.indexOf(":")) : CORE, text),
       frame,
     );
-    this.keymap = new Keymap(this.commands, frame);
+    this.keymap = new Keymap(this.commands, frame, driver.after);
     this.widgets = new WidgetMounts(
       {
         requestFrame: frame,
@@ -149,6 +152,18 @@ export class Core {
     };
   }
 
+  /** Call `callback` of the plugin `owner` once after `delay` milliseconds, then draw a frame. A throw is a notice. */
+  after(owner: string, delay: number, callback: () => void): Disposer {
+    return this.driver.after(delay, () => {
+      try {
+        callback();
+      } catch (error) {
+        this.notices.add("error", owner, `a timer failed: ${failureOf(error)}`);
+      }
+      this.driver.requestFrame();
+    });
+  }
+
   /**
    * Make `slot` the default pane. A start that waits gets its first pane now. A second live default pane throws a
    * `TypeError`.
@@ -194,7 +209,7 @@ export class Core {
         }
         return;
       case "notice":
-        this.notices.add(event.level, event.source, event.text);
+        this.notices.add(event.level, event.source, event.text, event.sessionId);
         return;
       case "start":
         // The plugins of a first start load after this event, and those of a reload before it.

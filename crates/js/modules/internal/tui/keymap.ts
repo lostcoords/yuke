@@ -4,6 +4,7 @@
  * newest binding. The first enabled command runs. `key` returns `false` when no enabled command takes the key, and the
  * caller then gives it to the focused view.
  */
+import type { After } from "yuke:internal/tui/clock";
 import type { Commands } from "yuke:internal/tui/commands";
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";
 import type { KeyEvent } from "yuke:tui";
@@ -26,15 +27,14 @@ export class Keymap {
   /** The strokes of a sequence so far, and the atoms of its last stroke. */
   #pending: readonly string[] = [];
   #atoms: readonly string[] = [];
-  #timer: ReturnType<typeof setTimeout> | undefined;
-  readonly #wait: number;
+  readonly #after: After;
+  #cancelWait: (() => void) | undefined;
 
-  /** `changed` asks for a frame when the bindings or the pending keys change. */
-  /** `wait` is the time in milliseconds that a sequence waits for its next stroke. */
-  constructor(commands: Commands, changed: () => void, wait = SEQUENCE_MS) {
+  /** `changed` asks for a frame when the bindings or the pending keys change. `after` times the wait of a sequence. */
+  constructor(commands: Commands, changed: () => void, after: After) {
     this.#commands = commands;
     this.#changed = changed;
-    this.#wait = wait;
+    this.#after = after;
   }
 
   /** Bind `spec` to the command `command` in the context atom `in` (`root` by default), and return the disposer. */
@@ -74,7 +74,8 @@ export class Keymap {
   /** Drop the pending sequence, as a focus change does. */
   cancel(): void {
     if (this.#pending.length === 0) return;
-    clearTimeout(this.#timer);
+    this.#cancelWait?.();
+    this.#cancelWait = undefined;
     this.#pending = [];
     this.#atoms = [];
     this.#changed();
@@ -111,11 +112,11 @@ export class Keymap {
     if (longer >= 0 && longer >= exact) {
       this.#pending = strokes;
       this.#atoms = [...atoms];
-      this.#timer = setTimeout(() => {
+      this.#cancelWait = this.#after(SEQUENCE_MS, () => {
         const [prefix, prefixAtoms] = [this.#pending, this.#atoms];
         this.cancel();
         this.#run(prefix, prefixAtoms);
-      }, this.#wait);
+      });
       this.#changed();
       return true;
     }

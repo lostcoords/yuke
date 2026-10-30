@@ -18,6 +18,10 @@ const core = new Core({
   fill: (column, row, width, height, style) => term.fill(column, row, width, height, style),
   cursor: (cursor) => term.cursor(cursor),
   requestFrame: (delay) => term.requestFrame(delay),
+  after: (delay, callback) => {
+    const timer = setTimeout(callback, delay);
+    return () => clearTimeout(timer);
+  },
   copy: (text) => term.copy(text),
   readImage: async () => {
     const bytes = await clipboardReadImage();

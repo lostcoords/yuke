@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use rquickjs::{Ctx, Module, Object, Value};
 use tokio::sync::mpsc;
-use yuke_protocol::{NoticeLevel, NoticeParams};
+use yuke_protocol::{NoticeLevel, NoticeParams, SessionId};
 use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size};
 
 use super::{NAMES, evaluate, folder, next_fault, options, start, wait_until};
@@ -207,6 +207,23 @@ async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
             .await
             .unwrap(),
         r#"{"type":"notice","level":"warn","source":"notes","text":"the index is stale"}"#
+    );
+}
+
+#[tokio::test]
+async fn a_notice_of_a_session_keeps_its_session_id() {
+    let (runtime, _reports, display, _output, _requests) = started("a_notice_of_a_session_keeps_its_session_id").await;
+    let session = SessionId::generate();
+    display.send(Input::Notice(NoticeParams {
+        session_id: Some(session),
+        level: NoticeLevel::Error,
+        source: "host:session".to_owned(),
+        message: "the turn failed".to_owned(),
+    }));
+    wait_until(&runtime, "return seen.length === 2;").await;
+    assert_eq!(
+        evaluate::<String>(&runtime, "return seen[1].sessionId;").await.unwrap(),
+        session.to_string()
     );
 }
 
