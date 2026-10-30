@@ -214,34 +214,6 @@ pub struct Replaced<'a> {
     pub keep: usize,
 }
 
-impl Replaced<'_> {
-    /// Check that each tool result after this replacement of `context` follows a call with its id, in `head` or in the
-    /// kept blocks. A provider refuses a request with a result whose call is not before it. Call ids can repeat.
-    ///
-    /// # Errors
-    ///
-    /// Returns a text that names the call of the first result without its call.
-    pub fn check(&self, context: &[Block]) -> Result<(), String> {
-        let kept = &context[context.len().saturating_sub(self.keep)..];
-        let mut calls = std::collections::HashSet::new();
-        for block in self.head.iter().chain(kept) {
-            match block {
-                Block::ToolCall(call) => {
-                    calls.insert(call.call_id.as_str());
-                }
-                Block::ToolResult(result) if !calls.contains(result.call_id.as_str()) => {
-                    return Err(format!(
-                        "the replacement contains the result of call {} without its call",
-                        result.call_id
-                    ));
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-}
-
 /// The facts of one answer of the model.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

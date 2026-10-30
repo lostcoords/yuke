@@ -730,21 +730,19 @@ struct PlannedSettings {
 }
 
 impl PlannedRound {
-    /// The plan of the engine for `round`, from the handlers of `point`. Each failure names its plugin: a head that is
-    /// not a list of blocks, a replacement with a result without its call, a model that `host` does not know, or settings
-    /// of another shape.
+    /// The plan of the engine for `round`, from the handlers of `point`.
+    /// Each failure names its plugin: a head that is not a list of blocks, a model that `host` does not know, or
+    /// settings of another shape.
     fn plan(self, round: &RoundStart<'_>, host: &dyn SessionHost, point: &str) -> Result<RoundPlan, String> {
         let failed = |plugin: &str, error: &dyn Display| format!("{point} of plugin {plugin} failed: {error}");
         let replace = match self.replace {
             Some(PlannedReplace { plugin, head, keep }) => {
                 let head: Vec<Block> = serde_json::from_value(head.0)
                     .map_err(|error| failed(&plugin, &format!("the head is not a list of blocks: {error}")))?;
-                let replaced = Replaced {
+                Some(Replaced {
                     head: Cow::Owned(head),
                     keep,
-                };
-                replaced.check(round.context).map_err(|error| failed(&plugin, &error))?;
-                Some(replaced)
+                })
             }
             None => None,
         };

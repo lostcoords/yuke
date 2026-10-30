@@ -36,8 +36,9 @@ pub trait Tool: Send + Sync {
         ToolHints::default()
     }
 
-    /// Run one call with its JSON `arguments`. The engine checks that the arguments are valid JSON first. `Err`
-    /// reaches the model as an error result, and the turn continues.
+    /// Run one call with its raw `arguments`.
+    /// The tool parses the arguments, for example with [`parse_arguments`].
+    /// `Err` reaches the model as an error result, and the turn continues.
     ///
     /// When the cancellation token of `context` is cancelled, stop the work. Return a result that describes the
     /// stopped work, for example the output so far and "Command aborted". The driver waits for the return.

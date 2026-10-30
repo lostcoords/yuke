@@ -145,11 +145,6 @@ test("a later model wins, and the settings of each answer merge field by field",
 
 for (const [name, answer, expected] of [
   [
-    "a replacement that cuts a call from its result",
-    () => ({ replace: { head: [{ user_text: "summary" }], keep: 2 } }),
-    "the replacement contains the result of call c1 without its call",
-  ],
-  [
     "a model that the catalog lacks",
     () => ({ model: { provider: "openai", model: "missing" } }),
     "openai/missing: the catalog holds no model with that name",

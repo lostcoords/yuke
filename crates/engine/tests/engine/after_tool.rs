@@ -16,7 +16,7 @@ fn printer() -> Toolset {
     toolset
 }
 
-/// Hooks that replace each result under another call id, and keep the text that they saw.
+/// Hooks that replace each result and keep the text that they saw.
 #[derive(Default)]
 struct ReplaceResult {
     seen: Mutex<Vec<String>>,
@@ -26,7 +26,7 @@ struct ReplaceResult {
 impl Hooks for ReplaceResult {
     async fn after_tool(&self, call: &ToolCall, outcome: &ToolOutcome) -> Option<ToolOutcome> {
         self.seen.lock().unwrap().push(outcome.result.content.clone());
-        Some(ToolResult::error(format!("not-{}", call.call_id), "replaced").into())
+        Some(ToolResult::error(&call.call_id, "replaced").into())
     }
 }
 

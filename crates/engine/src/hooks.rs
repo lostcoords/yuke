@@ -39,15 +39,20 @@ pub trait Hooks: Send + Sync {
         Ok(None)
     }
 
-    /// Decide whether `call` runs. The driver asks before each call, in call order. It skips a call with invalid JSON
-    /// arguments and a call that the deferred-tool bridge refuses. In a parallel group, it asks before any call starts.
+    /// Decide whether `call` runs.
+    /// The driver asks before each call, in call order, except a call that the deferred-tool bridge refuses.
+    /// The hook parses the raw arguments if it needs them.
+    /// In a parallel group, the driver asks before any call starts.
     async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
         ToolDecision::Run
     }
 
-    /// Return a replacement for the `outcome` of `call`, or `None` to keep it. The driver asks after each call that
-    /// started, at once when the call returns. A call to an unknown tool also starts. The driver can ask for the calls
-    /// of a parallel group together. A replacement keeps the call id. A cancel during this hook keeps the outcome.
+    /// Return a replacement for the `outcome` of `call`, or `None` to keep it.
+    /// The driver asks after each call that started, at once when the call returns.
+    /// A call to an unknown tool also starts.
+    /// The driver can ask for the calls of a parallel group together.
+    /// The hook must preserve the call id in a replacement.
+    /// A cancel during this hook keeps the outcome.
     /// The engine sets no cap on a result, so a caller bounds a large result here.
     async fn after_tool(&self, _call: &ToolCall, _outcome: &ToolOutcome) -> Option<ToolOutcome> {
         None

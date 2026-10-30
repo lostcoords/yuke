@@ -41,7 +41,7 @@ fn toolset_add_refuses_invalid_reserved_and_duplicate_names_and_keeps_the_toolse
 }
 
 #[test]
-fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
+fn raw_arguments_reach_hooks_and_tools() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", r#"{"text": "#)]), text_reply("done")]);
     let model = model();
     let echo = Recorder::default();
@@ -52,17 +52,9 @@ fn arguments_that_are_not_valid_json_reach_no_hook_and_no_tool() {
 
     let results = results_in_context(driver);
 
-    assert_eq!(results.len(), 1);
-    assert!(results[0].is_error);
-    assert!(
-        results[0]
-            .content
-            .starts_with(r#"Tool call "echo" was not executed: its arguments are not valid JSON: "#),
-        "{}",
-        results[0].content
-    );
-    assert_eq!(hooks.tools(), Vec::<String>::new());
-    assert_eq!(echo.calls(), Vec::<String>::new());
+    assert_eq!(results, [ToolResult::success("c1", "result 1")]);
+    assert_eq!(hooks.tools(), [r#"before echo {"text": "#, "after c1"]);
+    assert_eq!(echo.calls(), [r#"{"text": "#]);
 }
 
 /// A tool that parses its arguments, answers their text, and counts its runs. Its clones share the count.

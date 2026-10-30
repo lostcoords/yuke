@@ -299,14 +299,10 @@ impl<'a> Driver<'a> {
         } else {
             Cow::Borrowed(call)
         };
-        // The parse error goes to the model before a hook or the tool receives the call. The model can send it again.
-        let result = serde_json::from_str::<serde::de::IgnoredAny>(&call.arguments)
-            .err()
-            .map(|error| not_executed(&call, &format!("its arguments are not valid JSON: {error}.")));
         Resolved {
             block_index,
             call,
-            result,
+            result: None,
         }
     }
 
@@ -822,20 +818,13 @@ impl TurnParts<'_> {
         )
         .await
         {
-            // The result answers this call, so a replacement keeps its call id.
-            Raced::Done(Some(replacement)) => ToolOutcome {
-                result: ToolResult {
-                    call_id: outcome.result.call_id,
-                    ..replacement.result
-                },
-                display: replacement.display,
-            },
+            Raced::Done(Some(replacement)) => replacement,
             Raced::Done(None) | Raced::Cancelled => outcome,
         }
     }
 }
 
-/// A tool call after the bridge and the JSON check.
+/// A tool call after the deferred-tool bridge.
 struct Resolved<'c> {
     /// The call's block index in the answer commit.
     block_index: usize,
@@ -843,8 +832,8 @@ struct Resolved<'c> {
     /// The call that the hooks and the observer see.
     call: Cow<'c, ToolCall>,
 
-    /// The result of a call that the bridge refuses or that has invalid JSON. After [`Hooks::before_tool`], also the
-    /// result of a call that the hooks block or that a cancel stops.
+    /// The result of a call that the bridge refuses.
+    /// After [`Hooks::before_tool`], it is also the result of a call that the hooks block or that a cancel stops.
     result: Option<ToolResult>,
 }
 

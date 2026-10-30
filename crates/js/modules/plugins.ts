@@ -421,7 +421,6 @@ export interface SideRequestResult {
 /**
  * The answer of a `round.before` handler. Each part is optional.
  * - `replace` makes the context `head`, then the last `keep` blocks of the context. The session keeps the replacement.
- *   A replacement with a tool result without its call before it fails the turn.
  * - `model` sends this round to another model of the catalog. An unknown model fails the turn.
  * - `settings` replaces these settings for this round. Each field replaces its whole value, so a field that a new
  *   `reasoning` leaves out has no value. An unknown field or a value of another shape fails the turn.
