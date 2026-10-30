@@ -198,13 +198,6 @@ fn write_file<'js>(
             ));
         }
     };
-    if placement == Placement::Atomic && creation != Creation::Create {
-        return Err(throw(
-            ctx,
-            ErrorClass::TypeError,
-            "an atomic write creates or replaces its file",
-        ));
-    }
     let path = resolve(ctx, path, base)?;
     // A copy at the call, so a later change of the bytes does not reach the file.
     let bytes = match data.as_string() {

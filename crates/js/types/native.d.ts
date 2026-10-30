@@ -315,10 +315,7 @@ declare module "yuke:internal/native" {
     creation: "create" | "existing" | "new",
     mode: number | undefined,
   ): Operation<undefined>;
-  export function fsReadDir(
-    path: string,
-    baseDir: string | undefined,
-  ): Operation<readonly (Kind & { readonly name: string })[]>;
+  export function fsReadDir(path: string, baseDir: string | undefined): Operation<(Kind & { readonly name: string })[]>;
   export function fsStat(
     path: string,
     baseDir: string | undefined,

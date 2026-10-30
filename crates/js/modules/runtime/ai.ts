@@ -17,9 +17,6 @@ const OPTIONS = ["model", "instructions", "prompt", "attachments", "output", "ab
 /** A schema name that OpenAI takes. */
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** The checked schema of each value that `Output.object` returns, so a later change of the value changes nothing. */
-const schemas = new WeakMap<object, { checked: ObjectSchema; sent: string }>();
-
 export const Output = Object.freeze({
   object<const S extends ObjectSchema>(options: { schema: S; name?: string }): ObjectOutput<Infer<S>> {
     const { schema, name = "response" } = fieldsOf(options, "the options of Output.object", ["schema", "name"]);
@@ -27,9 +24,7 @@ export const Output = Object.freeze({
     if (typeof name !== "string" || !NAME.test(name)) {
       throw new TypeError("the option name is not 1 to 64 letters, digits, _, or -");
     }
-    const checked = jsonCopy(schema, "the schema");
-    const output = Object.freeze({ schema: jsonCopy(schema, "the schema"), name });
-    schemas.set(output, { checked, sent: JSON.stringify(providerSchema(checked)) });
+    const output = Object.freeze({ schema, name });
     // The brand of the type exists only for TypeScript.
     return output as unknown as ObjectOutput<Infer<S>>;
   },
@@ -77,7 +72,8 @@ export function generateText<T>(
 export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult<unknown>> {
   const fields = fieldsOf(options, "the options", OPTIONS);
-  const { model, instructions = "", prompt, attachments = [], output, abortSignal } = fields;
+  const { model, instructions = "", prompt, attachments = [], abortSignal } = fields;
+  const output = fields.output as ObjectOutput<unknown> | undefined;
   const { provider, model: id } = fieldsOf(model, "the option model", ["provider", "model"]);
   if (typeof provider !== "string" || typeof id !== "string") {
     throw new TypeError("the option model has no string provider and model");
@@ -87,14 +83,10 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
   if (!Array.isArray(blocks)) throw new TypeError("the option prompt is not a string or an array");
   if (!Array.isArray(attachments)) throw new TypeError("the option attachments is not an array");
   const media = attachments.map((item: unknown, index) => mediaOf(item, `attachments[${index}]`));
-  const schema = typeof output === "object" && output !== null ? schemas.get(output) : undefined;
-  if (output !== undefined && schema === undefined) {
-    throw new TypeError("the option output is not a value of Output.object");
-  }
   const settings: Record<string, unknown> = Object.fromEntries(SETTINGS.map((name) => [name, fields[name]]));
-  if (schema !== undefined) {
+  if (output !== undefined) {
     // OpenAI strict mode needs each field required, so yuke sends no strict mode and checks the answer itself.
-    settings.outputSchema = { name: (output as ObjectOutput<unknown>).name, schema: schema.sent, strict: false };
+    settings.outputSchema = { name: output.name, schema: JSON.stringify(providerSchema(output.schema)), strict: false };
   }
   const stop = signalOf(abortSignal);
   const request = {
@@ -106,7 +98,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     settings: jsonCopy(settings, "a setting"),
   };
   const answer = await underStop(stop, () => aiComplete(request));
-  return Object.freeze({ ...answer, output: schema === undefined ? undefined : objectOf(schema.checked, answer) });
+  return Object.freeze({ ...answer, output: output === undefined ? undefined : objectOf(output.schema, answer) });
 }
 
 /** Parse the text of `answer`, and check it against `schema`. A failure throws a `NoObjectGeneratedError`. */

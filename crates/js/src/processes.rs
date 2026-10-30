@@ -3,7 +3,7 @@
 //! stop ends it without a report. The processes run on the tokio runtime of the consumer, so a job outlives a reload
 //! of the JavaScript.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::File;
@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+use rquickjs::FromJs;
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
@@ -571,15 +572,16 @@ fn new_session(command: &mut Command) {
 }
 
 /// A program of a plugin, with its arguments and without a shell.
-#[derive(Debug)]
+#[derive(Debug, FromJs)]
+#[qjs(rename_all = "camelCase")]
 pub(crate) struct Program {
     /// The program: a name that the `PATH` finds, or a path.
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
     /// The absolute folder of the program.
-    pub(crate) cwd: PathBuf,
+    pub(crate) cwd: String,
     /// The environment variables beside the environment of yuke, or in place of it with `clear_env`.
-    pub(crate) env: Vec<(String, String)>,
+    pub(crate) env: BTreeMap<String, String>,
     pub(crate) clear_env: bool,
     /// Whether the answer keeps stdout, and stderr. A stream that it does not keep goes to the null device.
     pub(crate) stdout: bool,

@@ -377,17 +377,14 @@ async fn an_output_sends_the_schema_and_answers_with_the_checked_object() {
             "{SHAPE}
              const answer = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go', output: shape }});
              const plain = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go' }});
-             shape.schema.properties.summary.type = 'integer';
-             const again = await ai.generateText({{ model: {{ provider: 'p', model: 'm' }}, prompt: 'go', output: shape }});
-             return [JSON.stringify(answer.output), String(plain.output), JSON.stringify(again.output)];"
+             return [JSON.stringify(answer.output), String(plain.output)];"
         ),
     )
     .await
     .unwrap();
 
-    // A `null` optional field counts as absent, as in the arguments of a tool. A change of the schema after
-    // `Output.object` changes nothing.
-    assert_eq!(answers, [r#"{"summary":"done"}"#, "undefined", r#"{"summary":"done"}"#]);
+    // A `null` optional field counts as absent, as in the arguments of a tool.
+    assert_eq!(answers, [r#"{"summary":"done"}"#, "undefined"]);
     let requests = models.requests.lock().unwrap();
     assert_eq!(
         requests[0].settings.output_schema,
@@ -483,13 +480,11 @@ async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
     let errors = evaluate::<Vec<String>>(
         &runtime,
         "const ai = await import('yuke:ai');
-         const model = { provider: 'p', model: 'm' };
          const attempts = [
            () => ai.Output.object({ schema: { type: 'string' } }),
            () => ai.Output.object({ schema: { type: 'object', properties: {}, oneOf: [] } }),
            () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 3 }),
            () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 'a name' }),
-           () => ai.generateText({ model, prompt: 'go', output: { schema: { type: 'object', properties: {} }, name: 'n' } }),
          ];
          const errors = [];
          for (const attempt of attempts) {
@@ -508,7 +503,6 @@ async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
             "TypeError: schema: yuke does not check the keyword 'oneOf'",
             "TypeError: the option name is not 1 to 64 letters, digits, _, or -",
             "TypeError: the option name is not 1 to 64 letters, digits, _, or -",
-            "TypeError: the option output is not a value of Output.object",
         ]
     );
     assert!(models.requests.lock().unwrap().is_empty());

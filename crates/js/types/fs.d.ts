@@ -7,7 +7,6 @@
  * - A failure rejects with a `FileSystemError`.
  * - A misuse rejects with a `TypeError`.
  * - A relative path without `baseDir` is a misuse.
- * - An unknown option, or an option of another type, is a misuse.
  * - An option that is `undefined` is missing.
  * - An abort of the `signal` stops the operation at its next check: before each chunk of 1 MiB, and before the rename
  *   of an atomic write. A stopped operation rejects with the reason of the signal.

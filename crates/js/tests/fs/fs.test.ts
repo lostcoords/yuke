@@ -70,55 +70,10 @@ test("a bad path or option throws a type error", async () => {
     // @ts-expect-error: the data is an array, not bytes.
     rejects(fs.writeFile("x", [1], { baseDir: base })),
     rejects(fs.mkdir("x", { baseDir: base, mode: 0o1_0000 })),
-    // @ts-expect-error: the signal is a plain object.
-    rejects(fs.readTextFile("x", { baseDir: base, signal: {} })),
   ]);
   equal(
     errors.map((error) => (error instanceof Error ? error.name : error)),
-    Array(9).fill("TypeError"),
-  );
-});
-
-// A typo or a coerced value would change the operation without a word, so each one throws before the operation.
-test("an unknown option or an option of another type throws and changes nothing", async () => {
-  const base = await place("unknown_option");
-  await fs.mkdir("keep", { baseDir: base });
-  await fs.writeTextFile("keep/note.txt", "kept", { baseDir: base });
-  const errors = await Promise.all([
-    // @ts-expect-error: recursive is a string.
-    rejects(fs.remove("keep", { baseDir: base, recursive: "false" })),
-    // @ts-expect-error: force is a number.
-    rejects(fs.remove("keep/note.txt", { baseDir: base, force: 1 })),
-    // @ts-expect-error: atmoic is a typo.
-    rejects(fs.writeTextFile("new.txt", "x", { baseDir: base, atmoic: true })),
-    // @ts-expect-error: atomic is a string.
-    rejects(fs.writeTextFile("new.txt", "x", { baseDir: base, atomic: "yes" })),
-    // @ts-expect-error: recursive is a number.
-    rejects(fs.mkdir("new", { baseDir: base, recursive: 0 })),
-    // @ts-expect-error: the options are null.
-    rejects(fs.readTextFile("keep/note.txt", null)),
-    // @ts-expect-error: baseDir is a number.
-    rejects(fs.readTextFile("keep/note.txt", { baseDir: 1 })),
-    // @ts-expect-error: a text read has no length.
-    rejects(fs.readTextFile("keep/note.txt", { baseDir: base, signal: undefined, length: 1 })),
-    // @ts-expect-error: readDir is not recursive.
-    rejects(fs.readDir("keep", { baseDir: base, recursive: true })),
-  ]);
-  equal(errors, [
-    new TypeError("the option recursive is not a boolean"),
-    new TypeError("the option force is not a boolean"),
-    new TypeError("the options has the unknown field 'atmoic'"),
-    new TypeError("the option atomic is not a boolean"),
-    new TypeError("the option recursive is not a boolean"),
-    new TypeError("the options is not an object"),
-    new TypeError("the option baseDir is not a string"),
-    new TypeError("the options has the unknown field 'length'"),
-    new TypeError("the options has the unknown field 'recursive'"),
-  ]);
-  equal(await fs.readTextFile(`${base}/keep/note.txt`, { baseDir: undefined, signal: undefined }), "kept");
-  equal(
-    [await exists(base, "keep/note.txt"), await exists(base, "new.txt"), await exists(base, "new")],
-    [true, false, false],
+    Array(8).fill("TypeError"),
   );
 });
 
@@ -212,14 +167,11 @@ test("an atomic write with append create new or without create is a misuse", asy
       await rejects(fs.writeTextFile("x.txt", "x", { ...options, append: true })),
       await rejects(fs.writeTextFile("x.txt", "x", { ...options, createNew: true })),
       await rejects(fs.writeTextFile("x.txt", "x", { ...options, create: false })),
-      // @ts-expect-error: create is a number.
-      await rejects(fs.writeTextFile("x.txt", "x", { baseDir: base, create: 1 })),
     ],
     [
       new TypeError("the options atomic and append exclude each other"),
       new TypeError("the options atomic and createNew exclude each other"),
       new TypeError("an atomic write needs create"),
-      new TypeError("the option create is not a boolean"),
     ],
   );
   equal(await exists(base, "x.txt"), false);

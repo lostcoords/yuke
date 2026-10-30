@@ -22,7 +22,7 @@ declare module "yuke:ai" {
   // biome-ignore lint/complexity/noUselessEmptyExport: without it, an ambient module exports `objectType` too.
   export {};
 
-  /** A request for a JSON object of a schema. Only `Output.object` makes it. */
+  /** A request for a JSON object of a schema. */
   export interface ObjectOutput<T> {
     /** The schema of the object, in the dialect of the parameters of a tool. */
     readonly schema: ObjectSchema;

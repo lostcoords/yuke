@@ -70,33 +70,10 @@ test("env adds variables clear env leaves only env and a null stream is empty", 
   );
 });
 
-test("a misuse throws a type error before any start", async () => {
-  const base = await place("misuse");
+test("a relative cwd throws a type error before any start", () => {
   equal(
-    [
-      // @ts-expect-error: the options are missing.
-      throws(() => new Command("ls")),
-      throws(() => new Command("ls", { cwd: "relative" })),
-      // @ts-expect-error: stdout does not inherit.
-      throws(() => new Command("ls", { cwd: base, stdout: "inherit" })),
-      // @ts-expect-error: stdin has no pipe.
-      throws(() => new Command("ls", { cwd: base, stdin: "piped" })),
-      // @ts-expect-error: a command has no shell.
-      throws(() => new Command("ls", { cwd: base, shell: true })),
-      // @ts-expect-error: an argument is a number.
-      throws(() => new Command("ls", { cwd: base, args: [1] })),
-      // @ts-expect-error: a variable is a number.
-      throws(() => new Command("ls", { cwd: base, env: { A: 1 } })),
-    ],
-    [
-      new TypeError("the options is not an object"),
-      new TypeError("the option cwd is not an absolute path"),
-      new TypeError('the option stdout is not "piped" or "null"'),
-      new TypeError('the option stdin is not "null"'),
-      new TypeError("the options has the unknown field 'shell'"),
-      new TypeError("the option args is not an array of strings"),
-      new TypeError("the option env has a value that is not a string"),
-    ],
+    throws(() => new Command("ls", { cwd: "relative" })),
+    new TypeError("the option cwd is not an absolute path"),
   );
 });
 

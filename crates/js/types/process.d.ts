@@ -10,7 +10,7 @@
  * - After the exit of the program, the run waits for the end of stdout and stderr: a process that the program left
  *   can still write. An abort stops such a process too.
  * - yuke sets no limit on the time or on the output.
- * - A misuse throws a `TypeError`: an unknown option, an option of another type, or a relative `cwd`.
+ * - A relative `cwd` throws a `TypeError`.
  */
 declare module "yuke:process" {
   /** The options of a command. An option that is `undefined` is missing. */
@@ -23,8 +23,6 @@ declare module "yuke:process" {
     env?: Readonly<Record<string, string>> | undefined;
     /** Leave out the environment of yuke, so the program gets only `env`. */
     clearEnv?: boolean | undefined;
-    /** The program reads no input. */
-    stdin?: "null" | undefined;
     /** `"piped"` keeps the stream in the output, and `"null"` drops it. The default is `"piped"`. */
     stdout?: "piped" | "null" | undefined;
     /** As `stdout`. */
