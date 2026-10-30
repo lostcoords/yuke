@@ -78,14 +78,24 @@ test("a list with a folder plugin and a given plugin of the same name rejects th
   equal(error instanceof Error ? error.message : error, "plugin twin: another plugin of the list has this name");
 });
 
-test("a given plugin before its folder provider rejects the host", async () => {
-  const root = await writePlugin("words", { provides: ["test.words.v1"] }, "export function apply() {}");
+test("a given plugin before its folder provider loads after it and gets the service in its apply", async () => {
+  const root = await writePlugin(
+    "words",
+    { provides: ["test.words.v1"] },
+    `export function apply(ctx) { ctx.provide("test.words.v1", { word: "later" }); }`,
+  );
+  const reader: PluginApply = (ctx) => {
+    ctx.notify("info", ctx.get("test.words.v1").word);
+    return undefined;
+  };
 
-  const error = await rejects(createHost({ plugins: [{ name: "reader", uses: ["test.words.v1"] }, { folder: root }] }));
+  await using host = await createHost({
+    plugins: [{ name: "reader", apply: reader, uses: ["test.words.v1"] }, { folder: root }],
+  });
 
   equal(
-    error instanceof Error ? error.message : error,
-    "plugin reader: it uses 'test.words.v1', and plugin words provides it later in the list",
+    host.notices.map((notice) => [notice.source, notice.message]),
+    [["reader", "later"]],
   );
 });
 

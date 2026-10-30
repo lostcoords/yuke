@@ -45,15 +45,16 @@ const BUNDLED: &[(&str, &str, &[&str])] = &[
     ("toasts", "yuke:internal/bundled/toasts", &[]),
 ];
 
-/// The plugins to load, in load order. The bundled plugins come first, without the ones that `config.disable` names.
-/// Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order. A
-/// relative folder starts in `config_folder`. The function makes the data folder `<data>/plugins/<name>` of each plugin.
+/// The plugins to load, in load order. The list has the bundled plugins first, without the ones that `config.disable`
+/// names. Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order.
+/// [`load_order`] moves each provider before the plugins that use it. A relative folder starts in `config_folder`. The
+/// function makes the data folder `<data>/plugins/<name>` of each plugin.
 ///
 /// # Errors
 ///
 /// Returns a text that names the plugin and the problem. The problem is an unreadable folder or manifest, a bad name or
-/// field, or a duplicate name. It can also be two providers of one service, or a missing or later provider. A `disable`
-/// or `bundled` name that no bundled plugin has is an error too.
+/// field, or a duplicate name. It can also be two providers of one service, a missing provider, or a cycle of uses. A
+/// `disable` or `bundled` name that no bundled plugin has is an error too.
 pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
     with_bundled(BUNDLED, config_folder, config, data)
 }
@@ -103,56 +104,80 @@ fn with_bundled(
         plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
     }
 
-    check_list(&plugins)?;
+    let plugins = load_order(plugins)?;
     for plugin in &plugins {
         std::fs::create_dir_all(&plugin.data_dir).map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
     }
     Ok(plugins)
 }
 
-/// Check `plugins` as one load order: each name once, each service from one plugin, and each provider before each plugin
-/// that uses it.
+/// Check `plugins` and give their load order: each provider before each plugin that uses it, else the order of the
+/// list. Each name comes once, and each service has one provider.
 ///
 /// # Errors
 ///
-/// Returns a text for the user that names the first plugin that breaks a rule.
-pub(crate) fn check_list(plugins: &[Plugin]) -> Result<(), String> {
-    // The order of the list is the load order, so each provider must come before each plugin that uses it.
-    let mut providers: HashMap<&str, (usize, &str)> = HashMap::new();
-    for (index, plugin) in plugins.iter().enumerate() {
-        let fail = |message: String| format!("plugin {}: {message}", plugin.name);
-        match plugins[..index].iter().find(|other| other.name == plugin.name) {
-            Some(Plugin {
-                origin: Origin::Bundled { .. },
-                ..
-            }) => {
-                return Err(fail(format!(
-                    "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
-                    plugin.name
-                )));
-            }
-            Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
-            None => {}
-        }
-        for service in &plugin.provides {
-            if let Some((_, provider)) = providers.insert(service, (index, &plugin.name)) {
-                return Err(fail(format!("plugin {provider} provides '{service}' already")));
-            }
-        }
-    }
-    for (index, plugin) in plugins.iter().enumerate() {
-        for service in &plugin.uses {
-            let message = match providers.get(service.as_str()) {
-                Some((at, _)) if *at < index => continue,
-                Some((_, provider)) => {
-                    format!("it uses '{service}', and plugin {provider} provides it later in the list")
+/// Returns a text for the user that names the first plugin that breaks a rule, or the plugins of a cycle of uses.
+pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
+    let order = {
+        let mut providers: HashMap<&str, (usize, &str)> = HashMap::new();
+        for (index, plugin) in plugins.iter().enumerate() {
+            let fail = |message: String| format!("plugin {}: {message}", plugin.name);
+            match plugins[..index].iter().find(|other| other.name == plugin.name) {
+                Some(Plugin {
+                    origin: Origin::Bundled { .. },
+                    ..
+                }) => {
+                    return Err(fail(format!(
+                        "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
+                        plugin.name
+                    )));
                 }
-                None => format!("it uses '{service}', and no plugin of the list provides it"),
-            };
-            return Err(format!("plugin {}: {message}", plugin.name));
+                Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
+                None => {}
+            }
+            for service in &plugin.provides {
+                if let Some((_, provider)) = providers.insert(service, (index, &plugin.name)) {
+                    return Err(fail(format!("plugin {provider} provides '{service}' already")));
+                }
+            }
         }
-    }
-    Ok(())
+        // The provider of each used service, by plugin.
+        let mut needs: Vec<Vec<usize>> = Vec::with_capacity(plugins.len());
+        for plugin in &plugins {
+            let mut found = Vec::with_capacity(plugin.uses.len());
+            for service in &plugin.uses {
+                let Some(&(at, _)) = providers.get(service.as_str()) else {
+                    return Err(format!(
+                        "plugin {}: it uses '{service}', and no plugin of the list provides it",
+                        plugin.name
+                    ));
+                };
+                found.push(at);
+            }
+            needs.push(found);
+        }
+        // Each step takes the first plugin of the list whose providers loaded. A plugin moves only for its providers.
+        let mut loaded = vec![false; plugins.len()];
+        let mut order = Vec::with_capacity(plugins.len());
+        while order.len() < plugins.len() {
+            let next = (0..plugins.len()).find(|&index| !loaded[index] && needs[index].iter().all(|&at| loaded[at]));
+            let Some(index) = next else {
+                let waiting: Vec<&str> = (0..plugins.len())
+                    .filter(|&index| !loaded[index])
+                    .map(|index| plugins[index].name.as_str())
+                    .collect();
+                return Err(format!(
+                    "plugins {}: a cycle of uses keeps them from loading",
+                    waiting.join(", ")
+                ));
+            };
+            loaded[index] = true;
+            order.push(index);
+        }
+        order
+    };
+    let mut slots: Vec<Option<Plugin>> = plugins.into_iter().map(Some).collect();
+    Ok(order.into_iter().filter_map(|index| slots[index].take()).collect())
 }
 
 /// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.

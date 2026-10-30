@@ -20,7 +20,7 @@ use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, Sess
 use super::sessions::SessionService;
 use super::{App, Machine, Mode, Observer, Shared, lock};
 use crate::paths::Paths;
-use crate::plugins::{check_list, manifest_plugin, valid_name};
+use crate::plugins::{load_order, manifest_plugin, valid_name};
 
 /// What the app of a test needs beyond production. It holds the TypeScript cache of the run and the internal imports
 /// of the tests of yuke. It also holds the test host of the runtime and the sender of the raw reports to the runner.
@@ -289,7 +289,6 @@ impl TestHost for AppTestHost {
         let (shared, sessions) = self.app()?;
         let data = &shared.machine.paths.data;
         let mut plugins = Vec::with_capacity(request.plugins.len());
-        let mut folders = Vec::new();
         for requested in request.plugins {
             plugins.push(match requested {
                 PluginRequest::Folder { folder, options } => {
@@ -300,7 +299,6 @@ impl TestHost for AppTestHost {
                     let root = folder
                         .canonicalize()
                         .map_err(|error| format!("plugin folder {}: {error}", folder.display()))?;
-                    folders.push(root.clone());
                     manifest_plugin(&root, data, options)
                         .map_err(|error| format!("plugin folder {}: {error}", root.display()))?
                 }
@@ -323,12 +321,19 @@ impl TestHost for AppTestHost {
                 }
             });
         }
-        check_list(&plugins)?;
+        let plugins = load_order(plugins)?;
         for plugin in &plugins {
             std::fs::create_dir_all(&plugin.data_dir)
                 .map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
         }
-        // A session reads the skills of the folder plugins, so the profile names their folders.
+        // A session reads the skills of the folder plugins in load order, so the profile names their folders.
+        let folders: Vec<PathBuf> = plugins
+            .iter()
+            .filter_map(|plugin| match &plugin.origin {
+                Origin::Folder { root, .. } => Some(root.clone()),
+                Origin::Bundled { .. } | Origin::Given => None,
+            })
+            .collect();
         shared
             .profile
             .write()

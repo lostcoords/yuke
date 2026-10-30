@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
-    /// The plugins of the profile, in load order.
+    /// The plugins of the profile, in load order. A provider loads before the plugins that use it.
     #[serde(default)]
     pub(crate) plugins: Vec<ConfigPlugin>,
     /// The bundled plugins that do not load, by name.

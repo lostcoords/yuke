@@ -180,7 +180,7 @@ fn a_bad_folder_or_manifest_stops_the_start_and_names_the_problem() {
 }
 
 #[test]
-fn the_order_of_the_list_is_the_load_order_so_a_provider_comes_first() {
+fn a_provider_loads_before_its_users_and_the_rest_keeps_the_list_order() {
     let root = place("order");
     write_plugin(
         &root,
@@ -199,10 +199,17 @@ fn the_order_of_the_list_is_the_load_order_so_a_provider_comes_first() {
     );
     write_plugin(&root, "config/again", &manifest("reader", &json!({})));
 
-    assert_eq!(
-        load(&root, &["reader", "notes"]),
-        Err("plugin reader: it uses 'notes', and plugin notes provides it later in the list".to_owned())
-    );
+    write_plugin(&root, "config/plain", &manifest("plain", &json!({})));
+    let names = |list: &[&str]| -> Vec<String> {
+        load(&root, list)
+            .unwrap()
+            .into_iter()
+            .map(|plugin| plugin.name)
+            .collect()
+    };
+
+    assert_eq!(names(&["reader", "plain", "notes"]), ["plain", "notes", "reader"]);
+    assert_eq!(names(&["notes", "reader", "plain"]), ["notes", "reader", "plain"]);
     assert_eq!(
         load(&root, &["reader"]),
         Err("plugin reader: it uses 'notes', and no plugin of the list provides it".to_owned())
@@ -223,6 +230,27 @@ const BUNDLED_PAIR: &[(&str, &str, &[&str])] = &[
     ("first", "yuke:internal/bundled/first", &[]),
     ("second", "yuke:internal/bundled/second", &["pairs"]),
 ];
+
+#[test]
+fn plugins_that_use_the_services_of_each_other_stop_the_start() {
+    let root = place("cycle");
+    write_plugin(
+        &root,
+        "config/first",
+        &manifest("first", &json!({ "entry": "i.ts", "uses": ["b"], "provides": ["a"] })),
+    );
+    write_plugin(
+        &root,
+        "config/second",
+        &manifest("second", &json!({ "entry": "i.ts", "uses": ["a"], "provides": ["b"] })),
+    );
+    write_plugin(&root, "config/plain", &manifest("plain", &json!({})));
+
+    assert_eq!(
+        load(&root, &["first", "plain", "second"]),
+        Err("plugins first, second: a cycle of uses keeps them from loading".to_owned())
+    );
+}
 
 #[test]
 fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
