@@ -124,6 +124,13 @@ impl Sessions for Scripted {
         self.record(format!("cancel {id}"));
     }
     async fn idle(&self, _: SessionId) -> Result<(), SessionsError> {
+        // More updates than one delivery takes, so idle must wait for the feed too.
+        for sink in self.sinks.lock().unwrap().iter() {
+            for _ in 0..600 {
+                sink(ViewEvent::Update(state(SessionState::Running)));
+                sink(ViewEvent::Update(state(SessionState::Idle)));
+            }
+        }
         Ok(())
     }
     async fn set_settings(&self, _: SessionId, _: SessionSettings) -> Result<(), SessionsError> {
@@ -204,24 +211,14 @@ async fn open(runtime: &Runtime, signal: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_handle_starts_with_its_snapshot_and_gets_each_later_update_in_order() {
+async fn idle_delivers_each_update_in_order_after_the_snapshot() {
     let scripted = Arc::new(Scripted::default());
-    let runtime = started(
-        "a_handle_starts_with_its_snapshot_and_gets_each_later_update_in_order",
-        &scripted,
-    )
-    .await;
+    let runtime = started("idle_delivers_each_update_in_order_after_the_snapshot", &scripted).await;
 
     let snapshot = open(&runtime, "undefined").await;
-    // More updates than one delivery takes.
-    for _ in 0..600 {
-        scripted.send(0, state(SessionState::Running));
-        scripted.send(0, state(SessionState::Idle));
-    }
-    wait_until(&runtime, "return seen.length === 1201;").await;
-    let alternate = evaluate::<bool>(
+    let updates = evaluate::<Vec<String>>(
         &runtime,
-        "return seen.slice(1).every((e, i) => e.update.state === (i % 2 === 0 ? 'running' : 'idle'));",
+        "await handle.idle(); return seen.slice(1).map(event => event.update.state);",
     )
     .await
     .unwrap();
@@ -233,7 +230,7 @@ async fn a_handle_starts_with_its_snapshot_and_gets_each_later_update_in_order()
             updates: vec![state(SessionState::Idle)],
         }
     );
-    assert!(alternate);
+    assert_eq!(updates, ["running", "idle"].repeat(600));
     assert_eq!(scripted.calls(), [format!("open {} 5", session())]);
 }
 
@@ -317,14 +314,15 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
     let runtime = started("the_close_of_the_session_ends_each_handle_on_it", &scripted).await;
     open(&runtime, "undefined").await;
 
-    evaluate::<()>(
+    let ended = evaluate::<Vec<bool>>(
         &runtime,
         "globalThis.other = await sessions.open(handle.id, { tail: 5, event: () => undefined });
-         await sessions.close(handle.id);",
+         await sessions.close(handle.id);
+         return [handle.signal.aborted, other.signal.aborted];",
     )
     .await
     .unwrap();
-    wait_until(&runtime, "return handle.signal.aborted && other.signal.aborted;").await;
+    assert_eq!(ended, [true, true]);
     let reason = evaluate::<String>(&runtime, "return handle.signal.reason.message;")
         .await
         .unwrap();

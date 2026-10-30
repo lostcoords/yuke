@@ -163,6 +163,7 @@ export interface SessionHandle {
   /**
    * Wait until the session runs no turn and has handled each input that it accepted before the call, or until its close.
    * A failed turn counts as handled, and its input waits for the next input.
+   * Each view of this runtime receives the queued events before the promise resolves.
    */
   readonly idle: () => Promise<void>;
   /** Save `settings`. It fails while a turn runs or input waits. */

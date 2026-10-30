@@ -142,6 +142,7 @@ async function open(
     async idle() {
       live();
       await sessionIdle(id);
+      await flush();
     },
     async setSettings(settings) {
       live();
