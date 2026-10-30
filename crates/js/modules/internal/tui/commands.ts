@@ -1,5 +1,5 @@
 /**
- * The commands of the terminal interface. A key binding names a command, and the palette lists them. A run can be
+ * The commands of the terminal interface. A key binding names a command, and a list of commands shows them. A run can be
  * async: the caller does not wait, so the keys go on during a dialog of the command.
  */
 import { failureOf } from "yuke:internal/failure";
@@ -100,7 +100,7 @@ export class Commands {
 
   /**
    * True when the command of `entry` can run. A throw of `enabled` counts as disabled and gives one fault per
-   * registration, because a palette checks each command on each frame.
+   * registration, because a list of commands checks each command on each frame.
    */
   #enabled(name: string, entry: Entry): boolean {
     const { command } = entry;

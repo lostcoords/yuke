@@ -237,16 +237,16 @@ test("a disposer during a wait cancels the wait", () => {
 
 test("keys of a command and each disposer remove only their own binding", () => {
   const keymap = bench().keymap;
-  const first = keymap.bind("ctrl+p", "palette");
-  const second = keymap.bind("ctrl+p", "palette");
-  keymap.bind("alt+x  p", "palette");
+  const first = keymap.bind("ctrl+o", "open");
+  const second = keymap.bind("ctrl+o", "open");
+  keymap.bind("alt+x  o", "open");
   keymap.bind("ctrl+q", "quit");
-  equal(keymap.keysOf("palette"), ["alt+x p", "ctrl+p"]);
+  equal(keymap.keysOf("open"), ["alt+x o", "ctrl+o"]);
   first();
   first();
-  equal(keymap.keysOf("palette"), ["alt+x p", "ctrl+p"]);
+  equal(keymap.keysOf("open"), ["alt+x o", "ctrl+o"]);
   second();
-  equal(keymap.keysOf("palette"), ["alt+x p"]);
+  equal(keymap.keysOf("open"), ["alt+x o"]);
 });
 
 test("commands check their names and run with args", () => {
@@ -362,7 +362,7 @@ test("a throwing enabled check counts as disabled and faults once per registrati
   keys.commands.list();
   keys.commands.list();
   keys.commands.run("flaky");
-  // A palette checks each command on each frame, so a broken check reports once until a new registration.
+  // A list of commands checks each command on each frame, so a broken check reports once until a new registration.
   equal(keys.faults.length, 1);
   dispose();
   keys.add("flaky", flaky);

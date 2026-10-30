@@ -11,7 +11,6 @@ import { type Asked, ask } from "yuke:internal/bundled/chat/questions";
 import { STYLE } from "yuke:internal/bundled/chat/rows";
 import { ChatDocument, inputText } from "yuke:internal/bundled/chat/transcript";
 import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
-import { commandLabel } from "yuke:internal/tui/core";
 import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type {
@@ -55,6 +54,11 @@ const PICKER_ROWS = 12;
 
 /** The most rows of the command list above the composer. */
 const SLASH_ROWS = 6;
+
+/** The label of the command `name` in the list: a slash, and the name. A core command shows without its prefix. */
+function commandLabel(name: string): string {
+  return `/${name.startsWith("core:") ? name.slice("core:".length) : name}`;
+}
 
 /** A draft of one slash word, such as `/mod`. */
 const SLASH_WORD = /^\/\S*$/;

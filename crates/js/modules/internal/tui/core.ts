@@ -11,28 +11,15 @@ import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
-import { bottom } from "yuke:internal/tui/layout";
 import { Notices } from "yuke:internal/tui/notices";
 import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
-import { Picker } from "yuke:internal/tui/picker";
 import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/restore";
 import { Scene } from "yuke:internal/tui/scene";
 import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type {
-  CanvasStyle,
-  ClipboardImage,
-  CommandItem,
-  Cursor,
-  Disposer,
-  FocusChange,
-  Mount,
-  Startup,
-  Style,
-  View,
-} from "yuke:tui";
+import type { CanvasStyle, ClipboardImage, Cursor, Disposer, FocusChange, Startup, Style, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -65,16 +52,8 @@ export interface Driver {
 /** The source of the faults and the commands of the core itself. */
 export const CORE = "core";
 
-/** The label of the command `name` in a list: a slash, and the name. A core command shows without its prefix. */
-export function commandLabel(name: string): string {
-  return `/${name.startsWith(`${CORE}:`) ? name.slice(CORE.length + 1) : name}`;
-}
-
 /** The status item of the pending keys of a sequence. */
 const KEYS_ITEM = `${CORE}:keys`;
-
-/** The row limit of the palette. The search field counts as a row. */
-const PALETTE_ROWS = 12;
 
 export class Core {
   readonly notices = new Notices();
@@ -246,38 +225,6 @@ export class Core {
     }
   }
 
-  /**
-   * Open the command palette for `owner`: a modal picker of the enabled commands at the bottom. A choice closes the
-   * palette, gives the focus back, and then runs the command. Esc closes the palette and calls `cancel`.
-   */
-  palette(owner: string, cancel?: () => void): Mount {
-    const mount = this.scene.overlay(
-      owner,
-      () =>
-        new Picker<CommandItem>({
-          items: this.commands.list().filter((item) => item.enabled),
-          key: (item) => item.name,
-          label: (item) => commandLabel(item.name),
-          detail: (item) =>
-            [item.description ?? "", this.keymap.keysOf(item.name).join(", ")].filter(Boolean).join(" · "),
-          choose: (item) => {
-            mount.close();
-            // The command runs with the focus that the palette took, not in the palette.
-            this.scene.layout();
-            this.commands.run(item.name);
-          },
-          cancel: () => {
-            mount.close();
-            cancel?.();
-          },
-        }),
-      {
-        place: (size) => bottom(size, PALETTE_ROWS),
-      },
-    );
-    return mount;
-  }
-
   /** The saved panes for a reload: the tree, the split ratios, the focus, and the saved view of each pane. */
   snapshot(): string {
     return JSON.stringify(this.panes.snapshot((view, owner) => this.#save(view, owner)));
@@ -344,8 +291,5 @@ export class Core {
       );
     }
     add("focus-next", "Focus the next pane", () => this.panes.focusNext());
-    add("palette", "Open the command palette", () => {
-      this.palette(CORE);
-    });
   }
 }

@@ -173,11 +173,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
-    palette: live((options?: { readonly cancel?: (() => void) | undefined }): Mount => {
-      const cancel = options?.cancel;
-      if (cancel !== undefined && typeof cancel !== "function") throw new TypeError("a palette cancel is a function");
-      return mounted(core.palette(owner, cancel));
-    }),
     commands: Object.freeze({
       add: live((command: Command): Disposer => {
         if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");

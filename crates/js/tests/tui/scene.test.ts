@@ -640,6 +640,8 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
   tui.keys.bind("ctrl+n", "open");
   tui.views.register("note", () => ({ draw() {} }));
   assert(throws(() => tui.commands.add({ name: "other:x", run() {} })) instanceof TypeError);
+  // @ts-expect-error: a command is an object.
+  equal(String(throws(() => tui.commands.add(null))), "TypeError: a command is an object");
   assert(throws(() => tui.views.register("core:note", () => ({ draw() {} }))) instanceof TypeError);
   tui.commands.add({ name: "notes:close", run() {} });
   equal([tui.commands.run("open"), tui.commands.run("core:quit")], [true, true]);

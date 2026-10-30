@@ -291,7 +291,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
         const pane = active();
         if (pane !== undefined) command.run(pane);
       },
-      // A command of the chat runs only in a chat pane, so the palette of another pane leaves it out.
+      // A command of the chat runs only in a chat pane, so a list of commands in another pane leaves it out.
       enabled: () => {
         const pane = active();
         return pane !== undefined && (command.enabled?.(pane) ?? true);

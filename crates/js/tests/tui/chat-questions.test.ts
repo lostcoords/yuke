@@ -166,7 +166,7 @@ test("a modal question opens over the focused pane, waits for another modal, and
   frame.start();
   await settle();
   frame.paste("draft");
-  chat.tui.palette();
+  chat.tui.overlay(() => ({ draw() {}, focusable: true }));
   frame.draw();
   sessions.push(asked(8, DELETE));
   frame.draw();

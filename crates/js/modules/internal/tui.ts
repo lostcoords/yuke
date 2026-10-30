@@ -37,7 +37,6 @@ const core = new Core({
 
 const bindings: readonly (readonly [string, string])[] = [
   ["ctrl+q", "quit"],
-  ["ctrl+p", "palette"],
   ["ctrl+z", "suspend"],
   [`${LEADER} v`, "split-right"],
   [`${LEADER} s`, "split-down"],

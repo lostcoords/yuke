@@ -176,11 +176,11 @@ declare module "yuke:tui" {
   /** A change of a style group: a field changes, `null` deletes it, and a missing field stays. */
   export type StylePatch = { readonly [K in keyof Style]?: Style[K] | null };
 
-  /** A command: the palette lists it, and a key binding names it. */
+  /** A command: a key binding names it, and `commands.list` gives it to a list of commands, such as the slash list. */
   export interface Command {
     /** The name: letters, digits, and `:`, `-`, `_`, `.`. */
     readonly name: string;
-    /** One line for the palette, beside the name. */
+    /** One line for a list of commands, beside the name. */
     readonly description?: string | undefined;
     /** Run the command. The keymap does not wait for a promise, so the keys go on during the run. */
     readonly run: (args: unknown) => void | Promise<void>;
@@ -188,7 +188,7 @@ declare module "yuke:tui" {
     readonly enabled?: (() => boolean) | undefined;
   }
 
-  /** A command as the palette lists it. */
+  /** A command as `commands.list` gives it. */
   export interface CommandItem {
     readonly name: string;
     readonly description?: string | undefined;
@@ -878,11 +878,6 @@ declare module "yuke:tui" {
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
-    /**
-     * Open the command palette: the enabled commands in a modal picker. A choice closes it, gives the focus back, and
-     * then runs the command. Esc closes it and calls `cancel`.
-     */
-    readonly palette: (options?: { readonly cancel?: (() => void) | undefined }) => Mount;
     readonly commands: {
       readonly add: (command: Command) => Disposer;
       /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */
