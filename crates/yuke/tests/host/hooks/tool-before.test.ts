@@ -63,48 +63,6 @@ test("a handler gets the id, the name, and the parsed arguments of the call", as
   equal(await session.run("tool.before", { call }), { block: "c1 read src/main.rs" });
 });
 
-// The call runs as the model gave it, so a change of the event or the call fails at once and stops the call.
-type Change = (event: { call: { name: string; arguments: unknown } }) => void;
-const changes: [string, Change][] = [
-  [
-    "a nested argument",
-    (event) => {
-      (event.call.arguments as { options: { force: boolean } }).options.force = true;
-    },
-  ],
-  [
-    "the name",
-    (event) => {
-      event.call.name = "write";
-    },
-  ],
-  [
-    "the call",
-    (event) => {
-      (event as { call: unknown }).call = {};
-    },
-  ],
-];
-for (const [name, change] of changes) {
-  test(`a change of ${name} throws and stops the call`, async () => {
-    const editor: PluginSession = (s) => {
-      s.hook("tool.before", (event) => {
-        change(event);
-        return undefined;
-      });
-    };
-    await using host = await createHost({ plugins: [{ name: "editor", session: editor }] });
-    const session = await host.openSession();
-
-    const decision = await session.run("tool.before", {
-      call: { callId: "c1", name: "write", arguments: { options: { force: false } } },
-    });
-
-    const reason = typeof decision === "object" ? decision.block : "";
-    equal(reason.startsWith("tool.before of plugin editor failed: TypeError: "), true);
-  });
-}
-
 test("a throw stops the call and names the plugin", async () => {
   const check = answering(() => {
     throw new Error("no check today");

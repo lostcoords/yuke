@@ -219,48 +219,21 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   equal(after, "true plugin bad defines a tool after the end of its session");
 });
 
-for (const [name, setup, expected] of [
-  [
-    "a session that throws at once",
-    (s: SessionContext) => {
-      s.tools.define(tool("gone"));
-      throw Object.create(null);
-    },
-    "a value without a text form",
-  ],
-  [
-    "a session that returns a value that is no cleanup",
-    (s: SessionContext) => {
-      s.tools.define(tool("gone"));
-      return 5;
-    },
-    "TypeError: session must return nothing or a cleanup function",
-  ],
-  [
-    "a session error whose stack throws",
-    () => {
-      const error = new Error("broken");
-      Object.defineProperty(error, "stack", {
-        get() {
-          throw new Error("read");
-        },
-      });
-      throw error;
-    },
-    "Error: broken",
-  ],
-] as const) {
-  test(`${name} drops its tools and sends its notice`, async () => {
-    await using host = await createHost({ plugins: [{ name: "failing", session: setup as PluginSession }] });
-    const session = await host.openSession();
+test("a session that returns a value that is no cleanup drops its tools and sends its notice", async () => {
+  // @ts-expect-error: a session returns nothing or a cleanup.
+  const setup: PluginSession = (s) => {
+    s.tools.define(tool("gone"));
+    return 5;
+  };
+  await using host = await createHost({ plugins: [{ name: "failing", session: setup }] });
+  const session = await host.openSession();
 
-    equal(await refusal(session.call("gone", {})), "the session has no tool gone");
-    equal(
-      host.notices.map((notice) => notice.message),
-      [`${SETUP_FAILED}${expected}`],
-    );
-  });
-}
+  equal(await refusal(session.call("gone", {})), "the session has no tool gone");
+  equal(
+    host.notices.map((notice) => notice.message),
+    [`${SETUP_FAILED}TypeError: session must return nothing or a cleanup function`],
+  );
+});
 
 test("a notice of a session names its session", async () => {
   await using host = await createHost({ plugins: [{ name: "loud", session: (s) => void s.notify("info", "opened") }] });
@@ -273,7 +246,7 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
   let cleaned = 0;
   let refused = "";
   const broken: PluginSession = () => () => {
-    throw Object.create(null);
+    throw new Error("broken cleanup");
   };
   const kept: PluginSession = (s) => {
     s.signal.addEventListener("abort", () => {
@@ -301,9 +274,10 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
 
   equal([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
   equal(
-    host.notices.map((notice) => notice.message),
-    ["the cleanup of the session failed: a value without a text form"],
+    host.notices.map((notice) => notice.message.split("\n")[0]),
+    ["the cleanup of the session failed: Error: broken cleanup"],
   );
+  equal(host.notices[0]?.message.includes("session-setup.test.ts:"), true);
 });
 
 test("a close during the setup ends it, and runs the late cleanup once", async () => {

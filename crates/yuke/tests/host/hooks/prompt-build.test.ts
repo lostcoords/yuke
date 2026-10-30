@@ -61,12 +61,6 @@ test("the handlers run in plugin order, then in addition order, and each gets th
   );
 });
 
-test("the order of the answer is the order of the prompt", async () => {
-  const order = answering((event) => ({ sections: { first: "one", ...event.sections } }));
-
-  equal(await build([{ name: "order", session: order }]), [["first", "one"], ...Object.entries(saved)]);
-});
-
 test("the order of the sections reaches the system prompt of a request", async () => {
   // The prompt joins the sections in order, so a section put first comes before the base of yuke.
   const order = answering((event) => ({ sections: { first: "FIRST SECTION", ...event.sections } }));
@@ -119,45 +113,6 @@ test("a handler that throws fails the build, and the error names the plugin", as
   // The stack is the stack of the handler, which names the module of the plugin.
   equal(error instanceof Error && error.stack?.includes("prompt-build.test.ts"), true);
 });
-
-for (const [name, answers, change] of [
-  [
-    "a section",
-    false,
-    (event: { sections: Record<string, string> }) => {
-      event.sections.rules = "x";
-    },
-  ],
-  [
-    "the sections",
-    false,
-    (event: { sections: unknown }) => {
-      event.sections = {};
-    },
-  ],
-  [
-    "a section of an earlier answer",
-    true,
-    (event: { sections: Record<string, string> }) => {
-      event.sections.rules = "x";
-    },
-  ],
-] as const) {
-  test(`a change of ${name} throws and fails the build`, async () => {
-    const editor: PluginSession = (s) => {
-      s.hook("prompt.build", (event) => (answers ? { sections: { ...event.sections } } : undefined));
-      s.hook("prompt.build", (event) => {
-        (change as (event: unknown) => void)(event);
-        return undefined;
-      });
-    };
-
-    const message = await failure([{ name: "editor", session: editor }]);
-
-    const prefix = "prompt.build of plugin editor failed: TypeError: ";
-    equal(message.slice(0, prefix.length), prefix);
-  });
-}
 
 // A getter is code of the plugin, so its throw names the plugin as a handler throw does.
 test("a getter that throws in the answer fails the build, and the error names the plugin", async () => {

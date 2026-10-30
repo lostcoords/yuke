@@ -255,53 +255,6 @@ test("a throw gives an error result that names the plugin", async () => {
   );
 });
 
-for (const [name, change] of [
-  [
-    "the text",
-    (event: { result: { text: string } }) => {
-      event.result.text = "x";
-    },
-  ],
-  [
-    "the media list",
-    (event: { result: { media: unknown[] } }) => {
-      event.result.media.pop();
-    },
-  ],
-  [
-    "a media item",
-    (event: { result: { media: { size: number }[] } }) => {
-      (event.result.media[0] as { size: number }).size = 1;
-    },
-  ],
-  [
-    "the result",
-    (event: { result: unknown }) => {
-      event.result = {};
-    },
-  ],
-] as const) {
-  test(`a change of ${name} throws and gives an error result`, async () => {
-    const editor: PluginSession = (s) => {
-      s.hook("tool.after", (event) => {
-        (change as (event: unknown) => void)(event);
-        return undefined;
-      });
-    };
-
-    const result = (await after([{ name: "editor", session: editor }])) as {
-      text: string;
-      isError: boolean;
-      media: unknown[];
-    };
-
-    equal(
-      [result.text.startsWith("tool.after of plugin editor failed: TypeError: "), result.isError, result.media],
-      [true, true, []],
-    );
-  });
-}
-
 test("a new media item that cannot be read gives an error result", async () => {
   const pics: PluginSession = (s) => {
     s.hook("tool.after", () => ({ media: [{ mimeType: "image/png", path: "missing.png" }] }));

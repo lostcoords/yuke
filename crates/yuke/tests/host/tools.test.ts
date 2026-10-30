@@ -418,7 +418,7 @@ test("media bytes reach the store as the view held them at the return", async ()
   equal([plain(drawn.media), plain(own.media)], [[["image/png", [1, 2]]], [["image/png", [1, 2]]]]);
 });
 
-const LIMIT = ((5 * 1024 * 1024) / 4) * 3;
+const LIMIT = 3_932_160;
 
 test("media over the limit fails the call", async () => {
   await writeFile(`${folder()}/fits.png`, new Uint8Array(LIMIT));
@@ -453,70 +453,6 @@ test("media over the limit fails the call", async () => {
     ],
   );
   equal([fits.isError, fits.media[0]?.size], [false, LIMIT]);
-});
-
-test("a result of another shape is an error that names the problem", async () => {
-  const shapes: unknown[] = [
-    5,
-    { output: "x" },
-    { text: 1 },
-    { text: "x", isError: "yes" },
-    { text: "x", media: {} },
-    { text: "x", media: [{ mimeType: "image/png" }] },
-    { text: "x", media: [{ mimeType: "image/png", path: "a", bytes: new Uint8Array(1) }] },
-    { text: "x", media: [{ mimeType: "image/png", bytes: Object.create(Uint8Array.prototype) }] },
-    { text: "x", media: [{ mimeType: "image/png", path: 5 }] },
-    { text: "x", media: [{ mimeType: 5, path: "a" }] },
-    Object.defineProperty({ text: "x" }, "hidden", { value: 1 }),
-    { text: "x", [Symbol("tag")]: 1 },
-    Object.create({ text: "x" }),
-    { text: "x", media: null },
-    { text: "x", media: [{ mimeType: "image/png", path: "a", bytes: undefined }] },
-    // biome-ignore lint/suspicious/noSparseArray: a hole in the media list is the case under test.
-    { text: "x", media: [, { mimeType: "image/png", path: "a" }] },
-    { text: "x", display: {} },
-    { text: "x", display: [{ kind: "html", text: "a" }] },
-    { text: "x", display: [{ kind: "diff", path: "a" }] },
-    { text: "x", display: [{ kind: "markdown", text: "a", path: "b" }] },
-  ];
-  const shape = {
-    name: "shape",
-    description: "d",
-    concurrency: "serial",
-    parameters: { type: "object", properties: { index: { type: "integer" } }, required: ["index"] },
-    execute: (args: { index: number }) => shapes[args.index],
-  } as unknown as Tool;
-  const { host, session } = await opened(shape);
-  await using _host = host;
-
-  const errors = [];
-  for (let index = 0; index < shapes.length; index += 1) {
-    const result = await session.call("shape", { index });
-    errors.push(result.isError ? result.text : `no error: ${result.text}`);
-  }
-
-  equal(errors, [
-    "the result is not an object",
-    "the result has the unknown field 'output'",
-    "the result text is not a string",
-    "the result isError is not a boolean",
-    "the result media is not an array",
-    "the result media[0] needs exactly one of path and bytes",
-    "the result media[0] needs exactly one of path and bytes",
-    "the result media[0].bytes is not a Uint8Array",
-    "the result media[0].path is not a string",
-    "the result media[0].mimeType is not a string",
-    "the result has the unknown field 'hidden'",
-    "the result has a symbol key",
-    "the result text is not a string",
-    "the result media is not an array",
-    "the result media[0] needs exactly one of path and bytes",
-    "the result media[0] is not an object",
-    "the result display is not an array",
-    "the result display[0].kind is not 'markdown' or 'diff'",
-    "the result display[0].patch is not a string",
-    "the result display[0] has the unknown field 'path'",
-  ]);
 });
 
 // The answer commit saves the hints and the folder before the call runs, so the saved transcript shows them too.

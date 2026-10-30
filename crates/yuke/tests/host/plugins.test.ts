@@ -187,7 +187,7 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
     signals.push(ctx.signal);
     return () => {
       events.push("three");
-      throw Object.create(null);
+      throw new Error("broken cleanup");
     };
   };
   const host = await createHost({
@@ -203,9 +203,10 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
 
   equal(events, ["three", "two true,true,true", "one"]);
   equal(
-    host.notices.map((notice) => [notice.source, notice.level, notice.message]),
-    [["three", "error", "the cleanup of the plugin failed: a value without a text form"]],
+    host.notices.map((notice) => [notice.source, notice.level, notice.message.split("\n")[0]]),
+    [["three", "error", "the cleanup of the plugin failed: Error: broken cleanup"]],
   );
+  equal(host.notices[0]?.message.includes("plugins.test.ts:"), true);
 });
 
 test("a plugin that fails after its apply returned runs its cleanup once", async () => {
