@@ -15,7 +15,7 @@ function texts(chat: ChatSession): string[] {
 
 test("a failed open keeps the shown session, and a later open shows its own transcript and ends the old handle", async () => {
   const sessions = fakeSessions(replies(2));
-  const chat = new ChatSession(sessions as unknown as Sessions, new AbortController().signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
   const first = chat.transcript;
   let failure = "";
@@ -41,7 +41,7 @@ test("a failed open keeps the shown session, and a later open shows its own tran
 
 test("ensure creates the first session once, and a missing choice creates none", async () => {
   const sessions = fakeSessions(replies(2));
-  const chat = new ChatSession(sessions as unknown as Sessions, new AbortController().signal);
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal });
   const none = await chat.ensure(async () => undefined);
   const first = await chat.ensure(async () => SETTINGS);
   const again = await chat.ensure(async () => SETTINGS);
@@ -50,7 +50,7 @@ test("ensure creates the first session once, and a missing choice creates none",
 
 test("ensure opens the session again after the end of its handle", async () => {
   const sessions = fakeSessions(replies(2));
-  const chat = new ChatSession(sessions as unknown as Sessions, new AbortController().signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
   const changes: (boolean | undefined)[] = [];
   chat.onChange(() => changes.push(chat.handle !== undefined));
@@ -67,7 +67,7 @@ test("a page that fails after the open of another session leaves the history of 
     ...sessions,
     events: (id: string, page: { before?: number; limit: number }) => (held ? promise : sessions.events(id, page)),
   };
-  const chat = new ChatSession(store as unknown as Sessions, new AbortController().signal, "s1");
+  const chat = new ChatSession(store as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
   const page = chat.older();
   await chat.open("s2");
@@ -81,7 +81,7 @@ test("a page that fails after the open of another session leaves the history of 
 
 test("two calls of ensure without a session create one session", async () => {
   const sessions = fakeSessions(replies(2));
-  const chat = new ChatSession(sessions as unknown as Sessions, new AbortController().signal);
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal });
   const [first, second] = await Promise.all([chat.ensure(async () => SETTINGS), chat.ensure(async () => SETTINGS)]);
   equal([first === second, sessions.created.length, sessions.opened.length], [true, 1, 1]);
 });
@@ -95,7 +95,7 @@ test("an end of the handle after the snapshot leaves the target shown without a 
       throw new Error(`the session ${id} closed`);
     },
   };
-  const chat = new ChatSession(store as unknown as Sessions, new AbortController().signal, "s1");
+  const chat = new ChatSession(store as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
   const failure = await chat
     .ensure(async () => undefined)
@@ -109,7 +109,7 @@ test("an end of the handle after the snapshot leaves the target shown without a 
 test("the end of the owner ends the handle and its hold", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   owner.abort();
   equal([chat.handle, sessions.opened.map((open) => open.signal.aborted)], [undefined, [true]]);
@@ -118,7 +118,7 @@ test("the end of the owner ends the handle and its hold", async () => {
 test("a composer sends the draft, and a refused input comes back above newer text and rejects", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const editor = new TextEditor();
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
@@ -144,7 +144,7 @@ test("a composer sends the draft, and a refused input comes back above newer tex
 test("a composer labels a long paste, and a paste handler added later takes a paste first", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   const editor = new TextEditor();
   new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
   editor.paste("a".repeat(301));
@@ -161,7 +161,7 @@ test("a composer labels a long paste, and a paste handler added later takes a pa
 test("attachImage stores the image and puts it over the selection, and an abort during the handle stores nothing", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const editor = new TextEditor({ state: { text: "abc", selection: { anchor: 2, head: 1 }, spans: [] } });
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
@@ -182,7 +182,7 @@ test("attachImage stores the image and puts it over the selection, and an abort 
 test("a send before the store of an attach ends does nothing, so the image goes with its draft", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const editor = new TextEditor({ state: { text: "hello", selection: { anchor: 5, head: 5 }, spans: [] } });
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
@@ -205,7 +205,7 @@ test("a send before the store of an attach ends does nothing, so the image goes 
 test("older recalls the newest waiting message, and gives taken when a turn took it first", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const editor = new TextEditor();
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
@@ -227,7 +227,7 @@ test("older recalls the newest waiting message, and gives taken when a turn took
 test("the questions show the first open one, a cancel answers it once, and a refused answer goes to failed and stays open", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const failures: string[] = [];
   const questions = new ChatQuestions(chat, { signal: owner.signal, failed: (error) => failures.push(String(error)) });
@@ -262,7 +262,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
 test("questions that start after a question opened show it at once", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   sessions.push({
     sessionUpdate: "interaction_requested",
@@ -278,7 +278,7 @@ test("the working time starts again for another running session, and the end of 
   // Each open gives a snapshot of a running turn.
   const sessions = fakeSessions([...replies(2), { sessionUpdate: "state", state: "running" } as never]);
   const owner = new AbortController();
-  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   let now = 0;
   const working = new ChatWorking(chat, { signal: owner.signal, now: () => now });

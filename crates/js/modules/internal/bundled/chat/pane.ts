@@ -134,7 +134,7 @@ export interface Chat {
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
-  const chatSession = new ChatSession(ctx.get("sessions"), mount.signal, state.session);
+  const chatSession = new ChatSession(ctx.get("sessions"), { signal: mount.signal, id: state.session });
   // The draft of each session that this pane left by `show`, for the return to it.
   const drafts = new Map<SessionId, EditorState>();
   let bound = chatSession.id;

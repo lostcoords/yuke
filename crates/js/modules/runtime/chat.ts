@@ -1,5 +1,6 @@
 /** The code of the public module `yuke:chat`. Its declaration is `types/chat.d.ts`, and the check at the end compares the two. */
 
+import type { ChatSessionOptions } from "yuke:chat";
 import { ChatCommands } from "yuke:internal/chat/commands";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
@@ -37,10 +38,10 @@ export class ChatSession {
   #complete = false;
   #historyError: unknown;
 
-  constructor(sessions: Sessions, signal: AbortSignal, id?: SessionId) {
+  constructor(sessions: Sessions, options: ChatSessionOptions) {
     this.#sessions = sessions;
-    this.#signal = signal;
-    this.#id = id;
+    this.#signal = options.signal;
+    this.#id = options.id;
   }
 
   get id(): SessionId | undefined {

@@ -4,7 +4,7 @@
  * The blocks of a chat, for the bundled chat and for a chat of a plugin.
  *
  * ```ts
- * const chat = new ChatSession(ctx.get("sessions"), mount.signal, saved);
+ * const chat = new ChatSession(ctx.get("sessions"), { signal: mount.signal, id: saved });
  * chat.onChange(() => tui.requestFrame());
  * if (chat.id !== undefined) chat.open(chat.id).catch((error) => ctx.notify("error", String(error)));
  * ```
@@ -15,13 +15,19 @@ declare module "yuke:chat" {
   import type { Transcript } from "yuke:transcript";
   import type { CanvasStyle, CommandItem, EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
 
+  export interface ChatSessionOptions {
+    /** Its abort ends the handle. */
+    readonly signal: AbortSignal;
+    /** The session to show. Without it, the chat has no session yet. Call `open` to show it. */
+    readonly id?: SessionId | undefined;
+  }
+
   /**
    * The session of one chat view, with no terminal interface: its id, its handle, its transcript, and the pages of its
    * history. It holds one handle at a time, and gives no notices: a failure rejects to the caller.
    */
   export class ChatSession {
-    /** A chat of the session `id`, or of no session yet. The abort of `signal` ends the handle. Call `open` to show `id`. */
-    constructor(sessions: Sessions, signal: AbortSignal, id?: SessionId);
+    constructor(sessions: Sessions, options: ChatSessionOptions);
     /** The shown session. It stays after a failed open and after the end of its handle. */
     get id(): SessionId | undefined;
     /** The handle of the shown session, until its end, as by a close of another client. */
