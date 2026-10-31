@@ -14,7 +14,7 @@ import {
   ChatWorking,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { EMPTY, IMAGE, PASTE_SPAN } from "yuke:internal/chat/composer";
+import { EMPTY, IMAGE } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
@@ -227,16 +227,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     group,
     placeholder: "Message…",
     state: state.draft,
-  });
-  const extension = composer.extend(mount.signal);
-  // A long paste shows a label, and the draft keeps its whole text for the input.
-  extension.onPaste((text) => {
-    if (text.length <= PASTE_SPAN) return false;
-    const selection = composer.selection;
-    composer.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), text, [
-      { from: 0, to: text.length, kind: "paste", label: `[Pasted text · ${text.length} chars]` },
-    ]);
-    return true;
   });
   // A question takes the place of the list, and a pane without a row above the rule shows no list.
   const commands = new ChatCommands(composer, {

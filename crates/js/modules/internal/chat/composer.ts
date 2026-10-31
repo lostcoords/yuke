@@ -83,10 +83,20 @@ export class ChatComposer {
     this.#chat = chat;
     this.#editor = editor;
     this.#options = options;
+    const extension = editor.extend(options.signal);
     // An edit of the shown message ends the browse, so the edited text stays. An edit or a caret move ends a recall.
-    editor.extend(options.signal).onChange((change) => {
+    extension.onChange((change) => {
       if (change.kind === "edit") this.#browse = undefined;
       if (change.kind === "edit" || change.kind === "selection") this.#recalled = undefined;
+    });
+    // The label covers the text on the screen only, so a send takes the whole text.
+    extension.onPaste((text) => {
+      if (text.length <= PASTE_SPAN) return false;
+      const selection = editor.selection;
+      editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), text, [
+        { from: 0, to: text.length, kind: "paste", label: `[Pasted text · ${text.length} chars]` },
+      ]);
+      return true;
     });
   }
 

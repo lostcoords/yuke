@@ -59,8 +59,9 @@ declare module "yuke:chat" {
 
   /**
    * The behavior of a composer on a `TextEditor`: the send of its draft, the recall of a waiting message, and the
-   * history of the messages of the user. It gives no notices: a failure rejects to the caller. One composer owns its
-   * editor: two composers on one editor send one draft twice.
+   * history of the messages of the user. A paste of more than 300 characters shows a label. A send takes the whole text
+   * of that paste. A paste handler that the caller adds later takes a paste first. It gives no notices: a failure
+   * rejects to the caller. One composer owns its editor: two composers on one editor send one draft twice.
    *
    * ```ts
    * const composer = new ChatComposer(chat, editor, { handle: () => chat.ensure(pick), signal: mount.signal });

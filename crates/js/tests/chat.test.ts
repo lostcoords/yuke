@@ -141,6 +141,23 @@ test("a composer sends the draft, and a refused input comes back above newer tex
   );
 });
 
+test("a composer labels a long paste, and a paste handler added later takes a paste first", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  const editor = new TextEditor();
+  new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
+  editor.paste("a".repeat(301));
+  const labeled = editor.state.spans.map((span) => span.label);
+  editor.reset({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
+  editor.extend(owner.signal).onPaste((text) => {
+    editor.replace(0, 0, "claimed");
+    return text.length > 0;
+  });
+  editor.paste("b".repeat(301));
+  equal([labeled, editor.state.text, editor.state.spans], [["[Pasted text · 301 chars]"], "claimed", []]);
+});
+
 test("older recalls the newest waiting message, and gives taken when a turn took it first", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
