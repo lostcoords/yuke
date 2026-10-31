@@ -9,7 +9,6 @@ import type {
   CommandItem,
   DefaultPane,
   Direction,
-  Disposer,
   FocusChange,
   FocusDirection,
   Mount,
@@ -52,7 +51,7 @@ class Scope {
   }
 
   /** Keep `dispose` until the stop. The returned disposer leaves the scope, so a closed registration holds nothing. */
-  own(dispose: Disposer): Disposer {
+  own(dispose: () => void): () => void {
     const cleanup = (): void => {
       if (!this.#cleanups.delete(cleanup)) return;
       dispose();
@@ -124,7 +123,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     ),
     focus: live((direction: FocusDirection): boolean => core.panes.focus(direction)),
     focusNext: live((): void => core.panes.focusNext()),
-    setDefault: live((create: DefaultPane): Disposer => {
+    setDefault: live((create: DefaultPane): (() => void) => {
       if (typeof create !== "function") throw new TypeError("a default pane is a function that makes its view");
       return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
     }),
@@ -157,11 +156,11 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       return core.scene.focused;
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
-    onFocus: live((listener: (change: FocusChange) => void): Disposer => scope.own(core.onFocus(owner, listener))),
+    onFocus: live((listener: (change: FocusChange) => void): (() => void) => scope.own(core.onFocus(owner, listener))),
     now: live((): number => core.driver.now()),
-    after: live((delay: number, callback: () => void): Disposer => {
+    after: live((delay: number, callback: () => void): (() => void) => {
       // A fired timer leaves the scope, so a callback that calls `after` again leaves no old disposer.
-      const cancel: Disposer = scope.own(
+      const cancel: () => void = scope.own(
         core.after(owner, delay, () => {
           cancel();
           callback();
@@ -174,7 +173,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
     commands: Object.freeze({
-      add: live((command: Command): Disposer => {
+      add: live((command: Command): (() => void) => {
         if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");
         return scope.own(core.commands.add(command, own(command.name)));
       }),
@@ -182,35 +181,33 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       list: live((): readonly CommandItem[] => core.commands.list()),
     }),
     keys: Object.freeze({
-      bind: live(
-        (spec: string, command: string, options?: { readonly in?: string | undefined }): Disposer =>
-          scope.own(core.keymap.bind(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
+      bind: live((spec: string, command: string, options?: { readonly in?: string | undefined }): (() => void) =>
+        scope.own(core.keymap.bind(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
       ),
       pending: live((): string => core.keymap.pending()),
       keysOf: live((name: string): readonly string[] => core.keymap.keysOf(lookup(name))),
     }),
     styles: Object.freeze({
-      set: live((name: string, patch: StylePatch): Disposer => scope.own(core.styles.set(name, patch))),
+      set: live((name: string, patch: StylePatch): (() => void) => scope.own(core.styles.set(name, patch))),
     }),
     status: Object.freeze({
       set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),
       delete: live((key: string): void => core.status.delete(own(key))),
       list: live((): readonly StatusItem[] => core.status.list()),
-      on: live((listener: () => void): Disposer => scope.own(core.status.on(listener))),
+      on: live((listener: () => void): (() => void) => scope.own(core.status.on(listener))),
     }),
     notices: Object.freeze({
       list: live((): readonly Notice[] => core.notices.list()),
-      on: live((listener: (notice: Notice) => void): Disposer => scope.own(core.notices.on(listener))),
+      on: live((listener: (notice: Notice) => void): (() => void) => scope.own(core.notices.on(listener))),
     }),
     widgets: Object.freeze({
       list: live((): readonly WidgetMount[] => core.widgets.list()),
-      watch: live(
-        (attach: (mount: WidgetMount) => Disposer | undefined): Disposer =>
-          scope.own(core.widgets.watch(owner, attach)),
+      watch: live((attach: (mount: WidgetMount) => (() => void) | undefined): (() => void) =>
+        scope.own(core.widgets.watch(owner, attach)),
       ),
     }),
     views: Object.freeze({
-      register: live((type: string, restore: RestoreView): Disposer => {
+      register: live((type: string, restore: RestoreView): (() => void) => {
         if (typeof restore !== "function") throw new TypeError("a view type takes a function that restores its view");
         return scope.own(core.views.register(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
       }),

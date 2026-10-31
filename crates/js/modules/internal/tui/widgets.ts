@@ -7,7 +7,6 @@ import { failureOf } from "yuke:internal/failure";
 import type {
   CursorShape,
   Decoration,
-  Disposer,
   KeyEvent,
   MouseEvent,
   Pane,
@@ -107,7 +106,7 @@ export class TextSupport<P, E> {
       this.#parts.push(part);
       signal.addEventListener("abort", part.dispose, { once: true });
     }
-    const add = <T>(list: Handler<P, T>[], handle: T, kind: string): Disposer => {
+    const add = <T>(list: Handler<P, T>[], handle: T, kind: string): (() => void) => {
       if (typeof handle !== "function") throw new TypeError(`a ${kind} handler is a function`);
       if (part.disposed) return () => {};
       const handler = { part, handle };
@@ -142,13 +141,13 @@ export class TextSupport<P, E> {
         part.decorations = Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration })));
         this.#host?.requestFrame();
       },
-      onKey: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): Disposer => {
+      onKey: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): (() => void) => {
         if (!PHASES.includes(phase)) throw new TypeError(`a key phase is beforeDefault or beforeKeymap, not ${phase}`);
         return add(this.#keys[phase], handler, "key");
       },
-      onMouse: (handler: (event: MouseEvent) => boolean): Disposer => add(this.#mice, handler, "mouse"),
-      onPaste: (handler: (text: string) => boolean): Disposer => add(this.#pastes, handler, "paste"),
-      onChange: (listener: (event: E) => void): Disposer => add(this.#listeners, listener, "change"),
+      onMouse: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler, "mouse"),
+      onPaste: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler, "paste"),
+      onChange: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener, "change"),
       dispose: part.dispose,
     });
   }
@@ -268,9 +267,9 @@ interface Mounted {
 
 interface Watch {
   readonly owner: string;
-  readonly attach: (mount: WidgetMount) => Disposer | undefined;
+  readonly attach: (mount: WidgetMount) => (() => void) | undefined;
   /** Each mount that the watch saw, with its cleanup when `attach` gave one. */
-  readonly cleanups: Map<WidgetMount, Disposer | undefined>;
+  readonly cleanups: Map<WidgetMount, (() => void) | undefined>;
 }
 
 /** The core host of each placed hosted view, and the mounts of the placed text widgets. */
@@ -339,7 +338,7 @@ export class WidgetMounts {
   }
 
   /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
-  watch(owner: string, attach: (mount: WidgetMount) => Disposer | undefined): Disposer {
+  watch(owner: string, attach: (mount: WidgetMount) => (() => void) | undefined): () => void {
     if (typeof attach !== "function") throw new TypeError("a widget watch takes a function");
     const watch: Watch = { owner, attach, cleanups: new Map() };
     this.#watches.add(watch);
@@ -363,7 +362,7 @@ export class WidgetMounts {
     }
   }
 
-  #run(owner: string, cleanup: Disposer): void {
+  #run(owner: string, cleanup: () => void): void {
     try {
       cleanup();
     } catch (error) {

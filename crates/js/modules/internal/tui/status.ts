@@ -2,7 +2,7 @@
  * The items of the status bar: plain data that plugins and the core set, by the key `<plugin>:<key>`. The core draws
  * none of them: a bar plugin reads them and draws them.
  */
-import type { Disposer, StatusEntry, StatusItem } from "yuke:tui";
+import type { StatusEntry, StatusItem } from "yuke:tui";
 
 export class StatusItems {
   readonly #items = new Map<string, StatusItem>();
@@ -56,7 +56,7 @@ export class StatusItems {
   }
 
   /** Give each later change to `listener`, and return the disposer. */
-  on(listener: () => void): Disposer {
+  on(listener: () => void): () => void {
     const entry = { listener };
     this.#listeners.add(entry);
     return () => {

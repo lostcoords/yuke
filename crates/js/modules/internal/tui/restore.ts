@@ -2,7 +2,7 @@
  * The view types of the plugins and the saved panes of a reload. The old runtime saves the pane tree at
  * `core:reload`; the new one rebuilds it through the factory of each view type after its plugins load.
  */
-import type { Direction, Disposer, JsonValue, Mount, RestoreView } from "yuke:tui";
+import type { Direction, JsonValue, Mount, RestoreView } from "yuke:tui";
 
 /** A factory of a view type, the plugin that owns it, and the hand-over of a restored pane to that plugin. */
 export interface ViewType {
@@ -30,7 +30,7 @@ export class ViewTypes {
   readonly #types = new Map<string, ViewType>();
 
   /** Add the factory of the qualified view type `type`. A type with a factory already throws a `TypeError`. */
-  register(type: string, entry: ViewType): Disposer {
+  register(type: string, entry: ViewType): () => void {
     if (this.#types.has(type)) throw new TypeError(`the view type ${type} exists`);
     this.#types.set(type, entry);
     return () => {

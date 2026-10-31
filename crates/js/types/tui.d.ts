@@ -3,7 +3,7 @@
 /**
  * The types of the terminal interface and its stateless helpers. An import of this module starts nothing, so a plugin
  * can import it in each mode. Coordinates are local cells from 0. Text offsets are UTF-16 units, as in JavaScript
- * strings.
+ * strings. A registration gives a remover, `() => void`. A second call of a remover does nothing.
  */
 declare module "yuke:tui" {
   import type { NoticeLevel } from "yuke:plugins";
@@ -27,9 +27,6 @@ declare module "yuke:tui" {
   export interface Cursor extends Point {
     readonly shape?: CursorShape | undefined;
   }
-
-  /** Remove a registration. A second call does nothing. */
-  export type Disposer = () => void;
 
   export type Direction = "row" | "column";
 
@@ -306,11 +303,11 @@ declare module "yuke:tui" {
      * takes ends a pending key sequence. A `beforeDefault` handler (the default) runs after the keymap and before the
      * editing of the widget. The newest handler of a phase runs first.
      */
-    onKey: (handler: (event: KeyEvent) => boolean, phase?: "beforeDefault" | "beforeKeymap") => Disposer;
+    onKey: (handler: (event: KeyEvent) => boolean, phase?: "beforeDefault" | "beforeKeymap") => () => void;
     /** Take a mouse event before the widget: `true` stops it. A handler can return `false` to only watch. */
-    onMouse: (handler: (event: MouseEvent) => boolean) => Disposer;
-    onPaste: (handler: (text: string) => boolean) => Disposer;
-    onChange: (listener: (event: E) => void) => Disposer;
+    onMouse: (handler: (event: MouseEvent) => boolean) => () => void;
+    onPaste: (handler: (text: string) => boolean) => () => void;
+    onChange: (listener: (event: E) => void) => () => void;
     dispose: () => void;
   }
 
@@ -505,7 +502,7 @@ declare module "yuke:tui" {
     followTail: () => void;
     scrollToItem: (key: string, row?: number) => boolean;
     ensureVisible: (key: string, row?: number) => boolean;
-    onChange: (listener: (state: ScrollState) => void, signal: AbortSignal) => Disposer;
+    onChange: (listener: (state: ScrollState) => void, signal: AbortSignal) => () => void;
   }
 
   export interface TextViewOptions {
@@ -573,7 +570,7 @@ declare module "yuke:tui" {
   export interface WidgetRegistry {
     readonly list: () => readonly WidgetMount[];
     /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
-    readonly watch: (attach: (mount: WidgetMount) => Disposer | undefined) => Disposer;
+    readonly watch: (attach: (mount: WidgetMount) => (() => void) | undefined) => () => void;
   }
 
   /**
@@ -689,7 +686,7 @@ declare module "yuke:tui" {
      */
     rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined;
     /** Give each later state to `listener`, until `signal` aborts or the disposer runs. */
-    onChange(listener: (state: ScrollState) => void, signal: AbortSignal): Disposer;
+    onChange(listener: (state: ScrollState) => void, signal: AbortSignal): () => void;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
     mouse(event: MouseEvent): boolean;
@@ -808,7 +805,7 @@ declare module "yuke:tui" {
      * Make the view of each pane that the core opens. `PaneReason` names the cases. One plugin at a time sets it, and
      * a second set throws a `TypeError`. Without it, such a pane is empty.
      */
-    readonly setDefault: (create: DefaultPane) => Disposer;
+    readonly setDefault: (create: DefaultPane) => () => void;
     readonly focus: (direction: FocusDirection) => boolean;
     readonly focusNext: () => void;
   }
@@ -867,35 +864,35 @@ declare module "yuke:tui" {
     readonly focused: View | undefined;
     readonly focus: (view: View) => boolean;
     /** Give each later change of `focused` to `listener`. */
-    readonly onFocus: (listener: (change: FocusChange) => void) => Disposer;
+    readonly onFocus: (listener: (change: FocusChange) => void) => () => void;
     /**
      * Call `callback` once after `delay` milliseconds, and draw a frame after it. The disposer cancels the call, and the
      * stop of the plugin cancels it too. A frame test moves this time with `advance`.
      */
-    readonly after: (delay: number, callback: () => void) => Disposer;
+    readonly after: (delay: number, callback: () => void) => () => void;
     /** The time in milliseconds on the clock of `after`. The difference of two times is a duration. `advance` moves it. */
     readonly now: () => number;
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     readonly commands: {
-      readonly add: (command: Command) => Disposer;
+      readonly add: (command: Command) => () => void;
       /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */
       readonly run: (name: string, args?: unknown) => boolean;
       readonly list: () => readonly CommandItem[];
     };
     readonly keys: {
-      readonly bind: (spec: string, command: string, options?: { readonly in?: string | undefined }) => Disposer;
+      readonly bind: (spec: string, command: string, options?: { readonly in?: string | undefined }) => () => void;
       /** The keys of the pending sequence, such as `ctrl+k`, or "". */
       readonly pending: () => string;
       readonly keysOf: (name: string) => readonly string[];
     };
     readonly styles: {
-      readonly set: (name: string, patch: StylePatch) => Disposer;
+      readonly set: (name: string, patch: StylePatch) => () => void;
     };
     readonly notices: {
       readonly list: () => readonly Notice[];
-      readonly on: (listener: (notice: Notice) => void) => Disposer;
+      readonly on: (listener: (notice: Notice) => void) => () => void;
     };
     /**
      * The items of the status bar. A bare key gets the prefix of the plugin. When the plugin stops, the core deletes its
@@ -908,11 +905,11 @@ declare module "yuke:tui" {
       /** Each item of each plugin. */
       readonly list: () => readonly StatusItem[];
       /** Call `listener` after each later change of the items. A throw removes the listener and reports the error. */
-      readonly on: (listener: () => void) => Disposer;
+      readonly on: (listener: () => void) => () => void;
     };
     readonly widgets: WidgetRegistry;
     readonly views: {
-      readonly register: (type: string, restore: RestoreView) => Disposer;
+      readonly register: (type: string, restore: RestoreView) => () => void;
     };
     /** Ask for a frame in `delay` milliseconds. Many asks give one frame. Ask after a state change outside the input. */
     readonly requestFrame: (delay?: number) => void;

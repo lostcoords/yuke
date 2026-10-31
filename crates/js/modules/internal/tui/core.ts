@@ -19,7 +19,7 @@ import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, ClipboardImage, Cursor, Disposer, FocusChange, Startup, Style, View } from "yuke:tui";
+import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, Style, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -147,7 +147,7 @@ export class Core {
   }
 
   /** Give each later change of `tui.focused` to `listener` of the plugin `owner`. A throw reports and removes it. */
-  onFocus(owner: string, listener: (change: FocusChange) => void): Disposer {
+  onFocus(owner: string, listener: (change: FocusChange) => void): () => void {
     const entry = { owner, listener };
     this.#focusListeners.add(entry);
     return () => {
@@ -156,7 +156,7 @@ export class Core {
   }
 
   /** Call `callback` of the plugin `owner` once after `delay` milliseconds, then draw a frame. A throw is a notice. */
-  after(owner: string, delay: number, callback: () => void): Disposer {
+  after(owner: string, delay: number, callback: () => void): () => void {
     return this.driver.after(delay, () => {
       try {
         callback();
@@ -171,7 +171,7 @@ export class Core {
    * Make `slot` the default pane. A start that waits gets its first pane now. A second live default pane throws a
    * `TypeError`.
    */
-  setDefaultPane(slot: DefaultPaneSlot): Disposer {
+  setDefaultPane(slot: DefaultPaneSlot): () => void {
     const current = this.#defaultPane;
     if (current !== undefined && !current.signal.aborted) {
       throw new TypeError(`plugin ${current.owner} sets the default pane`);

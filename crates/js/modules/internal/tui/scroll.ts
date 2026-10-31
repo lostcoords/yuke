@@ -4,7 +4,7 @@
  * update, and a resize. A list that follows the tail stays at the bottom.
  */
 import { registerHost, type WidgetHost } from "yuke:internal/tui/widgets";
-import type { Canvas, Disposer, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow } from "yuke:tui";
+import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow } from "yuke:tui";
 
 /** A wheel step moves this many rows. */
 const WHEEL_ROWS = 3;
@@ -166,7 +166,7 @@ export class ScrollList<T extends object> {
   }
 
   /** Give each later change of the state to `listener`, until `signal` aborts. */
-  onChange(listener: (state: ScrollState) => void, signal: AbortSignal): Disposer {
+  onChange(listener: (state: ScrollState) => void, signal: AbortSignal): () => void {
     if (typeof listener !== "function") throw new TypeError("a scroll listener is a function");
     if (signal.aborted) return () => {};
     // A wrapper makes each registration its own, so a disposer removes only its own one.
