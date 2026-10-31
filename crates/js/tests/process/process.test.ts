@@ -2,7 +2,7 @@
 
 import * as fs from "yuke:fs";
 import { folder } from "yuke:internal/test";
-import { Command } from "yuke:process";
+import { Command, env } from "yuke:process";
 import { assert, equal, rejects, test, throws } from "yuke:test";
 
 /** Make the empty folder `name` in the scratch folder of the file, and give its absolute path. */
@@ -118,4 +118,15 @@ test("a program that does not start rejects with its name", async () => {
     await rejects(new Command("/no/such/program", { cwd: base }).output()),
     new Error("/no/such/program did not start: No such file or directory (os error 2)"),
   );
+});
+
+test("env.get gives a variable of the environment of yuke, and undefined for a missing one", async () => {
+  const cwd = await place("env");
+  // A program gets the environment of yuke, and env prints it as it gets it.
+  const shown = await new Command("/usr/bin/env", { cwd }).output();
+  const path = text(shown.stdout)
+    .split("\n")
+    .find((line) => line.startsWith("PATH="))
+    ?.slice("PATH=".length);
+  equal([env.get("PATH"), env.get("YUKE_TEST_NO_SUCH_VARIABLE"), env.get("")], [path, undefined, undefined]);
 });

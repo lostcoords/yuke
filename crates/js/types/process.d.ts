@@ -1,6 +1,8 @@
 // The declaration of the public module `yuke:process`.
 
 /**
+ * `env` reads the environment of yuke, as `Deno.env.get` does. It does not change the environment.
+ *
  * Programs, in the shape of `Deno.Command`: a program and its arguments, without a shell.
  * - Each program runs in its own process group, and it gets no input.
  * - `cwd` is required: a tool passes `context.folder`, and a session passes `s.folder`.
@@ -44,6 +46,12 @@ declare module "yuke:process" {
     /** The bytes of stderr. They are empty for `"null"`. */
     readonly stderr: Uint8Array;
   }
+
+  /** The environment of the yuke process. A plugin reads it, and a program gets it unless `clearEnv` is set. */
+  export const env: {
+    /** The value of the variable `name`. `undefined` when the variable is missing or its value is not valid Unicode. */
+    readonly get: (name: string) => string | undefined;
+  };
 
   /** A program to run. Each `output` starts it again. */
   export class Command {

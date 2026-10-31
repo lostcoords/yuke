@@ -1,8 +1,10 @@
 /** The code of the public module `yuke:process`. Its declaration is `types/process.d.ts`, and the check at the end compares the two. */
 
 import { underSignal } from "yuke:internal/events";
-import { type ProcessRequest, processOutput } from "yuke:internal/native";
+import { type ProcessRequest, processEnv, processOutput } from "yuke:internal/native";
 import type { CommandOptions, CommandOutput } from "yuke:process";
+
+export const env = Object.freeze({ get: (name: string): string | undefined => processEnv(name) });
 
 export class Command {
   readonly #request: ProcessRequest;
@@ -29,5 +31,5 @@ export class Command {
 }
 
 // The check against `types/process.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { Command } satisfies typeof import("yuke:process");
+const declared = { Command, env } satisfies typeof import("yuke:process");
 void declared;

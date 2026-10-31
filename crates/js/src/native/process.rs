@@ -1,4 +1,5 @@
 //! The native of `yuke:process`: `processOutput` runs a program without a shell, and answers its end and its output.
+//! `processEnv` reads a variable of the environment of yuke.
 
 use std::sync::Arc;
 
@@ -8,8 +9,13 @@ use super::Operation;
 use crate::error::{ErrorClass, throw};
 use crate::processes::{Processes, Program};
 
-/// Add `processOutput` to `object`, the export object of the native module.
+/// Add `processOutput` and `processEnv` to `object`, the export object of the native module.
 pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, processes: &Arc<Processes>) -> rquickjs::Result<()> {
+    // A missing variable and a value that is not valid Unicode both give `undefined`.
+    object.set(
+        "processEnv",
+        Function::new(ctx.clone(), |name: String| std::env::var(name).ok())?,
+    )?;
     let processes = Arc::clone(processes);
     object.set(
         "processOutput",

@@ -244,6 +244,9 @@ declare module "yuke:internal/native" {
    */
   export function processOutput(request: ProcessRequest): Operation<ProcessEnd>;
 
+  /** The value of the variable `name` of yuke. `undefined` when it is missing or its value is not valid Unicode. */
+  export function processEnv(name: string): string | undefined;
+
   /** The PNG bytes of the clipboard image, or `undefined` without an image. The read runs off the thread. */
   export function clipboardReadImage(): Promise<Uint8Array | undefined>;
 
