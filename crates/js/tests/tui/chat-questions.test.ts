@@ -12,7 +12,7 @@ function asked(id: number, request: InteractionRequest): SessionUpdate {
 }
 
 /** The composer of the chat in `frame`. */
-function composerOf(chat: ReturnType<typeof loadChat>): TextEditor {
+function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
   return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor && mount.widget.role === "composer")
     ?.widget as TextEditor;
 }
@@ -22,7 +22,7 @@ const DELETE: InteractionRequest = { kind: "confirm", title: "Delete branch?", m
 test("a confirm takes the place of the composer, waits for y or n, and the draft comes back after it", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -65,7 +65,7 @@ test("a confirm takes the place of the composer, waits for y or n, and the draft
 test("a select picks an option, a secret input shows dots, and the count shows the open questions", async () => {
   using frame = createFrame({ width: 32, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.push(asked(2, { kind: "select", title: "Deploy to?", options: ["staging", "prod"] }));
@@ -94,7 +94,7 @@ test("a select picks an option, a secret input shows dots, and the count shows t
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -122,7 +122,7 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
 test("a late answer gives a notice and the question stays until it closes", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.state.refuseAnswer = true;
@@ -143,7 +143,7 @@ test("each pane of a session shows its question, the focused pane takes the keys
   const saved = JSON.stringify({ tree: { split: "row", ratio: 0.5, first: pane, second: pane }, focus: 0 });
   using frame = createFrame({ width: 61, height: 6 });
   const sessions = fakeSessions();
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start(saved);
   await settle();
   sessions.push(asked(7, DELETE));
@@ -162,7 +162,7 @@ test("each pane of a session shows its question, the focused pane takes the keys
 test("a modal question opens over the focused pane, waits for another modal, and gives the focus back", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = loadChat(frame, { questions: "modal" }, sessions);
+  const chat = await loadChat(frame, { questions: "modal" }, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -198,7 +198,7 @@ test("a modal question opens over the focused pane, waits for another modal, and
 test("a close of the session by another client drops its question, and the next send opens the session again", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -223,7 +223,7 @@ test("a browse of the messages stops while a question shows", async () => {
   ];
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   frame.key("up");

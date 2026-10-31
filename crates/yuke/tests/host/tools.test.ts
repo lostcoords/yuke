@@ -301,24 +301,27 @@ test("a throw of a tool is an error with its message", async () => {
 
 test("a cancel aborts the signal, and the tool still answers", async () => {
   let reason = "";
+  const started = Promise.withResolvers<void>();
   const { host, session } = await opened(
     tool(
       "wait",
       (_args, context) =>
-        new Promise((resolve) =>
+        new Promise((resolve) => {
           context.signal.addEventListener("abort", () => {
             const why = context.signal.reason;
             reason = `${why instanceof DOMException} ${String(why)}`;
             resolve("stopped");
-          }),
-        ),
+          });
+          started.resolve();
+        }),
     ),
   );
   await using _host = host;
   const stop = new AbortController();
-  setTimeout(() => stop.abort(new Error("stop")), 20);
-
-  await session.call("wait", {}, { signal: stop.signal }).catch(() => undefined);
+  const pending = session.call("wait", {}, { signal: stop.signal }).catch(() => undefined);
+  await started.promise;
+  stop.abort(new Error("stop"));
+  await pending;
 
   equal(reason, "true AbortError: The tool call was cancelled");
 });
@@ -485,12 +488,14 @@ test("a media path starts in the folder of the start of the call", async () => {
   await writeTextFile(`${folder()}/first/dot.png`, "first");
   await writeTextFile(`${folder()}/second/dot.png`, "second");
   let release = (): void => {};
+  const started = Promise.withResolvers<void>();
   const { host, session } = await opened(
     tool(
       "later",
       () =>
         new Promise((resolve) => {
           release = () => resolve({ text: "x", media: [{ path: "dot.png", mimeType: "image/png" }] });
+          started.resolve();
         }),
     ),
   );
@@ -498,7 +503,7 @@ test("a media path starts in the folder of the start of the call", async () => {
   await session.setSettings({ ...session.settings, cwd: `${folder()}/first` });
 
   const pending = session.call("later", {});
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await started.promise;
   await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
   release();
 

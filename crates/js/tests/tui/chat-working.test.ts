@@ -8,7 +8,7 @@ const hints = { title: null, subject: { argument: "command", kind: "text" }, pre
 test("a running turn shows its phase and time above the rule, and the end of the turn takes the row away", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   /** Draw the frame, and give the row above the rule. */
@@ -57,7 +57,7 @@ test("a running turn shows its phase and time above the rule, and the end of the
 test("the elapsed time of a long turn shows minutes", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.push({ sessionUpdate: "state", state: "running" });
@@ -71,7 +71,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
 test("a draft shows reasoning, a response, or a call that the model still writes", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.push({ sessionUpdate: "state", state: "running" });
@@ -97,7 +97,7 @@ test("a draft shows reasoning, a response, or a call that the model still writes
 test("a close of the session by another client takes the working row away", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.push({ sessionUpdate: "state", state: "running" });
@@ -111,7 +111,7 @@ test("a close of the session by another client takes the working row away", asyn
 test("the working row shows no cancel key while the command list takes esc", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   await settle();
   sessions.push({ sessionUpdate: "state", state: "running" });

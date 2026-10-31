@@ -15,13 +15,13 @@ function row(id: string, cwd: string, preview: string, activity: SessionActivity
 }
 
 /** A chat on session `s1` of `/w` and the plugin `sessions` in `frame`, with three saved sessions. */
-function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
+async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
   sessions.rows.push(
     row("s1", "/w", "fix the flaky test", "running", 5),
     row("s2", "/w", "add the bar", "closed", 180),
     row("s3", "/home/other", "refactor sqlgen", "idle", 2 * 24 * 60),
   );
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   const notices: string[] = [];
   const services: Record<string, unknown> = { tui: frame.surface("sessions").tui, sessions, chat: chat.chat };
   apply({
@@ -33,7 +33,7 @@ function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
 }
 
 /** Run `/sessions:open`, and give the drawn rows after its list loads. */
-async function openList(frame: FrameTest, chat: ReturnType<typeof loadChat>): Promise<string[]> {
+async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadChat>>): Promise<string[]> {
   chat.tui.commands.run("sessions:open");
   await settle();
   frame.draw();
@@ -42,7 +42,7 @@ async function openList(frame: FrameTest, chat: ReturnType<typeof loadChat>): Pr
 
 test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
-  const loaded = load(frame);
+  const loaded = await load(frame);
   await settle();
   const here = await openList(frame, loaded.chat);
   frame.key("tab");
@@ -71,7 +71,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
 
 test("a query matches the first prompt, and else the model, the folder, or the id", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
-  const loaded = load(frame);
+  const loaded = await load(frame);
   await settle();
   await openList(frame, loaded.chat);
   frame.key("tab");
@@ -98,7 +98,7 @@ test("a query matches the first prompt, and else the model, the folder, or the i
 
 test("enter shows the chosen session in the focused chat pane and closes the list", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
-  const loaded = load(frame);
+  const loaded = await load(frame);
   await settle();
   await openList(frame, loaded.chat);
   frame.paste("bar");
@@ -115,7 +115,7 @@ test("a pick that does not open gives a notice", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("missing", "/w", "gone", "closed", 1));
-  const loaded = load(frame, sessions);
+  const loaded = await load(frame, sessions);
   await settle();
   await openList(frame, loaded.chat);
   frame.paste("gone");
@@ -138,7 +138,7 @@ test("a list of an earlier scope that loads late keeps the list of the later sco
     }
     return page;
   };
-  const loaded = load(frame, sessions);
+  const loaded = await load(frame, sessions);
   await settle();
   await openList(frame, loaded.chat);
   frame.key("tab");
@@ -156,7 +156,7 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("s4", "/srv/bar", "deploy notes", "closed", 1));
-  const loaded = load(frame, sessions);
+  const loaded = await load(frame, sessions);
   await settle();
   await openList(frame, loaded.chat);
   frame.key("tab");
@@ -181,7 +181,7 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
     }
     return list(params);
   };
-  const loaded = load(frame, sessions);
+  const loaded = await load(frame, sessions);
   await settle();
   await openList(frame, loaded.chat);
   frame.key("tab");
@@ -194,7 +194,7 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
 
 test("the list of a pane whose session is gone starts with the start folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s9" });
-  const loaded = load(frame);
+  const loaded = await load(frame);
   await settle();
   const drawn = await openList(frame, loaded.chat);
   equal(

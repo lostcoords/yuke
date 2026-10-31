@@ -2,6 +2,7 @@
 // `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
 import { underStop } from "yuke:internal/events";
+import { flush as flushFacts } from "yuke:internal/facts";
 import {
   catalogList,
   type ViewEvent as NativeViewEvent,
@@ -73,9 +74,9 @@ function deliver(batch: readonly (readonly [number, NativeViewEvent])[]): void {
   }
 }
 
-/** Wait until each view got each event that came before this call. Without a view, nothing waits. */
+/** Wait until the views and fact listeners receive each event queued before this call. */
 export async function flush(): Promise<void> {
-  if (listening) await sessionsFlush();
+  await Promise.all([listening ? sessionsFlush() : undefined, flushFacts()]);
 }
 
 /** `promise`, or a rejection with the reason of `signal` when it aborts first. */

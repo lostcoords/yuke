@@ -45,7 +45,7 @@ const PROBE: ToolHints = { title: "Probe", subject: null, preview: "head" };
 
 const ok = (content: string): ToolResult => ({ callId: "", content, isError: false });
 
-test("a folded call shows the head line and the preview of its hints, and an error shows its first rows", () => {
+test("a folded call shows the head line and the preview of its hints, and an error shows its first rows", async () => {
   using frame = createFrame({ width: 30, height: 40 }, undefined, { cwd: "/w", session: "s1" });
   const long = "x".repeat(50);
   const saved = calls(
@@ -54,7 +54,7 @@ test("a folded call shows the head line and the preview of its hints, and an err
     { name: "probe", args: {}, hints: PROBE, result: ok(lines("row", 12)) },
     { name: "fail", args: {}, hints: READ, result: { callId: "", content: lines("err", 11), isError: true } },
   );
-  loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 37), [
     "",
@@ -80,7 +80,7 @@ test("a folded call shows the head line and the preview of its hints, and an err
   ]);
 });
 
-test("the live output of a call gives way to its result at once", () => {
+test("the live output of a call gives way to its result at once", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
@@ -90,7 +90,7 @@ test("the live output of a call gives way to its result at once", () => {
     }),
   ];
   const sessions = fakeSessions(saved);
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "tool_started", execution, call });
@@ -103,7 +103,7 @@ test("the live output of a call gives way to its result at once", () => {
   equal(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
 });
 
-test("the display blocks of a result share one preview, and a diff keeps its styles and its text in a copy", () => {
+test("the display blocks of a result share one preview, and a diff keeps its styles and its text in a copy", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const patch = "@@ -1 +1 @@\n-old\n+new\n same";
   const display: DisplayBlock[] = [
@@ -112,7 +112,7 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
   ];
   const edit: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
   const saved = calls({ name: "edit", args: { path: "src/a.rs" }, hints: edit, result: ok("done"), display });
-  const chat = loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   const shown = transcriptRows(frame);
   equal(shown.slice(0, 9), [
@@ -147,10 +147,10 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
   equal(frame.copies, [`src/a.rs\n${patch}`, `Edited\nsrc/a.rs\n${patch}`]);
 });
 
-test("a click on a subject copies its path in the folder of the call, and a click on the title opens the call", () => {
+test("a click on a subject copies its path in the folder of the call, and a click on the title opens the call", async () => {
   using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "read", args: { path: "src/main.rs" }, hints: READ, result: ok("fn main() {}") });
-  const chat = loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   click(frame, 7, 1);
   equal([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info copied /tools/src/main.rs"]]);
@@ -159,13 +159,13 @@ test("a click on a subject copies its path in the folder of the call, and a clic
   equal(transcriptRows(frame).slice(0, 5), ["", " read src/main.rs", ' {"path":"src/main.rs"}', " fn main() {}", ""]);
 });
 
-test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", () => {
+test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/start", session: "s1" });
   const saved = calls(
     { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), folder: null },
     { name: "note", args: {}, hints: PROBE, result: ok("x"), display: [{ kind: "markdown", text: "[b](b.rs)" }] },
   );
-  loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 5), ["", " read a.rs", "", " Probe", " [b](b.rs)"]);
   click(frame, 7, 1);
@@ -173,14 +173,14 @@ test("a relative link of a call without a folder starts in the folder of the ses
   equal(frame.copies, ["/w/a.rs", "/tools/b.rs"]);
 });
 
-test("ctrl+o in the composer opens each tool when one is folded, else folds each tool, and it leaves a thought", () => {
+test("ctrl+o in the composer opens each tool when one is folded, else folds each tool, and it leaves a thought", async () => {
   using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls(
     { name: "read", args: { path: "a" }, hints: READ, result: ok("A") },
     { name: "read", args: { path: "b" }, hints: READ, result: ok("B") },
   );
   saved.push(commit(saved.length + 1, [{ reasoning: { text: "why" } } as never]));
-  loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   // The composer has the focus, and the key reaches the command through the context of the pane.
   frame.key("ctrl+o");
@@ -204,14 +204,14 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
   equal(transcriptRows(frame).slice(0, 6), ["", " read a", "", " read b", "", " thought"]);
 });
 
-test("a link in a reply copies its target, and a relative target starts in the folder of the session", () => {
+test("a link in a reply copies its target, and a relative target starts in the folder of the session", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/start", session: "s1" });
   const reply = "see [source](src/main.rs#L40-L52) or [docs](https://docs.rs)";
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
     commit(2, [{ assistant_text: reply }]),
   ];
-  loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, {}, fakeSessions(saved));
   frame.start();
   // The Markdown rows show the whole link, and each of its cells carries the target.
   equal(rows(frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);

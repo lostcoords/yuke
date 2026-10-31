@@ -448,6 +448,8 @@ declare module "yuke:internal/native" {
     | { readonly event: "notice"; readonly data: NoticeParams };
   /** Deliver the facts of this runtime to `deliver`, in batches of `[key, fact]` pairs. Call it once. */
   export function factsListen(deliver: (batch: readonly (readonly [number, Fact])[]) => void): void;
+  /** Wait until the listener receives each fact queued before this call. */
+  export function factsFlush(): Promise<void>;
   /** Watch the facts as the watch `key`, in place of the watch before. The open sessions come first. */
   export function factsWatch(key: number): void;
   /** End the watch of the facts. */

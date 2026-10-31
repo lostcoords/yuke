@@ -2,10 +2,9 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::tools::{TestHost, Tools};
-use super::{descriptor, evaluate, folder, start, write};
+use super::{descriptor, evaluate, folder, start, wait_until, write};
 use crate::{Origin, Plugin, PluginFailure, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
@@ -99,7 +98,7 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
         Some(
             "globalThis.cleanups = [];
              export async function apply(ctx) {
-               await new Promise((resolve) => setTimeout(resolve, 50));
+               await new Promise((resolve) => { globalThis.finishApply = resolve; });
                return () => { globalThis.cleanups.push(`slow ${ctx.signal.aborted}`); };
              }",
         ),
@@ -110,8 +109,9 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
 
     let slow = [slow];
     let (during, ()) = tokio::join!(runtime.load_plugins(&slow), async {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        wait_until(&runtime, "return typeof globalThis.finishApply === 'function';").await;
         runtime.close_plugins().await.unwrap();
+        evaluate::<()>(&runtime, "finishApply();").await.unwrap();
     });
     let after = runtime.load_plugins(&[late]).await;
 

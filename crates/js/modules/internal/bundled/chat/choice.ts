@@ -25,32 +25,25 @@ function choiceOf(value: unknown): Choice | undefined {
 export class SavedChoice {
   readonly #dataDir: string;
   readonly #listeners = new Set<() => void>();
-  readonly #read: Promise<void>;
   #choice: Choice | undefined;
 
-  /** Read the pick. A missing file gives no pick, and another failure goes to `report`. */
-  constructor(dataDir: string, report: (error: unknown) => void) {
+  private constructor(dataDir: string, choice: Choice | undefined) {
     this.#dataDir = dataDir;
-    this.#read = readTextFile("choice.json", { baseDir: dataDir, fatal: true })
-      .then((text) => JSON.parse(text))
-      .then(
-        (value: unknown) => {
-          this.#choice = choiceOf(value);
-          this.#changed();
-        },
-        (error: unknown) => {
-          if (!(error instanceof FileSystemError && error.code === "ENOENT")) report(error);
-        },
-      );
+    this.#choice = choice;
+  }
+
+  /** Load the pick. A missing file gives no pick, and another failure goes to `report`. */
+  static async load(dataDir: string, report: (error: unknown) => void): Promise<SavedChoice> {
+    let choice: Choice | undefined;
+    try {
+      choice = choiceOf(JSON.parse(await readTextFile("choice.json", { baseDir: dataDir, fatal: true })));
+    } catch (error) {
+      if (!(error instanceof FileSystemError && error.code === "ENOENT")) report(error);
+    }
+    return new SavedChoice(dataDir, choice);
   }
 
   get current(): Choice | undefined {
-    return this.#choice;
-  }
-
-  /** The pick after the first read. */
-  async loaded(): Promise<Choice | undefined> {
-    await this.#read;
     return this.#choice;
   }
 

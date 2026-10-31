@@ -29,10 +29,10 @@ async fn started_with(place: &Place, transport: Box<dyn Transport>) -> App {
         .unwrap()
 }
 
-/// The number of the countdown of the open session `id`.
-fn countdown(sessions: &SessionService, id: SessionId) -> u64 {
+/// The idle deadline of the open session `id`, or `None` while a holder or turn keeps it open.
+fn deadline(sessions: &SessionService, id: SessionId) -> Option<tokio::time::Instant> {
     match lock(&sessions.registry).slots.get(&id) {
-        Some(Slot::Open(open)) => open.countdown,
+        Some(Slot::Open(open)) => open.deadline,
         _ => panic!("the session {id} is not open"),
     }
 }
@@ -59,9 +59,8 @@ async fn closed(sessions: &SessionService, id: SessionId, within: Duration) {
 
 /// Drop `attachment` of session `id`, and wait until its countdown starts.
 async fn release(sessions: &SessionService, id: SessionId, attachment: Attachment) {
-    let number = countdown(sessions, id);
     drop(attachment);
-    until("no countdown starts", || countdown(sessions, id) != number).await;
+    until("no countdown starts", || deadline(sessions, id).is_some()).await;
 }
 
 /// A message of the user with `text`.
@@ -374,9 +373,8 @@ async fn an_input_during_the_countdown_keeps_the_session_open_until_its_turn_end
     tokio::time::pause();
     tokio::time::sleep(GRACE * 2).await;
     let during_the_turn = sessions.live(id).is_ok();
-    let number = countdown(sessions, id);
     sessions.cancel(id);
-    until("no countdown starts", || countdown(sessions, id) != number).await;
+    until("no countdown starts", || deadline(sessions, id).is_some()).await;
     closed(sessions, id, GRACE + Duration::from_secs(1)).await;
 
     assert!(during_the_turn);
@@ -394,13 +392,52 @@ async fn a_countdown_that_ends_during_a_reload_starts_again() {
     release(sessions, id, attachment).await;
 
     let reload = sessions.start_reload().unwrap();
-    let number = countdown(sessions, id);
+    let before = deadline(sessions, id);
     tokio::time::sleep(GRACE + Duration::from_secs(1)).await;
-    let restarted = countdown(sessions, id) != number;
+    let restarted = deadline(sessions, id) != before;
     drop(reload);
     closed(sessions, id, GRACE + Duration::from_secs(1)).await;
 
     assert!(restarted);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs() {
+    let place = Place::new(
+        "sessions",
+        "a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs",
+    );
+    let app = started(&place).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+    tokio::time::pause();
+    drop(attachment);
+
+    // No yield separates the new countdown from the clock advance, so its task first runs after its deadline.
+    sessions.report_idle(id);
+    closed(sessions, id, GRACE + Duration::from_secs(1)).await;
+
+    assert_eq!(sessions.get(id).await.unwrap().activity, SessionActivity::Closed);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_repeated_idle_report_does_not_extend_the_countdown() {
+    let place = Place::new("sessions", "a_repeated_idle_report_does_not_extend_the_countdown");
+    let app = started(&place).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place)).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+    tokio::time::pause();
+    release(sessions, id, attachment).await;
+    tokio::time::advance(GRACE / 2).await;
+
+    sessions.report_idle(id);
+    closed(sessions, id, GRACE / 2 + Duration::from_secs(1)).await;
+
+    assert_eq!(sessions.get(id).await.unwrap().activity, SessionActivity::Closed);
     app.shutdown().await;
 }
 

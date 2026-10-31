@@ -207,7 +207,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
 }
 
 /** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat, each notice, and its service. */
-export function loadChat(
+export async function loadChat(
   frame: FrameTest,
   options: { readonly copyOnRelease?: boolean; readonly questions?: "composer" | "modal" } = {},
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
@@ -217,7 +217,7 @@ export function loadChat(
   const notices: string[] = [];
   const services: Record<string, unknown> = { tui: surface.tui, sessions, catalog };
   const provided = new Map<string, unknown>();
-  apply({
+  await apply({
     get: (name: string) => services[name],
     provide: (name: string, value: unknown) => provided.set(name, value),
     options,
@@ -263,7 +263,12 @@ export const CATALOG = {
 
 export const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
 
-/** Wait for one timer of no delay, so the jobs before it run, such as the end of a page load. */
+/** Wait until `done` holds. The time limit of the test ends a wait that never ends. */
+export async function waitFor(done: () => boolean | Promise<boolean>): Promise<void> {
+  while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 5));
+}
+
+/** Yield to a timer. This does not wait for work on another thread, such as a file operation. */
 export function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }

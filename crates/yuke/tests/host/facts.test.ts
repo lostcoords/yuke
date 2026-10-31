@@ -56,11 +56,9 @@ test("a listener gets each open session first, then the states of a turn, a late
   await waitFor(() => seen.length === 1);
 
   await first.send("Hi.");
-  await waitFor(() => seen.includes("state idle"));
   await host.openSession();
   await waitFor(() => seen.includes("opened second idle"));
   await ctx.get("sessions").close(first.id);
-  await waitFor(() => seen.includes("closed first"));
 
   equal(
     [seen, frozen, early],
@@ -94,7 +92,6 @@ test("an open during a turn gives its state and questions, and a later listener 
   await waitFor(() => during.length === 1);
   answered.resolve(true);
   await turn;
-  await new Promise((resolve) => setTimeout(resolve, 20));
   // The watch runs already, so this listener gets the open as the facts of the turn left it.
   const after = opens();
 
@@ -117,9 +114,12 @@ test("a listener that comes during a question of a running watch gets the open a
   const first: string[] = [];
   ctx.on("session.opened", (data) => first.push(`${data.state} ${data.questions.length}`));
   await waitFor(() => first.length === 1);
+  let asking = false;
+  ctx.on("session.update", (data) => {
+    if (data.update.sessionUpdate === "interaction_requested") asking = true;
+  });
   const turn = session.send("Ask me.");
-  await waitFor(() => host.questions.length === 1);
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitFor(() => asking);
   const later: string[] = [];
   ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
   answered.resolve(true);
@@ -159,7 +159,7 @@ test("a listener that throws is removed with one notice, and the other listeners
 test("a notice of a plugin reaches the notice listeners of another plugin, until the remover runs", async () => {
   const plugin = watcher();
   const sender = watcher();
-  await using host = await createHost({
+  await using _host = await createHost({
     plugins: [
       { name: "watcher", apply: plugin.apply },
       { name: "sender", apply: sender.apply },
@@ -167,16 +167,17 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
   });
   const got: HostEvents["notice"][] = [];
   const remove = plugin.ctx().on("notice", (data) => got.push(data));
+  const delivered: string[] = [];
+  plugin.ctx().on("notice", (data) => delivered.push(data.message));
   sender.ctx().notify("info", "first");
   await waitFor(() => got.length === 1);
   remove();
   sender.ctx().notify("info", "second");
-  await waitFor(() => host.notices.some((notice) => notice.message === "second"));
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await waitFor(() => delivered.length === 2);
 
   equal(
-    got.map((notice) => [notice.source, notice.level, notice.message]),
-    [["sender", "info", "first"]],
+    [got.map((notice) => [notice.source, notice.level, notice.message]), delivered],
+    [[["sender", "info", "first"]], ["first", "second"]],
   );
 });
 

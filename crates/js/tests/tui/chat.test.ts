@@ -17,9 +17,9 @@ import {
   transcriptRows,
 } from "./chat.ts";
 
-test("a split opens a new empty chat with its own draft", () => {
+test("a split opens a new empty chat with its own draft", async () => {
   using frame = createFrame({ width: 21, height: 4 });
-  const chat = loadChat(frame);
+  const chat = await loadChat(frame);
   frame.start();
   equal(rows(frame), ["", "", "─────────────────────", "Message…"]);
   frame.paste("hi");
@@ -37,25 +37,25 @@ test("a split opens a new empty chat with its own draft", () => {
   );
 });
 
-test("a reload keeps the draft of each pane and the focus", () => {
+test("a reload keeps the draft of each pane and the focus", async () => {
   using before = createFrame({ width: 21, height: 4 });
-  const chat = loadChat(before);
+  const chat = await loadChat(before);
   before.start();
   before.paste("a");
   chat.tui.commands.run("core:split-right");
   before.paste("x");
   const snapshot = before.snapshot();
   using after = createFrame({ width: 21, height: 4 });
-  loadChat(after);
+  await loadChat(after);
   after.start(snapshot);
   after.paste("b");
   equal(rows(after).at(-1), "a         │xb");
 });
 
-test("the option copyOnRelease turns the copy of a drag over the transcript on and off", () => {
+test("the option copyOnRelease turns the copy of a drag over the transcript on and off", async () => {
   for (const copyOnRelease of [false, true]) {
     using frame = createFrame({ width: 10, height: 4 }, undefined, { cwd: "/w", session: "s1" });
-    loadChat(frame, { copyOnRelease }, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
+    await loadChat(frame, { copyOnRelease }, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
     frame.start();
     // Row 0 is the gap before the reply, and column 0 is its indent.
     frame.mouse(mouse(1, 1, "press"));
@@ -65,9 +65,9 @@ test("the option copyOnRelease turns the copy of a drag over the transcript on a
   }
 });
 
-test("the start pane holds the session of the startup, and a split opens a new chat without one", () => {
+test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
   using frame = createFrame({ width: 21, height: 4 }, undefined, { cwd: "/work", session: "s1" });
-  const chat = loadChat(frame);
+  const chat = await loadChat(frame);
   frame.start();
   chat.tui.commands.run("core:split-right");
   equal(
@@ -86,7 +86,7 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
   const saved = JSON.stringify({ tree: { split: "row", ratio: 0.5, first: pane, second: pane }, focus: 0 });
   using frame = createFrame({ width: 21, height: 4 });
-  const chat = loadChat(frame);
+  const chat = await loadChat(frame);
   frame.start(saved);
   equal(
     chat.opened.map((open) => open.id),
@@ -100,14 +100,14 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   equal(JSON.parse(frame.snapshot()).tree.state.session, "s1");
   // A session that does not open gives one notice, and the pane keeps the session for the next reload.
   using other = createFrame({ width: 21, height: 4 });
-  const failed = loadChat(other);
+  const failed = await loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
   await settle();
   equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
 
-test("each kind of entry draws its rows, and a click on a thought opens it", () => {
+test("each kind of entry draws its rows, and a click on a thought opens it", async () => {
   const user = { kind: "user" } as const;
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
@@ -147,7 +147,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", () 
   ];
   using frame = createFrame({ width: 30, height: 23 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  loadChat(frame, {}, sessions);
+  await loadChat(frame, {}, sessions);
   frame.start();
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 2500, error: "overloaded" });
   frame.draw();
@@ -184,7 +184,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", () 
 test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(250));
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   equal(transcriptRows(frame).at(-1), " reply 250");
   for (let visit = 0; visit < 3; visit += 1) {
@@ -211,7 +211,7 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(250));
   sessions.state.failing = true;
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   for (let visit = 0; visit < 2; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
@@ -227,10 +227,10 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   equal(sessions.pages.length, 1);
 });
 
-test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", () => {
+test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", async () => {
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(30));
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
@@ -248,7 +248,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const saved = replies(40);
   saved[1] = commit(2, [{ reasoning: { text: "deep" } } as never, { assistant_text: "ok" }]);
   using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = loadChat(before, {}, fakeSessions(saved));
+  const chat = await loadChat(before, {}, fakeSessions(saved));
   before.start();
   chat.transcript().scroll.scrollTo(0);
   before.draw();
@@ -258,7 +258,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const shown = transcriptRows(before);
   equal(shown.slice(0, 2), [" thought", " deep"]);
   using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  loadChat(after, {}, fakeSessions(saved));
+  await loadChat(after, {}, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
   await settle();
@@ -270,7 +270,7 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const saved = replies(10);
   const sessions = fakeSessions(saved);
-  const chat = loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, {}, sessions);
   frame.start();
   const first = chat.transcript().document.items[0];
   // The event 11 is saved, but the handle gets only the event 12.

@@ -66,9 +66,8 @@ struct Open {
     live: Arc<LiveSession>,
     /// The holders of the session. The session counts down to its close only without a holder.
     attachments: usize,
-    /// The number of the countdown now. A new countdown, an attachment, and a turn start change it, so an older
-    /// countdown closes nothing.
-    countdown: u64,
+    /// The idle deadline. An attachment or a turn clears it, so an older countdown closes nothing.
+    deadline: Option<tokio::time::Instant>,
 }
 
 /// The wait of a session with no holder, no turn, and no running job before it closes.
@@ -116,7 +115,7 @@ impl Transition<'_> {
                 Slot::Open(Open {
                     live,
                     attachments: 0,
-                    countdown: 0,
+                    deadline: None,
                 }),
             );
         }
@@ -173,7 +172,7 @@ impl SessionService {
             return Err(AppError::NotOpen(id));
         };
         open.attachments += 1;
-        open.countdown += 1;
+        open.deadline = None;
         Ok(Attachment {
             service: self.this.clone(),
             id,
@@ -197,50 +196,51 @@ impl SessionService {
     /// Stop the countdown of session `id`, because a turn starts.
     pub(super) fn touch(&self, id: SessionId) {
         if let Some(Slot::Open(open)) = lock(&self.registry).slots.get_mut(&id) {
-            open.countdown += 1;
+            open.deadline = None;
         }
     }
 
     /// Start the countdown of session `id`, whose task runs no turn now. A session with a holder does not count down.
-    /// The wait is [`GRACE`], or `sessionIdleMinutes` while a job of the session runs. An older countdown task ends its
-    /// wait, and then finds a new number.
+    /// The wait is [`GRACE`], or `sessionIdleMinutes` while a job of the session runs. An existing countdown keeps its
+    /// deadline until a holder or a turn cancels it.
     pub(super) fn report_idle(&self, id: SessionId) {
         let mut registry = lock(&self.registry);
         let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
             return;
         };
-        if open.attachments > 0 {
+        if open.attachments > 0 || open.deadline.is_some() {
             return;
         }
-        open.countdown += 1;
         let wait = if open.live.jobs().is_empty() {
             GRACE
         } else {
             self.shared.session_idle()
         };
-        let (service, countdown) = (self.this.clone(), open.countdown);
+        let timer = tokio::time::sleep(wait);
+        let deadline = timer.deadline();
+        open.deadline = Some(deadline);
+        let service = self.this.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(wait).await;
+            timer.await;
             if let Some(service) = service.upgrade() {
-                service.expire(id, countdown).await;
+                service.expire(id, deadline).await;
             }
         });
     }
 
-    /// End the countdown `countdown` of session `id`: close the session with its jobs, when no holder and no turn came
-    /// since the countdown started. During a reload, the countdown starts again.
-    async fn expire(&self, id: SessionId, countdown: u64) {
+    /// Close session `id` at `deadline` if no holder or turn cancelled it. During a reload, start a new countdown.
+    async fn expire(&self, id: SessionId, deadline: tokio::time::Instant) {
         let live = {
             let mut registry = lock(&self.registry);
             let reloading = registry.phase == Phase::Reloading;
-            let Some(Slot::Open(open)) = registry.slots.get(&id) else {
+            let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
                 return;
             };
-            // An attachment and a turn start change the number. The shutdown removes each slot.
-            if open.countdown != countdown {
+            if open.deadline != Some(deadline) {
                 return;
             }
             if reloading {
+                open.deadline = None;
                 drop(registry);
                 self.report_idle(id);
                 return;

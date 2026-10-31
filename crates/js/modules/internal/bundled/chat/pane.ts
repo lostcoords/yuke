@@ -61,16 +61,16 @@ export interface PaneState {
 /** What the commands of the plugin do in a pane. */
 export interface PaneActions {
   readonly toggleTools: () => void;
-  readonly send: () => void;
+  readonly send: () => Promise<void>;
   /** Let the user choose the model and the reasoning of the pane. */
-  readonly chooseModel: () => void;
+  readonly chooseModel: () => Promise<void>;
   /** Put the image of the clipboard at the caret of the composer. */
-  readonly pasteImage: () => void;
+  readonly pasteImage: () => Promise<void>;
   /**
    * Recall the newest waiting message of the user into an empty composer, and each next older one above the recalled
    * text. When no message waits, show an older message of the user.
    */
-  readonly older: () => void;
+  readonly older: () => Promise<void>;
   readonly canOlder: () => boolean;
   /** Show a newer message of the user, or the empty composer after the newest one. */
   readonly newer: () => void;
@@ -282,7 +282,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
-    const saved = pick ? undefined : await chat.choice.loaded();
+    const saved = pick ? undefined : chat.choice.current;
     let chosen = models.find(
       (entry) => entry.provider === saved?.model.provider && entry.model.id === saved?.model.model,
     );
@@ -563,13 +563,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       document.toggleTools(chatSession.transcript);
       changed();
     },
-    send: () => void send(),
-    chooseModel: () => void chooseModel(),
-    pasteImage: () => void pasteImage(),
+    send,
+    chooseModel,
+    pasteImage,
     browsing: () => chatComposer.browsing,
     // A waiting recall keeps ↑, so the key does not move the caret meanwhile.
     canOlder: () => chatComposer.canOlder,
-    older: () => void older(),
+    older,
     newer: () => chatComposer.newer(),
     clear: () => {
       if (composer.state.text === "") chatSession.handle?.cancel();

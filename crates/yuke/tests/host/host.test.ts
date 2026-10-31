@@ -136,12 +136,14 @@ test("each call gets its own call id", async () => {
 
 test("an abort of the signal cancels a call and a hook point, and each rejects with the reason", async () => {
   const seen: string[] = [];
-  const waits = (signal: AbortSignal, name: string): Promise<string> =>
+  const started = { tool: Promise.withResolvers<void>(), hook: Promise.withResolvers<void>() };
+  const waits = (signal: AbortSignal, name: keyof typeof started): Promise<string> =>
     new Promise((resolve) => {
       signal.addEventListener("abort", () => {
         seen.push(name);
         resolve("");
       });
+      started[name].resolve();
     });
   const waiter: PluginSession = (s) => {
     s.tools.define({
@@ -158,19 +160,20 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
   };
   await using host = await createHost({ plugins: [{ name: "waiter", session: waiter }] });
   const session = await host.openSession();
-  const abortSoon = (): AbortSignal => {
-    const stop = new AbortController();
-    setTimeout(() => stop.abort(new Error("stop")), 20);
-    return stop.signal;
-  };
-
-  const called = await rejects(session.call("wait", {}, { signal: abortSoon() }));
-  const ran = await rejects(
-    session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: abortSoon() }),
+  const callStop = new AbortController();
+  const called = rejects(session.call("wait", {}, { signal: callStop.signal }));
+  await started.tool.promise;
+  callStop.abort(new Error("stop"));
+  const callError = await called;
+  const hookStop = new AbortController();
+  const ran = rejects(
+    session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
   );
+  await started.hook.promise;
+  hookStop.abort(new Error("stop"));
 
   equal(
-    [called, ran].map((error) => (error instanceof Error ? error.message : error)),
+    [callError, await ran].map((error) => (error instanceof Error ? error.message : error)),
     ["stop", "stop"],
   );
   equal(seen, ["tool", "hook"]);

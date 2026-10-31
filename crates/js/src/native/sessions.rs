@@ -2,16 +2,16 @@
 //! `ctx.get("plugins")`. One feed gives JavaScript the events of the views, and one gives the facts of `ctx.on`.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::future::Future;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use tokio::runtime::Handle;
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use yuke_ai::{Block, MAX_MEDIA_BYTES};
 use yuke_engine::chain_text;
 use yuke_protocol::{
@@ -27,68 +27,70 @@ use crate::tools::Json;
 /// The most events of one delivery. The feed yields between deliveries, so keys and frames come between them.
 const BATCH: usize = 256;
 
-/// The events of one runtime, in order, each with the key of its view or of its watch.
-struct Feed<E> {
-    events: Mutex<VecDeque<(u32, E)>>,
-    arrived: Notify,
-    /// The flushes that wait until the feed delivered each event before them.
-    flushes: Mutex<Vec<oneshot::Sender<()>>>,
+/// An event or a barrier in the delivery order of one runtime.
+enum Delivery<E> {
+    Event(u32, E),
+    Flush(oneshot::Sender<()>),
 }
 
-impl<E> Default for Feed<E> {
-    fn default() -> Self {
-        Feed {
-            events: Mutex::default(),
-            arrived: Notify::new(),
-            flushes: Mutex::default(),
-        }
-    }
-}
+/// The events of one runtime, in order, each with the key of its view or of its watch.
+struct Feed<E>(mpsc::UnboundedSender<Delivery<E>>);
 
 impl<E> Feed<E> {
-    fn push(&self, key: u32, event: E) {
-        self.events
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back((key, event));
-        self.arrived.notify_one();
+    /// Add the listener and the barrier function for one ordered feed.
+    fn add<'js>(
+        ctx: &Ctx<'js>,
+        object: &Object<'js>,
+        listen: &str,
+        flush: &str,
+        faults: mpsc::UnboundedSender<Report>,
+    ) -> rquickjs::Result<Arc<Self>>
+    where
+        E: Serialize + 'static,
+    {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let feed = Arc::new(Self(sender));
+        let received = RefCell::new(Some(receiver));
+        object.set(
+            listen,
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
+                let receiver = received
+                    .borrow_mut()
+                    .take()
+                    .ok_or_else(|| throw(&ctx, ErrorClass::TypeError, "the event feed already has a listener"))?;
+                ctx.spawn(deliver_events(ctx.clone(), deliver, receiver, faults.clone()));
+                rquickjs::Result::Ok(())
+            })?,
+        )?;
+        let flushing = Arc::clone(&feed);
+        object.set(
+            flush,
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
+                let flushed = flushing.flush();
+                let error_ctx = ctx.clone();
+                Promise::wrap_future(&ctx, async move {
+                    flushed
+                        .await
+                        .map_err(|_| throw(&error_ctx, ErrorClass::Error, "the event feed has ended"))
+                })
+            })?,
+        )?;
+        Ok(feed)
     }
 
-    /// The next events, at most [`BATCH`]. It waits while the feed is empty and no flush waits.
-    async fn next(&self) -> Vec<(u32, E)> {
-        loop {
-            {
-                let mut events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
-                if !events.is_empty() {
-                    let count = events.len().min(BATCH);
-                    return events.drain(..count).collect();
-                }
-            }
-            if !self.flushes.lock().unwrap_or_else(PoisonError::into_inner).is_empty() {
-                return Vec::new();
-            }
-            self.arrived.notified().await;
+    fn push(&self, key: u32, event: E) {
+        if self.0.send(Delivery::Event(key, event)).is_err() {
+            // The runtime stopped, so it takes no more events.
         }
     }
 
-    /// A wait for the delivery of each event that the feed holds now.
+    /// Wait for the delivery of each event before this barrier, not for events that come later.
     fn flush(&self) -> oneshot::Receiver<()> {
         let (sender, receiver) = oneshot::channel();
-        self.flushes.lock().unwrap_or_else(PoisonError::into_inner).push(sender);
-        self.arrived.notify_one();
+        if self.0.send(Delivery::Flush(sender)).is_err() {
+            // The dropped sender makes the receiver report the stopped feed.
+        }
         receiver
-    }
-
-    /// End each flush when the feed is empty: the delivery has given each event before them.
-    fn end_flushes(&self) {
-        if !self.events.lock().unwrap_or_else(PoisonError::into_inner).is_empty() {
-            return;
-        }
-        for flush in self.flushes.lock().unwrap_or_else(PoisonError::into_inner).drain(..) {
-            if flush.send(()).is_err() {
-                // The caller stopped waiting.
-            }
-        }
     }
 }
 
@@ -112,35 +114,10 @@ pub(super) fn add<'js>(
     consumer: &Handle,
     faults: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let feed = Arc::new(Feed::<ViewEvent>::default());
+    let feed = Feed::<ViewEvent>::add(ctx, object, "sessionsListen", "sessionsFlush", faults.clone())?;
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
     let held: Rc<RefCell<HashMap<u32, Box<dyn Send>>>> = Rc::default();
 
-    let flush_feed = Arc::clone(&feed);
-    object.set(
-        "sessionsFlush",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
-            let flushed = flush_feed.flush();
-            let error_ctx = ctx.clone();
-            Promise::wrap_future(&ctx, async move {
-                flushed
-                    .await
-                    .map_err(|_| throw(&error_ctx, ErrorClass::Error, "the feed of the sessions has ended"))
-            })
-        })?,
-    )?;
-    let (listen_feed, view_faults) = (Arc::clone(&feed), faults.clone());
-    object.set(
-        "sessionsListen",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
-            ctx.spawn(deliver_events(
-                ctx.clone(),
-                deliver,
-                Arc::clone(&listen_feed),
-                view_faults.clone(),
-            ));
-        })?,
-    )?;
     add_facts(ctx, object, sessions, faults)?;
 
     let (open_sessions, open_consumer, open_held) = (Arc::clone(sessions), consumer.clone(), Rc::clone(&held));
@@ -182,20 +159,8 @@ fn add_facts<'js>(
     sessions: &Arc<dyn Sessions>,
     faults: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let feed = Arc::new(Feed::<Fact>::default());
+    let feed = Feed::<Fact>::add(ctx, object, "factsListen", "factsFlush", faults)?;
     let watch: Rc<RefCell<Option<Box<dyn Send>>>> = Rc::default();
-    let listen_feed = Arc::clone(&feed);
-    object.set(
-        "factsListen",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
-            ctx.spawn(deliver_events(
-                ctx.clone(),
-                deliver,
-                Arc::clone(&listen_feed),
-                faults.clone(),
-            ));
-        })?,
-    )?;
     let (sessions, started) = (Arc::clone(sessions), Rc::clone(&watch));
     object.set(
         "factsWatch",
@@ -374,11 +339,24 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
 async fn deliver_events<'js, E: Serialize>(
     ctx: Ctx<'js>,
     deliver: Function<'js>,
-    feed: Arc<Feed<E>>,
+    mut received: mpsc::UnboundedReceiver<Delivery<E>>,
     faults: mpsc::UnboundedSender<Report>,
 ) {
-    loop {
-        let batch = feed.next().await;
+    while let Some(first) = received.recv().await {
+        let mut batch = Vec::new();
+        let mut flushed = None;
+        for delivery in std::iter::once(first)
+            .chain(std::iter::from_fn(|| received.try_recv().ok()))
+            .take(BATCH)
+        {
+            match delivery {
+                Delivery::Event(key, event) => batch.push((key, event)),
+                Delivery::Flush(sender) => {
+                    flushed = Some(sender);
+                    break;
+                }
+            }
+        }
         if !batch.is_empty() {
             let result = deliver.call::<_, ()>((Json(batch),));
             if let Err(Error::Script(error)) = caught(&ctx, result)
@@ -387,7 +365,11 @@ async fn deliver_events<'js, E: Serialize>(
                 // The owner dropped the receiver, so it ignores faults.
             }
         }
-        feed.end_flushes();
+        if let Some(flushed) = flushed
+            && flushed.send(()).is_err()
+        {
+            // The caller stopped waiting.
+        }
         tokio::task::yield_now().await;
     }
 }

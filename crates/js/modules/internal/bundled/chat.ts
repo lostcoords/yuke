@@ -40,7 +40,7 @@ const COMMANDS: readonly {
   readonly description: string;
   readonly keys: readonly string[];
   readonly in: "chat" | "composer" | "transcript" | "question";
-  readonly run: (pane: PaneActions) => void;
+  readonly run: (pane: PaneActions) => void | Promise<void>;
   readonly enabled?: (pane: PaneActions) => boolean;
 }[] = [
   {
@@ -151,7 +151,7 @@ const COMMANDS: readonly {
   },
 ];
 
-export function apply(ctx: PluginContext<Options>): undefined {
+export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
   // One entry per call of `addRows`, so the same source can show twice and each disposer removes its own.
@@ -196,8 +196,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
     questions: ctx.options.questions ?? "composer",
     panes,
     refresh: () => publish(),
-    // The read can end after the stop of the plugin, and then no notice comes.
-    choice: new SavedChoice(ctx.dataDir, (error) => {
+    choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
     rows: (pane) =>
@@ -227,26 +226,23 @@ export function apply(ctx: PluginContext<Options>): undefined {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
-  // The catalog names the context window and the reasoning levels of each model, by provider/model.
-  let models: ReadonlyMap<string, ModelInfo> | undefined;
-  ctx
+  // Activation finishes the reads before any pane can use their state.
+  const models = await ctx
     .get("catalog")
     .list()
     .then(
-      (catalog) => {
-        models = new Map(
+      (catalog) =>
+        new Map<string, ModelInfo>(
           catalog.providers.flatMap((provider) =>
             provider.models.map((model) => [`${provider.id}/${model.id}`, model]),
           ),
-        );
-        publish();
-      },
+        ),
       // Without the catalog, the model item has no level, and the context item is a token count.
-      () => {},
+      () => undefined,
     );
   /** Show the model, the token share of the last answer, and the jobs of the focused chat pane, or nothing. */
   const publish = (): void => {
-    // The catalog and the end of a handle can come after the stop of the plugin, when its tui takes no more calls.
+    // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
     const status = active()?.status();
     const settings = status?.settings;
@@ -296,7 +292,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
       description: command.description,
       run: () => {
         const pane = active();
-        if (pane !== undefined) command.run(pane);
+        return pane === undefined ? undefined : command.run(pane);
       },
       // A command of the chat runs only in a chat pane, so a list of commands in another pane leaves it out.
       enabled: () => {

@@ -2,7 +2,7 @@
 //! handle, and the requests.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use yuke_protocol::{
@@ -23,6 +23,7 @@ struct Scripted {
     /// The holds that ended.
     released: Arc<AtomicUsize>,
     check_started: tokio::sync::Notify,
+    echo_updates: AtomicBool,
 }
 
 /// A hold of [`Scripted`]. Its drop counts.
@@ -126,7 +127,11 @@ impl Sessions for Scripted {
         Ok(InputId(3))
     }
     fn cancel(&self, id: SessionId) {
-        self.record(format!("cancel {id}"));
+        if self.echo_updates.load(Ordering::SeqCst) {
+            self.send(0, state(SessionState::Running));
+        } else {
+            self.record(format!("cancel {id}"));
+        }
     }
     async fn idle(&self, _: SessionId) -> Result<(), SessionsError> {
         // More updates than one delivery takes, so idle must wait for the feed too.
@@ -275,6 +280,40 @@ async fn idle_delivers_each_update_in_order_after_the_snapshot() {
     );
     assert_eq!(updates, ["running", "idle"].repeat(600));
     assert_eq!(scripted.calls(), [format!("open {} 5", session())]);
+}
+
+#[tokio::test]
+async fn idle_waits_for_queued_updates_but_not_for_later_updates() {
+    let scripted = Arc::new(Scripted::default());
+    let runtime = started("idle_waits_for_queued_updates_but_not_for_later_updates", &scripted).await;
+    evaluate::<()>(
+        &runtime,
+        &format!(
+            "globalThis.updates = 0;
+             globalThis.handle = await sessions.open('{}', {{ tail: 5, event(event) {{
+               if ('update' in event) {{ updates++; handle.cancel(); }}
+             }} }});",
+            session()
+        ),
+    )
+    .await
+    .unwrap();
+    // Each delivery adds another update, so waiting for an empty queue would never end.
+    scripted.echo_updates.store(true, Ordering::SeqCst);
+    let completed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        evaluate::<String>(
+            &runtime,
+            "await handle.idle(); return updates > 0 ? 'idle after updates' : 'idle without updates';",
+        ),
+    )
+    .await;
+    scripted.echo_updates.store(false, Ordering::SeqCst);
+
+    assert_eq!(
+        completed.expect("idle waited for later updates").unwrap(),
+        "idle after updates"
+    );
 }
 
 #[tokio::test]
