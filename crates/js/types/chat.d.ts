@@ -130,6 +130,36 @@ declare module "yuke:chat" {
     onChange(listener: () => void): () => void;
   }
 
+  export interface ChatWorkingOptions {
+    /** Its abort ends the watch of the chat session. */
+    readonly signal: AbortSignal;
+    /** The clock in milliseconds, as `() => tui.now()`. */
+    readonly now: () => number;
+  }
+
+  /**
+   * The working row of a running turn: a spinner, the phase, the elapsed time, and a retry countdown. The time counts
+   * from the first running state with a live handle. Another session or the end of the handle stops the count. The chat
+   * draws the text again each `frameMs` while `active`.
+   *
+   * ```ts
+   * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
+   * const row = working.text("esc"); // in draw
+   * if (row !== undefined) canvas.text(0, 0, `${row.spinner} ${row.text}`);
+   * ```
+   */
+  export class ChatWorking {
+    constructor(chat: ChatSession, options: ChatWorkingOptions);
+    /** A turn of the shown session runs. */
+    get active(): boolean;
+    /** The time of one frame of the spinner, in milliseconds. */
+    get frameMs(): number;
+    /** The spinner and the text now, with `cancelKey` as the interrupt hint, or `undefined` while no turn runs. */
+    text(cancelKey?: string): { readonly spinner: string; readonly text: string } | undefined;
+    /** Call `listener` after each change of `active`. */
+    onChange(listener: () => void): () => void;
+  }
+
   /**
    * The default look of the style groups that `ChatDocument` draws with, such as `chat.user` and `chat.title`. A chat
    * without the bundled chat sets them: `for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style)`.

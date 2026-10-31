@@ -4,16 +4,14 @@
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
-import { ChatComposer, ChatDocument, type ChatQuestion, ChatQuestions, ChatSession } from "yuke:chat";
+import { ChatComposer, ChatDocument, type ChatQuestion, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { FRAME_MS, workingText } from "yuke:internal/bundled/chat/working";
 import { EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
-import type { Status } from "yuke:transcript";
 import {
   type Canvas,
   type CommandItem,
@@ -151,32 +149,24 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let document = new ChatDocument(`session:${bound ?? "new"}`, state.folds);
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
-  // The status of the transcript at the last change, so a new retry starts its countdown once.
-  let status: Status | undefined;
   // The saved place waits until its item loads.
   let restore = state.viewport;
   // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
   // until it ends, also while a picker is open, and a show rejects.
   let busy = false;
-  // The start of the running turn on the clock of the tui, and the end of the wait of a scheduled retry.
-  let working: number | undefined;
-  let retryAt: number | undefined;
+  const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
   // The modal of the shown question, when questions show in a modal.
   let modal: { readonly asked: ChatQuestion; readonly mount: Mount } | undefined;
   /** Draw the working row again at the next frame of its spinner, while the turn runs. */
   const tick = (): void => {
-    stopTick = working === undefined || mount.signal.aborted ? undefined : tui.after(FRAME_MS, tick);
+    stopTick = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
   };
-  /** Hide the working row and stop its spinner, at the end of a turn or of the handle. */
-  const stopWorking = (): void => {
-    working = undefined;
-    // The retry status of the transcript can outlive its turn, so the next turn shows no old countdown.
-    retryAt = undefined;
+  working.onChange(() => {
     stopTick?.();
-    stopTick = undefined;
-  };
+    tick();
+  });
 
   const changed = (): void => {
     dirty = true;
@@ -184,9 +174,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     chat.refresh();
   };
 
-  // The pane follows each change of its session: the working row, the question, and the next layout.
+  // The pane follows each change of its session: the folds, the place, and the next layout.
   chatSession.onChange(() => {
-    const transcript = chatSession.transcript;
     if (chatSession.id !== bound) {
       // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
       document = new ChatDocument(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
@@ -195,20 +184,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         view.scroll.followTail();
       }
       bound = chatSession.id;
-      stopWorking();
       chat.moved(pane);
     }
-    // The working row counts from the first running state that the pane sees, and a retry counts down from its event.
-    // An ended handle gets no more events, so its last state does not count.
-    if (chatSession.handle !== undefined && transcript.state === "running") {
-      if (working === undefined) {
-        working = tui.now();
-        tick();
-      }
-    } else stopWorking();
-    const next = transcript.status;
-    if (next !== status && next?.kind === "retry_scheduled") retryAt = tui.now() + next.afterMs;
-    status = next;
     changed();
   });
 
@@ -540,7 +517,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       ruleRow = composerRow - 1;
       // The command list sits on the rule, and the working row sits on the list while a turn runs.
       slashRows = Math.min(SLASH_ROWS, slashMatches().length, Math.max(0, ruleRow));
-      const workingRows = working !== undefined && ruleRow - slashRows > 0 ? 1 : 0;
+      const workingRows = working.active && ruleRow - slashRows > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
       // rows run out, the strip keeps the newest messages.
       const list = chatComposer.waiting;
@@ -568,7 +545,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
-      const workingRows = working !== undefined && ruleRow - slashRows > 0 ? 1 : 0;
+      const workingRows = working.active && ruleRow - slashRows > 0 ? 1 : 0;
       const slashRow = ruleRow - slashRows;
       for (const [at, entry] of shown.entries()) {
         const row = slashRow - workingRows - shown.length + at;
@@ -579,10 +556,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         canvas.text(1, row, cut, STYLE.meta);
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
-      if (working !== undefined && workingRows === 1) {
-        // While the list shows, Esc hides the list, so the row shows no cancel key.
-        const key = slashRows > 0 ? undefined : tui.keys.keysOf("chat:interrupt")[0];
-        const row = workingText(chatSession.transcript, working, tui.now(), retryAt, key);
+      // While the list shows, Esc hides the list, so the row shows no cancel key.
+      const key = slashRows > 0 ? undefined : tui.keys.keysOf("chat:interrupt")[0];
+      const row = workingRows === 1 ? working.text(key) : undefined;
+      if (row !== undefined) {
         canvas.text(0, slashRow - 1, row.spinner, STYLE.hint);
         const room = Math.max(0, canvas.width - 2);
         const text =

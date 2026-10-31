@@ -1,7 +1,7 @@
-// The tests use the blocks of `yuke:chat` without a pane. They cover the sessions, the pages, the composer, and the
-// questions.
+// The tests use the blocks of `yuke:chat` without a pane. They cover the sessions, the pages, the composer, the
+// questions, and the working row.
 
-import { ChatComposer, ChatQuestions, ChatSession } from "yuke:chat";
+import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
 import { equal, test } from "yuke:test";
@@ -211,4 +211,27 @@ test("questions that start after a question opened show it at once", async () =>
   });
   const questions = new ChatQuestions(chat, { signal: owner.signal, failed: () => {} });
   equal(questions.current !== undefined, true);
+});
+
+test("the working time starts again for another running session, and the end of the handle stops it", async () => {
+  // Each open gives a snapshot of a running turn.
+  const sessions = fakeSessions([...replies(2), { sessionUpdate: "state", state: "running" } as never]);
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  let now = 0;
+  const working = new ChatWorking(chat, { signal: owner.signal, now: () => now });
+  const changes: boolean[] = [];
+  working.onChange(() => changes.push(working.active));
+  now = 61_000;
+  const first = working.text("esc")?.text;
+  await chat.open("s2");
+  const second = working.text()?.text;
+  // An event that keeps the turn running changes no `active`.
+  sessions.push(commit(3, [{ assistant_text: "more" }]), "s2");
+  sessions.close("s2");
+  equal(
+    [first, second, working.text(), changes],
+    ["Waiting… (1m 01s · esc to interrupt)", "Waiting… (0s)", undefined, [false, true, false]],
+  );
 });
