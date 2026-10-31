@@ -109,7 +109,7 @@ export class TextView {
     this.#list.setItems(this.#document.items);
     this.#list.onChange(() => {
       if (!this.#quiet) this.#emit("scroll");
-    }, new AbortController().signal);
+    });
     this.rows = this.#coordinates();
     const support = this.#support;
     const list = this.#list;

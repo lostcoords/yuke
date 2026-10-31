@@ -32,7 +32,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   const vim = frame.surface("vim");
   const watcher = frame.surface("watcher");
   let changes = 0;
-  watcher.tui.status.on(() => {
+  watcher.tui.status.onChange(() => {
     changes += 1;
   });
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });

@@ -502,7 +502,8 @@ declare module "yuke:tui" {
     followTail: () => void;
     scrollToItem: (key: string, row?: number) => boolean;
     ensureVisible: (key: string, row?: number) => boolean;
-    onChange: (listener: (state: ScrollState) => void, signal: AbortSignal) => () => void;
+    /** Give each later state to `listener`, until the remover runs. */
+    onChange: (listener: (state: ScrollState) => void) => () => void;
   }
 
   export interface TextViewOptions {
@@ -685,8 +686,8 @@ declare module "yuke:tui" {
      * Return `undefined` when the key is absent.
      */
     rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined;
-    /** Give each later state to `listener`, until `signal` aborts or the disposer runs. */
-    onChange(listener: (state: ScrollState) => void, signal: AbortSignal): () => void;
+    /** Give each later state to `listener`, until the remover runs. */
+    onChange(listener: (state: ScrollState) => void): () => void;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
     mouse(event: MouseEvent): boolean;
@@ -940,7 +941,7 @@ declare module "yuke:tui" {
       /** Each item of each plugin. */
       readonly list: () => readonly StatusItem[];
       /** Call `listener` after each later change of the items. A throw removes the listener and reports the error. */
-      readonly on: (listener: () => void) => () => void;
+      readonly onChange: (listener: () => void) => () => void;
     };
     readonly widgets: WidgetRegistry;
     readonly views: {

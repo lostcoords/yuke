@@ -215,18 +215,19 @@ test("items with no rows take no rows, and a render that throws changes nothing"
   void second;
 });
 
-test("a listener gets each later state until its signal aborts or its disposer runs", () => {
+test("a listener gets each later state until its remover runs, and a remover removes only its own registration", () => {
   const { scroll } = list([item("a", "a0a1a2a3")]);
   using frame = createFrame({ width: 2, height: 1 }, () => scroll);
-  const controller = new AbortController();
   const tops: number[] = [];
-  const kept: number[] = [];
-  scroll.onChange((state) => tops.push(state.top), controller.signal);
-  const dispose = scroll.onChange((state) => kept.push(state.top), new AbortController().signal);
+  const listener = (state: { readonly top: number }): void => {
+    tops.push(state.top);
+  };
+  const first = scroll.onChange(listener);
+  scroll.onChange(listener);
   scroll.scrollTo(1);
-  controller.abort();
-  dispose();
+  first();
+  first();
   scroll.scrollTo(2);
-  equal([tops, kept], [[1], [1]]);
+  equal(tops, [1, 1, 2]);
   void frame;
 });

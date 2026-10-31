@@ -221,7 +221,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),
       delete: live((key: string): void => core.status.delete(own(key))),
       list: live((): readonly StatusItem[] => core.status.list()),
-      on: live((listener: () => void): (() => void) => scope.own(core.status.on(listener))),
+      onChange: live((listener: () => void): (() => void) => scope.own(core.status.onChange(listener))),
     }),
     notices: Object.freeze({
       list: live((): readonly Notice[] => core.notices.list()),

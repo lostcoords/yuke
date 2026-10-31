@@ -55,8 +55,8 @@ export class StatusItems {
     return [...this.#items.values()];
   }
 
-  /** Give each later change to `listener`, and return the disposer. */
-  on(listener: () => void): () => void {
+  /** Give each later change to `listener`, and return the remover. */
+  onChange(listener: () => void): () => void {
     const entry = { listener };
     this.#listeners.add(entry);
     return () => {

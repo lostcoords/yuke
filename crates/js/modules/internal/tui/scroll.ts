@@ -165,19 +165,15 @@ export class ScrollList<T extends object> {
     return { start: this.#prefix[at] as number, rows: (this.#entries[at] as Entry<T>).rows };
   }
 
-  /** Give each later change of the state to `listener`, until `signal` aborts. */
-  onChange(listener: (state: ScrollState) => void, signal: AbortSignal): () => void {
+  /** Give each later change of the state to `listener`, until the remover runs. */
+  onChange(listener: (state: ScrollState) => void): () => void {
     if (typeof listener !== "function") throw new TypeError("a scroll listener is a function");
-    if (signal.aborted) return () => {};
-    // A wrapper makes each registration its own, so a disposer removes only its own one.
+    // A wrapper makes each registration its own, so a remover removes only its own one.
     const registered = (state: ScrollState): void => listener(state);
-    const dispose = (): void => {
-      this.#listeners.delete(registered);
-      signal.removeEventListener("abort", dispose);
-    };
     this.#listeners.add(registered);
-    signal.addEventListener("abort", dispose, { once: true });
-    return dispose;
+    return () => {
+      this.#listeners.delete(registered);
+    };
   }
 
   layout(size: Size): readonly Placement[] {
