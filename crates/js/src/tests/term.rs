@@ -520,12 +520,11 @@ async fn term_run_runs_once_and_draws_need_a_display() {
         "draws_need_a_display",
         &format!(
             "{NAMES}
-             return [names([() => term.text(0, 0, 'a'), () => term.run({{ event() {{}}, draw() {{}} }}), () => term.width]),
-               term.measure('ab')].join(' ');"
+             return names([() => term.text(0, 0, 'a'), () => term.run({{ event() {{}}, draw() {{}} }}), () => term.width]);"
         ),
     )
     .await;
-    assert_eq!(without, "Error Error Error 2");
+    assert_eq!(without, "Error Error Error");
 }
 
 #[tokio::test]

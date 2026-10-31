@@ -92,7 +92,7 @@ impl fmt::Debug for Display {
 
 impl Display {
     /// A display of `size` that writes its frames to `output`, and the one receiver of the requests of the
-    /// JavaScript. `background` is the color of the probe; without one, the scheme is dark, as in the Zig yuke.
+    /// JavaScript. `background` is the color of the probe; without one, the scheme is dark.
     /// `truecolor` says that the terminal draws 24-bit color, and `tmux` that a copy also needs the tmux passthrough.
     pub fn new(
         size: Size,
@@ -157,8 +157,7 @@ impl Display {
     }
 }
 
-/// The class of a background color. A color below half of the full BT.601 luma is dark, as in Neovim and the Zig
-/// yuke.
+/// The class of a background color. A color below half of the full BT.601 luma is dark, as in Neovim.
 pub(crate) fn scheme_of(color: Rgb) -> Scheme {
     let luma = 299 * u32::from(color.red) + 587 * u32::from(color.green) + 114 * u32::from(color.blue);
     if luma * 2 < 1000 * 255 {

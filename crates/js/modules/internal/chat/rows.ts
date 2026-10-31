@@ -36,7 +36,7 @@ export const STYLES = {
 } as const;
 
 /** The cells at the left of each row. They stay out of a copy. */
-export const INDENT: Segment = Object.freeze({ text: " ", copy: false });
+const INDENT: Segment = Object.freeze({ text: " ", copy: false });
 
 /** One empty row before each item, so two items do not touch. It has no source. */
 const GAP: TextSection = Object.freeze({

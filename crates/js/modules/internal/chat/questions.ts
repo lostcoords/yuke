@@ -14,14 +14,14 @@ import { type Canvas, Picker, type Placement, type Size, strokeOf, TextEditor, t
 const SELECT_ROWS = 8;
 
 /** A view of one question, the view inside it that takes the keys, and the rows that it needs at most. */
-export interface Asked {
+interface Asked {
   readonly view: View;
   readonly focus: View;
   readonly rows: number;
 }
 
 /** The view of `question`. `count` gives the open questions of the session now, and `answer` gets the response. */
-export function ask(question: Question, count: () => number, answer: (response: InteractionResponse) => void): Asked {
+function ask(question: Question, count: () => number, answer: (response: InteractionResponse) => void): Asked {
   const request = question.request;
   let body: View | undefined;
   let focus: View | undefined;

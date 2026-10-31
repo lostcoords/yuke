@@ -10,9 +10,6 @@ import {
   termCopy,
   termCursor,
   termFill,
-  termFit,
-  termGraphemes,
-  termMeasure,
   termQuit,
   termReload,
   termRequestFrame,
@@ -22,7 +19,6 @@ import {
   termSuspend,
   termText,
   termTruecolor,
-  termWrap,
 } from "yuke:internal/native";
 import type { SessionId } from "yuke:protocol";
 import type { Cursor, KeyEvent, MouseEvent, Startup } from "yuke:tui";
@@ -79,26 +75,6 @@ export const term = {
   /** Show the cursor, or hide it with `undefined`. A frame starts with the cursor hidden. */
   cursor(cursor: Cursor | undefined): void {
     termCursor(cursor);
-  },
-  /** The cells of `text`. */
-  measure(text: string): number {
-    return termMeasure(text.toWellFormed());
-  },
-  /** The offset, the length, and the cells of each grapheme of `text`, three numbers each. */
-  graphemes(text: string): Int32Array {
-    return termGraphemes(text.toWellFormed());
-  },
-  /** The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`. */
-  fit(text: string, cells: number): number {
-    return termFit(text.toWellFormed(), cells);
-  },
-  /**
-   * The rows of `text` at `width` cells, as `[start, end, soft]` triples. A line end ends a row (soft 0). A soft break
-   * (soft 1) comes after the last space when the text from that space fits, else before the grapheme that does not
-   * fit. With `head`, only the first `head` rows stay.
-   */
-  wrap(text: string, width: number, head = 0): Int32Array {
-    return termWrap(text.toWellFormed(), width, head);
   },
   /** Send `text` to the clipboard of the terminal with OSC 52. */
   copy(text: string): void {

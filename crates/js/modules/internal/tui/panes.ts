@@ -171,7 +171,7 @@ export class PaneTree {
 
   /**
    * Move the focus to the nearest pane in `direction`: the centers strictly ahead, scored by the distance along plus
-   * twice the distance across; the first in tree order wins a tie (Zig `core.js:1377-1398`).
+   * twice the distance across; the first in tree order wins a tie.
    */
   focus(direction: FocusDirection): boolean {
     const from = this.#leafRects.get(this.#active);

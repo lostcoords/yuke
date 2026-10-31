@@ -10,15 +10,15 @@ import type { Entry } from "yuke:transcript";
 import type { EditorSpan, EditorState, TextEditor } from "yuke:tui";
 
 /** A paste of more characters than this becomes a span that shows a label. */
-export const PASTE_SPAN = 300;
+const PASTE_SPAN = 300;
 
 /** The character that an image span covers: U+FFFC, the object replacement character. */
-export const IMAGE = "￼";
+const IMAGE = "￼";
 
 export const EMPTY: EditorState = Object.freeze({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
 
 /** The blocks of `draft`: its text between its images, each image a media block. A draft of white space has none. */
-export function blocksOf(draft: EditorState): Block[] {
+function blocksOf(draft: EditorState): Block[] {
   const blocks: Block[] = [];
   let from = 0;
   const text = (to: number): void => {
@@ -36,7 +36,7 @@ export function blocksOf(draft: EditorState): Block[] {
 }
 
 /** The draft of the blocks of an input, with an image span for each media block. The caret is at the end. */
-export function draftOf(content: Extract<Entry, { kind: "input" }>["content"]): EditorState {
+function draftOf(content: Extract<Entry, { kind: "input" }>["content"]): EditorState {
   let text = "";
   const spans: EditorSpan[] = [];
   for (const block of content) {
@@ -56,7 +56,7 @@ export function draftOf(content: Extract<Entry, { kind: "input" }>["content"]): 
 }
 
 /** `first` above `second`, a line end between them, each span kept. The caret is at the end. */
-export function joined(first: EditorState, second: EditorState): EditorState {
+function joined(first: EditorState, second: EditorState): EditorState {
   if (second.text === "") return { ...first, selection: { anchor: first.text.length, head: first.text.length } };
   const shift = first.text.length + 1;
   const text = `${first.text}\n${second.text}`;
