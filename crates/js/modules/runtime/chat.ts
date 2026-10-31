@@ -3,6 +3,7 @@
 import { ChatCommands } from "yuke:internal/chat/commands";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
+import { callEach } from "yuke:internal/chat/listeners";
 import { ChatQuestions } from "yuke:internal/chat/questions";
 import { STYLES as chatStyles } from "yuke:internal/chat/rows";
 import { ChatWorking } from "yuke:internal/chat/working";
@@ -197,7 +198,7 @@ export class ChatSession {
   }
 
   #changed(): void {
-    for (const listener of this.#listeners) listener();
+    callEach(this.#listeners);
   }
 }
 

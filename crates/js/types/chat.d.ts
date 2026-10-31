@@ -46,7 +46,10 @@ declare module "yuke:chat" {
     ensure(settings: () => Promise<SessionSettings | undefined>): Promise<SessionHandle | undefined>;
     /** Load one page of history: the missing events of a gap first, else the page before the first held event. */
     older(): Promise<void>;
-    /** Call `listener` after each change: an open, an event, the end of the handle, or a page. */
+    /**
+     * Call `listener` after each change: an open, an event, the end of the handle, or a page. A throw removes it and
+     * reports the error.
+     */
     onChange(listener: () => void): () => void;
   }
 
@@ -133,7 +136,7 @@ declare module "yuke:chat" {
     get current(): ChatQuestion | undefined;
     /** Answer the shown question with a cancel. */
     cancel(): void;
-    /** Call `listener` after each change of `current`. */
+    /** Call `listener` after each change of `current`. A throw removes it and reports the error. */
     onChange(listener: () => void): () => void;
   }
 
@@ -190,7 +193,7 @@ declare module "yuke:chat" {
     get frameMs(): number;
     /** The spinner and the text now, with `cancelKey` as the interrupt hint, or `undefined` while no turn runs. */
     text(cancelKey?: string): { readonly spinner: string; readonly text: string } | undefined;
-    /** Call `listener` after each change of `active`. */
+    /** Call `listener` after each change of `active`. A throw removes it and reports the error. */
     onChange(listener: () => void): () => void;
   }
 

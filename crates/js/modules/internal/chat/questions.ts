@@ -5,6 +5,7 @@
  */
 
 import type { ChatQuestionsOptions, ChatSession } from "yuke:chat";
+import { callEach } from "yuke:internal/chat/listeners";
 import { STYLE } from "yuke:internal/chat/rows";
 import type { InteractionId, InteractionResponse } from "yuke:protocol";
 import type { Question } from "yuke:transcript";
@@ -134,6 +135,6 @@ export class ChatQuestions {
             ),
             answered: false,
           };
-    for (const listener of this.#listeners) listener();
+    callEach(this.#listeners);
   }
 }

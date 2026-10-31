@@ -4,6 +4,7 @@
  */
 
 import type { ChatSession, ChatWorkingOptions } from "yuke:chat";
+import { callEach } from "yuke:internal/chat/listeners";
 import { argument } from "yuke:internal/chat/tools";
 import type { Status, Transcript } from "yuke:transcript";
 
@@ -95,6 +96,6 @@ export class ChatWorking {
     if (status !== this.#status && status?.kind === "retry_scheduled") this.#retryAt = this.#now() + status.afterMs;
     this.#status = status;
     if (this.active === active) return;
-    for (const listener of this.#listeners) listener();
+    callEach(this.#listeners);
   }
 }

@@ -1,4 +1,5 @@
 mod ai;
+mod chat;
 mod exec;
 mod fs;
 mod globals;
