@@ -926,8 +926,15 @@ declare module "yuke:tui" {
     readonly styles: {
       readonly set: (name: string, patch: StylePatch) => () => void;
     };
+    /**
+     * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from
+     * before the load of the plugin. For the live notices of the whole process, also without this interface, a plugin
+     * uses `ctx.on("notice")`.
+     */
     readonly notices: {
+      /** The kept notices, the oldest first. */
       readonly list: () => readonly Notice[];
+      /** Call `listener` with each later notice of the history. */
       readonly on: (listener: (notice: Notice) => void) => () => void;
     };
     /**

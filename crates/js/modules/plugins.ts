@@ -315,7 +315,10 @@ export interface HostEvents {
   };
   /** A session closed. No update of it follows. A later open gives a new `session.opened`. */
   readonly "session.closed": { readonly sessionId: SessionId };
-  /** A notice of yuke or of a plugin. */
+  /**
+   * A notice of yuke or of a plugin, when it happens. The terminal interface also keeps a history of the notices from
+   * before a listener: `tui.notices`.
+   */
   readonly notice: Frozen<NoticeParams>;
 }
 
