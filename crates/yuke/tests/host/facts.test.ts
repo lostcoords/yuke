@@ -1,0 +1,210 @@
+// The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
+
+import type { HostEvents, PluginContext, PluginSession } from "yuke:plugins";
+import { createHost, equal, reply, test } from "yuke:test";
+import { waitFor } from "./wait.ts";
+
+/** A plugin that keeps its context for the test. */
+function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonly ctx: () => PluginContext } {
+  let kept: PluginContext | undefined;
+  return {
+    apply: (ctx) => {
+      kept = ctx;
+      return undefined;
+    },
+    ctx: () => {
+      if (kept === undefined) throw new Error("the plugin did not load");
+      return kept;
+    },
+  };
+}
+
+/** A plugin whose tool `ask` asks the user to confirm. */
+const asker: PluginSession = (s) => {
+  s.tools.define({
+    name: "ask",
+    description: "Ask the user.",
+    concurrency: "serial",
+    parameters: { type: "object", properties: {} },
+    execute: async (_args, context) => String(await s.confirm("Go on?", "It runs.", { signal: context.signal })),
+  });
+};
+
+test("a listener gets each open session first, then the states of a turn, a later open, and a close", async () => {
+  const plugin = watcher();
+  await using host = await createHost({
+    plugins: [{ name: "watcher", apply: plugin.apply }],
+    replies: [reply.text("Hello.")],
+  });
+  const first = await host.openSession();
+  const seen: string[] = [];
+  const ctx = plugin.ctx();
+  ctx.on("session.opened", (data) =>
+    seen.push(`opened ${data.sessionId === first.id ? "first" : "second"} ${data.state}`),
+  );
+  let frozen = true;
+  // Each session starts with its open, so no update of a session comes before it.
+  const opened = new Set<string>();
+  let early = false;
+  ctx.on("session.opened", (data) => opened.add(data.sessionId));
+  ctx.on("session.update", (data) => {
+    early ||= !opened.has(data.sessionId);
+    frozen &&= Object.isFrozen(data) && Object.isFrozen(data.update);
+    if (data.update.sessionUpdate === "state") seen.push(`state ${data.update.state}`);
+  });
+  ctx.on("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
+  await waitFor(() => seen.length === 1);
+
+  await first.send("Hi.");
+  await waitFor(() => seen.includes("state idle"));
+  await host.openSession();
+  await waitFor(() => seen.includes("opened second idle"));
+  await ctx.get("sessions").close(first.id);
+  await waitFor(() => seen.includes("closed first"));
+
+  equal(
+    [seen, frozen, early],
+    [["opened first idle", "state running", "state idle", "opened second idle", "closed first"], true, false],
+  );
+});
+
+test("an open during a turn gives its state and questions, and a later listener gets them as the facts left them", async () => {
+  const plugin = watcher();
+  const answered = Promise.withResolvers<boolean>();
+  await using host = await createHost({
+    plugins: [
+      { name: "watcher", apply: plugin.apply },
+      { name: "asker", session: asker },
+    ],
+    replies: [reply.toolCall("ask", {}), reply.text("Done.")],
+    answer: () => answered.promise,
+  });
+  const session = await host.openSession();
+  const ctx = plugin.ctx();
+  /** The state and the count of questions of each open that a new listener gets. */
+  const opens = (): string[] => {
+    const got: string[] = [];
+    ctx.on("session.opened", (data) => got.push(`${data.state} ${data.questions.length}`));
+    return got;
+  };
+  const turn = session.send("Ask me.");
+  await waitFor(() => host.questions.length === 1);
+  // The first listener starts the watch, so the host gives the open as the session is now.
+  const during = opens();
+  await waitFor(() => during.length === 1);
+  answered.resolve(true);
+  await turn;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The watch runs already, so this listener gets the open as the facts of the turn left it.
+  const after = opens();
+
+  equal([during, after], [["running 1"], ["idle 0"]]);
+});
+
+test("a listener that comes during a question of a running watch gets the open as the facts made it", async () => {
+  const plugin = watcher();
+  const answered = Promise.withResolvers<boolean>();
+  await using host = await createHost({
+    plugins: [
+      { name: "watcher", apply: plugin.apply },
+      { name: "asker", session: asker },
+    ],
+    replies: [reply.toolCall("ask", {}), reply.text("Done.")],
+    answer: () => answered.promise,
+  });
+  const session = await host.openSession();
+  const ctx = plugin.ctx();
+  const first: string[] = [];
+  ctx.on("session.opened", (data) => first.push(`${data.state} ${data.questions.length}`));
+  await waitFor(() => first.length === 1);
+  const turn = session.send("Ask me.");
+  await waitFor(() => host.questions.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const later: string[] = [];
+  ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
+  answered.resolve(true);
+  await turn;
+
+  equal([first, later], [["idle 0"], ["running 1"]]);
+});
+
+test("a listener that throws is removed with one notice, and the other listeners stay", async () => {
+  const plugin = watcher();
+  await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
+  await host.openSession();
+  const ctx = plugin.ctx();
+  let throws = 0;
+  let others = 0;
+  ctx.on("session.opened", () => {
+    throws += 1;
+    throw new Error("broken");
+  });
+  ctx.on("session.opened", () => {
+    others += 1;
+  });
+  await waitFor(() => others === 1);
+  await host.openSession();
+  await waitFor(() => others === 2);
+
+  equal(
+    [
+      throws,
+      others,
+      host.notices.filter((notice) => notice.source === "watcher").map((notice) => notice.message.split("\n")[0]),
+    ],
+    [1, 2, ["a listener of session.opened failed: Error: broken"]],
+  );
+});
+
+test("a notice of a plugin reaches the notice listeners of another plugin, until the remover runs", async () => {
+  const plugin = watcher();
+  const sender = watcher();
+  await using host = await createHost({
+    plugins: [
+      { name: "watcher", apply: plugin.apply },
+      { name: "sender", apply: sender.apply },
+    ],
+  });
+  const got: HostEvents["notice"][] = [];
+  const remove = plugin.ctx().on("notice", (data) => got.push(data));
+  sender.ctx().notify("info", "first");
+  await waitFor(() => got.length === 1);
+  remove();
+  sender.ctx().notify("info", "second");
+  await waitFor(() => host.notices.some((notice) => notice.message === "second"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  equal(
+    got.map((notice) => [notice.source, notice.level, notice.message]),
+    [["sender", "info", "first"]],
+  );
+});
+
+test("the last removal ends the watch, and a new listener gets the open sessions again", async () => {
+  const plugin = watcher();
+  await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
+  await host.openSession();
+  const ctx = plugin.ctx();
+  const first: string[] = [];
+  const remove = ctx.on("session.opened", (data) => first.push(data.sessionId));
+  await waitFor(() => first.length === 1);
+  remove();
+  const again: string[] = [];
+  ctx.on("session.opened", (data) => again.push(data.sessionId));
+  await waitFor(() => again.length === 1);
+
+  equal(again, first);
+});
+
+test("an unknown event throws a TypeError", async () => {
+  const plugin = watcher();
+  await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
+  let error: unknown;
+  try {
+    plugin.ctx().on("session.started" as never, () => {});
+  } catch (thrown) {
+    error = thrown;
+  }
+  equal([error instanceof TypeError, String(error)], [true, "TypeError: on: 'session.started' is not an event"]);
+  await host.close();
+});

@@ -33,12 +33,14 @@ import type {
   McpServer,
   ModelReference,
   NoticeLevel,
+  NoticeParams,
   PluginChange,
   PluginTarget,
   SessionId,
   SessionRow,
   SessionSettings,
   SessionSnapshot,
+  SessionState,
   SessionUpdate,
   Settings,
   StoredEvent,
@@ -69,12 +71,14 @@ export type {
   McpServer,
   ModelReference,
   NoticeLevel,
+  NoticeParams,
   PluginChange,
   PluginTarget,
   SessionId,
   SessionRow,
   SessionSettings,
   SessionSnapshot,
+  SessionState,
   SessionUpdate,
   Settings,
   StoredEvent,
@@ -272,6 +276,36 @@ export interface PluginContext<O = Record<string, never>> {
   readonly notify: (level: NoticeLevel, message: string) => void;
   /** Send an event of the whole process. See {@link Emit}. */
   readonly emit: Emit;
+  /**
+   * Call `listener` with each fact of the kind `event` in the whole process, and give the remover. A fact reports what
+   * happened. The host does not wait for the listener, and the return of the listener does nothing.
+   * - A listener of `session.opened` first gets each session that is open now, then each later open.
+   * - A listener holds no session.
+   * - A throw removes the listener and gives a notice. The abort of `ctx.signal` removes it too.
+   *
+   * ```ts
+   * ctx.on("session.update", ({ sessionId, update }) => {
+   *   if (update.sessionUpdate === "state") report(sessionId, update.state);
+   * });
+   * ```
+   */
+  readonly on: <K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void) => () => void;
+}
+
+/** The facts of `ctx.on`, by event. */
+export interface HostEvents {
+  /** An update of an open session, as a handle of `sessions.open` gets it. */
+  readonly "session.update": { readonly sessionId: SessionId; readonly update: Frozen<SessionUpdate> };
+  /** A session is open, with its state and its open questions, oldest first. */
+  readonly "session.opened": {
+    readonly sessionId: SessionId;
+    readonly state: SessionState;
+    readonly questions: readonly InteractionId[];
+  };
+  /** A session closed. No update of it follows. A later open gives a new `session.opened`. */
+  readonly "session.closed": { readonly sessionId: SessionId };
+  /** A notice of yuke or of a plugin. */
+  readonly notice: Frozen<NoticeParams>;
 }
 
 /**

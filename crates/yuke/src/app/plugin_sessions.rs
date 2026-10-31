@@ -4,7 +4,7 @@
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
-use yuke_js::{Sessions, SessionsError, ViewSink};
+use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
@@ -60,6 +60,14 @@ impl Sessions for PluginSessions {
         };
         let view = service.view(id, tail, sink).await?;
         Ok(Box::new((attachment, view)))
+    }
+
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send> {
+        match self.service() {
+            Ok(service) => Box::new(service.watch_facts(sink)),
+            // After the shutdown, no session opens, so the watch gets nothing.
+            Err(_) => Box::new(()),
+        }
     }
 
     async fn events_before(

@@ -3,6 +3,7 @@
 //! of the protocol.
 
 mod catalog;
+mod facts;
 mod live;
 mod models;
 mod plugin_sessions;
@@ -121,6 +122,8 @@ struct Shared {
     mcp: yuke_mcp::Config,
     /// The id of the last question of any session.
     last_question: Arc<AtomicU64>,
+    /// The watches of `ctx.on`.
+    facts: Arc<facts::Facts>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
     logins: Mutex<HashMap<String, LoginSource>>,
     /// The login in progress of each provider, from `auth/login`.
@@ -341,6 +344,11 @@ impl App {
         timer: Arc<dyn Timer>,
     ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
+        let facts = Arc::new(facts::Facts::default());
+        let observer: Arc<dyn Observer> = Arc::new(facts::Noticed {
+            observer,
+            facts: Arc::clone(&facts),
+        });
         // A one-task run without the plugins of the user is a wrong run, so it fails instead.
         let (profile, plugins, failed) = Profile::load(&machine.paths, mode == Mode::Server)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
@@ -367,6 +375,7 @@ impl App {
             mode,
             mcp,
             last_question: Arc::default(),
+            facts,
             logins: Mutex::default(),
             pending_logins: Mutex::default(),
             last_login: AtomicU64::new(0),

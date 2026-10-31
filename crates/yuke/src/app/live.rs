@@ -20,6 +20,7 @@ use yuke_protocol::{
     SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
+use super::facts::Facts;
 use super::sessions::SessionService;
 use super::trust;
 use super::{AppError, Mode, Observer, SOURCE, Shared, lock, model_of, save_settings};
@@ -63,6 +64,7 @@ impl LiveSession {
                 session.id(),
                 Arc::clone(&shared.observer),
                 Arc::clone(&shared.last_question),
+                Arc::clone(&shared.facts),
             )),
             shared,
             service,
@@ -160,6 +162,11 @@ impl LiveSession {
     pub(super) async fn replace_plugins(&self, script: ScriptSession) {
         let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
         close_plugins(&self.parts.host.shared, &old).await;
+    }
+
+    /// Tell the watches of the facts, or only the watch `only`, that the session is open.
+    pub(super) fn announce(&self, only: Option<u64>) {
+        self.parts.host.output.announce(only);
     }
 
     /// Whether a turn runs.
@@ -316,8 +323,14 @@ struct Output {
 }
 
 /// What the output keeps under its lock.
-#[derive(Default)]
 struct Sent {
+    session: SessionId,
+    /// The watches of `ctx.on`. They get each update that goes out.
+    facts: Arc<Facts>,
+    /// Whether a turn runs, from the last published state, so a fact of the open agrees with the updates.
+    running: bool,
+    /// The views and the facts of the session have ended. Nothing announces the session again.
+    ended: bool,
     /// The inputs that a published commit consumed or a published removal named. An `input_accepted` can come after
     /// them, because the store saves an input before the server publishes it, so the output drops it.
     gone: HashSet<InputId>,
@@ -349,17 +362,35 @@ impl Sent {
         true
     }
 
-    /// Give `update` to each listener, when [`Sent::admit`] lets it out.
+    /// Give `update` to the facts and to each listener, when [`Sent::admit`] lets it out.
     fn publish(&mut self, update: SessionUpdate) {
         if !self.admit(&update) {
             return;
         }
+        if let SessionUpdate::Live(LiveUpdate::State { state }) = &update {
+            self.running = *state == SessionState::Running;
+        }
+        self.facts.update(self.session, &update);
         if let Some((last, others)) = self.listeners.split_last_mut() {
             for listener in others {
                 listener.deliver(update.clone());
             }
             last.deliver(update);
         }
+    }
+
+    /// Tell the watches of the facts, or only the watch `only`, that the session is open. An ended session stays quiet.
+    fn announce(&self, only: Option<u64>) {
+        if self.ended {
+            return;
+        }
+        let state = if self.running {
+            SessionState::Running
+        } else {
+            SessionState::Idle
+        };
+        let questions: Vec<InteractionId> = self.questions.keys().copied().collect();
+        self.facts.opened(self.session, state, &questions, only);
     }
 
     /// The listener of the observer of the app.
@@ -456,7 +487,7 @@ struct Question {
 
 impl Output {
     /// The output of the session `session`. The observer gets each update as its first listener.
-    fn new(session: SessionId, observer: Arc<dyn Observer>, last_question: Arc<AtomicU64>) -> Self {
+    fn new(session: SessionId, observer: Arc<dyn Observer>, last_question: Arc<AtomicU64>, facts: Arc<Facts>) -> Self {
         let notified = Arc::clone(&observer);
         let send = move |update: SessionUpdate| {
             notified.notify(ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
@@ -479,8 +510,14 @@ impl Output {
             session,
             observer,
             sent: Mutex::new(Sent {
+                session,
+                facts,
+                running: false,
+                ended: false,
+                gone: HashSet::new(),
+                questions: BTreeMap::new(),
                 listeners: vec![observer_listener],
-                ..Sent::default()
+                last_view: 0,
             }),
             last_question,
         }
@@ -530,14 +567,20 @@ impl Output {
         }
     }
 
-    /// Send each view its end, and remove it. A later open of the session starts new views. The observer stays.
+    /// Send each view its end, and remove the views. Tell each watch of the facts that the session closed. A later open
+    /// of the session starts new views. The observer stays.
     fn end_views(&self) {
-        for view in lock(&self.sent)
-            .listeners
-            .extract_if(.., |listener| listener.id != OBSERVER)
-        {
+        let mut sent = lock(&self.sent);
+        sent.ended = true;
+        sent.facts.closed(sent.session);
+        for view in sent.listeners.extract_if(.., |listener| listener.id != OBSERVER) {
             (view.sink)(ViewEvent::Closed);
         }
+    }
+
+    /// Tell the watches of the facts, or only the watch `only`, that the session is open.
+    fn announce(&self, only: Option<u64>) {
+        lock(&self.sent).announce(only);
     }
 
     /// Open the question `request` of `source`, and return its id and the receiver of its answer.
@@ -1065,6 +1108,7 @@ mod tests {
         Output::new(
             SessionId::generate(),
             Arc::clone(recorder) as Arc<dyn Observer>,
+            Arc::default(),
             Arc::default(),
         )
     }

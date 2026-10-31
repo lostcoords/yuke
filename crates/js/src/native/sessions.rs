@@ -1,5 +1,5 @@
 //! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`, and
-//! `ctx.get("plugins")`, and the feed that delivers the events of the views to JavaScript.
+//! `ctx.get("plugins")`. One feed gives JavaScript the events of the views, and one gives the facts of `ctx.on`.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -21,23 +21,32 @@ use yuke_protocol::{
 
 use super::{Cancelled, Operation};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
-use crate::sessions::{Sessions, SessionsError, ViewEvent};
+use crate::sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent};
 use crate::tools::Json;
 
 /// The most events of one delivery. The feed yields between deliveries, so keys and frames come between them.
 const BATCH: usize = 256;
 
-/// The events of the views of one runtime, in order, each with the key of its view.
-#[derive(Default)]
-struct Feed {
-    events: Mutex<VecDeque<(u32, ViewEvent)>>,
+/// The events of one runtime, in order, each with the key of its view or of its watch.
+struct Feed<E> {
+    events: Mutex<VecDeque<(u32, E)>>,
     arrived: Notify,
     /// The flushes that wait until the feed delivered each event before them.
     flushes: Mutex<Vec<oneshot::Sender<()>>>,
 }
 
-impl Feed {
-    fn push(&self, key: u32, event: ViewEvent) {
+impl<E> Default for Feed<E> {
+    fn default() -> Self {
+        Feed {
+            events: Mutex::default(),
+            arrived: Notify::new(),
+            flushes: Mutex::default(),
+        }
+    }
+}
+
+impl<E> Feed<E> {
+    fn push(&self, key: u32, event: E) {
         self.events
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -46,7 +55,7 @@ impl Feed {
     }
 
     /// The next events, at most [`BATCH`]. It waits while the feed is empty and no flush waits.
-    async fn next(&self) -> Vec<(u32, ViewEvent)> {
+    async fn next(&self) -> Vec<(u32, E)> {
         loop {
             {
                 let mut events = self.events.lock().unwrap_or_else(PoisonError::into_inner);
@@ -103,7 +112,7 @@ pub(super) fn add<'js>(
     consumer: &Handle,
     faults: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let feed = Arc::new(Feed::default());
+    let feed = Arc::new(Feed::<ViewEvent>::default());
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
     let held: Rc<RefCell<HashMap<u32, Box<dyn Send>>>> = Rc::default();
 
@@ -120,7 +129,7 @@ pub(super) fn add<'js>(
             })
         })?,
     )?;
-    let listen_feed = Arc::clone(&feed);
+    let (listen_feed, view_faults) = (Arc::clone(&feed), faults.clone());
     object.set(
         "sessionsListen",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
@@ -128,10 +137,11 @@ pub(super) fn add<'js>(
                 ctx.clone(),
                 deliver,
                 Arc::clone(&listen_feed),
-                faults.clone(),
+                view_faults.clone(),
             ));
         })?,
     )?;
+    add_facts(ctx, object, sessions, faults)?;
 
     let (open_sessions, open_consumer, open_held) = (Arc::clone(sessions), consumer.clone(), Rc::clone(&held));
     object.set(
@@ -162,6 +172,45 @@ pub(super) fn add<'js>(
 
     add_requests(object, sessions, consumer)?;
     add_calls(ctx, object, sessions)
+}
+
+/// Add `factsListen(deliver)`, `factsWatch(key)`, and `factsRelease()`, for the facts of `ctx.on`. One watch runs at a
+/// time. A new watch ends the old one. The key of each fact names the watch that sent it.
+fn add_facts<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    sessions: &Arc<dyn Sessions>,
+    faults: mpsc::UnboundedSender<Report>,
+) -> rquickjs::Result<()> {
+    let feed = Arc::new(Feed::<Fact>::default());
+    let watch: Rc<RefCell<Option<Box<dyn Send>>>> = Rc::default();
+    let listen_feed = Arc::clone(&feed);
+    object.set(
+        "factsListen",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
+            ctx.spawn(deliver_events(
+                ctx.clone(),
+                deliver,
+                Arc::clone(&listen_feed),
+                faults.clone(),
+            ));
+        })?,
+    )?;
+    let (sessions, started) = (Arc::clone(sessions), Rc::clone(&watch));
+    object.set(
+        "factsWatch",
+        Function::new(ctx.clone(), move |key: u32| {
+            let feed = Arc::clone(&feed);
+            let sink: FactSink = Arc::new(move |fact| feed.push(key, fact));
+            // The old watch ends before the new one starts, so no fact of the old one follows the replay.
+            drop(started.borrow_mut().take());
+            *started.borrow_mut() = Some(sessions.watch_facts(sink));
+        })?,
+    )?;
+    object.set(
+        "factsRelease",
+        Function::new(ctx.clone(), move || drop(watch.borrow_mut().take()))?,
+    )
 }
 
 /// Add the asynchronous requests, which run on the runtime of the consumer.
@@ -307,10 +356,10 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
 
 /// Call `deliver` with each batch of the feed, as `[key, event]` pairs, until the runtime stops. A throw of `deliver` is
 /// a fault, and the next batch still comes.
-async fn deliver_events<'js>(
+async fn deliver_events<'js, E: Serialize>(
     ctx: Ctx<'js>,
     deliver: Function<'js>,
-    feed: Arc<Feed>,
+    feed: Arc<Feed<E>>,
     faults: mpsc::UnboundedSender<Report>,
 ) {
     loop {

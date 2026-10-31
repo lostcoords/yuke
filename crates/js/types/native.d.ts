@@ -26,6 +26,7 @@ declare module "yuke:internal/native" {
     SessionRow,
     SessionSettings,
     SessionSnapshot,
+    SessionState,
     SessionUpdate,
     StoredEvent,
     SyncPluginsParams,
@@ -426,6 +427,28 @@ declare module "yuke:internal/native" {
   export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<void>;
   /** End the hold and the view `key`. */
   export function sessionsRelease(key: number): void;
+  /** One fact of `ctx.on`: its event and its data. */
+  export type Fact =
+    | {
+        readonly event: "session.update";
+        readonly data: { readonly sessionId: SessionId; readonly update: SessionUpdate };
+      }
+    | {
+        readonly event: "session.opened";
+        readonly data: {
+          readonly sessionId: SessionId;
+          readonly state: SessionState;
+          readonly questions: InteractionId[];
+        };
+      }
+    | { readonly event: "session.closed"; readonly data: { readonly sessionId: SessionId } }
+    | { readonly event: "notice"; readonly data: NoticeParams };
+  /** Deliver the facts of this runtime to `deliver`, in batches of `[key, fact]` pairs. Call it once. */
+  export function factsListen(deliver: (batch: readonly (readonly [number, Fact])[]) => void): void;
+  /** Watch the facts as the watch `key`, in place of the watch before. The open sessions come first. */
+  export function factsWatch(key: number): void;
+  /** End the watch of the facts. */
+  export function factsRelease(): void;
   export function sessionsCreate(settings: SessionSettings): Promise<SessionId>;
   export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | null]): Promise<SessionId>;
   export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;

@@ -122,6 +122,9 @@ impl crate::Sessions for NoSessions {
     ) -> Result<Box<dyn Send>, crate::SessionsError> {
         no_sessions()
     }
+    fn watch_facts(&self, _: crate::FactSink) -> Box<dyn Send> {
+        Box::new(())
+    }
     async fn events_before(
         &self,
         _: yuke_protocol::SessionId,

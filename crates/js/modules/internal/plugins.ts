@@ -1,5 +1,6 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
+import { on } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import { emit, notify } from "yuke:internal/native";
 import { catalog, plugins, sessionsOf } from "yuke:internal/sessions";
@@ -7,6 +8,7 @@ import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
 import type {
   Cleanup,
+  HostEvents,
   NoticeLevel,
   PluginApply,
   PluginContext,
@@ -162,6 +164,9 @@ export async function load(spec: PluginSpec): Promise<void> {
       },
       emit(event: string, data?: unknown): void {
         emit(spec.name, String(event), JSON.stringify(data) ?? "null", undefined);
+      },
+      on<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
+        return on(spec.name, signal, event, listener);
       },
     });
     if (apply !== undefined) {

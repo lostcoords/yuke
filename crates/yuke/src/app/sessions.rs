@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use yuke_agent::{EventPage, ListPosition, Session};
 use yuke_engine::chain_text;
-use yuke_js::{Handle, ViewSink};
+use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListSessionsParams, ListSessionsResult,
     NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow, SessionSettings,
     SessionState, SessionSummary, StoredEvent,
 };
 
+use super::facts::Watch;
 use super::live::{LiveSession, View};
 use super::{AppError, SOURCE, Shared, canonical, lock, model_of, save_settings, system_prompt};
 use crate::providers::Providers;
@@ -104,18 +105,23 @@ impl Transition<'_> {
     ///
     /// Returns [`AppError::Stopped`] after the shutdown started.
     fn open(self, live: Arc<LiveSession>) -> Result<(), AppError> {
-        let mut registry = lock(&self.service.registry);
-        if registry.phase == Phase::Stopped {
-            return Err(AppError::Stopped);
+        let announced = Arc::clone(&live);
+        {
+            let mut registry = lock(&self.service.registry);
+            if registry.phase == Phase::Stopped {
+                return Err(AppError::Stopped);
+            }
+            registry.slots.insert(
+                self.id,
+                Slot::Open(Open {
+                    live,
+                    attachments: 0,
+                    countdown: 0,
+                }),
+            );
         }
-        registry.slots.insert(
-            self.id,
-            Slot::Open(Open {
-                live,
-                attachments: 0,
-                countdown: 0,
-            }),
-        );
+        // After the registry lock, because an announce takes the output lock of the session.
+        announced.announce(None);
         Ok(())
     }
 }
@@ -268,6 +274,24 @@ impl SessionService {
             service: self,
             sessions,
         })
+    }
+
+    /// Watch the facts with `sink`: first the open of each open session, then each later fact. The watch holds no
+    /// session. A session that opens meanwhile gets one open fact.
+    pub(super) fn watch_facts(&self, sink: FactSink) -> Watch {
+        let watch = self.shared.facts.watch(sink);
+        let open: Vec<Arc<LiveSession>> = lock(&self.registry)
+            .slots
+            .values()
+            .filter_map(|slot| match slot {
+                Slot::Open(open) => Some(Arc::clone(&open.live)),
+                Slot::Opening | Slot::Closing => None,
+            })
+            .collect();
+        for live in open {
+            live.announce(Some(watch.id));
+        }
+        watch
     }
 
     /// Open the plugins of each later session with `runtime`.

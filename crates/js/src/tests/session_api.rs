@@ -13,7 +13,7 @@ use yuke_protocol::{
 };
 
 use super::{evaluate, folder, load_entry, options, wait_until, write};
-use crate::{Processes, Runtime, Sessions, SessionsError, ViewEvent, ViewSink};
+use crate::{FactSink, Processes, Runtime, Sessions, SessionsError, ViewEvent, ViewSink};
 
 /// A consumer that records each request and keeps the sink of each view.
 #[derive(Default)]
@@ -99,6 +99,9 @@ impl Sessions for Scripted {
         }));
         self.sinks.lock().unwrap().push(sink);
         Ok(Box::new(Hold(Arc::clone(&self.released))))
+    }
+    fn watch_facts(&self, _: FactSink) -> Box<dyn Send> {
+        Box::new(())
     }
     async fn events_before(
         &self,

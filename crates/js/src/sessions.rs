@@ -5,11 +5,12 @@ use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionUpdate, StoredEvent,
-    SyncPluginsParams, SyncPluginsResult,
+    ListSessionsResult, McpServer, NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState,
+    SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -30,6 +31,43 @@ pub enum ViewEvent {
 /// Takes the events of one view. The consumer calls it under the output lock of the session. A call must not block, call
 /// back into the session, or drop its view.
 pub type ViewSink = Arc<dyn Fn(ViewEvent) + Send + Sync>;
+
+/// A fact of the consumer for `ctx.on` of the plugins. It reports what happened, and no answer changes it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "event", content = "data")]
+pub enum Fact {
+    /// An update of the open session `session_id`. The update is the same as the update that a view gets.
+    #[serde(rename = "session.update", rename_all = "camelCase")]
+    Update {
+        /// The session of the update.
+        session_id: SessionId,
+        /// The update.
+        update: Box<SessionUpdate>,
+    },
+    /// The session `session_id` is open, with its state and its open questions now.
+    #[serde(rename = "session.opened", rename_all = "camelCase")]
+    Opened {
+        /// The session that is open.
+        session_id: SessionId,
+        /// Whether a turn runs now.
+        state: SessionState,
+        /// The open questions now, oldest first.
+        questions: Vec<InteractionId>,
+    },
+    /// The session `session_id` closed. A later open of it starts with a new [`Fact::Opened`].
+    #[serde(rename = "session.closed", rename_all = "camelCase")]
+    Closed {
+        /// The session that closed.
+        session_id: SessionId,
+    },
+    /// A notice of the consumer or of a plugin.
+    #[serde(rename = "notice")]
+    Notice(NoticeParams),
+}
+
+/// Takes the facts of one watch. The consumer calls it under the output lock of a session. A call must not block, call
+/// back into the consumer, or drop its watch.
+pub type FactSink = Arc<dyn Fn(Fact) + Send + Sync>;
 
 /// The sessions and the catalog that the plugins use. The consumer gives one value to each runtime. Each async call runs
 /// on the tokio runtime of the consumer. A sync call runs on the JavaScript thread, so it must not block.
@@ -77,6 +115,10 @@ pub trait Sessions: Send + Sync {
     ///
     /// Returns why the request failed.
     async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Send>, SessionsError>;
+
+    /// Watch the facts: `sink` first gets [`Fact::Opened`] for each open session, then each later fact. The watch holds
+    /// no session. The drop of the result ends the watch.
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send>;
 
     /// At most `limit` saved events of session `id` with a number below `before`, or its last `limit` events.
     ///
