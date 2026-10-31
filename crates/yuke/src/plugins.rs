@@ -83,6 +83,12 @@ const BUNDLED: &[Bundled] = &[
         uses: &[],
         provides: &[],
     },
+    Bundled {
+        name: "plugins",
+        module: "yuke:internal/bundled/plugins",
+        uses: &[],
+        provides: &[],
+    },
 ];
 
 /// The plugins to load, in load order. The list has the bundled plugins first, without the ones that `config.disable`
