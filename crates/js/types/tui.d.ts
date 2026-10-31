@@ -810,6 +810,39 @@ declare module "yuke:tui" {
     readonly focusNext: () => void;
   }
 
+  /** A key of a dialog, with its label in the footer. */
+  export interface DialogKey {
+    /** One stroke, as `parseKeys` reads it, such as `enter` or `u`. A spec of more strokes throws. */
+    readonly key: string;
+    /** The text after the key in the footer, such as `apply`. */
+    readonly label: string;
+    /** Whether the key works now. A key that does not work stays out of the footer. The default is `() => true`. */
+    readonly when?: (() => boolean) | undefined;
+    /** The action of the key. */
+    readonly run: () => void;
+  }
+
+  /**
+   * A dialog: a modal overlay with an optional head row, a body, and a footer of the keys that work now. A keymap
+   * binding of a key wins over a dialog key. Then the body gets each key, and the dialog gets what the body leaves. Up,
+   * down, page up, and page down scroll a body with `scroll.scrollBy` or `scrollBy`, such as a text view or a scroll
+   * list. An Esc that the body leaves closes the dialog; a picker body takes Esc and closes it in its `cancel`.
+   */
+  export interface DialogOptions {
+    /** Gives the text of the head row at each draw. Without it, the dialog has no head row. */
+    readonly title?: (() => string) | undefined;
+    /** The view between the head row and the footer. It gets the first focus when it can take it. */
+    readonly body: View;
+    /** The keys of the dialog, in footer order. */
+    readonly keys?: readonly DialogKey[] | undefined;
+    /** The height of the dialog at the bottom of the screen, when `place` is absent. The default is 13. */
+    readonly rows?: number | undefined;
+    /** The rect of the dialog, as `OverlayOptions.place` gives it. */
+    readonly place?: ((size: Size) => Rect) | undefined;
+    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    readonly signal?: AbortSignal | undefined;
+  }
+
   export interface OverlayOptions {
     /** Default true: a modal takes the focus and all input below it. A float takes only what it handles. */
     readonly modal?: boolean | undefined;
@@ -875,6 +908,8 @@ declare module "yuke:tui" {
     /** Set the root view. Its close gives the default root back: the pane tree alone. */
     readonly setRoot: (create: ViewFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
+    /** Open a dialog. Gives its mount; `close` closes the dialog. */
+    readonly dialog: (options: DialogOptions) => Mount;
     readonly commands: {
       readonly add: (command: Command) => () => void;
       /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */

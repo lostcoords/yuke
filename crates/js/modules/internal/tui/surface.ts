@@ -3,11 +3,14 @@
  * to the plugin; the abort of its signal removes the rest, and later calls throw. A bare name gets the plugin prefix.
  */
 import type { Core } from "yuke:internal/tui/core";
+import { dialogView } from "yuke:internal/tui/dialog";
+import { bottom } from "yuke:internal/tui/layout";
 import type {
   ClipboardImage,
   Command,
   CommandItem,
   DefaultPane,
+  DialogOptions,
   Direction,
   FocusChange,
   FocusDirection,
@@ -26,6 +29,9 @@ import type {
   ViewFactory,
   WidgetMount,
 } from "yuke:tui";
+
+/** The rows of a dialog at the bottom of the screen without `rows` or `place`. */
+const DIALOG_ROWS = 13;
 
 /** The cleanups of the registrations and mounts of one plugin, newest first at the stop. */
 class Scope {
@@ -172,6 +178,27 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
+    dialog: live((options: DialogOptions): Mount => {
+      const rows = options.rows ?? DIALOG_ROWS;
+      // The view forms before the overlay, so a bad key throws to the caller, not as a fault of the overlay.
+      const view = dialogView(options);
+      const mount = mounted(
+        core.scene.overlay(owner, () => view, {
+          place: options.place ?? ((size) => bottom(size, rows)),
+        }),
+      );
+      const signal = options.signal;
+      if (signal?.aborted === true) {
+        mount.close();
+        return mount;
+      }
+      if (signal !== undefined) {
+        const close = (): void => mount.close();
+        signal.addEventListener("abort", close, { once: true });
+        mount.signal.addEventListener("abort", () => signal.removeEventListener("abort", close), { once: true });
+      }
+      return mount;
+    }),
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {
         if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");
