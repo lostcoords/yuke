@@ -14,16 +14,15 @@ import {
   ChatWorking,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { EMPTY, IMAGE, joined, PASTE_SPAN } from "yuke:internal/chat/composer";
+import { EMPTY, IMAGE, PASTE_SPAN } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
-import { STYLE } from "yuke:internal/chat/rows";
+import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
   type Canvas,
   type EditorState,
-  fit,
   type JsonValue,
   type Mount,
   measure,
@@ -38,7 +37,6 @@ import {
 
 const RULE = Object.freeze({ dim: true });
 
-/** The most rows of a picker of a pane. */
 const PICKER_ROWS = 12;
 
 /** The item at the top of a scrolled transcript, and its row there. */
@@ -135,7 +133,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const chatSession = new ChatSession(ctx.get("sessions"), mount.signal, state.session);
   // The draft of each session that this pane left by `show`, for the return to it.
   const drafts = new Map<SessionId, EditorState>();
-  // The session that the document belongs to.
   let bound = chatSession.id;
   let document = new ChatDocument(`session:${bound ?? "new"}`, state.folds);
   // The events of the session change the transcript, and the next layout projects it once.
@@ -148,7 +145,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
-  // The modal of the shown question, when questions show in a modal.
   let modal: { readonly asked: ChatQuestion; readonly mount: Mount } | undefined;
   /** Draw the working row again at the next frame of its spinner, while the turn runs. */
   const tick = (): void => {
@@ -179,13 +175,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
     changed();
   });
-
-  /** Open the session `id` of a restored pane. A failure gives one notice, and the next send opens it again. */
-  const openSaved = (id: SessionId): void => {
-    chatSession.open(id).catch((error: unknown) => {
-      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not open: ${String(error)}`);
-    });
-  };
 
   /**
    * Show the first open question in a modal, and close the modal of a closed one. A modal opens only while this pane
@@ -237,7 +226,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     role: "composer",
     group,
     placeholder: "Message…",
-    ...(state.draft === undefined ? {} : { state: state.draft }),
+    state: state.draft,
   });
   const extension = composer.extend(mount.signal);
   // A long paste shows a label, and the draft keeps its whole text for the input.
@@ -313,7 +302,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       try {
         await chat.choice.save(choice);
       } catch (error) {
-        // The session can start without the saved choice. The next new pane asks again.
+        // The session can start without the saved choice.
         ctx.notify("error", `the model choice did not save: ${String(error)}`);
       }
     }
@@ -346,8 +335,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (id === undefined) return;
       const target = await sessionHandle();
       if (target === undefined || mount.signal.aborted) return;
-      const current = chatSession.transcript.settings;
-      if (current === undefined) throw new Error(`the session ${id} is not open`);
+      // A handle comes after the snapshot, and the snapshot gives the settings.
+      const current = chatSession.transcript.settings as Frozen<SessionSettings>;
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     } catch (error) {
@@ -380,7 +369,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
-  /** Send the draft. A refused input comes back in the composer, with a notice. */
   const send = async (): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -431,26 +419,34 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
+  /** The view that takes the typed keys: a question in the place of the composer, else the composer. */
+  const input = (): View => (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
+
   const questions = new ChatQuestions(chatSession, {
     signal: mount.signal,
     failed: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
-  questions.onChange(() => {
-    placeQuestion();
-    changed();
-  });
+  // A change of the questions comes inside a change of the session, and the session listener asks for the frame.
+  questions.onChange(placeQuestion);
   // A modal question waits for the focus of this pane.
   if (chat.questions === "modal") {
     const stop = tui.onFocus(() => placeQuestion());
     mount.signal.addEventListener("abort", stop, { once: true });
   }
-  // The open comes after the views, because its snapshot can show a question.
-  if (chatSession.id !== undefined) openSaved(chatSession.id);
+  // The open comes after the views, because its snapshot can show a question. A failure gives one notice, and the next
+  // send opens the session again.
+  const saved = chatSession.id;
+  if (saved !== undefined) {
+    chatSession.open(saved).catch((error: unknown) => {
+      if (!mount.signal.aborted) ctx.notify("error", `the session ${saved} did not open: ${String(error)}`);
+    });
+  }
 
   // The layout keeps the row of the rule and the shown waiting messages for the draw. Without a free row, the pane
   // draws no rule.
   let ruleRow = -1;
   let listRows = 0;
+  let workingRows = 0;
   let shown: [InputId, Frozen<Input>][] = [];
   const pane: View = {
     contexts: ["chat"],
@@ -468,14 +464,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       ruleRow = composerRow - 1;
       // The command list sits on the rule, and the working row sits on the list while a turn runs.
       listRows = Math.min(commands.rows, Math.max(0, ruleRow));
-      const workingRows = working.active && ruleRow - listRows > 0 ? 1 : 0;
+      workingRows = working.active && ruleRow - listRows > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
       // rows run out, the strip keeps the newest messages.
       const list = chatComposer.waiting;
       const above = Math.max(0, ruleRow - listRows - workingRows);
       shown = list.slice(Math.max(0, list.length - above));
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: Math.max(0, above - shown.length) } },
+        { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length } },
         {
           view: question?.view ?? composer,
           rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow },
@@ -497,15 +493,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
-      const workingRows = working.active && ruleRow - listRows > 0 ? 1 : 0;
       const listRow = ruleRow - listRows;
       for (const [at, entry] of shown.entries()) {
         const row = listRow - workingRows - shown.length + at;
         const hint = at === shown.length - 1 ? " ↑ edit" : "";
         const text = inputText(entry[1].content).replaceAll("\n", " ");
         const room = Math.max(0, canvas.width - 1 - measure(hint));
-        const cut = fit(text, room) === text.length ? text : `${text.slice(0, fit(text, room - 1))}…`;
-        canvas.text(1, row, cut, STYLE.meta);
+        canvas.text(1, row, clipped(text, room), STYLE.meta);
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
       // While the list shows, Esc hides the list, so the row shows no cancel key.
@@ -513,10 +507,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const row = workingRows === 1 ? working.text(key) : undefined;
       if (row !== undefined) {
         canvas.text(0, listRow - 1, row.spinner, STYLE.hint);
-        const room = Math.max(0, canvas.width - 2);
-        const text =
-          fit(row.text, room) === row.text.length ? row.text : `${row.text.slice(0, fit(row.text, room - 1))}…`;
-        canvas.text(2, listRow - 1, text, STYLE.meta);
+        canvas.text(2, listRow - 1, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
       }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.
@@ -526,7 +517,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       } else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
     },
     get initialFocus(): View {
-      return (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
+      return input();
     },
     snapshot: () => {
       const scroll = view.scroll.state;
@@ -556,16 +547,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // A show of the shown session only opens it again after the end of its handle.
       if (mount.signal.aborted || id === before) return;
       // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
-      // draft goes with the pane, below the saved draft of `id`.
+      // draft goes with the pane.
+      if (before === undefined) return;
       const draft = composer.state;
-      const saved = drafts.get(id);
+      if (draft.text !== "") drafts.set(before, draft);
+      chatComposer.setDraft(drafts.get(id) ?? EMPTY);
       drafts.delete(id);
-      if (before === undefined) {
-        if (saved !== undefined) chatComposer.setDraft(joined(saved, draft));
-      } else {
-        if (draft.text !== "") drafts.set(before, draft);
-        chatComposer.setDraft(saved ?? EMPTY);
-      }
     },
     status: () => ({
       bound: chatSession.id !== undefined,
@@ -601,8 +588,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else view.scroll.followTail();
     },
     switchFocus: () => {
-      const input = (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
-      tui.focus(tui.focused === view ? input : view);
+      tui.focus(tui.focused === view ? input() : view);
     },
     activate: () => {
       const caret = view.caret;

@@ -2,17 +2,8 @@
 
 import type { ChatCommandsOptions } from "yuke:chat";
 import { EMPTY } from "yuke:internal/chat/composer";
-import { STYLE } from "yuke:internal/chat/rows";
-import {
-  type Canvas,
-  type CommandItem,
-  fit,
-  fuzzyMatch,
-  measure,
-  strokeOf,
-  type TextEditor,
-  type View,
-} from "yuke:tui";
+import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { type Canvas, type CommandItem, fuzzyMatch, measure, strokeOf, type TextEditor, type View } from "yuke:tui";
 
 /** The most rows of the list. */
 const ROWS = 6;
@@ -62,8 +53,7 @@ export class ChatCommands {
         const style = first + at === selected ? SELECTED : undefined;
         const name = label(item.name).padEnd(width);
         const text = `${name}  ${item.description ?? ""}`;
-        const cut =
-          fit(text, canvas.width - 1) === text.length ? text : `${text.slice(0, fit(text, canvas.width - 2))}…`;
+        const cut = clipped(text, canvas.width - 1);
         canvas.text(1, at, cut.slice(0, name.length), style);
         canvas.text(1 + measure(name), at, cut.slice(name.length), style ?? STYLE.meta);
       }

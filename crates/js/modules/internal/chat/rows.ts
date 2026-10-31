@@ -3,7 +3,7 @@
  * row. It wraps a text with a style and a link for each range of its source.
  */
 
-import { measure, type Segment, type TextItem, type TextRow, type TextSection, wrap } from "yuke:tui";
+import { fit, measure, type Segment, type TextItem, type TextRow, type TextSection, wrap } from "yuke:tui";
 
 /** The style groups of the chat. Each one gets its default look from `STYLES`. */
 export const STYLE = {
@@ -52,6 +52,11 @@ export interface Range {
   readonly to: number;
   readonly style?: string | undefined;
   readonly link?: string | undefined;
+}
+
+/** `text` cut to `width` cells, with `…` at the end of a cut text. */
+export function clipped(text: string, width: number): string {
+  return fit(text, width) === text.length ? text : `${text.slice(0, fit(text, width - 1))}…`;
 }
 
 /** An item of `sections` after the gap row. */
