@@ -19,7 +19,7 @@ mod test_files;
 mod testing;
 mod tui;
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -34,6 +34,7 @@ use yuke_protocol::SessionId;
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
+use crate::plugins::manager;
 use crate::print::{Finished, Reasoning, SessionChoice, Task};
 use crate::providers::Providers;
 
@@ -91,7 +92,7 @@ struct Cli {
 }
 
 /// A command of `yuke`.
-#[derive(Debug, Subcommand)]
+#[derive(Debug, PartialEq, Subcommand)]
 enum Command {
     /// Log in to PROVIDER, and save the grant.
     Login {
@@ -110,6 +111,38 @@ enum Command {
         /// Test files, or folders that hold them.
         paths: Vec<PathBuf>,
     },
+    /// Install, update, and list the Git plugins of config.json. Their commits are in plugins.lock.
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+}
+
+/// A command of `yuke plugin`.
+#[derive(Debug, PartialEq, Subcommand)]
+enum PluginCommand {
+    /// Show each plugin of config.json, its locked commit, and whether it is installed. It uses no network.
+    List,
+    /// Install the commits of plugins.lock, and lock each new Git plugin at the commit of its ref.
+    Sync {
+        /// Fail when plugins.lock does not match config.json, and never write plugins.lock.
+        #[arg(long)]
+        locked: bool,
+    },
+    /// Move Git plugins to the newest commit of their ref. It shows the log of each move and asks before it writes
+    /// plugins.lock.
+    #[command(group(clap::ArgGroup::new("plugins").required(true).args(["all", "names"])))]
+    Update {
+        /// Update every Git plugin.
+        #[arg(long)]
+        all: bool,
+        /// The plugins to update, by the name of their plugin.json.
+        #[arg(value_name = "NAME")]
+        names: Vec<String>,
+        /// Write plugins.lock with no question.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// What the program runs.
@@ -123,12 +156,6 @@ enum Mode {
     Connect(PathBuf),
     /// One task with no view. `json` prints the `--json` report.
     Print { task: Task, json: bool },
-    /// A login to a provider.
-    Login(String),
-    /// A removal of the saved login of a provider.
-    Logout(String),
-    /// A run of test files.
-    Test(Vec<PathBuf>),
 }
 
 /// The path of a `unix://PATH` value.
@@ -140,14 +167,8 @@ fn socket_path(value: &str) -> Result<PathBuf, String> {
 }
 
 impl Cli {
-    /// The mode that the flags name.
+    /// The mode that the flags name. A command runs in place of a mode.
     fn into_mode(self) -> Mode {
-        match self.command {
-            Some(Command::Login { provider }) => return Mode::Login(provider),
-            Some(Command::Logout { provider }) => return Mode::Logout(provider),
-            Some(Command::Test { paths }) => return Mode::Test(paths),
-            None => {}
-        }
         if self.rpc {
             return match self.connect {
                 Some(path) => Mode::Connect(path),
@@ -184,16 +205,20 @@ fn main() -> ExitCode {
         }
     };
     let code = runtime.block_on(async {
-        let ran = match Cli::parse().into_mode() {
-            Mode::Tui(session) => run_tui(session).await,
-            Mode::Rpc { listen } => serve_rpc(listen).await,
-            Mode::Connect(path) => rpc::connect(&path, tokio::io::stdin(), tokio::io::stdout())
-                .await
-                .map(|()| ExitCode::SUCCESS),
-            Mode::Print { task, json } => print_task(&task, json).await,
-            Mode::Login(provider) => login(&provider).await,
-            Mode::Logout(provider) => logout(&provider).await,
-            Mode::Test(paths) => test(paths).await,
+        let mut cli = Cli::parse();
+        let ran = match cli.command.take() {
+            Some(Command::Login { provider }) => login(&provider).await,
+            Some(Command::Logout { provider }) => logout(&provider).await,
+            Some(Command::Test { paths }) => test(paths).await,
+            Some(Command::Plugin { command }) => plugin(command).await,
+            None => match cli.into_mode() {
+                Mode::Tui(session) => run_tui(session).await,
+                Mode::Rpc { listen } => serve_rpc(listen).await,
+                Mode::Connect(path) => rpc::connect(&path, tokio::io::stdin(), tokio::io::stdout())
+                    .await
+                    .map(|()| ExitCode::SUCCESS),
+                Mode::Print { task, json } => print_task(&task, json).await,
+            },
         };
         ran.unwrap_or_else(|error| {
             warn(&error);
@@ -250,6 +275,101 @@ async fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// The folders of yuke that the environment names, and the home folder of the user.
+fn environment_paths() -> Result<(Paths, Option<PathBuf>), String> {
+    let home = std::env::home_dir().filter(|home| home.is_absolute());
+    let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
+    Ok((paths, home))
+}
+
+/// Run the `yuke plugin` command `command`, and print its result.
+async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
+    let (paths, _) = environment_paths()?;
+    let say =
+        |text: &str| writeln!(io::stdout(), "{text}").map_err(|error| format!("the output did not write: {error}"));
+    let short = |commit: &str| commit[..7].to_owned();
+    match command {
+        PluginCommand::List => {
+            for listed in manager::list(&paths)? {
+                let state = match &listed.state {
+                    manager::State::Local => "local".to_owned(),
+                    manager::State::NotLocked => "not locked: run `yuke plugin sync`".to_owned(),
+                    manager::State::NotInstalled(commit) => {
+                        format!("{} not installed: run `yuke plugin sync`", short(commit))
+                    }
+                    manager::State::Installed(commit) => short(commit),
+                };
+                say(&format!(
+                    "{}  {}  {state}",
+                    listed.name.as_deref().unwrap_or("?"),
+                    listed.item
+                ))?;
+            }
+        }
+        PluginCommand::Sync { locked } => {
+            let (commits, written) = manager::sync(&paths, locked).await?;
+            for (source, commit) in &commits {
+                say(&format!("{source}  {}", short(commit)))?;
+            }
+            say(if written {
+                "plugins.lock written: run /reload in open sessions"
+            } else {
+                "plugins.lock unchanged"
+            })?;
+        }
+        PluginCommand::Update { all, names, yes } => {
+            // The question needs a terminal, so a run without one stops before any change.
+            if !yes && !io::stdin().is_terminal() {
+                return Err(
+                    "update asks before it writes plugins.lock: run it in a terminal, or pass --yes".to_owned(),
+                );
+            }
+            let selection = if all {
+                manager::Selection::All
+            } else {
+                manager::Selection::Names(names)
+            };
+            let changes = manager::check(&paths, &selection).await?;
+            if changes.is_empty() {
+                say("each plugin is at the newest commit of its ref")?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            for change in &changes {
+                say(&format!(
+                    "{}  {} → {}",
+                    change.name,
+                    short(&change.old),
+                    short(&change.new)
+                ))?;
+                match &change.log {
+                    Ok(lines) => lines.iter().try_for_each(|line| say(&format!("  {line}")))?,
+                    Err(error) => say(&format!("  no log: {error}"))?,
+                }
+            }
+            if !yes && !confirm("Apply? [y/N] ")? {
+                say("plugins.lock unchanged")?;
+                return Ok(ExitCode::SUCCESS);
+            }
+            manager::apply(&paths, &changes)?;
+            say("plugins.lock written: run /reload in open sessions")?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Ask `question` on the terminal. Gives whether the answer is yes.
+fn confirm(question: &str) -> Result<bool, String> {
+    let fail = |error: io::Error| format!("the question did not work: {error}");
+    // The question goes to stderr, so the user sees it when stdout goes to a file.
+    let mut stderr = io::stderr();
+    write!(stderr, "{question}")
+        .and_then(|()| stderr.flush())
+        .map_err(fail)?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer).map_err(fail)?;
+    Ok(matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes"))
 }
 
 /// Log in to the provider `id`.
@@ -332,8 +452,7 @@ async fn run_here(task: &Task, cancellation_token: CancellationToken) -> Result<
 
 /// The facts of this machine: its environment, its folders, and an HTTP transport.
 fn machine() -> Result<Machine, String> {
-    let home = std::env::home_dir().filter(|home| home.is_absolute());
-    let paths = Paths::of(&|name| std::env::var_os(name), home.as_deref())?;
+    let (paths, home) = environment_paths()?;
     let options = yuke_http::ClientOptions::new(concat!("yuke/", env!("YUKE_VERSION")));
     let http = Arc::new(yuke_http::Client::new(options.clone()).map_err(|error| chain_text(&error))?);
     let fetch = yuke_http::Client::new(yuke_http::ClientOptions {
@@ -447,10 +566,16 @@ mod tests {
 
     use super::*;
 
+    fn parse(arguments: &[&str]) -> Result<Cli, ErrorKind> {
+        Cli::try_parse_from(std::iter::once("yuke").chain(arguments.iter().copied())).map_err(|error| error.kind())
+    }
+
     fn mode(arguments: &[&str]) -> Result<Mode, ErrorKind> {
-        Cli::try_parse_from(std::iter::once("yuke").chain(arguments.iter().copied()))
-            .map(Cli::into_mode)
-            .map_err(|error| error.kind())
+        parse(arguments).map(Cli::into_mode)
+    }
+
+    fn command(arguments: &[&str]) -> Result<Option<Command>, ErrorKind> {
+        parse(arguments).map(|cli| cli.command)
     }
 
     #[tokio::test]
@@ -539,20 +664,59 @@ mod tests {
 
     #[test]
     fn login_takes_one_provider_and_no_mode_flag() {
-        assert_eq!(mode(&["login", "xai-grok"]), Ok(Mode::Login("xai-grok".to_owned())));
-        assert_eq!(mode(&["login"]), Err(ErrorKind::MissingRequiredArgument));
-        assert_eq!(mode(&["--rpc", "login", "xai-grok"]), Err(ErrorKind::ArgumentConflict));
         assert_eq!(
-            mode(&["-p", "Hi.", "login", "xai-grok"]),
+            command(&["login", "xai-grok"]),
+            Ok(Some(Command::Login {
+                provider: "xai-grok".to_owned()
+            }))
+        );
+        assert_eq!(command(&["login"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(
+            command(&["--rpc", "login", "xai-grok"]),
+            Err(ErrorKind::ArgumentConflict)
+        );
+        assert_eq!(
+            command(&["-p", "Hi.", "login", "xai-grok"]),
             Err(ErrorKind::ArgumentConflict)
         );
     }
 
     #[test]
     fn logout_takes_one_provider_and_no_mode_flag() {
-        assert_eq!(mode(&["logout", "xai-grok"]), Ok(Mode::Logout("xai-grok".to_owned())));
-        assert_eq!(mode(&["logout"]), Err(ErrorKind::MissingRequiredArgument));
-        assert_eq!(mode(&["--rpc", "logout", "xai-grok"]), Err(ErrorKind::ArgumentConflict));
+        assert_eq!(
+            command(&["logout", "xai-grok"]),
+            Ok(Some(Command::Logout {
+                provider: "xai-grok".to_owned()
+            }))
+        );
+        assert_eq!(command(&["logout"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(
+            command(&["--rpc", "logout", "xai-grok"]),
+            Err(ErrorKind::ArgumentConflict)
+        );
+    }
+
+    #[test]
+    fn plugin_update_takes_all_or_names_but_not_both() {
+        let update = |names: &[&str], all: bool| {
+            Ok(Some(Command::Plugin {
+                command: PluginCommand::Update {
+                    all,
+                    names: names.iter().map(|&name| name.to_owned()).collect(),
+                    yes: false,
+                },
+            }))
+        };
+        assert_eq!(command(&["plugin", "update", "--all"]), update(&[], true));
+        assert_eq!(
+            command(&["plugin", "update", "clock", "tools"]),
+            update(&["clock", "tools"], false)
+        );
+        assert_eq!(command(&["plugin", "update"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(
+            command(&["plugin", "update", "--all", "clock"]),
+            Err(ErrorKind::ArgumentConflict)
+        );
     }
 
     #[test]

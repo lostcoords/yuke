@@ -1,14 +1,19 @@
 //! The plugins of yuke and of the profile: the bundled plugins, then the `plugins` list of `config.json` and the Agent
 //! Plugins `plugin.json` of each folder. The checks run before any plugin code: a bad list stops the start.
 
+mod git;
+mod lock;
+pub(crate) mod manager;
+
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use yuke_js::{Origin, Plugin};
 
-use crate::config::{Config, ConfigPlugin, read_json};
+use self::lock::Lock;
+use crate::config::{Config, ConfigPlugin, Source, read_json};
 
 /// The name of the manifest in each plugin folder.
 const MANIFEST: &str = "plugin.json";
@@ -81,14 +86,16 @@ const BUNDLED: &[Bundled] = &[
 
 /// The plugins to load, in load order. The list has the bundled plugins first, without the ones that `config.disable`
 /// names. Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order.
-/// [`load_order`] moves each provider before the plugins that use it. A relative folder starts in `config_folder`. The
-/// data folder of each plugin is `<data>/plugins/<name>`. [`create_data_folders`] makes these folders.
+/// [`load_order`] moves each provider before the plugins that use it. A relative folder starts in `config_folder`. A Git
+/// plugin loads from [`git_folder`] at its commit in `plugins.lock`, with no network. The data folder of each plugin is
+/// `<data>/plugins/<name>`. [`create_data_folders`] makes these folders.
 ///
 /// # Errors
 ///
-/// Returns a text that names the plugin and the problem. The problem is an unreadable folder or manifest, a bad name or
-/// field, or a duplicate name. It can also be two providers of one service, a missing provider, or a cycle of uses. A
-/// `disable` or `bundled` name that no bundled plugin has is an error too.
+/// Returns a text that names the plugin or the file, and the problem. The problem is an unreadable folder or manifest, a
+/// bad name or field, or a duplicate name. It can also be two providers of one service, a missing provider, or a cycle
+/// of uses. A `disable` or `bundled` name that no bundled plugin has is an error too. So is a bad `plugins.lock`, or a
+/// Git plugin without its commit in the lock or on disk.
 pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
     with_bundled(BUNDLED, config_folder, config, data)
 }
@@ -125,15 +132,45 @@ fn with_bundled(
             provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
-    for ConfigPlugin { path: folder, options } in &config.plugins {
-        let fail = |message: String| format!("plugin folder {folder}: {message}");
-        let root = config_folder
-            .join(folder)
-            .canonicalize()
-            .map_err(|error| fail(error.to_string()))?;
+    let lock = Lock::read(config_folder)?;
+    for ConfigPlugin { source, options } in &config.plugins {
+        let (label, root) = match source {
+            Source::Folder(folder) => (format!("plugin folder {folder}"), config_folder.join(folder)),
+            Source::Git(git) => {
+                let label = format!("plugin {git}");
+                let commit = lock.commits.get(git).ok_or_else(|| {
+                    format!("{label}: plugins.lock has no commit for this plugin: run `yuke plugin sync`")
+                })?;
+                let installed = git_folder(data, &git.url, commit);
+                if !installed.is_dir() {
+                    return Err(format!(
+                        "{label}: commit {commit} is not installed: run `yuke plugin sync`"
+                    ));
+                }
+                (label, installed.join(git.folder.as_deref().unwrap_or_default()))
+            }
+        };
+        let fail = |message: String| format!("{label}: {message}");
+        let root = root.canonicalize().map_err(|error| fail(error.to_string()))?;
         plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
     }
     load_order(plugins)
+}
+
+/// The folder name of the repository `url` in `<data>/git` and `<cache>/git`. The name is the last part of the URL, and
+/// the hash of the whole URL keeps two repositories of one name apart.
+pub(crate) fn repository_key(url: &str) -> String {
+    let last = url.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or_default();
+    let last = last.strip_suffix(".git").unwrap_or(last);
+    // The URL is not a safe folder name, so each other character becomes `-`.
+    let name = last.replace(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c), "-");
+    let hash = yuke_ai::hex(&yuke_agent::blob_of(url.as_bytes()).digest);
+    format!("{name}-{}", &hash[..16])
+}
+
+/// The install of the commit `commit` of the repository `url`: `<data>/git/<key>/<commit>`.
+pub(crate) fn git_folder(data: &Path, url: &str, commit: &str) -> PathBuf {
+    data.join("git").join(repository_key(url)).join(commit)
 }
 
 /// Make the data folder of each plugin of `plugins`.

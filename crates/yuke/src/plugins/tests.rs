@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::config::GitSource;
+
 use serde_json::json;
 
 use super::*;
@@ -38,7 +40,7 @@ fn load_with(bundled: &[Bundled], root: &Path, list: &[&str], disable: &[&str]) 
         plugins: list
             .iter()
             .map(|&path| ConfigPlugin {
-                path: path.to_owned(),
+                source: Source::Folder(path.to_owned()),
                 options: Map::new(),
             })
             .collect(),
@@ -379,4 +381,103 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
         .collect();
     assert_eq!(origins, [false, true]);
     assert_eq!(replaced[1].name, "first");
+}
+
+/// The `plugins` item of the folder `folder` of the repository `url` at `reference`.
+fn git(url: &str, folder: &str, reference: Option<&str>) -> ConfigPlugin {
+    ConfigPlugin {
+        source: Source::Git(GitSource::new(url.to_owned(), Some(folder), reference.map(str::to_owned)).unwrap()),
+        options: Map::new(),
+    }
+}
+
+/// The plugins of `items` in the config folder of `root`, with no bundled plugin.
+fn load_items(root: &Path, items: Vec<ConfigPlugin>) -> Result<Vec<Plugin>, String> {
+    let config = Config {
+        plugins: items,
+        ..Config::default()
+    };
+    with_bundled(&[], &root.join("config"), &config, &root.join("data"))
+}
+
+/// Write `plugins.lock` of `root` with the entries `entries`.
+fn write_lock(root: &Path, entries: &Value) {
+    let text = json!({ "version": 1, "plugins": entries }).to_string();
+    std::fs::write(root.join("config/plugins.lock"), text).unwrap();
+}
+
+const URL: &str = "https://github.com/lostcoords/yuke-plugin.git";
+
+#[test]
+fn a_git_install_folder_has_the_last_url_part_and_a_hash_of_the_whole_url() {
+    let data = Path::new("/data");
+
+    assert_eq!(
+        git_folder(data, URL, "c1"),
+        Path::new("/data/git/yuke-plugin-c4285510f1a5da6e/c1")
+    );
+    assert_eq!(
+        git_folder(data, "git@github.com:lostcoords/yuke-plugin", "c1"),
+        Path::new("/data/git/yuke-plugin-520d70dd994511f7/c1")
+    );
+}
+
+#[test]
+fn a_git_plugin_loads_from_the_install_of_the_commit_that_the_lock_gives_its_folder_and_ref() {
+    let root = place("git_locked");
+    let commit = "3f9c1a2b".repeat(5);
+    let installed = root.join("data/git/yuke-plugin-c4285510f1a5da6e").join(&commit);
+    write_plugin(&installed, "plugins/clock", &manifest("clock", &json!({})));
+    write_lock(
+        &root,
+        &json!([{ "git": URL, "folder": "./plugins/clock/", "ref": "main", "commit": commit }]),
+    );
+
+    let plugins = load_items(&root, vec![git(URL, "plugins/clock", Some("main"))]).unwrap();
+    let default_branch = load_items(&root, vec![git(URL, "plugins/clock", None)]).unwrap_err();
+
+    assert_eq!(
+        plugins[0].origin,
+        Origin::Folder {
+            root: installed.join("plugins/clock"),
+            entry: None,
+        }
+    );
+    assert_eq!(
+        default_branch,
+        format!(
+            "plugin {URL} (folder plugins/clock): plugins.lock has no commit for this plugin: run `yuke plugin sync`"
+        )
+    );
+}
+
+#[test]
+fn a_git_plugin_whose_commit_is_not_installed_stops_the_start() {
+    let root = place("git_missing");
+    let commit = "3f9c1a2b".repeat(5);
+    write_lock(&root, &json!([{ "git": URL, "folder": "clock", "commit": commit }]));
+
+    let error = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
+
+    assert_eq!(
+        error,
+        format!("plugin {URL} (folder clock): commit {commit} is not installed: run `yuke plugin sync`")
+    );
+}
+
+#[test]
+fn a_lock_of_another_version_or_with_a_short_commit_stops_the_start() {
+    let root = place("git_bad_lock");
+    let lock = root.join("config/plugins.lock");
+
+    std::fs::write(&lock, json!({ "version": 2, "plugins": [] }).to_string()).unwrap();
+    let version = load_items(&root, Vec::new()).unwrap_err();
+    write_lock(&root, &json!([{ "git": URL, "commit": "3f9c1a2" }]));
+    let short = load_items(&root, Vec::new()).unwrap_err();
+
+    assert_eq!(
+        version,
+        format!("{}: this yuke reads version 1, not version 2", lock.display())
+    );
+    assert_eq!(short, format!("{}: '3f9c1a2' is not a full commit id", lock.display()));
 }

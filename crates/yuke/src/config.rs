@@ -1,8 +1,8 @@
 //! `config.json`: the settings of the user. It and `providers.json` are JSON with `//` and `/* */` comments.
 
 use std::collections::BTreeMap;
-use std::io;
 use std::path::Path;
+use std::{fmt, io};
 
 use serde::de::{DeserializeOwned, Error as _};
 use serde::{Deserialize, Deserializer};
@@ -27,13 +27,66 @@ pub(crate) struct Config {
     pub(crate) session_idle_minutes: Option<u32>,
 }
 
-/// One item of `plugins`: a folder path, or an object with `path` and `options`.
+/// One item of `plugins`: a folder path, or an object with `path` or `git` and optional `options`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfigPlugin {
-    /// The folder of the plugin. A relative folder starts in the folder of `config.json`.
-    pub(crate) path: String,
+    /// Where the plugin comes from.
+    pub(crate) source: Source,
     /// The options of the plugin. They are empty when the item gives none.
     pub(crate) options: Map<String, Value>,
+}
+
+/// Where a plugin of `plugins` comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Source {
+    /// A folder. A relative folder starts in the folder of `config.json`.
+    Folder(String),
+    /// A folder of a Git repository, at the commit of `plugins.lock`.
+    Git(GitSource),
+}
+
+/// A plugin folder of a Git repository. It is also the key of its entry in `plugins.lock`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct GitSource {
+    /// The URL of the repository, as `git` takes it.
+    pub(crate) url: String,
+    /// The folder in the repository, as names joined by `/`. `None` is the root of the repository.
+    pub(crate) folder: Option<String>,
+    /// The branch, tag, or commit that an update follows. `None` is the default branch.
+    pub(crate) reference: Option<String>,
+}
+
+impl GitSource {
+    /// The source of `url`, `folder`, and `reference`. The folders `./a/` and `a` are the same, and `.` is the root.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text when `folder` is absolute or has a `..` part.
+    pub(crate) fn new(url: String, folder: Option<&str>, reference: Option<String>) -> Result<Self, String> {
+        let folder = match folder {
+            None => None,
+            Some(text) => {
+                let parts: Vec<&str> = text.split('/').filter(|part| !matches!(*part, "" | ".")).collect();
+                if text.starts_with('/') || parts.contains(&"..") {
+                    return Err(format!("folder: '{text}' is not a relative path inside the repository"));
+                }
+                (!parts.is_empty()).then(|| parts.join("/"))
+            }
+        };
+        Ok(Self { url, folder, reference })
+    }
+}
+
+impl fmt::Display for GitSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.url)?;
+        match (&self.folder, &self.reference) {
+            (None, None) => Ok(()),
+            (Some(folder), None) => write!(f, " (folder {folder})"),
+            (None, Some(reference)) => write!(f, " (ref {reference})"),
+            (Some(folder), Some(reference)) => write!(f, " (folder {folder}, ref {reference})"),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for ConfigPlugin {
@@ -41,22 +94,42 @@ impl<'de> Deserialize<'de> for ConfigPlugin {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Full {
-            path: String,
+            path: Option<String>,
+            git: Option<String>,
+            folder: Option<String>,
+            #[serde(rename = "ref")]
+            reference: Option<String>,
             #[serde(default)]
             options: Map<String, Value>,
         }
         match Value::deserialize(deserializer)? {
             Value::String(path) => Ok(Self {
-                path,
+                source: Source::Folder(path),
                 options: Map::new(),
             }),
             // The error of serde names the bad field or the unknown field.
             value @ Value::Object(_) => {
-                let Full { path, options } = Full::deserialize(value).map_err(D::Error::custom)?;
-                Ok(Self { path, options })
+                let full = Full::deserialize(value).map_err(D::Error::custom)?;
+                let source = match (full.path, full.git) {
+                    (Some(_), Some(_)) => return Err(D::Error::custom("a plugin has \"path\" or \"git\", not both")),
+                    (None, None) => return Err(D::Error::custom("a plugin needs \"path\" or \"git\"")),
+                    (Some(_), None) if full.folder.is_some() || full.reference.is_some() => {
+                        return Err(D::Error::custom(
+                            "\"folder\" and \"ref\" go with \"git\", not with \"path\"",
+                        ));
+                    }
+                    (Some(path), None) => Source::Folder(path),
+                    (None, Some(url)) => Source::Git(
+                        GitSource::new(url, full.folder.as_deref(), full.reference).map_err(D::Error::custom)?,
+                    ),
+                };
+                Ok(Self {
+                    source,
+                    options: full.options,
+                })
             }
             _ => Err(D::Error::custom(
-                "a plugin is a folder path or an object with \"path\" and \"options\"",
+                "a plugin is a folder path or an object with \"path\" or \"git\"",
             )),
         }
     }
@@ -150,22 +223,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_plugin_item_is_a_folder_path_or_an_object_with_options() {
+    fn a_plugin_item_is_a_folder_path_or_an_object_with_a_folder_or_a_git_repository() {
         let config: Config = serde_json::from_value(json!({
-            "plugins": ["./plain", { "path": "./notes", "options": { "folder": "~/notes" } }, { "path": "./bare" }]
+            "plugins": [
+                "./plain",
+                { "path": "./notes", "options": { "folder": "~/notes" } },
+                { "git": "https://host/repo", "folder": "./plugins//clock/", "ref": "main", "options": { "a": 1 } },
+                { "git": "https://host/repo", "folder": "." },
+            ]
         }))
         .unwrap();
 
-        let folder = |path: &str, options: Value| ConfigPlugin {
-            path: path.to_owned(),
+        let item = |source: Source, options: Value| ConfigPlugin {
+            source,
             options: options.as_object().unwrap().clone(),
+        };
+        let git = |folder: Option<&str>, reference: Option<&str>| {
+            Source::Git(GitSource {
+                url: "https://host/repo".to_owned(),
+                folder: folder.map(str::to_owned),
+                reference: reference.map(str::to_owned),
+            })
         };
         assert_eq!(
             config.plugins,
             [
-                folder("./plain", json!({})),
-                folder("./notes", json!({ "folder": "~/notes" })),
-                folder("./bare", json!({})),
+                item(Source::Folder("./plain".to_owned()), json!({})),
+                item(Source::Folder("./notes".to_owned()), json!({ "folder": "~/notes" })),
+                item(git(Some("plugins/clock"), Some("main")), json!({ "a": 1 })),
+                item(git(None, None), json!({})),
             ]
         );
     }
@@ -180,17 +266,28 @@ mod tests {
 
         assert_eq!(
             error(json!(1)),
-            "a plugin is a folder path or an object with \"path\" and \"options\""
+            "a plugin is a folder path or an object with \"path\" or \"git\""
         );
         assert_eq!(
             error(json!({ "path": "./a", "options": null })),
             "invalid type: null, expected a map"
         );
+        assert!(error(json!({ "path": "./a", "option": {} })).starts_with("unknown field `option`"));
+        assert_eq!(error(json!({ "options": {} })), "a plugin needs \"path\" or \"git\"");
         assert_eq!(
-            error(json!({ "path": "./a", "option": {} })),
-            "unknown field `option`, expected `path` or `options`"
+            error(json!({ "path": "./a", "git": "https://host/repo" })),
+            "a plugin has \"path\" or \"git\", not both"
         );
-        assert_eq!(error(json!({ "options": {} })), "missing field `path`");
+        assert_eq!(
+            error(json!({ "path": "./a", "ref": "main" })),
+            "\"folder\" and \"ref\" go with \"git\", not with \"path\""
+        );
+        for folder in ["../up", "a/../../up", "/abs"] {
+            assert_eq!(
+                error(json!({ "git": "https://host/repo", "folder": folder })),
+                format!("folder: '{folder}' is not a relative path inside the repository")
+            );
+        }
     }
 
     #[test]
