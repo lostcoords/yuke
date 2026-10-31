@@ -1,5 +1,5 @@
-//! The session functions of the native module: the requests of `ctx.get("sessions")` and `ctx.get("catalog")`, and
-//! the feed that delivers the events of the views to JavaScript.
+//! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`, and
+//! `ctx.get("plugins")`, and the feed that delivers the events of the views to JavaScript.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -7,7 +7,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rquickjs::{Ctx, Function, Object, Promise, TypedArray};
+use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use tokio::runtime::Handle;
@@ -15,10 +15,11 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use yuke_ai::{Block, MAX_MEDIA_BYTES};
 use yuke_engine::chain_text;
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, ListSessionsParams,
-    SessionId, SessionSettings,
+    ApplyPluginsParams, CheckPluginsParams, EventNumber, Input, InputId, InputKind, InputSource, InteractionId,
+    InteractionResponse, ListSessionsParams, SessionId, SessionSettings, SyncPluginsParams,
 };
 
+use super::{Cancelled, Operation};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
 use crate::sessions::{Sessions, SessionsError, ViewEvent};
 use crate::tools::Json;
@@ -243,6 +244,24 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
+    request.add(object, "pluginsList", |sessions, (): ()| async move {
+        sessions.list_plugins().await
+    })?;
+    request.add_operation(
+        object,
+        "pluginsSync",
+        |sessions, params: SyncPluginsParams| async move { sessions.sync_plugins(params).await },
+    )?;
+    request.add_operation(
+        object,
+        "pluginsCheck",
+        |sessions, params: CheckPluginsParams| async move { sessions.check_plugins(params).await },
+    )?;
+    request.add(
+        object,
+        "pluginsApply",
+        |sessions, params: ApplyPluginsParams| async move { sessions.apply_plugins(params).await },
+    )?;
 
     Ok(())
 }
@@ -374,6 +393,41 @@ impl Requests {
                     let task = consumer.spawn(run(Arc::clone(&sessions), arguments.0));
                     let error_ctx = ctx.clone();
                     Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
+                },
+            )?,
+        )
+    }
+
+    /// Add a request as [`Requests::add`] does, which answers an operation. Its `cancel` drops the task, so a child
+    /// process of the task stops, and the promise rejects with `{ cancelled: true }`.
+    fn add_operation<'js, A, T, F>(
+        &self,
+        object: &Object<'js>,
+        name: &str,
+        run: impl Fn(Arc<dyn Sessions>, A) -> F + 'js,
+    ) -> rquickjs::Result<()>
+    where
+        A: DeserializeOwned + 'js,
+        T: Serialize + Send + 'static,
+        F: Future<Output = Result<T, SessionsError>> + Send + 'static,
+    {
+        let (sessions, consumer) = (Arc::clone(&self.sessions), self.consumer.clone());
+        object.set(
+            name,
+            Function::new(
+                object.ctx().clone(),
+                move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
+                    let task = consumer.spawn(run(Arc::clone(&sessions), arguments.0));
+                    Operation::start(&ctx, move |ctx, stop| async move {
+                        let abort = task.abort_handle();
+                        tokio::select! {
+                            done = task => joined(&ctx, done).map(Json),
+                            () = stop.cancelled() => {
+                                abort.abort();
+                                Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?))
+                            }
+                        }
+                    })
                 },
             )?,
         )

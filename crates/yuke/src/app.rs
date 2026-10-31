@@ -32,9 +32,10 @@ use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
 use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
-    ExtensionRequestParams, InteractionId, ListCatalogResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult,
+    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ExtensionRequestParams,
+    InteractionId, ListCatalogResult, ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult,
     ModelReference, NoticeLevel, NoticeParams, ProviderState, ResponseError, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, StoredEvent, UpdateCredentialParams,
+    SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult, UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -141,26 +142,36 @@ struct Profile {
     providers: Arc<Providers>,
     /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
     plugin_folders: Arc<[PathBuf]>,
+    /// The name of each plugin that the runtime loaded.
+    loaded: Arc<[String]>,
     /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
     session_idle: Duration,
 }
 
 impl Profile {
     /// The profile of the config folder of `paths`, and its plugins in load order. It makes the data folder of each
-    /// plugin.
-    fn load(paths: &Paths) -> Result<(Self, Vec<yuke_js::Plugin>), String> {
+    /// plugin. With `fallback`, a plugin list that does not load gives the bundled plugins alone and the error of the
+    /// list.
+    fn load(paths: &Paths, fallback: bool) -> Result<(Self, Vec<yuke_js::Plugin>, Option<String>), String> {
         let providers = Providers::load(&paths.config)?;
         let config: Config = read_json(&paths.config.join("config.json"))?.unwrap_or_default();
-        let plugins = plugins::plugins(&paths.config, &config, &paths.data)?;
+        let (plugins, failed) = match plugins::plugins(&paths.config, &config, &paths.data) {
+            Ok(plugins) => (plugins, None),
+            // The bundled plugins can fix the list, for example with a sync of the Git plugins and a reload.
+            Err(error) if fallback => (plugins::bundled(&paths.config, &config, &paths.data)?, Some(error)),
+            Err(error) => return Err(error),
+        };
         plugins::create_data_folders(&plugins)?;
         let profile = Self {
             providers: Arc::new(providers),
             plugin_folders: Self::plugin_folders(&plugins),
+            // A failure at the start leaves the list, and a failure of a reload keeps the old profile.
+            loaded: plugins.iter().map(|plugin| plugin.name.clone()).collect(),
             session_idle: Duration::from_secs(
                 60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
             ),
         };
-        Ok((profile, plugins))
+        Ok((profile, plugins, failed))
     }
 
     /// The root folder of each folder plugin of `plugins`, in their order.
@@ -240,6 +251,37 @@ impl Shared {
         Ok(ListCatalogResult { providers })
     }
 
+    /// The plugins of `config.json` with their state, for `plugin/list`.
+    fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
+        let loaded = Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).loaded);
+        let plugins = plugins::manager::list(&self.machine.paths, &loaded).map_err(AppError::Invalid)?;
+        Ok(ListPluginsResult { plugins })
+    }
+
+    /// Install the locked commits and lock the new Git plugins, for `plugin/sync`.
+    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
+        let locked = params.locked.unwrap_or(false);
+        plugins::manager::sync(&self.machine.paths, locked)
+            .await
+            .map_err(AppError::Invalid)
+    }
+
+    /// The new commits of the Git plugins of the target, for `plugin/check`.
+    async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
+        let changes = plugins::manager::check(&self.machine.paths, &params.target)
+            .await
+            .map_err(AppError::Invalid)?;
+        Ok(CheckPluginsResult { changes })
+    }
+
+    /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
+        let written = plugins::manager::apply(&self.machine.paths, &params.changes)
+            .await
+            .map_err(AppError::Invalid)?;
+        Ok(ApplyPluginsResult { written })
+    }
+
     /// The plugin folders now.
     fn plugin_folders(&self) -> Arc<[PathBuf]> {
         Arc::clone(
@@ -299,7 +341,8 @@ impl App {
         timer: Arc<dyn Timer>,
     ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
-        let (profile, plugins) = Profile::load(&machine.paths)?;
+        // A one-task run without the plugins of the user is a wrong run, so it fails instead.
+        let (profile, plugins, failed) = Profile::load(&machine.paths, mode == Mode::Server)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes. A test keeps the folder in its own place.
         let processes_folder = match &machine.test {
@@ -328,6 +371,14 @@ impl App {
             pending_logins: Mutex::default(),
             last_login: AtomicU64::new(0),
         });
+        if let Some(error) = failed {
+            shared.observer.notify(ServerNotification::Notice(NoticeParams {
+                session_id: None,
+                level: NoticeLevel::Error,
+                source: SOURCE.to_owned(),
+                message: format!("only the bundled plugins run, because the plugin list did not load: {error}"),
+            }));
+        }
         let sessions = SessionService::new(Arc::clone(&shared));
         let (runtime, reporter) = match start_runtime(&shared, &sessions).await {
             Ok(started) => started,
@@ -362,6 +413,14 @@ impl App {
 
     /// Send a notice for each plugin that did not load. The other plugins load.
     fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
+        if !failures.is_empty() {
+            let mut profile = self.shared.profile.write().unwrap_or_else(PoisonError::into_inner);
+            let loaded = profile
+                .loaded
+                .iter()
+                .filter(|name| !failures.iter().any(|failure| failure.name() == *name));
+            profile.loaded = loaded.cloned().collect();
+        }
         for failure in failures {
             self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
                 session_id: None,
@@ -393,7 +452,7 @@ impl App {
             held.push(live.try_hold().ok_or(AppError::TurnRuns)?);
         }
         // The new plugins use the new providers, for example in a model request of their `apply`.
-        let (profile, plugins) = Profile::load(&self.shared.machine.paths).map_err(AppError::Invalid)?;
+        let (profile, plugins, _) = Profile::load(&self.shared.machine.paths, false).map_err(AppError::Invalid)?;
         let old_profile = std::mem::replace(
             &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
             profile,
@@ -612,6 +671,42 @@ impl App {
     /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
     pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
         self.shared.catalog(all).await
+    }
+
+    /// The plugins of `config.json` with their state. It uses no network.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad `config.json` or `plugins.lock`.
+    pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
+        self.shared.list_plugins()
+    }
+
+    /// Install the locked commits of the Git plugins, and lock the new ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad file, a lock that does not match with `locked`, or a failed install.
+    pub(crate) async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
+        self.shared.sync_plugins(params).await
+    }
+
+    /// The new commits of the Git plugins of the target. Each new commit is installed, and the lock stays.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad file, an unknown name, or a failed fetch or install.
+    pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
+        self.shared.check_plugins(params).await
+    }
+
+    /// Write the new commits of changes into `plugins.lock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad change, or when the lock does not read or write.
+    pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
+        self.shared.apply_plugins(params).await
     }
 
     /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the

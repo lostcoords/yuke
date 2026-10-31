@@ -13,7 +13,13 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
   `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
   `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
-  `credential/update`, `interaction/respond`, `mcp/list`, `profile/reload`, `blob/put`, `blob/get`.
+  `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
+  `plugin/apply`, `profile/reload`, `blob/put`, `blob/get`.
+- `plugin/list` gives each plugin of `config.json` with `state` (`local`, `not_locked`, `not_installed`, or `installed`
+  with its `commit`) and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
+  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `"all"` or
+  `{ "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
+  writes their `new` commits into `plugins.lock`. Git asks for no password. A new commit loads at `profile/reload`.
 - `blob/put { sessionId, data }` decodes the base64 `data` and saves at most 3,932,160 bytes in a saved session. It
   answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
   as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the

@@ -77,6 +77,14 @@ pub(crate) enum PluginError {
     },
 }
 
+impl PluginFailure {
+    /// The name of the plugin that did not load.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 impl fmt::Display for PluginFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.reason {

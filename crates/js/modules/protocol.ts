@@ -19,6 +19,24 @@ usage: Usage,
 finishReason: FinishReason, };
 
 /**
+ * The params of `plugin/apply`.
+ */
+export type ApplyPluginsParams = { 
+/**
+ * Changes of `plugin/check`. The server writes the `new` commit of each one whose source is in the lock.
+ */
+changes: Array<PluginChange>, };
+
+/**
+ * The result of `plugin/apply`.
+ */
+export type ApplyPluginsResult = { 
+/**
+ * Whether `plugins.lock` changed.
+ */
+written: boolean, };
+
+/**
  * Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
  * of a resumed context reads no blob that the encoder kept.
  */
@@ -73,6 +91,24 @@ hints: ToolHints,
  * The folder where the call ran. A relative path of the call starts there.
  */
 folder: string | null, };
+
+/**
+ * The params of `plugin/check`.
+ */
+export type CheckPluginsParams = { 
+/**
+ * The plugins to check.
+ */
+target: PluginTarget, };
+
+/**
+ * The result of `plugin/check`.
+ */
+export type CheckPluginsResult = { 
+/**
+ * Each checked plugin whose ref moved. An empty list means that each one is at the newest commit of its ref.
+ */
+changes: Array<PluginChange>, };
 
 /**
  * The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
@@ -361,6 +397,15 @@ export type ListCatalogResult = {
 providers: Array<ProviderInfo>, };
 
 /**
+ * The result of `plugin/list`.
+ */
+export type ListPluginsResult = { 
+/**
+ * The plugins in the order of `config.json`.
+ */
+plugins: Array<ManagedPlugin>, };
+
+/**
  * The params of `session/list`.
  */
 export type ListSessionsParams = { 
@@ -520,6 +565,32 @@ error: string, } | { "sessionUpdate": "round_failed",
  * The failure text with each cause.
  */
 error: string, };
+
+/**
+ * One plugin of `config.json` in `plugin/list`.
+ */
+export type ManagedPlugin = { 
+/**
+ * The folder of a local plugin, or the URL, folder, and ref of a Git plugin.
+ */
+item: string, 
+/**
+ * The name of its `plugin.json`, when the server can read it.
+ */
+name?: string | null, 
+/**
+ * Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
+ * from an older commit until `profile/reload`.
+ */
+loaded: boolean, } & ({ "state": "local" } | { "state": "not_locked" } | { "state": "not_installed", 
+/**
+ * The full commit id of the lock.
+ */
+commit: string, } | { "state": "installed", 
+/**
+ * The full commit id of the lock.
+ */
+commit: string, });
 
 /**
  * One MCP server of a session.
@@ -758,6 +829,59 @@ schema: string,
  * OpenAI strict mode. A non-strict schema gives no guarantee.
  */
 strict: boolean, };
+
+/**
+ * The new commit of one Git plugin whose ref moved.
+ */
+export type PluginChange = { 
+/**
+ * The name of its `plugin.json`.
+ */
+name: string, 
+/**
+ * The plugin.
+ */
+source: PluginSource, 
+/**
+ * The commit of the lock.
+ */
+old: string, 
+/**
+ * The commit that its ref names now. It is installed.
+ */
+new: string, 
+/**
+ * The commits of the move.
+ */
+log: PluginLog, };
+
+/**
+ * The commits between the locked commit and the new one: `{ "commits": [...] }`, newest first as a short id and a
+ * subject each, or `{ "error": text }` when the server cannot read them.
+ */
+export type PluginLog = { "commits": Array<string> } | { "error": string };
+
+/**
+ * A Git plugin of `config.json`, as `plugins.lock` keys it.
+ */
+export type PluginSource = { 
+/**
+ * The URL of the repository, as `git` takes it.
+ */
+git: string, 
+/**
+ * The plugin folder in the repository. None is the root.
+ */
+folder?: string | null, 
+/**
+ * The branch, tag, or commit that an update follows. None is the default branch.
+ */
+ref?: string | null, };
+
+/**
+ * Which Git plugins `plugin/check` checks: `"all"`, or `{ "names": [...] }` by the name of their `plugin.json`.
+ */
+export type PluginTarget = "all" | { "names": Array<string> };
 
 /**
  * The part of the output that a folded call shows. An error always shows its first rows.
@@ -1086,6 +1210,41 @@ kind: SubjectKind, };
  * What the subject argument names. A frontend can open a file or a URI.
  */
 export type SubjectKind = "text" | "file" | "uri";
+
+/**
+ * The params of `plugin/sync`.
+ */
+export type SyncPluginsParams = { 
+/**
+ * Fail when `plugins.lock` does not match `config.json`, and never write it. None or false syncs normally.
+ */
+locked?: boolean | null, };
+
+/**
+ * The result of `plugin/sync`.
+ */
+export type SyncPluginsResult = { 
+/**
+ * Each Git plugin of `config.json` with its commit, in list order.
+ */
+plugins: Array<SyncedPlugin>, 
+/**
+ * Whether `plugins.lock` changed.
+ */
+written: boolean, };
+
+/**
+ * The commit of one Git plugin after `plugin/sync`.
+ */
+export type SyncedPlugin = { 
+/**
+ * The plugin.
+ */
+source: PluginSource, 
+/**
+ * The full commit id in the lock.
+ */
+commit: string, };
 
 /**
  * Whether and how the model thinks before it answers.

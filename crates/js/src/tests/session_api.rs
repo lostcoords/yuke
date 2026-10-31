@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use yuke_protocol::{
-    EventNumber, Input, InputId, InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult,
+    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
+    InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult,
     ListSessionsParams, ListSessionsResult, LiveUpdate, McpServer, ModelReference, SessionId, SessionRow,
-    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, StoredEvent,
+    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, wait_until, write};
@@ -168,6 +169,27 @@ impl Sessions for Scripted {
         self.record(format!("catalog {all}"));
         Ok(ListCatalogResult { providers: Vec::new() })
     }
+    async fn list_plugins(&self) -> Result<ListPluginsResult, SessionsError> {
+        self.record("plugins list".to_owned());
+        Ok(ListPluginsResult { plugins: Vec::new() })
+    }
+    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError> {
+        self.record(format!("plugins sync {:?}", params.locked));
+        Ok(SyncPluginsResult {
+            plugins: Vec::new(),
+            written: true,
+        })
+    }
+    /// A check that never ends. Its drop ends a hold, so a test sees the cancel of its task.
+    async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
+        self.record(format!("plugins check {:?}", params.target));
+        let _hold = Hold(Arc::clone(&self.released));
+        std::future::pending().await
+    }
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
+        self.record(format!("plugins apply {}", params.changes[0].new));
+        Ok(ApplyPluginsResult { written: false })
+    }
 }
 
 /// A runtime of the test `name` on `scripted` with the plugin `test`, whose `apply` puts `ctx.get("sessions")` and
@@ -188,6 +210,7 @@ async fn started(name: &str, scripted: &Arc<Scripted>) -> Runtime {
             "export function apply(ctx) {
                globalThis.sessions = ctx.get('sessions');
                globalThis.catalog = ctx.get('catalog');
+               globalThis.plugins = ctx.get('plugins');
                globalThis.seen = [];
              }",
         )],
@@ -390,6 +413,51 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             "list None".to_owned(),
             "catalog false".to_owned(),
             format!("close {id} true"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_its_task() {
+    let scripted = Arc::new(Scripted::default());
+    let runtime = started(
+        "the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_its_task",
+        &scripted,
+    )
+    .await;
+
+    let answers = evaluate::<String>(
+        &runtime,
+        "const listed = await plugins.list();
+         const synced = await plugins.sync({ locked: true });
+         const change = { name: 'clock', source: { git: 'https://host/repo' }, old: 'a'.repeat(40),
+                          new: 'b'.repeat(40), log: { commits: [] } };
+         const applied = await plugins.apply([change]);
+         const controller = new AbortController();
+         const checked = plugins.check({ names: ['clock'] }, { signal: controller.signal });
+         controller.abort();
+         const reason = await checked.then(() => 'resolved', (error) => error === controller.signal.reason);
+         return JSON.stringify([listed, synced.written, applied.written, reason]);",
+    )
+    .await
+    .unwrap();
+    // The abort of the task drops it at the next poll of the consumer runtime.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while scripted.released.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(answers, r#"[{"plugins":[]},true,false,true]"#);
+    assert_eq!(
+        scripted.calls(),
+        [
+            "plugins list".to_owned(),
+            "plugins sync Some(true)".to_owned(),
+            format!("plugins apply {}", "b".repeat(40)),
+            r#"plugins check Names(["clock"])"#.to_owned(),
         ]
     );
 }

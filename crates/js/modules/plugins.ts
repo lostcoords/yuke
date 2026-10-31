@@ -14,8 +14,10 @@
  */
 import type { ChatService } from "yuke:chat";
 import type {
+  ApplyPluginsResult,
   Blob,
   Block,
+  CheckPluginsResult,
   EventNumber,
   FinishReason,
   InputId,
@@ -25,11 +27,14 @@ import type {
   InteractionResponse,
   Job,
   ListCatalogResult,
+  ListPluginsResult,
   ListSessionsParams,
   ListSessionsResult,
   McpServer,
   ModelReference,
   NoticeLevel,
+  PluginChange,
+  PluginTarget,
   SessionId,
   SessionRow,
   SessionSettings,
@@ -37,6 +42,7 @@ import type {
   SessionUpdate,
   Settings,
   StoredEvent,
+  SyncPluginsResult,
   Usage,
 } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
@@ -44,8 +50,10 @@ import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 import type { Tui } from "yuke:tui";
 
 export type {
+  ApplyPluginsResult,
   Blob,
   Block,
+  CheckPluginsResult,
   EventNumber,
   FinishReason,
   InputId,
@@ -55,11 +63,14 @@ export type {
   InteractionResponse,
   Job,
   ListCatalogResult,
+  ListPluginsResult,
   ListSessionsParams,
   ListSessionsResult,
   McpServer,
   ModelReference,
   NoticeLevel,
+  PluginChange,
+  PluginTarget,
   SessionId,
   SessionRow,
   SessionSettings,
@@ -67,17 +78,19 @@ export type {
   SessionUpdate,
   Settings,
   StoredEvent,
+  SyncPluginsResult,
   Usage,
 } from "yuke:protocol";
 
 /**
  * The services of the plugins, by name. A provider ships a declaration file that adds its service to this interface:
  * `declare module "yuke:plugins" { interface Services { "acme.notes.v1": Notes } }`. Each plugin that uses the service
- * includes that file. A name without a declaration fails the type check. Three services belong to yuke itself and
+ * includes that file. A name without a declaration fails the type check. Four services belong to yuke itself and
  * need no `uses` entry:
  * - `tui`: the terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`.
  * - `sessions`: the sessions, in each mode.
  * - `catalog`: the providers and their models, in each mode.
+ * - `plugins`: the plugin manager of `config.json` and `plugins.lock`, in each mode.
  *
  * The bundled chat provides `chat`, the chat panes of the terminal interface. A plugin that uses it needs a `uses`
  * entry.
@@ -86,6 +99,7 @@ export interface Services {
   readonly tui: Tui | undefined;
   readonly sessions: Sessions;
   readonly catalog: Catalog;
+  readonly plugins: PluginManager;
   readonly chat: ChatService;
 }
 
@@ -190,6 +204,27 @@ export interface SessionHandle {
 export interface Catalog {
   /** Every provider with `options.all`, else only the providers that are ready. */
   readonly list: (options?: { readonly all?: boolean }) => Promise<ListCatalogResult>;
+}
+
+/**
+ * The plugin manager of the profile, as the requests `plugin/list`, `plugin/sync`, `plugin/check`, and `plugin/apply`
+ * give it. No call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
+ */
+export interface PluginManager {
+  /** The plugins of `config.json` with their state on disk, and whether each one runs. It uses no network. */
+  readonly list: () => Promise<ListPluginsResult>;
+  /**
+   * Install the locked commit of each Git plugin, and lock each new one at the commit of its ref. With
+   * `options.locked`, the lock must match `config.json`, and it stays as it is. `options.signal` stops the work.
+   */
+  readonly sync: (options?: { readonly locked?: boolean; readonly signal?: AbortSignal }) => Promise<SyncPluginsResult>;
+  /**
+   * The new commit of each Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
+   * installed, and `plugins.lock` stays as it is until `apply`. `options.signal` stops the work.
+   */
+  readonly check: (target: PluginTarget, options?: { readonly signal?: AbortSignal }) => Promise<CheckPluginsResult>;
+  /** Write the new commit of each change of `check` into `plugins.lock`. */
+  readonly apply: (changes: readonly PluginChange[]) => Promise<ApplyPluginsResult>;
 }
 
 /** The value of `ctx.get(name)`: never null, except `tui`, which can be `undefined`. */

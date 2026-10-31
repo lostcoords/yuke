@@ -3,8 +3,12 @@
 declare module "yuke:internal/native" {
   import type { NoticeLevel } from "yuke:plugins";
   import type {
+    ApplyPluginsParams,
+    ApplyPluginsResult,
     Blob,
     Block,
+    CheckPluginsParams,
+    CheckPluginsResult,
     DisplayBlock,
     EventNumber,
     ExtensionEventParams,
@@ -13,6 +17,7 @@ declare module "yuke:internal/native" {
     InteractionResponse,
     Job,
     ListCatalogResult,
+    ListPluginsResult,
     ListSessionsParams,
     ListSessionsResult,
     McpServer,
@@ -23,6 +28,8 @@ declare module "yuke:internal/native" {
     SessionSnapshot,
     SessionUpdate,
     StoredEvent,
+    SyncPluginsParams,
+    SyncPluginsResult,
     ToolHints,
   } from "yuke:protocol";
   import type { CallOutcome, Frame, ModelRequest } from "yuke:test";
@@ -449,6 +456,10 @@ declare module "yuke:internal/native" {
   export function sessionJobs(id: SessionId): Job[];
   export function sessionMcpServers(id: SessionId): McpServer[];
   export function catalogList(all: boolean): Promise<ListCatalogResult>;
+  export function pluginsList(nothing: null): Promise<ListPluginsResult>;
+  export function pluginsSync(params: SyncPluginsParams): Operation<SyncPluginsResult>;
+  export function pluginsCheck(params: CheckPluginsParams): Operation<CheckPluginsResult>;
+  export function pluginsApply(params: ApplyPluginsParams): Promise<ApplyPluginsResult>;
 
   /** What the host of a test recorded. */
   export interface HostRecord {

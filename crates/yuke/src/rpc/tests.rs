@@ -306,6 +306,7 @@ async fn turn(client: &mut Client, session: &Value, text: &str) {
 mod auth;
 mod jobs;
 mod mcp;
+mod plugins;
 mod questions;
 mod reload;
 mod requests;

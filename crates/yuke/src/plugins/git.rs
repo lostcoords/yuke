@@ -20,6 +20,12 @@ fn git(cache: Option<&Path>) -> Command {
     }
     // A hook of the user, such as `reference-transaction`, would run on each fetch.
     command.args(["-c", "core.hooksPath=/dev/null"]).kill_on_drop(true);
+    // The terminal interface and the protocol server have no terminal for a question. The credential helper and the
+    // ssh agent still serve.
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "")
+        .stdin(Stdio::null());
     command
 }
 

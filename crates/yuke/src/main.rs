@@ -30,7 +30,7 @@ use clap::{Parser, Subcommand};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
-use yuke_protocol::SessionId;
+use yuke_protocol::{PluginLog, PluginState, PluginTarget, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -292,28 +292,28 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
     let short = |commit: &str| commit[..7].to_owned();
     match command {
         PluginCommand::List => {
-            for listed in manager::list(&paths)? {
-                let state = match &listed.state {
-                    manager::State::Local => "local".to_owned(),
-                    manager::State::NotLocked => "not locked: run `yuke plugin sync`".to_owned(),
-                    manager::State::NotInstalled(commit) => {
+            for plugin in manager::list(&paths, &[])? {
+                let state = match &plugin.state {
+                    PluginState::Local => "local".to_owned(),
+                    PluginState::NotLocked => "not locked: run `yuke plugin sync`".to_owned(),
+                    PluginState::NotInstalled { commit } => {
                         format!("{} not installed: run `yuke plugin sync`", short(commit))
                     }
-                    manager::State::Installed(commit) => short(commit),
+                    PluginState::Installed { commit } => short(commit),
                 };
                 say(&format!(
                     "{}  {}  {state}",
-                    listed.name.as_deref().unwrap_or("?"),
-                    listed.item
+                    plugin.name.as_deref().unwrap_or("?"),
+                    plugin.item
                 ))?;
             }
         }
         PluginCommand::Sync { locked } => {
-            let (commits, written) = manager::sync(&paths, locked).await?;
-            for (source, commit) in &commits {
-                say(&format!("{source}  {}", short(commit)))?;
+            let synced = manager::sync(&paths, locked).await?;
+            for plugin in &synced.plugins {
+                say(&format!("{}  {}", plugin.source, short(&plugin.commit)))?;
             }
-            say(if written {
+            say(if synced.written {
                 "plugins.lock written: run /reload in open sessions"
             } else {
                 "plugins.lock unchanged"
@@ -326,12 +326,12 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                     "update asks before it writes plugins.lock: run it in a terminal, or pass --yes".to_owned(),
                 );
             }
-            let selection = if all {
-                manager::Selection::All
+            let target = if all {
+                PluginTarget::All
             } else {
-                manager::Selection::Names(names)
+                PluginTarget::Names(names)
             };
-            let changes = manager::check(&paths, &selection).await?;
+            let changes = manager::check(&paths, &target).await?;
             if changes.is_empty() {
                 say("each plugin is at the newest commit of its ref")?;
                 return Ok(ExitCode::SUCCESS);
@@ -344,15 +344,15 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                     short(&change.new)
                 ))?;
                 match &change.log {
-                    Ok(lines) => lines.iter().try_for_each(|line| say(&format!("  {line}")))?,
-                    Err(error) => say(&format!("  no log: {error}"))?,
+                    PluginLog::Commits(lines) => lines.iter().try_for_each(|line| say(&format!("  {line}")))?,
+                    PluginLog::Error(error) => say(&format!("  no log: {error}"))?,
                 }
             }
             if !yes && !confirm("Apply? [y/N] ")? {
                 say("plugins.lock unchanged")?;
                 return Ok(ExitCode::SUCCESS);
             }
-            manager::apply(&paths, &changes)?;
+            manager::apply(&paths, &changes).await?;
             say("plugins.lock written: run /reload in open sessions")?;
         }
     }

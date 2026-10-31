@@ -1,10 +1,17 @@
-use std::process::Command;
-
 use serde_json::{Value, json};
 
 use super::*;
+use crate::testing::commit_plugin;
 
-/// A new empty place for the test `name`, with the folders of a profile and a repository `remote` on branch `main`.
+/// The sync result of `source` at `commit`.
+fn at(source: PluginSource, commit: &str) -> SyncedPlugin {
+    SyncedPlugin {
+        source,
+        commit: commit.to_owned(),
+    }
+}
+
+/// A new empty place for the test `name`, with the folders of a profile.
 fn place(name: &str) -> (PathBuf, Paths) {
     let root = std::env::temp_dir().join(format!("yuke-manager-tests-{}/{name}", std::process::id()));
     if root.exists() {
@@ -12,7 +19,6 @@ fn place(name: &str) -> (PathBuf, Paths) {
     }
     fs::create_dir_all(root.join("config")).unwrap();
     let root = root.canonicalize().unwrap();
-    run_git(&root, &["init", "--quiet", "-b", "main", "remote"]);
     let paths = Paths {
         config: root.join("config"),
         data: root.join("data"),
@@ -21,37 +27,9 @@ fn place(name: &str) -> (PathBuf, Paths) {
     (root, paths)
 }
 
-/// Run `git` with `args` in `folder`, and give its output.
-fn run_git(folder: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(folder)
-        .args([
-            "-c",
-            "user.name=test",
-            "-c",
-            "user.email=test@example.com",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(["-c", "core.hooksPath=/dev/null"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
-/// Commit the plugin `clock` in `plugins/clock` of the repository at `root/remote`, with the subject `subject`. Gives
-/// the commit id.
+/// Commit the plugin `clock` of the repository at `root/remote`, with the subject `subject`. Gives the commit id.
 fn commit(root: &Path, subject: &str) -> String {
-    let remote = root.join("remote");
-    let folder = remote.join("plugins/clock");
-    fs::create_dir_all(&folder).unwrap();
-    fs::write(folder.join("plugin.json"), json!({ "name": "clock" }).to_string()).unwrap();
-    fs::write(folder.join("notes.txt"), subject).unwrap();
-    run_git(&remote, &["add", "."]);
-    run_git(&remote, &["commit", "--quiet", "-m", subject]);
-    run_git(&remote, &["rev-parse", "HEAD"])
+    commit_plugin(&root.join("remote"), "clock", subject)
 }
 
 /// Write `config.json` of `paths` with the plugin items `plugins`.
@@ -64,32 +42,38 @@ fn write_config(paths: &Paths, plugins: &Value) {
 }
 
 /// The source of the clock plugin of `root/remote` at `reference`.
-fn clock(root: &Path, reference: Option<&str>) -> GitSource {
+fn clock(root: &Path, reference: Option<&str>) -> PluginSource {
     let url = root.join("remote").to_string_lossy().into_owned();
-    GitSource::new(url, Some("plugins/clock"), reference.map(str::to_owned)).unwrap()
+    git_source(url, Some("plugins/clock"), reference.map(str::to_owned)).unwrap()
 }
 
 #[tokio::test]
 async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update_moves_it() {
     let (root, paths) = place("lifecycle");
     let first = commit(&root, "first");
-    let url = clock(&root, None).url;
+    let url = clock(&root, None).git;
     write_config(
         &paths,
         &json!([{ "git": url, "folder": "plugins/clock", "ref": "main" }]),
     );
 
-    let (synced, written) = sync(&paths, false).await.unwrap();
+    let SyncPluginsResult {
+        plugins: synced,
+        written,
+    } = sync(&paths, false).await.unwrap();
     let second = commit(&root, "feat: seconds");
-    let (again, written_again) = sync(&paths, false).await.unwrap();
+    let SyncPluginsResult {
+        plugins: again,
+        written: written_again,
+    } = sync(&paths, false).await.unwrap();
     let config: Config = read_json(&paths.config.join("config.json")).unwrap().unwrap();
     let loaded = super::super::plugins(&paths.config, &config, &paths.data).unwrap();
-    let changes = check(&paths, &Selection::All).await.unwrap();
+    let changes = check(&paths, &PluginTarget::All).await.unwrap();
     let before_apply = Lock::read(&paths.config).unwrap();
-    let applied = apply(&paths, &changes).unwrap();
-    let after_apply = check(&paths, &Selection::All).await.unwrap();
+    let applied = apply(&paths, &changes).await.unwrap();
+    let after_apply = check(&paths, &PluginTarget::All).await.unwrap();
 
-    assert_eq!(synced, [(clock(&root, Some("main")), first.clone())]);
+    assert_eq!(synced, [at(clock(&root, Some("main")), &first)]);
     assert!(written);
     assert_eq!(again, synced);
     assert!(!written_again);
@@ -106,7 +90,9 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
         (changes[0].old.as_str(), changes[0].new.as_str()),
         (first.as_str(), second.as_str())
     );
-    let log = changes[0].log.as_ref().unwrap();
+    let PluginLog::Commits(log) = &changes[0].log else {
+        panic!("no log: {:?}", changes[0].log);
+    };
     assert_eq!(log.len(), 1, "{log:?}");
     let (short, subject) = log[0].split_once(' ').unwrap();
     assert!(second.starts_with(short) && subject == "feat: seconds", "{log:?}");
@@ -123,7 +109,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
 async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
     let (root, paths) = place("new_plugin");
     let first = commit(&root, "first");
-    let url = clock(&root, None).url;
+    let url = clock(&root, None).git;
     write_config(
         &paths,
         &json!([{ "git": url, "folder": "plugins/clock", "ref": "main" }]),
@@ -138,11 +124,14 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
         ]),
     );
 
-    let (synced, written) = sync(&paths, false).await.unwrap();
+    let SyncPluginsResult {
+        plugins: synced,
+        written,
+    } = sync(&paths, false).await.unwrap();
 
     assert_eq!(
         synced,
-        [(clock(&root, Some("main")), first), (clock(&root, None), second)]
+        [at(clock(&root, Some("main")), &first), at(clock(&root, None), &second),]
     );
     assert!(written);
 }
@@ -153,11 +142,11 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
     commit(&root, "first");
     write_config(
         &paths,
-        &json!([{ "git": clock(&root, None).url, "folder": "plugins/clock" }]),
+        &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
     sync(&paths, false).await.unwrap();
 
-    let error = check(&paths, &Selection::Names(vec!["nope".to_owned()]))
+    let error = check(&paths, &PluginTarget::Names(vec!["nope".to_owned()]))
         .await
         .unwrap_err();
 
@@ -171,7 +160,7 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
 async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin() {
     let (root, paths) = place("locked");
     commit(&root, "first");
-    let url = clock(&root, None).url;
+    let url = clock(&root, None).git;
     write_config(&paths, &json!([{ "git": url, "folder": "plugins/clock" }]));
 
     let error = sync(&paths, true).await.unwrap_err();
@@ -188,16 +177,19 @@ async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin()
 async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     let (root, paths) = place("locked_match");
     let first = commit(&root, "first");
-    let url = clock(&root, None).url;
+    let url = clock(&root, None).git;
     write_config(&paths, &json!([{ "git": url, "folder": "plugins/clock" }]));
     // A lock that the user formats by hand differs from the text that a write gives.
     let text =
         json!({ "version": 1, "plugins": [{ "git": url, "folder": "plugins/clock", "commit": first }] }).to_string();
     fs::write(paths.config.join("plugins.lock"), &text).unwrap();
 
-    let (synced, written) = sync(&paths, true).await.unwrap();
+    let SyncPluginsResult {
+        plugins: synced,
+        written,
+    } = sync(&paths, true).await.unwrap();
 
-    assert_eq!(synced, [(clock(&root, None), first.clone())]);
+    assert_eq!(synced, [at(clock(&root, None), &first)]);
     assert!(!written);
     assert_eq!(fs::read_to_string(paths.config.join("plugins.lock")).unwrap(), text);
     assert!(git_folder(&paths.data, &url, &first).is_dir());
@@ -212,13 +204,42 @@ async fn a_linked_lock_stays_a_link_and_its_target_gets_the_commits() {
     std::os::unix::fs::symlink(root.join("dotfiles/plugins.lock"), paths.config.join("plugins.lock")).unwrap();
     write_config(
         &paths,
-        &json!([{ "git": clock(&root, None).url, "folder": "plugins/clock" }]),
+        &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
     );
 
-    let (_, written) = sync(&paths, false).await.unwrap();
+    let written = sync(&paths, false).await.unwrap().written;
 
     assert!(written);
     assert!(paths.config.join("plugins.lock").is_symlink());
     let text = fs::read_to_string(root.join("dotfiles/plugins.lock")).unwrap();
     assert!(text.contains(&first), "{text}");
+}
+
+#[tokio::test]
+async fn an_apply_with_a_commit_that_is_not_a_full_id_fails_and_keeps_the_lock() {
+    let (root, paths) = place("apply_short");
+    let first = commit(&root, "first");
+    write_config(
+        &paths,
+        &json!([{ "git": clock(&root, None).git, "folder": "plugins/clock" }]),
+    );
+    sync(&paths, false).await.unwrap();
+    let change = PluginChange {
+        name: "clock".to_owned(),
+        source: clock(&root, None),
+        old: first.clone(),
+        new: "3f9c1a2".to_owned(),
+        log: PluginLog::Commits(Vec::new()),
+    };
+
+    let error = apply(&paths, &[change]).await.unwrap_err();
+
+    assert_eq!(
+        error,
+        format!(
+            "plugin {} (folder plugins/clock): '3f9c1a2' is not a full commit id",
+            clock(&root, None).git
+        )
+    );
+    assert_eq!(Lock::read(&paths.config).unwrap().commits[&clock(&root, None)], first);
 }

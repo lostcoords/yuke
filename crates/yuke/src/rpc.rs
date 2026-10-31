@@ -444,6 +444,10 @@ impl Server {
                 app.update_credential(params)?;
                 result(&EmptyResult {})
             }
+            ClientRequest::ListPlugins(EmptyParams {}) => result(&app.list_plugins()?),
+            ClientRequest::SyncPlugins(params) => result(&app.sync_plugins(params).await?),
+            ClientRequest::CheckPlugins(params) => result(&app.check_plugins(params).await?),
+            ClientRequest::ApplyPlugins(params) => result(&app.apply_plugins(params).await?),
             ClientRequest::ReloadProfile(EmptyParams {}) => {
                 self.app.reload().await?;
                 result(&EmptyResult {})

@@ -1,13 +1,15 @@
-//! The sessions and the model catalog of the consumer, for `ctx.get("sessions")` and `ctx.get("catalog")` of the
-//! plugins. The methods mirror the session requests of the protocol.
+//! The sessions, the model catalog, and the plugin manager of the consumer, for `ctx.get("sessions")`,
+//! `ctx.get("catalog")`, and `ctx.get("plugins")` of the plugins. The methods mirror the requests of the protocol.
 
 use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use yuke_protocol::{
-    EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListCatalogResult, ListSessionsParams,
+    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
+    InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
     ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionUpdate, StoredEvent,
+    SyncPluginsParams, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -173,4 +175,32 @@ pub trait Sessions: Send + Sync {
     ///
     /// Returns why the request failed.
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, SessionsError>;
+
+    /// The plugins of `config.json` with their state, as `plugin/list` gives them.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn list_plugins(&self) -> Result<ListPluginsResult, SessionsError>;
+
+    /// Install the locked commits and lock the new Git plugins, as `plugin/sync` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError>;
+
+    /// The new commits of the Git plugins of the target, as `plugin/check` gives them.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError>;
+
+    /// Write the new commits of changes into `plugins.lock`, as `plugin/apply` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError>;
 }

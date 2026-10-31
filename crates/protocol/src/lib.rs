@@ -11,6 +11,7 @@ mod input;
 mod interaction;
 mod mcp;
 mod message;
+mod plugin;
 mod session;
 mod update;
 
@@ -34,6 +35,11 @@ pub use message::{
     PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams, Request, RequestId,
     Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionParams, SessionResult,
     SetSettingsParams, StopJobParams, UpdateCredentialParams,
+};
+pub use plugin::{
+    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ListPluginsResult, ManagedPlugin,
+    PluginChange, PluginLog, PluginSource, PluginState, PluginTarget, SyncPluginsParams, SyncPluginsResult,
+    SyncedPlugin,
 };
 pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
 pub use update::{

@@ -1,5 +1,6 @@
 //! The plugins of yuke and of the profile: the bundled plugins, then the `plugins` list of `config.json` and the Agent
-//! Plugins `plugin.json` of each folder. The checks run before any plugin code: a bad list stops the start.
+//! Plugins `plugin.json` of each folder. The checks run before any plugin code. A bad list stops `yuke -p` and a reload.
+//! The terminal interface and the server start with the bundled plugins alone.
 
 mod git;
 mod lock;
@@ -100,6 +101,21 @@ pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Res
     with_bundled(BUNDLED, config_folder, config, data)
 }
 
+/// The bundled plugins alone, as [`plugins`] gives them, without the `plugins` list of `config`.
+///
+/// # Errors
+///
+/// Returns a text for a `disable` or `bundled` name that no bundled plugin has.
+pub(crate) fn bundled(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
+    let config = Config {
+        plugins: Vec::new(),
+        disable: config.disable.clone(),
+        bundled: config.bundled.clone(),
+        session_idle_minutes: config.session_idle_minutes,
+    };
+    plugins(config_folder, &config, data)
+}
+
 /// [`plugins`] with the bundled plugins `bundled`.
 fn with_bundled(
     bundled: &[Bundled],
@@ -132,22 +148,22 @@ fn with_bundled(
             provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
-    let lock = Lock::read(config_folder)?;
+    let lock = Lock::read_for(config_folder, config)?;
     for ConfigPlugin { source, options } in &config.plugins {
         let (label, root) = match source {
             Source::Folder(folder) => (format!("plugin folder {folder}"), config_folder.join(folder)),
-            Source::Git(git) => {
-                let label = format!("plugin {git}");
-                let commit = lock.commits.get(git).ok_or_else(|| {
+            Source::Git(source) => {
+                let label = format!("plugin {source}");
+                let commit = lock.commits.get(source).ok_or_else(|| {
                     format!("{label}: plugins.lock has no commit for this plugin: run `yuke plugin sync`")
                 })?;
-                let installed = git_folder(data, &git.url, commit);
+                let installed = git_folder(data, &source.git, commit);
                 if !installed.is_dir() {
                     return Err(format!(
                         "{label}: commit {commit} is not installed: run `yuke plugin sync`"
                     ));
                 }
-                (label, installed.join(git.folder.as_deref().unwrap_or_default()))
+                (label, installed.join(source.folder.as_deref().unwrap_or_default()))
             }
         };
         let fail = |message: String| format!("{label}: {message}");

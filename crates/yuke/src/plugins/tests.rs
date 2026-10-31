@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::config::GitSource;
+use crate::config::git_source;
 
 use serde_json::json;
 
@@ -386,7 +386,7 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
 /// The `plugins` item of the folder `folder` of the repository `url` at `reference`.
 fn git(url: &str, folder: &str, reference: Option<&str>) -> ConfigPlugin {
     ConfigPlugin {
-        source: Source::Git(GitSource::new(url.to_owned(), Some(folder), reference.map(str::to_owned)).unwrap()),
+        source: Source::Git(git_source(url.to_owned(), Some(folder), reference.map(str::to_owned)).unwrap()),
         options: Map::new(),
     }
 }
@@ -466,18 +466,22 @@ fn a_git_plugin_whose_commit_is_not_installed_stops_the_start() {
 }
 
 #[test]
-fn a_lock_of_another_version_or_with_a_short_commit_stops_the_start() {
+fn a_lock_of_another_version_or_with_a_short_commit_fails_a_list_with_a_git_plugin() {
     let root = place("git_bad_lock");
     let lock = root.join("config/plugins.lock");
+    write_plugin(&root, "config/local", &manifest("local", &json!({})));
 
     std::fs::write(&lock, json!({ "version": 2, "plugins": [] }).to_string()).unwrap();
-    let version = load_items(&root, Vec::new()).unwrap_err();
+    let version = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
+    let local = load(&root, &["local"]);
     write_lock(&root, &json!([{ "git": URL, "commit": "3f9c1a2" }]));
-    let short = load_items(&root, Vec::new()).unwrap_err();
+    let short = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
 
     assert_eq!(
         version,
         format!("{}: this yuke reads version 1, not version 2", lock.display())
     );
+    // A list of local plugins does not read the lock.
+    assert_eq!(local.map(|plugins| plugins.len()), Ok(1));
     assert_eq!(short, format!("{}: '3f9c1a2' is not a full commit id", lock.display()));
 }

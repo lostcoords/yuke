@@ -138,6 +138,23 @@ pub enum ClientRequest {
     /// List the MCP servers of an open session. Result: [`crate::ListMcpServersResult`].
     #[serde(rename = "mcp/list")]
     ListMcpServers(SessionParams),
+    /// List the plugins of `config.json` with their state on disk and whether they run. It uses no network. Result:
+    /// [`crate::ListPluginsResult`].
+    #[serde(rename = "plugin/list")]
+    ListPlugins(EmptyParams),
+    /// Install the commit of `plugins.lock` of each Git plugin, and lock each new one at the commit of its ref. The lock
+    /// keeps only the plugins of `config.json`. Git asks for no password: the credential helper and the ssh agent of
+    /// the user serve. No plugin code runs. Result: [`crate::SyncPluginsResult`].
+    #[serde(rename = "plugin/sync")]
+    SyncPlugins(crate::SyncPluginsParams),
+    /// Resolve the ref of each Git plugin of the target again, and install each new commit. `plugins.lock` stays as it
+    /// is until `plugin/apply`. Result: [`crate::CheckPluginsResult`].
+    #[serde(rename = "plugin/check")]
+    CheckPlugins(crate::CheckPluginsParams),
+    /// Write the new commits of changes of `plugin/check` into `plugins.lock`. The running plugins keep their commits
+    /// until `profile/reload`. Result: [`crate::ApplyPluginsResult`].
+    #[serde(rename = "plugin/apply")]
+    ApplyPlugins(crate::ApplyPluginsParams),
     /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
     /// its next turn takes the tools and hooks of the new plugins. Result: [`EmptyResult`].
     /// - It fails while a turn runs. Then nothing changes.
@@ -157,7 +174,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 24] = [
+    pub const METHODS: [&str; 28] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -179,6 +196,10 @@ impl ClientRequest {
         "credential/update",
         "interaction/respond",
         "mcp/list",
+        "plugin/list",
+        "plugin/sync",
+        "plugin/check",
+        "plugin/apply",
         "profile/reload",
         "blob/put",
         "blob/get",

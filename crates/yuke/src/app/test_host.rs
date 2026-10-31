@@ -323,12 +323,16 @@ impl TestHost for AppTestHost {
         }
         let plugins = load_order(plugins)?;
         create_data_folders(&plugins)?;
-        // A session reads the skills of the folder plugins in load order, so the profile names their folders.
-        shared
-            .profile
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .plugin_folders = Profile::plugin_folders(&plugins);
+        // A session reads the skills of the folder plugins in load order, so the profile names their folders. A failed
+        // load fails the test, so each plugin counts as loaded.
+        {
+            let mut profile = shared
+                .profile
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            profile.plugin_folders = Profile::plugin_folders(&plugins);
+            profile.loaded = plugins.iter().map(|plugin| plugin.name.clone()).collect();
+        }
         let handle = sessions.plugins().ok_or("the app of the test has no runtime")?;
         let failures = handle.load_plugins(&plugins).await;
         if !failures.is_empty() {

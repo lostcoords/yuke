@@ -8,14 +8,19 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::{
-    ClientNotification, ClientRequest, EmptyResult, GetBlobResult, InitializeResult, InputResult, ListCatalogResult,
-    ListJobsResult, ListMcpServersResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request,
-    Response, ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot,
+    ApplyPluginsResult, CheckPluginsResult, ClientNotification, ClientRequest, EmptyResult, GetBlobResult,
+    InitializeResult, InputResult, ListCatalogResult, ListJobsResult, ListMcpServersResult, ListPluginsResult,
+    ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response, ServerNotification,
+    ServerRequest, SessionResult, SessionRow, SessionSnapshot, SyncPluginsResult,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
 const PLUGIN_TYPES: &[&str] = &[
+    "ApplyPluginsParams",
+    "ApplyPluginsResult",
     "Block",
+    "CheckPluginsParams",
+    "CheckPluginsResult",
     "DisplayBlock",
     "EventNumber",
     "ExtensionEventParams",
@@ -28,12 +33,15 @@ const PLUGIN_TYPES: &[&str] = &[
     "InteractionResponse",
     "Job",
     "ListCatalogResult",
+    "ListPluginsResult",
     "ListSessionsParams",
     "ListSessionsResult",
     "McpServer",
     "ModelReference",
     "NoticeLevel",
     "NoticeParams",
+    "PluginChange",
+    "PluginTarget",
     "SessionId",
     "SessionRow",
     "SessionSettings",
@@ -41,6 +49,8 @@ const PLUGIN_TYPES: &[&str] = &[
     "SessionUpdate",
     "Settings",
     "StoredEvent",
+    "SyncPluginsParams",
+    "SyncPluginsResult",
     "ToolHints",
     "Usage",
 ];
@@ -97,6 +107,10 @@ fn export(folder: &Path) {
     LoginResult::export_all(&config).unwrap();
     SessionRow::export_all(&config).unwrap();
     ListMcpServersResult::export_all(&config).unwrap();
+    ListPluginsResult::export_all(&config).unwrap();
+    SyncPluginsResult::export_all(&config).unwrap();
+    CheckPluginsResult::export_all(&config).unwrap();
+    ApplyPluginsResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
     RemoveInputResult::export_all(&config).unwrap();
     GetBlobResult::export_all(&config).unwrap();

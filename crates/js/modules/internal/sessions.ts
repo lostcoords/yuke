@@ -1,8 +1,14 @@
-// The sessions and the catalog of yuke for the plugins: `ctx.get("sessions")` and `ctx.get("catalog")`.
+// The sessions, the catalog, and the plugin manager of yuke for the plugins: `ctx.get("sessions")`,
+// `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
+import { underStop } from "yuke:internal/events";
 import {
   catalogList,
   type ViewEvent as NativeViewEvent,
+  pluginsApply,
+  pluginsCheck,
+  pluginsList,
+  pluginsSync,
   sessionCancel,
   sessionClose,
   sessionIdle,
@@ -26,7 +32,7 @@ import {
   sessionsRelease,
   sessionsRemove,
 } from "yuke:internal/native";
-import type { Catalog, OpenOptions, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
+import type { Catalog, OpenOptions, PluginManager, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
 import type { SessionId } from "yuke:protocol";
 
 const { reportError } = globalThis;
@@ -199,3 +205,11 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
 export const catalog: Catalog = Object.freeze({
   list: (options) => catalogList(options?.all === true),
 } satisfies Catalog);
+
+/** The plugin manager of the profile. */
+export const plugins: PluginManager = Object.freeze({
+  list: () => pluginsList(null),
+  sync: (options) => underStop(options?.signal, () => pluginsSync({ locked: options?.locked === true })),
+  check: (target, options) => underStop(options?.signal, () => pluginsCheck({ target })),
+  apply: (changes) => pluginsApply({ changes: [...changes] }),
+} satisfies PluginManager);

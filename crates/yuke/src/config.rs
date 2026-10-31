@@ -1,12 +1,13 @@
 //! `config.json`: the settings of the user. It and `providers.json` are JSON with `//` and `/* */` comments.
 
 use std::collections::BTreeMap;
+use std::io;
 use std::path::Path;
-use std::{fmt, io};
 
 use serde::de::{DeserializeOwned, Error as _};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
+use yuke_protocol::PluginSource;
 
 /// The settings of `config.json`. A missing key keeps its default, and an unknown key is an error.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
@@ -42,51 +43,31 @@ pub(crate) enum Source {
     /// A folder. A relative folder starts in the folder of `config.json`.
     Folder(String),
     /// A folder of a Git repository, at the commit of `plugins.lock`.
-    Git(GitSource),
+    Git(PluginSource),
 }
 
-/// A plugin folder of a Git repository. It is also the key of its entry in `plugins.lock`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct GitSource {
-    /// The URL of the repository, as `git` takes it.
-    pub(crate) url: String,
-    /// The folder in the repository, as names joined by `/`. `None` is the root of the repository.
-    pub(crate) folder: Option<String>,
-    /// The branch, tag, or commit that an update follows. `None` is the default branch.
-    pub(crate) reference: Option<String>,
-}
-
-impl GitSource {
-    /// The source of `url`, `folder`, and `reference`. The folders `./a/` and `a` are the same, and `.` is the root.
-    ///
-    /// # Errors
-    ///
-    /// Returns a text when `folder` is absolute or has a `..` part.
-    pub(crate) fn new(url: String, folder: Option<&str>, reference: Option<String>) -> Result<Self, String> {
-        let folder = match folder {
-            None => None,
-            Some(text) => {
-                let parts: Vec<&str> = text.split('/').filter(|part| !matches!(*part, "" | ".")).collect();
-                if text.starts_with('/') || parts.contains(&"..") {
-                    return Err(format!("folder: '{text}' is not a relative path inside the repository"));
-                }
-                (!parts.is_empty()).then(|| parts.join("/"))
+/// The source of the Git plugin `url`, `folder`, and `reference`, in the form that keys `plugins.lock`. The folders `./a/`
+/// and `a` are the same, and `.` is the root.
+///
+/// # Errors
+///
+/// Returns a text when `folder` is absolute or has a `..` part.
+pub(crate) fn git_source(url: String, folder: Option<&str>, reference: Option<String>) -> Result<PluginSource, String> {
+    let folder = match folder {
+        None => None,
+        Some(text) => {
+            let parts: Vec<&str> = text.split('/').filter(|part| !matches!(*part, "" | ".")).collect();
+            if text.starts_with('/') || parts.contains(&"..") {
+                return Err(format!("folder: '{text}' is not a relative path inside the repository"));
             }
-        };
-        Ok(Self { url, folder, reference })
-    }
-}
-
-impl fmt::Display for GitSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.url)?;
-        match (&self.folder, &self.reference) {
-            (None, None) => Ok(()),
-            (Some(folder), None) => write!(f, " (folder {folder})"),
-            (None, Some(reference)) => write!(f, " (ref {reference})"),
-            (Some(folder), Some(reference)) => write!(f, " (folder {folder}, ref {reference})"),
+            (!parts.is_empty()).then(|| parts.join("/"))
         }
-    }
+    };
+    Ok(PluginSource {
+        git: url,
+        folder,
+        reference,
+    })
 }
 
 impl<'de> Deserialize<'de> for ConfigPlugin {
@@ -119,9 +100,9 @@ impl<'de> Deserialize<'de> for ConfigPlugin {
                         ));
                     }
                     (Some(path), None) => Source::Folder(path),
-                    (None, Some(url)) => Source::Git(
-                        GitSource::new(url, full.folder.as_deref(), full.reference).map_err(D::Error::custom)?,
-                    ),
+                    (None, Some(url)) => {
+                        Source::Git(git_source(url, full.folder.as_deref(), full.reference).map_err(D::Error::custom)?)
+                    }
                 };
                 Ok(Self {
                     source,
@@ -239,8 +220,8 @@ mod tests {
             options: options.as_object().unwrap().clone(),
         };
         let git = |folder: Option<&str>, reference: Option<&str>| {
-            Source::Git(GitSource {
-                url: "https://host/repo".to_owned(),
+            Source::Git(PluginSource {
+                git: "https://host/repo".to_owned(),
                 folder: folder.map(str::to_owned),
                 reference: reference.map(str::to_owned),
             })

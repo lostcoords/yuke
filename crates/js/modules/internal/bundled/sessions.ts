@@ -54,17 +54,18 @@ function labelOf(row: SessionRow): string {
 function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<SessionRow>[] {
   if (query === "") return rows.map((item) => ({ item }));
   const lower = query.toLowerCase();
-  const fuzzy: { readonly match: PickerMatch<SessionRow>; readonly score: number; readonly index: number }[] = [];
+  const fuzzy: { readonly match: PickerMatch<SessionRow>; readonly score: number }[] = [];
   const plain: PickerMatch<SessionRow>[] = [];
-  for (const [index, item] of rows.entries()) {
+  for (const item of rows) {
     const match = fuzzyMatch(query, labelOf(item));
     const session = item.session;
-    if (match !== undefined) fuzzy.push({ match: { item, ranges: match.ranges }, score: match.score, index });
+    if (match !== undefined) fuzzy.push({ match: { item, ranges: match.ranges }, score: match.score });
     else if ([session.model.model, session.cwd, session.sessionId].some((text) => text.toLowerCase().includes(lower))) {
       plain.push({ item });
     }
   }
-  fuzzy.sort((a, b) => b.score - a.score || a.index - b.index);
+  // The sort is stable, so matches of one score keep the list order.
+  fuzzy.sort((a, b) => b.score - a.score);
   return [...fuzzy.map((entry) => entry.match), ...plain];
 }
 

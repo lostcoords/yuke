@@ -2,7 +2,7 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
 import { failureOf } from "yuke:internal/failure";
 import { emit, notify } from "yuke:internal/native";
-import { catalog, sessionsOf } from "yuke:internal/sessions";
+import { catalog, plugins, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
 import type {
@@ -151,6 +151,7 @@ export async function load(spec: PluginSpec): Promise<void> {
           return sessions as ServiceOf<K>;
         }
         if (name === "catalog") return catalog as ServiceOf<K>;
+        if (name === "plugins") return plugins as ServiceOf<K>;
         if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
         const service = services.get(name);
         if (service === undefined) throw new Error(`get: no loaded plugin provides '${name}'`);

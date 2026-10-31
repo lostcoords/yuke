@@ -9,7 +9,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::git::is_commit;
-use crate::config::{GitSource, read_json};
+use yuke_protocol::PluginSource;
+
+use crate::config::{Config, Source, git_source, read_json};
 
 /// The name of the lock file in the config folder.
 pub(crate) const LOCK: &str = "plugins.lock";
@@ -20,7 +22,7 @@ const VERSION: u32 = 1;
 /// The commits of `plugins.lock`, by source.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Lock {
-    pub(crate) commits: HashMap<GitSource, String>,
+    pub(crate) commits: HashMap<PluginSource, String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,10 +68,28 @@ impl Lock {
             if !is_commit(&entry.commit) {
                 return Err(fail(format!("'{}' is not a full commit id", entry.commit)));
             }
-            let source = GitSource::new(entry.git, entry.folder.as_deref(), entry.reference).map_err(fail)?;
+            let source = git_source(entry.git, entry.folder.as_deref(), entry.reference).map_err(fail)?;
             commits.insert(source, entry.commit);
         }
         Ok(Self { commits })
+    }
+
+    /// [`Lock::read`] when `config` has a Git plugin, else an empty lock, so a bad lock does not stop a profile of local
+    /// plugins.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of [`Lock::read`].
+    pub(crate) fn read_for(config_folder: &Path, config: &Config) -> Result<Self, String> {
+        if config
+            .plugins
+            .iter()
+            .any(|plugin| matches!(plugin.source, Source::Git(_)))
+        {
+            Self::read(config_folder)
+        } else {
+            Ok(Self::default())
+        }
     }
 
     /// Write the lock to `plugins.lock` of `config_folder`, sorted by source, unless the file has this text already. A
@@ -79,14 +99,14 @@ impl Lock {
     ///
     /// Returns a text that names the file that does not read or write.
     pub(crate) fn write(&self, config_folder: &Path) -> Result<bool, String> {
-        let mut entries: Vec<(&GitSource, &String)> = self.commits.iter().collect();
+        let mut entries: Vec<(&PluginSource, &String)> = self.commits.iter().collect();
         entries.sort();
         let file = FileText {
             version: VERSION,
             plugins: entries
                 .into_iter()
                 .map(|(source, commit)| Entry {
-                    git: source.url.clone(),
+                    git: source.git.clone(),
                     folder: source.folder.clone(),
                     reference: source.reference.clone(),
                     commit: commit.clone(),

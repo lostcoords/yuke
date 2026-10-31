@@ -1,12 +1,15 @@
-//! The sessions and the catalog of the app for the plugins: `ctx.get("sessions")` and `ctx.get("catalog")`.
+//! The sessions, the catalog, and the plugin manager of the app for the plugins: `ctx.get("sessions")`,
+//! `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use yuke_js::{Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListCatalogResult, ListSessionsParams,
-    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, StoredEvent,
+    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
+    InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
+    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, StoredEvent, SyncPluginsParams,
+    SyncPluginsResult,
 };
 
 use super::sessions::SessionService;
@@ -121,5 +124,21 @@ impl Sessions for PluginSessions {
 
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, SessionsError> {
         Ok(self.shared.catalog(all).await?)
+    }
+
+    async fn list_plugins(&self) -> Result<ListPluginsResult, SessionsError> {
+        Ok(self.shared.list_plugins()?)
+    }
+
+    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, SessionsError> {
+        Ok(self.shared.sync_plugins(params).await?)
+    }
+
+    async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
+        Ok(self.shared.check_plugins(params).await?)
+    }
+
+    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
+        Ok(self.shared.apply_plugins(params).await?)
     }
 }

@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -165,4 +165,33 @@ impl Timer for CountedWaits {
     async fn sleep(&self, _: Duration) {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
+}
+
+/// Run `git` with `args` in `folder`, as a test user with no hooks and no signing, and give its output.
+pub(crate) fn git(folder: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(folder)
+        .args(["-c", "user.name=test", "-c", "user.email=test@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// Commit the plugin `name` in the folder `plugins/<name>` of the repository `remote`, with the subject `subject`. A
+/// missing repository starts on branch `main`. Gives the commit id.
+pub(crate) fn commit_plugin(remote: &Path, name: &str, subject: &str) -> String {
+    if !remote.join(".git").exists() {
+        std::fs::create_dir_all(remote).unwrap();
+        git(remote, &["init", "--quiet", "-b", "main"]);
+    }
+    let folder = remote.join("plugins").join(name);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("plugin.json"), format!(r#"{{ "name": "{name}" }}"#)).unwrap();
+    std::fs::write(folder.join("notes.txt"), subject).unwrap();
+    git(remote, &["add", "."]);
+    git(remote, &["commit", "--quiet", "-m", subject]);
+    git(remote, &["rev-parse", "HEAD"])
 }
