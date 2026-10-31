@@ -1,0 +1,22 @@
+{
+  "name": "yuke-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vitepress build",
+    "dev": "vitepress dev --host 127.0.0.1 --strictPort",
+    "preview": "vitepress preview",
+    "check": "node check.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "vitepress": "1.6.4"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "6.4.3"
+    }
+  }
+}

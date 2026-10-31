@@ -1,0 +1,59 @@
+name: Site
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'tools/install.sh'
+      - '.github/workflows/site.yml'
+  push:
+    branches: [site]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'tools/install.sh'
+      - '.github/workflows/site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci --prefix website
+      - run: npm run check --prefix website
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/site
+
+  # GitHub Pages serves target/site at yuke.sh; website/public/CNAME names the domain.
+  # The site branch deploys until the page is ready to merge into main.
+  deploy:
+    name: Deploy
+    if: github.ref == 'refs/heads/site' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

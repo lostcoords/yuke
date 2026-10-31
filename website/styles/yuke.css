@@ -1,0 +1,297 @@
+@font-face {
+  font-family: 'Yuke Mono';
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Yuke Mono';
+  font-weight: 600 700;
+  font-display: swap;
+  src: url('./fonts/JetBrainsMono-SemiBold.woff2') format('woff2');
+}
+
+/* The brand palette: mantis green, yuke black, warm white, muted. */
+:root {
+  --yuke-green: #a8cfa0;
+  --yuke-black: #0c0d0c;
+  --yuke-white: #f4f2eb;
+  --yuke-muted: #858a84;
+
+  --vp-font-family-base: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --vp-font-family-mono: 'Yuke Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --yuke-line: #dcd8cc;
+  --yuke-panel: #efece3;
+  --yuke-ink: #3b7535;
+  --yuke-terminal: #0c0d0c;
+  --yuke-terminal-line: #262a26;
+  --yuke-bg-mark: rgba(12, 13, 12, 0.16);
+
+  --vp-c-bg: var(--yuke-white);
+  --vp-c-bg-alt: #eeebe2;
+  --vp-c-bg-soft: var(--yuke-panel);
+  --vp-c-bg-elv: var(--yuke-white);
+  --vp-c-text-1: var(--yuke-black);
+  --vp-c-text-2: #4a4e49;
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-divider: var(--yuke-line);
+  --vp-c-gutter: var(--yuke-line);
+  --vp-c-border: var(--yuke-line);
+  --vp-c-brand-1: var(--yuke-ink);
+  --vp-c-brand-2: #4c8a45;
+  --vp-c-brand-3: var(--yuke-ink);
+  --vp-c-brand-soft: rgba(168, 207, 160, 0.3);
+  --vp-code-color: var(--yuke-ink);
+  --vp-code-bg: rgba(168, 207, 160, 0.28);
+  --vp-code-block-bg: var(--yuke-panel);
+  --vp-code-copy-code-bg: var(--yuke-panel);
+  --vp-nav-bg-color: var(--yuke-white);
+}
+
+:root.dark {
+  --yuke-line: #262a26;
+  --yuke-panel: #111311;
+  --yuke-ink: var(--yuke-green);
+  --yuke-bg-mark: rgba(244, 242, 235, 0.13);
+
+  --vp-c-bg: var(--yuke-black);
+  --vp-c-bg-alt: #090a09;
+  --vp-c-bg-elv: #111311;
+  --vp-c-text-1: var(--yuke-white);
+  --vp-c-text-2: #b8bbb4;
+  --vp-c-text-3: var(--yuke-muted);
+  --vp-c-brand-2: #c2e0bb;
+  --vp-c-brand-soft: rgba(168, 207, 160, 0.14);
+  --vp-code-bg: rgba(168, 207, 160, 0.12);
+  --vp-nav-bg-color: var(--yuke-black);
+}
+
+html {
+  background-color: var(--vp-c-bg);
+}
+
+::selection {
+  background: var(--yuke-green);
+  color: var(--yuke-black);
+}
+
+:focus-visible {
+  outline: 2px solid var(--yuke-green);
+  outline-offset: 3px;
+}
+
+/* A small, spaced, uppercase mono label above a heading or beside a panel. */
+.yuke-label {
+  margin: 0;
+  color: var(--vp-c-text-3);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Heavy, tight headings, as in the brand sheet. */
+.yuke-heading {
+  margin: 0;
+  color: var(--vp-c-text-1);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+}
+
+.VPNav .title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.VPNavBar .divider-line {
+  background-color: var(--yuke-line) !important;
+}
+
+.VPNavBar .appearance::before,
+.VPNavBar .social-links::before {
+  display: none;
+}
+
+/* The home page is wider than a docs page, and its sections share these edges. */
+/* The grid background sits behind everything on the home page. */
+.VPHome {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.VPContent.is-home .VPHome {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* The same edges as parcela.run: 1280 px wide, with 24, 48 or 64 px of gutter. */
+.yuke-section {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+@media (min-width: 640px) {
+  .yuke-section {
+    padding: 0 48px;
+  }
+}
+
+@media (min-width: 960px) {
+  .yuke-section {
+    padding: 0 64px;
+  }
+}
+
+/* A bordered panel: the frame of every home page section. */
+.yuke-panel {
+  border: 1px solid var(--yuke-line);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+}
+
+/* The Markdown steps read as one more panel: the container keeps the section edges, and its
+   Markdown root draws the frame. */
+.VPHome > .vp-doc.container {
+  margin-top: 128px;
+}
+
+.VPHome > .vp-doc > div {
+  counter-reset: step;
+  padding: 40px 24px 48px;
+  border: 1px solid var(--yuke-line);
+  border-radius: 8px;
+}
+
+@media (min-width: 768px) {
+  .VPHome > .vp-doc > div {
+    padding: 44px 40px 56px;
+  }
+}
+
+.VPHome .vp-doc h2 {
+  margin: 0 0 36px;
+  padding: 0;
+  border: 0;
+  color: var(--vp-c-text-1);
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.VPHome .vp-doc h2::before {
+  content: 'Quick start';
+  display: block;
+  margin-bottom: 14px;
+  color: var(--vp-c-text-3);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.VPHome .vp-doc h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 32px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.VPHome .vp-doc h3:first-of-type {
+  margin-top: 0;
+}
+
+.VPHome .vp-doc h3::before {
+  counter-increment: step;
+  content: counter(step) '.';
+  flex: none;
+  color: var(--vp-c-brand-1);
+  font-family: var(--vp-font-family-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.7;
+}
+
+.vp-doc a {
+  text-underline-offset: 3px;
+}
+
+.vp-doc :not(pre) > code {
+  border-radius: 4px;
+}
+
+/* Code sits in thin frames that light up green on hover. */
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--yuke-line);
+  border-radius: 6px;
+  transition: border-color 0.2s ease;
+}
+
+.vp-doc div[class*='language-']:hover {
+  border-color: var(--yuke-green);
+}
+
+.vp-doc [class*='language-'] > span.lang {
+  display: none;
+}
+
+.vp-doc [class*='language-'] pre,
+.vp-doc [class*='language-'] code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (hover: none) {
+  .vp-doc [class*='language-'] > button.copy {
+    opacity: 1;
+  }
+}
+
+/* Each theme shows its own variant of a light/dark image pair. */
+html:not(.dark) .yuke-dark,
+html.dark .yuke-light {
+  display: none;
+}
+
+/* Home sections rise into place as they scroll in. */
+@supports (animation-timeline: view()) {
+  .yuke-reveal {
+    animation: reveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 40%;
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
