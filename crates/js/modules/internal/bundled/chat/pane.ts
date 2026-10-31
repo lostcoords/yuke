@@ -10,6 +10,8 @@ import {
   ChatDocument,
   type ChatQuestion,
   ChatQuestions,
+  type ChatRow,
+  type ChatRowsContext,
   ChatSession,
   ChatWorking,
 } from "yuke:chat";
@@ -119,6 +121,8 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
+  /** The rows of each row source of the `chat` service for `pane`, in add order. */
+  readonly rows: (pane: ChatRowsContext) => (readonly ChatRow[])[];
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
 }
@@ -429,6 +433,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let listRows = 0;
   let workingRows = 0;
   let shown: [InputId, Frozen<Input>][] = [];
+  let added: ChatRow[] = [];
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
@@ -451,8 +456,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const list = chatComposer.waiting;
       const above = Math.max(0, ruleRow - listRows - workingRows);
       shown = list.slice(Math.max(0, list.length - above));
+      // Plugin rows get the rows that the strip leaves, at most half the rows above the rule. The chat shows all rows
+      // of a source, or none.
+      let room = Math.min(above - shown.length, Math.floor(Math.max(0, ruleRow) / 2));
+      added = [];
+      for (const rows of chat.rows({ session: chatSession.id, width: size.width })) {
+        if (rows.length > room) break;
+        added.push(...rows);
+        room -= rows.length;
+      }
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length } },
+        { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length - added.length } },
         {
           view: question?.view ?? composer,
           rect: { column: 0, row: composerRow, width: size.width, height: size.height - composerRow },
@@ -475,8 +489,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     draw(canvas: Canvas): void {
       if (ruleRow < 0) return;
       const listRow = ruleRow - listRows;
+      const stripRow = listRow - workingRows - shown.length;
+      for (const [at, row] of added.entries()) {
+        canvas.text(0, stripRow - added.length + at, clipped(row.text, canvas.width), row.style);
+      }
       for (const [at, entry] of shown.entries()) {
-        const row = listRow - workingRows - shown.length + at;
+        const row = stripRow + at;
         const hint = at === shown.length - 1 ? " ↑ edit" : "";
         const text = inputText(entry[1].content).replaceAll("\n", " ");
         const room = Math.max(0, canvas.width - 1 - measure(hint));

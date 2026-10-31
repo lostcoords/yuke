@@ -5,7 +5,7 @@
  * shows a session in a pane for other plugins.
  */
 
-import { chatStyles } from "yuke:chat";
+import { type ChatRow, type ChatRowsContext, chatStyles } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
@@ -154,6 +154,8 @@ const COMMANDS: readonly {
 export function apply(ctx: PluginContext<Options>): undefined {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
+  // One entry per call of `addRows`, so the same source can show twice and each disposer removes its own.
+  const sources = new Set<{ readonly source: (pane: ChatRowsContext) => readonly ChatRow[] }>();
   const panes = new WeakMap<View, PaneActions>();
   ctx.provide("chat", {
     show: async (id) => {
@@ -177,6 +179,14 @@ export function apply(ctx: PluginContext<Options>): undefined {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    addRows: (source) => {
+      const entry = { source };
+      sources.add(entry);
+      tui?.requestFrame();
+      return () => {
+        if (sources.delete(entry)) tui?.requestFrame();
+      };
+    },
   });
   if (tui === undefined) return undefined;
   for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style);
@@ -190,6 +200,16 @@ export function apply(ctx: PluginContext<Options>): undefined {
     choice: new SavedChoice(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
+    rows: (pane) =>
+      [...sources].flatMap((entry) => {
+        try {
+          return [entry.source(pane)];
+        } catch (error) {
+          sources.delete(entry);
+          ctx.notify("error", `a row source of the chat failed: ${String(error)}`);
+          return [];
+        }
+      }),
     moved: (view) => {
       for (const listener of listeners) {
         try {

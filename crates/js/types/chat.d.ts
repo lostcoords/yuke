@@ -13,7 +13,7 @@ declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
   import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { CommandItem, EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
+  import type { CanvasStyle, CommandItem, EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
 
   /**
    * The session of one chat view, with no terminal interface: its id, its handle, its transcript, and the pages of its
@@ -227,6 +227,18 @@ declare module "yuke:chat" {
    * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
    * pane exists.
    */
+  /** One row above the composer of a chat pane. The chat cuts a longer text to the pane width and ends it with `…`. */
+  export interface ChatRow {
+    readonly text: string;
+    readonly style?: CanvasStyle | undefined;
+  }
+
+  /** The chat pane that a row source gives rows for. */
+  export interface ChatRowsContext {
+    readonly session: SessionId | undefined;
+    readonly width: number;
+  }
+
   export interface ChatService {
     /**
      * Show the session `id` in the focused chat pane, or in a new chat pane when the focused pane is no chat pane. The
@@ -237,5 +249,20 @@ declare module "yuke:chat" {
     readonly session: (view: View) => SessionId | undefined;
     /** Call `listener` after each change of the session of a chat pane. A throw removes the listener and reports it. */
     readonly onChange: (listener: (view: View) => void) => () => void;
+    /**
+     * Add rows above the composer of each chat pane. The rows sit below the transcript and above the rows of the chat:
+     * the waiting messages, the working row, and the command list. Each layout of a pane calls `source`, so a source
+     * must be cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
+     *
+     * Plugin rows get the rows that the chat leaves, at most half the rows above the rule. The chat shows all rows of a
+     * source, or none. The sources show in add order, and the first source that does not fit hides the later sources. A
+     * throw removes the source, and a notice shows the error. Each call adds one source, and its disposer removes only
+     * that source.
+     *
+     * ```ts
+     * chat.addRows((pane) => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : []));
+     * ```
+     */
+    readonly addRows: (source: (pane: ChatRowsContext) => readonly ChatRow[]) => () => void;
   }
 }
