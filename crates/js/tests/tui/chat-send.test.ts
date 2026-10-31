@@ -567,6 +567,38 @@ test("a pane with no row above the rule shows no commands, and the list takes no
   equal(ran, []);
 });
 
+test("a pane with few rows above the rule shows the first commands", () => {
+  using frame = createFrame({ width: 60, height: 4 });
+  const chat = loadChat(frame);
+  for (const name of ["alpha1", "alpha2", "alpha3"]) chat.tui.commands.add({ name, run: () => {} });
+  frame.start();
+  frame.key("/ a l p h a");
+  frame.draw();
+  equal(rows(frame).slice(0, 2), [" /chat:alpha1", " /chat:alpha2"]);
+});
+
+test("a question in the place of the composer hides the commands", async () => {
+  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(replies(2));
+  const chat = loadChat(frame, { questions: "composer" }, sessions);
+  chat.tui.commands.add({ name: "alpha", run: () => {} });
+  frame.start();
+  await settle();
+  const listed = (): boolean => {
+    frame.draw();
+    return rows(frame).some((line) => line.includes("/chat:alpha"));
+  };
+  frame.key("/ a l p");
+  const before = listed();
+  sessions.push({
+    sessionUpdate: "interaction_requested",
+    interactionId: 1,
+    source: "guard",
+    request: { kind: "confirm", title: "Go?", message: "" },
+  });
+  equal([before, listed()], [true, false]);
+});
+
 test("esc hides the commands until the draft changes, and a draft with no command sends as a message", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));

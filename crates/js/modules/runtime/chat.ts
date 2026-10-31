@@ -1,5 +1,6 @@
 /** The code of the public module `yuke:chat`. Its declaration is `types/chat.d.ts`, and the check at the end compares the two. */
 
+import { ChatCommands } from "yuke:internal/chat/commands";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
 import { ChatQuestions } from "yuke:internal/chat/questions";
@@ -7,7 +8,7 @@ import { STYLES as chatStyles } from "yuke:internal/chat/rows";
 import { ChatWorking } from "yuke:internal/chat/working";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 
-export { ChatComposer, ChatDocument, ChatQuestions, ChatWorking, chatStyles };
+export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking, chatStyles };
 
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
@@ -203,6 +204,7 @@ export class ChatSession {
 // The check against `types/chat.d.ts` keeps this code and the declarations of the authors in step.
 const declared = {
   ChatSession,
+  ChatCommands,
   ChatComposer,
   ChatDocument,
   ChatQuestions,

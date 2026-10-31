@@ -13,7 +13,7 @@ declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
   import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
+  import type { CommandItem, EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
 
   /**
    * The session of one chat view, with no terminal interface: its id, its handle, its transcript, and the pages of its
@@ -128,6 +128,33 @@ declare module "yuke:chat" {
     cancel(): void;
     /** Call `listener` after each change of `current`. */
     onChange(listener: () => void): () => void;
+  }
+
+  export interface ChatCommandsOptions {
+    /** The commands to list and run. `tui.commands` fits. */
+    readonly commands: { readonly list: () => readonly CommandItem[]; readonly run: (name: string) => boolean };
+    /** Its abort removes the watch of the editor. */
+    readonly signal: AbortSignal;
+    /** While this gives `false`, the list shows nothing and takes no key. */
+    readonly enabled: () => boolean;
+  }
+
+  /**
+   * A list of the enabled commands that match a draft of one slash word, such as `/mod`. The list shows above a
+   * composer. Up and Down move the selection. Enter runs the selected command and empties the editor. Esc hides the list
+   * until the next edit. A draft with no match stays a message.
+   *
+   * ```ts
+   * const commands = new ChatCommands(editor, { commands: tui.commands, signal: mount.signal, enabled: () => true });
+   * // in layout: { view: commands.view, rect: { column: 0, row: editorRow - commands.rows, width, height: commands.rows } }
+   * ```
+   */
+  export class ChatCommands {
+    constructor(editor: TextEditor, options: ChatCommandsOptions);
+    /** The count of rows that the list needs now: at most 6, and 0 without a match. */
+    get rows(): number;
+    /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected command. */
+    readonly view: View;
   }
 
   export interface ChatWorkingOptions {
