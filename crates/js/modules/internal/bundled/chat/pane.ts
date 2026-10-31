@@ -14,7 +14,7 @@ import {
   ChatWorking,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { EMPTY, IMAGE } from "yuke:internal/chat/composer";
+import { EMPTY } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { bottom } from "yuke:internal/tui/layout";
@@ -381,7 +381,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
-  /** Put the image of the clipboard at the caret. The pane gets its session first, because the image goes to its store. */
+  /** Put the image of the clipboard at the caret. */
   const pasteImage = async (): Promise<void> => {
     if (busy) return;
     busy = true;
@@ -392,16 +392,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         ctx.notify("info", "the clipboard holds no image");
         return;
       }
-      const target = await sessionHandle();
-      if (target === undefined || mount.signal.aborted) return;
-      const blob = await target.putBlob(image.bytes);
-      if (mount.signal.aborted) return;
-      // The image goes where the caret is now, also after an edit during the paste.
-      const count = composer.state.spans.filter((span) => span.kind === "image").length;
-      const selection = composer.selection;
-      composer.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), IMAGE, [
-        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mime: image.mime } },
-      ]);
+      await chatComposer.attachImage(image);
     } catch (error) {
       if (!mount.signal.aborted) ctx.notify("error", `the image did not attach: ${String(error)}`);
     } finally {

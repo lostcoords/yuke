@@ -158,6 +158,50 @@ test("a composer labels a long paste, and a paste handler added later takes a pa
   equal([labeled, editor.state.text, editor.state.spans], [["[Pasted text · 301 chars]"], "claimed", []]);
 });
 
+test("attachImage stores the image and puts it over the selection, and an abort during the handle stores nothing", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  const editor = new TextEditor({ state: { text: "abc", selection: { anchor: 2, head: 1 }, spans: [] } });
+  const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
+  await composer.attachImage({ bytes: new Uint8Array([1, 2]), mime: "image/png" });
+  const attached = [editor.state.text, editor.state.spans.map((span) => [span.from, span.label])];
+  const closed = new AbortController();
+  const handle = async () => {
+    closed.abort();
+    return chat.handle;
+  };
+  await new ChatComposer(chat, new TextEditor(), { handle, signal: closed.signal }).attachImage({
+    bytes: new Uint8Array([3]),
+    mime: "image/png",
+  });
+  equal([attached, sessions.blobs], [["a\uFFFCc", [[1, "[image 1]"]]], [[1, 2]]]);
+});
+
+test("a send before the store of an attach ends does nothing, so the image goes with its draft", async () => {
+  const sessions = fakeSessions(replies(2));
+  const owner = new AbortController();
+  const chat = new ChatSession(sessions as unknown as Sessions, owner.signal, "s1");
+  await chat.open("s1");
+  const editor = new TextEditor({ state: { text: "hello", selection: { anchor: 5, head: 5 }, spans: [] } });
+  const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
+  const store = Promise.withResolvers<void>();
+  sessions.state.store = store.promise;
+  const attaching = composer.attachImage({ bytes: new Uint8Array([1]), mime: "image/png" });
+  await settle();
+  const busy = composer.busy;
+  await composer.send();
+  const early = [...sessions.inputs];
+  store.resolve();
+  await attaching;
+  await composer.send();
+  equal(
+    [busy, early, sessions.inputs, composer.busy],
+    [true, [], [[{ user_text: "hello" }, { media: { blob: { digest: "d1", len: 1 }, mime: "image/png" } }]], false],
+  );
+});
+
 test("older recalls the newest waiting message, and gives taken when a turn took it first", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();

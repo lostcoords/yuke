@@ -78,6 +78,8 @@ export class ChatComposer {
   #recalled: InputId | undefined;
   // A recall waits for its removal. Until the removal ends, older() does nothing.
   #recalling = false;
+  // The attaches whose store has not ended. A send waits for them, so the image goes with its draft.
+  #attaching = 0;
 
   constructor(chat: ChatSession, editor: TextEditor, options: ChatComposerOptions) {
     this.#chat = chat;
@@ -101,7 +103,7 @@ export class ChatComposer {
   }
 
   get busy(): boolean {
-    return this.#sending || this.#recalling;
+    return this.#sending || this.#recalling || this.#attaching > 0;
   }
 
   get browsing(): boolean {
@@ -120,7 +122,7 @@ export class ChatComposer {
   }
 
   async send(): Promise<void> {
-    if (this.#sending || blocksOf(this.#editor.state).length === 0) return;
+    if (this.#sending || this.#attaching > 0 || blocksOf(this.#editor.state).length === 0) return;
     this.#sending = true;
     let draft: EditorState | undefined;
     try {
@@ -150,6 +152,25 @@ export class ChatComposer {
 
   newer(): void {
     this.#browseBy(1);
+  }
+
+  async attachImage(image: { readonly bytes: Uint8Array; readonly mime: string }): Promise<void> {
+    this.#attaching += 1;
+    try {
+      const target = await this.#options.handle();
+      if (target === undefined || this.#options.signal.aborted) return;
+      const blob = await target.putBlob(image.bytes);
+      if (this.#options.signal.aborted) return;
+      // The image goes where the caret is now, also after an edit during the store.
+      const editor = this.#editor;
+      const count = editor.state.spans.filter((span) => span.kind === "image").length;
+      const selection = editor.selection;
+      editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), IMAGE, [
+        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mime: image.mime } },
+      ]);
+    } finally {
+      this.#attaching -= 1;
+    }
   }
 
   setDraft(draft: EditorState): void {

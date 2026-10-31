@@ -53,7 +53,7 @@ declare module "yuke:chat" {
   export interface ChatComposerOptions {
     /** The handle for a send. `undefined` cancels the send, and the draft stays. */
     readonly handle: () => Promise<SessionHandle | undefined>;
-    /** Its abort removes the watch of the editor by the composer. */
+    /** Its abort removes the watch of the editor by the composer. An attach that started before it puts nothing. */
     readonly signal: AbortSignal;
   }
 
@@ -70,7 +70,7 @@ declare module "yuke:chat" {
    */
   export class ChatComposer {
     constructor(chat: ChatSession, editor: TextEditor, options: ChatComposerOptions);
-    /** A send or a recall runs. */
+    /** A send, a recall, or an attach has not ended. */
     get busy(): boolean;
     /** The editor shows an older message of the user. */
     get browsing(): boolean;
@@ -80,7 +80,8 @@ declare module "yuke:chat" {
     get waiting(): [InputId, Frozen<Input>][];
     /**
      * Send the draft. The draft of the send is the one after `handle()`, and the editor then empties. A refused input
-     * comes back above the newer text, and the promise rejects. An empty draft or a running send does nothing.
+     * comes back above the newer text, and the promise rejects. An empty draft does nothing. A send before the end of
+     * another send or of an attach does nothing.
      */
     send(): Promise<void>;
     /**
@@ -91,6 +92,11 @@ declare module "yuke:chat" {
     older(): Promise<"taken" | undefined>;
     /** Show a newer message of the user, or the empty editor after the newest one. */
     newer(): void;
+    /**
+     * Store `image` in the session of `handle()`, then put it at the caret of that time as `[image N]`. A send gives it
+     * as a media block. `undefined` from `handle()` puts nothing, and a failed store rejects.
+     */
+    attachImage(image: { readonly bytes: Uint8Array; readonly mime: string }): Promise<void>;
     /** Put `draft` in the editor, and end a browse. A running recall puts its message above `draft` when it ends. */
     setDraft(draft: EditorState): void;
   }
