@@ -8,14 +8,16 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config, TS};
 
 use crate::{
-    ApplyPluginsResult, CheckPluginsResult, ClientNotification, ClientRequest, EmptyResult, GetBlobResult,
-    InitializeResult, InputResult, ListCatalogResult, ListJobsResult, ListMcpServersResult, ListPluginsResult,
-    ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response, ServerNotification,
-    ServerRequest, SessionResult, SessionRow, SessionSnapshot, SyncPluginsResult,
+    AddPluginResult, ApplyPluginsResult, CheckPluginsResult, ClientNotification, ClientRequest, EmptyResult,
+    GetBlobResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult, ListMcpServersResult,
+    ListPluginsResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response,
+    ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot, SyncPluginsResult,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
 const PLUGIN_TYPES: &[&str] = &[
+    "AddPluginParams",
+    "AddPluginResult",
     "ApplyPluginsParams",
     "ApplyPluginsResult",
     "Block",
@@ -42,6 +44,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "NoticeParams",
     "PluginChange",
     "PluginTarget",
+    "RemovePluginParams",
     "SessionId",
     "SessionRow",
     "SessionSettings",
@@ -111,6 +114,7 @@ fn export(folder: &Path) {
     SyncPluginsResult::export_all(&config).unwrap();
     CheckPluginsResult::export_all(&config).unwrap();
     ApplyPluginsResult::export_all(&config).unwrap();
+    AddPluginResult::export_all(&config).unwrap();
     EmptyResult::export_all(&config).unwrap();
     RemoveInputResult::export_all(&config).unwrap();
     GetBlobResult::export_all(&config).unwrap();

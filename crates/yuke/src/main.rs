@@ -27,10 +27,11 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
+use serde_json::Map;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
-use yuke_protocol::{PluginLog, PluginState, PluginTarget, SessionId};
+use yuke_protocol::{PluginLog, PluginSource, PluginState, PluginTarget, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
@@ -142,6 +143,23 @@ enum PluginCommand {
         /// Write plugins.lock with no question.
         #[arg(long)]
         yes: bool,
+    },
+    /// Add a Git plugin to config.json, install it, and lock it at the commit of its ref. The comments of config.json
+    /// stay.
+    Add {
+        /// The URL of the repository, as git takes it.
+        url: String,
+        /// The plugin folder in the repository. The default is its root.
+        #[arg(long)]
+        folder: Option<String>,
+        /// The branch, tag, or commit that an update follows. The default is the default branch.
+        #[arg(long = "ref", value_name = "REF")]
+        reference: Option<String>,
+    },
+    /// Remove a plugin from config.json and plugins.lock, by the name of its plugin.json. Its install stays on disk.
+    Remove {
+        /// The name of the plugin.
+        name: String,
     },
 }
 
@@ -354,6 +372,22 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             }
             manager::apply(&paths, &changes).await?;
             say("plugins.lock written: run /reload in open sessions")?;
+        }
+        PluginCommand::Add { url, folder, reference } => {
+            let source = PluginSource {
+                git: url,
+                folder,
+                reference,
+            };
+            let added = manager::add(&paths, source, Map::new()).await?;
+            say(&format!("{}  {}  {}", added.name, added.source, short(&added.commit)))?;
+            say("config.json and plugins.lock written: run /reload in open sessions")?;
+        }
+        PluginCommand::Remove { name } => {
+            manager::remove(&paths, &name).await?;
+            say(&format!(
+                "{name} removed from config.json: run /reload in open sessions"
+            ))?;
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -716,6 +750,37 @@ mod tests {
         assert_eq!(
             command(&["plugin", "update", "--all", "clock"]),
             Err(ErrorKind::ArgumentConflict)
+        );
+    }
+
+    #[test]
+    fn plugin_add_takes_a_url_with_a_folder_and_a_ref_and_remove_takes_a_name() {
+        assert_eq!(
+            command(&[
+                "plugin",
+                "add",
+                "https://h/r",
+                "--folder",
+                "plugins/clock",
+                "--ref",
+                "v1"
+            ]),
+            Ok(Some(Command::Plugin {
+                command: PluginCommand::Add {
+                    url: "https://h/r".to_owned(),
+                    folder: Some("plugins/clock".to_owned()),
+                    reference: Some("v1".to_owned()),
+                },
+            }))
+        );
+        assert_eq!(command(&["plugin", "add"]), Err(ErrorKind::MissingRequiredArgument));
+        assert_eq!(
+            command(&["plugin", "remove", "clock"]),
+            Ok(Some(Command::Plugin {
+                command: PluginCommand::Remove {
+                    name: "clock".to_owned()
+                },
+            }))
         );
     }
 

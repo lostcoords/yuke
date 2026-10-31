@@ -149,4 +149,15 @@ impl Sessions for PluginSessions {
     async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
         Ok(self.shared.apply_plugins(params).await?)
     }
+
+    async fn add_plugin(
+        &self,
+        params: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, SessionsError> {
+        Ok(self.shared.add_plugin(params).await?)
+    }
+
+    async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), SessionsError> {
+        Ok(self.shared.remove_plugin(params).await?)
+    }
 }

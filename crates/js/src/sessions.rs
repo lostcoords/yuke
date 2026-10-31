@@ -245,4 +245,21 @@ pub trait Sessions: Send + Sync {
     ///
     /// Returns why the request failed.
     async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError>;
+
+    /// Add a Git plugin to `config.json`, and install and lock it, as `plugin/add` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn add_plugin(
+        &self,
+        params: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, SessionsError>;
+
+    /// Remove a plugin from `config.json` and `plugins.lock`, as `plugin/remove` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), SessionsError>;
 }

@@ -155,6 +155,14 @@ pub enum ClientRequest {
     /// until `profile/reload`. Result: [`crate::ApplyPluginsResult`].
     #[serde(rename = "plugin/apply")]
     ApplyPlugins(crate::ApplyPluginsParams),
+    /// Add a Git plugin to `config.json`, install it, and lock it at the commit of its ref. The comments and the layout of
+    /// `config.json` stay. It fails when `config.json` has the plugin already. Result: [`crate::AddPluginResult`].
+    #[serde(rename = "plugin/add")]
+    AddPlugin(crate::AddPluginParams),
+    /// Remove a plugin of `config.json` by the name of its `plugin.json`, and its entry of `plugins.lock`. Its install
+    /// stays on disk. Result: [`EmptyResult`].
+    #[serde(rename = "plugin/remove")]
+    RemovePlugin(crate::RemovePluginParams),
     /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
     /// its next turn takes the tools and hooks of the new plugins. Result: [`EmptyResult`].
     /// - It fails while a turn runs. Then nothing changes.
@@ -174,7 +182,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 28] = [
+    pub const METHODS: [&str; 30] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -200,6 +208,8 @@ impl ClientRequest {
         "plugin/sync",
         "plugin/check",
         "plugin/apply",
+        "plugin/add",
+        "plugin/remove",
         "profile/reload",
         "blob/put",
         "blob/get",

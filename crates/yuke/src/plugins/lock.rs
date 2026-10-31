@@ -2,8 +2,6 @@
 //! with the dotfiles.
 
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, Write};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::git::is_commit;
 use yuke_protocol::PluginSource;
 
-use crate::config::{Config, Source, git_source, read_json};
+use crate::config::{Config, Source, git_source, read_json, write_text};
 
 /// The name of the lock file in the config folder.
 pub(crate) const LOCK: &str = "plugins.lock";
@@ -114,29 +112,8 @@ impl Lock {
                 .collect(),
         };
         let path = config_folder.join(LOCK);
-        let fail = |error: io::Error| format!("{}: {error}", path.display());
         let mut text = serde_json::to_string_pretty(&file).map_err(|error| format!("{}: {error}", path.display()))?;
         text.push('\n');
-        // The rename replaces the target of a link, so a lock in a dotfiles repository stays linked, also before its
-        // target exists.
-        let target = match fs::read_link(&path) {
-            Ok(link) => config_folder.join(link),
-            Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::InvalidInput) => path.clone(),
-            Err(error) => return Err(fail(error)),
-        };
-        match fs::read_to_string(&target) {
-            Ok(old) if old == text => return Ok(false),
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(fail(error)),
-        }
-        let folder = target.parent().unwrap_or(config_folder);
-        fs::create_dir_all(folder).map_err(fail)?;
-        let temporary = folder.join(format!(".{LOCK}.new"));
-        let mut new = File::create(&temporary).map_err(fail)?;
-        new.write_all(text.as_bytes()).map_err(fail)?;
-        new.sync_all().map_err(fail)?;
-        fs::rename(&temporary, &target).map_err(fail)?;
-        Ok(true)
+        write_text(&path, &text)
     }
 }

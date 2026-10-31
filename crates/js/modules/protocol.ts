@@ -2,6 +2,36 @@
 // The types of the protocol that plugins use, as the clients of the protocol see them.
 
 /**
+ * The params of `plugin/add`.
+ */
+export type AddPluginParams = { 
+/**
+ * The Git plugin to add.
+ */
+source: PluginSource, 
+/**
+ * The options of the plugin. None gives it no options.
+ */
+options?: Record<string, unknown>, };
+
+/**
+ * The result of `plugin/add`.
+ */
+export type AddPluginResult = { 
+/**
+ * The name of its `plugin.json`.
+ */
+name: string, 
+/**
+ * The plugin, as `config.json` and `plugins.lock` hold it now.
+ */
+source: PluginSource, 
+/**
+ * The full commit id in the lock.
+ */
+commit: string, };
+
+/**
  * The facts of one answer of the model.
  */
 export type Answer = { 
@@ -1010,6 +1040,15 @@ thinking: Thinking | null,
  * How hard the model thinks. `None` leaves the endpoint default.
  */
 effort: Effort | null, };
+
+/**
+ * The params of `plugin/remove`.
+ */
+export type RemovePluginParams = { 
+/**
+ * The name of the `plugin.json` of the plugin, a Git plugin or a local one.
+ */
+name: string, };
 
 /**
  * A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent

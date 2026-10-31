@@ -37,9 +37,9 @@ pub use message::{
     SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use plugin::{
-    ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ListPluginsResult, ManagedPlugin,
-    PluginChange, PluginLog, PluginSource, PluginState, PluginTarget, SyncPluginsParams, SyncPluginsResult,
-    SyncedPlugin,
+    AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,
+    ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
+    RemovePluginParams, SyncPluginsParams, SyncPluginsResult, SyncedPlugin,
 };
 pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
 pub use update::{

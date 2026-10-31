@@ -448,6 +448,11 @@ impl Server {
             ClientRequest::SyncPlugins(params) => result(&app.sync_plugins(params).await?),
             ClientRequest::CheckPlugins(params) => result(&app.check_plugins(params).await?),
             ClientRequest::ApplyPlugins(params) => result(&app.apply_plugins(params).await?),
+            ClientRequest::AddPlugin(params) => result(&app.add_plugin(params).await?),
+            ClientRequest::RemovePlugin(params) => {
+                app.remove_plugin(params).await?;
+                result(&EmptyResult {})
+            }
             ClientRequest::ReloadProfile(EmptyParams {}) => {
                 self.app.reload().await?;
                 result(&EmptyResult {})

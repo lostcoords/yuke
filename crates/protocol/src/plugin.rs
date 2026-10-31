@@ -1,5 +1,5 @@
-//! The plugin manager of `plugin/list`, `plugin/sync`, `plugin/check`, and `plugin/apply`: the plugins of `config.json`
-//! and the commits of the Git plugins in `plugins.lock`.
+//! The plugin manager of `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`, `plugin/add`, and
+//! `plugin/remove`: the plugins of `config.json` and the commits of the Git plugins in `plugins.lock`.
 
 use std::fmt;
 
@@ -186,4 +186,39 @@ pub struct ApplyPluginsParams {
 pub struct ApplyPluginsResult {
     /// Whether `plugins.lock` changed.
     pub written: bool,
+}
+
+/// The params of `plugin/add`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AddPluginParams {
+    /// The Git plugin to add.
+    pub source: PluginSource,
+    /// The options of the plugin. None gives it no options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
+    pub options: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// The result of `plugin/add`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AddPluginResult {
+    /// The name of its `plugin.json`.
+    pub name: String,
+    /// The plugin, as `config.json` and `plugins.lock` hold it now.
+    pub source: PluginSource,
+    /// The full commit id in the lock.
+    pub commit: String,
+}
+
+/// The params of `plugin/remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RemovePluginParams {
+    /// The name of the `plugin.json` of the plugin, a Git plugin or a local one.
+    pub name: String,
 }

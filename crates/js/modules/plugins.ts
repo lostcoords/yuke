@@ -14,6 +14,8 @@
  */
 import type { ChatService } from "yuke:chat";
 import type {
+  AddPluginParams,
+  AddPluginResult,
   ApplyPluginsResult,
   Blob,
   Block,
@@ -52,6 +54,8 @@ import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 import type { Tui } from "yuke:tui";
 
 export type {
+  AddPluginParams,
+  AddPluginResult,
   ApplyPluginsResult,
   Blob,
   Block,
@@ -211,8 +215,8 @@ export interface Catalog {
 }
 
 /**
- * The plugin manager of the profile, as the requests `plugin/list`, `plugin/sync`, `plugin/check`, and `plugin/apply`
- * give it. No call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
+ * The plugin manager of the profile, as the requests `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`,
+ * `plugin/add`, and `plugin/remove` give it. No call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
  */
 export interface PluginManager {
   /** The plugins of `config.json` with their state on disk, and whether each one runs. It uses no network. */
@@ -229,6 +233,13 @@ export interface PluginManager {
   readonly check: (target: PluginTarget, options?: { readonly signal?: AbortSignal }) => Promise<CheckPluginsResult>;
   /** Write the new commit of each change of `check` into `plugins.lock`. */
   readonly apply: (changes: readonly PluginChange[]) => Promise<ApplyPluginsResult>;
+  /**
+   * Add the Git plugin `plugin` to `config.json`, install it, and lock it at the commit of its ref. The comments of
+   * `config.json` stay. `options.signal` stops the work.
+   */
+  readonly add: (plugin: AddPluginParams, options?: { readonly signal?: AbortSignal }) => Promise<AddPluginResult>;
+  /** Remove the plugin `name` from `config.json` and `plugins.lock`. Its install stays on disk. */
+  readonly remove: (name: string) => Promise<void>;
 }
 
 /** The value of `ctx.get(name)`: never null, except `tui`, which can be `undefined`. */

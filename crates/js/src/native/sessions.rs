@@ -293,6 +293,11 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
+    add_plugin_requests(&request, object)
+}
+
+/// Add the requests of `ctx.get("plugins")`. A sync, a check, and an add fetch, so each one answers an operation.
+fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(object, "pluginsList", |sessions, (): ()| async move {
         sessions.list_plugins().await
     })?;
@@ -310,6 +315,16 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
         object,
         "pluginsApply",
         |sessions, params: ApplyPluginsParams| async move { sessions.apply_plugins(params).await },
+    )?;
+    request.add_operation(
+        object,
+        "pluginsAdd",
+        |sessions, params: yuke_protocol::AddPluginParams| async move { sessions.add_plugin(params).await },
+    )?;
+    request.add(
+        object,
+        "pluginsRemove",
+        |sessions, params: yuke_protocol::RemovePluginParams| async move { sessions.remove_plugin(params).await },
     )?;
 
     Ok(())

@@ -74,3 +74,36 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_not_loaded() {
     assert_eq!(loaded, [("broken", false), ("fine", true)]);
     client.end().await;
 }
+
+#[tokio::test]
+async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both_back() {
+    let place = Place::new("rpc", "plugins_add_remove");
+    let remote = place.work.join("remote");
+    let commit = commit_plugin(&remote, "clock", "first");
+    let url = remote.to_string_lossy().into_owned();
+    std::fs::create_dir_all(&place.paths.config).unwrap();
+    std::fs::write(place.paths.config.join("config.json"), "{\n  // mine\n}\n").unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([]))).await;
+
+    let added = client
+        .call(
+            "plugin/add",
+            json!({ "source": { "git": url, "folder": "plugins/clock" } }),
+        )
+        .await;
+    let listed = client.call("plugin/list", json!({})).await.unwrap();
+    let removed = client.call("plugin/remove", json!({ "name": "clock" })).await;
+    let config = std::fs::read_to_string(place.paths.config.join("config.json")).unwrap();
+    let lock = std::fs::read_to_string(place.paths.config.join("plugins.lock")).unwrap();
+
+    assert_eq!(
+        added,
+        Ok(json!({ "name": "clock", "source": { "git": url, "folder": "plugins/clock" }, "commit": commit }))
+    );
+    assert_eq!(listed["plugins"][0]["state"], json!("installed"));
+    assert_eq!(removed, Ok(json!({})));
+    // The comment stays; an object with no member gets `plugins` on its own line.
+    assert_eq!(config, "{\n  \"plugins\": []\n\n  // mine\n}\n");
+    assert!(!lock.contains(&commit), "{lock}");
+    client.end().await;
+}

@@ -22,6 +22,7 @@ struct Scripted {
     calls: Mutex<Vec<String>>,
     /// The holds that ended.
     released: Arc<AtomicUsize>,
+    check_started: tokio::sync::Notify,
 }
 
 /// A hold of [`Scripted`]. Its drop counts.
@@ -187,11 +188,27 @@ impl Sessions for Scripted {
     async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
         self.record(format!("plugins check {:?}", params.target));
         let _hold = Hold(Arc::clone(&self.released));
+        self.check_started.notify_one();
         std::future::pending().await
     }
     async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
         self.record(format!("plugins apply {}", params.changes[0].new));
         Ok(ApplyPluginsResult { written: false })
+    }
+    async fn add_plugin(
+        &self,
+        params: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, SessionsError> {
+        self.record(format!("plugins add {} {:?}", params.source.git, params.options));
+        Ok(yuke_protocol::AddPluginResult {
+            name: "clock".to_owned(),
+            source: params.source,
+            commit: "c".repeat(40),
+        })
+    }
+    async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), SessionsError> {
+        self.record(format!("plugins remove {}", params.name));
+        Ok(())
     }
 }
 
@@ -436,11 +453,22 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
          const change = { name: 'clock', source: { git: 'https://host/repo' }, old: 'a'.repeat(40),
                           new: 'b'.repeat(40), log: { commits: [] } };
          const applied = await plugins.apply([change]);
-         const controller = new AbortController();
-         const checked = plugins.check({ names: ['clock'] }, { signal: controller.signal });
-         controller.abort();
-         const reason = await checked.then(() => 'resolved', (error) => error === controller.signal.reason);
-         return JSON.stringify([listed, synced.written, applied.written, reason]);",
+         globalThis.controller = new AbortController();
+         globalThis.checked = plugins.check({ names: ['clock'] }, { signal: controller.signal });
+         const added = await plugins.add({ source: { git: 'https://host/clock' }, options: { format: '24h' } });
+         await plugins.remove('clock');
+         return JSON.stringify([listed, synced.written, applied.written, added.name]);",
+    )
+    .await
+    .unwrap();
+    // An abort before the first poll creates no hold, so the drop assertion must wait for the task to start.
+    tokio::time::timeout(std::time::Duration::from_secs(5), scripted.check_started.notified())
+        .await
+        .expect("the plugin check did not start");
+    let aborted = evaluate::<bool>(
+        &runtime,
+        "controller.abort();
+         return await checked.then(() => false, (error) => error === controller.signal.reason);",
     )
     .await
     .unwrap();
@@ -453,7 +481,9 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     .await
     .unwrap();
 
-    assert_eq!(answers, r#"[{"plugins":[]},true,false,true]"#);
+    assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);
+    assert!(aborted);
+    assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
     assert_eq!(
         scripted.calls(),
         [
@@ -461,6 +491,8 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
             "plugins sync Some(true)".to_owned(),
             format!("plugins apply {}", "b".repeat(40)),
             r#"plugins check Names(["clock"])"#.to_owned(),
+            r#"plugins add https://host/clock Some({"format": String("24h")})"#.to_owned(),
+            "plugins remove clock".to_owned(),
         ]
     );
 }

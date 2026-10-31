@@ -285,6 +285,24 @@ impl Shared {
         Ok(ApplyPluginsResult { written })
     }
 
+    /// Add a Git plugin to `config.json`, and install and lock it, for `plugin/add`.
+    async fn add_plugin(
+        &self,
+        params: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, AppError> {
+        let options = params.options.unwrap_or_default();
+        plugins::manager::add(&self.machine.paths, params.source, options)
+            .await
+            .map_err(AppError::Invalid)
+    }
+
+    /// Remove a plugin from `config.json` and `plugins.lock`, for `plugin/remove`.
+    async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
+        plugins::manager::remove(&self.machine.paths, &params.name)
+            .await
+            .map_err(AppError::Invalid)
+    }
+
     /// The plugin folders now.
     fn plugin_folders(&self) -> Arc<[PathBuf]> {
         Arc::clone(
@@ -716,6 +734,27 @@ impl App {
     /// Returns [`AppError::Invalid`] for a bad change, or when the lock does not read or write.
     pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
         self.shared.apply_plugins(params).await
+    }
+
+    /// Add a Git plugin to `config.json`, install it, and lock it. The comments of `config.json` stay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad file, a plugin that `config.json` has already, or a failed install.
+    pub(crate) async fn add_plugin(
+        &self,
+        params: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, AppError> {
+        self.shared.add_plugin(params).await
+    }
+
+    /// Remove a plugin from `config.json` and `plugins.lock` by its name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a bad file or an unknown name.
+    pub(crate) async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
+        self.shared.remove_plugin(params).await
     }
 
     /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the

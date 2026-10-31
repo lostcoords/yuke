@@ -5,9 +5,11 @@ import { underStop } from "yuke:internal/events";
 import {
   catalogList,
   type ViewEvent as NativeViewEvent,
+  pluginsAdd,
   pluginsApply,
   pluginsCheck,
   pluginsList,
+  pluginsRemove,
   pluginsSync,
   sessionCancel,
   sessionClose,
@@ -212,4 +214,8 @@ export const plugins: PluginManager = Object.freeze({
   sync: (options) => underStop(options?.signal, () => pluginsSync({ locked: options?.locked === true })),
   check: (target, options) => underStop(options?.signal, () => pluginsCheck({ target })),
   apply: (changes) => pluginsApply({ changes: [...changes] }),
+  add: (plugin, options) => underStop(options?.signal, () => pluginsAdd(plugin)),
+  async remove(name) {
+    await pluginsRemove({ name });
+  },
 } satisfies PluginManager);

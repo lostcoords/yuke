@@ -202,6 +202,15 @@ impl crate::Sessions for NoSessions {
     ) -> Result<yuke_protocol::ApplyPluginsResult, crate::SessionsError> {
         no_sessions()
     }
+    async fn add_plugin(
+        &self,
+        _: yuke_protocol::AddPluginParams,
+    ) -> Result<yuke_protocol::AddPluginResult, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn remove_plugin(&self, _: yuke_protocol::RemovePluginParams) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
     async fn catalog(&self, _: bool) -> Result<yuke_protocol::ListCatalogResult, crate::SessionsError> {
         no_sessions()
     }

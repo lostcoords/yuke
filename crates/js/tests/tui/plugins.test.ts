@@ -57,6 +57,12 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
       calls.push(`apply ${chosen.map((change) => `${change.name} ${change.new.slice(0, 7)}`).join(", ")}`);
       return { written: true };
     },
+    add: async () => {
+      throw new Error("unused");
+    },
+    remove: async () => {
+      throw new Error("unused");
+    },
   };
   return { plugins, calls };
 }

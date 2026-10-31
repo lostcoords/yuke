@@ -14,12 +14,15 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
   `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
-  `plugin/apply`, `profile/reload`, `blob/put`, `blob/get`.
+  `plugin/apply`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
 - `plugin/list` gives each plugin of `config.json` with `state` (`local`, `not_locked`, `not_installed`, or `installed`
   with its `commit`) and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
   `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `"all"` or
   `{ "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
-  writes their `new` commits into `plugins.lock`. Git asks for no password. A new commit loads at `profile/reload`.
+  writes their `new` commits into `plugins.lock`. `plugin/add { source, options? }` adds a Git plugin to `config.json`,
+  installs it, locks it, and answers its `name`, `source`, and `commit`. `plugin/remove { name }` removes a plugin from
+  `config.json` and `plugins.lock`. Each edit keeps the comments of `config.json`. Git asks for no password. A new
+  commit loads at `profile/reload`.
 - `blob/put { sessionId, data }` decodes the base64 `data` and saves at most 3,932,160 bytes in a saved session. It
   answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
   as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the

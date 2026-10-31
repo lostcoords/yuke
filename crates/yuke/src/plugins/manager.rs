@@ -1,17 +1,20 @@
-//! `yuke plugin`: list, sync, and update the Git plugins of `config.json`. It runs no plugin code.
+//! `yuke plugin`: list, sync, update, add, and remove the plugins of `config.json`. It runs no plugin code.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde_json::Map;
+use serde_json::{Map, Value};
 use yuke_protocol::{
-    ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget, SyncPluginsResult, SyncedPlugin,
+    AddPluginResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
+    SyncPluginsResult, SyncedPlugin,
 };
 
 use super::lock::Lock;
 use super::{git, git_folder, manifest_plugin, repository_key};
-use crate::config::{Config, ConfigPlugin, Source, git_source, read_json};
+use crate::config::{
+    Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text,
+};
 use crate::paths::Paths;
 
 /// The plugins of `config.json`, with the state of each one. A plugin is loaded when `loaded` has its name. It uses no
@@ -23,26 +26,20 @@ use crate::paths::Paths;
 pub(crate) fn list(paths: &Paths, loaded: &[String]) -> Result<Vec<ManagedPlugin>, String> {
     let config = read_config(paths)?;
     let lock = Lock::read_for(&paths.config, &config)?;
-    let name = |root: &Path| {
-        manifest_plugin(root, &paths.data, Map::new())
-            .ok()
-            .map(|plugin| plugin.name)
-    };
     Ok(config
         .plugins
         .iter()
-        .map(|ConfigPlugin { source, .. }| {
-            let (item, name, state) = match source {
-                Source::Folder(folder) => (folder.clone(), name(&paths.config.join(folder)), PluginState::Local),
+        .map(|plugin| {
+            let name = name_of(paths, &lock, &plugin.source);
+            let (item, state) = match &plugin.source {
+                Source::Folder(folder) => (folder.clone(), PluginState::Local),
                 Source::Git(source) => {
-                    let (name, state) = match lock.commits.get(source) {
-                        None => (None, PluginState::NotLocked),
-                        Some(commit) => match name(&root(paths, source, commit)) {
-                            Some(name) => (Some(name), PluginState::Installed { commit: commit.clone() }),
-                            None => (None, PluginState::NotInstalled { commit: commit.clone() }),
-                        },
+                    let state = match (lock.commits.get(source), &name) {
+                        (None, _) => PluginState::NotLocked,
+                        (Some(commit), Some(_)) => PluginState::Installed { commit: commit.clone() },
+                        (Some(commit), None) => PluginState::NotInstalled { commit: commit.clone() },
                     };
-                    (source.to_string(), name, state)
+                    (source.to_string(), state)
                 }
             };
             ManagedPlugin {
@@ -53,6 +50,113 @@ pub(crate) fn list(paths: &Paths, loaded: &[String]) -> Result<Vec<ManagedPlugin
             }
         })
         .collect())
+}
+
+/// Add the Git plugin `source` with `options` to `config.json`, install it, and lock it at the commit of its ref. The
+/// comments and the layout of `config.json` stay. A stop after the write of `config.json` leaves the plugin unlocked,
+/// and a sync locks it.
+///
+/// # Errors
+///
+/// Returns a text for a bad file, a plugin that `config.json` has already, or a failed fetch or install.
+pub(crate) async fn add(
+    paths: &Paths,
+    source: PluginSource,
+    options: Map<String, Value>,
+) -> Result<AddPluginResult, String> {
+    let _held = hold(&paths.data).await?;
+    let source = git_source(source.git, source.folder.as_deref(), source.reference)?;
+    let fail = |message: String| format!("plugin {source}: {message}");
+    let config = read_config(paths)?;
+    if git_sources(&config).contains(&&source) {
+        return Err(fail("config.json has this plugin already".to_owned()));
+    }
+    let commit = git::resolve(&source.git, source.reference.as_deref())
+        .await
+        .map_err(fail)?;
+    install(paths, &source, &commit).await.map_err(fail)?;
+    let name = manifest_plugin(&root(paths, &source, &commit), &paths.data, Map::new())
+        .map_err(fail)?
+        .name;
+    // The loader refuses two plugins of one name, so a clash would stop the next reload.
+    let lock = Lock::read_for(&paths.config, &config)?;
+    if config
+        .plugins
+        .iter()
+        .any(|plugin| name_of(paths, &lock, &plugin.source).as_deref() == Some(name.as_str()))
+    {
+        return Err(fail(format!("config.json has a plugin of the name '{name}' already")));
+    }
+    let path = paths.config.join("config.json");
+    let mut fields = vec![format!("\"git\": {}", Value::from(source.git.as_str()))];
+    if let Some(folder) = &source.folder {
+        fields.push(format!("\"folder\": {}", Value::from(folder.as_str())));
+    }
+    if let Some(reference) = &source.reference {
+        fields.push(format!("\"ref\": {}", Value::from(reference.as_str())));
+    }
+    if !options.is_empty() {
+        fields.push(format!("\"options\": {}", Value::Object(options)));
+    }
+    let item = format!("{{ {} }}", fields.join(", "));
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => add_plugin_item(&text, &item),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => format!("{{\n  \"plugins\": [{item}]\n}}\n"),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    // The edit works on the text, so its result is read again before it replaces the file of the user.
+    let edited: Config = serde_json::from_str(&without_comments(&text))
+        .map_err(|error| format!("{}: the edit gives no valid config: {error}", path.display()))?;
+    if !git_sources(&edited).contains(&&source) {
+        return Err(format!("{}: the edit did not add the plugin", path.display()));
+    }
+    // The lock reads before the write of `config.json`, so a bad lock changes no file. It keeps only the plugins of
+    // the new config.
+    let mut lock = Lock::read(&paths.config)?;
+    let sources = git_sources(&edited);
+    lock.commits.retain(|locked, _| sources.contains(&locked));
+    lock.commits.insert(source.clone(), commit.clone());
+    write_text(&path, &text)?;
+    lock.write(&paths.config)?;
+    Ok(AddPluginResult { name, source, commit })
+}
+
+/// Remove the plugin `name` from `config.json`, and its entry from `plugins.lock`. The comments and the layout of
+/// `config.json` stay, and the install of a Git plugin stays on disk.
+///
+/// # Errors
+///
+/// Returns a text for a bad file, or when no plugin of `config.json` has the name.
+pub(crate) async fn remove(paths: &Paths, name: &str) -> Result<(), String> {
+    let _held = hold(&paths.data).await?;
+    let config = read_config(paths)?;
+    let mut lock = Lock::read_for(&paths.config, &config)?;
+    let index = config
+        .plugins
+        .iter()
+        .position(|plugin| name_of(paths, &lock, &plugin.source).as_deref() == Some(name))
+        .ok_or_else(|| format!("no plugin of config.json has the name '{name}': see `yuke plugin list`"))?;
+    let path = paths.config.join("config.json");
+    let text = fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let text = remove_plugin_item(&text, index)
+        .ok_or_else(|| format!("{}: the edit did not find the plugin", path.display()))?;
+    write_text(&path, &text)?;
+    if let Source::Git(source) = &config.plugins[index].source {
+        lock.commits.remove(source);
+        lock.write(&paths.config)?;
+    }
+    Ok(())
+}
+
+/// The name of the manifest of the plugin of `source`: of its folder, or of its locked and installed commit.
+fn name_of(paths: &Paths, lock: &Lock, source: &Source) -> Option<String> {
+    let root = match source {
+        Source::Folder(folder) => paths.config.join(folder),
+        Source::Git(source) => root(paths, source, lock.commits.get(source)?),
+    };
+    manifest_plugin(&root, &paths.data, Map::new())
+        .ok()
+        .map(|plugin| plugin.name)
 }
 
 /// Install the commit of `plugins.lock` of each Git plugin, and lock each new Git plugin at the commit of its ref. The
