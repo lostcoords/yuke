@@ -18,9 +18,9 @@ use yuke_js::{Origin, Plugin, Report, Runtime, ScriptError, ScriptSession, TestE
 use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, SessionId};
 
 use super::sessions::SessionService;
-use super::{App, Machine, Mode, Observer, Shared, lock};
+use super::{App, Machine, Mode, Observer, Profile, Shared, lock};
 use crate::paths::Paths;
-use crate::plugins::{load_order, manifest_plugin, valid_name};
+use crate::plugins::{create_data_folders, load_order, manifest_plugin, valid_name};
 
 /// What the app of a test needs beyond production. It holds the TypeScript cache of the run and the internal imports
 /// of the tests of yuke. It also holds the test host of the runtime and the sender of the raw reports to the runner.
@@ -322,23 +322,13 @@ impl TestHost for AppTestHost {
             });
         }
         let plugins = load_order(plugins)?;
-        for plugin in &plugins {
-            std::fs::create_dir_all(&plugin.data_dir)
-                .map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
-        }
+        create_data_folders(&plugins)?;
         // A session reads the skills of the folder plugins in load order, so the profile names their folders.
-        let folders: Vec<PathBuf> = plugins
-            .iter()
-            .filter_map(|plugin| match &plugin.origin {
-                Origin::Folder { root, .. } => Some(root.clone()),
-                Origin::Bundled { .. } | Origin::Given => None,
-            })
-            .collect();
         shared
             .profile
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .plugin_folders = folders.into();
+            .plugin_folders = Profile::plugin_folders(&plugins);
         let handle = sessions.plugins().ok_or("the app of the test has no runtime")?;
         let failures = handle.load_plugins(&plugins).await;
         if !failures.is_empty() {

@@ -146,21 +146,32 @@ struct Profile {
 }
 
 impl Profile {
-    /// The profile of `providers`, the folders of `plugins`, and the session wait of `config`.
-    fn new(providers: Providers, plugins: &[yuke_js::Plugin], config: &Config) -> Self {
-        Self {
+    /// The profile of the config folder of `paths`, and its plugins in load order. It makes the data folder of each
+    /// plugin.
+    fn load(paths: &Paths) -> Result<(Self, Vec<yuke_js::Plugin>), String> {
+        let providers = Providers::load(&paths.config)?;
+        let config: Config = read_json(&paths.config.join("config.json"))?.unwrap_or_default();
+        let plugins = plugins::plugins(&paths.config, &config, &paths.data)?;
+        plugins::create_data_folders(&plugins)?;
+        let profile = Self {
             providers: Arc::new(providers),
-            plugin_folders: plugins
-                .iter()
-                .filter_map(|plugin| match &plugin.origin {
-                    Origin::Folder { root, .. } => Some(root.clone()),
-                    Origin::Bundled { .. } | Origin::Given => None,
-                })
-                .collect(),
+            plugin_folders: Self::plugin_folders(&plugins),
             session_idle: Duration::from_secs(
                 60 * u64::from(config.session_idle_minutes.unwrap_or(SESSION_IDLE_MINUTES)),
             ),
-        }
+        };
+        Ok((profile, plugins))
+    }
+
+    /// The root folder of each folder plugin of `plugins`, in their order.
+    fn plugin_folders(plugins: &[yuke_js::Plugin]) -> Arc<[PathBuf]> {
+        plugins
+            .iter()
+            .filter_map(|plugin| match &plugin.origin {
+                Origin::Folder { root, .. } => Some(root.clone()),
+                Origin::Bundled { .. } | Origin::Given => None,
+            })
+            .collect()
     }
 }
 
@@ -287,10 +298,8 @@ impl App {
         store: Arc<dyn Store>,
         timer: Arc<dyn Timer>,
     ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
-        let providers = Providers::load(&machine.paths.config)?;
-        let config: Config = read_json(&machine.paths.config.join("config.json"))?.unwrap_or_default();
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
-        let plugins = plugins::plugins(&machine.paths.config, &config, &machine.paths.data)?;
+        let (profile, plugins) = Profile::load(&machine.paths)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes. A test keeps the folder in its own place.
         let processes_folder = match &machine.test {
@@ -307,7 +316,7 @@ impl App {
         });
         let shared = Arc::new(Shared {
             machine,
-            profile: RwLock::new(Profile::new(providers, &plugins, &config)),
+            profile: RwLock::new(profile),
             store,
             timer,
             processes,
@@ -383,14 +392,8 @@ impl App {
         for live in &reload.sessions {
             held.push(live.try_hold().ok_or(AppError::TurnRuns)?);
         }
-        let paths = &self.shared.machine.paths;
-        let providers = Providers::load(&paths.config).map_err(AppError::Invalid)?;
-        let config: Config = read_json(&paths.config.join("config.json"))
-            .map_err(AppError::Invalid)?
-            .unwrap_or_default();
-        let plugins = plugins::plugins(&paths.config, &config, &paths.data).map_err(AppError::Invalid)?;
         // The new plugins use the new providers, for example in a model request of their `apply`.
-        let profile = Profile::new(providers, &plugins, &config);
+        let (profile, plugins) = Profile::load(&self.shared.machine.paths).map_err(AppError::Invalid)?;
         let old_profile = std::mem::replace(
             &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
             profile,

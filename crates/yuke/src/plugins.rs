@@ -82,7 +82,7 @@ const BUNDLED: &[Bundled] = &[
 /// The plugins to load, in load order. The list has the bundled plugins first, without the ones that `config.disable`
 /// names. Each one gets its options from `config.bundled`. Then the plugins of `config.plugins` follow in their order.
 /// [`load_order`] moves each provider before the plugins that use it. A relative folder starts in `config_folder`. The
-/// function makes the data folder `<data>/plugins/<name>` of each plugin.
+/// data folder of each plugin is `<data>/plugins/<name>`. [`create_data_folders`] makes these folders.
 ///
 /// # Errors
 ///
@@ -125,24 +125,27 @@ fn with_bundled(
             provides: plugin.provides.iter().map(|&service| service.to_owned()).collect(),
         })
         .collect();
-    let mut roots = HashSet::new();
     for ConfigPlugin { path: folder, options } in &config.plugins {
         let fail = |message: String| format!("plugin folder {folder}: {message}");
         let root = config_folder
             .join(folder)
             .canonicalize()
             .map_err(|error| fail(error.to_string()))?;
-        if !roots.insert(root.clone()) {
-            return Err(fail("the list names this folder twice".to_owned()));
-        }
         plugins.push(manifest_plugin(&root, data, options.clone()).map_err(fail)?);
     }
+    load_order(plugins)
+}
 
-    let plugins = load_order(plugins)?;
-    for plugin in &plugins {
+/// Make the data folder of each plugin of `plugins`.
+///
+/// # Errors
+///
+/// Returns a text that names the folder that yuke cannot make.
+pub(crate) fn create_data_folders(plugins: &[Plugin]) -> Result<(), String> {
+    for plugin in plugins {
         std::fs::create_dir_all(&plugin.data_dir).map_err(|error| format!("{}: {error}", plugin.data_dir.display()))?;
     }
-    Ok(plugins)
+    Ok(())
 }
 
 /// Check `plugins` and give their load order: each provider before each plugin that uses it, else the order of the
@@ -152,66 +155,60 @@ fn with_bundled(
 ///
 /// Returns a text for the user that names the first plugin that breaks a rule, or the plugins of a cycle of uses.
 pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
-    let order = {
-        let mut providers: HashMap<&str, (usize, &str)> = HashMap::new();
-        for (index, plugin) in plugins.iter().enumerate() {
-            let fail = |message: String| format!("plugin {}: {message}", plugin.name);
-            match plugins[..index].iter().find(|other| other.name == plugin.name) {
-                Some(Plugin {
-                    origin: Origin::Bundled { .. },
-                    ..
-                }) => {
-                    return Err(fail(format!(
-                        "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
-                        plugin.name
-                    )));
-                }
-                Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
-                None => {}
+    let mut providers: HashMap<&str, &str> = HashMap::new();
+    for (index, plugin) in plugins.iter().enumerate() {
+        let fail = |message: String| format!("plugin {}: {message}", plugin.name);
+        match plugins[..index].iter().find(|other| other.name == plugin.name) {
+            Some(Plugin {
+                origin: Origin::Bundled { .. },
+                ..
+            }) => {
+                return Err(fail(format!(
+                    "a bundled plugin has this name: add \"{}\" to \"disable\" in config.json to replace it",
+                    plugin.name
+                )));
             }
-            for service in &plugin.provides {
-                if let Some((_, provider)) = providers.insert(service, (index, &plugin.name)) {
-                    return Err(fail(format!("plugin {provider} provides '{service}' already")));
-                }
+            Some(_) => return Err(fail("another plugin of the list has this name".to_owned())),
+            None => {}
+        }
+        for service in &plugin.provides {
+            if let Some(provider) = providers.insert(service, &plugin.name) {
+                return Err(fail(format!("plugin {provider} provides '{service}' already")));
             }
         }
-        // The provider of each used service, by plugin.
-        let mut needs: Vec<Vec<usize>> = Vec::with_capacity(plugins.len());
-        for plugin in &plugins {
-            let mut found = Vec::with_capacity(plugin.uses.len());
-            for service in &plugin.uses {
-                let Some(&(at, _)) = providers.get(service.as_str()) else {
-                    return Err(format!(
-                        "plugin {}: it uses '{service}', and no plugin of the list provides it",
-                        plugin.name
-                    ));
-                };
-                found.push(at);
-            }
-            needs.push(found);
+    }
+    for plugin in &plugins {
+        if let Some(service) = plugin
+            .uses
+            .iter()
+            .find(|service| !providers.contains_key(service.as_str()))
+        {
+            return Err(format!(
+                "plugin {}: it uses '{service}', and no plugin of the list provides it",
+                plugin.name
+            ));
         }
-        // Each step takes the first plugin of the list whose providers loaded. A plugin moves only for its providers.
-        let mut loaded = vec![false; plugins.len()];
-        let mut order = Vec::with_capacity(plugins.len());
-        while order.len() < plugins.len() {
-            let next = (0..plugins.len()).find(|&index| !loaded[index] && needs[index].iter().all(|&at| loaded[at]));
-            let Some(index) = next else {
-                let waiting: Vec<&str> = (0..plugins.len())
-                    .filter(|&index| !loaded[index])
-                    .map(|index| plugins[index].name.as_str())
-                    .collect();
-                return Err(format!(
-                    "plugins {}: a cycle of uses keeps them from loading",
-                    waiting.join(", ")
-                ));
-            };
-            loaded[index] = true;
-            order.push(index);
-        }
-        order
-    };
-    let mut slots: Vec<Option<Plugin>> = plugins.into_iter().map(Some).collect();
-    Ok(order.into_iter().filter_map(|index| slots[index].take()).collect())
+    }
+    // Each step takes the first plugin of the list whose services loaded. A plugin moves only for its providers.
+    let mut waiting = plugins;
+    let mut loaded: HashSet<String> = HashSet::new();
+    let mut order = Vec::with_capacity(waiting.len());
+    while !waiting.is_empty() {
+        let Some(index) = waiting
+            .iter()
+            .position(|plugin| plugin.uses.iter().all(|service| loaded.contains(service)))
+        else {
+            let names: Vec<&str> = waiting.iter().map(|plugin| plugin.name.as_str()).collect();
+            return Err(format!(
+                "plugins {}: a cycle of uses keeps them from loading",
+                names.join(", ")
+            ));
+        };
+        let plugin = waiting.remove(index);
+        loaded.extend(plugin.provides.iter().cloned());
+        order.push(plugin);
+    }
+    Ok(order)
 }
 
 /// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.

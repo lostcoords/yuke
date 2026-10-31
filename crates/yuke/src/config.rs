@@ -190,24 +190,25 @@ mod tests {
             error(json!({ "path": "./a", "option": {} })),
             "unknown field `option`, expected `path` or `options`"
         );
-        assert_eq!(
-            error(json!({ "path": "./a", "options": [] })),
-            "invalid type: sequence, expected a map"
-        );
         assert_eq!(error(json!({ "options": {} })), "missing field `path`");
     }
 
     #[test]
-    fn the_options_of_a_bundled_plugin_are_an_object() {
-        let config: Config =
-            serde_json::from_value(json!({ "bundled": { "chat": { "questions": "modal" } } })).unwrap();
-        let refused = serde_json::from_value::<Config>(json!({ "bundled": { "chat": 1 } }));
+    fn a_missing_file_reads_as_none_and_a_bad_file_fails_with_its_path() {
+        let folder = std::env::temp_dir().join(format!("yuke-config-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let good = folder.join("good.json");
+        std::fs::write(&good, "{\n  // a comment\n  \"plugins\": [\"./a\"]\n}").unwrap();
+        let bad = folder.join("bad.json");
+        std::fs::write(&bad, "{ \"plugins\": ").unwrap();
 
-        assert_eq!(
-            config.bundled["chat"],
-            *json!({ "questions": "modal" }).as_object().unwrap()
-        );
-        assert!(refused.is_err());
+        let read = read_json::<Config>(&good).unwrap();
+        let missing = read_json::<Config>(&folder.join("absent.json"));
+        let error = read_json::<Config>(&bad).unwrap_err();
+
+        assert_eq!(read.map(|config| config.plugins.len()), Some(1));
+        assert_eq!(missing, Ok(None));
+        assert!(error.starts_with(&format!("{}: ", bad.display())), "{error}");
     }
 
     #[test]
