@@ -175,7 +175,13 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     activate: (position, link) => {
       const transcript = chatSession.transcript;
       if (link === undefined) {
-        if (position.section === "title" && document.toggle(transcript, position.item)) changed();
+        if (position.section === "gap" || !document.toggle(transcript, position.item)) return;
+        // The view stays where it is, also at the tail, and it scrolls the least to show the head line of the item.
+        const top = view.scroll.state.top;
+        view.setDocument(document.project(transcript));
+        view.scroll.scrollTo(top);
+        view.ensureVisible({ item: position.item, section: "title", offset: 0 });
+        changed();
         return;
       }
       // A relative target starts in the folder of its tool call, else in the folder of the session, else at the start.

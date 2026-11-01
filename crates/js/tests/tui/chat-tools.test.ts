@@ -324,6 +324,106 @@ test("a click on a subject copies its path in the folder of the call, and a clic
   equal(transcriptRows(frame).slice(0, 4), ["", " read src/main.rs", " fn main() {}", ""]);
 });
 
+test("a click on a body row, a preview row, or the count row toggles a call, and the row between two items does not", async () => {
+  using frame = createFrame({ width: 40, height: 30 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 12)) },
+    { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 12)) },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  const folded = transcriptRows(frame).slice(0, 26);
+  equal(folded.slice(11, 15), [" a 10", " … 2 more rows", "", " Probe"]);
+  equal(folded.slice(24, 26), [" b 10", " … 2 more rows"]);
+  // A click on the row that counts the rest opens the call.
+  click(frame, 3, 12);
+  equal(transcriptRows(frame).slice(12, 15), [" a 11", " a 12", ""]);
+  // A click on a row of the body folds it.
+  click(frame, 3, 12);
+  equal(transcriptRows(frame).slice(0, 26), folded);
+  // The row above the second call has no toggle, so the call stays folded.
+  click(frame, 3, 13);
+  equal(transcriptRows(frame).slice(0, 26), folded);
+  // A click on a row of a preview opens the call.
+  click(frame, 3, 2);
+  equal(transcriptRows(frame).slice(12, 14), [" a 11", " a 12"]);
+});
+
+test("a click on the text of an open thought folds it", async () => {
+  using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [{ reasoning: { text: "why" } } as never]),
+  ];
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  click(frame, 2, 1);
+  equal(transcriptRows(frame).slice(0, 4), ["", " thought", " why", ""]);
+  click(frame, 2, 2);
+  equal(transcriptRows(frame).slice(0, 3), ["", " thought", ""]);
+});
+
+test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 3)) },
+    { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 40)) },
+  );
+  const chat = await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  const folded = transcriptRows(frame).slice(0, 12);
+  const view = chat.transcript();
+  equal(view.scroll.state.following, true);
+  const more = folded.indexOf(" … 30 more rows");
+  click(frame, 3, more);
+  // The rows above stay, and the next rows of the output take the place of the count.
+  equal(transcriptRows(frame).slice(0, more), folded.slice(0, more));
+  equal(transcriptRows(frame)[more], " b 11");
+  equal(view.scroll.state.following, false);
+  click(frame, 3, more);
+  equal(transcriptRows(frame).slice(0, 12), folded);
+  equal(view.scroll.state.following, true);
+  // ctrl+o keeps the pane on the tail in both directions.
+  frame.key("ctrl+o");
+  equal(view.scroll.state.following, true);
+  frame.key("ctrl+o");
+  equal(view.scroll.state.following, true);
+});
+
+test("a call that folds from a row below its hidden head line shows the head line at the top", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 3)) },
+    { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 40)) },
+    { name: "three", args: {}, hints: PROBE, result: ok(lines("c", 3)) },
+  );
+  const chat = await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  frame.key("ctrl+o");
+  chat.transcript().scroll.scrollBy(-10);
+  frame.draw();
+  const row = transcriptRows(frame).indexOf(" b 30");
+  click(frame, 3, row);
+  equal(transcriptRows(frame).slice(0, 3), [" Probe", " b 1", " b 2"]);
+});
+
+test("a call that opens in a view away from the tail leaves the rows above it in place", async () => {
+  using frame = createFrame({ width: 40, height: 20 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 12)) },
+    { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 12)) },
+    { name: "three", args: {}, hints: PROBE, result: ok(lines("c", 40)) },
+  );
+  const chat = await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  chat.transcript().scroll.scrollTo(0);
+  frame.draw();
+  const before = transcriptRows(frame).slice(0, 12);
+  click(frame, 3, 3);
+  equal(transcriptRows(frame).slice(0, 12), before);
+  equal(transcriptRows(frame)[12], " a 11");
+});
+
 test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/start", session: "s1" });
   const saved = calls(
