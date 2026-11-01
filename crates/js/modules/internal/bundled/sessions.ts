@@ -4,21 +4,15 @@
  * switches to the sessions of every folder.
  */
 
-import { bottom } from "yuke:internal/tui/layout";
 import type { PluginContext } from "yuke:plugins";
 import type { SessionActivity, SessionRow } from "yuke:protocol";
-import { fuzzyMatch, Picker, type PickerMatch, strokeOf, type Tui, type View } from "yuke:tui";
+import { fuzzyMatch, Picker, type PickerMatch, type Tui } from "yuke:tui";
 
 /** The list shows at most this count of sessions. */
 const PAGE = 100;
 
-/** The overlay has at most this count of rows, with its head row. */
-const ROWS = 13;
-
 /** The mark of each activity: a running turn, an open session, and a closed one. */
 const MARK: Readonly<Record<SessionActivity, string>> = { running: "●", idle: "○", closed: " " };
-
-const HEAD = Object.freeze({ dim: true });
 
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
@@ -101,24 +95,24 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     },
     rank,
     choose: (row) => {
-      overlay.close();
+      dialog.close();
       const id = row.session.sessionId;
       chat.show(id).catch((error: unknown) => ctx.notify("error", `the session ${id} did not show: ${String(error)}`));
     },
-    cancel: () => overlay.close(),
+    cancel: () => dialog.close(),
   });
-  const view: View = {
-    layout: (size) => [
-      { view: picker, rect: { column: 0, row: 1, width: size.width, height: Math.max(0, size.height - 1) } },
-    ],
-    draw: (canvas) => {
-      const scope = all ? "every folder · tab: this folder" : `${folder} · tab: every folder`;
-      canvas.text(1, 0, scope, HEAD);
-    },
-    initialFocus: picker.input,
+  const scope = (): void => {
+    all = !all;
+    void load();
   };
-  const overlay = tui.overlay(() => view, {
-    place: (size) => bottom(size, ROWS),
+  // Tab changes the scope. The footer names the other scope.
+  const dialog = tui.dialog({
+    title: () => (all ? "every folder" : folder),
+    body: picker,
+    keys: [
+      { key: "tab", label: "every folder", when: () => !all, run: scope },
+      { key: "tab", label: "this folder", when: () => all, run: scope },
+    ],
   });
   /** Load the list of the scope. A failure closes the list and gives a notice. */
   const load = async (): Promise<void> => {
@@ -128,21 +122,15 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     try {
       page = await sessions.list(all ? { limit: PAGE } : { cwd: folder, limit: PAGE });
     } catch (error) {
-      if (current !== loads || overlay.signal.aborted) return;
-      overlay.close();
+      if (current !== loads || dialog.signal.aborted) return;
+      dialog.close();
       ctx.notify("error", `the sessions did not load: ${String(error)}`);
       return;
     }
-    if (current !== loads || overlay.signal.aborted) return;
+    if (current !== loads || dialog.signal.aborted) return;
     loadedAt = Date.now();
     picker.setItems(page.sessions);
     tui.requestFrame();
   };
-  picker.input.extend(overlay.signal).onKey((event) => {
-    if (strokeOf(event) !== "tab") return false;
-    all = !all;
-    void load();
-    return true;
-  });
   void load();
 }

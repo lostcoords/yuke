@@ -212,7 +212,8 @@ async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat
     let app = started(&place, &display).await;
 
     // The screen of the test reads bytes, so it matches the ASCII start of the head row: the folder of the list.
-    output.shows(" /work ").await;
+    // The footer of the sessions dialog names the other scope.
+    output.shows(" tab: every folder").await;
     app.shutdown().await;
 }
 

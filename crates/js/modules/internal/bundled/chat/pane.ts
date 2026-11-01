@@ -246,33 +246,21 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    */
   const choose = <T extends object>(items: readonly T[], label: (item: T) => string): Promise<T | undefined> =>
     new Promise((resolve) => {
-      if (mount.signal.aborted) {
-        resolve(undefined);
-        return;
-      }
       let picked: T | undefined;
-      const overlay = tui.overlay(
-        () =>
-          new Picker<T>({
-            items,
-            key: label,
-            label,
-            choose: (item) => {
-              picked = item;
-              overlay.close();
-            },
-            cancel: () => overlay.close(),
-          }),
-        {
-          place: (size) => bottom(size, PICKER_ROWS),
+      const picker = new Picker<T>({
+        items,
+        key: label,
+        label,
+        choose: (item) => {
+          picked = item;
+          dialog.close();
         },
-      );
-      const close = (): void => overlay.close();
-      mount.signal.addEventListener("abort", close, { once: true });
-      overlay.signal.addEventListener("abort", () => {
-        mount.signal.removeEventListener("abort", close);
-        resolve(picked);
+        cancel: () => dialog.close(),
       });
+      const dialog = tui.dialog({ body: picker, rows: PICKER_ROWS, signal: mount.signal });
+      dialog.signal.addEventListener("abort", () => resolve(picked), { once: true });
+      // An already-aborted pane signal closes the dialog before this listener attaches.
+      if (dialog.signal.aborted) resolve(picked);
     });
 
   /**

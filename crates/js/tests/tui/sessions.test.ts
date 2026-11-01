@@ -53,19 +53,21 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
   equal(loaded.sessions.lists, [{ cwd: "/w", limit: 100 }, { limit: 100 }]);
   equal(
     [
-      shows(here, "/w · tab: every folder"),
+      here.some((line) => line.trim() === "/w"),
+      shows(here, "tab: every folder · esc: close"),
       shows(here, "● fix the flaky test  5m · m"),
       shows(here, "  add the bar  3h · m"),
     ],
-    [true, true, true],
+    [true, true, true, true],
   );
   equal(
     [
       shows(here, "refactor"),
-      shows(every, "every folder · tab: this folder"),
+      every.some((line) => line.trim() === "every folder"),
+      shows(every, "tab: this folder · esc: close"),
       shows(every, "○ refactor sqlgen  2d · m · other"),
     ],
-    [false, true, true],
+    [false, true, true, true],
   );
 });
 
@@ -198,7 +200,7 @@ test("the list of a pane whose session is gone starts with the start folder", as
   await settle();
   const drawn = await openList(frame, loaded.chat);
   equal(
-    [drawn.some((line) => line.includes("/start · tab: every folder")), loaded.sessions.lists],
+    [drawn.some((line) => line.trim() === "/start"), loaded.sessions.lists],
     [true, [{ cwd: "/start", limit: 100 }]],
   );
 });
