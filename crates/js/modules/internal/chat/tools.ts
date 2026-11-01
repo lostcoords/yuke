@@ -1,11 +1,11 @@
 /**
  * The item of a tool call. Its head line comes from the hints of its tool. An open call also shows its arguments. The
- * body is the live output until a result comes, then the result: its display blocks, or its text. A folded call shows
- * the preview of its hints.
+ * body is the live output until a result comes, then the result: its display blocks or its text, then its media. A
+ * folded call shows the preview of its hints.
  */
 
 import { diffRows, diffSource } from "yuke:internal/chat/diff";
-import { indented, item, plain, type Range, rangedRows, STYLE, shifted } from "yuke:internal/chat/rows";
+import { indented, item, plain, type Range, rangedRows, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
 import type { Entry } from "yuke:transcript";
 import { Markdown, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
@@ -44,10 +44,9 @@ function title(entry: ToolEntry): TextSection {
   const name = entry.hints.title ?? (entry.name === "" ? "tool" : entry.name);
   const ranges: Range[] = [{ from: 0, to: name.length, style: STYLE.title }];
   let text = name;
-  const subject = entry.hints.subject;
-  const value = subject === null ? undefined : argument(entry.arguments, subject.argument);
-  if (subject !== null && value !== undefined) {
-    const link = subject.kind === "text" ? undefined : value;
+  const value = subjectOf(entry);
+  if (value !== undefined) {
+    const link = entry.hints.subject?.kind === "text" ? undefined : value;
     ranges.push({ from: text.length + 1, to: text.length + 1 + value.length, style: STYLE.subject, link });
     text += ` ${value}`;
   }
@@ -66,46 +65,44 @@ function stateOf(entry: ToolEntry): string | undefined {
   return entry.result?.isError === true ? "error" : undefined;
 }
 
-/** The string argument `name` of the JSON `text`. A call that still streams has no complete JSON yet. */
-export function argument(text: string, name: string): string | undefined {
+/** The string argument that the hints of `entry` name as the subject. Incomplete JSON has none. */
+export function subjectOf(entry: ToolEntry): string | undefined {
+  const subject = entry.hints.subject;
+  if (subject === null) return undefined;
   try {
-    const value: unknown = JSON.parse(text);
+    const value: unknown = JSON.parse(entry.arguments);
     if (typeof value !== "object" || value === null) return undefined;
-    const field = (value as Record<string, unknown>)[name];
+    const field = (value as Record<string, unknown>)[subject.argument];
     return typeof field === "string" ? field : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** One body: its section key, its source, and its rows at a width. */
-interface Body {
-  readonly key: "output" | "result";
+/** One block of a body: its source and its rows at a width. */
+interface Block {
   readonly text: string;
   readonly rows: (width: number) => TextRow[];
+}
+
+/** One body: its section key, its source, and its rows at a width. */
+interface Body extends Block {
+  readonly key: "output" | "result";
+}
+
+/** A block of plain `text` in `style`. */
+function plainBlock(text: string, style: string | undefined): Block {
+  return { text, rows: (width) => styledRows(text, width, style) };
 }
 
 /** The body of `entry`: the live output before a result, else the result. A call without either has none. */
 function bodyOf(entry: ToolEntry): Body | undefined {
   const result = entry.result;
+  const blocks: Block[] = [];
   if (result === undefined) {
-    if (entry.output === "") return undefined;
-    const output = entry.output;
-    return {
-      key: "output",
-      text: output,
-      rows: (width) => rangedRows(output, width, [{ from: 0, to: output.length }]),
-    };
-  }
-  const blocks: { readonly text: string; readonly rows: (width: number) => TextRow[] }[] = [];
-  if (result.isError || entry.display.length === 0) {
-    const content = result.content;
-    const style = result.isError ? STYLE.error : undefined;
-    if (content !== "")
-      blocks.push({
-        text: content,
-        rows: (width) => rangedRows(content, width, [{ from: 0, to: content.length, style }]),
-      });
+    if (entry.output !== "") blocks.push(plainBlock(entry.output, undefined));
+  } else if (result.isError || entry.display.length === 0) {
+    if (result.content !== "") blocks.push(plainBlock(result.content, result.isError ? STYLE.error : undefined));
   } else {
     for (const block of entry.display) {
       if (block.kind === "markdown") {
@@ -118,9 +115,8 @@ function bodyOf(entry: ToolEntry): Body | undefined {
       }
     }
   }
-  for (const [index, media] of (result.media ?? []).entries()) {
-    const text = `[${media.mime} #${index + 1} · ${size(media.blob.len)}]`;
-    blocks.push({ text, rows: (width) => rangedRows(text, width, [{ from: 0, to: text.length, style: STYLE.meta }]) });
+  for (const [index, media] of (result?.media ?? []).entries()) {
+    blocks.push(plainBlock(`[${media.mime} #${index + 1} · ${size(media.blob.len)}]`, STYLE.meta));
   }
   if (blocks.length === 0) return undefined;
   // One source for all blocks, with a line end between two, so one preview budget counts all of them.
@@ -132,7 +128,7 @@ function bodyOf(entry: ToolEntry): Body | undefined {
     text += block.text;
   }
   return {
-    key: "result",
+    key: result === undefined ? "output" : "result",
     text,
     rows: (width) =>
       blocks.flatMap((block, at) => {

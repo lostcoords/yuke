@@ -103,6 +103,46 @@ test("the live output of a call gives way to its result at once", async () => {
   equal(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
 });
 
+test("a copy of live output gives its lines", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [{ tool_call: call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    }),
+  ];
+  const sessions = fakeSessions(saved);
+  await loadChat(frame, {}, sessions);
+  frame.start();
+  const execution = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "tool_started", execution, call });
+  sessions.push({ sessionUpdate: "tool_output", execution, text: "one\ntwo" });
+  frame.draw();
+  frame.mouse(mouse(1, 2, "press"));
+  frame.mouse(mouse(4, 3, "drag"));
+  frame.mouse(mouse(4, 3, "release"));
+  equal(frame.copies, ["one\ntwo"]);
+});
+
+test("a result with only media shows a label with the type, the number, and the size of each one", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const media = [
+    { mime: "image/png", blob: { digest: "a".repeat(64), len: 2048 } },
+    { mime: "application/pdf", blob: { digest: "b".repeat(64), len: 10 } },
+  ];
+  const saved = calls({ name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } });
+  await loadChat(frame, {}, fakeSessions(saved));
+  frame.start();
+  equal(transcriptRows(frame).slice(0, 5), [
+    "",
+    " Probe",
+    " [image/png #1 · 2 KiB]",
+    " [application/pdf #2 · 10 B]",
+    "",
+  ]);
+});
+
 test("the display blocks of a result share one preview, and a diff keeps its styles and its text in a copy", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const patch = "@@ -1 +1 @@\n-old\n+new\n same";

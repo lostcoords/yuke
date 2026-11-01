@@ -5,7 +5,7 @@
 
 import type { ChatSession, ChatWorkingOptions } from "yuke:chat";
 import { callEach } from "yuke:internal/chat/listeners";
-import { argument } from "yuke:internal/chat/tools";
+import { subjectOf } from "yuke:internal/chat/tools";
 import type { Status, Transcript } from "yuke:transcript";
 
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -20,10 +20,8 @@ function phase(transcript: Transcript, now: number, retryAt: number | undefined)
   const last = transcript.entries.at(-1);
   // A call that ended waits for the next answer of the model.
   if (last?.kind === "tool" && last.status !== "done") {
-    const subject = last.hints.subject;
-    const value = subject === null ? undefined : argument(last.arguments, subject.argument);
     // A call that the model still writes has no name yet.
-    const label = value ?? last.hints.title ?? (last.name === "" ? "a tool call" : last.name);
+    const label = subjectOf(last) ?? last.hints.title ?? (last.name === "" ? "a tool call" : last.name);
     return last.status === "streaming" ? `Preparing ${label}…` : `Running ${label}…`;
   }
   if (last?.kind === "reasoning" && last.draft) return "Reasoning…";
