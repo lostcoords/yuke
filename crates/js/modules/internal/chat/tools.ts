@@ -1,13 +1,13 @@
 /**
- * The item of a tool call. Its head line comes from the hints of its tool. An open call also shows its arguments. The
- * body is the live output until a result comes, then the result: its display blocks or its text, then its media. A
- * folded call shows the preview of its hints.
+ * The item of a tool call. Its head line comes from the hints of its tool, and it fills one row. An open call also
+ * shows the subject that the head line changes, and its other arguments. The body is the live output until a result
+ * comes, then the result: its display blocks or its text, then its media. A folded call shows the preview of its hints.
  */
 
 import { diffRows, diffSource } from "yuke:internal/chat/diff";
-import { indented, item, plain, type Range, rangedRows, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
+import { clipped, indented, item, plain, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
 import type { Entry } from "yuke:transcript";
-import { Markdown, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
+import { Markdown, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 
@@ -19,9 +19,10 @@ const TAIL = 5;
 
 /** The item of `entry`. An open call shows arguments that are not empty, and its whole body. */
 export function toolItem(entry: ToolEntry, open: boolean): TextItem {
-  const sections: TextSection[] = [title(entry)];
-  if (open && entry.arguments !== "" && entry.arguments !== "{}") {
-    sections.push(plain("arguments", entry.arguments, STYLE.meta));
+  const sections = heading(entry, open);
+  if (open) {
+    const others = otherArguments(entry);
+    if (others !== "" && others !== "{}") sections.push(plain("arguments", others, STYLE.meta));
   }
   const body = bodyOf(entry);
   if (body !== undefined) {
@@ -39,23 +40,54 @@ export function toolItem(entry: ToolEntry, open: boolean): TextItem {
   return item(entry.key, ...sections);
 }
 
-/** The head line: the title of the hints or the name, the subject argument, and a state other than success. */
-function title(entry: ToolEntry): TextSection {
+/**
+ * The head line: the title of the hints or the name, the subject argument, and a state other than success. The state
+ * stays, and the rest takes the room that it leaves. An open call shows a subject that the row clips or flattens below
+ * the row.
+ */
+function heading(entry: ToolEntry, open: boolean): TextSection[] {
   const name = entry.hints.title ?? (entry.name === "" ? "tool" : entry.name);
-  const ranges: Range[] = [{ from: 0, to: name.length, style: STYLE.title }];
-  let text = name;
-  const value = subjectOf(entry);
-  if (value !== undefined) {
-    const link = entry.hints.subject?.kind === "text" ? undefined : value;
-    ranges.push({ from: text.length + 1, to: text.length + 1 + value.length, style: STYLE.subject, link });
-    text += ` ${value}`;
-  }
   const state = stateOf(entry);
-  if (state !== undefined) {
-    ranges.push({ from: text.length, to: text.length + state.length + 3, style: STYLE.meta });
-    text += ` · ${state}`;
-  }
-  return { key: "title", kind: "label", text, render: (width) => rangedRows(text, width, ranges) };
+  const end = state === undefined ? "" : ` · ${state}`;
+  const value = subjectOf(entry);
+  const source = value === undefined ? name : `${name} ${value}`;
+  // Each line end unit becomes one space, so the shown text keeps the offsets of its source.
+  const head = source.replaceAll(/[\r\n]/g, " ");
+  // The room excludes the indent and the right margin of each row.
+  const shownAt = (width: number) => clipped(head, Math.max(1, width - 2 - measure(end)));
+  const title: TextSection = {
+    key: "title",
+    kind: "label",
+    text: source + end,
+    render: (width) => {
+      const shown = shownAt(width);
+      // A clipped text does not match its source unit by unit, so it stands for the whole range.
+      const kind = shown === head ? "text" : "replacement";
+      const from = name.length + 1;
+      const segments: Segment[] = [];
+      if (shown.length > from) {
+        const link = entry.hints.subject?.kind === "text" ? undefined : value;
+        segments.push({ text: name, style: STYLE.title, source: { kind: "text", from: 0, to: name.length } });
+        segments.push({ text: " ", source: { kind: "text", from: name.length, to: from } });
+        segments.push({ text: shown.slice(from), style: STYLE.subject, link, source: { kind, from, to: head.length } });
+      } else {
+        segments.push({ text: shown, style: STYLE.title, source: { kind, from: 0, to: head.length } });
+      }
+      if (end !== "") {
+        const to = head.length + end.length;
+        segments.push({ text: end, style: STYLE.meta, source: { kind: "text", from: head.length, to } });
+      }
+      return [indented({ segments, join: "\n" })];
+    },
+  };
+  if (!open || value === undefined) return [title];
+  const subject: TextSection = {
+    key: "subject",
+    kind: "text",
+    text: value,
+    render: (width) => (shownAt(width) === source ? [] : styledRows(value, width, STYLE.subject)),
+  };
+  return [title, subject];
 }
 
 /** The state of a call that did not end well, or `undefined` for a call that ended well. */
@@ -65,18 +97,30 @@ function stateOf(entry: ToolEntry): string | undefined {
   return entry.result?.isError === true ? "error" : undefined;
 }
 
-/** The string argument that the hints of `entry` name as the subject. Incomplete JSON has none. */
-export function subjectOf(entry: ToolEntry): string | undefined {
-  const subject = entry.hints.subject;
-  if (subject === null) return undefined;
+/** The fields of the arguments of `entry`. Incomplete JSON has none. */
+function fieldsOf(entry: ToolEntry): Record<string, unknown> | undefined {
   try {
     const value: unknown = JSON.parse(entry.arguments);
-    if (typeof value !== "object" || value === null) return undefined;
-    const field = (value as Record<string, unknown>)[subject.argument];
-    return typeof field === "string" ? field : undefined;
+    return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** The string argument that the hints of `entry` name as the subject. */
+export function subjectOf(entry: ToolEntry): string | undefined {
+  const subject = entry.hints.subject;
+  if (subject === null) return undefined;
+  const field = fieldsOf(entry)?.[subject.argument];
+  return typeof field === "string" ? field : undefined;
+}
+
+/** The arguments of `entry` without its subject, as JSON. A call without a subject keeps its text as it came. */
+function otherArguments(entry: ToolEntry): string {
+  const subject = entry.hints.subject?.argument;
+  const fields = fieldsOf(entry);
+  if (subject === undefined || typeof fields?.[subject] !== "string") return entry.arguments;
+  return JSON.stringify(Object.fromEntries(Object.entries(fields).filter((field) => field[0] !== subject)));
 }
 
 /** One block of a body: its source and its rows at a width. */
