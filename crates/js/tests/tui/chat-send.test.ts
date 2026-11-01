@@ -53,7 +53,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
   const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 6 }, undefined, startup);
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.paste("hello");
   frame.key("enter");
@@ -84,7 +84,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
 test("without a saved choice the first send asks for the model and level, and a cancel keeps the draft", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.paste("hi");
   frame.key("enter");
@@ -126,7 +126,7 @@ for (const choice of [
     await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: folder() });
     using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
     const sessions = fakeSessions();
-    const chat = await loadChat(frame, {}, sessions);
+    const chat = await loadChat(frame, sessions);
     frame.start();
     frame.paste("hi");
     frame.key("enter");
@@ -182,7 +182,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   await mkdir("choice.json", { baseDir: folder() });
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.paste("hi");
   frame.key("enter");
@@ -209,7 +209,7 @@ test("a refused input comes back above the newer text with the spans of both, an
   const sessions = fakeSessions();
   const refuse = Promise.withResolvers<void>();
   sessions.state.accept = refuse.promise;
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("first");
@@ -228,7 +228,7 @@ test("a refused input comes back above the newer text with the spans of both, an
 test("an accepted input followed by a failed turn does not come back", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.paste("go");
   frame.key("enter");
@@ -244,7 +244,7 @@ test("a pane whose open failed opens its session again at the next send", async 
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   sessions.state.openFails = 1;
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("again");
@@ -259,7 +259,7 @@ test("a pane whose open failed opens its session again at the next send", async 
 test("a cancel of the model picker, a catalog that fails, and a pane close each keep the draft and create nothing", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.paste("hi");
   frame.key("enter");
@@ -277,7 +277,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.draw();
   equal([rows(frame).includes("p/m"), sessions.created], [false, []]);
   using other = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/launch" });
-  const failing = await loadChat(other, {}, fakeSessions(), { list: () => Promise.reject(new Error("offline")) });
+  const failing = await loadChat(other, fakeSessions(), { list: () => Promise.reject(new Error("offline")) });
   other.start();
   other.paste("hi");
   other.key("enter");
@@ -288,7 +288,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
 test("a paste over 300 characters shows a label, and the input gets the whole text", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   // A draft of white space sends nothing and stays.
@@ -329,7 +329,7 @@ test("up in an empty composer shows the older messages of the user, down past th
     message(4, "build done", "plugin"),
   ];
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const text = () => composerOf(chat).state.text;
   frame.key("up");
@@ -358,7 +358,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
   ];
   using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  const chat = await loadChat(frame, { copyOnRelease: false }, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -376,34 +376,11 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
   equal(sessions.state.cancels, 2);
 });
 
-test("tab moves the focus to the transcript, where y copies the selection and enter acts on the caret", async () => {
-  const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ assistant_text: "see [docs](https://docs.rs)" }]),
-  ];
-  using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, { copyOnRelease: false }, fakeSessions(saved));
-  frame.start();
-  frame.key("tab");
-  equal(chat.tui.focused === chat.transcript(), true);
-  const transcript = chat.transcript();
-  transcript.selection = {
-    anchor: { item: "2:0", section: "text", offset: 0 },
-    head: { item: "2:0", section: "text", offset: 3 },
-  };
-  frame.key("y");
-  transcript.caret = { item: "2:0", section: "text", offset: 6 };
-  frame.key("enter");
-  equal(frame.copies, ["see", "https://docs.rs"]);
-  frame.key("shift+tab");
-  equal(chat.tui.focused === composerOf(chat), true);
-});
-
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const bottom = chat.transcript().scroll.state.top;
   frame.key("page_up");
@@ -430,7 +407,7 @@ test("a refusal while the user browses the messages ends the browse, so down kee
   const sessions = fakeSessions(saved);
   const refuse = Promise.withResolvers<void>();
   sessions.state.accept = refuse.promise;
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("first");
@@ -449,7 +426,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 14 }, undefined, startup);
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.key("ctrl+k m");
   await waitFor(() => showsModelPicker(frame));
@@ -481,7 +458,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
 test("ctrl+k m in a pane with a session changes its model and level and keeps its other settings", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   // The session has its own folder, model, and output limit, so the change must keep the first and the last.
@@ -587,7 +564,7 @@ test("a pane with few rows above the rule shows the first commands", async () =>
 test("a question in the place of the composer hides the commands", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
-  const chat = await loadChat(frame, { questions: "composer" }, sessions);
+  const chat = await loadChat(frame, sessions);
   chat.tui.commands.add({ name: "alpha", run: () => {} });
   frame.start();
   await settle();
@@ -601,7 +578,10 @@ test("a question in the place of the composer hides the commands", async () => {
     sessionUpdate: "interaction_requested",
     interactionId: 1,
     source: "guard",
-    request: { kind: "confirm", title: "Go?", message: "" },
+    request: {
+      kind: "questions",
+      questions: [{ id: "go", header: "Go", question: "Go?", options: [{ label: "Yes" }, { label: "No" }] }],
+    },
   });
   equal([before, listed()], [true, false]);
 });
@@ -609,7 +589,7 @@ test("a question in the place of the composer hides the commands", async () => {
 test("esc hides the commands until the draft changes, and a draft with no command sends as a message", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   const listed = (): boolean => {
@@ -648,7 +628,7 @@ test("the commands of the chat are disabled in a pane of another plugin", async 
 test("the strip shows the waiting messages of the user oldest first, cut to one row, and no input of a plugin", async () => {
   using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   sessions.push(accepted(5, [{ user_text: "fix the test" }]));
@@ -669,7 +649,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
 test("up recalls the newest waiting message with its images, the next up puts the older one above, and an edit or a caret move ends it", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
@@ -711,7 +691,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
 test("a message that a turn took stays sent and the next up recalls an older one, up during a recall does nothing, and text typed meanwhile stays", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   sessions.push(accepted(3, [{ user_text: "zero" }]));
@@ -735,7 +715,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
 test("a pane close during a recall leaves the composer and gives no notice", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   const composer = composerOf(chat);
@@ -761,7 +741,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
   ];
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.key("up");
@@ -777,7 +757,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
 test("the strip keeps the newest messages when rows run out, and a failed recall keeps the composer", async () => {
   using frame = createFrame({ width: 20, height: 4 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   for (const [id, text] of [
@@ -800,7 +780,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
 test("a send after a close of the session by another client opens the session again", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   await settle();
   sessions.close("s1");
@@ -815,7 +795,7 @@ const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mime: "image/png" 
 test("ctrl+v puts the image of the clipboard at the caret with the next number, and a send keeps the order", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.clipboard = PNG;
@@ -855,7 +835,7 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
   const startup = { cwd: "/w" };
   using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.key("ctrl+v");
   await settle();
@@ -882,7 +862,7 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
 test("a cancel of the model picker or a pane close during ctrl+v puts nothing in the composer", async () => {
   using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   frame.clipboard = PNG;
   const composer = composerOf(chat);
@@ -893,7 +873,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   const cancelled = [sessions.created.length, composer.state.text];
   using other = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const later = fakeSessions();
-  const closing = await loadChat(other, {}, later);
+  const closing = await loadChat(other, later);
   other.start();
   await settle();
   other.clipboard = PNG;
@@ -917,7 +897,7 @@ test("text typed while the first send sets up the session goes with the message"
   const sessions = fakeSessions();
   const { promise, resolve } = Promise.withResolvers<ListCatalogResult>();
   let first = true;
-  await loadChat(frame, {}, sessions, {
+  await loadChat(frame, sessions, {
     list: () => {
       if (!first) return promise;
       first = false;
@@ -937,7 +917,7 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   sessions.state.openFails = 2;
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.key("ctrl+k m");
@@ -955,7 +935,7 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
 test("an image whose store finishes after an edit goes where the caret is then", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.clipboard = PNG;

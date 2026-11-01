@@ -660,7 +660,10 @@ async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
            s.tools.define({
              name: 'ask', description: 'Ask.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
-             execute: async () => `answer: ${await s.confirm('Run the migration?')}`,
+             async execute() {
+               const question = { id: 'run', header: 'Migration', question: 'Run the migration?', options: [{ label: 'Yes' }, { label: 'No' }] };
+               return `answer: ${await s.ask({ questions: [question] })}`;
+             },
            });
          }",
     );

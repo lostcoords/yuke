@@ -8,7 +8,6 @@ import {
   ChatCommands,
   ChatComposer,
   ChatDocument,
-  type ChatQuestion,
   ChatQuestions,
   type ChatRow,
   type ChatRowsContext,
@@ -19,7 +18,6 @@ import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
-import { bottom } from "yuke:internal/tui/layout";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
@@ -80,12 +78,6 @@ export interface PaneActions {
   /** Drop the selection of the transcript, else cancel the running turn. */
   readonly interrupt: () => void;
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
-  /** Move the focus between the composer and the transcript. */
-  readonly switchFocus: () => void;
-  /** Act on the caret of the transcript, as a click does. */
-  readonly activate: () => void;
-  /** Copy the selection of the transcript. */
-  readonly copy: () => void;
   /** A question of a plugin shows, so the composer takes no message. */
   readonly asking: () => boolean;
   /** Answer the shown question with a cancel. */
@@ -108,13 +100,8 @@ export interface PaneActions {
 
 /** What each pane of the chat shares. */
 export interface Chat {
-  readonly ctx: PluginContext<{
-    readonly copyOnRelease?: boolean | undefined;
-    readonly questions?: "composer" | "modal" | undefined;
-  }>;
+  readonly ctx: PluginContext;
   readonly tui: Tui;
-  /** Where a question shows: in the place of the composer, or in a modal above the focused pane. */
-  readonly questions: "composer" | "modal";
   /** The actions of each pane, by its view. */
   readonly panes: WeakMap<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
@@ -149,7 +136,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
-  let modal: { readonly asked: ChatQuestion; readonly mount: Mount } | undefined;
   /** Draw the working row again at the next frame of its spinner, while the turn runs. */
   const tick = (): void => {
     stopTick = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
@@ -180,35 +166,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     changed();
   });
 
-  /**
-   * Show the first open question in a modal, and close the modal of a closed one. A modal opens only while this pane
-   * has the focus, so it waits for another modal to close.
-   */
-  function placeQuestion(): void {
-    const asked = questions.current;
-    if (modal !== undefined && modal.asked !== asked) modal.mount.close();
-    if (asked === undefined || chat.questions !== "modal" || modal !== undefined) return;
-    if (tui.focused !== composer && tui.focused !== view) return;
-    const overlay = tui.overlay(() => asked.view, { place: (size) => bottom(size, asked.rows) });
-    modal = { asked, mount: overlay };
-    const close = (): void => overlay.close();
-    mount.signal.addEventListener("abort", close, { once: true });
-    overlay.signal.addEventListener(
-      "abort",
-      () => {
-        mount.signal.removeEventListener("abort", close);
-        if (modal?.mount === overlay) modal = undefined;
-      },
-      { once: true },
-    );
-  }
-
   const group = {};
   const view = new TextView({
     document: document.project(chatSession.transcript),
     role: "transcript",
     group,
-    copyOnRelease: chat.ctx.options.copyOnRelease,
     followTail: true,
     activate: (position, link) => {
       const transcript = chatSession.transcript;
@@ -393,19 +355,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /** The view that takes the typed keys: a question in the place of the composer, else the composer. */
-  const input = (): View => (chat.questions === "composer" ? questions.current?.focus : undefined) ?? composer;
+  const input = (): View => questions.current?.view ?? composer;
 
   const questions = new ChatQuestions(chatSession, {
     signal: mount.signal,
     failed: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
-  // A change of the questions comes inside a change of the session, and the session listener asks for the frame.
-  questions.onChange(placeQuestion);
-  // A modal question waits for the focus of this pane.
-  if (chat.questions === "modal") {
-    const stop = tui.onFocus(() => placeQuestion());
-    mount.signal.addEventListener("abort", stop, { once: true });
-  }
   // The open comes after the views, because its snapshot can show a question. A failure gives one notice, and the next
   // send opens the session again.
   const saved = chatSession.id;
@@ -429,8 +384,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = false;
         view.setDocument(document.project(chatSession.transcript));
       }
-      // A question in the composer place hides the composer, and the composer keeps its draft.
-      const question = chat.questions === "composer" ? questions.current : undefined;
+      // A question hides the composer, and the composer keeps its draft.
+      const question = questions.current;
       // The composer keeps one row in a pane of any size, and at most half of a taller pane.
       const wanted = question?.rows ?? composer.heightFor(size.width);
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(size.height / 2)));
@@ -573,17 +528,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else if (to === "pageDown") view.scroll.scrollBy(step);
       else if (to === "top") view.scroll.scrollTo(0);
       else view.scroll.followTail();
-    },
-    switchFocus: () => {
-      tui.focus(tui.focused === view ? input() : view);
-    },
-    activate: () => {
-      const caret = view.caret;
-      if (caret !== undefined) view.activate(caret);
-    },
-    copy: () => {
-      const selection = view.selection;
-      if (selection !== undefined) tui.copy(view.text({ from: selection.anchor, to: selection.head }));
     },
     asking: () => questions.current !== undefined,
     cancelQuestion: () => questions.cancel(),

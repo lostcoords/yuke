@@ -25,7 +25,7 @@ async function failure(promise: Promise<void>): Promise<string> {
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   const view = chat.tui.panes.active?.view as View;
@@ -58,7 +58,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
 
 test("a failed show keeps the session, the handle, and the draft of the pane", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(replies(2)));
+  const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await settle();
   frame.paste("keep");
@@ -84,7 +84,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
 test("show waits for the end of a send in the pane", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -101,7 +101,7 @@ test("show waits for the end of a send in the pane", async () => {
 
 test("show in a pane of another plugin opens a new chat pane, and a pane without a session keeps its draft", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
-  const chat = await loadChat(frame, {}, fakeSessions(replies(2)));
+  const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   frame.paste("first words");
   await chat.chat.show("s1");
@@ -114,7 +114,7 @@ test("show in a pane of another plugin opens a new chat pane, and a pane without
 
 test("a failed show from a pane of another plugin closes the new chat pane again", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(replies(2)));
+  const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   const other = frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   const error = await failure(chat.chat.show("missing"));
@@ -125,7 +125,7 @@ test("a failed show from a pane of another plugin closes the new chat pane again
 test("a show of the shown session opens it again after a close by another client", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("keep");
@@ -145,7 +145,7 @@ test("a show of the shown session opens it again after a close by another client
 
 test("each pane keeps its own draft of a session that it leaves", async () => {
   using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(replies(2)));
+  const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   await settle();
   frame.paste("left");

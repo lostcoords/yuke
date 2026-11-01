@@ -905,7 +905,7 @@ async fn trust_of(host: Arc<Host>, folder: PathBuf, project: yuke_mcp::Config) -
         return true;
     }
     let question = trust::question(&folder, &project);
-    if host.ask(MCP_SOURCE, question, host.closed.clone()).await != (InteractionResponse::Confirm { value: true }) {
+    if !trust::started(&host.ask(MCP_SOURCE, question, host.closed.clone()).await) {
         return false;
     }
     if let Err(error) = trust::trust(data, &key) {
@@ -941,23 +941,45 @@ impl Drop for PendingRequest<'_> {
     }
 }
 
-/// Fail an answer that does not fit `request`: another kind, or an option that `request` does not offer.
+/// Fail an answer that does not fit `request`: not one answer per question, an option that its question does not
+/// offer, more than one option without `multiple`, a typed text without `other`, or an answer with neither.
 fn check_answer(request: &InteractionRequest, response: &InteractionResponse) -> Result<(), AppError> {
-    match (request, response) {
-        (_, InteractionResponse::Canceled)
-        | (InteractionRequest::Confirm { .. }, InteractionResponse::Confirm { .. })
-        | (InteractionRequest::Input { .. }, InteractionResponse::Input { .. }) => Ok(()),
-        (InteractionRequest::Select { options, .. }, InteractionResponse::Select { value }) => {
-            if options.contains(value) {
-                Ok(())
-            } else {
-                Err(AppError::Invalid(format!("the question offers no option {value:?}")))
-            }
-        }
-        _ => Err(AppError::Invalid(
-            "the answer is of another kind than the question".to_owned(),
-        )),
+    let InteractionRequest::Questions { questions } = request;
+    let InteractionResponse::Questions { answers } = response else {
+        return Ok(());
+    };
+    let invalid = |text: String| Err(AppError::Invalid(text));
+    if answers.len() != questions.len() {
+        return invalid(format!(
+            "the answer count {} is not the question count {}",
+            answers.len(),
+            questions.len()
+        ));
     }
+    for question in questions {
+        let id = &question.id;
+        let mut matching = answers.iter().filter(|answer| answer.id == *id);
+        let (Some(answer), None) = (matching.next(), matching.next()) else {
+            return invalid(format!("the question {id:?} has no single answer"));
+        };
+        if let Some(value) = answer
+            .values
+            .iter()
+            .find(|value| !question.options.iter().any(|option| option.label == **value))
+        {
+            return invalid(format!("the question {id:?} offers no option {value:?}"));
+        }
+        if !question.multiple && answer.values.len() > 1 {
+            return invalid(format!("the question {id:?} takes one option"));
+        }
+        if answer.other.is_some() && !question.other {
+            return invalid(format!("the question {id:?} takes no typed text"));
+        }
+        if answer.values.is_empty() && answer.other.is_none() {
+            return invalid(format!("the answer to the question {id:?} is empty"));
+        }
+    }
+    Ok(())
 }
 
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.
@@ -1029,9 +1051,14 @@ impl SessionHost for Host {
     async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
         let output = &self.output;
         if self.shared.mode == Mode::Print {
+            let InteractionRequest::Questions { questions } = &request;
+            let headers = questions.iter().map(|question| question.header.as_str());
             output.notice(
                 NoticeLevel::Warn,
-                &format!("no client can answer the question of {source}: {}", request.title()),
+                &format!(
+                    "no client can answer the question of {source}: {}",
+                    headers.collect::<Vec<_>>().join(", ")
+                ),
             );
             return InteractionResponse::Canceled;
         }
@@ -1086,7 +1113,7 @@ mod tests {
 
     use crate::app::{TokioTimer, open_store};
     use yuke_ai::scripted::ScriptedTransport;
-    use yuke_protocol::{InputKind, InputSource, ModelReference};
+    use yuke_protocol::{InputKind, InputSource, ModelReference, Question, QuestionAnswer, QuestionOption};
 
     use super::*;
     use crate::app::App;
@@ -1313,10 +1340,42 @@ mod tests {
         assert_eq!(*lock(&recorder.0), [saved(5), removed(1)]);
     }
 
+    /// A question with the options `labels`.
+    fn question(id: &str, labels: &[&str], multiple: bool, other: bool) -> Question {
+        Question {
+            id: id.to_owned(),
+            header: id.to_owned(),
+            question: format!("{id}?"),
+            options: labels
+                .iter()
+                .map(|label| QuestionOption {
+                    label: (*label).to_owned(),
+                    description: None,
+                })
+                .collect(),
+            multiple,
+            other,
+            secret: false,
+        }
+    }
+
     fn confirm() -> InteractionRequest {
-        InteractionRequest::Confirm {
-            title: "Run the migration?".to_owned(),
-            message: String::new(),
+        InteractionRequest::Questions {
+            questions: vec![question("go", &["Yes", "No"], false, false)],
+        }
+    }
+
+    /// The answers `answers` of `(id, values, other)`.
+    fn answers(answers: &[(&str, &[&str], Option<&str>)]) -> InteractionResponse {
+        InteractionResponse::Questions {
+            answers: answers
+                .iter()
+                .map(|(id, values, other)| QuestionAnswer {
+                    id: (*id).to_owned(),
+                    values: values.iter().map(|value| (*value).to_owned()).collect(),
+                    other: other.map(str::to_owned),
+                })
+                .collect(),
         }
     }
 
@@ -1340,51 +1399,67 @@ mod tests {
         let output = output(&recorder);
 
         let (id, mut answered) = output.open_question("guard", confirm());
-        let first = output.answer_question(id, InteractionResponse::Confirm { value: true });
-        let second = output.answer_question(id, InteractionResponse::Confirm { value: false });
+        let first = output.answer_question(id, answers(&[("go", &["Yes"], None)]));
+        let second = output.answer_question(id, answers(&[("go", &["No"], None)]));
 
         assert!(first.is_ok(), "{first:?}");
         assert!(
             matches!(second, Err(AppError::NoInteraction(InteractionId(1)))),
             "{second:?}"
         );
-        assert_eq!(answered.try_recv(), Ok(InteractionResponse::Confirm { value: true }));
+        assert_eq!(answered.try_recv(), Ok(answers(&[("go", &["Yes"], None)])));
         assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
     }
 
     #[test]
-    fn an_answer_of_another_kind_or_an_option_that_the_question_lacks_leaves_the_question_open() {
+    fn an_answer_that_does_not_fit_its_questions_leaves_them_open() {
         let recorder = Arc::new(Recorder::default());
         let output = output(&recorder);
-        let select = InteractionRequest::Select {
-            title: "Deploy to?".to_owned(),
-            options: vec!["staging".to_owned(), "production".to_owned()],
+        let request = InteractionRequest::Questions {
+            questions: vec![
+                question("db", &["SQLite", "Postgres"], true, true),
+                question("go", &["Yes", "No"], false, false),
+            ],
         };
+        let db: (&str, &[&str], Option<&str>) = ("db", &["Postgres"], Some("with pgvector"));
 
-        let (id, mut answered) = output.open_question("guard", select.clone());
-        let other_kind = output.answer_question(id, InteractionResponse::Confirm { value: true });
-        let other_option = output.answer_question(
-            id,
-            InteractionResponse::Select {
-                value: "local".to_owned(),
-            },
-        );
-        let fitting = output.answer_question(
-            id,
-            InteractionResponse::Select {
-                value: "staging".to_owned(),
-            },
-        );
+        let (id, mut answered) = output.open_question("guard", request);
+        let refusals = [
+            (answers(&[db]), "the answer count 1 is not the question count 2"),
+            (answers(&[db, db]), "the question \"db\" has no single answer"),
+            (
+                answers(&[db, ("other", &["Yes"], None)]),
+                "the question \"go\" has no single answer",
+            ),
+            (
+                answers(&[("db", &["MySQL"], None), ("go", &["Yes"], None)]),
+                "offers no option \"MySQL\"",
+            ),
+            (
+                answers(&[db, ("go", &["Yes", "No"], None)]),
+                "the question \"go\" takes one option",
+            ),
+            (
+                answers(&[db, ("go", &[], Some("later"))]),
+                "the question \"go\" takes no typed text",
+            ),
+            (
+                answers(&[db, ("go", &[], None)]),
+                "the answer to the question \"go\" is empty",
+            ),
+        ];
+        for (response, reason) in refusals {
+            let refused = output.answer_question(id, response);
+            assert!(
+                matches!(&refused, Err(AppError::Invalid(text)) if text.contains(reason)),
+                "{reason}: {refused:?}"
+            );
+        }
+        let fitting = answers(&[db, ("go", &["No"], None)]);
+        let accepted = output.answer_question(id, fitting.clone());
 
-        assert!(matches!(other_kind, Err(AppError::Invalid(_))), "{other_kind:?}");
-        assert!(matches!(other_option, Err(AppError::Invalid(_))), "{other_option:?}");
-        assert!(fitting.is_ok(), "{fitting:?}");
-        assert_eq!(
-            answered.try_recv(),
-            Ok(InteractionResponse::Select {
-                value: "staging".to_owned()
-            })
-        );
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert_eq!(answered.try_recv(), Ok(fitting));
     }
 
     #[test]

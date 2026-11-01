@@ -7,10 +7,13 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 
-use yuke_protocol::InteractionRequest;
+use yuke_protocol::{InteractionRequest, InteractionResponse, Question, QuestionOption};
 
 /// The folder of the trust files in the data folder.
 const FOLDER: &str = "mcp-trust";
+
+/// The option of [`question`] that starts the servers.
+const START: &str = "Start";
 
 /// The key of the project servers `config` of `folder`: the hex SHA-256 of the real path of the folder, a NUL byte, and
 /// the JSON of the servers.
@@ -67,14 +70,29 @@ pub(super) fn question(folder: &Path, config: &yuke_mcp::Config) -> InteractionR
             format!("- {name}: {}", parts.join(", "))
         });
     let head = format!(
-        "{} has these MCP servers. Each runs on this computer.",
+        "Start the MCP servers of this project?\n{} has these MCP servers. Each runs on this computer.",
         folder.display()
     );
-    let message = std::iter::once(head).chain(lines).collect::<Vec<_>>().join("\n");
-    InteractionRequest::Confirm {
-        title: "Start the MCP servers of this project?".to_owned(),
-        message,
+    let option = |label: &str| QuestionOption {
+        label: label.to_owned(),
+        description: None,
+    };
+    InteractionRequest::Questions {
+        questions: vec![Question {
+            id: "start".to_owned(),
+            header: "MCP servers".to_owned(),
+            question: std::iter::once(head).chain(lines).collect::<Vec<_>>().join("\n"),
+            options: vec![option(START), option("Don't start")],
+            multiple: false,
+            other: false,
+            secret: false,
+        }],
     }
+}
+
+/// The user chose to start the servers in `response` to [`question`].
+pub(super) fn started(response: &InteractionResponse) -> bool {
+    matches!(response, InteractionResponse::Questions { answers } if answers.iter().any(|answer| answer.values == [START]))
 }
 
 #[cfg(test)]
@@ -92,13 +110,11 @@ mod tests {
         )
         .unwrap();
 
-        let InteractionRequest::Confirm { message, .. } = question(Path::new("/work"), &config) else {
-            panic!("a confirm");
-        };
+        let InteractionRequest::Questions { questions } = question(Path::new("/work"), &config);
 
         assert_eq!(
-            message,
-            "/work has these MCP servers. Each runs on this computer.\n\
+            questions[0].question,
+            "Start the MCP servers of this project?\n/work has these MCP servers. Each runs on this computer.\n\
              - db: node db.js, in tools, NODE_OPTIONS=--inspect\n\
              - web: uvx web"
         );

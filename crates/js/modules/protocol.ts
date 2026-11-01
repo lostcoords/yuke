@@ -339,54 +339,24 @@ name: string, };
 export type InteractionId = number;
 
 /**
- * One question. A client shows it in its own way.
+ * A request to the user. A client shows it in its own way.
  */
-export type InteractionRequest = { "kind": "confirm", 
+export type InteractionRequest = { "kind": "questions", 
 /**
- * The question.
+ * The questions, in display order. The ids are unique. The labels of a question are unique, and each question
+ * has an option or `other`.
  */
-title: string, 
-/**
- * More text about the question. It can be empty.
- */
-message: string, } | { "kind": "select", 
-/**
- * The question.
- */
-title: string, 
-/**
- * The options, in display order. They are unique.
- */
-options: Array<string>, } | { "kind": "input", 
-/**
- * The question.
- */
-title: string, 
-/**
- * The text that an empty field shows.
- */
-placeholder?: string | null, 
-/**
- * The field hides what the user types, as for a password.
- */
-secret: boolean, };
+questions: Array<Question>, };
 
 /**
- * An answer. Its kind matches the kind of the question, or the question ended without an answer.
+ * The response to a request. Its kind matches the kind of the request, or the user closed the request without an
+ * answer.
  */
-export type InteractionResponse = { "kind": "confirm", 
+export type InteractionResponse = { "kind": "questions", 
 /**
- * `true` for yes.
+ * One answer per question, each with a value or `other`.
  */
-value: boolean, } | { "kind": "select", 
-/**
- * One of the options of the question.
- */
-value: string, } | { "kind": "input", 
-/**
- * The text.
- */
-value: string, } | { "kind": "canceled" };
+answers: Array<QuestionAnswer>, } | { "kind": "canceled" };
 
 /**
  * A background job.
@@ -977,6 +947,70 @@ export type ProviderState = { "kind": "ready" } | { "kind": "needs_api_key",
  * The name of the environment variable.
  */
 variable: string, } | { "kind": "needs_login" };
+
+/**
+ * One question of a request.
+ */
+export type Question = { 
+/**
+ * The id that the answer names.
+ */
+id: string, 
+/**
+ * A short name of the question.
+ */
+header: string, 
+/**
+ * The question. It can have more than one line.
+ */
+question: string, 
+/**
+ * The options, in display order. Without options and with `other`, the question is a text field.
+ */
+options: Array<QuestionOption>, 
+/**
+ * The user can choose more than one option. A missing flag is `false`.
+ */
+multiple?: boolean, 
+/**
+ * The user can type an answer of their own. A missing flag is `false`.
+ */
+other?: boolean, 
+/**
+ * The text field hides what the user types, as for a password. Only a question without options has it. A missing
+ * flag is `false`.
+ */
+secret?: boolean, };
+
+/**
+ * The answer to one question.
+ */
+export type QuestionAnswer = { 
+/**
+ * The id of the question.
+ */
+id: string, 
+/**
+ * The labels of the chosen options. A question without `multiple` has at most one.
+ */
+values: Array<string>, 
+/**
+ * The text that the user typed, only for a question with `other`.
+ */
+other?: string | null, };
+
+/**
+ * One option of a question.
+ */
+export type QuestionOption = { 
+/**
+ * The text of the option, which the answer names.
+ */
+label: string, 
+/**
+ * More text about the option.
+ */
+description?: string | null, };
 
 /**
  * Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that

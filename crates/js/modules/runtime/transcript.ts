@@ -14,7 +14,7 @@ import type {
   ToolHints,
   Usage,
 } from "yuke:protocol";
-import type { Entry, Question, Status } from "yuke:transcript";
+import type { Entry, Interaction, Status } from "yuke:transcript";
 
 type Saved = Frozen<StoredEvent>;
 
@@ -45,7 +45,7 @@ function called(call: Frozen<ToolCall>): { name: string; arguments: string } {
 export class Transcript {
   readonly entries: Entry[] = [];
   readonly pending = new Map<InputId, Frozen<Input>>();
-  readonly questions = new Map<InteractionId, Question>();
+  readonly questions = new Map<InteractionId, Interaction>();
   #state: SessionState = "idle";
   #settings: Frozen<SessionSettings> | undefined;
   #status: Status | undefined;

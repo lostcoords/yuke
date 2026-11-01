@@ -384,8 +384,10 @@ export class Scene {
     const input = this.#inputLayer();
     if (event.action === "press" && !wheel) {
       for (let target: Target | undefined = hit; target !== undefined; target = target.parent) {
-        if (this.#focusable(target.view)) {
-          this.#setFocus(layer, target.view);
+        const view = target.view;
+        // The view of a pane takes a press, as it takes the focus without `focusable`.
+        if (this.#host.paneOf(view) !== undefined || (view.focusable === true && view.focusOnPress !== false)) {
+          this.#setFocus(layer, view);
           break;
         }
       }

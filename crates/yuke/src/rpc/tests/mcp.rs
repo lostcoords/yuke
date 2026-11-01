@@ -102,11 +102,12 @@ async fn opened_with_question(client: &mut Client, place: &Place) -> (Value, Val
     (session, question)
 }
 
-fn answer(session: &Value, question: &Value, value: bool) -> Value {
+fn answer(session: &Value, question: &Value, start: bool) -> Value {
+    let label = if start { "Start" } else { "Don't start" };
     json!({
         "sessionId": session,
         "interactionId": question["interactionId"],
-        "response": { "kind": "confirm", "value": value },
+        "response": { "kind": "questions", "answers": [{ "id": "start", "values": [label] }] },
     })
 }
 
@@ -139,16 +140,19 @@ async fn a_project_mcp_server_starts_after_a_yes_and_the_trust_lasts_until_the_l
     let (_third, asked_again) = opened_with_question(&mut client, &place).await;
 
     assert_eq!(question["source"], "host:mcp");
-    assert_eq!(question["request"]["kind"], "confirm");
-    assert_eq!(question["request"]["title"], "Start the MCP servers of this project?");
-    let message = question["request"]["message"].as_str().unwrap();
+    assert_eq!(question["request"]["kind"], "questions");
+    let text = question["request"]["questions"][0]["question"].as_str().unwrap();
+    assert!(text.starts_with("Start the MCP servers of this project?\n"), "{text}");
     assert!(
-        message.ends_with(&format!("has these MCP servers. Each runs on this computer.\n{line}")),
-        "{message}"
+        text.ends_with(&format!("has these MCP servers. Each runs on this computer.\n{line}")),
+        "{text}"
     );
     assert!(!second.iter().any(is_question), "{second:?}");
     assert!(
-        asked_again["request"]["message"].as_str().unwrap().ends_with("changed"),
+        asked_again["request"]["questions"][0]["question"]
+            .as_str()
+            .unwrap()
+            .ends_with("changed"),
         "{asked_again}"
     );
     let kept = std::fs::read_dir(place.paths.data.join("mcp-trust")).unwrap().count();
@@ -178,10 +182,8 @@ async fn a_no_leaves_a_project_mcp_server_untrusted_and_the_next_session_asks_ag
         listed,
         json!({ "servers": [{ "name": "proj", "source": "project", "state": "untrusted" }] })
     );
-    assert_eq!(
-        asked_again["request"]["title"],
-        "Start the MCP servers of this project?"
-    );
+    let text = asked_again["request"]["questions"][0]["question"].as_str().unwrap();
+    assert!(text.starts_with("Start the MCP servers of this project?\n"), "{text}");
     assert!(!place.paths.data.join("mcp-trust").exists());
     client.end().await;
 }

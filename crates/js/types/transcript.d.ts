@@ -82,8 +82,8 @@ declare module "yuke:transcript" {
   /** One entry of the conversation. `key` is unique in the transcript and has no meaning beyond that. */
   export type Entry = InputEntry | TextEntry | ReasoningEntry | ToolEntry | CompactionEntry | EndEntry;
 
-  /** An open question to the user. */
-  export type Question = Frozen<{ source: string; request: InteractionRequest }>;
+  /** An open request to the user: who asks, and the questions. */
+  export type Interaction = Frozen<{ source: string; request: InteractionRequest }>;
 
   /** A failure of the running turn that is not its end. */
   export type Status = Frozen<
@@ -102,7 +102,7 @@ declare module "yuke:transcript" {
     /** The inputs that wait for a turn, by id. */
     readonly pending: ReadonlyMap<InputId, Frozen<Input>>;
     /** The open questions, by id. */
-    readonly questions: ReadonlyMap<InteractionId, Question>;
+    readonly questions: ReadonlyMap<InteractionId, Interaction>;
     get state(): SessionState;
     get settings(): Frozen<SessionSettings> | undefined;
     /** The last failure of the running turn, until its next draft or its end. */

@@ -343,7 +343,10 @@ test("the inputs, questions, status, and settings follow their updates", () => {
       sessionUpdate: "interaction_requested",
       interactionId: 7,
       source: "ask",
-      request: { kind: "confirm", title: "t", message: "m" },
+      request: {
+        kind: "questions",
+        questions: [{ id: "go", header: "Go", question: "t", options: [{ label: "Yes" }, { label: "No" }] }],
+      },
     },
     { sessionUpdate: "retry_scheduled", afterMs: 3000, error: "overloaded" },
   ]);

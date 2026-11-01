@@ -240,7 +240,10 @@ test("the questions show the first open one, a cancel answers it once, and a ref
       sessionUpdate: "interaction_requested",
       interactionId: id,
       source: "guard",
-      request: { kind: "confirm", title: `Step ${id}?`, message: "" },
+      request: {
+        kind: "questions",
+        questions: [{ id: "go", header: "Go", question: `Step ${id}?`, options: [{ label: "Yes" }, { label: "No" }] }],
+      },
     });
   ask(7);
   ask(8);
@@ -268,7 +271,10 @@ test("questions that start after a question opened show it at once", async () =>
     sessionUpdate: "interaction_requested",
     interactionId: 3,
     source: "guard",
-    request: { kind: "confirm", title: "Go?", message: "" },
+    request: {
+      kind: "questions",
+      questions: [{ id: "go", header: "Go", question: "Go?", options: [{ label: "Yes" }, { label: "No" }] }],
+    },
   });
   const questions = new ChatQuestions(chat, { signal: owner.signal, failed: () => {} });
   equal(questions.current !== undefined, true);

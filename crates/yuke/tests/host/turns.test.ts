@@ -184,18 +184,27 @@ test("a plugin patches a tool result before the model reads it, and the session 
 test("an input.before handler asks the user, and a refusal removes the input", async () => {
   const guard: PluginSession = (s) => {
     s.hook("input.before", async (event) => {
-      const sent = await s.confirm("Send this input?", "", { signal: event.signal });
-      return sent ? undefined : { block: "the user refused" };
+      const question = {
+        id: "send",
+        header: "Send",
+        question: "Send this input?",
+        options: [{ label: "Yes" }, { label: "No" }],
+      };
+      const answers = await s.ask({ questions: [question] }, { signal: event.signal });
+      return answers?.[0]?.values[0] === "Yes" ? undefined : { block: "the user refused" };
     });
   };
-  await using host = await createHost({ plugins: [{ name: "guard", session: guard }], answer: () => false });
+  await using host = await createHost({
+    plugins: [{ name: "guard", session: guard }],
+    answer: () => [{ id: "send", values: ["No"] }],
+  });
   const session = await host.openSession();
 
   await session.send("rm -rf");
 
   equal([host.requests.length, session.transcript.pending.size], [0, 0]);
   equal(
-    host.questions.map((question) => question.request.title),
+    host.questions.map((question) => question.request.questions[0]?.question),
     ["Send this input?"],
   );
 });

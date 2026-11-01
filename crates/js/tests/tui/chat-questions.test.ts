@@ -1,10 +1,10 @@
-// The questions of plugins in the bundled chat: the place of the composer and the modal, the keys of each kind, the
-// count, a late answer, and two panes on one session.
+// The questions of plugins in the bundled chat: the place of the composer, the keys of the pages, the count, a late
+// answer, and two panes on one session.
 
-import type { InteractionRequest, SessionUpdate, StoredEvent } from "yuke:protocol";
+import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, test } from "yuke:test";
 import { TextEditor } from "yuke:tui";
-import { EMPTY, fakeSessions, loadChat, rows, SETTINGS, settle } from "./chat.ts";
+import { EMPTY, fakeSessions, loadChat, mouse, rows, SETTINGS, settle } from "./chat.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
@@ -17,44 +17,47 @@ function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
     ?.widget as TextEditor;
 }
 
-const DELETE: InteractionRequest = { kind: "confirm", title: "Delete branch?", message: "feat/x" };
+/** A request of one question with `options`. */
+function one(question: Partial<Question> & { readonly options: Question["options"] }): InteractionRequest {
+  return { kind: "questions", questions: [{ id: "q", header: "Q", question: "Q?", ...question }] };
+}
 
-test("a confirm takes the place of the composer, waits for y or n, and the draft comes back after it", async () => {
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+/** The answer of the user to the question `q`. */
+function answered(values: string[], other?: string): InteractionResponse {
+  return { kind: "questions", answers: [{ id: "q", values, ...(other === undefined ? {} : { other }) }] };
+}
+
+const DELETE = one({
+  header: "Branch",
+  question: "Delete branch?\nfeat/x",
+  options: [{ label: "Yes" }, { label: "No" }],
+});
+
+test("a single question takes the place of the composer, enter picks the cursor option, and the draft comes back", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
   sessions.push(asked(1, DELETE));
   frame.draw();
-  const shown = rows(frame).slice(-3);
+  const shown = rows(frame).slice(-6);
   // The composer takes no message while the question shows.
   const off = chat.tui.commands
     .list()
     .filter((command) => ["chat:send", "chat:model", "chat:older-message"].includes(command.name))
     .map((command) => command.enabled);
-  frame.key("enter");
-  const afterEnter = [...sessions.responses];
-  // The second y comes before the close of the question, and it sends nothing.
-  frame.key("y y");
+  // The second enter comes before the close of the question, and it sends nothing.
+  frame.key("down enter enter");
   await settle();
   frame.draw();
   equal(
+    [shown, off, sessions.responses, sessions.inputs, rows(frame).at(-1), chat.tui.focused === composerOf(chat)],
     [
-      shown,
-      off,
-      afterEnter,
-      sessions.responses,
-      sessions.inputs,
-      rows(frame).at(-1),
-      chat.tui.focused === composerOf(chat),
-    ],
-    [
-      [" guard · Delete branch?", " feat/x", " y yes · n no · Esc cancel"],
+      [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],
-      [],
-      [[1, { kind: "confirm", value: true }]],
+      [[1, answered(["No"])]],
       [],
       "draft",
       true,
@@ -62,46 +65,171 @@ test("a confirm takes the place of the composer, waits for y or n, and the draft
   );
 });
 
-test("a select picks an option, a secret input shows dots, and the count shows the open questions", async () => {
-  using frame = createFrame({ width: 32, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
+  using frame = createFrame({ width: 64, height: 20 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   await settle();
-  sessions.push(asked(2, { kind: "select", title: "Deploy to?", options: ["staging", "prod"] }));
-  sessions.push(asked(3, { kind: "input", title: "API key?", placeholder: null, secret: true }));
+  const request: InteractionRequest = {
+    kind: "questions",
+    questions: [
+      {
+        id: "db",
+        header: "Database",
+        question: "Which database?",
+        options: [{ label: "SQLite", description: "embedded" }, { label: "Postgres" }],
+        multiple: true,
+        other: true,
+      },
+      { id: "token", header: "Token", question: "API token?", options: [], other: true, secret: true },
+      { id: "go", header: "Go", question: "Go on?", options: [{ label: "Yes" }, { label: "No" }] },
+    ],
+  };
+  sessions.push(asked(2, request));
+  sessions.push(asked(3, DELETE));
   frame.draw();
-  const select = rows(frame).slice(-4);
-  frame.key("down enter");
-  await settle();
+  const first = rows(frame).slice(-6);
+  // Enter without a tick or a text keeps the page.
+  frame.key("enter space down down");
+  frame.paste("with pgvector");
+  frame.key("enter");
   frame.paste("sk-1");
   frame.draw();
-  const secret = rows(frame).slice(-2);
+  const secret = rows(frame).slice(-6, -3);
+  frame.key("enter");
+  frame.draw();
+  const last = [rows(frame).at(-6), rows(frame).at(-1)];
   frame.key("enter");
   equal(
-    [select, secret, sessions.responses],
+    [first, secret, last, sessions.responses],
     [
-      [" guard · Deploy to? · 1 of 2", "", "staging", "prod"],
-      [" guard · API key?", "••••"],
       [
-        [2, { kind: "select", value: "prod" }],
-        [3, { kind: "input", value: "sk-1" }],
+        " guard · Database · 1/3 · 1 of 2",
+        " Which database?",
+        "❯ [ ] SQLite  embedded",
+        "  [ ] Postgres",
+        "  Type your own answer…",
+        " ↑↓ choose · space tick · enter next · esc cancel",
+      ],
+      [" guard · Token · 2/3 · 1 of 2", " API token?", "❯ ••••"],
+      [" guard · Go · 3/3 · 1 of 2", " ↑↓ choose · enter send · ← back · esc cancel"],
+      [
+        [
+          2,
+          {
+            kind: "questions",
+            answers: [
+              { id: "db", values: ["SQLite"], other: "with pgvector" },
+              { id: "token", values: [], other: "sk-1" },
+              { id: "go", values: ["Yes"] },
+            ],
+          },
+        ],
       ],
     ],
   );
 });
 
-test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+test("shift+tab or left goes back, and enter answers the page again", async () => {
+  using frame = createFrame({ width: 50, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
+  frame.start();
+  await settle();
+  const questions: Question[] = [
+    { id: "a", header: "a", question: "a?", options: [{ label: "X" }, { label: "Y" }] },
+    { id: "b", header: "b", question: "b?", options: [], other: true },
+  ];
+  sessions.push(asked(12, { kind: "questions", questions }));
+  const shown = (): (string | undefined)[] => {
+    frame.draw();
+    return [rows(frame).at(-5), rows(frame).at(-1)];
+  };
+  frame.key("enter");
+  frame.paste("hi");
+  // The field takes Left, so Shift+Tab goes back from it.
+  const field = shown();
+  frame.key("shift+tab");
+  const back = shown();
+  // Space does nothing without `multiple`.
+  frame.key("space down enter left right");
+  const again = shown();
+  frame.key("enter");
+  equal(
+    [field, back, again, sessions.responses],
+    [
+      [" guard · b · 2/2", " enter send · shift+tab back · esc cancel"],
+      [" guard · a · 1/2", " ↑↓ choose · enter next · esc cancel"],
+      [" guard · b · 2/2", " enter send · shift+tab back · esc cancel"],
+      [
+        [
+          12,
+          {
+            kind: "questions",
+            answers: [
+              { id: "a", values: ["Y"] },
+              { id: "b", values: [], other: "hi" },
+            ],
+          },
+        ],
+      ],
+    ],
+  );
+});
+
+test("a press on the field row keeps the page keys with the question", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  await loadChat(frame, sessions);
+  frame.start();
+  await settle();
+  sessions.push(asked(14, one({ options: [{ label: "X" }], other: true })));
+  frame.key("down");
+  frame.draw();
+  // The field row is the row above the hint.
+  frame.mouse(mouse(3, 12, "press"));
+  frame.mouse(mouse(3, 12, "release"));
+  frame.key("up enter");
+  equal(sessions.responses, [[14, answered(["X"])]]);
+});
+
+test("a tall question keeps its options in view and counts the lines that do not show", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  await loadChat(frame, sessions);
+  frame.start();
+  await settle();
+  const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+  sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
+  frame.draw();
+  equal(rows(frame).slice(-7, -1), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
+});
+
+test("a short pane keeps the first line of a tall question above its options", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  await loadChat(frame, sessions);
+  frame.start();
+  await settle();
+  const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+  const options = ["A", "B", "C", "D"].map((label) => ({ label }));
+  sessions.push(asked(15, one({ question: text, options })));
+  frame.draw();
+  equal(rows(frame).slice(-4), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
+});
+
+test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
   sessions.push(asked(4, DELETE));
   frame.key("esc");
   await settle();
-  sessions.push(asked(5, { kind: "input", title: "Name?", placeholder: "a name", secret: false }));
+  sessions.push(asked(5, one({ header: "Name", question: "Name?", options: [], other: true })));
   frame.paste("abc");
   frame.key("ctrl+c");
   await settle();
@@ -120,85 +248,43 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
 });
 
 test("a late answer gives a notice and the question stays until it closes", async () => {
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   sessions.state.refuseAnswer = true;
   sessions.push(asked(6, DELETE));
-  frame.key("y");
+  frame.key("enter");
   frame.draw();
-  const stays = rows(frame).at(-3);
+  const stays = rows(frame).at(-6);
   sessions.push({ sessionUpdate: "interaction_closed", interactionId: 6 });
   frame.draw();
   equal(
     [chat.notices, stays, rows(frame).at(-1)],
-    [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Delete branch?", "Message…"],
+    [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
 });
 
-test("each pane of a session shows its question, the focused pane takes the keys, and tab reaches the transcript", async () => {
+test("each pane of a session shows its question, and the focused pane takes the keys", async () => {
   const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
   const saved = JSON.stringify({ tree: { split: "row", ratio: 0.5, first: pane, second: pane }, focus: 0 });
   using frame = createFrame({ width: 61, height: 6 });
   const sessions = fakeSessions();
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start(saved);
   await settle();
   sessions.push(asked(7, DELETE));
   frame.draw();
   const both = rows(frame).at(-3);
-  frame.key("tab");
-  frame.key("y");
-  const fromTranscript = [...sessions.responses];
-  frame.key("tab y");
-  equal(
-    [both, fromTranscript, sessions.responses],
-    [` guard · Delete branch?${" ".repeat(7)}│ guard · Delete branch?`, [], [[7, { kind: "confirm", value: true }]]],
-  );
-});
-
-test("a modal question opens over the focused pane, waits for another modal, and gives the focus back", async () => {
-  using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const sessions = fakeSessions();
-  const chat = await loadChat(frame, { questions: "modal" }, sessions);
-  frame.start();
-  await settle();
-  frame.paste("draft");
-  chat.tui.overlay(() => ({ draw() {}, focusable: true }));
-  frame.draw();
-  sessions.push(asked(8, DELETE));
-  frame.draw();
-  const waits = rows(frame).some((row) => row.includes("Delete branch?"));
-  frame.key("esc");
-  frame.draw();
-  const opens = rows(frame).slice(-3);
-  frame.key("n");
-  await settle();
-  frame.draw();
-  const back = [chat.tui.focused === composerOf(chat), rows(frame).at(-1)];
-  // The field of a select in a modal takes the keys.
-  sessions.push(asked(9, { kind: "select", title: "Deploy to?", options: ["staging", "prod"] }));
-  frame.key("p enter");
-  equal(
-    [waits, opens, back, sessions.responses],
-    [
-      false,
-      [" guard · Delete branch?", " feat/x", " y yes · n no · Esc cancel"],
-      [true, "draft"],
-      [
-        [8, { kind: "confirm", value: false }],
-        [9, { kind: "select", value: "prod" }],
-      ],
-    ],
-  );
+  frame.key("enter");
+  equal([both, sessions.responses], [` guard · Branch${" ".repeat(15)}│ guard · Branch`, [[7, answered(["Yes"])]]]);
 });
 
 test("a close of the session by another client drops its question, and the next send opens the session again", async () => {
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.paste("draft");
@@ -223,7 +309,7 @@ test("a browse of the messages stops while a question shows", async () => {
   ];
   using frame = createFrame({ width: 32, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   await settle();
   frame.key("up");

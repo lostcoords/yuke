@@ -17,7 +17,7 @@ function waiting(id: number, text: string): SessionUpdate {
 test("plugin rows show below the transcript and above the waiting messages, cut to the width, in add order", async () => {
   using frame = createFrame({ width: 24, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   const seen: ChatRowsContext[] = [];
   chat.chat.addRows((pane) => {
     seen.push(pane);
@@ -54,7 +54,7 @@ test("plugin rows show below the transcript and above the waiting messages, cut 
 test("plugin rows take at most half the rows above the rule and give way to the strip, and a source shows whole", async () => {
   using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   const three = ["a1", "a2", "a3"].map((text) => ({ text }));
   chat.chat.addRows(() => three);
   chat.chat.addRows(() => [{ text: "b1" }, { text: "b2" }, { text: "b3" }]);
@@ -75,7 +75,7 @@ test("plugin rows take at most half the rows above the rule and give way to the 
 
 test("a row source that throws is removed and gives one notice, and the other sources stay", async () => {
   using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions());
+  const chat = await loadChat(frame, fakeSessions());
   let calls = 0;
   chat.chat.addRows(() => {
     calls += 1;
@@ -94,7 +94,7 @@ test("a row source that throws is removed and gives one notice, and the other so
 
 test("each add is its own source, so the same source shows twice and a disposer removes only its own", async () => {
   using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions());
+  const chat = await loadChat(frame, fakeSessions());
   const source = () => [{ text: "same" }];
   const first = chat.chat.addRows(source);
   chat.chat.addRows(source);

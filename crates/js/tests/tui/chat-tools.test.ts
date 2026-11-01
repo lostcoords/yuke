@@ -54,7 +54,7 @@ test("a folded call shows the head line and the preview of its hints, and an err
     { name: "probe", args: {}, hints: PROBE, result: ok(lines("row", 12)) },
     { name: "fail", args: {}, hints: READ, result: { callId: "", content: lines("err", 11), isError: true } },
   );
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 37), [
     "",
@@ -85,7 +85,7 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   const command = "cd crates/js &&\n  mise exec -- tsc -p tsconfig.json";
   const failed = { callId: "", content: "", isError: true };
   const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: failed });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 3), ["", " exec cd crates/js &… · error", ""]);
   click(frame, 2, 1);
@@ -107,7 +107,7 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
 test("a subject that fits in one row copies as it shows, and an open call does not show it twice", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "npm test" }, hints: EXEC, result: ok("") });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
   equal(transcriptRows(frame).slice(0, 3), ["", " exec npm test", ""]);
@@ -121,7 +121,7 @@ test("a drag over a clipped subject copies the shown text, and its source gives 
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const command = "cd crates/js && tsc";
   const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: ok("") });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(19, 1, "drag"));
@@ -139,7 +139,7 @@ test("a click on a clipped path copies the whole path", async () => {
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const path = "crates/js/modules/main.ts";
   const saved = calls({ name: "read", args: { path }, hints: READ, result: ok("") });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 3), ["", " read crates/js/mo…", ""]);
   click(frame, 7, 1);
@@ -149,7 +149,7 @@ test("a click on a clipped path copies the whole path", async () => {
 test("a subject with a line end that fits in one row still opens below the head line", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "a\nb" }, hints: EXEC, result: ok("") });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 3), ["", " exec a b", ""]);
   click(frame, 2, 1);
@@ -159,7 +159,7 @@ test("a subject with a line end that fits in one row still opens below the head 
 test("a carriage return in a subject stays out of a copy of the head line", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "a\r\nb" }, hints: EXEC, result: ok("") });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(10, 1, "drag"));
@@ -172,7 +172,7 @@ test("a long title gives way to the state, and a subject without room stays out 
   const hints: ToolHints = { ...EXEC, title: "A title of many words" };
   const failed = { callId: "", content: "", isError: true };
   const saved = calls({ name: "exec", args: { command: "make" }, hints, result: failed });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 3), ["", " A title o… · error", ""]);
 });
@@ -186,7 +186,7 @@ test("an open call with incomplete arguments shows them as they came", async () 
       display: { calls: [{ blockIndex: 0, hints: READ, folder: "/w" }], results: [] },
     }),
   ];
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
   equal(transcriptRows(frame).slice(2, 3), [' {"path":"a']);
@@ -198,7 +198,7 @@ test("an open call shows the arguments other than its subject, and a call withou
     { name: "write", args: { path: "a.rs", content: "x" }, hints: READ, result: ok("") },
     { name: "probe", args: { depth: 2 }, hints: PROBE, result: ok("") },
   );
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
   click(frame, 2, 4);
@@ -215,7 +215,7 @@ test("the live output of a call gives way to its result at once", async () => {
     }),
   ];
   const sessions = fakeSessions(saved);
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "tool_started", execution, call });
@@ -238,7 +238,7 @@ test("a copy of live output gives its lines", async () => {
     }),
   ];
   const sessions = fakeSessions(saved);
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "tool_started", execution, call });
@@ -257,7 +257,7 @@ test("a result with only media shows a label with the type, the number, and the 
     { mime: "application/pdf", blob: { digest: "b".repeat(64), len: 10 } },
   ];
   const saved = calls({ name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } });
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 5), [
     "",
@@ -277,7 +277,7 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
   ];
   const edit: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
   const saved = calls({ name: "edit", args: { path: "src/a.rs" }, hints: edit, result: ok("done"), display });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const shown = transcriptRows(frame);
   equal(shown.slice(0, 9), [
@@ -315,7 +315,7 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
 test("a click on a subject copies its path in the folder of the call, and a click on the title opens the call", async () => {
   using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "read", args: { path: "src/main.rs" }, hints: READ, result: ok("fn main() {}") });
-  const chat = await loadChat(frame, {}, fakeSessions(saved));
+  const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 7, 1);
   equal([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info copied /tools/src/main.rs"]]);
@@ -330,7 +330,7 @@ test("a relative link of a call without a folder starts in the folder of the ses
     { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), folder: null },
     { name: "note", args: {}, hints: PROBE, result: ok("x"), display: [{ kind: "markdown", text: "[b](b.rs)" }] },
   );
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   equal(transcriptRows(frame).slice(0, 5), ["", " read a.rs", "", " Probe", " [b](b.rs)"]);
   click(frame, 7, 1);
@@ -345,7 +345,7 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
     { name: "read", args: { path: "b" }, hints: READ, result: ok("B") },
   );
   saved.push(commit(saved.length + 1, [{ reasoning: { text: "why" } } as never]));
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The composer has the focus, and the key reaches the command through the context of the pane.
   frame.key("ctrl+o");
@@ -363,7 +363,7 @@ test("a link in a reply copies its target, and a relative target starts in the f
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
     commit(2, [{ assistant_text: reply }]),
   ];
-  await loadChat(frame, {}, fakeSessions(saved));
+  await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The Markdown rows show the whole link, and each of its cells carries the target.
   equal(rows(frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);

@@ -209,6 +209,45 @@ test("a press focuses and captures and a modal cancels the capture", () => {
   ]);
 });
 
+test("a press on a view without focusOnPress reaches it and focuses its parent, and tui.focus still focuses it", () => {
+  const core = newCore(fakeTerminal());
+  const presses: string[] = [];
+  const inner: View = {
+    focusable: true,
+    focusOnPress: false,
+    draw() {},
+    mouse: (event) => {
+      presses.push(event.action);
+      return true;
+    },
+  };
+  const outer: View = {
+    focusable: true,
+    draw() {},
+    layout: () => [{ view: inner, rect: { column: 0, row: 0, width: 5, height: 2 } }],
+  };
+  core.scene.setRoot("test", () => ({
+    layout: () => [{ view: outer, rect: { column: 0, row: 0, width: 10, height: 4 } }],
+    draw() {},
+  }));
+  core.event(click(1, 1));
+  const pressed = core.scene.focused === outer;
+  core.scene.focus(inner);
+  equal([presses, pressed, core.scene.focused === inner], [["press"], true, true]);
+});
+
+test("the view of a pane takes a press without focusOnPress", () => {
+  const core = newCore(fakeTerminal());
+  const panes = createSurface(core, "test", new AbortController().signal).panes;
+  const view = (): View => ({ focusable: true, focusOnPress: false, draw() {} });
+  // The split puts the pane right of the empty pane. A press on the empty pane takes the focus away first.
+  const right = panes.split(view);
+  core.event(click(1, 1));
+  const away = core.scene.focused !== right.view;
+  core.event(click(12, 1));
+  equal([away, core.scene.focused === right.view], [true, true]);
+});
+
 test("panes split focus and close and the last close gives an empty pane without a default", () => {
   const terminal = fakeTerminal();
   const core = newCore(terminal);

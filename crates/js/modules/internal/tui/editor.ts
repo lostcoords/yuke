@@ -89,6 +89,8 @@ interface Mark {
 export class TextEditor {
   readonly kind = "editor";
   readonly focusable = true;
+  /** A press focuses the editor. An owner that keeps the focus itself, as a question does, sets it to false. */
+  focusOnPress = true;
   readonly role: string;
   readonly lines: TextCoordinates<number>;
   readonly rows: TextCoordinates<number>;

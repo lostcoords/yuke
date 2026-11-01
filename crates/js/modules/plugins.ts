@@ -38,6 +38,8 @@ import type {
   NoticeParams,
   PluginChange,
   PluginTarget,
+  Question,
+  QuestionAnswer,
   SessionId,
   SessionRow,
   SessionSettings,
@@ -78,6 +80,9 @@ export type {
   NoticeParams,
   PluginChange,
   PluginTarget,
+  Question,
+  QuestionAnswer,
+  QuestionOption,
   SessionId,
   SessionRow,
   SessionSettings,
@@ -714,18 +719,19 @@ export class ExtensionRequestError extends Error {
 }
 ExtensionRequestError.prototype.name = "ExtensionRequestError";
 
-/** The options of a question to the user. */
+/** The options of `ask`. */
 export interface AskOptions {
-  /** An abort of this signal closes the question, and the question answers `undefined`. */
+  /** An abort of this signal closes the request, and the request answers `undefined`. */
   readonly signal?: AbortSignal | undefined;
 }
 
-/** The options of `input`. */
-export interface InputOptions extends AskOptions {
-  /** The text that an empty field shows. */
-  readonly placeholder?: string | undefined;
-  /** The field hides what the user types, as for a password. */
-  readonly secret?: boolean | undefined;
+/** What `ask` puts to the user: one or more questions, which the user answers together. */
+export interface AskRequest {
+  /**
+   * The questions, in display order. The ids are unique. The labels of a question are unique, and each question has an
+   * option or `other`. Only a question without options has `secret`.
+   */
+  readonly questions: readonly Question[];
 }
 
 /** What `session` of a plugin gets for one session. `O` is the type of the options, as in `PluginContext`. */
@@ -773,20 +779,15 @@ export interface SessionContext<O = Record<string, never>> {
    */
   readonly request: (request: string, data?: unknown, options?: RequestOptions) => Promise<unknown>;
   /**
-   * Ask the user a yes or no question with this plugin as its source, and wait for the answer.
+   * Ask the user `request` with this plugin as its source, and wait for the answers: one per question, in question
+   * order. A request that breaks a rule of `AskRequest` rejects with a `TypeError`.
+   * - A yes or no question is a question with two options. A text field is a question without options and with `other`.
    * - The answer is `undefined` when the user cancels, the signal aborts, the session closes, or no client can answer,
    *   as in `yuke -p`.
    * - The turn waits while a hook or a tool waits for the answer. Pass the signal of the hook or the tool, so that a
-   *   cancel of the turn closes the question.
+   *   cancel of the turn closes the request.
    */
-  readonly confirm: (title: string, message?: string, options?: AskOptions) => Promise<boolean | undefined>;
-  /**
-   * Ask the user to choose one of `choices`, and wait for the answer. `choices` is not empty, and each choice is unique.
-   * The answer is `undefined` as for `confirm`.
-   */
-  readonly select: (title: string, choices: readonly string[], options?: AskOptions) => Promise<string | undefined>;
-  /** Ask the user for one line of text, and wait for the answer. The answer is `undefined` as for `confirm`. */
-  readonly input: (title: string, options?: InputOptions) => Promise<string | undefined>;
+  readonly ask: (request: AskRequest, options?: AskOptions) => Promise<QuestionAnswer[] | undefined>;
 }
 
 /**

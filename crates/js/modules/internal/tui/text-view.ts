@@ -67,6 +67,8 @@ interface Mark {
 export class TextView {
   readonly kind = "textView";
   readonly focusable = true;
+  /** A press gives the focus to the nearest parent that takes it, so a click or a selection keeps the composer. */
+  focusOnPress = false;
   readonly role: string;
   readonly rows: TextCoordinates<TextPosition>;
   readonly #support: TextSupport<TextPosition, TextViewChange>;

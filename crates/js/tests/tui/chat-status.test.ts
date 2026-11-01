@@ -37,7 +37,7 @@ test("the focused chat pane shows its model, its context use, and its jobs, and 
   const sessions = fakeSessions(SAVED);
   sessions.state.jobs = [JOB];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, sessions, { list: async () => withWindow(100_000) });
+  const chat = await loadChat(frame, sessions, { list: async () => withWindow(100_000) });
   frame.start();
   await settle();
   const items = (): string[][] => chat.tui.status.list().map((item) => [item.key, item.text]);
@@ -74,7 +74,7 @@ test("the focused chat pane shows its model, its context use, and its jobs, and 
 
 test("without a context window the context use is a token count", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions(SAVED));
+  const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await settle();
   equal(
@@ -96,7 +96,7 @@ test("an answer without an input count shows no context item", async () => {
     },
   });
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, {}, fakeSessions([settings as StoredEvent, unknown]));
+  const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
   await settle();
   equal([saved !== undefined, chat.tui.status.list().map((item) => item.key)], [true, ["chat:model"]]);
@@ -109,7 +109,7 @@ test("the first send of a new pane shows the jobs of its session once the handle
   const sessions = fakeSessions();
   sessions.state.jobs = [JOB];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   await settle();
   frame.start();
   frame.paste("hi");

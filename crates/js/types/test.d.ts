@@ -33,13 +33,14 @@ declare module "yuke:test" {
     InputKind,
     InputSource,
     NoticeParams,
+    QuestionAnswer,
     SessionId,
     SessionSettings,
     Settings,
     ToolDefinition,
   } from "yuke:protocol";
   import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
-  import type { Question, Transcript } from "yuke:transcript";
+  import type { Interaction, Transcript } from "yuke:transcript";
   import type { ClipboardImage, Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
 
   /** A color of a frame cell: a palette index from 0 to 255, or `#` and six lower-case hex digits. */
@@ -243,8 +244,8 @@ declare module "yuke:test" {
     readonly body: unknown;
   }
 
-  /** A question that a plugin asked in a session of the host. */
-  export interface TestQuestion extends Question {
+  /** A request of a plugin to the user in a session of the host. */
+  export interface TestQuestion extends Interaction {
     readonly sessionId: SessionId;
   }
 
@@ -259,11 +260,12 @@ declare module "yuke:test" {
      */
     readonly replies?: readonly Reply[];
     /**
-     * The answer to each question. Give `true` or `false` for `confirm`. Give a text for `select` and `input`.
-     * `undefined` cancels the question. Without the function, each question gets `undefined`, as with no client. A
-     * promise keeps the question open until it settles.
+     * The answers to each request, one per question. `undefined` cancels the request. Without the function, each
+     * request gets `undefined`, as with no client. A promise keeps the request open until it settles.
      */
-    readonly answer?: (question: TestQuestion) => boolean | string | undefined | Promise<boolean | string | undefined>;
+    readonly answer?: (
+      question: TestQuestion,
+    ) => readonly QuestionAnswer[] | undefined | Promise<readonly QuestionAnswer[] | undefined>;
     /**
      * The answer to each request of a plugin to the client. The plugin gets a JSON copy of the return, and
      * `undefined` gives `null`. A throw of an `ExtensionRequestError` is the error answer. Another throw or rejection

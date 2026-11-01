@@ -8,10 +8,10 @@ import { type Options, sessionExports } from "yuke:internal/plugins";
 import { frozen, jsonCopy } from "yuke:internal/values";
 import type {
   AskOptions,
+  AskRequest,
   Cleanup,
   FinishReason,
   InputKind,
-  InputOptions,
   InputSource,
   KeptMedia,
   NoticeLevel,
@@ -30,7 +30,7 @@ import type {
   ToolCallResult,
 } from "yuke:plugins";
 import { ExtensionRequestError } from "yuke:plugins";
-import type { Block, ExtensionRequestParams, ModelReference } from "yuke:protocol";
+import type { Block, ExtensionRequestParams, ModelReference, QuestionAnswer } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The handlers of each hook point, in the order of their addition. Each point of `SessionHooks` is a key. */
@@ -56,19 +56,11 @@ interface Scope {
 /** The scopes of each open session, by the open number of the host. */
 const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
 
-/** A question for the native `ask`, which reads it through JSON as an `InteractionRequest` of the protocol. */
-type Question =
-  | { readonly kind: "confirm"; readonly title: string; readonly message: string }
-  | { readonly kind: "select"; readonly title: string; readonly options: readonly string[] }
-  | {
-      readonly kind: "input";
-      readonly title: string;
-      readonly placeholder: string | undefined;
-      readonly secret: boolean;
-    };
-
-/** Ask the user `question` for the plugin `source`. The promise gives the answer, or `undefined` without one. */
-type Ask = (source: string, question: Question) => Operation<boolean | string | undefined>;
+/** Ask the user `request` for the plugin `source`. The promise gives the answers, or `undefined` without them. */
+type Ask = (
+  source: string,
+  request: { readonly kind: "questions" } & AskRequest,
+) => Operation<QuestionAnswer[] | undefined>;
 
 /**
  * Send the request `request` of the plugin `source` with the JSON text `data` to the client. The promise gives the
@@ -588,16 +580,6 @@ function start(
     const caller = signalOf(stop);
     return caller === undefined ? signal : AbortSignal.any([signal, caller]);
   };
-  // An ended wait closes the question, and it answers `undefined`.
-  const question = async <T extends boolean | string>(
-    asked: Question,
-    stop: AbortSignal | undefined,
-  ): Promise<T | undefined> => {
-    const ended = endedBy(stop);
-    if (ended.aborted) return undefined;
-    // The host answers with the type of the kind of the question.
-    return (await underSignal(ended, () => ask(plugin, asked))) as T | undefined;
-  };
   const report = (message: string): void => notify(plugin, "error", message, sessionId);
   const clean = async (cleanup: Cleanup): Promise<void> => {
     try {
@@ -674,19 +656,26 @@ function start(
         throw requestFailureOf(error, ended);
       }
     },
-    confirm(title: string, message?: string, options?: AskOptions): Promise<boolean | undefined> {
-      return question<boolean>({ kind: "confirm", title, message: message ?? "" }, options?.signal);
-    },
-    select(title: string, choices: readonly string[], options?: AskOptions): Promise<string | undefined> {
-      if (choices.length === 0) return Promise.reject(new TypeError("select: choices is empty"));
-      if (new Set(choices).size !== choices.length) {
-        return Promise.reject(new TypeError("select: choices has a choice twice"));
+    async ask(request: AskRequest, options?: AskOptions): Promise<QuestionAnswer[] | undefined> {
+      const questions = request.questions;
+      const ids = new Set<string>();
+      for (const question of questions) {
+        const id = JSON.stringify(question.id);
+        if (ids.has(question.id)) throw new TypeError(`ask: the id ${id} is twice`);
+        ids.add(question.id);
+        const labels = new Set(question.options.map((option) => option.label));
+        if (labels.size !== question.options.length) throw new TypeError(`ask: the question ${id} has a label twice`);
+        if (labels.size === 0 && question.other !== true) {
+          throw new TypeError(`ask: the question ${id} has no option and no other`);
+        }
+        if (labels.size > 0 && question.secret === true)
+          throw new TypeError(`ask: the question ${id} has options and secret`);
       }
-      return question<string>({ kind: "select", title, options: [...choices] }, options?.signal);
-    },
-    input(title: string, options?: InputOptions): Promise<string | undefined> {
-      const { placeholder, secret, signal: stop } = options ?? {};
-      return question<string>({ kind: "input", title, placeholder, secret: secret ?? false }, stop);
+      if (ids.size === 0) throw new TypeError("ask: the request has no question");
+      const ended = endedBy(options?.signal);
+      // An ended wait closes the request, and the request answers `undefined`.
+      if (ended.aborted) return undefined;
+      return await underSignal(ended, () => ask(plugin, { kind: "questions", questions: [...questions] }));
     },
   });
   scope.settled = (async () => {

@@ -10,26 +10,7 @@ import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo } from "yuke:protocol";
-import type { Infer } from "yuke:tools";
 import type { View } from "yuke:tui";
-
-export const optionsSchema = {
-  type: "object",
-  properties: {
-    copyOnRelease: {
-      type: "boolean",
-      description: "Copy a mouse selection of the transcript when the button goes up. The default is true.",
-    },
-    questions: {
-      type: "string",
-      enum: ["composer", "modal"],
-      description:
-        "Show the question of a plugin in the place of the composer, or in a modal. The default is composer.",
-    },
-  },
-} as const;
-
-type Options = Infer<typeof optionsSchema>;
 
 /** The cells of the gauge of the token share of the last answer. */
 const GAUGE = 6;
@@ -39,7 +20,7 @@ const COMMANDS: readonly {
   readonly name: string;
   readonly description: string;
   readonly keys: readonly string[];
-  readonly in: "chat" | "composer" | "transcript" | "question";
+  readonly in: "chat" | "composer" | "question";
   readonly run: (pane: PaneActions) => void | Promise<void>;
   readonly enabled?: (pane: PaneActions) => boolean;
 }[] = [
@@ -127,21 +108,6 @@ const COMMANDS: readonly {
     run: (pane) => pane.scroll("bottom"),
   },
   {
-    name: "switch-focus",
-    description: "Move the focus between the composer and the transcript",
-    keys: ["tab", "shift+tab"],
-    in: "chat",
-    run: (pane) => pane.switchFocus(),
-  },
-  {
-    name: "activate",
-    description: "Act on the caret",
-    keys: ["enter"],
-    in: "transcript",
-    run: (pane) => pane.activate(),
-  },
-  { name: "copy", description: "Copy the selection", keys: ["y"], in: "transcript", run: (pane) => pane.copy() },
-  {
     name: "cancel-question",
     description: "Cancel the question of a plugin",
     keys: ["esc", "ctrl+c"],
@@ -151,7 +117,7 @@ const COMMANDS: readonly {
   },
 ];
 
-export async function apply(ctx: PluginContext<Options>): Promise<void> {
+export async function apply(ctx: PluginContext): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
   // One entry per call of `addRows`, so the same source can show twice and each disposer removes its own.
@@ -193,7 +159,6 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const chat: Chat = {
     ctx,
     tui,
-    questions: ctx.options.questions ?? "composer",
     panes,
     refresh: () => publish(),
     choice: await SavedChoice.load(ctx.dataDir, (error) => {

@@ -21,6 +21,7 @@ import { ExtensionRequestError, type Frozen, type ViewEvent } from "yuke:plugins
 import type {
   ExtensionRequestParams,
   InteractionResponse,
+  QuestionAnswer,
   SessionId,
   SessionSettings,
   SessionUpdate,
@@ -106,19 +107,9 @@ function responderOf(respond: NonNullable<HostOptions["respond"]>) {
   };
 }
 
-/** The response to `update`, a question of a plugin, from `answer`. */
-function responseOf(
-  update: Frozen<Extract<SessionUpdate, { sessionUpdate: "interaction_requested" }>>,
-  value: boolean | string | undefined,
-): InteractionResponse {
-  const request = update.request;
-  if (value === undefined) return { kind: "canceled" };
-  if (request.kind === "confirm") {
-    if (typeof value !== "boolean") throw new TypeError(`the answer to the confirm "${request.title}" is no boolean`);
-    return { kind: "confirm", value };
-  }
-  if (typeof value !== "string") throw new TypeError(`the answer to the ${request.kind} "${request.title}" is no text`);
-  return { kind: request.kind, value };
+/** The response that `answer` gives: the answers, or a cancel without them. */
+function responseOf(answers: readonly QuestionAnswer[] | undefined): InteractionResponse {
+  return answers === undefined ? { kind: "canceled" } : { kind: "questions", answers: [...answers] };
 }
 
 export async function createHost(options: HostOptions): Promise<Host> {
@@ -165,7 +156,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       const open = (): boolean => !closed.has(id) && !stop.signal.aborted;
       try {
         const value = await options.answer?.(question);
-        if (open()) sessionRespond([id, update.interactionId, responseOf(update, value)]);
+        if (open()) sessionRespond([id, update.interactionId, responseOf(value)]);
       } catch (error) {
         if (!open()) return;
         // The cancel ends the operation that asked.

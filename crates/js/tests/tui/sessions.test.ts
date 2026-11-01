@@ -21,7 +21,7 @@ async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
     row("s2", "/w", "add the bar", "closed", 180),
     row("s3", "/home/other", "refactor sqlgen", "idle", 2 * 24 * 60),
   );
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   const notices: string[] = [];
   const services: Record<string, unknown> = { tui: frame.surface("sessions").tui, sessions, chat: chat.chat };
   apply({

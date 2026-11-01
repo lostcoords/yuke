@@ -16,7 +16,9 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
              name: 'deploy', description: 'Deploy.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
-               return `deployed to ${await s.select('Deploy to?', ['staging', 'production'], { signal })}`;
+               const question = { id: 'target', header: 'Target', question: 'Deploy to?', options: [{ label: 'staging' }, { label: 'production' }] };
+               const answers = await s.ask({ questions: [question] }, { signal });
+               return `deployed to ${answers?.[0].values[0]}`;
              },
            });
          }",
@@ -30,7 +32,10 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
         .request("session/input", input_params(&session, "deploy it"))
         .await;
     let asked = client.until(is_question).await.pop().unwrap();
-    let answer = |value: &str| json!({ "sessionId": session, "interactionId": 1, "response": { "kind": "select", "value": value } });
+    let answer = |value: &str| {
+        let response = json!({ "kind": "questions", "answers": [{ "id": "target", "values": [value] }] });
+        json!({ "sessionId": session, "interactionId": 1, "response": response })
+    };
     let wrong = client.call("interaction/respond", answer("local")).await;
     let id = client.request("interaction/respond", answer("production")).await;
     let answered = client.until(|message| message["id"] == json!(id)).await;
@@ -43,7 +48,11 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
             "sessionUpdate": "interaction_requested",
             "interactionId": 1,
             "source": "deploy",
-            "request": { "kind": "select", "title": "Deploy to?", "options": ["staging", "production"] },
+            "request": { "kind": "questions", "questions": [{
+                "id": "target", "header": "Target", "question": "Deploy to?",
+                "options": [{ "label": "staging" }, { "label": "production" }],
+                "multiple": false, "other": false, "secret": false,
+            }] },
         })
     );
     assert_eq!(wrong.unwrap_err()["code"], -32_602);
@@ -69,7 +78,10 @@ async fn a_load_sends_an_open_question_again() {
            s.tools.define({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
-             execute: async (_args, { signal }) => `kept: ${await s.confirm('Keep the branch?', 'It has no merge.', { signal })}`,
+             async execute(_args, { signal }) {
+               const question = { id: 'keep', header: 'Branch', question: 'Keep the branch?\\nIt has no merge.', options: [{ label: 'Yes' }, { label: 'No' }] };
+               return `kept: ${(await s.ask({ questions: [question] }, { signal }))?.[0].values[0]}`;
+             },
            });
          }",
     );
@@ -81,7 +93,8 @@ async fn a_load_sends_an_open_question_again() {
     client.until(is_question).await;
 
     let loaded = client.load(&session, json!({})).await;
-    let answer = json!({ "sessionId": session, "interactionId": 1, "response": { "kind": "confirm", "value": true } });
+    let response = json!({ "kind": "questions", "answers": [{ "id": "keep", "values": ["Yes"] }] });
+    let answer = json!({ "sessionId": session, "interactionId": 1, "response": response });
     client.call("interaction/respond", answer).await.unwrap();
     client.until(is_idle).await;
 
@@ -97,11 +110,15 @@ async fn a_load_sends_an_open_question_again() {
             "sessionUpdate": "interaction_requested",
             "interactionId": 1,
             "source": "keeper",
-            "request": { "kind": "confirm", "title": "Keep the branch?", "message": "It has no merge." },
+            "request": { "kind": "questions", "questions": [{
+                "id": "keep", "header": "Branch", "question": "Keep the branch?\nIt has no merge.",
+                "options": [{ "label": "Yes" }, { "label": "No" }],
+                "multiple": false, "other": false, "secret": false,
+            }] },
         })]
     );
     assert!(
-        transport.requests()[1].contains("kept: true"),
+        transport.requests()[1].contains("kept: Yes"),
         "{}",
         transport.requests()[1]
     );
@@ -118,7 +135,10 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
            s.tools.define({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
-             execute: async (_args, { signal }) => `kept: ${await s.confirm('Keep the branch?', '', { signal })}`,
+             async execute(_args, { signal }) {
+               const question = { id: 'keep', header: 'Branch', question: 'Keep the branch?', options: [{ label: 'Yes' }, { label: 'No' }] };
+               return `kept: ${(await s.ask({ questions: [question] }, { signal }))?.[0].values[0]}`;
+             },
            });
          }",
     );
@@ -142,7 +162,10 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
         .request("session/input", input_params(&session, "keep it again"))
         .await;
     let asked = client.until(is_question).await.pop().unwrap();
-    let answer = |id: u64| json!({ "sessionId": session, "interactionId": id, "response": { "kind": "confirm", "value": true } });
+    let answer = |id: u64| {
+        let response = json!({ "kind": "questions", "answers": [{ "id": "keep", "values": ["Yes"] }] });
+        json!({ "sessionId": session, "interactionId": id, "response": response })
+    };
     let old = client.call("interaction/respond", answer(1)).await;
     let new = client.call("interaction/respond", answer(2)).await;
 

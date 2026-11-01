@@ -1,6 +1,6 @@
 // The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
 
-import type { HostEvents, PluginContext, PluginSession } from "yuke:plugins";
+import type { HostEvents, PluginContext, PluginSession, QuestionAnswer } from "yuke:plugins";
 import { createHost, equal, reply, test } from "yuke:test";
 import { waitFor } from "./wait.ts";
 
@@ -19,16 +19,21 @@ function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonl
   };
 }
 
-/** A plugin whose tool `ask` asks the user to confirm. */
+/** A plugin whose tool `ask` asks the user a yes or no question. */
 const asker: PluginSession = (s) => {
   s.tools.define({
     name: "ask",
     description: "Ask the user.",
     concurrency: "serial",
     parameters: { type: "object", properties: {} },
-    execute: async (_args, context) => String(await s.confirm("Go on?", "It runs.", { signal: context.signal })),
+    execute: async (_args, context) => {
+      const question = { id: "go", header: "Go", question: "Go on?", options: [{ label: "Yes" }, { label: "No" }] };
+      return JSON.stringify(await s.ask({ questions: [question] }, { signal: context.signal })) ?? "undefined";
+    },
   });
 };
+
+const yes: QuestionAnswer[] = [{ id: "go", values: ["Yes"] }];
 
 test("a listener gets each open session first, then the states of a turn, a later open, and a close", async () => {
   const plugin = watcher();
@@ -68,7 +73,7 @@ test("a listener gets each open session first, then the states of a turn, a late
 
 test("an open during a turn gives its state and questions, and a later listener gets them as the facts left them", async () => {
   const plugin = watcher();
-  const answered = Promise.withResolvers<boolean>();
+  const answered = Promise.withResolvers<QuestionAnswer[]>();
   await using host = await createHost({
     plugins: [
       { name: "watcher", apply: plugin.apply },
@@ -90,7 +95,7 @@ test("an open during a turn gives its state and questions, and a later listener 
   // The first listener starts the watch, so the host gives the open as the session is now.
   const during = opens();
   await waitFor(() => during.length === 1);
-  answered.resolve(true);
+  answered.resolve(yes);
   await turn;
   // The watch runs already, so this listener gets the open as the facts of the turn left it.
   const after = opens();
@@ -100,7 +105,7 @@ test("an open during a turn gives its state and questions, and a later listener 
 
 test("a listener that comes during a question of a running watch gets the open as the facts made it", async () => {
   const plugin = watcher();
-  const answered = Promise.withResolvers<boolean>();
+  const answered = Promise.withResolvers<QuestionAnswer[]>();
   await using host = await createHost({
     plugins: [
       { name: "watcher", apply: plugin.apply },
@@ -122,7 +127,7 @@ test("a listener that comes during a question of a running watch gets the open a
   await waitFor(() => asking);
   const later: string[] = [];
   ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
-  answered.resolve(true);
+  answered.resolve(yes);
   await turn;
 
   equal([first, later], [["idle 0"], ["running 1"]]);

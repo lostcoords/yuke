@@ -488,9 +488,8 @@ struct OpenRequest<'js> {
     model: Function<'js>,
 }
 
-/// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answer:
-/// a boolean for a confirm, a text for a select and an input, and `undefined` without an answer. Its cancel ends the
-/// question.
+/// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answers,
+/// or `undefined` without an answer. Its cancel ends the request.
 fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
@@ -501,8 +500,7 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
             let host = Arc::clone(&host);
             Operation::start(&ctx, move |ctx, stop| async move {
                 match host.ask(&source, request, stop).await {
-                    InteractionResponse::Confirm { value } => value.into_js(&ctx),
-                    InteractionResponse::Select { value } | InteractionResponse::Input { value } => value.into_js(&ctx),
+                    InteractionResponse::Questions { answers } => Json(answers).into_js(&ctx),
                     InteractionResponse::Canceled => Ok(Value::new_undefined(ctx.clone())),
                 }
             })

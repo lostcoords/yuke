@@ -121,17 +121,18 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - An input holds the content that the user saw. It holds model content only when the model reads other blocks.
 - A saved commit starts with the model blocks of its consumed inputs. `consumed` gives the id, the source, the kind, and
   the block count of each input. It gives the content that the user saw only when that content differs.
-- Questions: a plugin or yuke asks the user with an `interaction_requested` live update: a `confirm`, a `select`, or
-  an `input`, with its `source`. The client answers with `interaction/respond`, or with `canceled`. A wrong kind, an
-  option that the question lacks, or an unknown id fails the request. An `interaction_closed` update ends each
-  question: an answer, an abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers
-  each question with no answer.
+- Questions: a plugin or yuke asks the user with an `interaction_requested` live update: a `questions` request with
+  its `source`. Each question has options, `other` for a typed answer, or both. The client answers all questions at
+  once with `interaction/respond`, or cancels the whole request with `canceled`. An answer that does not fit its
+  questions, or an unknown id, fails the request. An `interaction_closed` update ends each request: an answer, an
+  abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers each request with no
+  answer.
 - MCP servers: each open session runs the servers of the user config and of `.mcp.json` in its folder. An
   `mcp_server` live update holds the whole state of one server, with its `source` (`user` or `project`): `connecting`,
   `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server
   of a session.
-- Project servers start only after the user confirms them. yuke asks with a `confirm` from `host:mcp`, and keeps a
-  yes for that folder and that list of servers.
+- Project servers start only after the user confirms them. yuke asks one question from `host:mcp`, with the options
+  "Start" and "Don't start", and keeps a start for that folder and that list of servers.
 - Each type holds one message. The protocol has no batches.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that

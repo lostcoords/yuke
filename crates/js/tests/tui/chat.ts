@@ -206,10 +206,9 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   };
 }
 
-/** Load the chat into `frame` with `options` and `sessions`. Return the surface of the chat, each notice, and its service. */
+/** Load the chat into `frame` with `sessions`. Return the surface of the chat, each notice, and its service. */
 export async function loadChat(
   frame: FrameTest,
-  options: { readonly copyOnRelease?: boolean; readonly questions?: "composer" | "modal" } = {},
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
   catalog: { readonly list: () => Promise<ListCatalogResult> } = { list: async () => CATALOG },
 ) {
@@ -220,7 +219,7 @@ export async function loadChat(
   await apply({
     get: (name: string) => services[name],
     provide: (name: string, value: unknown) => provided.set(name, value),
-    options,
+    options: {},
     signal: surface.signal,
     dataDir: folder(),
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),

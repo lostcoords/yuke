@@ -117,30 +117,30 @@ declare module "yuke:chat" {
     readonly failed: (error: unknown) => void;
   }
 
-  /** The view of a question: `view` to place, `focus` to take the keys, and the most rows that it needs. */
+  /** The view of a request, which takes the keys, and the most rows that it needs. */
   export interface ChatQuestion {
     readonly view: View;
-    readonly focus: View;
     readonly rows: number;
   }
 
   /**
-   * The first open question of a plugin in a chat session, as a view: a confirm takes `y` or `n`, a select is a picker,
-   * and an input is a field that masks a secret. The chat places the view, as in the place of the composer or in a
-   * modal. A view answers once, and a refused answer can come again. The others wait in order. A question of an ended
-   * handle shows after the next open.
+   * The first open request of a plugin in a chat session, as a view with one page per question. Up and Down move,
+   * Space ticks, Enter answers and goes to the next page, and the last Enter sends. Left or Shift+Tab goes back. A
+   * question without options is a field that masks a secret. A caller places the view, as the chat does in the place of
+   * the composer. A view answers once, and a refused answer can come again. The others wait in order. A request of an
+   * ended handle shows after the next open.
    *
    * ```ts
    * const questions = new ChatQuestions(chat, { signal: mount.signal, failed: (error) => ctx.notify("error", String(error)) });
-   * place(questions.current); // a question that is open already
+   * place(questions.current); // a request that is open already
    * questions.onChange(() => place(questions.current));
    * ```
    */
   export class ChatQuestions {
     constructor(chat: ChatSession, options: ChatQuestionsOptions);
-    /** The view of the first open question, or `undefined` without one. */
+    /** The view of the first open request, or `undefined` without one. */
     get current(): ChatQuestion | undefined;
-    /** Answer the shown question with a cancel. */
+    /** Answer the shown request with a cancel. */
     cancel(): void;
     /** Call `listener` after each change of `current`. A throw removes it and reports the error. */
     onChange(listener: () => void): () => void;

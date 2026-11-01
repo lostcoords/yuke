@@ -58,6 +58,17 @@ impl Output {
             .collect()
     }
 
+    /// Wait until a row holds `text`, as a toast at the right does. A toast wraps a long text.
+    async fn contains(&self, text: &str) {
+        let waited = tokio::time::timeout(Duration::from_secs(10), async {
+            while !self.rows().iter().any(|row| row.contains(text)) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(waited.is_ok(), "the screen does not show {text:?}: {:#?}", self.rows());
+    }
+
     /// Wait until a row of the screen starts with `text`.
     async fn shows(&self, text: &str) {
         let waited = tokio::time::timeout(Duration::from_secs(10), async {
@@ -218,41 +229,38 @@ async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat
 }
 
 #[tokio::test]
-async fn the_bundled_chat_checks_its_options_at_the_start_and_at_a_reload() {
-    let place = Place::new("tui", "chat_options");
-    place.plugin("board", BOARD);
-    // The sessions plugin needs the chat, and its own load error would hide the error of the chat.
-    let config = |copy: &str| {
+async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
+    let place = Place::new("tui", "bundled_options");
+    // The item shows only in the bar, so it shows that the bar loaded.
+    place.plugin(
+        "marker",
+        "export function apply(ctx) { ctx.get('tui').status.set('marker', { text: 'marked', side: 'left' }); }",
+    );
+    let config = |hide: &str| {
         let text = format!(
-            r#"{{ "plugins": ["board"], "disable": ["sessions"], "bundled": {{ "chat": {{ "copyOnRelease": {copy} }} }} }}"#
+            r#"{{ "plugins": ["marker"], "disable": ["sessions"], "bundled": {{ "bar": {{ "hide": {hide} }} }} }}"#
         );
         std::fs::write(place.paths.config.join("config.json"), text).unwrap();
     };
     config(r#""no""#);
     let (display, output) = display();
     let mut app = started(&place, &display).await;
-    output
-        .shows("error host:yuke: plugin chat did not load: TypeError: the options of the plugin: Set copyOnRelease")
-        .await;
-    // Without the chat, the pane has no composer. The toast of the error shows at the right.
+    output.contains("plugin bar did not load").await;
     assert!(
-        output.rows().iter().all(|row| !row.contains("Message")),
+        output.rows().iter().all(|row| !row.contains("marked")),
         "{:?}",
         output.rows()
     );
 
-    config("false");
+    config("[]");
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output.shows("Message").await;
+    output.contains("marked").await;
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output
-        .shows(concat!(
-            "error host:yuke: the reload failed: the reload keeps the old plugins, because a plugin did not load: ",
-            "plugin chat did not load: TypeError: the options of the plugin: Set copyOnRelease"
-        ))
-        .await;
+    output.contains("the reload failed").await;
+    // The old runtime keeps its bar.
+    output.contains("marked").await;
     app.shutdown().await;
 }
 

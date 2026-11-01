@@ -25,7 +25,9 @@ pub use catalog::{
 pub use event::{SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, LoginId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
-pub use interaction::{InteractionRequest, InteractionRespondParams, InteractionResponse};
+pub use interaction::{
+    InteractionRequest, InteractionRespondParams, InteractionResponse, Question, QuestionAnswer, QuestionOption,
+};
 pub use mcp::{ListMcpServersResult, McpServer, McpServerSource, McpServerState};
 pub use message::{
     ClientNotification, ClientRequest, CloseSessionParams, EmptyParams, EmptyResult, ExtensionCancelParams,

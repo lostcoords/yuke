@@ -160,18 +160,20 @@ async fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
              const session = await host.openSession();
              await session.call("ask", {});
            }
-           test("no option", () => ask((s, signal) => s.select("Which?", ["red"], { signal }), "blue"));
-           test("thrown", () => ask((s, signal) => s.confirm("Go on?", undefined, { signal }), () => { throw new Error("no answer"); }));
-           test("no boolean", () => ask((s, signal) => s.confirm("Go on?", undefined, { signal }), "yes"));"#,
+           const question = { id: "color", header: "Color", question: "Which?", options: [{ label: "red" }] };
+           const pick = (s, signal) => s.ask({ questions: [question] }, { signal });
+           test("no option", () => ask(pick, [{ id: "color", values: ["blue"] }]));
+           test("thrown", () => ask(pick, () => { throw new Error("no answer"); }));
+           test("two options", () => ask(pick, [{ id: "color", values: ["red", "red"] }]));"#,
         TIME_LIMIT,
     )
     .await;
 
     assert_eq!((summary.passed, summary.failed), (0, 3));
     for failure in [
-        "no option\n  Error: the question offers no option \"blue\"",
+        "no option\n  Error: the question \"color\" offers no option \"blue\"",
         "thrown\n  Error: no answer",
-        "no boolean\n  TypeError: the answer to the confirm \"Go on?\" is no boolean",
+        "two options\n  Error: the question \"color\" takes one option",
     ] {
         assert!(summary.failures.contains(failure), "{}", summary.failures);
     }

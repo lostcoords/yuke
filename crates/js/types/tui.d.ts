@@ -253,6 +253,11 @@ declare module "yuke:tui" {
     readonly draw: (canvas: Canvas, focused: boolean) => void;
     /** True when a click or `tui.focus` can give the view the focus. The view of a pane can take it without this. */
     readonly focusable?: boolean | undefined;
+    /**
+     * False when a press gives the focus to the nearest parent that takes it. `tui.focus` still works. The view of a
+     * pane takes a press anyway.
+     */
+    readonly focusOnPress?: boolean | undefined;
     readonly focusChanged?: ((focused: boolean) => void) | undefined;
     /** The context atoms of the keymap while the view is on the focus path. */
     readonly contexts?: readonly string[] | undefined;
@@ -416,6 +421,8 @@ declare module "yuke:tui" {
     readonly kind: "editor";
     readonly role: string;
     readonly focusable: true;
+    /** The default is true. False gives a press to the parent, as for a field that its owner drives. */
+    focusOnPress: boolean;
     readonly state: EditorState;
     /** The logical lines, split at the line ends. */
     readonly lines: TextCoordinates<number>;
@@ -531,6 +538,8 @@ declare module "yuke:tui" {
     readonly kind: "textView";
     readonly role: string;
     readonly focusable: true;
+    /** The default is false: a press goes on to the parent, so a click or a selection keeps the focus. */
+    focusOnPress: boolean;
     readonly document: TextDocument;
     readonly revision: number;
     readonly scroll: ScrollControl;

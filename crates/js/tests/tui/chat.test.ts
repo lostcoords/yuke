@@ -1,5 +1,5 @@
-// The bundled chat pane in a frame: the default pane of each split, its own draft and session handle, a reload, and its
-// options.
+// The bundled chat pane in a frame: the default pane of each split, its own draft and session handle, a reload, and a
+// drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
 import { createFrame, equal, test } from "yuke:test";
@@ -52,17 +52,17 @@ test("a reload keeps the draft of each pane and the focus", async () => {
   equal(rows(after).at(-1), "a         │xb");
 });
 
-test("the option copyOnRelease turns the copy of a drag over the transcript on and off", async () => {
-  for (const copyOnRelease of [false, true]) {
-    using frame = createFrame({ width: 10, height: 4 }, undefined, { cwd: "/w", session: "s1" });
-    await loadChat(frame, { copyOnRelease }, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
-    frame.start();
-    // Row 0 is the gap before the reply, and column 0 is its indent.
-    frame.mouse(mouse(1, 1, "press"));
-    frame.mouse(mouse(5, 1, "drag"));
-    frame.mouse(mouse(5, 1, "release"));
-    equal(frame.copies, copyOnRelease ? ["hello"] : []);
-  }
+test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
+  using frame = createFrame({ width: 10, height: 4 }, undefined, { cwd: "/w", session: "s1" });
+  const chat = await loadChat(frame, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
+  frame.start();
+  // Row 0 is the gap before the reply, and column 0 is its indent.
+  frame.mouse(mouse(1, 1, "press"));
+  frame.mouse(mouse(5, 1, "drag"));
+  frame.mouse(mouse(5, 1, "release"));
+  frame.paste("x");
+  frame.draw();
+  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame).at(-1)], [["hello"], false, "x"]);
 });
 
 test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
@@ -147,7 +147,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   ];
   using frame = createFrame({ width: 30, height: 23 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
-  await loadChat(frame, {}, sessions);
+  await loadChat(frame, sessions);
   frame.start();
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 2500, error: "overloaded" });
   frame.draw();
@@ -184,7 +184,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
 test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(250));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   equal(transcriptRows(frame).at(-1), " reply 250");
   for (let visit = 0; visit < 3; visit += 1) {
@@ -211,7 +211,7 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(250));
   sessions.state.failing = true;
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   for (let visit = 0; visit < 2; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
@@ -230,7 +230,7 @@ test("a failed page shows its error in the rule and loads no more pages", async 
 test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", async () => {
   using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(30));
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
@@ -248,7 +248,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const saved = replies(40);
   saved[1] = commit(2, [{ reasoning: { text: "deep" } } as never, { assistant_text: "ok" }]);
   using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(before, {}, fakeSessions(saved));
+  const chat = await loadChat(before, fakeSessions(saved));
   before.start();
   chat.transcript().scroll.scrollTo(0);
   before.draw();
@@ -258,7 +258,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const shown = transcriptRows(before);
   equal(shown.slice(0, 2), [" thought", " deep"]);
   using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  await loadChat(after, {}, fakeSessions(saved));
+  await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
   await settle();
@@ -270,7 +270,7 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const saved = replies(10);
   const sessions = fakeSessions(saved);
-  const chat = await loadChat(frame, {}, sessions);
+  const chat = await loadChat(frame, sessions);
   frame.start();
   const first = chat.transcript().document.items[0];
   // The event 11 is saved, but the handle gets only the event 12.
