@@ -29,28 +29,27 @@ impl Write for Output {
 }
 
 impl Output {
-    /// The rows of the screen after the frames so far. A frame moves the cursor with `CSI row;column H` between the
-    /// changed cells; the other escape sequences change no character. Each test writes ASCII only.
+    /// The rows of the screen after the frames so far. A frame moves the cursor with `CSI row;column H` between
+    /// changed cells; the other escape sequences change no character. Each character fills one cell.
     fn rows(&self) -> Vec<String> {
-        let bytes = self.0.lock().unwrap().clone();
+        let text = String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned();
         let mut grid = vec![vec![' '; COLUMNS]; ROWS];
         let (mut row, mut column) = (0, 0);
-        let mut at = 0;
-        while at < bytes.len() {
-            if bytes[at] == 0x1b && bytes.get(at + 1) == Some(&b'[') {
-                let end = at + 2 + bytes[at + 2..].iter().position(u8::is_ascii_alphabetic).unwrap();
-                if bytes[end] == b'H' {
-                    let place = std::str::from_utf8(&bytes[at + 2..end]).unwrap();
-                    let (r, c) = place.split_once(';').unwrap();
+        let mut rest = text.as_str();
+        while let Some(character) = rest.chars().next() {
+            if let Some(sequence) = rest.strip_prefix("\x1b[") {
+                let end = sequence.find(|found: char| found.is_ascii_alphabetic()).unwrap();
+                if sequence[end..].starts_with('H') {
+                    let (r, c) = sequence[..end].split_once(';').unwrap();
                     (row, column) = (r.parse::<usize>().unwrap() - 1, c.parse::<usize>().unwrap() - 1);
                 }
-                at = end + 1;
+                rest = &sequence[end + 1..];
             } else {
                 if column < COLUMNS {
-                    grid[row][column] = char::from(bytes[at]);
+                    grid[row][column] = character;
                 }
                 column += 1;
-                at += 1;
+                rest = &rest[character.len_utf8()..];
             }
         }
         grid.into_iter()
