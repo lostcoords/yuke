@@ -1,8 +1,10 @@
 //! The built-in modules, the tool bridge, and the tools `read`, `write`, `edit`.
 
+use std::cell::RefCell;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -36,20 +38,20 @@ impl std::error::Error for HostFailed {
 pub(super) struct TestHost {
     pub(super) session: SessionId,
     /// Whether the session closed. A test sets it.
-    pub(super) closed: std::sync::atomic::AtomicBool,
+    pub(super) closed: std::cell::Cell<bool>,
     /// The folder of the session. A test can change it while a call runs.
-    pub(super) folder: Mutex<PathBuf>,
-    pub(super) media: Mutex<Vec<Vec<u8>>>,
+    pub(super) folder: RefCell<PathBuf>,
+    pub(super) media: RefCell<Vec<Vec<u8>>>,
     /// Each start and end of a job, in order.
-    pub(super) changed: Mutex<Vec<yuke_protocol::Job>>,
+    pub(super) changed: RefCell<Vec<yuke_protocol::Job>>,
     pub(super) job_ended: tokio::sync::Notify,
     pub(super) input_received: tokio::sync::Notify,
     /// Holds each input until a notify, when it is set.
-    pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
+    pub(super) end_gate: Option<Rc<tokio::sync::Notify>>,
     /// Each input that the plugins and the jobs gave the session, in order.
-    pub(super) inputs: Mutex<Vec<yuke_protocol::Input>>,
+    pub(super) inputs: RefCell<Vec<yuke_protocol::Input>>,
     /// The model of the session. A test can change it.
-    pub(super) model: Mutex<yuke_protocol::ModelReference>,
+    pub(super) model: RefCell<yuke_protocol::ModelReference>,
     pub(super) failure: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -58,15 +60,15 @@ impl TestHost {
     pub(super) fn new(folder: &Path) -> Self {
         TestHost {
             session: SessionId::generate(),
-            closed: std::sync::atomic::AtomicBool::new(false),
-            folder: Mutex::new(folder.to_owned()),
-            media: Mutex::default(),
-            changed: Mutex::default(),
+            closed: std::cell::Cell::new(false),
+            folder: RefCell::new(folder.to_owned()),
+            media: RefCell::default(),
+            changed: RefCell::default(),
             job_ended: tokio::sync::Notify::new(),
             input_received: tokio::sync::Notify::new(),
             end_gate: None,
-            inputs: Mutex::default(),
-            model: Mutex::new(yuke_protocol::ModelReference {
+            inputs: RefCell::default(),
+            model: RefCell::new(yuke_protocol::ModelReference {
                 provider: "test".to_owned(),
                 model: "test-model".to_owned(),
             }),
@@ -85,7 +87,7 @@ impl MediaStore for TestHost {
             digest: [7; 32],
             len: bytes.len(),
         };
-        self.media.lock().unwrap().push(bytes);
+        self.media.borrow_mut().push(bytes);
         Ok(blob)
     }
 }
@@ -101,16 +103,16 @@ impl SessionHost for TestHost {
     }
 
     fn folder(&self) -> PathBuf {
-        self.folder.lock().unwrap().clone()
+        self.folder.borrow_mut().clone()
     }
 
     fn is_closed(&self) -> bool {
-        self.closed.load(std::sync::atomic::Ordering::Relaxed)
+        self.closed.get()
     }
 
     fn job_changed(&self, job: yuke_protocol::Job) {
         let ended = job.state != yuke_protocol::JobState::Running;
-        self.changed.lock().unwrap().push(job);
+        self.changed.borrow_mut().push(job);
         if ended {
             self.job_ended.notify_one();
         }
@@ -120,7 +122,7 @@ impl SessionHost for TestHost {
         if let Some(gate) = &self.end_gate {
             gate.notified().await;
         }
-        self.inputs.lock().unwrap().push(input);
+        self.inputs.borrow_mut().push(input);
         self.input_received.notify_one();
     }
 
@@ -157,7 +159,7 @@ impl SessionHost for TestHost {
     }
 
     fn model_reference(&self) -> yuke_protocol::ModelReference {
-        self.model.lock().unwrap().clone()
+        self.model.borrow_mut().clone()
     }
 }
 
@@ -170,7 +172,7 @@ pub(super) struct Tools {
 
 impl Tools {
     /// Open the session of `host` on `runtime`, and wait for its tools.
-    pub(super) async fn open(runtime: &Runtime, host: Arc<dyn SessionHost>) -> Tools {
+    pub(super) async fn open(runtime: &Runtime, host: Rc<dyn SessionHost>) -> Tools {
         let session = runtime.handle().open_session(host).await.unwrap();
         let list = tokio::time::timeout(Duration::from_secs(5), session.tools())
             .await
@@ -197,16 +199,12 @@ impl std::ops::Index<&str> for Tools {
     }
 }
 
-pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Arc<TestHost>, Tools) {
+pub(super) async fn tools_of(folder: &Path, modules: &[&str]) -> (Runtime, Rc<TestHost>, Tools) {
     let (runtime, _faults) = start(folder).await;
-    tools_in(runtime, Arc::new(TestHost::new(folder)), modules).await
+    tools_in(runtime, Rc::new(TestHost::new(folder)), modules).await
 }
 
-pub(super) async fn tools_in(
-    runtime: Runtime,
-    host: Arc<TestHost>,
-    modules: &[&str],
-) -> (Runtime, Arc<TestHost>, Tools) {
+pub(super) async fn tools_in(runtime: Runtime, host: Rc<TestHost>, modules: &[&str]) -> (Runtime, Rc<TestHost>, Tools) {
     for name in modules {
         let loaded = tokio::time::timeout(Duration::from_secs(5), async {
             if name.starts_with("yuke:") {
@@ -217,7 +215,7 @@ pub(super) async fn tools_in(
         });
         loaded.await.unwrap().unwrap();
     }
-    let tools = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
+    let tools = Tools::open(&runtime, Rc::clone(&host) as Rc<dyn SessionHost>).await;
     (runtime, host, tools)
 }
 
@@ -260,7 +258,7 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
         )],
     );
     let (runtime, _faults) = start(&folder).await;
-    let host = Arc::new(TestHost {
+    let host = Rc::new(TestHost {
         failure: Some(Arc::new(HostFailed(std::io::Error::other("the cause")))),
         ..TestHost::new(&folder)
     });
@@ -357,7 +355,7 @@ async fn the_built_in_tools_come_with_their_definitions() {
     let folder = folder("the_built_in_tools_come_with_their_definitions");
     let (runtime, _faults) = start(&folder).await;
     runtime.import("yuke:internal/builtins").await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
+    let host: Rc<dyn SessionHost> = Rc::new(TestHost::new(&folder));
 
     let tools = Tools::open(&runtime, host).await;
 
@@ -403,7 +401,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     );
     let (runtime, mut faults) = start(&folder).await;
     load_entry(&runtime, &folder.join("tools.ts")).await.unwrap();
-    let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
+    let host: Rc<dyn SessionHost> = Rc::new(TestHost::new(&folder));
     let tools = Tools::open(&runtime, host).await;
 
     let text = call(&tools.list[0].1, "{}").await.unwrap().text;

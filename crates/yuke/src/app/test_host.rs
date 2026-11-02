@@ -1,10 +1,12 @@
 //! The host of `createHost` in `yuke:test`: an app per test with a scripted model, an in-memory store, and no retry
 //! waits. The cargo tests of yuke and `yuke test` run each test in one [`TestPlace`].
 
+use std::cell::Cell;
+use std::cell::{OnceCell, RefCell};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -18,7 +20,7 @@ use yuke_js::{Origin, Plugin, Report, Runtime, ScriptError, ScriptSession, TestE
 use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, SessionId};
 
 use super::sessions::SessionService;
-use super::{App, Machine, Mode, Observer, Profile, Shared, lock};
+use super::{App, Machine, Mode, Observer, Profile, Shared};
 use crate::paths::Paths;
 use crate::plugins::{create_data_folders, load_order, manifest_plugin, valid_name};
 
@@ -30,7 +32,7 @@ pub(crate) struct TestSetup {
     /// The folder of the outputs and the logs of the commands, in the place of the test. The end of a test can skip
     /// the shutdown, and the removal of the place of the test then removes the folder.
     pub(super) processes: PathBuf,
-    pub(super) host: Arc<AppTestHost>,
+    pub(super) host: Rc<AppTestHost>,
     pub(super) reports: mpsc::UnboundedSender<Report>,
 }
 
@@ -38,12 +40,12 @@ pub(crate) struct TestSetup {
 pub(crate) struct AppTestHost {
     transport: ScriptedTransport,
     /// The app after its start. The runtime gets the host before the app exists, so the host holds weak references.
-    app: OnceLock<(Weak<Shared>, Weak<SessionService>)>,
+    app: OnceCell<(Weak<Shared>, Weak<SessionService>)>,
     /// A test creates one host.
-    created: AtomicBool,
+    created: Cell<bool>,
     /// The test closed its host, so the close checked the model script.
-    closed: AtomicBool,
-    recorded: Mutex<Recorded>,
+    closed: Cell<bool>,
+    recorded: RefCell<Recorded>,
     /// The runner of the test: a failed check of the model script reaches it as a fault, so a test that catches the
     /// failure still fails.
     reports: mpsc::UnboundedSender<Report>,
@@ -58,8 +60,8 @@ struct Recorded {
 impl Observer for AppTestHost {
     fn notify(&self, notification: ServerNotification) {
         match notification {
-            ServerNotification::Notice(notice) => lock(&self.recorded).notices.push(notice),
-            ServerNotification::ExtensionEvent(event) => lock(&self.recorded).events.push(event),
+            ServerNotification::Notice(notice) => self.recorded.borrow_mut().notices.push(notice),
+            ServerNotification::ExtensionEvent(event) => self.recorded.borrow_mut().events.push(event),
             _ => {}
         }
     }
@@ -138,10 +140,10 @@ impl AppTestHost {
     fn new(reports: mpsc::UnboundedSender<Report>) -> Self {
         AppTestHost {
             transport: ScriptedTransport::default(),
-            app: OnceLock::new(),
-            created: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
-            recorded: Mutex::default(),
+            app: OnceCell::new(),
+            created: Cell::new(false),
+            closed: Cell::new(false),
+            recorded: RefCell::default(),
             reports,
         }
     }
@@ -161,7 +163,7 @@ impl AppTestHost {
         })
     }
 
-    fn app(&self) -> Result<(Arc<Shared>, Arc<SessionService>), TestError> {
+    fn app(&self) -> Result<(Rc<Shared>, Rc<SessionService>), TestError> {
         let (shared, sessions) = self.app.get().ok_or("the app of the test has not started")?;
         Ok((
             shared.upgrade().ok_or("the app of the test has stopped")?,
@@ -282,7 +284,7 @@ fn request_view(sent: &Sent) -> Value {
 #[async_trait(?Send)]
 impl TestHost for AppTestHost {
     async fn create(&self, request: Value) -> Result<(), TestError> {
-        if self.created.swap(true, Ordering::SeqCst) {
+        if self.created.replace(true) {
             return Err("a test creates one host".into());
         }
         let request: CreateRequest = serde_json::from_value(request)?;
@@ -326,10 +328,7 @@ impl TestHost for AppTestHost {
         // A session reads the skills of the folder plugins in load order, so the profile names their folders. A failed
         // load fails the test, so each plugin counts as loaded.
         {
-            let mut profile = shared
-                .profile
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut profile = shared.profile.borrow_mut();
             profile.plugin_folders = Profile::plugin_folders(&plugins);
             profile.loaded = plugins.iter().map(|plugin| plugin.name.clone()).collect();
         }
@@ -344,7 +343,7 @@ impl TestHost for AppTestHost {
     }
 
     fn record(&self) -> Value {
-        let recorded = lock(&self.recorded);
+        let recorded = self.recorded.borrow();
         json!({
             "notices": recorded.notices,
             "events": recorded.events,
@@ -354,7 +353,7 @@ impl TestHost for AppTestHost {
 
     async fn close(&self) -> Result<(), TestError> {
         let (_shared, sessions) = self.app()?;
-        self.closed.store(true, Ordering::SeqCst);
+        self.closed.set(true);
         sessions.close_all().await;
         if let Some(handle) = sessions.plugins() {
             handle.close_plugins().await?;
@@ -362,7 +361,7 @@ impl TestHost for AppTestHost {
         self.check_script()
     }
 
-    fn script_session(&self, id: SessionId) -> Result<Arc<ScriptSession>, TestError> {
+    fn script_session(&self, id: SessionId) -> Result<Rc<ScriptSession>, TestError> {
         let (_shared, sessions) = self.app()?;
         Ok(sessions.live(id)?.script_session())
     }
@@ -377,7 +376,7 @@ impl TestHost for AppTestHost {
 /// The app of one test, and the owner of its runtime for the runner.
 pub(crate) struct TestPlace {
     app: App,
-    host: Arc<AppTestHost>,
+    host: Rc<AppTestHost>,
 }
 
 impl TestRuntime for TestPlace {
@@ -391,7 +390,7 @@ impl TestRuntime for TestPlace {
             self.app.runtime.interrupt();
         }
         // A host that the test did not close checks its script here, so an unused reply still fails the test.
-        let unchecked = self.host.created.load(Ordering::SeqCst) && !self.host.closed.load(Ordering::SeqCst);
+        let unchecked = self.host.created.get() && !self.host.closed.get();
         if unchecked && !timed_out && self.host.check_script().is_err() {
             // The fault of the check reached the runner.
         }
@@ -413,7 +412,7 @@ impl TestPlace {
         internal_imports: bool,
     ) -> Result<(TestPlace, mpsc::UnboundedReceiver<Report>), TestError> {
         let (reports, report_receiver) = mpsc::unbounded_channel();
-        let host = Arc::new(AppTestHost::new(reports.clone()));
+        let host = Rc::new(AppTestHost::new(reports.clone()));
         let fetch = Arc::new(yuke_http::Client::new(yuke_http::ClientOptions {
             idle_timeout: None,
             user_agent: "yuke-test".to_owned(),
@@ -435,23 +434,23 @@ impl TestPlace {
                 cache: cache.to_owned(),
                 internal_imports,
                 processes: place.join("processes"),
-                host: Arc::clone(&host),
+                host: Rc::clone(&host),
                 reports,
             }),
         };
-        let observer = Arc::clone(&host) as Arc<dyn Observer>;
+        let observer = Rc::clone(&host) as Rc<dyn Observer>;
         // The plugins under test come from `createHost`, so the bundled plugins do not load.
         let (app, _bundled) = App::prepare(
             machine,
             Mode::Server,
             observer,
             Arc::new(MemoryStore::default()),
-            Arc::new(NoWait),
+            Rc::new(NoWait),
         )
         .await?;
         if host
             .app
-            .set((Arc::downgrade(&app.shared), Arc::downgrade(&app.sessions)))
+            .set((Rc::downgrade(&app.shared), Rc::downgrade(&app.sessions)))
             .is_err()
         {
             unreachable!("a new host has no app");

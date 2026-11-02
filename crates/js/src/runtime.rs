@@ -47,13 +47,13 @@ pub struct Options {
 
     /// The child processes of the tools. Give every JavaScript runtime of the process the same value, so a job
     /// outlives a reload.
-    pub processes: Arc<Processes>,
+    pub processes: Rc<Processes>,
 
     /// The models that the plugins call.
-    pub models: Arc<dyn Models>,
+    pub models: Rc<dyn Models>,
 
     /// The sessions and the catalog that the plugins use.
-    pub sessions: Arc<dyn Sessions>,
+    pub sessions: Rc<dyn Sessions>,
 
     /// The client of `fetch`. The consumer chooses its idle timeout. With none, only the signal stops a slow fetch.
     pub http: Arc<yuke_http::Client>,
@@ -67,7 +67,7 @@ pub struct Options {
     pub internal_imports: bool,
 
     /// The host of `createHost` in `yuke:test`, or `None` outside a test.
-    pub test_host: Option<Arc<dyn TestHost>>,
+    pub test_host: Option<Rc<dyn TestHost>>,
 }
 
 impl fmt::Debug for Options {
@@ -88,7 +88,7 @@ impl fmt::Debug for Options {
 pub struct Runtime {
     engine: Rc<Engine>,
     /// The models of the plugins.
-    pub(crate) models: Arc<dyn Models>,
+    pub(crate) models: Rc<dyn Models>,
     /// Its drop asks the drive task to stop. Handles can still exist.
     stop: oneshot::Sender<()>,
     /// Its drop stops each later stretch of JavaScript, so the task ends at its next poll.
@@ -122,7 +122,7 @@ impl Drop for Stopping {
 #[derive(Clone)]
 pub struct Handle {
     pub(crate) access: EngineAccess,
-    pub(crate) models: Arc<dyn Models>,
+    pub(crate) models: Rc<dyn Models>,
 }
 
 impl fmt::Debug for Handle {
@@ -151,7 +151,7 @@ impl Runtime {
     ///
     /// Panics outside a [`tokio::runtime::LocalRuntime`] or a [`tokio::task::LocalSet`].
     pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
-        let models = Arc::clone(&options.models);
+        let models = Rc::clone(&options.models);
         let (reports, report_receiver) = mpsc::unbounded_channel();
         let (stop, stopped) = oneshot::channel();
         let (show, shown) = oneshot::channel();
@@ -220,7 +220,7 @@ impl Runtime {
     pub fn handle(&self) -> Handle {
         Handle {
             access: self.access(),
-            models: Arc::clone(&self.models),
+            models: Rc::clone(&self.models),
         }
     }
 
@@ -413,7 +413,7 @@ impl Engine {
 
         let context = AsyncContext::full(&runtime).await.map_err(engine_error)?;
         let timers = Rc::new(Timers::default());
-        let registry = Rc::new(Registry::new(Arc::clone(&options.processes)));
+        let registry = Rc::new(Registry::new(Rc::clone(&options.processes)));
         let frames = Rc::new(Frames::new(options.interface.clone()));
         let engine = Self {
             context,

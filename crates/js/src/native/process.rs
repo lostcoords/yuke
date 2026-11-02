@@ -1,7 +1,7 @@
 //! The native of `yuke:process`: `processOutput` runs a program without a shell, and answers its end and its output.
 //! `processEnv` reads a variable of the environment of yuke.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use rquickjs::{Ctx, Function, Object, TypedArray, Value};
 
@@ -10,26 +10,26 @@ use crate::error::{ErrorClass, throw};
 use crate::processes::{Processes, Program};
 
 /// Add `processOutput` and `processEnv` to `object`, the export object of the native module.
-pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, processes: &Arc<Processes>) -> rquickjs::Result<()> {
+pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, processes: &Rc<Processes>) -> rquickjs::Result<()> {
     // A missing variable and a value that is not valid Unicode both give `undefined`.
     object.set(
         "processEnv",
         Function::new(ctx.clone(), |name: String| std::env::var(name).ok())?,
     )?;
-    let processes = Arc::clone(processes);
+    let processes = Rc::clone(processes);
     object.set(
         "processOutput",
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, program: Program| -> rquickjs::Result<Operation<'js>> {
-                output(&ctx, Arc::clone(&processes), program)
+                output(&ctx, Rc::clone(&processes), program)
             },
         )?,
     )
 }
 
 /// Start `program`, and answer the operation of its run.
-fn output<'js>(ctx: &Ctx<'js>, processes: Arc<Processes>, program: Program) -> rquickjs::Result<Operation<'js>> {
+fn output<'js>(ctx: &Ctx<'js>, processes: Rc<Processes>, program: Program) -> rquickjs::Result<Operation<'js>> {
     Operation::start(ctx, move |ctx, stop| async move {
         match processes.output(program, stop).await {
             Ok(end) => {

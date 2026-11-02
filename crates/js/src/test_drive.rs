@@ -429,7 +429,7 @@ pub(crate) async fn run_point(
         } => {
             let round = OwnedRound::of(&script, round)?;
             let failure = round_error(&failure)?;
-            hooks.retries.store(retries, Ordering::Relaxed);
+            hooks.retries.set(retries);
             Decision::Json(match hooks.retry_round(&round.start(), &failure).await? {
                 Some(plan) => plan_json(plan)?,
                 None => serde_json::Value::Null,
@@ -440,7 +440,7 @@ pub(crate) async fn run_point(
             finish_reason,
             continues,
         } => {
-            hooks.continues.store(continues, Ordering::Relaxed);
+            hooks.continues.set(continues);
             Decision::Json(
                 match hooks.after_round(&[Block::assistant_text(text)], finish_reason).await? {
                     RoundDecision::Proceed => json!("proceed"),

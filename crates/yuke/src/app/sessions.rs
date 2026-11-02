@@ -1,9 +1,11 @@
 //! The open sessions: the registry that admits each open and close, and the calls on one open session. Each method
 //! takes `&self`, so several callers share the service.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, Weak};
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 use yuke_agent::{EventPage, ListPosition, Session};
@@ -17,7 +19,7 @@ use yuke_protocol::{
 
 use super::facts::Watch;
 use super::live::{LiveSession, View};
-use super::{AppError, SOURCE, Shared, canonical, lock, model_of, save_settings, system_prompt};
+use super::{AppError, SOURCE, Shared, canonical, model_of, save_settings, system_prompt};
 use crate::providers::Providers;
 
 /// The open sessions of the app and the calls on them.
@@ -29,11 +31,11 @@ use crate::providers::Providers;
 pub(crate) struct SessionService {
     /// The service itself, for the countdown tasks and the attachments.
     this: Weak<SessionService>,
-    shared: Arc<Shared>,
+    shared: Rc<Shared>,
     /// Opens the plugins of a session in the runtime now, or `None` before the first runtime starts. A reload replaces
     /// it.
-    runtime: Mutex<Option<Handle>>,
-    registry: Mutex<Registry>,
+    runtime: RefCell<Option<Handle>>,
+    registry: RefCell<Registry>,
 }
 
 /// The slot of each session that is open, or that a call opens or closes now.
@@ -63,7 +65,7 @@ enum Slot {
 
 /// An open session and what keeps it open.
 struct Open {
-    live: Arc<LiveSession>,
+    live: Rc<LiveSession>,
     /// The holders of the session. The session counts down to its close only without a holder.
     attachments: usize,
     /// The idle deadline. An attachment or a turn clears it, so an older countdown closes nothing.
@@ -103,10 +105,10 @@ impl Transition<'_> {
     /// # Errors
     ///
     /// Returns [`AppError::Stopped`] after the shutdown started.
-    fn open(self, live: Arc<LiveSession>) -> Result<(), AppError> {
-        let announced = Arc::clone(&live);
+    fn open(self, live: Rc<LiveSession>) -> Result<(), AppError> {
+        let announced = Rc::clone(&live);
         {
-            let mut registry = lock(&self.service.registry);
+            let mut registry = self.service.registry.borrow_mut();
             if registry.phase == Phase::Stopped {
                 return Err(AppError::Stopped);
             }
@@ -119,7 +121,7 @@ impl Transition<'_> {
                 }),
             );
         }
-        // After the registry lock, because an announce takes the output lock of the session.
+        // A fact sink can call the service, so the registry borrow must end first.
         announced.announce(None);
         Ok(())
     }
@@ -127,7 +129,7 @@ impl Transition<'_> {
 
 impl Drop for Transition<'_> {
     fn drop(&mut self) {
-        let mut registry = lock(&self.service.registry);
+        let mut registry = self.service.registry.borrow_mut();
         if matches!(registry.slots.get(&self.id), Some(Slot::Opening | Slot::Closing)) {
             registry.slots.remove(&self.id);
         }
@@ -138,12 +140,12 @@ impl Drop for Transition<'_> {
 pub(super) struct Reload<'a> {
     service: &'a SessionService,
     /// Each open session at the start of the reload.
-    pub(super) sessions: Vec<Arc<LiveSession>>,
+    pub(super) sessions: Vec<Rc<LiveSession>>,
 }
 
 impl Drop for Reload<'_> {
     fn drop(&mut self) {
-        let mut registry = lock(&self.service.registry);
+        let mut registry = self.service.registry.borrow_mut();
         if registry.phase == Phase::Reloading {
             registry.phase = Phase::Ready;
         }
@@ -152,12 +154,12 @@ impl Drop for Reload<'_> {
 
 impl SessionService {
     /// The service of `shared`. A session opens after [`SessionService::set_runtime`].
-    pub(super) fn new(shared: Arc<Shared>) -> Arc<Self> {
-        Arc::new_cyclic(|this| SessionService {
+    pub(super) fn new(shared: Rc<Shared>) -> Rc<Self> {
+        Rc::new_cyclic(|this| SessionService {
             this: this.clone(),
             shared,
-            runtime: Mutex::new(None),
-            registry: Mutex::default(),
+            runtime: RefCell::new(None),
+            registry: RefCell::default(),
         })
     }
 
@@ -167,7 +169,7 @@ impl SessionService {
     ///
     /// Returns [`AppError::NotOpen`].
     pub(crate) fn attach(&self, id: SessionId) -> Result<Attachment, AppError> {
-        let mut registry = lock(&self.registry);
+        let mut registry = self.registry.borrow_mut();
         let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
             return Err(AppError::NotOpen(id));
         };
@@ -176,15 +178,15 @@ impl SessionService {
         Ok(Attachment {
             service: self.this.clone(),
             id,
-            live: Arc::downgrade(&open.live),
+            live: Rc::downgrade(&open.live),
         })
     }
 
     /// Release `attachment`. The last one wakes the task of the session, which reports when the session has no work.
     fn detach(&self, attachment: &Attachment) {
-        let mut registry = lock(&self.registry);
+        let mut registry = self.registry.borrow_mut();
         if let Some(Slot::Open(open)) = registry.slots.get_mut(&attachment.id)
-            && Weak::as_ptr(&attachment.live) == Arc::as_ptr(&open.live)
+            && Weak::as_ptr(&attachment.live) == Rc::as_ptr(&open.live)
         {
             open.attachments -= 1;
             if open.attachments == 0 {
@@ -195,7 +197,7 @@ impl SessionService {
 
     /// Stop the countdown of session `id`, because a turn starts.
     pub(super) fn touch(&self, id: SessionId) {
-        if let Some(Slot::Open(open)) = lock(&self.registry).slots.get_mut(&id) {
+        if let Some(Slot::Open(open)) = self.registry.borrow_mut().slots.get_mut(&id) {
             open.deadline = None;
         }
     }
@@ -204,7 +206,7 @@ impl SessionService {
     /// The wait is [`GRACE`], or `sessionIdleMinutes` while a job of the session runs. An existing countdown keeps its
     /// deadline until a holder or a turn cancels it.
     pub(super) fn report_idle(&self, id: SessionId) {
-        let mut registry = lock(&self.registry);
+        let mut registry = self.registry.borrow_mut();
         let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
             return;
         };
@@ -231,7 +233,7 @@ impl SessionService {
     /// Close session `id` at `deadline` if no holder or turn cancelled it. During a reload, start a new countdown.
     async fn expire(&self, id: SessionId, deadline: tokio::time::Instant) {
         let live = {
-            let mut registry = lock(&self.registry);
+            let mut registry = self.registry.borrow_mut();
             let reloading = registry.phase == Phase::Reloading;
             let Some(Slot::Open(open)) = registry.slots.get_mut(&id) else {
                 return;
@@ -245,7 +247,7 @@ impl SessionService {
                 self.report_idle(id);
                 return;
             }
-            let live = Arc::clone(&open.live);
+            let live = Rc::clone(&open.live);
             registry.slots.insert(id, Slot::Closing);
             live
         };
@@ -260,12 +262,12 @@ impl SessionService {
     /// Returns [`AppError::Changing`] while a call opens or closes a session, [`AppError::Reloading`], and
     /// [`AppError::Stopped`].
     pub(super) fn start_reload(&self) -> Result<Reload<'_>, AppError> {
-        let mut registry = lock(&self.registry);
+        let mut registry = self.registry.borrow_mut();
         admit(registry.phase)?;
         let mut sessions = Vec::with_capacity(registry.slots.len());
         for (id, slot) in &registry.slots {
             match slot {
-                Slot::Open(open) => sessions.push(Arc::clone(&open.live)),
+                Slot::Open(open) => sessions.push(Rc::clone(&open.live)),
                 Slot::Opening | Slot::Closing => return Err(AppError::Changing(*id)),
             }
         }
@@ -280,11 +282,13 @@ impl SessionService {
     /// session. A session that opens meanwhile gets one open fact.
     pub(super) fn watch_facts(&self, sink: FactSink) -> Watch {
         let watch = self.shared.facts.watch(sink);
-        let open: Vec<Arc<LiveSession>> = lock(&self.registry)
+        let open: Vec<Rc<LiveSession>> = self
+            .registry
+            .borrow()
             .slots
             .values()
             .filter_map(|slot| match slot {
-                Slot::Open(open) => Some(Arc::clone(&open.live)),
+                Slot::Open(open) => Some(Rc::clone(&open.live)),
                 Slot::Opening | Slot::Closing => None,
             })
             .collect();
@@ -297,18 +301,18 @@ impl SessionService {
     /// Open the plugins of each later session with `runtime`.
     /// The handle of the plugins of the runtime now, or `None` before the first runtime starts.
     pub(super) fn plugins(&self) -> Option<Handle> {
-        lock(&self.runtime).clone()
+        self.runtime.borrow().clone()
     }
 
     pub(super) fn set_runtime(&self, runtime: Handle) {
-        *lock(&self.runtime) = Some(runtime);
+        *self.runtime.borrow_mut() = Some(runtime);
     }
 
     /// Refuse each later open, and close each open session. The sessions stop together before the first wait. A call
     /// that opens or closes a session now ends alone.
     pub(super) async fn close_all(&self) {
-        let open: Vec<Arc<LiveSession>> = {
-            let mut registry = lock(&self.registry);
+        let open: Vec<Rc<LiveSession>> = {
+            let mut registry = self.registry.borrow_mut();
             registry.phase = Phase::Stopped;
             std::mem::take(&mut registry.slots)
                 .into_values()
@@ -350,7 +354,7 @@ impl SessionService {
         parent: Option<SessionId>,
     ) -> Result<SessionId, AppError> {
         // A refusal before the work saves no session in the common case. The reserve checks again.
-        admit(lock(&self.registry).phase)?;
+        admit(self.registry.borrow().phase)?;
         if let Some(parent) = parent {
             self.shared.store.session_summary(parent).await?;
         }
@@ -381,7 +385,7 @@ impl SessionService {
     /// Returns [`AppError::Store`] when the store fails, [`AppError::Invalid`] for a model that cannot run,
     /// [`AppError::Internal`] when the plugins do not open, [`AppError::Reloading`], and [`AppError::Stopped`].
     pub(crate) async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
-        admit(lock(&self.registry).phase)?;
+        admit(self.registry.borrow().phase)?;
         let session = Session::fork(Arc::clone(&self.shared.store), id, through).await?;
         self.start_new(session).await
     }
@@ -453,7 +457,7 @@ impl SessionService {
             tree.extend(children.sessions.iter().map(|child| child.session_id));
         }
         {
-            let registry = lock(&self.registry);
+            let registry = self.registry.borrow();
             if let Some(open) = tree.iter().find(|session| registry.slots.contains_key(session)) {
                 return Err(AppError::Open(*open));
             }
@@ -497,7 +501,7 @@ impl SessionService {
         &self,
         id: SessionId,
         change: impl FnOnce(&SessionSettings, &Providers) -> Result<Option<SessionSettings>, AppError>,
-    ) -> Result<Arc<LiveSession>, AppError> {
+    ) -> Result<Rc<LiveSession>, AppError> {
         let transition = self.reserve(id)?;
         let mut session = Session::open(Arc::clone(&self.shared.store), id).await?;
         match change(session.settings(), &self.shared.providers())? {
@@ -562,10 +566,10 @@ impl SessionService {
     /// [`AppError::Reloading`].
     pub(crate) async fn close(&self, id: SessionId) -> Result<(), AppError> {
         let live = {
-            let mut registry = lock(&self.registry);
+            let mut registry = self.registry.borrow_mut();
             admit(registry.phase)?;
             let live = match registry.slots.get(&id) {
-                Some(Slot::Open(open)) => Arc::clone(&open.live),
+                Some(Slot::Open(open)) => Rc::clone(&open.live),
                 Some(Slot::Opening | Slot::Closing) => return Err(AppError::Changing(id)),
                 None => return Err(AppError::NotOpen(id)),
             };
@@ -732,7 +736,7 @@ impl SessionService {
     /// Returns [`AppError::Invalid`] for an open session, [`AppError::Changing`] while another call opens or closes it,
     /// [`AppError::Reloading`], and [`AppError::Stopped`].
     fn reserve(&self, id: SessionId) -> Result<Transition<'_>, AppError> {
-        let mut registry = lock(&self.registry);
+        let mut registry = self.registry.borrow_mut();
         admit(registry.phase)?;
         match registry.slots.get(&id) {
             Some(Slot::Open(_)) => Err(AppError::Invalid(format!("the session {id} is open already"))),
@@ -745,13 +749,15 @@ impl SessionService {
     }
 
     /// Start the task of `session`, and make its slot `Open`.
-    async fn start_session(&self, transition: Transition<'_>, session: Session) -> Result<Arc<LiveSession>, AppError> {
+    async fn start_session(&self, transition: Transition<'_>, session: Session) -> Result<Rc<LiveSession>, AppError> {
         let id = session.id();
-        let runtime = lock(&self.runtime)
+        let runtime = self
+            .runtime
+            .borrow()
             .clone()
             .ok_or_else(|| AppError::Internal("the JavaScript runtime has not started".to_owned()))?;
-        let live = Arc::new(LiveSession::start(session, &runtime, Arc::clone(&self.shared), self.this.clone()).await?);
-        if let Err(error) = transition.open(Arc::clone(&live)) {
+        let live = Rc::new(LiveSession::start(session, &runtime, Rc::clone(&self.shared), self.this.clone()).await?);
+        if let Err(error) = transition.open(Rc::clone(&live)) {
             // The shutdown started during the open and closes no session that it did not see.
             live.close().await;
             return Err(error);
@@ -762,9 +768,9 @@ impl SessionService {
     }
 
     /// The open session `id`.
-    pub(super) fn live(&self, id: SessionId) -> Result<Arc<LiveSession>, AppError> {
-        match lock(&self.registry).slots.get(&id) {
-            Some(Slot::Open(open)) => Ok(Arc::clone(&open.live)),
+    pub(super) fn live(&self, id: SessionId) -> Result<Rc<LiveSession>, AppError> {
+        match self.registry.borrow().slots.get(&id) {
+            Some(Slot::Open(open)) => Ok(Rc::clone(&open.live)),
             Some(Slot::Opening | Slot::Closing) | None => Err(AppError::NotOpen(id)),
         }
     }

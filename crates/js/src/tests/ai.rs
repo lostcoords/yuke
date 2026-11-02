@@ -1,6 +1,7 @@
 //! The module `yuke:ai` and the model of a session.
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -16,27 +17,27 @@ use crate::{Attachment, CompleteAnswer, CompleteRequest, Models, Processes, Runt
 /// the cancel.
 #[derive(Default)]
 struct Recorded {
-    requests: Mutex<Vec<CompleteRequest>>,
+    requests: RefCell<Vec<CompleteRequest>>,
     answer: Option<Result<CompleteAnswer, String>>,
-    request_tokens: Mutex<Vec<CancellationToken>>,
-    cancelled: Mutex<bool>,
+    request_tokens: RefCell<Vec<CancellationToken>>,
+    cancelled: RefCell<bool>,
     /// The request futures that have not ended or dropped yet.
-    alive: Arc<Mutex<usize>>,
+    alive: Rc<RefCell<usize>>,
 }
 
 /// Counts a request future as alive until it ends or drops.
-struct Alive(Arc<Mutex<usize>>);
+struct Alive(Rc<RefCell<usize>>);
 
 impl Alive {
-    fn new(count: &Arc<Mutex<usize>>) -> Self {
-        *count.lock().unwrap() += 1;
-        Self(Arc::clone(count))
+    fn new(count: &Rc<RefCell<usize>>) -> Self {
+        *count.borrow_mut() += 1;
+        Self(Rc::clone(count))
     }
 }
 
 impl Drop for Alive {
     fn drop(&mut self) {
-        *self.0.lock().unwrap() -= 1;
+        *self.0.borrow_mut() -= 1;
     }
 }
 
@@ -47,14 +48,14 @@ impl Models for Recorded {
         request: CompleteRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
-        self.requests.lock().unwrap().push(request);
-        self.request_tokens.lock().unwrap().push(cancel.clone());
+        self.requests.borrow_mut().push(request);
+        self.request_tokens.borrow_mut().push(cancel.clone());
         let _alive = Alive::new(&self.alive);
         if let Some(answer) = &self.answer {
             return Ok(answer.clone()?);
         }
         cancel.cancelled().await;
-        *self.cancelled.lock().unwrap() = true;
+        *self.cancelled.borrow_mut() = true;
         Err("the request was cancelled".into())
     }
     async fn side_request(
@@ -62,20 +63,20 @@ impl Models for Recorded {
         _request: SideRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
-        self.request_tokens.lock().unwrap().push(cancel.clone());
+        self.request_tokens.borrow_mut().push(cancel.clone());
         let _alive = Alive::new(&self.alive);
         cancel.cancelled().await;
-        *self.cancelled.lock().unwrap() = true;
+        *self.cancelled.borrow_mut() = true;
         Err("the request was cancelled".into())
     }
 }
 
 /// A runtime of the test `name` whose plugins call `models`.
-async fn runtime_with(name: &str, models: &Arc<Recorded>) -> Runtime {
+async fn runtime_with(name: &str, models: &Rc<Recorded>) -> Runtime {
     let folder = folder(name);
-    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
     let options = crate::Options {
-        models: Arc::clone(models) as Arc<dyn Models>,
+        models: Rc::clone(models) as Rc<dyn Models>,
         ..options(&folder, processes)
     };
     Runtime::start(options).await.unwrap().0
@@ -90,7 +91,7 @@ fn reference(provider: &str, model: &str) -> ModelReference {
 
 #[tokio::test(flavor = "local")]
 async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_and_the_usage() {
-    let models = Arc::new(Recorded {
+    let models = Rc::new(Recorded {
         answer: Some(Ok(CompleteAnswer {
             text: "A summary.".to_owned(),
             finish_reason: FinishReason::Length,
@@ -137,7 +138,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
         ]
     );
     assert_eq!(
-        *models.requests.lock().unwrap(),
+        *models.requests.borrow_mut(),
         [
             CompleteRequest {
                 model: reference("p", "m"),
@@ -178,13 +179,13 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
             },
         ]
     );
-    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert!(!models.request_tokens.borrow_mut()[0].is_cancelled());
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing() {
     // The model answers at once, so a misuse that the checks miss gives `none`, and the test does not hang.
-    let models = Arc::new(Recorded {
+    let models = Rc::new(Recorded {
         answer: Some(Ok(CompleteAnswer {
             text: String::new(),
             finish_reason: FinishReason::Stop,
@@ -235,12 +236,12 @@ async fn a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing() {
             "TypeError: a setting holds a symbol, which JSON cannot hold",
         ]
     );
-    assert!(models.requests.lock().unwrap().is_empty());
+    assert!(models.requests.borrow_mut().is_empty());
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_failed_request_rejects_with_an_error_that_holds_the_text_of_the_failure() {
-    let models = Arc::new(Recorded {
+    let models = Rc::new(Recorded {
         answer: Some(Err("the provider is overloaded".to_owned())),
         ..Recorded::default()
     });
@@ -264,7 +265,7 @@ async fn a_failed_request_rejects_with_an_error_that_holds_the_text_of_the_failu
 
 #[tokio::test(flavor = "local")]
 async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() {
-    let models = Arc::new(Recorded::default());
+    let models = Rc::new(Recorded::default());
     let runtime = runtime_with(
         "an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal",
         &models,
@@ -283,7 +284,7 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
     .await
     .unwrap();
     crate::settled().await;
-    assert_eq!(models.requests.lock().unwrap().len(), 1);
+    assert_eq!(models.requests.borrow_mut().len(), 1);
     let reason = evaluate::<String>(
         &runtime,
         "controller.abort('stopped by the plugin'); return await globalThis.answer;",
@@ -292,13 +293,13 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
     .unwrap();
 
     assert_eq!(reason, "stopped by the plugin");
-    assert!(*models.cancelled.lock().unwrap());
-    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert!(*models.cancelled.borrow_mut());
+    assert!(models.request_tokens.borrow_mut()[0].is_cancelled());
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
-    let models = Arc::new(Recorded::default());
+    let models = Rc::new(Recorded::default());
     let runtime = runtime_with("a_shutdown_stops_a_request_that_waits_for_its_answer", &models).await;
     evaluate::<bool>(
         &runtime,
@@ -309,20 +310,20 @@ async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     .await
     .unwrap();
     crate::settled().await;
-    assert_eq!(models.requests.lock().unwrap().len(), 1);
-    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert_eq!(models.requests.borrow_mut().len(), 1);
+    assert!(!models.request_tokens.borrow_mut()[0].is_cancelled());
 
     runtime.shutdown().await.unwrap();
 
     crate::settled().await;
-    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
-    assert_eq!(*models.alive.lock().unwrap(), 0);
+    assert!(models.request_tokens.borrow_mut()[0].is_cancelled());
+    assert_eq!(*models.alive.borrow_mut(), 0);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
     let folder = folder("a_shutdown_stops_a_side_request_that_waits_for_its_answer");
-    let models = Arc::new(Recorded::default());
+    let models = Rc::new(Recorded::default());
     let runtime = runtime_with("a_shutdown_stops_a_side_request_that_waits_for_its_answer", &models).await;
     write(
         &folder,
@@ -336,7 +337,7 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
         )],
     );
     load_entry(&runtime, &folder.join("entry.ts")).await.unwrap();
-    let host = Arc::new(TestHost::new(&folder));
+    let host = Rc::new(TestHost::new(&folder));
     let tools = Tools::open(&runtime, host).await;
     let model = yuke_testing::model();
     let settings = Settings::new();
@@ -354,33 +355,33 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
         .await
         .unwrap();
     crate::settled().await;
-    assert_eq!(models.request_tokens.lock().unwrap().len(), 1);
-    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert_eq!(models.request_tokens.borrow_mut().len(), 1);
+    assert!(!models.request_tokens.borrow_mut()[0].is_cancelled());
 
     runtime.shutdown().await.unwrap();
 
     crate::settled().await;
-    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
-    assert_eq!(*models.alive.lock().unwrap(), 0);
+    assert!(models.request_tokens.borrow_mut()[0].is_cancelled());
+    assert_eq!(*models.alive.borrow_mut(), 0);
 }
 
 #[tokio::test(flavor = "local")]
 async fn s_model_names_the_model_of_the_session_now() {
     let folder = folder("s_model_names_the_model_of_the_session_now");
-    let models = Arc::new(Recorded::default());
+    let models = Rc::new(Recorded::default());
     let runtime = runtime_with("s_model_names_the_model_of_the_session_now", &models).await;
     write(
         &folder,
         &[("entry.ts", "export function session(s) { globalThis.s = s; }")],
     );
     load_entry(&runtime, &folder.join("entry.ts")).await.unwrap();
-    let host = Arc::new(TestHost::new(&folder));
-    let _tools = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
+    let host = Rc::new(TestHost::new(&folder));
+    let _tools = Tools::open(&runtime, Rc::clone(&host) as Rc<dyn SessionHost>).await;
 
     let first = evaluate::<String>(&runtime, "return JSON.stringify(s.model);")
         .await
         .unwrap();
-    *host.model.lock().unwrap() = reference("test", "other-model");
+    *host.model.borrow_mut() = reference("test", "other-model");
     let second = evaluate::<Vec<String>>(
         &runtime,
         "return [JSON.stringify(s.model), String(Object.isFrozen(s.model))];",
@@ -404,8 +405,8 @@ const SHAPE: &str = "const ai = await import('yuke:ai');
      });";
 
 /// A runtime of the test `name` whose model answers `text` with the finish `finish_reason`.
-async fn answering(name: &str, text: &str, finish_reason: FinishReason) -> (Runtime, Arc<Recorded>) {
-    let models = Arc::new(Recorded {
+async fn answering(name: &str, text: &str, finish_reason: FinishReason) -> (Runtime, Rc<Recorded>) {
+    let models = Rc::new(Recorded {
         answer: Some(Ok(CompleteAnswer {
             text: text.to_owned(),
             finish_reason,
@@ -442,7 +443,7 @@ async fn an_output_sends_the_schema_and_answers_with_the_checked_object() {
 
     // A `null` optional field counts as absent, as in the arguments of a tool.
     assert_eq!(answers, [r#"{"summary":"done"}"#, "undefined"]);
-    let requests = models.requests.lock().unwrap();
+    let requests = models.requests.borrow_mut();
     assert_eq!(
         requests[0].settings.output_schema,
         Some(OutputSchema {
@@ -562,7 +563,7 @@ async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
             "TypeError: the option name is not 1 to 64 letters, digits, _, or -",
         ]
     );
-    assert!(models.requests.lock().unwrap().is_empty());
+    assert!(models.requests.borrow_mut().is_empty());
 }
 
 #[tokio::test(flavor = "local")]
@@ -594,7 +595,7 @@ async fn attachments_reach_the_request_after_a_read_of_each_path() {
     .unwrap();
 
     assert_eq!(text, "seen");
-    let attachments = &models.requests.lock().unwrap()[0].attachments;
+    let attachments = &models.requests.borrow_mut()[0].attachments;
     assert_eq!(
         *attachments,
         [
@@ -656,7 +657,7 @@ async fn a_bad_attachment_fails_before_a_request() {
         errors[3].starts_with(&format!("Error: {}: ", missing.to_str().unwrap())),
         "{errors:?}"
     );
-    assert!(models.requests.lock().unwrap().is_empty());
+    assert!(models.requests.borrow_mut().is_empty());
 }
 
 #[tokio::test(flavor = "local")]
@@ -665,7 +666,7 @@ async fn an_abort_ends_the_wait_for_an_attachment_that_does_not_read() {
     let fifo = folder.join("input.fifo");
     let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
     assert!(made.success());
-    let models = Arc::new(Recorded::default());
+    let models = Rc::new(Recorded::default());
     let runtime = runtime_with(
         "an_abort_ends_the_wait_for_an_attachment_that_does_not_read_runtime",
         &models,
@@ -710,5 +711,5 @@ async fn an_abort_ends_the_wait_for_an_attachment_that_does_not_read() {
     drop(writer);
 
     assert_eq!(reason.unwrap().unwrap(), "stopped by the plugin");
-    assert!(models.requests.lock().unwrap().is_empty());
+    assert!(models.requests.borrow_mut().is_empty());
 }

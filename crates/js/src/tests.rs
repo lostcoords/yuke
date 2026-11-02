@@ -17,6 +17,7 @@ mod web;
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -224,12 +225,12 @@ impl crate::Sessions for NoSessions {
 }
 
 /// The options of a test runtime in `folder` with `processes`.
-fn options(folder: &Path, processes: Arc<Processes>) -> Options {
+fn options(folder: &Path, processes: Rc<Processes>) -> Options {
     Options {
         cache: folder.join("cache"),
         processes,
-        models: Arc::new(NoModels),
-        sessions: Arc::new(NoSessions),
+        models: Rc::new(NoModels),
+        sessions: Rc::new(NoSessions),
         http: Arc::new(
             yuke_http::Client::new(yuke_http::ClientOptions {
                 idle_timeout: None,
@@ -244,7 +245,7 @@ fn options(folder: &Path, processes: Arc<Processes>) -> Options {
 }
 
 async fn start(folder: &Path) -> (Runtime, mpsc::UnboundedReceiver<Report>) {
-    Runtime::start(options(folder, Arc::new(Processes::new(folder.join("processes")))))
+    Runtime::start(options(folder, Rc::new(Processes::new(folder.join("processes")))))
         .await
         .unwrap()
 }
@@ -761,7 +762,7 @@ async fn opened(name: &str, plugins: &[(&str, &str)]) -> (Runtime, ScriptSession
     assert!(runtime.load_plugins(&specs).await.is_empty());
     let session = runtime
         .handle()
-        .open_session(Arc::new(TestHost::new(&folder)))
+        .open_session(Rc::new(TestHost::new(&folder)))
         .await
         .unwrap();
     (runtime, session, reports)

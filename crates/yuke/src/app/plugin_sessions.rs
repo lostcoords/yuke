@@ -2,7 +2,7 @@
 //! `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
 use std::any::Any;
-use std::sync::{Arc, Weak};
+use std::rc::{Rc, Weak};
 
 use async_trait::async_trait;
 use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
@@ -19,11 +19,11 @@ use super::{AppError, Shared};
 /// The sessions of the app for one runtime. The service can end before the runtime, so each call upgrades it.
 pub(super) struct PluginSessions {
     pub(super) service: Weak<SessionService>,
-    pub(super) shared: Arc<Shared>,
+    pub(super) shared: Rc<Shared>,
 }
 
 impl PluginSessions {
-    fn service(&self) -> Result<Arc<SessionService>, AppError> {
+    fn service(&self) -> Result<Rc<SessionService>, AppError> {
         self.service.upgrade().ok_or(AppError::Stopped)
     }
 }

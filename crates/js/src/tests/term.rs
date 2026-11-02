@@ -1,6 +1,7 @@
 //! The terminal module `yuke:internal/term`: the frame loop on a test display.
 
 use std::io::Write;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -102,7 +103,7 @@ async fn hidden(name: &str) -> Started {
     let output = Output::default();
     let size = Size { columns: 20, rows: 3 };
     let (display, requests) = Display::new(size, Box::new(output.clone()), None, true, false);
-    let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
+    let mut options = options(&folder, Rc::new(Processes::new(folder.join("processes"))));
     options.interface = Some(interface(Arc::clone(&display)));
     let (runtime, reports) = Runtime::start(options).await.unwrap();
     global_term(&runtime).await;
@@ -424,7 +425,7 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
         true,
         false,
     );
-    let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
+    let mut options = options(&folder, Rc::new(Processes::new(folder.join("processes"))));
     options.interface = Some(interface(Arc::clone(&display)));
     let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
     runtime.show(None);
@@ -542,7 +543,7 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
         true,
         false,
     );
-    let mut options = options(&folder, Arc::new(Processes::new(folder.join("processes"))));
+    let mut options = options(&folder, Rc::new(Processes::new(folder.join("processes"))));
     options.interface = Some(interface(display));
     let (mut runtime, _reports) = Runtime::start(options).await.unwrap();
     runtime.show(None);

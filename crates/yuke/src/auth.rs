@@ -8,7 +8,7 @@ use std::fs::{self, File, OpenOptions, Permissions, TryLockError};
 use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -18,8 +18,6 @@ use yuke_ai::route::Credential;
 use yuke_ai::transport::Exchange;
 use yuke_engine::{CredentialSource, chain_text};
 use yuke_protocol::UpdateCredentialParams;
-
-use crate::app::lock;
 
 const FILE: &str = "auth.json";
 const TEMPORARY: &str = "auth.json.tmp";
@@ -626,6 +624,11 @@ pub(crate) async fn save_login(
         .ok_or("the provider gave no refresh token, so the login cannot last")?;
     let login = StoredLogin::from_grant(grant, refresh_token, None);
     write_entry(provider, Some(Stored::Login(login)), folder).await
+}
+
+/// Lock the credential state. Recover its value if another holder panicked.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 #[cfg(test)]

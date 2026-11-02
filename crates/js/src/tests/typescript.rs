@@ -2,7 +2,7 @@
 //! `yuke:test`.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Duration;
 
 use super::{folder, options};
@@ -24,7 +24,7 @@ async fn start(place: &Path, cache: &Path) -> Result<(Runtime, mpsc::UnboundedRe
     let options = Options {
         cache: cache.to_owned(),
         internal_imports: true,
-        ..options(place, Arc::new(Processes::new(place.join("processes"))))
+        ..options(place, Rc::new(Processes::new(place.join("processes"))))
     };
     Ok(Runtime::start(options).await?)
 }

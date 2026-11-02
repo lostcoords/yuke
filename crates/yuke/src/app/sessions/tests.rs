@@ -25,14 +25,14 @@ async fn started(place: &Place) -> App {
 async fn started_with(place: &Place, transport: Box<dyn Transport>) -> App {
     let machine = place.machine(Box::new(with_key), transport);
     let store = open_store(&place.paths.data).await.unwrap();
-    App::start(machine, Mode::Server, Arc::new(Silent), store, Arc::new(TokioTimer))
+    App::start(machine, Mode::Server, Rc::new(Silent), store, Rc::new(TokioTimer))
         .await
         .unwrap()
 }
 
 /// The idle deadline of the open session `id`, or `None` while a holder or turn keeps it open.
 fn deadline(sessions: &SessionService, id: SessionId) -> Option<tokio::time::Instant> {
-    match lock(&sessions.registry).slots.get(&id) {
+    match sessions.registry.borrow_mut().slots.get(&id) {
         Some(Slot::Open(open)) => open.deadline,
         _ => panic!("the session {id} is not open"),
     }
@@ -55,7 +55,7 @@ async fn until(what: &str, ready: impl Fn() -> bool) {
 async fn closed(sessions: &SessionService, id: SessionId, within: Duration) {
     tokio::time::advance(within).await;
     let what = format!("the session {id} did not close within {within:?}");
-    until(&what, || !lock(&sessions.registry).slots.contains_key(&id)).await;
+    until(&what, || !sessions.registry.borrow_mut().slots.contains_key(&id)).await;
 }
 
 /// Drop `attachment` of session `id`, and wait until its countdown starts.
@@ -160,7 +160,7 @@ async fn a_reload_refuses_to_start_while_a_session_opens() {
 async fn after_the_shutdown_starts_no_session_opens() {
     let place = Place::new("sessions", "after_the_shutdown_starts_no_session_opens");
     let app = started(&place).await;
-    let sessions = Arc::clone(app.sessions());
+    let sessions = Rc::clone(app.sessions());
     let id = sessions.create(settings(&place), None).await.unwrap();
 
     sessions.close_all().await;
@@ -243,22 +243,22 @@ async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_i
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
     let id = sessions.create(settings(&place), None).await.unwrap();
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let kept = Arc::clone(&events);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let kept = Rc::clone(&events);
     let view = sessions
-        .view(id, 1, Arc::new(move |event| lock(&kept).push(event)))
+        .view(id, 1, Rc::new(move |event| kept.borrow_mut().push(event)))
         .await
         .unwrap();
 
     sessions.close(id).await.unwrap();
-    let at_the_close = lock(&events).len();
+    let at_the_close = events.borrow_mut().len();
     sessions.open(id, |_, _| Ok(None)).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     sessions.input(id, said("Hi.")).await.unwrap();
     sessions.idle(id).await.unwrap();
     drop(view);
 
-    let events = std::mem::take(&mut *lock(&events));
+    let events = std::mem::take(&mut *events.borrow_mut());
     assert_eq!(events.len(), at_the_close);
     assert!(matches!(events.last(), Some(ViewEvent::Closed)), "{events:?}");
     assert_eq!(transport.requests().len(), 1);
@@ -292,10 +292,10 @@ async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app(
         "a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app",
     );
     let transport = ScriptedTransport::new([overloaded_reply(), text_reply("Hello.")]);
-    let timer = Arc::new(CountedWaits::default());
+    let timer = Rc::new(CountedWaits::default());
     let machine = place.machine(Box::new(with_key), Box::new(transport.clone()));
     let store = open_store(&place.paths.data).await.unwrap();
-    let app = App::start(machine, Mode::Server, Arc::new(Silent), store, Arc::clone(&timer) as _)
+    let app = App::start(machine, Mode::Server, Rc::new(Silent), store, Rc::clone(&timer) as _)
         .await
         .unwrap();
     let sessions = app.sessions();
@@ -517,11 +517,11 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
         );
     }
     let last = sessions.events_before(id, None, 1).await.unwrap()[0].event_number.0;
-    let events = Arc::new(Mutex::new(Vec::new()));
-    let kept = Arc::clone(&events);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let kept = Rc::clone(&events);
 
     let view = sessions
-        .view(id, 1, Arc::new(move |event| lock(&kept).push(event)))
+        .view(id, 1, Rc::new(move |event| kept.borrow_mut().push(event)))
         .await
         .unwrap();
     sessions.input(id, said("Three?")).await.unwrap();
@@ -533,7 +533,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let older = sessions.events_before(id, Some(EventNumber(last)), 100).await.unwrap();
     drop(view);
 
-    let events = std::mem::take(&mut *lock(&events));
+    let events = std::mem::take(&mut *events.borrow_mut());
     let ViewEvent::Snapshot(snapshot) = &events[0] else {
         panic!("the first view event is no snapshot: {events:?}");
     };

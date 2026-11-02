@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -40,18 +41,18 @@ fn input_params(session: &Value, text: &str) -> Value {
 
 /// The client side of a server that runs in this test.
 struct Client {
-    input: Box<dyn AsyncWrite + Unpin + Send>,
-    output: Lines<BufReader<Box<dyn AsyncRead + Unpin + Send>>>,
+    input: Box<dyn AsyncWrite + Unpin>,
+    output: Lines<BufReader<Box<dyn AsyncRead + Unpin>>>,
     next_id: i64,
     /// The server task of a client on a pair of pipes. The clients of a socket share the task of `Listening`.
     server: Option<JoinHandle<Result<(), String>>>,
 }
 
 impl Client {
-    fn new(input: impl AsyncWrite + Unpin + Send + 'static, output: impl AsyncRead + Unpin + Send + 'static) -> Client {
+    fn new(input: impl AsyncWrite + Unpin + 'static, output: impl AsyncRead + Unpin + 'static) -> Client {
         Client {
             input: Box::new(input),
-            output: BufReader::new(Box::new(output) as Box<dyn AsyncRead + Unpin + Send>).lines(),
+            output: BufReader::new(Box::new(output) as Box<dyn AsyncRead + Unpin>).lines(),
             next_id: 0,
             server: None,
         }

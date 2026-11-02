@@ -1,6 +1,6 @@
 //! `exec` of the session object: run a shell command until it ends, its deadline passes, or its call stops it.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use rquickjs::{Ctx, Function, Object};
 use tokio::sync::mpsc;
@@ -15,7 +15,7 @@ use crate::tools::forward;
 /// answers `{ output, cause }`. The cause is `exit` with `code`, `signal` with `signal`, `moved` with `id` and `log`, `timeout`, or `cancelled`.
 pub(crate) async fn exec<'js>(
     ctx: Ctx<'js>,
-    processes: Arc<Processes>,
+    processes: Rc<Processes>,
     request: Request,
     on_output: Function<'js>,
     queue: Queue<'js>,

@@ -2,9 +2,10 @@
 //! answers how the turn ended and the text of the last answer. It drives the session through the app, as the protocol
 //! server does.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use serde::Serialize;
 use tokio::sync::Notify;
@@ -17,7 +18,7 @@ use yuke_protocol::{
     SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
-use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, TokioTimer, lock, open_store, warn};
+use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -112,14 +113,14 @@ pub(crate) async fn run(
     cwd: &Path,
     cancellation_token: CancellationToken,
 ) -> Result<Finished, String> {
-    let watcher = Arc::new(Watcher::default());
+    let watcher = Rc::new(Watcher::default());
     let store = open_store(&machine.paths.data).await?;
     let app = App::start(
         machine,
         Mode::Print,
-        Arc::clone(&watcher) as Arc<dyn Observer>,
+        Rc::clone(&watcher) as Rc<dyn Observer>,
         store,
-        Arc::new(TokioTimer),
+        Rc::new(TokioTimer),
     )
     .await?;
     // The shutdown must also run after an error.
@@ -172,7 +173,7 @@ async fn run_turn(
     }
     // The close cancels a running turn, and that turn saves its end before the close returns.
     app.sessions().close(id).await.map_err(|error| chain_text(&error))?;
-    let watched = lock(&watcher.watched).remove(&id).unwrap_or_default();
+    let watched = watcher.watched.borrow_mut().remove(&id).unwrap_or_default();
     // A cancel before the turn leaves the input pending, and a later run must not answer it. After a failure, the input
     // stays for a later run.
     if cancellation_token.is_cancelled() && !watched.ran {
@@ -274,7 +275,7 @@ fn choose(
 /// failure: an error notice of yuke for the session. Other notices, also those of plugins, go to stderr.
 #[derive(Default)]
 struct Watcher {
-    watched: Mutex<HashMap<SessionId, Watched>>,
+    watched: RefCell<HashMap<SessionId, Watched>>,
     /// Wakes the run when a turn ends, or when a failure stops a session before its turn.
     ended: Notify,
 }
@@ -282,12 +283,12 @@ struct Watcher {
 impl Watcher {
     /// Whether the turn of session `id` ended, or a failure stopped the session.
     fn has_ended(&self, id: SessionId) -> bool {
-        lock(&self.watched).get(&id).is_some_and(|watched| watched.ended)
+        self.watched.borrow().get(&id).is_some_and(|watched| watched.ended)
     }
 
     /// Change what the watcher keeps of session `id`.
     fn change(&self, id: SessionId, change: impl FnOnce(&mut Watched)) {
-        change(lock(&self.watched).entry(id).or_default());
+        change(self.watched.borrow_mut().entry(id).or_default());
     }
 }
 

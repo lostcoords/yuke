@@ -1,15 +1,11 @@
 //! The MCP servers of one session: their connections, their states, and their tools.
 
-#![expect(
-    clippy::arc_with_non_send_sync,
-    reason = "local traits keep Arc ownership until the separate host state cleanup"
-)]
-
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::rc::Rc;
 
 use async_trait::async_trait;
 use process_wrap::tokio::{CommandWrap, ProcessSession};
@@ -42,7 +38,7 @@ const LOG_LINES: usize = 20;
 const LOG_LINE_BYTES: usize = 500;
 
 /// Receives each change of the state of a server. It must not wait, and it must not call the [`Servers`].
-pub type OnChange = Arc<dyn Fn(McpServer)>;
+pub type OnChange = Rc<dyn Fn(McpServer)>;
 
 /// One server of the session.
 struct Slot {
@@ -58,13 +54,12 @@ struct Slot {
 
 /// What the servers and their tasks share.
 struct Shared {
-    slots: Mutex<Vec<Slot>>,
+    slots: RefCell<Vec<Slot>>,
     on_change: OnChange,
     /// After a close, a stop is no news and no gated server starts.
-    closed: AtomicBool,
-    /// The task of each started server by the index of its slot, and the task of the trust without one. A close takes
-    /// them under this lock, so the trust task starts no server after the close.
-    tasks: Mutex<Vec<(Option<usize>, JoinHandle<()>)>>,
+    closed: Cell<bool>,
+    /// The task of each started server, by its slot index. The trust task has no index.
+    tasks: RefCell<Vec<(Option<usize>, JoinHandle<()>)>>,
 }
 
 impl Slot {
@@ -78,15 +73,15 @@ impl Slot {
 }
 
 impl Shared {
-    /// Change the slot `index` with `change`, and report its new state after the lock.
+    /// Change the slot `index` with `change`, and report its new state after the borrow ends.
     fn update(&self, index: usize, change: impl FnOnce(&mut Slot)) {
         let server = {
-            let mut slots = lock(&self.slots);
+            let mut slots = self.slots.borrow_mut();
             let slot = &mut slots[index];
             change(slot);
             slot.server()
         };
-        if !self.closed.load(Ordering::Acquire) {
+        if !self.closed.get() {
             (self.on_change)(server);
         }
     }
@@ -95,10 +90,10 @@ impl Shared {
 /// The MCP servers of one session. Each server starts in the background, and its task holds its connection until the
 /// server ends. A drop stops each server.
 pub struct Servers {
-    shared: Arc<Shared>,
+    shared: Rc<Shared>,
     /// The number of servers that still start or wait for the trust.
     starting: watch::Receiver<usize>,
-    media: Arc<dyn MediaStore>,
+    media: Rc<dyn MediaStore>,
 }
 
 impl std::fmt::Debug for Servers {
@@ -125,7 +120,7 @@ impl Servers {
         trust: impl Future<Output = bool> + 'static,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
-        media: Arc<dyn MediaStore>,
+        media: Rc<dyn MediaStore>,
         on_change: OnChange,
     ) -> Servers {
         let overridden: HashSet<&str> = project.iter().map(|(name, _)| name.as_str()).collect();
@@ -159,24 +154,24 @@ impl Servers {
                 tools: Vec::new(),
             });
         }
-        let shared = Arc::new(Shared {
-            slots: Mutex::new(slots),
+        let shared = Rc::new(Shared {
+            slots: RefCell::new(slots),
             on_change,
-            closed: AtomicBool::new(false),
-            tasks: Mutex::default(),
+            closed: Cell::new(false),
+            tasks: RefCell::default(),
         });
         let (count, starting) = watch::channel(launches.len() + gated.len());
-        let count = Arc::new(count);
-        let mut tasks = lock(&shared.tasks);
+        let count = Rc::new(count);
+        let mut tasks = shared.tasks.borrow_mut();
         for (index, process) in launches {
-            let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+            let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
             tasks.push((
                 Some(index),
                 tokio::task::spawn_local(run(index, process, task_shared, count)),
             ));
         }
         if !gated.is_empty() {
-            let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
+            let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
             tasks.push((
                 None,
                 tokio::task::spawn_local(start_trusted(gated, trust, task_shared, count)),
@@ -201,13 +196,13 @@ impl Servers {
 
     /// Each server and its state, in config order.
     pub fn states(&self) -> Vec<McpServer> {
-        lock(&self.shared.slots).iter().map(Slot::server).collect()
+        self.shared.slots.borrow().iter().map(Slot::server).collect()
     }
 
     /// The tools of the running servers, each deferred, with its definition. A tool whose name an earlier tool has gets
     /// the name with the hash.
     pub fn tools(&self) -> Vec<(ToolDefinition, McpTool)> {
-        let slots = lock(&self.shared.slots);
+        let slots = self.shared.slots.borrow();
         let mut names = HashSet::new();
         let mut tools = Vec::new();
         for slot in slots.iter() {
@@ -239,7 +234,7 @@ impl Servers {
                             .as_ref()
                             .and_then(|annotations| annotations.title.clone())
                     }),
-                    media: Arc::clone(&self.media),
+                    media: Rc::clone(&self.media),
                 };
                 tools.push((definition, tool));
             }
@@ -251,11 +246,14 @@ impl Servers {
     /// stops its start.
     pub async fn close(&self) {
         let tasks = {
-            let mut tasks = lock(&self.shared.tasks);
-            self.shared.closed.store(true, Ordering::Release);
+            let mut tasks = self.shared.tasks.borrow_mut();
+            self.shared.closed.set(true);
             std::mem::take(&mut *tasks)
         };
-        let mut stops: Vec<_> = lock(&self.shared.slots)
+        let mut stops: Vec<_> = self
+            .shared
+            .slots
+            .borrow_mut()
             .iter_mut()
             .map(|slot| slot.stop.take())
             .collect();
@@ -275,7 +273,7 @@ impl Servers {
 
 impl Drop for Servers {
     fn drop(&mut self) {
-        for (_, task) in lock(&self.shared.tasks).iter() {
+        for (_, task) in self.shared.tasks.borrow().iter() {
             task.abort();
         }
     }
@@ -285,19 +283,18 @@ impl Drop for Servers {
 async fn start_trusted(
     gated: Vec<(usize, tokio::process::Command)>,
     trust: impl Future<Output = bool>,
-    shared: Arc<Shared>,
-    count: Arc<watch::Sender<usize>>,
+    shared: Rc<Shared>,
+    count: Rc<watch::Sender<usize>>,
 ) {
     let trusted = trust.await;
     for (index, process) in gated {
-        let mut tasks = lock(&shared.tasks);
-        if !trusted || shared.closed.load(Ordering::Acquire) {
+        if !trusted || shared.closed.get() {
             count.send_modify(|starting| *starting -= 1);
             continue;
         }
         shared.update(index, |slot| slot.state = McpServerState::Connecting);
-        let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
-        tasks.push((
+        let (task_shared, count) = (Rc::clone(&shared), Rc::clone(&count));
+        shared.tasks.borrow_mut().push((
             Some(index),
             tokio::task::spawn_local(run(index, process, task_shared, count)),
         ));
@@ -305,7 +302,7 @@ async fn start_trusted(
 }
 
 /// Start the server of the slot `index` with `process`, and hold its connection until the server ends.
-async fn run(index: usize, process: tokio::process::Command, shared: Arc<Shared>, count: Arc<watch::Sender<usize>>) {
+async fn run(index: usize, process: tokio::process::Command, shared: Rc<Shared>, count: Rc<watch::Sender<usize>>) {
     let connected = connect(process).await;
     let connection = match connected {
         Ok((client, tools, program)) => {
@@ -455,7 +452,7 @@ pub struct McpTool {
     name: String,
     /// The title of the tool for a person, from the tool or from its annotations.
     title: Option<String>,
-    media: Arc<dyn MediaStore>,
+    media: Rc<dyn MediaStore>,
 }
 
 impl std::fmt::Debug for McpTool {
@@ -556,9 +553,4 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
 async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
     let bytes = yuke_ai::decode_base64(data.as_bytes()).ok_or("its data is not base64")?;
     media.put_media(bytes).await
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    // A panic of another holder leaves the slots valid.
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

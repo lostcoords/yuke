@@ -3,7 +3,8 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
+
+use std::rc::Rc;
 
 use async_trait::async_trait;
 use yuke_agent::{Store, blob_of};
@@ -16,7 +17,7 @@ use super::{Shared, model_of};
 
 /// The models of the app for the plugins. A request is one request to the model: no tool runs, no hook sees it, and
 /// the store keeps nothing of it.
-pub(super) struct PluginModels(pub(super) Arc<Shared>);
+pub(super) struct PluginModels(pub(super) Rc<Shared>);
 
 #[async_trait(?Send)]
 impl Models for PluginModels {
@@ -145,16 +146,16 @@ mod tests {
 
     /// An app of the test `name` that sends the requests of the model through `transport`.
     async fn app(name: &str, transport: Box<dyn Transport>) -> App {
-        timed_app(name, transport, Arc::new(TokioTimer)).await
+        timed_app(name, transport, Rc::new(TokioTimer)).await
     }
 
     /// An app as [`app`] that waits for the retries of a model request with `timer`.
-    async fn timed_app(name: &str, transport: Box<dyn Transport>, timer: Arc<dyn Timer>) -> App {
+    async fn timed_app(name: &str, transport: Box<dyn Transport>, timer: Rc<dyn Timer>) -> App {
         let place = Place::new("models", name);
         App::start(
             place.machine(Box::new(with_key), transport),
             Mode::Print,
-            Arc::new(Silent),
+            Rc::new(Silent),
             open_store(&place.paths.data).await.unwrap(),
             timer,
         )
@@ -165,15 +166,15 @@ mod tests {
     #[tokio::test(flavor = "local")]
     async fn a_retry_of_a_plugin_request_waits_with_the_timer_of_the_app() {
         let transport = ScriptedTransport::new([overloaded_reply(), text_reply("A summary.")]);
-        let timer = Arc::new(CountedWaits::default());
+        let timer = Rc::new(CountedWaits::default());
         let app = timed_app(
             "a_retry_of_a_plugin_request_waits_with_the_timer_of_the_app",
             Box::new(transport.clone()),
-            Arc::clone(&timer) as _,
+            Rc::clone(&timer) as _,
         )
         .await;
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .complete(request("MiniMax-M3"), CancellationToken::new())
             .await;
         app.shutdown().await;
@@ -210,7 +211,7 @@ mod tests {
         )
         .await;
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .complete(request("MiniMax-M3"), CancellationToken::new())
             .await;
         app.shutdown().await;
@@ -250,7 +251,7 @@ mod tests {
             ..request("MiniMax-M3")
         };
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .complete(request, CancellationToken::new())
             .await;
         app.shutdown().await;
@@ -272,7 +273,7 @@ mod tests {
         )
         .await;
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .complete(request("MiniMax-M3"), CancellationToken::new())
             .await
             .unwrap();
@@ -294,7 +295,7 @@ mod tests {
         )
         .await;
         let cancel = CancellationToken::new();
-        let models = PluginModels(Arc::clone(&app.shared));
+        let models = PluginModels(Rc::clone(&app.shared));
         let answer = {
             let complete = models.complete(request("MiniMax-M3"), cancel.clone());
             tokio::pin!(complete);
@@ -351,7 +352,7 @@ mod tests {
             prompt: "Describe.".to_owned(),
         };
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .side_request(request, CancellationToken::new())
             .await;
         app.shutdown().await;
@@ -392,7 +393,7 @@ mod tests {
             prompt: "Summarize.".to_owned(),
         };
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .side_request(request, CancellationToken::new())
             .await;
         app.shutdown().await;
@@ -418,7 +419,7 @@ mod tests {
         )
         .await;
 
-        let answer = PluginModels(Arc::clone(&app.shared))
+        let answer = PluginModels(Rc::clone(&app.shared))
             .complete(request("no-such-model"), CancellationToken::new())
             .await;
         app.shutdown().await;

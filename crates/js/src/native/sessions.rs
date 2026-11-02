@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
@@ -43,7 +42,7 @@ impl Serialize for ViewEvent {
 pub(super) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
-    sessions: &Arc<dyn Sessions>,
+    sessions: &Rc<dyn Sessions>,
     queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
@@ -52,16 +51,16 @@ pub(super) fn add<'js>(
     add_facts(ctx, object, sessions, queue)?;
     let open_queue = queue.clone();
 
-    let (open_sessions, open_held) = (Arc::clone(sessions), Rc::clone(&held));
+    let (open_sessions, open_held) = (Rc::clone(sessions), Rc::clone(&held));
     object.set(
         "sessionsOpen",
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, arguments: Json<(u32, SessionId, usize)>| -> rquickjs::Result<Promise<'js>> {
                 let (key, id, tail) = arguments.0;
-                let (sessions, held) = (Arc::clone(&open_sessions), Rc::clone(&open_held));
+                let (sessions, held) = (Rc::clone(&open_sessions), Rc::clone(&open_held));
                 let sender = open_queue.sender.clone();
-                let sink = Arc::new(move |event| {
+                let sink = Rc::new(move |event| {
                     if sender.send(Delivery::View(key, Box::new(event))).is_err() {
                         // The engine stopped, so it takes no more events.
                     }
@@ -96,17 +95,17 @@ pub(super) fn add<'js>(
 fn add_facts<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
-    sessions: &Arc<dyn Sessions>,
+    sessions: &Rc<dyn Sessions>,
     queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
     let sender = queue.sender.clone();
     let watch: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::default();
-    let (sessions, started) = (Arc::clone(sessions), Rc::clone(&watch));
+    let (sessions, started) = (Rc::clone(sessions), Rc::clone(&watch));
     object.set(
         "factsWatch",
         Function::new(ctx.clone(), move |key: u32| {
             let sender = sender.clone();
-            let sink: FactSink = Arc::new(move |fact| {
+            let sink: FactSink = Rc::new(move |fact| {
                 if sender.send(Delivery::Fact(key, fact)).is_err() {
                     // The engine stopped, so it takes no more facts.
                 }
@@ -123,10 +122,10 @@ fn add_facts<'js>(
 }
 
 /// Add the asynchronous requests, which run as local tasks.
-fn add_requests<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
+fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
     add_put_blob(object, sessions, queue)?;
     let request = Requests {
-        sessions: Arc::clone(sessions),
+        sessions: Rc::clone(sessions),
         queue: queue.clone(),
     };
     request.add(
@@ -240,23 +239,23 @@ fn add_plugin_requests<'js>(request: &Requests<'js>, object: &Object<'js>) -> rq
 }
 
 /// Add the requests that answer at once.
-fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
-    let calls = Arc::clone(sessions);
+fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionCancel",
         Function::new(ctx.clone(), move |id: Json<SessionId>| calls.cancel(id.0))?,
     )?;
-    let calls = Arc::clone(sessions);
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionBackground",
         Function::new(ctx.clone(), move |id: Json<SessionId>| calls.background(id.0))?,
     )?;
-    let calls = Arc::clone(sessions);
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionHasMovable",
         Function::new(ctx.clone(), move |id: Json<SessionId>| calls.has_movable(id.0))?,
     )?;
-    let calls = Arc::clone(sessions);
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionRespond",
         Function::new(
@@ -271,14 +270,14 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
             },
         )?,
     )?;
-    let calls = Arc::clone(sessions);
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionJobs",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: Json<SessionId>| {
             calls.jobs(id.0).map(Json).map_err(|error| failure(&ctx, &error))
         })?,
     )?;
-    let calls = Arc::clone(sessions);
+    let calls = Rc::clone(sessions);
     object.set(
         "sessionMcpServers",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: Json<SessionId>| {
@@ -290,8 +289,8 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
 
 /// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
 /// task runs.
-fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
-    let sessions = Arc::clone(sessions);
+fn add_put_blob<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
+    let sessions = Rc::clone(sessions);
     let queue = queue.clone();
     object.set(
         "sessionPutBlob",
@@ -299,7 +298,7 @@ fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, queue: 
             object.ctx().clone(),
             move |ctx: Ctx<'js>, id: Json<SessionId>, bytes: TypedArray<'js, u8>| -> rquickjs::Result<Promise<'js>> {
                 let bytes = crate::bytes::copy(&bytes)?;
-                let sessions = Arc::clone(&sessions);
+                let sessions = Rc::clone(&sessions);
                 let (promise, _abort) = queue.request(
                     &ctx,
                     async move { sessions.put_blob(id.0, bytes).await },
@@ -328,7 +327,7 @@ fn failure(ctx: &Ctx<'_>, error: &SessionsError) -> rquickjs::Error {
 /// Adds the asynchronous requests: each one takes its arguments as one JSON value, runs as a local task, and answers a
 /// promise of its JSON.
 struct Requests<'js> {
-    sessions: Arc<dyn Sessions>,
+    sessions: Rc<dyn Sessions>,
     queue: Queue<'js>,
 }
 
@@ -337,14 +336,14 @@ impl<'js> Requests<'js> {
         &self,
         object: &Object<'js>,
         name: &str,
-        run: impl Fn(Arc<dyn Sessions>, A) -> F + 'js,
+        run: impl Fn(Rc<dyn Sessions>, A) -> F + 'js,
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
         T: Serialize + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
-        let sessions = Arc::clone(&self.sessions);
+        let sessions = Rc::clone(&self.sessions);
         let queue = self.queue.clone();
         object.set(
             name,
@@ -352,7 +351,7 @@ impl<'js> Requests<'js> {
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Promise<'js>> {
                     let (promise, _abort) =
-                        queue.request(&ctx, run(Arc::clone(&sessions), arguments.0), |ctx, result| {
+                        queue.request(&ctx, run(Rc::clone(&sessions), arguments.0), |ctx, result| {
                             joined(ctx, result).map(Json)
                         })?;
                     Ok(promise)
@@ -367,14 +366,14 @@ impl<'js> Requests<'js> {
         &self,
         object: &Object<'js>,
         name: &str,
-        run: impl Fn(Arc<dyn Sessions>, A) -> F + 'js,
+        run: impl Fn(Rc<dyn Sessions>, A) -> F + 'js,
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
         T: Serialize + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
-        let sessions = Arc::clone(&self.sessions);
+        let sessions = Rc::clone(&self.sessions);
         let queue = self.queue.clone();
         object.set(
             name,
@@ -383,7 +382,7 @@ impl<'js> Requests<'js> {
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
                     let (promise, abort) = queue.request(
                         &ctx,
-                        run(Arc::clone(&sessions), arguments.0),
+                        run(Rc::clone(&sessions), arguments.0),
                         |ctx, result| match result {
                             Err(error) if error.is_cancelled() => {
                                 Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?))

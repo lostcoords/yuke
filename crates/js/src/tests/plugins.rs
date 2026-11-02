@@ -1,7 +1,7 @@
 //! The plugin loader: the context of `apply`, the exports, the services, and the failures.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use super::tools::{TestHost, Tools};
 use super::{descriptor, evaluate, folder, start, write};
@@ -29,7 +29,7 @@ pub(super) fn tool(name: &str) -> String {
 
 /// The names of the tools of a new session of `runtime`, in their order.
 async fn tool_names(runtime: &Runtime, folder: &Path) -> Vec<String> {
-    let tools = Tools::open(runtime, Arc::new(TestHost::new(folder))).await;
+    let tools = Tools::open(runtime, Rc::new(TestHost::new(folder))).await;
     tools.names().into_iter().map(str::to_owned).collect()
 }
 

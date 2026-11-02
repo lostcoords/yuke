@@ -1,7 +1,7 @@
 //! The host of `createHost` in `yuke:test`: a capability that the consumer gives to the runtime of a test, and the
 //! natives that reach it. Without it, each `testHost` native fails with a clear text. `testSettled` needs no host.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use async_trait::async_trait;
 use rquickjs::prelude::Async;
@@ -50,7 +50,7 @@ pub trait TestHost {
     /// # Errors
     ///
     /// Returns why the session has none: it is not open.
-    fn script_session(&self, id: SessionId) -> Result<Arc<ScriptSession>, TestError>;
+    fn script_session(&self, id: SessionId) -> Result<Rc<ScriptSession>, TestError>;
 
     /// The bytes of the media `blob` of the session `id`, for the media that a driver gives back.
     ///
@@ -64,7 +64,7 @@ pub trait TestHost {
 pub(crate) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
-    host: Option<&Arc<dyn TestHost>>,
+    host: Option<&Rc<dyn TestHost>>,
     queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
     object.set(
@@ -125,9 +125,9 @@ pub(crate) fn add<'js>(
 fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
     name: &str,
-    host: Option<&Arc<dyn TestHost>>,
+    host: Option<&Rc<dyn TestHost>>,
     queue: &Queue<'js>,
-    run: impl Fn(Arc<dyn TestHost>, A, CancellationToken) -> F + 'js,
+    run: impl Fn(Rc<dyn TestHost>, A, CancellationToken) -> F + 'js,
 ) -> rquickjs::Result<()>
 where
     A: FromJs<'js> + 'static,

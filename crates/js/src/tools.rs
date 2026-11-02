@@ -7,7 +7,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Value};
@@ -115,7 +114,7 @@ impl std::error::Error for RequestFailure {}
 /// The state of the engine task: the tools that the JavaScript defined, the open sessions, and the processes that
 /// the calls start.
 pub(crate) struct Registry {
-    pub(crate) processes: Arc<Processes>,
+    pub(crate) processes: Rc<Processes>,
     tools: RefCell<Vec<Registered>>,
     last_id: Cell<u64>,
     /// The open number of each open session.
@@ -136,7 +135,7 @@ struct Registered {
 }
 
 impl Registry {
-    pub(crate) fn new(processes: Arc<Processes>) -> Self {
+    pub(crate) fn new(processes: Rc<Processes>) -> Self {
         Self {
             processes,
             tools: RefCell::default(),
@@ -268,7 +267,7 @@ pub struct ScriptTool {
     pub(crate) open: u64,
     pub(crate) concurrency: Concurrency,
     pub(crate) hints: ToolHints,
-    pub(crate) host: Arc<dyn SessionHost>,
+    pub(crate) host: Rc<dyn SessionHost>,
 }
 
 impl fmt::Debug for ScriptTool {
@@ -351,7 +350,7 @@ impl ScriptTool {
             return Err(Error::Folder(folder).into());
         };
         let (id, open) = (self.id, self.open);
-        let host = Arc::clone(&self.host);
+        let host = Rc::clone(&self.host);
         let session_folder = folder.clone();
         let arguments = arguments.to_owned();
         let call_id = call_id.to_owned();

@@ -1,6 +1,6 @@
 //! The blocks of `yuke:chat` without a pane: the change listeners.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use super::{evaluate, folder, options};
 use crate::{Options, Processes, Runtime};
@@ -10,7 +10,7 @@ async fn change_listeners_defer_additions_and_skip_removed_listeners() {
     let place = folder("chat_listeners");
     let (runtime, _reports) = Runtime::start(Options {
         internal_imports: true,
-        ..options(&place, Arc::new(Processes::new(place.join("processes"))))
+        ..options(&place, Rc::new(Processes::new(place.join("processes"))))
     })
     .await
     .unwrap();

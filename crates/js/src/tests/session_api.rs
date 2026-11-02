@@ -2,9 +2,10 @@
 //! handle, and the requests.
 
 use std::any::Any;
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
@@ -19,44 +20,43 @@ use crate::{Fact, FactSink, Processes, Runtime, Sessions, SessionsError, ViewEve
 /// A consumer that records each request and keeps the sink of each view.
 #[derive(Default)]
 struct Scripted {
-    sinks: Mutex<Vec<ViewSink>>,
-    facts: Mutex<Option<FactSink>>,
-    calls: Mutex<Vec<String>>,
+    sinks: RefCell<Vec<ViewSink>>,
+    facts: RefCell<Option<FactSink>>,
+    calls: RefCell<Vec<String>>,
     folder: PathBuf,
     /// The holds that ended.
-    released: Arc<AtomicUsize>,
-    follow_up_on_cancel: AtomicBool,
+    released: Rc<Cell<usize>>,
+    follow_up_on_cancel: Cell<bool>,
 }
 
 /// A hold of [`Scripted`]. Its drop counts.
-struct Hold(Arc<AtomicUsize>);
+struct Hold(Rc<Cell<usize>>);
 
 impl Drop for Hold {
     fn drop(&mut self) {
-        self.0.fetch_add(1, Ordering::SeqCst);
+        self.0.set(self.0.get() + 1);
     }
 }
 
 impl Scripted {
     fn record(&self, call: String) {
-        self.calls.lock().unwrap().push(call);
+        self.calls.borrow_mut().push(call);
     }
 
     fn calls(&self) -> Vec<String> {
-        self.calls.lock().unwrap().clone()
+        self.calls.borrow_mut().clone()
     }
 
     /// Send `update` to the view `index`.
     fn send(&self, index: usize, update: SessionUpdate) {
-        let sink = Arc::clone(&self.sinks.lock().unwrap()[index]);
+        let sink = Rc::clone(&self.sinks.borrow_mut()[index]);
         sink(ViewEvent::Update(update));
     }
 }
 
 impl Scripted {
     fn publish_before_reply(&self, update: SessionUpdate) {
-        let facts = self.facts.lock().unwrap();
-        let sink = facts.as_ref().unwrap();
+        let sink = self.facts.borrow().as_ref().unwrap().clone();
         // Several batches must pass before the last host event reaches JavaScript.
         for _ in 0..1200 {
             sink(Fact::Update {
@@ -104,7 +104,8 @@ impl crate::SessionHost for Scripted {
         request: yuke_protocol::InteractionRequest,
         _: yuke_engine::CancellationToken,
     ) -> InteractionResponse {
-        self.facts.lock().unwrap().as_ref().unwrap()(Fact::Update {
+        let sink = self.facts.borrow().as_ref().unwrap().clone();
+        sink(Fact::Update {
             session_id: session(),
             update: Box::new(SessionUpdate::Live(LiveUpdate::InteractionRequested {
                 interaction_id: InteractionId(4),
@@ -181,11 +182,11 @@ impl Sessions for Scripted {
             settings: settings(),
             updates: vec![state(SessionState::Idle)],
         }));
-        self.sinks.lock().unwrap().push(sink);
-        Ok(Box::new(Hold(Arc::clone(&self.released))))
+        self.sinks.borrow_mut().push(sink);
+        Ok(Box::new(Hold(Rc::clone(&self.released))))
     }
     fn watch_facts(&self, sink: FactSink) -> Box<dyn Any> {
-        *self.facts.lock().unwrap() = Some(sink);
+        *self.facts.borrow_mut() = Some(sink);
         Box::new(())
     }
     async fn events_before(
@@ -216,7 +217,7 @@ impl Sessions for Scripted {
         false
     }
     fn cancel(&self, id: SessionId) {
-        if self.follow_up_on_cancel.swap(false, Ordering::SeqCst) {
+        if self.follow_up_on_cancel.replace(false) {
             self.send(
                 0,
                 SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(9) }),
@@ -227,8 +228,8 @@ impl Sessions for Scripted {
     }
     async fn idle(&self, _: SessionId) -> Result<(), SessionsError> {
         // The reply must follow updates across several delivery batches.
-        let facts = self.facts.lock().unwrap();
-        for sink in self.sinks.lock().unwrap().iter() {
+        let facts = self.facts.borrow_mut();
+        for sink in self.sinks.borrow_mut().iter() {
             for _ in 0..600 {
                 for session_state in [SessionState::Running, SessionState::Idle] {
                     let update = state(session_state);
@@ -270,7 +271,7 @@ impl Sessions for Scripted {
     }
     async fn close(&self, id: SessionId) -> Result<(), SessionsError> {
         self.record(format!("close {id}"));
-        for sink in self.sinks.lock().unwrap().iter() {
+        for sink in self.sinks.borrow_mut().iter() {
             sink(ViewEvent::Closed);
         }
         Ok(())
@@ -293,7 +294,7 @@ impl Sessions for Scripted {
     /// A check that never ends. Its drop ends a hold, so a test sees the cancel of its task.
     async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
         self.record(format!("plugins check {:?}", params.target));
-        let _hold = Hold(Arc::clone(&self.released));
+        let _hold = Hold(Rc::clone(&self.released));
         std::future::pending().await
     }
     async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
@@ -319,11 +320,11 @@ impl Sessions for Scripted {
 
 /// A runtime of the test `name` on `scripted` with the plugin `test`, whose `apply` puts `ctx.get("sessions")` and
 /// `ctx.get("catalog")` on the global object.
-async fn started(name: &str, scripted: &Arc<Scripted>) -> Runtime {
+async fn started(name: &str, scripted: &Rc<Scripted>) -> Runtime {
     let folder = folder(name);
-    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
     let (runtime, _reports) = Runtime::start(crate::Options {
-        sessions: Arc::clone(scripted) as Arc<dyn Sessions>,
+        sessions: Rc::clone(scripted) as Rc<dyn Sessions>,
         ..options(&folder, processes)
     })
     .await
@@ -362,7 +363,7 @@ async fn open(runtime: &Runtime, signal: &str) -> String {
 
 #[tokio::test(flavor = "local")]
 async fn idle_delivers_each_update_in_order_after_the_snapshot() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("idle_delivers_each_update_in_order_after_the_snapshot", &scripted).await;
 
     let snapshot = open(&runtime, "undefined").await;
@@ -386,7 +387,7 @@ async fn idle_delivers_each_update_in_order_after_the_snapshot() {
 
 #[tokio::test(flavor = "local")]
 async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started(
         "idle_preserves_the_order_of_facts_and_view_events_across_batches",
         &scripted,
@@ -416,7 +417,7 @@ async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
 
 #[tokio::test(flavor = "local")]
 async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("idle_delivers_prior_events_when_a_listener_calls_the_host", &scripted).await;
     evaluate::<()>(
         &runtime,
@@ -439,7 +440,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
     )
     .await
     .unwrap();
-    scripted.follow_up_on_cancel.store(true, Ordering::SeqCst);
+    scripted.follow_up_on_cancel.set(true);
     let prior = evaluate::<Vec<String>>(
         &runtime,
         "await handle.idle(); return updates.filter(state => state !== 'follow-up');",
@@ -459,7 +460,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
 
 #[tokio::test(flavor = "local")]
 async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("an_aborted_handle_ends_its_hold_and_gets_no_later_update", &scripted).await;
 
     open(&runtime, "(globalThis.pane = new AbortController()).signal").await;
@@ -487,7 +488,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     .unwrap();
     let seen = evaluate::<usize>(&runtime, "return seen.length;").await.unwrap();
 
-    assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
+    assert_eq!(scripted.released.get(), 1);
     assert_eq!(input, format!("the handle of the session {} has ended", session()));
     assert_eq!(seen, 1);
 }
@@ -495,7 +496,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
 // The abort comes before the hold exists, so the open itself ends the hold.
 #[tokio::test(flavor = "local")]
 async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("an_abort_during_the_open_rejects_it_and_ends_its_hold", &scripted).await;
 
     let opened = evaluate::<String>(
@@ -512,12 +513,12 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
     .unwrap();
 
     assert_eq!(opened, "the pane closed");
-    assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
+    assert_eq!(scripted.released.get(), 1);
 }
 
 #[tokio::test(flavor = "local")]
 async fn the_stop_of_the_plugin_ends_its_handles() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("the_stop_of_the_plugin_ends_its_handles", &scripted).await;
 
     // The own signal of the handle does not replace the signal of the plugin.
@@ -529,12 +530,12 @@ async fn the_stop_of_the_plugin_ends_its_handles() {
     let ended = evaluate::<bool>(&runtime, "return signal.aborted;").await.unwrap();
 
     assert!(!signal && ended);
-    assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
+    assert_eq!(scripted.released.get(), 1);
 }
 
 #[tokio::test(flavor = "local")]
 async fn the_close_of_the_session_ends_each_handle_on_it() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("the_close_of_the_session_ends_each_handle_on_it", &scripted).await;
     open(&runtime, "undefined").await;
 
@@ -559,12 +560,12 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
 
     assert_eq!(reason, format!("the session {} closed", session()));
     assert_eq!(input, format!("the handle of the session {} has ended", session()));
-    assert_eq!(scripted.released.load(Ordering::SeqCst), 2);
+    assert_eq!(scripted.released.get(), 2);
 }
 
 #[tokio::test(flavor = "local")]
 async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started(
         "the_requests_reach_the_consumer_with_the_arguments_of_the_plugin",
         &scripted,
@@ -622,7 +623,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
 
 #[tokio::test(flavor = "local")]
 async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_its_task() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started(
         "the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_its_task",
         &scripted,
@@ -658,7 +659,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
 
     assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);
     assert!(aborted);
-    assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
+    assert_eq!(scripted.released.get(), 1);
     assert_eq!(
         scripted.calls(),
         [
@@ -674,7 +675,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
 
 #[tokio::test(flavor = "local")]
 async fn a_blob_takes_the_bytes_of_its_view_at_the_call() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("a_blob_takes_the_bytes_of_its_view_at_the_call", &scripted).await;
     open(&runtime, "undefined").await;
 
@@ -704,7 +705,7 @@ async fn a_blob_takes_the_bytes_of_its_view_at_the_call() {
 
 #[tokio::test(flavor = "local")]
 async fn a_failed_request_rejects_with_the_text_of_its_failure() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("a_failed_request_rejects_with_the_text_of_its_failure", &scripted).await;
     open(&runtime, "undefined").await;
 
@@ -726,11 +727,11 @@ async fn a_failed_request_rejects_with_the_text_of_its_failure() {
 
 #[tokio::test(flavor = "local")]
 async fn ask_delivers_host_events_before_its_reply() {
-    let scripted = Arc::new(Scripted::default());
+    let scripted = Rc::new(Scripted::default());
     let runtime = started("ask_delivers_host_events_before_its_reply", &scripted).await;
     let session = runtime
         .handle()
-        .open_session(Arc::clone(&scripted) as Arc<dyn crate::SessionHost>)
+        .open_session(Rc::clone(&scripted) as Rc<dyn crate::SessionHost>)
         .await
         .unwrap();
     session.tools().await.unwrap();
@@ -754,7 +755,7 @@ async fn ask_delivers_host_events_before_its_reply() {
 #[tokio::test(flavor = "local")]
 async fn start_job_delivers_host_events_before_its_reply() {
     let name = "start_job_delivers_host_events_before_its_reply";
-    let scripted = Arc::new(Scripted {
+    let scripted = Rc::new(Scripted {
         folder: folder(name),
         ..Scripted::default()
     });
@@ -762,7 +763,7 @@ async fn start_job_delivers_host_events_before_its_reply() {
     runtime
         .access()
         .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
-            let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
+            let host = Rc::clone(&scripted) as Rc<dyn crate::SessionHost>;
             let call = crate::native::call::object(
                 &ctx,
                 &registry.processes,
@@ -800,7 +801,7 @@ async fn start_job_delivers_host_events_before_its_reply() {
 #[tokio::test(flavor = "local")]
 async fn stop_job_delivers_host_events_before_its_reply() {
     let name = "stop_job_delivers_host_events_before_its_reply";
-    let scripted = Arc::new(Scripted {
+    let scripted = Rc::new(Scripted {
         folder: folder(name),
         ..Scripted::default()
     });
@@ -808,7 +809,7 @@ async fn stop_job_delivers_host_events_before_its_reply() {
     runtime
         .access()
         .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
-            let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
+            let host = Rc::clone(&scripted) as Rc<dyn crate::SessionHost>;
             let call = crate::native::call::object(
                 &ctx,
                 &registry.processes,

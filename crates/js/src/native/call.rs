@@ -2,7 +2,7 @@
 //! the jobs. The bridge builds one for each call. `yuke:internal/call` keeps it from the tools of plugins.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Duration;
 
 use rquickjs::function::Async;
@@ -21,8 +21,8 @@ use crate::tools::SessionHost;
 /// stops the commands of the call.
 pub(crate) fn object<'js>(
     ctx: &Ctx<'js>,
-    processes: &Arc<Processes>,
-    host: &Arc<dyn SessionHost>,
+    processes: &Rc<Processes>,
+    host: &Rc<dyn SessionHost>,
     folder: PathBuf,
     stop: &CancellationToken,
     queue: &Queue<'js>,
@@ -30,16 +30,16 @@ pub(crate) fn object<'js>(
     let object = Object::new(ctx.clone())?;
 
     let exec_queue = queue.clone();
-    let (exec_processes, exec_stop, exec_host) = (Arc::clone(processes), stop.clone(), Arc::clone(host));
+    let (exec_processes, exec_stop, exec_host) = (Rc::clone(processes), stop.clone(), Rc::clone(host));
     object.set(
         "exec",
         Function::new(
             ctx.clone(),
             Async(
                 move |ctx: Ctx<'js>, command: String, limits: Object<'js>, on_output: Function<'js>| {
-                    let processes = Arc::clone(&exec_processes);
+                    let processes = Rc::clone(&exec_processes);
                     let queue = exec_queue.clone();
-                    let (folder, stop, owner) = (folder.clone(), exec_stop.clone(), Arc::clone(&exec_host));
+                    let (folder, stop, owner) = (folder.clone(), exec_stop.clone(), Rc::clone(&exec_host));
                     async move {
                         let timeout_ms: u32 = limits.get("timeoutMs")?;
                         let max_bytes: u32 = limits.get("maxBytes")?;
@@ -59,13 +59,13 @@ pub(crate) fn object<'js>(
     )?;
 
     let start_queue = queue.clone();
-    let (start_processes, start_host) = (Arc::clone(processes), Arc::clone(host));
+    let (start_processes, start_host) = (Rc::clone(processes), Rc::clone(host));
     object.set(
         "startJob",
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, command: String, timeout_ms: Option<u32>| {
-                let (processes, host) = (Arc::clone(&start_processes), Arc::clone(&start_host));
+                let (processes, host) = (Rc::clone(&start_processes), Rc::clone(&start_host));
                 let (promise, _abort) = start_queue.request(
                     &ctx,
                     async move {
@@ -83,12 +83,12 @@ pub(crate) fn object<'js>(
         )?,
     )?;
 
-    let (stop_processes, stop_host, stop_call) = (Arc::clone(processes), Arc::clone(host), stop.clone());
+    let (stop_processes, stop_host, stop_call) = (Rc::clone(processes), Rc::clone(host), stop.clone());
     let stop_queue = queue.clone();
     object.set(
         "stopJob",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: String| {
-            let (processes, host, call) = (Arc::clone(&stop_processes), Arc::clone(&stop_host), stop_call.clone());
+            let (processes, host, call) = (Rc::clone(&stop_processes), Rc::clone(&stop_host), stop_call.clone());
             // The answer goes through the queue, so the `job_changed` event of the stop reaches JavaScript first.
             let (promise, _abort) = stop_queue.request(
                 &ctx,
@@ -107,7 +107,7 @@ pub(crate) fn object<'js>(
         })?,
     )?;
 
-    let (running_processes, running_host) = (Arc::clone(processes), Arc::clone(host));
+    let (running_processes, running_host) = (Rc::clone(processes), Rc::clone(host));
     object.set(
         "runningJobs",
         Function::new(ctx.clone(), move || {

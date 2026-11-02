@@ -2,6 +2,7 @@
 //! the plugins. The plugin runtime imports `yuke:internal/tui`, which draws on the display.
 
 use std::io;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -100,8 +101,8 @@ async fn serve(
         }),
         ..machine
     };
-    let observer = Arc::new(Notices(Arc::clone(&host.display)));
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await?;
+    let observer = Rc::new(Notices(Arc::clone(&host.display)));
+    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Rc::new(TokioTimer)).await?;
     app.show(None);
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold
     // the terminal, and the app shuts down before the terminal restores.

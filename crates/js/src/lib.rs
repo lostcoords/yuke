@@ -18,11 +18,6 @@
 //! runtime, so a process job outlives a reload of the JavaScript. The consumer gives the [`Models`] that the plugins
 //! call.
 
-#![expect(
-    clippy::arc_with_non_send_sync,
-    reason = "local traits keep Arc ownership until the separate host state cleanup"
-)]
-
 mod baked;
 mod bytes;
 mod display;

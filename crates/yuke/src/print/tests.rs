@@ -866,13 +866,15 @@ fn only_an_error_notice_of_yuke_fails_the_run() {
     };
 
     watcher.notify(notice("loud"));
-    let after_plugin = lock(&watcher.watched)
+    let after_plugin = watcher
+        .watched
+        .borrow()
         .get(&id)
         .and_then(|watched| watched.failure.clone());
     watcher.notify(notice(SOURCE));
 
     assert_eq!(after_plugin, None);
-    assert_eq!(lock(&watcher.watched)[&id].failure.as_deref(), Some("from host:yuke"));
+    assert_eq!(watcher.watched.borrow()[&id].failure.as_deref(), Some("from host:yuke"));
 }
 
 #[test]

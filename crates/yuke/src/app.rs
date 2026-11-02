@@ -2,11 +2,6 @@
 //! and `yuke --rpc` drive their sessions through an [`App`], and the app tells them what happens with the notifications
 //! of the protocol.
 
-#![expect(
-    clippy::arc_with_non_send_sync,
-    reason = "local traits keep Arc ownership until the separate host state cleanup"
-)]
-
 mod catalog;
 mod facts;
 mod live;
@@ -16,6 +11,7 @@ mod sessions;
 mod test_host;
 mod trust;
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -23,8 +19,8 @@ use std::fmt;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -116,25 +112,25 @@ pub(crate) type Answer = Result<serde_json::Value, ResponseError>;
 struct Shared {
     machine: Machine,
     /// The parts of the profile that a reload replaces.
-    profile: RwLock<Profile>,
+    profile: RefCell<Profile>,
     store: Arc<dyn Store>,
     /// Waits before each retry of a model request.
-    timer: Arc<dyn Timer>,
-    processes: Arc<Processes>,
-    observer: Arc<dyn Observer>,
+    timer: Rc<dyn Timer>,
+    processes: Rc<Processes>,
+    observer: Rc<dyn Observer>,
     mode: Mode,
     /// The MCP servers of the user, from `mcp.json` in the config folder.
     mcp: yuke_mcp::Config,
     /// The id of the last question of any session.
-    last_question: Arc<AtomicU64>,
+    last_question: Rc<Cell<u64>>,
     /// The watches of `ctx.on`.
-    facts: Arc<facts::Facts>,
+    facts: Rc<facts::Facts>,
     /// The credential of each provider with a login. One source serves each session, so one refresh serves all.
-    logins: Mutex<HashMap<String, LoginSource>>,
+    logins: RefCell<HashMap<String, LoginSource>>,
     /// The login in progress of each provider, from `auth/login`.
-    pending_logins: Mutex<HashMap<String, InProgress>>,
+    pending_logins: RefCell<HashMap<String, InProgress>>,
     /// The id of the last login of `auth/login`.
-    last_login: AtomicU64,
+    last_login: Cell<u64>,
 }
 
 /// A login in progress: its id, the token that stops its polls, and its task.
@@ -144,14 +140,14 @@ struct InProgress {
     task: JoinHandle<()>,
 }
 
-/// The parts of the profile that a reload replaces. A reader takes a copy of an `Arc`, so it never holds the lock.
+/// The profile data that a reload replaces. A reader clones it before an await.
 struct Profile {
     /// The providers of `providers.json` and of the catalog.
-    providers: Arc<Providers>,
+    providers: Rc<Providers>,
     /// The folder of each plugin of the profile, in load order, also of a plugin that failed to load.
-    plugin_folders: Arc<[PathBuf]>,
+    plugin_folders: Rc<[PathBuf]>,
     /// The name of each plugin that the runtime loaded.
-    loaded: Arc<[String]>,
+    loaded: Rc<[String]>,
     /// The wait of a session with running jobs and no holder before it closes, from `sessionIdleMinutes`.
     session_idle: Duration,
 }
@@ -171,7 +167,7 @@ impl Profile {
         };
         plugins::create_data_folders(&plugins)?;
         let profile = Self {
-            providers: Arc::new(providers),
+            providers: Rc::new(providers),
             plugin_folders: Self::plugin_folders(&plugins),
             // A failure at the start leaves the list, and a failure of a reload keeps the old profile.
             loaded: plugins.iter().map(|plugin| plugin.name.clone()).collect(),
@@ -183,7 +179,7 @@ impl Profile {
     }
 
     /// The root folder of each folder plugin of `plugins`, in their order.
-    fn plugin_folders(plugins: &[yuke_js::Plugin]) -> Arc<[PathBuf]> {
+    fn plugin_folders(plugins: &[yuke_js::Plugin]) -> Rc<[PathBuf]> {
         plugins
             .iter()
             .filter_map(|plugin| match &plugin.origin {
@@ -209,13 +205,13 @@ impl Shared {
     }
 
     /// The providers now.
-    fn providers(&self) -> Arc<Providers> {
-        Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).providers)
+    fn providers(&self) -> Rc<Providers> {
+        Rc::clone(&self.profile.borrow().providers)
     }
 
     /// The wait of a session with running jobs and no holder before it closes.
     fn session_idle(&self) -> Duration {
-        self.profile.read().unwrap_or_else(PoisonError::into_inner).session_idle
+        self.profile.borrow().session_idle
     }
 
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
@@ -228,7 +224,7 @@ impl Shared {
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
         let providers = self.providers();
-        let logins = lock(&self.logins);
+        let logins = self.logins.borrow();
         let providers = providers
             .iter()
             .filter_map(|provider| {
@@ -261,7 +257,7 @@ impl Shared {
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
     fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        let loaded = Arc::clone(&self.profile.read().unwrap_or_else(PoisonError::into_inner).loaded);
+        let loaded = Rc::clone(&self.profile.borrow().loaded);
         let plugins = plugins::manager::list(&self.machine.paths, &loaded).map_err(AppError::Invalid)?;
         Ok(ListPluginsResult { plugins })
     }
@@ -309,14 +305,8 @@ impl Shared {
     }
 
     /// The plugin folders now.
-    fn plugin_folders(&self) -> Arc<[PathBuf]> {
-        Arc::clone(
-            &self
-                .profile
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .plugin_folders,
-        )
+    fn plugin_folders(&self) -> Rc<[PathBuf]> {
+        Rc::clone(&self.profile.borrow().plugin_folders)
     }
 }
 
@@ -326,11 +316,11 @@ impl Shared {
 ///
 /// The methods are not cancel safe. A caller awaits each call to its end, as the request loop of `yuke --rpc` does.
 pub(crate) struct App {
-    shared: Arc<Shared>,
+    shared: Rc<Shared>,
     runtime: Runtime,
     reporter: JoinHandle<()>,
     processes_folder: PathBuf,
-    sessions: Arc<SessionService>,
+    sessions: Rc<SessionService>,
 }
 
 impl App {
@@ -344,9 +334,9 @@ impl App {
     pub(crate) async fn start(
         machine: Machine,
         mode: Mode,
-        observer: Arc<dyn Observer>,
+        observer: Rc<dyn Observer>,
         store: Arc<dyn Store>,
-        timer: Arc<dyn Timer>,
+        timer: Rc<dyn Timer>,
     ) -> Result<App, String> {
         let (app, plugins) = Self::prepare(machine, mode, observer, store, timer).await?;
         app.load_plugins(&plugins).await;
@@ -362,15 +352,15 @@ impl App {
     pub(crate) async fn prepare(
         machine: Machine,
         mode: Mode,
-        observer: Arc<dyn Observer>,
+        observer: Rc<dyn Observer>,
         store: Arc<dyn Store>,
-        timer: Arc<dyn Timer>,
+        timer: Rc<dyn Timer>,
     ) -> Result<(App, Vec<yuke_js::Plugin>), String> {
         let mcp: yuke_mcp::Config = read_json(&machine.paths.config.join("mcp.json"))?.unwrap_or_default();
-        let facts = Arc::new(facts::Facts::default());
-        let observer: Arc<dyn Observer> = Arc::new(facts::Noticed {
+        let facts = Rc::new(facts::Facts::default());
+        let observer: Rc<dyn Observer> = Rc::new(facts::Noticed {
             observer,
-            facts: Arc::clone(&facts),
+            facts: Rc::clone(&facts),
         });
         // A one-task run without the plugins of the user is a wrong run, so it fails instead.
         let (profile, plugins, failed) = Profile::load(&machine.paths, mode == Mode::Server)?;
@@ -384,24 +374,24 @@ impl App {
                 RandomState::new().hash_one(0_u8)
             )),
         };
-        let processes = Arc::new(match mode {
+        let processes = Rc::new(match mode {
             Mode::Server => Processes::new(processes_folder.clone()),
             Mode::Print => Processes::without_jobs(processes_folder.clone()),
         });
-        let shared = Arc::new(Shared {
+        let shared = Rc::new(Shared {
             machine,
-            profile: RwLock::new(profile),
+            profile: RefCell::new(profile),
             store,
             timer,
             processes,
             observer,
             mode,
             mcp,
-            last_question: Arc::default(),
+            last_question: Rc::default(),
             facts,
-            logins: Mutex::default(),
-            pending_logins: Mutex::default(),
-            last_login: AtomicU64::new(0),
+            logins: RefCell::default(),
+            pending_logins: RefCell::default(),
+            last_login: Cell::new(0),
         });
         if let Some(error) = failed {
             shared.observer.notify(ServerNotification::Notice(NoticeParams {
@@ -411,7 +401,7 @@ impl App {
                 message: format!("only the bundled plugins run, because the plugin list did not load: {error}"),
             }));
         }
-        let sessions = SessionService::new(Arc::clone(&shared));
+        let sessions = SessionService::new(Rc::clone(&shared));
         let (runtime, reporter) = match start_runtime(&shared, &sessions).await {
             Ok(started) => started,
             Err(error) => {
@@ -446,7 +436,7 @@ impl App {
     /// Send a notice for each plugin that did not load. The other plugins load.
     fn report_failures(&self, failures: Vec<yuke_js::PluginFailure>) {
         if !failures.is_empty() {
-            let mut profile = self.shared.profile.write().unwrap_or_else(PoisonError::into_inner);
+            let mut profile = self.shared.profile.borrow_mut();
             let loaded = profile
                 .loaded
                 .iter()
@@ -485,15 +475,12 @@ impl App {
         }
         // The new plugins use the new providers, for example in a model request of their `apply`.
         let (profile, plugins, _) = Profile::load(&self.shared.machine.paths, false).map_err(AppError::Invalid)?;
-        let old_profile = std::mem::replace(
-            &mut *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner),
-            profile,
-        );
+        let old_profile = std::mem::replace(&mut *self.shared.profile.borrow_mut(), profile);
         // The new plugins load before the old plugins close. A runtime cannot load plugins after it closes its plugins.
         let (runtime, reporter) = match start_runtime(&self.shared, &self.sessions).await {
             Ok(started) => started,
             Err(error) => {
-                *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+                *self.shared.profile.borrow_mut() = old_profile;
                 return Err(AppError::Internal(chain_text(&error)));
             }
         };
@@ -501,7 +488,7 @@ impl App {
         if !failures.is_empty() {
             // A plugin load failure rejects the reload. An edit with a fault keeps the old runtime.
             stop_runtime(&self.shared, runtime, reporter).await;
-            *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+            *self.shared.profile.borrow_mut() = old_profile;
             let texts: Vec<String> = failures.iter().map(|failure| chain_text(failure)).collect();
             return Err(AppError::Invalid(format!(
                 "the reload keeps the old plugins, because a plugin did not load: {}",
@@ -519,7 +506,7 @@ impl App {
                         live::close_plugins(&self.shared, &script).await;
                     }
                     stop_runtime(&self.shared, runtime, reporter).await;
-                    *self.shared.profile.write().unwrap_or_else(PoisonError::into_inner) = old_profile;
+                    *self.shared.profile.borrow_mut() = old_profile;
                     return Err(error);
                 }
             }
@@ -537,7 +524,7 @@ impl App {
     }
 
     /// The open sessions and the calls on them.
-    pub(crate) fn sessions(&self) -> &Arc<SessionService> {
+    pub(crate) fn sessions(&self) -> &Rc<SessionService> {
         &self.sessions
     }
 
@@ -547,7 +534,7 @@ impl App {
     }
 
     /// The providers of the profile now.
-    pub(crate) fn providers(&self) -> Arc<Providers> {
+    pub(crate) fn providers(&self) -> Rc<Providers> {
         self.shared.providers()
     }
 
@@ -560,21 +547,22 @@ impl App {
     /// does not start the login.
     pub(crate) async fn login(&self, provider: String) -> Result<LoginResult, AppError> {
         let flow = self.shared.providers().login(&provider).map_err(AppError::Invalid)?.1;
-        if let Some(earlier) = lock(&self.shared.pending_logins).remove(&provider) {
+        if let Some(earlier) = self.shared.pending_logins.borrow_mut().remove(&provider) {
             earlier.stop.cancel();
         }
         let started = tokio::time::Instant::now();
         let pending = crate::auth::start_login(flow, &*self.shared.machine.exchange)
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
-        let login_id = LoginId(self.shared.last_login.fetch_add(1, Ordering::Relaxed) + 1);
+        let login_id = LoginId(self.shared.last_login.get() + 1);
+        self.shared.last_login.set(login_id.0);
         let stop = CancellationToken::new();
         let result = LoginResult {
             login_id,
             verification_url: pending.verification_url.clone(),
             user_code: pending.user_code.clone(),
         };
-        let shared = Arc::clone(&self.shared);
+        let shared = Rc::clone(&self.shared);
         let task_provider = provider.clone();
         let task_stop = stop.clone();
         let task = tokio::task::spawn_local(async move {
@@ -600,7 +588,7 @@ impl App {
                 }
             };
             {
-                let mut pending = lock(&shared.pending_logins);
+                let mut pending = shared.pending_logins.borrow_mut();
                 // A newer login of the provider keeps its entry.
                 if pending
                     .get(&provider)
@@ -623,7 +611,7 @@ impl App {
             stop,
             task,
         };
-        lock(&self.shared.pending_logins).insert(provider, in_progress);
+        self.shared.pending_logins.borrow_mut().insert(provider, in_progress);
         Ok(result)
     }
 
@@ -633,7 +621,7 @@ impl App {
     ///
     /// Returns [`AppError::NoLogin`] when no login with this id is in progress.
     pub(crate) fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
-        let pending = lock(&self.shared.pending_logins);
+        let pending = self.shared.pending_logins.borrow();
         let in_progress = pending
             .values()
             .find(|in_progress| in_progress.id == id)
@@ -651,7 +639,7 @@ impl App {
     /// `auth.json`.
     pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
         self.shared.providers().get(provider).map_err(AppError::Invalid)?;
-        let earlier = lock(&self.shared.pending_logins).remove(provider);
+        let earlier = self.shared.pending_logins.borrow_mut().remove(provider);
         if let Some(earlier) = earlier {
             earlier.stop.cancel();
             // A save that started still ends, so the removal waits for the task and comes after the save.
@@ -660,7 +648,7 @@ impl App {
                 .await
                 .map_err(|error| AppError::Internal(format!("the login task failed: {error}")))?;
         }
-        if let Some(source) = lock(&self.shared.logins).get(provider) {
+        if let Some(source) = self.shared.logins.borrow().get(provider) {
             source.clear_push();
         }
         crate::auth::logout(provider, self.shared.machine.paths.data.clone())
@@ -873,26 +861,26 @@ impl Error for AppError {
 /// Start a JavaScript runtime for `shared`, import the tools of yuke into it, and start the task that reports its faults
 /// and notices.
 async fn start_runtime(
-    shared: &Arc<Shared>,
-    sessions: &Arc<SessionService>,
+    shared: &Rc<Shared>,
+    sessions: &Rc<SessionService>,
 ) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
     let test = shared.machine.test.as_ref();
     let (runtime, reports) = Runtime::start(Options {
         cache: test.map_or_else(|| shared.machine.paths.cache.join("js"), |test| test.cache.clone()),
-        processes: Arc::clone(&shared.processes),
-        models: Arc::new(PluginModels(Arc::clone(shared))),
-        sessions: Arc::new(PluginSessions {
-            service: Arc::downgrade(sessions),
-            shared: Arc::clone(shared),
+        processes: Rc::clone(&shared.processes),
+        models: Rc::new(PluginModels(Rc::clone(shared))),
+        sessions: Rc::new(PluginSessions {
+            service: Rc::downgrade(sessions),
+            shared: Rc::clone(shared),
         }),
         http: Arc::clone(&shared.machine.fetch),
         interface: shared.machine.interface.clone(),
         internal_imports: test.is_some_and(|test| test.internal_imports),
-        test_host: test.map(|test| Arc::clone(&test.host) as Arc<dyn yuke_js::TestHost>),
+        test_host: test.map(|test| Rc::clone(&test.host) as Rc<dyn yuke_js::TestHost>),
     })
     .await?;
     let copy = test.map(|test| test.reports.clone());
-    let reporter = tokio::task::spawn_local(report(reports, Arc::clone(&shared.observer), copy));
+    let reporter = tokio::task::spawn_local(report(reports, Rc::clone(&shared.observer), copy));
     if let Err(error) = runtime.import("yuke:internal/builtins").await {
         stop_runtime(shared, runtime, reporter).await;
         return Err(error);
@@ -998,7 +986,7 @@ fn variable_key(shared: &Shared, name: &str) -> Option<String> {
 /// The credential source of the provider `id` with the login `flow`. Each session of the provider shares it, so one
 /// refresh and one push serve them all.
 fn login_source(shared: &Shared, id: &str, flow: Flow) -> LoginSource {
-    let mut logins = lock(&shared.logins);
+    let mut logins = shared.logins.borrow_mut();
     if let Some(source) = logins.get(id) {
         return source.clone();
     }
@@ -1054,7 +1042,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, AppError> + S
 /// report first as it is.
 async fn report(
     mut reports: mpsc::UnboundedReceiver<Report>,
-    observer: Arc<dyn Observer>,
+    observer: Rc<dyn Observer>,
     copy: Option<mpsc::UnboundedSender<Report>>,
 ) {
     while let Some(report) = reports.recv().await {
@@ -1090,11 +1078,6 @@ pub(crate) fn warn(text: &str) {
     }
 }
 
-/// Lock `mutex`. A panic of another holder leaves a valid value.
-pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// The store of the sessions in the data folder `data`.
 ///
 /// # Errors
@@ -1122,18 +1105,18 @@ mod tests {
 
     /// Keeps each notification that it receives.
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<ServerNotification>>);
+    struct Recorder(RefCell<Vec<ServerNotification>>);
 
     impl Observer for Recorder {
         fn notify(&self, notification: ServerNotification) {
-            lock(&self.0).push(notification);
+            self.0.borrow_mut().push(notification);
         }
     }
 
     #[tokio::test(flavor = "local")]
     async fn a_console_entry_and_a_fault_become_notices() {
         let (reports, receiver) = mpsc::unbounded_channel();
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         reports
             .send(Report::Console {
                 level: NoticeLevel::Error,
@@ -1149,9 +1132,11 @@ mod tests {
             .unwrap();
         drop(reports);
 
-        report(receiver, Arc::clone(&recorder) as Arc<dyn Observer>, None).await;
+        report(receiver, Rc::clone(&recorder) as Rc<dyn Observer>, None).await;
 
-        let notices: Vec<(NoticeLevel, String, String)> = lock(&recorder.0)
+        let notices: Vec<(NoticeLevel, String, String)> = recorder
+            .0
+            .borrow_mut()
             .iter()
             .map(|notification| match notification {
                 ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.message.clone()),

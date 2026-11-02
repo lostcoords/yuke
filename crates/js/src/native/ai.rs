@@ -3,7 +3,7 @@
 
 use std::error::Error;
 use std::path::Path;
-use std::sync::Arc;
+use std::rc::Rc;
 
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
 use serde_json::{Map, Value};
@@ -39,15 +39,15 @@ struct Completion {
 }
 
 /// Add `aiComplete` to `object`, the export object of the native module.
-pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, models: &Arc<dyn Models>) -> rquickjs::Result<()> {
-    let models = Arc::clone(models);
+pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, models: &Rc<dyn Models>) -> rquickjs::Result<()> {
+    let models = Rc::clone(models);
     object.set(
         "aiComplete",
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, request: Request| -> rquickjs::Result<Operation<'js>> {
                 let (mut request, files) = checked(&ctx, request)?;
-                let models = Arc::clone(&models);
+                let models = Rc::clone(&models);
                 Operation::start(&ctx, move |ctx, stop| async move {
                     // Each path is absolute, so the join keeps it. A read can block, as on a FIFO, so a stop ends the wait.
                     let read = tokio::select! {
@@ -166,7 +166,7 @@ fn view<'a>(
 
 /// The native `tokens(head, kept)` of a round event: the estimated tokens of each block of the view, as
 /// [`block_tokens`] gives them.
-pub(crate) fn tokens<'js>(ctx: &Ctx<'js>, round: Arc<Round>) -> rquickjs::Result<Function<'js>> {
+pub(crate) fn tokens<'js>(ctx: &Ctx<'js>, round: Rc<Round>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>, head: Json<Value>, kept: usize| -> rquickjs::Result<Vec<u64>> {
@@ -180,8 +180,8 @@ pub(crate) fn tokens<'js>(ctx: &Ctx<'js>, round: Arc<Round>) -> rquickjs::Result
 /// it, cut to `blocks`, then `prompt`. A head that is not a list of blocks throws a `TypeError`.
 pub(crate) fn side_request<'js>(
     ctx: &Ctx<'js>,
-    round: Arc<Round>,
-    models: Arc<dyn Models>,
+    round: Rc<Round>,
+    models: Rc<dyn Models>,
 ) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
@@ -205,7 +205,7 @@ pub(crate) fn side_request<'js>(
                 blocks,
                 prompt: options.prompt,
             };
-            let models = Arc::clone(&models);
+            let models = Rc::clone(&models);
             Operation::start(&ctx, move |ctx, stop| async move {
                 // The guard cancels the request token when a shutdown drops this future.
                 let guard = stop.clone().drop_guard();

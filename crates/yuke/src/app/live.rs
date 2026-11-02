@@ -1,10 +1,11 @@
 //! One open session: a task that runs its turns, and the parts that the app shares with that task.
 
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::rc::{Rc, Weak};
 
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot, watch};
@@ -23,15 +24,15 @@ use yuke_protocol::{
 use super::facts::Facts;
 use super::sessions::SessionService;
 use super::trust;
-use super::{AppError, Mode, Observer, SOURCE, Shared, lock, model_of, save_settings};
+use super::{AppError, Mode, Observer, SOURCE, Shared, model_of, save_settings};
 use crate::config::read_json;
 use crate::prompt::deferred_tools;
 
 /// An open session.
 pub(super) struct LiveSession {
-    parts: Arc<Parts>,
+    parts: Rc<Parts>,
     /// The task that runs the turns. The close takes it.
-    task: Mutex<Option<JoinHandle<()>>>,
+    task: RefCell<Option<JoinHandle<()>>>,
 }
 
 /// The parts of an open session that the app and the task of the session share.
@@ -39,12 +40,12 @@ struct Parts {
     /// A turn holds the lock for its whole run, so new settings never meet a turn.
     session: tokio::sync::Mutex<Session>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
-    turn: Mutex<Option<CancellationToken>>,
+    turn: RefCell<Option<CancellationToken>>,
     /// The host of the tools. The `closed` token of the host ends the task,
     /// and the token of each turn is a child of that token.
-    host: Arc<Host>,
+    host: Rc<Host>,
     /// The session of the plugins. Each turn takes its tools. A reload replaces it while it holds the session lock.
-    script: Mutex<Arc<ScriptSession>>,
+    script: RefCell<Rc<ScriptSession>>,
     /// The MCP servers of the session. Each turn takes their tools.
     servers: Servers,
 }
@@ -55,39 +56,39 @@ impl LiveSession {
     pub(super) async fn start(
         session: Session,
         runtime: &Handle,
-        shared: Arc<Shared>,
+        shared: Rc<Shared>,
         service: Weak<SessionService>,
     ) -> Result<LiveSession, AppError> {
-        let host = Arc::new(Host {
-            settings: Mutex::new(session.settings().clone()),
+        let host = Rc::new(Host {
+            settings: RefCell::new(session.settings().clone()),
             parent: session.parent(),
-            output: Arc::new(Output::new(
+            output: Rc::new(Output::new(
                 session.id(),
-                Arc::clone(&shared.observer),
-                Arc::clone(&shared.last_question),
-                Arc::clone(&shared.facts),
+                Rc::clone(&shared.observer),
+                Rc::clone(&shared.last_question),
+                Rc::clone(&shared.facts),
             )),
             shared,
             service,
             wake: Notify::new(),
-            accepted: AtomicU64::new(0),
+            accepted: Cell::new(0),
             handled: watch::Sender::new(0),
             closed: CancellationToken::new(),
         });
         let script = runtime
-            .open_session(Arc::clone(&host) as Arc<dyn SessionHost>)
+            .open_session(Rc::clone(&host) as Rc<dyn SessionHost>)
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))?;
         let servers = start_servers(&host, &session.settings().cwd);
-        let parts = Arc::new(Parts {
+        let parts = Rc::new(Parts {
             session: tokio::sync::Mutex::new(session),
-            turn: Mutex::default(),
+            turn: RefCell::default(),
             host,
-            script: Mutex::new(Arc::new(script)),
+            script: RefCell::new(Rc::new(script)),
             servers,
         });
         Ok(LiveSession {
-            task: Mutex::new(Some(tokio::task::spawn_local(Arc::clone(&parts).run()))),
+            task: RefCell::new(Some(tokio::task::spawn_local(Rc::clone(&parts).run()))),
             parts,
         })
     }
@@ -116,7 +117,7 @@ impl LiveSession {
     /// close. A failed turn counts as handled, and its input waits for the next wake.
     pub(super) async fn idle(&self) {
         let host = &self.parts.host;
-        let accepted = host.accepted.load(Ordering::SeqCst);
+        let accepted = host.accepted.get();
         let mut handled = host.handled.subscribe();
         loop {
             if *handled.borrow_and_update() >= accepted && self.state() == SessionState::Idle {
@@ -146,14 +147,14 @@ impl LiveSession {
     }
 
     /// The session of the plugins now.
-    pub(super) fn script_session(&self) -> Arc<ScriptSession> {
-        Arc::clone(&lock(&self.parts.script))
+    pub(super) fn script_session(&self) -> Rc<ScriptSession> {
+        Rc::clone(&self.parts.script.borrow())
     }
 
     /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
     pub(super) async fn open_plugins(&self, runtime: &Handle) -> Result<ScriptSession, AppError> {
         runtime
-            .open_session(Arc::clone(&self.parts.host) as Arc<dyn SessionHost>)
+            .open_session(Rc::clone(&self.parts.host) as Rc<dyn SessionHost>)
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))
     }
@@ -161,7 +162,7 @@ impl LiveSession {
     /// Give the next turn the tools and hooks of `script`, and close the old plugins. The caller holds the guard of
     /// [`LiveSession::try_hold`], so no turn uses the old plugins.
     pub(super) async fn replace_plugins(&self, script: ScriptSession) {
-        let old = std::mem::replace(&mut *lock(&self.parts.script), Arc::new(script));
+        let old = std::mem::replace(&mut *self.parts.script.borrow_mut(), Rc::new(script));
         close_plugins(&self.parts.host.shared, &old).await;
     }
 
@@ -172,7 +173,7 @@ impl LiveSession {
 
     /// Whether a turn runs.
     pub(super) fn state(&self) -> SessionState {
-        if lock(&self.parts.turn).is_some() {
+        if self.parts.turn.borrow().is_some() {
             SessionState::Running
         } else {
             SessionState::Idle
@@ -206,7 +207,7 @@ impl LiveSession {
 
     /// Cancel the running turn.
     pub(super) fn cancel(&self) {
-        if let Some(token) = lock(&self.parts.turn).as_ref() {
+        if let Some(token) = self.parts.turn.borrow().as_ref() {
             token.cancel();
         }
     }
@@ -216,7 +217,7 @@ impl LiveSession {
     pub(super) async fn load(&self, after: Option<EventNumber>) -> Result<(), AppError> {
         let host = &self.parts.host;
         let hold = Hold::start(&host.output);
-        let settings = lock(&host.settings).clone();
+        let settings = host.settings.borrow().clone();
         let loaded = host
             .shared
             .store
@@ -233,7 +234,7 @@ impl LiveSession {
         // The drop of the view removes its listener, also after a failed read.
         let view = host.output.watch(sink);
         // Before the read, so a later change of the settings comes as a saved event in the page or after it.
-        let settings = lock(&host.settings).clone();
+        let settings = host.settings.borrow().clone();
         let page = EventPage::Before {
             before: None,
             limit: tail,
@@ -253,7 +254,7 @@ impl LiveSession {
         };
         let host = &self.parts.host;
         let output = &host.output;
-        // A turn starts only under the lock, so an input that comes after this check runs with the new settings.
+        // The session lock keeps a later input on the new settings.
         if host.has_pending_input().await? {
             return Err(AppError::Busy);
         }
@@ -261,7 +262,7 @@ impl LiveSession {
             recover(&mut session, output).await?;
         }
         let saved = save_settings(&mut session, settings, &host.shared).await?;
-        lock(&host.settings).clone_from(session.settings());
+        host.settings.borrow_mut().clone_from(session.settings());
         output.publish(SessionUpdate::Saved(saved));
         Ok(())
     }
@@ -289,9 +290,6 @@ impl LiveSession {
 
     /// Stop the running turn, and start no other.
     pub(super) fn stop(&self) {
-        // The task starts a turn under the same lock, so a turn starts either before the stop and ends cancelled, or
-        // not at all and leaves its input pending.
-        let _turn = lock(&self.parts.turn);
         self.parts.host.closed.cancel();
     }
 
@@ -299,7 +297,7 @@ impl LiveSession {
     /// starts no turn.
     pub(super) async fn close(&self) {
         self.stop();
-        let task = lock(&self.task).take();
+        let task = self.task.borrow_mut().take();
         if let Some(task) = task
             && let Err(error) = task.await
         {
@@ -308,7 +306,7 @@ impl LiveSession {
         // After the last update of the turn, and before the plugin cleanup, which can wait for the end of a handle.
         self.parts.host.output.end_views();
         // The task ends first, so no turn takes the tools of the closed plugins.
-        let script = Arc::clone(&lock(&self.parts.script));
+        let script = Rc::clone(&self.parts.script.borrow());
         close_plugins(&self.parts.host.shared, &script).await;
         self.parts
             .host
@@ -342,17 +340,15 @@ impl Drop for LiveSession {
 /// The updates of one session on their way to the observer.
 struct Output {
     session: SessionId,
-    observer: Arc<dyn Observer>,
-    sent: Mutex<Sent>,
+    observer: Rc<dyn Observer>,
+    sent: RefCell<Sent>,
+    facts: Rc<Facts>,
     /// The id of the last question of any session, so an id names one question also after a close and a load.
-    last_question: Arc<AtomicU64>,
+    last_question: Rc<Cell<u64>>,
 }
 
-/// What the output keeps under its lock.
+/// The state of the session output.
 struct Sent {
-    session: SessionId,
-    /// The watches of `ctx.on`. They get each update that goes out.
-    facts: Arc<Facts>,
     /// Whether a turn runs, from the last published state, so a fact of the open agrees with the updates.
     running: bool,
     /// The views and the facts of the session have ended. Nothing announces the session again.
@@ -360,7 +356,7 @@ struct Sent {
     /// The inputs that a published commit consumed or a published removal named. An `input_accepted` can come after
     /// them, because the store saves an input before the server publishes it, so the output drops it.
     gone: HashSet<InputId>,
-    /// The open questions. A snapshot shows them, so they live under the same lock as the updates.
+    /// The open questions that appear in snapshots and live updates.
     questions: BTreeMap<InteractionId, Question>,
     /// The listeners of the session: the observer of the app first, then the private views.
     listeners: Vec<Listener>,
@@ -386,37 +382,6 @@ impl Sent {
             _ => {}
         }
         true
-    }
-
-    /// Give `update` to the facts and to each listener, when [`Sent::admit`] lets it out.
-    fn publish(&mut self, update: SessionUpdate) {
-        if !self.admit(&update) {
-            return;
-        }
-        if let SessionUpdate::Live(LiveUpdate::State { state }) = &update {
-            self.running = *state == SessionState::Running;
-        }
-        self.facts.update(self.session, &update);
-        if let Some((last, others)) = self.listeners.split_last_mut() {
-            for listener in others {
-                listener.deliver(update.clone());
-            }
-            last.deliver(update);
-        }
-    }
-
-    /// Tell the watches of the facts, or only the watch `only`, that the session is open. An ended session stays quiet.
-    fn announce(&self, only: Option<u64>) {
-        if self.ended {
-            return;
-        }
-        let state = if self.running {
-            SessionState::Running
-        } else {
-            SessionState::Idle
-        };
-        let questions: Vec<InteractionId> = self.questions.keys().copied().collect();
-        self.facts.opened(self.session, state, &questions, only);
     }
 
     /// The listener of the observer of the app.
@@ -461,16 +426,6 @@ struct Listener {
     waiting: Option<Vec<SessionUpdate>>,
 }
 
-impl Listener {
-    /// Give `update` to the sink, or keep it while a read runs.
-    fn deliver(&mut self, update: SessionUpdate) {
-        match self.waiting.as_mut() {
-            Some(waiting) => waiting.push(update),
-            None => (self.sink)(ViewEvent::Update(update)),
-        }
-    }
-}
-
 /// A private listener of an open session. Its drop ends it.
 pub(crate) struct View {
     output: Weak<Output>,
@@ -480,7 +435,11 @@ pub(crate) struct View {
 impl Drop for View {
     fn drop(&mut self) {
         if let Some(output) = self.output.upgrade() {
-            lock(&output.sent).listeners.retain(|listener| listener.id != self.id);
+            output
+                .sent
+                .borrow_mut()
+                .listeners
+                .retain(|listener| listener.id != self.id);
         }
     }
 }
@@ -513,8 +472,8 @@ struct Question {
 
 impl Output {
     /// The output of the session `session`. The observer gets each update as its first listener.
-    fn new(session: SessionId, observer: Arc<dyn Observer>, last_question: Arc<AtomicU64>, facts: Arc<Facts>) -> Self {
-        let notified = Arc::clone(&observer);
+    fn new(session: SessionId, observer: Rc<dyn Observer>, last_question: Rc<Cell<u64>>, facts: Rc<Facts>) -> Self {
+        let notified = Rc::clone(&observer);
         let send = move |update: SessionUpdate| {
             notified.notify(ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
                 session_id: session,
@@ -522,7 +481,7 @@ impl Output {
             })));
         };
         // The observer reads a snapshot as its updates.
-        let sink: ViewSink = Arc::new(move |event| match event {
+        let sink: ViewSink = Rc::new(move |event| match event {
             ViewEvent::Snapshot(snapshot) => snapshot.updates.into_iter().for_each(&send),
             ViewEvent::Update(update) => send(update),
             ViewEvent::Closed => {}
@@ -535,9 +494,8 @@ impl Output {
         Output {
             session,
             observer,
-            sent: Mutex::new(Sent {
-                session,
-                facts,
+            facts,
+            sent: RefCell::new(Sent {
                 running: false,
                 ended: false,
                 gone: HashSet::new(),
@@ -551,13 +509,38 @@ impl Output {
 
     /// Send `update` to each listener. A listener gets it after a read that runs for it.
     fn publish(&self, update: SessionUpdate) {
-        let mut sent = lock(&self.sent);
-        sent.publish(update);
+        let sinks: Vec<_> = {
+            let mut sent = self.sent.borrow_mut();
+            if !sent.admit(&update) {
+                return;
+            }
+            if let SessionUpdate::Live(LiveUpdate::State { state }) = &update {
+                sent.running = *state == SessionState::Running;
+            }
+            sent.listeners
+                .iter_mut()
+                .filter_map(|listener| {
+                    if let Some(waiting) = &mut listener.waiting {
+                        waiting.push(update.clone());
+                        None
+                    } else {
+                        Some(Rc::clone(&listener.sink))
+                    }
+                })
+                .collect()
+        };
+        self.facts.update(self.session, &update);
+        if let Some((last, others)) = sinks.split_last() {
+            for sink in others {
+                sink(ViewEvent::Update(update.clone()));
+            }
+            last(ViewEvent::Update(update));
+        }
     }
 
     /// Add a listener with `sink`. It keeps the updates until [`Output::show`] sends its snapshot.
-    fn watch(self: &Arc<Self>, sink: ViewSink) -> View {
-        let mut sent = lock(&self.sent);
+    fn watch(self: &Rc<Self>, sink: ViewSink) -> View {
+        let mut sent = self.sent.borrow_mut();
         sent.last_view += 1;
         let id = sent.last_view;
         sent.listeners.push(Listener {
@@ -566,13 +549,13 @@ impl Output {
             waiting: Some(Vec::new()),
         });
         View {
-            output: Arc::downgrade(self),
+            output: Rc::downgrade(self),
             id,
         }
     }
 
     /// Send the listener `id` its snapshot of `settings`, `loaded` and `now`, then the kept updates that add to it.
-    /// `now` runs under the lock, so no update comes between it and the snapshot.
+    /// `now` gives the live state for the snapshot.
     fn show(
         &self,
         id: u64,
@@ -580,13 +563,14 @@ impl Output {
         loaded: Loaded,
         now: impl FnOnce() -> (SessionState, Vec<Job>, Vec<McpServer>),
     ) {
-        let mut sent = lock(&self.sent);
+        let mut sent = self.sent.borrow_mut();
         let Some(listener) = sent.listeners.iter_mut().find(|listener| listener.id == id) else {
             return;
         };
-        let (sink, waiting) = (Arc::clone(&listener.sink), listener.waiting.take().unwrap_or_default());
+        let (sink, waiting) = (Rc::clone(&listener.sink), listener.waiting.take().unwrap_or_default());
         let kept = after(&loaded, waiting);
         let updates = sent.snapshot(loaded, now());
+        drop(sent);
         sink(ViewEvent::Snapshot(SessionSnapshot { settings, updates }));
         for update in kept {
             sink(ViewEvent::Update(update));
@@ -596,17 +580,34 @@ impl Output {
     /// Send each view its end, and remove the views. Tell each watch of the facts that the session closed. A later open
     /// of the session starts new views. The observer stays.
     fn end_views(&self) {
-        let mut sent = lock(&self.sent);
-        sent.ended = true;
-        sent.facts.closed(sent.session);
-        for view in sent.listeners.extract_if(.., |listener| listener.id != OBSERVER) {
+        let views: Vec<_> = {
+            let mut sent = self.sent.borrow_mut();
+            sent.ended = true;
+            sent.listeners
+                .extract_if(.., |listener| listener.id != OBSERVER)
+                .collect()
+        };
+        self.facts.closed(self.session);
+        for view in views {
             (view.sink)(ViewEvent::Closed);
         }
     }
 
     /// Tell the watches of the facts, or only the watch `only`, that the session is open.
     fn announce(&self, only: Option<u64>) {
-        lock(&self.sent).announce(only);
+        let (state, questions) = {
+            let sent = self.sent.borrow();
+            if sent.ended {
+                return;
+            }
+            let state = if sent.running {
+                SessionState::Running
+            } else {
+                SessionState::Idle
+            };
+            (state, sent.questions.keys().copied().collect::<Vec<_>>())
+        };
+        self.facts.opened(self.session, state, &questions, only);
     }
 
     /// Open the question `request` of `source`, and return its id and the receiver of its answer.
@@ -615,8 +616,9 @@ impl Output {
         source: &str,
         request: InteractionRequest,
     ) -> (InteractionId, oneshot::Receiver<InteractionResponse>) {
-        let mut sent = lock(&self.sent);
-        let id = InteractionId(self.last_question.fetch_add(1, Ordering::Relaxed) + 1);
+        let mut sent = self.sent.borrow_mut();
+        let id = InteractionId(self.last_question.get() + 1);
+        self.last_question.set(id.0);
         let (answer, answered) = oneshot::channel();
         let update = LiveUpdate::InteractionRequested {
             interaction_id: id,
@@ -631,29 +633,31 @@ impl Output {
                 answer,
             },
         );
-        sent.publish(SessionUpdate::Live(update));
+        drop(sent);
+        self.publish(SessionUpdate::Live(update));
         (id, answered)
     }
 
     /// End the question `id` without an answer, when it is still open.
     fn close_question(&self, id: InteractionId) {
-        let mut sent = lock(&self.sent);
-        if sent.questions.remove(&id).is_some() {
+        let question = self.sent.borrow_mut().questions.remove(&id);
+        if question.is_some() {
             let update = LiveUpdate::InteractionClosed { interaction_id: id };
-            sent.publish(SessionUpdate::Live(update));
+            self.publish(SessionUpdate::Live(update));
         }
     }
 
     /// End the open question `id` with `response`.
     fn answer_question(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
-        let mut sent = lock(&self.sent);
+        let mut sent = self.sent.borrow_mut();
         let Entry::Occupied(open) = sent.questions.entry(id) else {
             return Err(AppError::NoInteraction(id));
         };
         check_answer(&open.get().request, &response)?;
         let question = open.remove();
         let update = LiveUpdate::InteractionClosed { interaction_id: id };
-        sent.publish(SessionUpdate::Live(update));
+        drop(sent);
+        self.publish(SessionUpdate::Live(update));
         // The asker closes the question before it stops waiting, so an open question has a receiver.
         question.answer.send(response).map_err(|_| AppError::NoInteraction(id))
     }
@@ -684,7 +688,7 @@ struct Hold<'a> {
 
 impl<'a> Hold<'a> {
     fn start(output: &'a Output) -> Self {
-        lock(&output.sent).observer().waiting.get_or_insert_with(Vec::new);
+        output.sent.borrow_mut().observer().waiting.get_or_insert_with(Vec::new);
         Hold { output }
     }
 
@@ -701,22 +705,25 @@ impl<'a> Hold<'a> {
 
 impl Drop for Hold<'_> {
     fn drop(&mut self) {
-        let mut sent = lock(&self.output.sent);
-        let observer = sent.observer();
-        for update in observer.waiting.take().unwrap_or_default() {
-            (observer.sink)(ViewEvent::Update(update));
+        let (sink, waiting) = {
+            let mut sent = self.output.sent.borrow_mut();
+            let observer = sent.observer();
+            (Rc::clone(&observer.sink), observer.waiting.take().unwrap_or_default())
+        };
+        for update in waiting {
+            sink(ViewEvent::Update(update));
         }
     }
 }
 
 impl Parts {
     /// Run the task of the session. Each wake runs the pending input, until the app closes the session.
-    async fn run(self: Arc<Self>) {
+    async fn run(self: Rc<Self>) {
         // An open alone runs nothing, so a load only reads. The waiting input runs at the next wake.
         loop {
             tokio::select! {
                 () = self.host.wake.notified() => {
-                    let accepted = self.host.accepted.load(Ordering::SeqCst);
+                    let accepted = self.host.accepted.get();
                     self.run_waiting_turns().await;
                     self.host.handled.send_replace(accepted);
                     // A failure leaves its input saved for the next wake. A session with no holder gets no wake, so
@@ -746,7 +753,7 @@ impl Parts {
     /// Mark a turn as running, tell the observer, and give the token of the turn. `None` after the close.
     fn start_turn(&self) -> Option<CancellationToken> {
         let token = {
-            let mut turn = lock(&self.turn);
+            let mut turn = self.turn.borrow_mut();
             if self.host.closed.is_cancelled() {
                 return None;
             }
@@ -765,7 +772,7 @@ impl Parts {
 
     /// Mark the session as idle, and tell the observer.
     fn finish_turn(&self) {
-        *lock(&self.turn) = None;
+        *self.turn.borrow_mut() = None;
         self.host.output.publish(SessionUpdate::Live(LiveUpdate::State {
             state: SessionState::Idle,
         }));
@@ -775,7 +782,7 @@ impl Parts {
     async fn run_waiting_turns(&self) {
         let output = &self.host.output;
         loop {
-            // The check comes before the lock, so a wake with no input never makes new settings fail.
+            // A wake with no input must not prevent new settings.
             match self.host.has_pending_input().await {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -799,12 +806,12 @@ impl Parts {
                     return;
                 }
             };
-            lock(&self.host.settings).clone_from(session.settings());
+            self.host.settings.borrow_mut().clone_from(session.settings());
             let Some(token) = self.start_turn() else {
                 return;
             };
             // The session lock is held, so a reload cannot replace the plugins during this turn.
-            let script = Arc::clone(&lock(&self.script));
+            let script = Rc::clone(&self.script.borrow());
             let toolset = self.toolset(&script, &token).await;
             let prepared = match toolset {
                 Ok(toolset) => {
@@ -892,8 +899,8 @@ const MCP_SOURCE: &str = "host:mcp";
 
 /// Start the MCP servers of the user config and of `.mcp.json` in `folder` for the session of `host`. The project
 /// servers start after the trust. Each change of a server state is a live update of the session.
-fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
-    let output = Arc::clone(&host.output);
+fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
+    let output = Rc::clone(&host.output);
     let project = match read_json::<yuke_mcp::Config>(&folder.join(".mcp.json")) {
         Ok(project) => project.unwrap_or_default(),
         Err(error) => {
@@ -902,19 +909,19 @@ fn start_servers(host: &Arc<Host>, folder: &Path) -> Servers {
         }
     };
     let on_change: OnChange =
-        Arc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer { server })));
+        Rc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer { server })));
     let shared = &host.shared;
     let variable = |name: &str| (shared.machine.variable)(name).and_then(|value| value.into_string().ok());
     let user: Vec<_> = shared.mcp.servers.clone().into_iter().collect();
     let entries: Vec<_> = project.servers.clone().into_iter().collect();
-    let trust = trust_of(Arc::clone(host), folder.to_owned(), project);
-    let media = Arc::clone(host) as Arc<dyn MediaStore>;
+    let trust = trust_of(Rc::clone(host), folder.to_owned(), project);
+    let media = Rc::clone(host) as Rc<dyn MediaStore>;
     Servers::start(&user, &entries, trust, &variable, folder, media, on_change)
 }
 
 /// Whether the user trusts the project servers `project` of `folder`: a kept confirm, or a yes to the question now. A
 /// yes is kept. The close of the session ends the question.
-async fn trust_of(host: Arc<Host>, folder: PathBuf, project: yuke_mcp::Config) -> bool {
+async fn trust_of(host: Rc<Host>, folder: PathBuf, project: yuke_mcp::Config) -> bool {
     let output = &host.output;
     let data = &host.shared.machine.paths.data;
     let key = match trust::key(&folder, &project) {
@@ -1013,15 +1020,15 @@ struct Host {
     /// The parent session.
     parent: Option<SessionId>,
     /// The settings of the session now. A saved change of the settings and each turn set them.
-    settings: Mutex<SessionSettings>,
-    shared: Arc<Shared>,
+    settings: RefCell<SessionSettings>,
+    shared: Rc<Shared>,
     /// The service of the open sessions, which closes the session after its countdown.
     service: Weak<SessionService>,
-    output: Arc<Output>,
+    output: Rc<Output>,
     /// Wakes the task to run the waiting input. Many wakes before the task runs count as one.
     wake: Notify,
     /// The inputs that the session accepted.
-    accepted: AtomicU64,
+    accepted: Cell<u64>,
     /// The accepted inputs at the start of the last run of the turns that ended.
     handled: watch::Sender<u64>,
     /// The close of the session. It ends each open question.
@@ -1038,7 +1045,7 @@ impl Host {
             .await?;
         self.output
             .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
-        self.accepted.fetch_add(1, Ordering::SeqCst);
+        self.accepted.set(self.accepted.get() + 1);
         self.wake.notify_one();
         Ok(input_id)
     }
@@ -1067,7 +1074,7 @@ impl SessionHost for Host {
     }
 
     fn folder(&self) -> PathBuf {
-        lock(&self.settings).cwd.clone()
+        self.settings.borrow().cwd.clone()
     }
 
     fn is_closed(&self) -> bool {
@@ -1139,7 +1146,7 @@ impl SessionHost for Host {
     }
 
     fn model_reference(&self) -> ModelReference {
-        lock(&self.settings).model.clone()
+        self.settings.borrow().model.clone()
     }
 }
 
@@ -1157,22 +1164,22 @@ mod tests {
 
     /// Keeps each session update that it receives.
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<SessionUpdate>>);
+    struct Recorder(RefCell<Vec<SessionUpdate>>);
 
     impl Observer for Recorder {
         fn notify(&self, notification: ServerNotification) {
             if let ServerNotification::SessionUpdate(params) = notification {
-                lock(&self.0).push(params.update);
+                self.0.borrow_mut().push(params.update);
             }
         }
     }
 
-    fn output(recorder: &Arc<Recorder>) -> Output {
+    fn output(recorder: &Rc<Recorder>) -> Output {
         Output::new(
             SessionId::generate(),
-            Arc::clone(recorder) as Arc<dyn Observer>,
-            Arc::default(),
-            Arc::default(),
+            Rc::clone(recorder) as Rc<dyn Observer>,
+            Rc::default(),
+            Rc::default(),
         )
     }
 
@@ -1248,16 +1255,64 @@ mod tests {
     }
 
     /// A sink that keeps each event of its view.
-    fn collector() -> (ViewSink, Arc<Mutex<Vec<ViewEvent>>>) {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let kept = Arc::clone(&events);
-        (Arc::new(move |event| lock(&kept).push(event)), events)
+    fn collector() -> (ViewSink, Rc<RefCell<Vec<ViewEvent>>>) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let kept = Rc::clone(&events);
+        (Rc::new(move |event| kept.borrow_mut().push(event)), events)
+    }
+
+    #[test]
+    fn a_view_can_change_output_and_answer_a_question_in_its_callback() {
+        let recorder = Rc::new(Recorder::default());
+        let output = Rc::new(output(&recorder));
+        let weak = Rc::downgrade(&output);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let kept = Rc::clone(&events);
+        let view = output.watch(Rc::new(move |event| {
+            let output = weak.upgrade().unwrap();
+            drop(output.watch(Rc::new(|_| {})));
+            kept.borrow_mut().push(event.clone());
+            if let ViewEvent::Update(SessionUpdate::Live(LiveUpdate::InteractionRequested { interaction_id, .. })) =
+                event
+            {
+                output
+                    .answer_question(interaction_id, InteractionResponse::Canceled)
+                    .unwrap();
+            }
+        }));
+        output.show(
+            view.id,
+            settings(),
+            Loaded {
+                events: Vec::new(),
+                pending: Vec::new(),
+            },
+            || (SessionState::Idle, Vec::new(), Vec::new()),
+        );
+        let (id, mut answered) = output.open_question("guard", confirm());
+        output.end_views();
+
+        assert_eq!(answered.try_recv(), Ok(InteractionResponse::Canceled));
+        assert_eq!(
+            *events.borrow(),
+            [
+                ViewEvent::Snapshot(SessionSnapshot {
+                    settings: settings(),
+                    updates: vec![SessionUpdate::Live(LiveUpdate::State {
+                        state: SessionState::Idle
+                    })],
+                }),
+                ViewEvent::Update(requested(id.0, confirm())),
+                ViewEvent::Update(closed(id.0)),
+                ViewEvent::Closed,
+            ]
+        );
     }
 
     #[test]
     fn a_view_gets_its_snapshot_then_only_the_kept_updates_that_it_does_not_hold() {
-        let recorder = Arc::new(Recorder::default());
-        let output = Arc::new(output(&recorder));
+        let recorder = Rc::new(Recorder::default());
+        let output = Rc::new(output(&recorder));
         let (sink, events) = collector();
 
         let view = output.watch(sink);
@@ -1280,7 +1335,7 @@ mod tests {
         output.publish(saved(7));
 
         assert_eq!(
-            *lock(&events),
+            *events.borrow_mut(),
             [
                 ViewEvent::Snapshot(SessionSnapshot {
                     settings: settings(),
@@ -1299,14 +1354,14 @@ mod tests {
         );
         // The observer gets each update as it comes, and no snapshot of the view.
         assert_eq!(
-            *lock(&recorder.0),
+            *recorder.0.borrow_mut(),
             [accepted(7), saved(5), accepted(9), saved(6), saved(7)]
         );
     }
 
     #[test]
     fn a_load_sends_its_snapshot_then_only_the_kept_updates_that_the_snapshot_does_not_hold() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         output.publish(removed(1));
@@ -1331,7 +1386,7 @@ mod tests {
         output.publish(removed(3));
 
         assert_eq!(
-            *lock(&recorder.0),
+            *recorder.0.borrow_mut(),
             [
                 removed(1),
                 saved(4),
@@ -1352,7 +1407,7 @@ mod tests {
 
     #[test]
     fn an_input_accepted_that_comes_after_its_consumption_or_removal_is_dropped() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         output.publish(SessionUpdate::Saved(consuming(5, 8)));
@@ -1362,14 +1417,14 @@ mod tests {
         output.publish(accepted(10));
 
         assert_eq!(
-            *lock(&recorder.0),
+            *recorder.0.borrow_mut(),
             [SessionUpdate::Saved(consuming(5, 8)), removed(9), accepted(10)]
         );
     }
 
     #[test]
     fn a_load_that_fails_sends_the_kept_updates() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         let hold = Hold::start(&output);
@@ -1377,7 +1432,7 @@ mod tests {
         drop(hold);
         output.publish(removed(1));
 
-        assert_eq!(*lock(&recorder.0), [saved(5), removed(1)]);
+        assert_eq!(*recorder.0.borrow_mut(), [saved(5), removed(1)]);
     }
 
     /// A question with the options `labels`.
@@ -1435,7 +1490,7 @@ mod tests {
 
     #[test]
     fn an_answer_closes_its_question_and_reaches_the_asker_once() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         let (id, mut answered) = output.open_question("guard", confirm());
@@ -1448,12 +1503,12 @@ mod tests {
             "{second:?}"
         );
         assert_eq!(answered.try_recv(), Ok(answers(&[("go", &["Yes"], None)])));
-        assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
+        assert_eq!(*recorder.0.borrow_mut(), [requested(1, confirm()), closed(1)]);
     }
 
     #[test]
     fn an_answer_that_does_not_fit_its_questions_leaves_them_open() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
         let request = InteractionRequest::Questions {
             questions: vec![
@@ -1504,7 +1559,7 @@ mod tests {
 
     #[test]
     fn a_dropped_wait_closes_its_question_and_a_later_answer_finds_none() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         let (id, _answered) = output.open_question("guard", confirm());
@@ -1512,12 +1567,12 @@ mod tests {
         let late = output.answer_question(id, InteractionResponse::Canceled);
 
         assert!(matches!(late, Err(AppError::NoInteraction(_))), "{late:?}");
-        assert_eq!(*lock(&recorder.0), [requested(1, confirm()), closed(1)]);
+        assert_eq!(*recorder.0.borrow_mut(), [requested(1, confirm()), closed(1)]);
     }
 
     #[test]
     fn a_load_sends_each_open_question() {
-        let recorder = Arc::new(Recorder::default());
+        let recorder = Rc::new(Recorder::default());
         let output = output(&recorder);
 
         let (first, _first) = output.open_question("guard", confirm());
@@ -1534,7 +1589,7 @@ mod tests {
         output.close_question(first);
 
         assert_eq!(
-            *lock(&recorder.0),
+            *recorder.0.borrow_mut(),
             [
                 requested(1, confirm()),
                 SessionUpdate::Live(LiveUpdate::State {
@@ -1562,9 +1617,9 @@ mod tests {
         let app = App::start(
             machine,
             Mode::Print,
-            Arc::new(Recorder::default()),
+            Rc::new(Recorder::default()),
             store,
-            Arc::new(TokioTimer),
+            Rc::new(TokioTimer),
         )
         .await
         .unwrap();

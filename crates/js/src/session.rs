@@ -2,12 +2,10 @@
 //! `session` exports define. Its hooks are the hooks that the `session` exports add.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::error::Error as StdError;
 use std::fmt::Display;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Module, Object, Promise, Value};
@@ -37,11 +35,11 @@ use crate::tools::{
 /// the session and does not wait. That close runs only while the engine runs, so close each session before a shutdown.
 pub struct ScriptSession {
     access: EngineAccess,
-    pub(crate) host: Arc<dyn SessionHost>,
+    pub(crate) host: Rc<dyn SessionHost>,
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
     open: u64,
-    models: Arc<dyn Models>,
+    models: Rc<dyn Models>,
 }
 
 impl std::fmt::Debug for ScriptSession {
@@ -61,15 +59,15 @@ impl Handle {
     ///
     /// Returns [`Error::Folder`] when the folder of `host` is not UTF-8, and [`Error::Stopped`] when the engine task
     /// has ended.
-    pub async fn open_session(&self, host: Arc<dyn SessionHost>) -> Result<ScriptSession, Error> {
+    pub async fn open_session(&self, host: Rc<dyn SessionHost>) -> Result<ScriptSession, Error> {
         let folder = host.folder();
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
         let parent = host.parent().map(|parent| parent.to_string());
-        let job_host = Arc::clone(&host);
-        let ask_host = Arc::clone(&host);
-        let request_host = Arc::clone(&host);
-        let model_host = Arc::clone(&host);
+        let job_host = Rc::clone(&host);
+        let ask_host = Rc::clone(&host);
+        let request_host = Rc::clone(&host);
+        let model_host = Rc::clone(&host);
         let open = self
             .access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
@@ -100,7 +98,7 @@ impl Handle {
             access: self.access.clone(),
             host,
             open,
-            models: Arc::clone(&self.models),
+            models: Rc::clone(&self.models),
         })
     }
 }
@@ -133,7 +131,7 @@ impl ScriptSession {
                     open,
                     concurrency: entry.concurrency,
                     hints: entry.hints,
-                    host: Arc::clone(&self.host),
+                    host: Rc::clone(&self.host),
                 };
                 (entry.definition, tool)
             })
@@ -167,12 +165,12 @@ impl ScriptSession {
     pub fn hooks(&self, token: CancellationToken) -> ScriptHooks {
         ScriptHooks {
             access: self.access.clone(),
-            host: Arc::clone(&self.host),
+            host: Rc::clone(&self.host),
             open: self.open,
             token,
-            continues: AtomicU64::new(0),
-            retries: AtomicU64::new(0),
-            models: Arc::clone(&self.models),
+            continues: Cell::new(0),
+            retries: Cell::new(0),
+            models: Rc::clone(&self.models),
         }
     }
 
@@ -200,14 +198,14 @@ impl Drop for ScriptSession {
 /// runs, each hook that they do not handle keeps its default.
 pub struct ScriptHooks {
     access: EngineAccess,
-    host: Arc<dyn SessionHost>,
+    host: Rc<dyn SessionHost>,
     open: u64,
     token: CancellationToken,
     /// The `continue` answers of the `round.after` hooks in this turn.
-    pub(crate) continues: AtomicU64,
+    pub(crate) continues: Cell<u64>,
     /// The `round.retry` answers that sent the current round again.
-    pub(crate) retries: AtomicU64,
-    models: Arc<dyn Models>,
+    pub(crate) retries: Cell<u64>,
+    models: Rc<dyn Models>,
 }
 
 impl std::fmt::Debug for ScriptHooks {
@@ -230,8 +228,8 @@ impl ScriptHooks {
             context: round.context.to_vec(),
         };
         RoundNatives {
-            round: Arc::new(round),
-            models: Arc::clone(&self.models),
+            round: Rc::new(round),
+            models: Rc::clone(&self.models),
         }
     }
 }
@@ -240,7 +238,7 @@ impl ScriptHooks {
 impl Hooks for ScriptHooks {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
         // Each round starts here, so its count of retries starts at zero.
-        self.retries.store(0, Ordering::Relaxed);
+        self.retries.set(0);
         let request = RoundBeforeRequest {
             open: self.open,
             window: round.model.context_window,
@@ -274,7 +272,7 @@ impl Hooks for ScriptHooks {
                 kind,
                 message: chain_text(failure),
             },
-            retries: self.retries.load(Ordering::Relaxed),
+            retries: self.retries.get(),
             window: round.model.context_window,
             input_tokens: round.input_tokens,
             context_tokens: context_tokens(round.context, round.input_tokens),
@@ -289,7 +287,7 @@ impl Hooks for ScriptHooks {
             return Ok(None);
         };
         let plan = planned.plan(round, &*self.host, "round.retry")?;
-        self.retries.fetch_add(1, Ordering::Relaxed);
+        self.retries.set(self.retries.get() + 1);
         Ok(Some(plan))
     }
 
@@ -302,7 +300,7 @@ impl Hooks for ScriptHooks {
             open: self.open,
             text: answer_text(context),
             finish_reason: finish_reason.map(FinishReason::as_str),
-            continues: self.continues.load(Ordering::Relaxed),
+            continues: self.continues.get(),
         };
         let answer: Option<RoundAnswer> = run_hook(&self.access, "startRoundAfter", request, self.token.clone())
             .await
@@ -310,7 +308,7 @@ impl Hooks for ScriptHooks {
         Ok(match answer {
             Some(RoundAnswer::Stop) => RoundDecision::Stop,
             Some(RoundAnswer::Continue { plugin, text }) => {
-                self.continues.fetch_add(1, Ordering::Relaxed);
+                self.continues.set(self.continues.get() + 1);
                 // The request is a notification of the plugin, so the user sees who sent it. The turn takes the
                 // input of the session after this round, together with an input of the user.
                 self.host.accept_input(Input::notification(&plugin, &text, &text)).await;
@@ -496,9 +494,9 @@ struct OpenRequest<'js> {
 fn start_job_function<'js>(
     ctx: &Ctx<'js>,
     registry: &Registry,
-    host: Arc<dyn SessionHost>,
+    host: Rc<dyn SessionHost>,
 ) -> rquickjs::Result<Function<'js>> {
-    let processes = Arc::clone(&registry.processes);
+    let processes = Rc::clone(&registry.processes);
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>,
@@ -509,7 +507,7 @@ fn start_job_function<'js>(
               -> rquickjs::Result<Object<'js>> {
             let job = processes
                 .jobs()
-                .start_plugin(Arc::clone(&host), plugin, id, label, in_call)
+                .start_plugin(Rc::clone(&host), plugin, id, label, in_call)
                 .map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
             let (stopped, stop) = (job.stop(), job.stop());
             let (moved, in_call_now) = (job.moved(), job.moved());
@@ -556,14 +554,14 @@ fn start_job_function<'js>(
 
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answers,
 /// or `undefined` without an answer. Its cancel ends the request.
-fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>, queue: Queue<'js>) -> rquickjs::Result<Function<'js>> {
+fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>, queue: Queue<'js>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>,
               source: String,
               Json(request): Json<InteractionRequest>|
               -> rquickjs::Result<Operation<'js>> {
-            let host = Arc::clone(&host);
+            let host = Rc::clone(&host);
             let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
                 let _guard = stop.clone().drop_guard();
@@ -586,7 +584,7 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>, queue: Queue<'j
 /// `{ cancelled: true }`. A cancel drops the wait, and the drop cancels the request.
 fn request_function<'js>(
     ctx: &Ctx<'js>,
-    host: Arc<dyn SessionHost>,
+    host: Rc<dyn SessionHost>,
     queue: Queue<'js>,
 ) -> rquickjs::Result<Function<'js>> {
     Function::new(
@@ -599,7 +597,7 @@ fn request_function<'js>(
                     &format!("request: the data is not JSON: {error}"),
                 )
             })?;
-            let host = Arc::clone(&host);
+            let host = Rc::clone(&host);
             let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
                 let _guard = stop.clone().drop_guard();
@@ -772,15 +770,15 @@ struct RoundBeforeRequest {
 /// the functions `context`, `tokens`, and `sideRequest`. `context` converts the blocks at each call, so a round without
 /// a call converts nothing.
 struct RoundNatives {
-    round: Arc<Round>,
-    models: Arc<dyn Models>,
+    round: Rc<Round>,
+    models: Rc<dyn Models>,
 }
 
 impl<'js> IntoJs<'js> for RoundNatives {
     fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
         let object = Object::new(ctx.clone())?;
-        object.set("sideRequest", side_request(ctx, Arc::clone(&self.round), self.models)?)?;
-        object.set("tokens", tokens(ctx, Arc::clone(&self.round))?)?;
+        object.set("sideRequest", side_request(ctx, Rc::clone(&self.round), self.models)?)?;
+        object.set("tokens", tokens(ctx, Rc::clone(&self.round))?)?;
         let round = self.round;
         object.set(
             "context",

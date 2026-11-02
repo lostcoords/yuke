@@ -1,7 +1,7 @@
 //! These tests cover the session of the plugins: its setup, its tools, its failure, and its close.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -35,7 +35,7 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
     .await;
     let session = runtime
         .handle()
-        .open_session(Arc::new(TestHost::new(&folder)))
+        .open_session(Rc::new(TestHost::new(&folder)))
         .await
         .unwrap();
 
@@ -73,7 +73,7 @@ async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
         ),
     )
     .await;
-    let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+    let tools = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
 
     evaluate::<()>(&runtime, "globalThis.replace();").await.unwrap();
 
@@ -87,7 +87,7 @@ async fn a_closed_session_has_no_tools() {
     runtime.import("yuke:internal/builtins").await.unwrap();
     let session = runtime
         .handle()
-        .open_session(Arc::new(TestHost::new(&folder)))
+        .open_session(Rc::new(TestHost::new(&folder)))
         .await
         .unwrap();
 
@@ -104,8 +104,8 @@ async fn a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_clo
          export function session() { return () => { globalThis.cleaned += 1; }; }",
     )
     .await;
-    let dropped = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
-    let closed = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+    let dropped = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
+    let closed = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
 
     drop(dropped);
     // The close that the drop requests comes before the next call.
@@ -126,12 +126,12 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
     write(&folder, &[("notes.txt", "alpha\n")]);
     let (runtime, _reports) = start(&folder).await;
     runtime.import("yuke:internal/builtins").await.unwrap();
-    let host = Arc::new(TestHost::new(&folder));
-    let first = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
+    let host = Rc::new(TestHost::new(&folder));
+    let first = Tools::open(&runtime, Rc::clone(&host) as Rc<dyn SessionHost>).await;
     let old_read = first["read"].clone();
 
     first.session.close().await.unwrap();
-    let second = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
+    let second = Tools::open(&runtime, Rc::clone(&host) as Rc<dyn SessionHost>).await;
     // The close that this drop asks for names the old open, so it leaves the new one open.
     drop(first);
 
@@ -152,7 +152,7 @@ async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
     .await;
     let session = runtime
         .handle()
-        .open_session(Arc::new(TestHost::new(&folder)))
+        .open_session(Rc::new(TestHost::new(&folder)))
         .await
         .unwrap();
 
@@ -171,7 +171,7 @@ async fn sessions_and_tools_do_not_keep_the_engine_alive_after_shutdown() {
     )
     .await;
     let access = runtime.access();
-    let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+    let tools = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
 
     runtime.shutdown().await.unwrap();
 
@@ -201,7 +201,7 @@ fn a_session_drop_without_a_local_executor_wakes_the_drive() {
             "export function session() { return () => { console.log('closed'); }; }",
         )
         .await;
-        let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+        let tools = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
         (runtime, reports, tools)
     });
 

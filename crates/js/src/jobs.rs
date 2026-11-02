@@ -2,9 +2,10 @@
 //! plugin. A job in a call stays hidden until a background request moves it. When a job without a call ends by itself, its
 //! session gets one report. A stop ends it without a report. The list outlives a reload of the JavaScript.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 use rustix::process::{Pid, Signal};
 use yuke_engine::CancellationToken;
@@ -23,7 +24,7 @@ const NO_JOBS: &str =
 
 /// The jobs of this process, of each session.
 pub struct Jobs {
-    list: Arc<Mutex<List>>,
+    list: Rc<RefCell<List>>,
     /// Whether a job can start. A process that ends with its turn has no one to receive the end of a job.
     starts: bool,
 }
@@ -103,7 +104,7 @@ impl Jobs {
     /// The jobs of this process.
     pub(crate) fn new(starts: bool) -> Self {
         Self {
-            list: Arc::new(Mutex::new(List::default())),
+            list: Rc::new(RefCell::new(List::default())),
             starts,
         }
     }
@@ -131,7 +132,7 @@ impl Jobs {
     /// plugin.
     pub(crate) fn start_plugin(
         &self,
-        owner: Arc<dyn SessionHost>,
+        owner: Rc<dyn SessionHost>,
         plugin: String,
         id: String,
         label: String,
@@ -175,12 +176,12 @@ impl Jobs {
         if !in_call {
             moved.cancel();
         }
-        let mut list = lock(&self.list);
+        let closed = owner.is_closed();
+        let mut list = self.list.borrow_mut();
         if list.closed {
             return Err(SHUTTING_DOWN.to_owned());
         }
-        // A close marks the host before it takes this lock. So a job either sees the close here, or the close finds it.
-        if owner.is_closed() {
+        if closed {
             return Err(SESSION_CLOSED.to_owned());
         }
         if list.running.iter().any(|job| job.session == session && job.id == id) {
@@ -199,7 +200,7 @@ impl Jobs {
         Ok(RunningJob {
             id,
             session,
-            list: Arc::clone(&self.list),
+            list: Rc::clone(&self.list),
             stop,
             ended,
             moved,
@@ -212,7 +213,7 @@ impl Jobs {
         if !self.starts {
             return;
         }
-        for job in &lock(&self.list).running {
+        for job in &self.list.borrow().running {
             if job.movable(session) {
                 job.moved.cancel();
             }
@@ -221,7 +222,7 @@ impl Jobs {
 
     /// Whether [`Jobs::move_to_background`] would move a job of `session`.
     pub fn has_movable(&self, session: SessionId) -> bool {
-        self.starts && lock(&self.list).running.iter().any(|job| job.movable(session))
+        self.starts && self.list.borrow().running.iter().any(|job| job.movable(session))
     }
 
     /// Stop the running job `id` of `session`, and wait for its end. Answer `false` when `session` runs no such job.
@@ -229,7 +230,7 @@ impl Jobs {
     /// the stop makes this wait, so a caller that must not block drops the wait.
     pub async fn stop(&self, session: SessionId, id: &str) -> bool {
         let ended = {
-            let mut list = lock(&self.list);
+            let mut list = self.list.borrow_mut();
             let found = list
                 .running
                 .iter_mut()
@@ -248,7 +249,9 @@ impl Jobs {
     /// Stop each job of `session`, and wait until each job has ended and delivered its end. A stopped job sends no report,
     /// and a process that ended by itself before the stop still delivers its end.
     pub async fn close_session(&self, session: SessionId) {
-        let ends: Vec<_> = lock(&self.list)
+        let ends: Vec<_> = self
+            .list
+            .borrow()
             .running
             .iter()
             .filter(|job| job.session == session)
@@ -264,7 +267,8 @@ impl Jobs {
 
     /// The running jobs of `session`, oldest first.
     pub fn running(&self, session: SessionId) -> Vec<yuke_protocol::Job> {
-        lock(&self.list)
+        self.list
+            .borrow()
             .running
             .iter()
             .filter(|job| job.runs() && job.session == session)
@@ -287,7 +291,7 @@ impl Jobs {
     /// Refuse each later job, stop each running job, and wait for the ends.
     pub(crate) async fn shutdown(&self) {
         let ends: Vec<_> = {
-            let mut list = lock(&self.list);
+            let mut list = self.list.borrow_mut();
             list.closed = true;
             list.running
                 .iter()
@@ -307,7 +311,7 @@ impl Drop for Jobs {
     /// Kill each running process, so no job outlives the consumer. A shutdown has already stopped them with a grace. A
     /// killed job sends no report, also when its task sees the exit of the process before the stop.
     fn drop(&mut self) {
-        let mut list = lock(&self.list);
+        let mut list = self.list.borrow_mut();
         list.closed = true;
         for job in &mut list.running {
             job.silenced = true;
@@ -326,18 +330,16 @@ impl Drop for Jobs {
 pub(crate) struct RunningJob {
     pub(crate) id: String,
     session: SessionId,
-    list: Arc<Mutex<List>>,
+    list: Rc<RefCell<List>>,
     pub(crate) stop: CancellationToken,
     pub(crate) moved: CancellationToken,
     ended: CancellationToken,
 }
 
 impl RunningJob {
-    /// Set the process group of a process job, and answer whether a stop of this one job came. A stop takes the same
-    /// lock, so after the end of the process a stop either found the process and silences the report, or finds no
-    /// process.
+    /// Set the process group of a process job. Return whether this job received a stop.
     pub(crate) fn set_group(&self, new: Option<Pid>) -> bool {
-        let mut list = lock(&self.list);
+        let mut list = self.list.borrow_mut();
         let job = list
             .running
             .iter_mut()
@@ -353,7 +355,8 @@ impl RunningJob {
 
 impl Drop for RunningJob {
     fn drop(&mut self) {
-        lock(&self.list)
+        self.list
+            .borrow_mut()
             .running
             .retain(|job| job.id != self.id || job.session != self.session);
         self.stop.cancel();
@@ -367,7 +370,7 @@ pub(crate) struct PluginJob {
     job: RunningJob,
     plugin: String,
     label: String,
-    owner: Arc<dyn SessionHost>,
+    owner: Rc<dyn SessionHost>,
 }
 
 impl PluginJob {
@@ -387,12 +390,11 @@ impl PluginJob {
     }
 
     /// End the job. Answer `true` when a call still waits for it: the call takes the answer, and the job never showed.
-    /// Else `report` goes to the session as the status and the text of the one report, unless a stop came. The job stays in
-    /// the list until the session has the report. One lock decides, so a later stop finds no job and a later move finds
-    /// no job in a call.
+    /// Else `report` goes to the session as the status and the text of the one report, unless a stop came. The list keeps
+    /// the job until the session receives its report. A later stop finds no job. A later move finds no job for that call.
     pub(crate) fn end(self, report: Option<(String, String)>) -> bool {
         let (in_call, stopped) = {
-            let mut list = lock(&self.job.list);
+            let mut list = self.job.list.borrow_mut();
             let job = list
                 .running
                 .iter_mut()
@@ -434,9 +436,4 @@ impl PluginJob {
 /// The report of the job `id` from `source`, the same frame for each job. The user reads `{id} {status}`.
 pub(crate) fn report_input(source: &str, id: &str, status: &str, text: &str) -> Input {
     Input::notification(source, &format!("{id} {status}"), &format!("{id} {status}.\n{text}"))
-}
-
-/// The running jobs. A panic of another holder leaves a valid list, so a poisoned lock still serves.
-fn lock(list: &Mutex<List>) -> std::sync::MutexGuard<'_, List> {
-    list.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

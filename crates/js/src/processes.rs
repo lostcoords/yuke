@@ -1,6 +1,7 @@
 //! The child processes of the tools: the commands of `exec` and the process jobs. Their tasks run on the host runtime,
 //! and every JavaScript runtime shares one `Processes`, so a process job outlives a reload of the JavaScript.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
 use std::fmt;
@@ -10,7 +11,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -58,7 +59,7 @@ pub(crate) struct Request {
     /// The token that stops the command.
     pub(crate) stop: CancellationToken,
     /// The session of the command. Its background request moves the command to a job.
-    pub(crate) owner: Arc<dyn SessionHost>,
+    pub(crate) owner: Rc<dyn SessionHost>,
 }
 
 /// The child processes of the tools. Run commands on a local tokio runtime with I/O and time. Give the same value to
@@ -66,10 +67,10 @@ pub(crate) struct Request {
 /// [`Processes::shutdown`] removes the folder.
 pub struct Processes {
     folder: PathBuf,
-    last_number: AtomicU64,
+    last_number: Cell<u64>,
     /// The counter of the job ids. It starts at a random number, so an id in the transcript of an earlier process
     /// rarely names a job of this one.
-    last_job: AtomicU32,
+    last_job: Cell<u32>,
     jobs: Jobs,
 }
 
@@ -119,11 +120,9 @@ impl Processes {
     fn with_jobs(folder: PathBuf, starts_jobs: bool) -> Self {
         Self {
             folder,
-            last_number: AtomicU64::new(0),
+            last_number: Cell::new(0),
             // A fresh `RandomState` has random keys, so its hash is a random number.
-            last_job: AtomicU32::new(
-                u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
-            ),
+            last_job: Cell::new(u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0)),
             jobs: Jobs::new(starts_jobs),
         }
     }
@@ -150,7 +149,8 @@ impl Processes {
     /// A new job id: `job-` and four base-36 digits. The counter gives each id once, until it wraps after every
     /// four-digit number.
     pub(crate) fn next_job_id(&self) -> String {
-        let next = self.last_job.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        let next = self.last_job.get().wrapping_add(1);
+        self.last_job.set(next);
         format!("job-{}", base36(FIRST_JOB_NUMBER + next % JOB_NUMBERS))
     }
 
@@ -170,7 +170,8 @@ impl Processes {
             stop,
             owner,
         } = request;
-        let number = self.last_number.fetch_add(1, Ordering::Relaxed) + 1;
+        let number = self.last_number.get() + 1;
+        self.last_number.set(number);
         let log = self.folder.join(format!("exec-{number}.log"));
         let id = self.next_job_id();
         let label = short_command(&command);
@@ -225,7 +226,7 @@ impl Processes {
         &self,
         command: String,
         timeout: Option<Duration>,
-        owner: Arc<dyn SessionHost>,
+        owner: Rc<dyn SessionHost>,
     ) -> Result<StartedJob, String> {
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
@@ -286,7 +287,7 @@ struct CommandTask {
     command: String,
     log: PathBuf,
     folder: PathBuf,
-    owner: Arc<dyn SessionHost>,
+    owner: Rc<dyn SessionHost>,
 }
 
 impl CommandTask {

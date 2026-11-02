@@ -1,24 +1,23 @@
 //! The facts of the app for `ctx.on` of the plugins: each update of each open session, its open and its close, and
 //! each notice. A watch holds no session.
 
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::rc::{Rc, Weak};
 
 use tokio::sync::oneshot;
 use yuke_js::{Fact, FactSink};
 use yuke_protocol::{ExtensionRequestParams, InteractionId, NoticeParams, ServerNotification, SessionId, SessionState};
 
-use super::{Answer, Observer, lock};
+use super::{Answer, Observer};
 
 /// The watches of the facts. A watch gets [`Fact::Update`] and [`Fact::Closed`] of a session only after
 /// [`Fact::Opened`] of that session.
 #[derive(Default)]
 pub(super) struct Facts {
-    watchers: Mutex<Vec<Watcher>>,
-    /// The number of watches, so an update without a watch takes no lock.
-    count: AtomicUsize,
-    last: AtomicU64,
+    watchers: RefCell<Vec<Watcher>>,
+    last: Cell<u64>,
 }
 
 struct Watcher {
@@ -31,14 +30,15 @@ struct Watcher {
 impl Facts {
     /// Give `update` of `session` to each watch that knows the session.
     pub(super) fn update(&self, session: SessionId, update: &yuke_protocol::SessionUpdate) {
-        if self.count.load(Ordering::Acquire) == 0 {
-            return;
-        }
-        for watcher in lock(&self.watchers)
+        let sinks: Vec<_> = self
+            .watchers
+            .borrow()
             .iter()
             .filter(|watcher| watcher.known.contains(&session))
-        {
-            (watcher.sink)(Fact::Update {
+            .map(|watcher| Rc::clone(&watcher.sink))
+            .collect();
+        for sink in sinks {
+            sink(Fact::Update {
                 session_id: session,
                 update: Box::new(update.clone()),
             });
@@ -54,11 +54,20 @@ impl Facts {
         questions: &[InteractionId],
         only: Option<u64>,
     ) {
-        for watcher in lock(&self.watchers).iter_mut() {
-            if only.is_some_and(|id| id != watcher.id) || !watcher.known.insert(session) {
-                continue;
-            }
-            (watcher.sink)(Fact::Opened {
+        let sinks: Vec<_> = self
+            .watchers
+            .borrow_mut()
+            .iter_mut()
+            .filter_map(|watcher| {
+                if only.is_some_and(|id| id != watcher.id) || !watcher.known.insert(session) {
+                    None
+                } else {
+                    Some(Rc::clone(&watcher.sink))
+                }
+            })
+            .collect();
+        for sink in sinks {
+            sink(Fact::Opened {
                 session_id: session,
                 state,
                 questions: questions.to_vec(),
@@ -68,34 +77,41 @@ impl Facts {
 
     /// Tell each watch that knows `session` that it closed.
     pub(super) fn closed(&self, session: SessionId) {
-        for watcher in lock(&self.watchers).iter_mut() {
-            if watcher.known.remove(&session) {
-                (watcher.sink)(Fact::Closed { session_id: session });
-            }
+        let sinks: Vec<_> = self
+            .watchers
+            .borrow_mut()
+            .iter_mut()
+            .filter_map(|watcher| watcher.known.remove(&session).then(|| Rc::clone(&watcher.sink)))
+            .collect();
+        for sink in sinks {
+            sink(Fact::Closed { session_id: session });
         }
     }
 
     /// Give `notice` to each watch.
     fn notice(&self, notice: &NoticeParams) {
-        if self.count.load(Ordering::Acquire) == 0 {
-            return;
-        }
-        for watcher in lock(&self.watchers).iter() {
-            (watcher.sink)(Fact::Notice(notice.clone()));
+        let sinks: Vec<_> = self
+            .watchers
+            .borrow()
+            .iter()
+            .map(|watcher| Rc::clone(&watcher.sink))
+            .collect();
+        for sink in sinks {
+            sink(Fact::Notice(notice.clone()));
         }
     }
 
     /// Start a watch with `sink`. It knows no session yet; the caller gives it the open ones.
-    pub(super) fn watch(self: &Arc<Self>, sink: FactSink) -> Watch {
-        let id = self.last.fetch_add(1, Ordering::Relaxed) + 1;
-        lock(&self.watchers).push(Watcher {
+    pub(super) fn watch(self: &Rc<Self>, sink: FactSink) -> Watch {
+        let id = self.last.get() + 1;
+        self.last.set(id);
+        self.watchers.borrow_mut().push(Watcher {
             id,
             sink,
             known: HashSet::new(),
         });
-        self.count.fetch_add(1, Ordering::Release);
         Watch {
-            facts: Arc::downgrade(self),
+            facts: Rc::downgrade(self),
             id,
         }
     }
@@ -110,16 +126,15 @@ pub(super) struct Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         if let Some(facts) = self.facts.upgrade() {
-            lock(&facts.watchers).retain(|watcher| watcher.id != self.id);
-            facts.count.fetch_sub(1, Ordering::Release);
+            facts.watchers.borrow_mut().retain(|watcher| watcher.id != self.id);
         }
     }
 }
 
 /// The observer of the app with each notice also as a fact. Every notice of the app goes through it.
 pub(super) struct Noticed {
-    pub(super) observer: Arc<dyn Observer>,
-    pub(super) facts: Arc<Facts>,
+    pub(super) observer: Rc<dyn Observer>,
+    pub(super) facts: Rc<Facts>,
 }
 
 impl Observer for Noticed {
@@ -136,5 +151,60 @@ impl Observer for Noticed {
 
     fn cancel_request(&self, id: i64) {
         self.observer.cancel_request(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yuke_protocol::{LiveUpdate, NoticeLevel, SessionUpdate};
+
+    #[test]
+    fn a_fact_callback_can_change_watches_and_only_known_sessions_get_updates() {
+        let facts = Rc::new(Facts::default());
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let kept = Rc::clone(&events);
+        let weak = Rc::downgrade(&facts);
+        let watch = facts.watch(Rc::new(move |fact| {
+            let facts = weak.upgrade().unwrap();
+            drop(facts.watch(Rc::new(|_| {})));
+            kept.borrow_mut().push(fact);
+        }));
+        let session = SessionId::generate();
+        let update = SessionUpdate::Live(LiveUpdate::State {
+            state: SessionState::Running,
+        });
+        let notice = NoticeParams {
+            session_id: None,
+            level: NoticeLevel::Info,
+            source: "test".to_owned(),
+            message: "ready".to_owned(),
+        };
+        facts.update(session, &update);
+        facts.opened(session, SessionState::Idle, &[], Some(watch.id));
+        facts.opened(session, SessionState::Idle, &[], None);
+        facts.update(session, &update);
+        facts.closed(session);
+        facts.update(session, &update);
+        facts.notice(&notice);
+        drop(watch);
+        facts.notice(&notice);
+
+        assert_eq!(
+            *events.borrow(),
+            [
+                Fact::Opened {
+                    session_id: session,
+                    state: SessionState::Idle,
+                    questions: Vec::new()
+                },
+                Fact::Update {
+                    session_id: session,
+                    update: Box::new(update)
+                },
+                Fact::Closed { session_id: session },
+                Fact::Notice(notice),
+            ]
+        );
     }
 }

@@ -7,13 +7,14 @@
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::future::Future;
 use std::io;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -29,7 +30,7 @@ use yuke_protocol::{
     Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
 };
 
-use crate::app::{Answer, App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, lock, open_store, warn};
+use crate::app::{Answer, App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, open_store, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
@@ -43,15 +44,12 @@ const ACCEPT_RETRY: Duration = Duration::from_secs(1);
 
 /// The input and the output of one client.
 pub(crate) struct Stream {
-    input: Box<dyn AsyncRead + Unpin + Send>,
-    output: Box<dyn AsyncWrite + Unpin + Send>,
+    input: Box<dyn AsyncRead + Unpin>,
+    output: Box<dyn AsyncWrite + Unpin>,
 }
 
 impl Stream {
-    pub(crate) fn new(
-        input: impl AsyncRead + Unpin + Send + 'static,
-        output: impl AsyncWrite + Unpin + Send + 'static,
-    ) -> Stream {
+    pub(crate) fn new(input: impl AsyncRead + Unpin + 'static, output: impl AsyncWrite + Unpin + 'static) -> Stream {
         Stream {
             input: Box::new(input),
             output: Box::new(output),
@@ -156,16 +154,16 @@ pub(crate) async fn serve(
     clients: Clients,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), String> {
-    let active = Arc::new(ActiveClient::default());
+    let active = Rc::new(ActiveClient::default());
     // The one client connects before the start, so it gets the notices of the start.
     let (mut current, socket) = match clients {
         Clients::One(stream) => (Some(Connection::open(stream, &active)), None),
         Clients::Socket(socket) => (None, Some(socket)),
     };
-    let observer = Arc::clone(&active) as Arc<dyn Observer>;
+    let observer = Rc::clone(&active) as Rc<dyn Observer>;
     let started = async {
         let store = open_store(&machine.paths.data).await?;
-        App::start(machine, Mode::Server, observer, store, Arc::new(TokioTimer)).await
+        App::start(machine, Mode::Server, observer, store, Rc::new(TokioTimer)).await
     };
     let app = match started.await {
         Ok(app) => app,
@@ -179,7 +177,7 @@ pub(crate) async fn serve(
     };
     let mut server = Server {
         app,
-        active: Arc::clone(&active),
+        active: Rc::clone(&active),
         instance_id: InstanceId::generate(),
         attachments: HashMap::new(),
     };
@@ -279,7 +277,7 @@ pub(crate) async fn connect(
 struct Server {
     app: App,
     /// Gets the answers of the client to the requests of the plugins.
-    active: Arc<ActiveClient>,
+    active: Rc<ActiveClient>,
     instance_id: InstanceId,
     /// The sessions that the clients created, forked, or loaded. A client holds each one until `session/close`, also
     /// after it disconnects.
@@ -345,7 +343,7 @@ impl Server {
             Err(error_with(ResponseError::INVALID_REQUEST, "send initialize first"))
         } else if let ClientRequest::StopJob(params) = request.call {
             // A plugin sets no limit on the end of its job, so this wait must leave the connection free to read.
-            let (sessions, writer) = (Arc::clone(self.app.sessions()), connection.writer.clone());
+            let (sessions, writer) = (Rc::clone(self.app.sessions()), connection.writer.clone());
             tokio::task::spawn_local(async move {
                 let stopped = sessions.stop_job(params.session_id, &params.job_id).await;
                 let answer = stopped
@@ -479,7 +477,7 @@ impl Server {
 
 /// The connection of one client.
 struct Connection {
-    lines: Lines<BufReader<Box<dyn AsyncRead + Unpin + Send>>>,
+    lines: Lines<BufReader<Box<dyn AsyncRead + Unpin>>>,
     writer: Writer,
     written: JoinHandle<()>,
     initialized: bool,
@@ -505,7 +503,7 @@ impl Connection {
     /// Take this connection from `active`, and close it in the background.
     fn retire(self, active: &ActiveClient, drain_limit: Duration) {
         active.detach();
-        tokio::spawn(self.close(drain_limit));
+        tokio::task::spawn_local(self.close(drain_limit));
     }
 
     /// Write the messages that wait, and end the connection. The active client must not hold its writer.
@@ -536,10 +534,10 @@ impl Connection {
 /// login end is dropped. `session/load` sends the saved events again, and `catalog/list` gives the state of a login.
 #[derive(Default)]
 struct ActiveClient {
-    state: Mutex<ClientState>,
+    state: RefCell<ClientState>,
 }
 
-/// The state of the active client. One lock holds it, so a detach and a request do not race.
+/// The writer and the pending requests of the active client.
 #[derive(Default)]
 struct ClientState {
     writer: Option<Writer>,
@@ -551,12 +549,12 @@ struct ClientState {
 
 impl ActiveClient {
     fn attach(&self, writer: Writer) {
-        lock(&self.state).writer = Some(writer);
+        self.state.borrow_mut().writer = Some(writer);
     }
 
     /// Forget the writer, and fail each waiting request: the drop of its sender fails its receiver.
     fn detach(&self) {
-        let mut state = lock(&self.state);
+        let mut state = self.state.borrow_mut();
         state.writer = None;
         state.pending.clear();
     }
@@ -566,7 +564,7 @@ impl ActiveClient {
         let Some(RequestId::Number(id)) = response.id else {
             return;
         };
-        let Some(sender) = lock(&self.state).pending.remove(&id) else {
+        let Some(sender) = self.state.borrow_mut().pending.remove(&id) else {
             return;
         };
         let answer = match response.outcome {
@@ -581,7 +579,7 @@ impl ActiveClient {
 
 impl Observer for ActiveClient {
     fn notify(&self, notification: ServerNotification) {
-        let writer = lock(&self.state).writer.clone();
+        let writer = self.state.borrow_mut().writer.clone();
         match (writer, notification) {
             (Some(writer), notification) => writer.send(&Notification {
                 jsonrpc: JsonRpc::V2,
@@ -599,7 +597,7 @@ impl Observer for ActiveClient {
     }
 
     fn request(&self, params: ExtensionRequestParams) -> Option<(i64, oneshot::Receiver<Answer>)> {
-        let mut state = lock(&self.state);
+        let mut state = self.state.borrow_mut();
         let writer = state.writer.clone()?;
         state.last_request += 1;
         let id = state.last_request;
@@ -614,7 +612,7 @@ impl Observer for ActiveClient {
     }
 
     fn cancel_request(&self, id: i64) {
-        let mut state = lock(&self.state);
+        let mut state = self.state.borrow_mut();
         if state.pending.remove(&id).is_none() {
             return;
         }
@@ -639,9 +637,9 @@ struct Writer {
 
 impl Writer {
     /// Start the task that writes to `output`.
-    fn start(mut output: impl AsyncWrite + Unpin + Send + 'static) -> (Writer, JoinHandle<()>) {
+    fn start(mut output: impl AsyncWrite + Unpin + 'static) -> (Writer, JoinHandle<()>) {
         let (sender, mut receiver) = mpsc::channel::<String>(OUTGOING_LIMIT);
-        let task = tokio::spawn(async move {
+        let task = tokio::task::spawn_local(async move {
             let mut batch = Vec::new();
             while let Some(mut line) = receiver.recv().await {
                 batch.clear();

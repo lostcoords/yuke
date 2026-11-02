@@ -2,8 +2,10 @@
 //! do not start.
 #![expect(clippy::unwrap_used, reason = "a test fails by panicking")]
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -64,10 +66,10 @@ fn folder(name: &str) -> PathBuf {
 }
 
 /// Keeps each change of a server state.
-type Changes = Arc<Mutex<Vec<McpServer>>>;
+type Changes = Rc<RefCell<Vec<McpServer>>>;
 
 /// The servers of `entries`, after each start ended, and the changes of their states.
-async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Arc<Recorded>) -> (Servers, Changes) {
+async fn started(entries: Vec<(String, ServerConfig)>, folder: &Path, media: Rc<Recorded>) -> (Servers, Changes) {
     started_with(entries, Vec::new(), false, folder, media).await
 }
 
@@ -77,12 +79,12 @@ async fn started_with(
     project: Vec<(String, ServerConfig)>,
     trusted: bool,
     folder: &Path,
-    media: Arc<Recorded>,
+    media: Rc<Recorded>,
 ) -> (Servers, Changes) {
     let variable = |name: &str| (name == "SET").then(|| "set".to_owned());
     let changes = Changes::default();
-    let kept = Arc::clone(&changes);
-    let on_change = Arc::new(move |server| kept.lock().unwrap().push(server));
+    let kept = Rc::clone(&changes);
+    let on_change = Rc::new(move |server| kept.borrow_mut().push(server));
     let trust = async move { trusted };
     let servers = Servers::start(&user, &project, trust, &variable, folder, media, on_change);
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
@@ -127,7 +129,7 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
     let folder = folder("a_server_starts");
     let log = folder.join("log");
     let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
-    let (servers, changes) = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
+    let (servers, changes) = started(vec![("test".to_owned(), entry)], &folder, Rc::default()).await;
 
     let tools = servers.tools();
 
@@ -137,7 +139,7 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
     );
     // The newest version with `initialize`, which each server of this era speaks.
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "initialize \"2025-11-25\"\n");
-    assert_eq!(*changes.lock().unwrap(), servers.states());
+    assert_eq!(*changes.borrow_mut(), servers.states());
     let names: Vec<_> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
     assert_eq!(
         names,
@@ -166,8 +168,8 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
 #[tokio::test(flavor = "local")]
 async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_results() {
     let folder = folder("the_model_reads_the_results");
-    let media = Arc::new(Recorded::default());
-    let (servers, _changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Arc::clone(&media)).await;
+    let media = Rc::new(Recorded::default());
+    let (servers, _changes) = started(vec![("test".to_owned(), test_server(&[]))], &folder, Rc::clone(&media)).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([
         tool_reply(&[
@@ -204,7 +206,7 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let folder = folder("a_cancel_of_a_call");
     let log = folder.join("log");
     let entry = test_server(&[("MCP_TEST_LOG", log.to_str().unwrap())]);
-    let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Arc::default()).await;
+    let (servers, _changes) = started(vec![("test".to_owned(), entry)], &folder, Rc::default()).await;
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__wait", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -252,7 +254,7 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
         ("a b".to_owned(), test_server(&[])),
         ("a_b".to_owned(), test_server(&[])),
     ];
-    let (servers, _changes) = started(entries, &folder, Arc::default()).await;
+    let (servers, _changes) = started(entries, &folder, Rc::default()).await;
 
     let tools = servers.tools();
 
@@ -289,8 +291,8 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
         async { false },
         &|_| None,
         &folder,
-        Arc::new(Recorded::default()),
-        Arc::new(move |server| changed.send(server).unwrap()),
+        Rc::new(Recorded::default()),
+        Rc::new(move |server| changed.send(server).unwrap()),
     );
     tokio::time::timeout(Duration::from_secs(10), servers.ready())
         .await
@@ -348,7 +350,7 @@ async fn a_failed_start_shows_the_last_twenty_stderr_lines_and_stops_the_childre
         ..test_server(&[])
     };
 
-    let (servers, _) = started(vec![("failing".to_owned(), failing)], &folder, Arc::default()).await;
+    let (servers, _) = started(vec![("failing".to_owned(), failing)], &folder, Rc::default()).await;
 
     let states = servers.states();
     let [
@@ -376,14 +378,14 @@ async fn a_close_stops_a_server_that_never_answers_its_start() {
         args: vec!["30".to_owned()],
         ..test_server(&[])
     };
-    let on_change = Arc::new(|_| {});
+    let on_change = Rc::new(|_| {});
     let servers = Servers::start(
         &[("silent".to_owned(), silent)],
         &[],
         async { false },
         &|_| None,
         &folder,
-        Arc::new(Recorded::default()),
+        Rc::new(Recorded::default()),
         on_change,
     );
 
@@ -436,7 +438,7 @@ async fn a_close_stops_the_children_of_a_server_that_outlives_its_input() {
     let (servers, _) = started(
         vec![("wrapped".to_owned(), wrapped_server(&folder))],
         &folder,
-        Arc::default(),
+        Rc::default(),
     )
     .await;
 
@@ -454,7 +456,7 @@ async fn a_drop_stops_the_children_of_a_server() {
     let (servers, _) = started(
         vec![("wrapped".to_owned(), wrapped_server(&folder))],
         &folder,
-        Arc::default(),
+        Rc::default(),
     )
     .await;
 
@@ -472,8 +474,8 @@ async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() 
     ];
     let project = vec![("test".to_owned(), test_server(&[]))];
 
-    let (trusted, changes) = started_with(user.clone(), project.clone(), true, &folder, Arc::default()).await;
-    let (refused, refused_changes) = started_with(user, project, false, &folder, Arc::default()).await;
+    let (trusted, changes) = started_with(user.clone(), project.clone(), true, &folder, Rc::default()).await;
+    let (refused, refused_changes) = started_with(user, project, false, &folder, Rc::default()).await;
 
     let connected = McpServerState::Connected { tools: 6 };
     assert_eq!(
@@ -485,8 +487,7 @@ async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() 
     );
     assert!(
         changes
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .contains(&project_server("test", McpServerState::Connecting))
     );
     assert_eq!(
@@ -498,8 +499,7 @@ async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() 
     );
     assert!(
         refused_changes
-            .lock()
-            .unwrap()
+            .borrow_mut()
             .iter()
             .all(|change| change.source == McpServerSource::User)
     );
@@ -510,10 +510,10 @@ async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() 
 #[tokio::test]
 async fn the_trust_runs_only_when_a_project_server_can_start() {
     let folder = folder("the_trust_runs_only_when_a_project_server_can_start");
-    let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let marked = Arc::clone(&asked);
+    let asked = Rc::new(std::cell::Cell::new(false));
+    let marked = Rc::clone(&asked);
     let trust = async move {
-        marked.store(true, std::sync::atomic::Ordering::SeqCst);
+        marked.set(true);
         true
     };
     let disabled = ServerConfig {
@@ -527,12 +527,12 @@ async fn the_trust_runs_only_when_a_project_server_can_start() {
         trust,
         &|_| None,
         &folder,
-        Arc::new(Recorded::default()),
-        Arc::new(|_| {}),
+        Rc::new(Recorded::default()),
+        Rc::new(|_| {}),
     );
     servers.ready().await;
 
-    assert!(!asked.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(!asked.get());
     assert_eq!(servers.states(), [project_server("off", McpServerState::Disabled)]);
 }
 
@@ -547,8 +547,8 @@ async fn a_close_during_the_trust_starts_no_project_server() {
         trust,
         &|_| None,
         &folder,
-        Arc::new(Recorded::default()),
-        Arc::new(|_| {}),
+        Rc::new(Recorded::default()),
+        Rc::new(|_| {}),
     );
 
     tokio::time::timeout(Duration::from_secs(5), servers.close())
@@ -595,7 +595,7 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
             .map(|(name, entry)| (name.to_owned(), entry))
             .collect(),
         &folder,
-        Arc::default(),
+        Rc::default(),
     )
     .await;
 
@@ -624,6 +624,6 @@ async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
     );
     assert!(servers.tools().is_empty());
     // Only the end of a start is a change, so the entries that never start send none.
-    assert_eq!(changes.lock().unwrap().len(), 1);
+    assert_eq!(changes.borrow_mut().len(), 1);
     servers.close().await;
 }

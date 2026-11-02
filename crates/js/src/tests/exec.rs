@@ -2,7 +2,7 @@
 
 use std::ffi::OsStr;
 use std::path::Path;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use yuke_ai::Block;
@@ -122,14 +122,14 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
         .await
         .unwrap();
     assert_eq!(
-        host.inputs.lock().unwrap().iter().map(model_text).collect::<Vec<_>>(),
+        host.inputs.borrow_mut().iter().map(model_text).collect::<Vec<_>>(),
         [format!(
             "<system_notification plugin=\"host:jobs\">{id} exited 4.\nLog: {}\nhello</system_notification>",
             log.display()
         )]
     );
     assert_eq!(
-        host.inputs.lock().unwrap()[0].content(),
+        host.inputs.borrow_mut()[0].content(),
         [Block::user_text(format!("{id} exited 4"))]
     );
     // An ended job leaves the list: its report has told the model already.
@@ -144,12 +144,11 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     let folder = folder("a_background_start_fails_when_the_processes_start_no_jobs");
     let (runtime, _faults) = Runtime::start(options(
         &folder,
-        Arc::new(Processes::without_jobs(folder.join("processes"))),
+        Rc::new(Processes::without_jobs(folder.join("processes"))),
     ))
     .await
     .unwrap();
-    let (_runtime, host, tools) =
-        tools_in(runtime, Arc::new(TestHost::new(&folder)), &["yuke:internal/builtins"]).await;
+    let (_runtime, host, tools) = tools_in(runtime, Rc::new(TestHost::new(&folder)), &["yuke:internal/builtins"]).await;
 
     let error = error_of(&tools["exec"], r#"{"command": "touch started", "background": true}"#).await;
 
@@ -158,7 +157,7 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
         "This run ends with its turn, so it cannot start a background job. Run the command without background."
     );
     assert!(!folder.join("started").exists());
-    assert!(host.inputs.lock().unwrap().is_empty());
+    assert!(host.inputs.borrow_mut().is_empty());
     // A command in the foreground still runs.
     assert_eq!(
         text_of(&tools["exec"], r#"{"command": "echo ran"}"#).await,
@@ -183,8 +182,8 @@ async fn stop_of_an_unknown_id_names_the_running_jobs() {
 #[tokio::test(flavor = "local")]
 async fn a_background_job_with_a_timeout_ends_and_reports_it() {
     let folder = folder("a_background_job_with_a_timeout_ends_and_reports_it");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
     let started = text_of(
@@ -197,7 +196,7 @@ async fn a_background_job_with_a_timeout_ends_and_reports_it() {
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert!(
         texts[0].contains(&format!("{id} timed out after 200 ms.")),
         "{}",
@@ -205,24 +204,24 @@ async fn a_background_job_with_a_timeout_ends_and_reports_it() {
     );
     assert!(texts[0].contains("started"), "{}", texts[0]);
     assert_eq!(processes.jobs().running(host.session), []);
-    let changed = host.changed.lock().unwrap().clone();
+    let changed = host.changed.borrow_mut().clone();
     assert_eq!(changed.last().map(|job| job.state), Some(JobState::Ended));
     processes.shutdown().await.unwrap();
 }
 
 /// A runtime with `processes` and the built-in tools, for the session of `host`.
-async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<TestHost>) -> (Runtime, Tools) {
-    let started = Runtime::start(options(folder, Arc::clone(processes)));
+async fn runtime_with(folder: &Path, processes: &Rc<Processes>, host: &Rc<TestHost>) -> (Runtime, Tools) {
+    let started = Runtime::start(options(folder, Rc::clone(processes)));
     let (runtime, _faults) = tokio::time::timeout(WAIT, started).await.unwrap().unwrap();
-    let (runtime, _host, tools) = tools_in(runtime, Arc::clone(host), &["yuke:internal/builtins"]).await;
+    let (runtime, _host, tools) = tools_in(runtime, Rc::clone(host), &["yuke:internal/builtins"]).await;
     (runtime, tools)
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_process_job_outlives_a_reload_of_the_runtime() {
     let folder = folder("a_process_job_outlives_a_reload_of_the_runtime");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(
         &exec["exec"],
@@ -236,7 +235,7 @@ async fn a_process_job_outlives_a_reload_of_the_runtime() {
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert!(
         texts[0].contains(">job-") && texts[0].contains(" exited 0."),
@@ -249,8 +248,8 @@ async fn a_process_job_outlives_a_reload_of_the_runtime() {
 #[tokio::test(flavor = "local")]
 async fn a_shutdown_stops_each_job_without_a_report_and_removes_the_folder() {
     let folder = folder("a_shutdown_stops_each_job_without_a_report_and_removes_the_folder");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
     let had_log = folder.join("processes").exists();
@@ -260,15 +259,15 @@ async fn a_shutdown_stops_each_job_without_a_report_and_removes_the_folder() {
     assert!(had_log);
     assert!(!folder.join("processes").exists());
     // A shutdown stops each job, and a stopped job sends no report.
-    assert!(host.inputs.lock().unwrap().is_empty());
+    assert!(host.inputs.borrow_mut().is_empty());
 }
 
 // A job start after the shutdown fails, and it leaves no job and no folder.
 #[tokio::test(flavor = "local")]
 async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     let folder = folder("a_job_start_after_the_shutdown_fails_and_leaves_no_job");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     processes.shutdown().await.unwrap();
 
@@ -282,14 +281,14 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
 #[tokio::test(flavor = "local")]
 async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
     let folder = folder("closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let (first, second) = (Arc::new(TestHost::new(&folder)), Arc::new(TestHost::new(&folder)));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let (first, second) = (Rc::new(TestHost::new(&folder)), Rc::new(TestHost::new(&folder)));
     let (_first_runtime, first_exec) = runtime_with(&folder, &processes, &first).await;
     let (_second_runtime, second_exec) = runtime_with(&folder, &processes, &second).await;
     text_of(&first_exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
     let kept = job_id(&text_of(&second_exec["exec"], r#"{"command": "sleep 31", "background": true}"#).await);
 
-    first.closed.store(true, std::sync::atomic::Ordering::Relaxed);
+    first.closed.set(true);
     tokio::time::timeout(WAIT, processes.jobs().close_session(first.session))
         .await
         .unwrap();
@@ -305,17 +304,17 @@ async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
             .collect::<Vec<_>>(),
         [(kept.as_str(), "sleep 31")]
     );
-    assert!(first.inputs.lock().unwrap().is_empty());
+    assert!(first.inputs.borrow_mut().is_empty());
     processes.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     let folder = folder("a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let gate = Arc::new(tokio::sync::Notify::new());
-    let host = Arc::new(TestHost {
-        end_gate: Some(Arc::clone(&gate)),
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let gate = Rc::new(tokio::sync::Notify::new());
+    let host = Rc::new(TestHost {
+        end_gate: Some(Rc::clone(&gate)),
         ..TestHost::new(&folder)
     });
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
@@ -332,7 +331,7 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     gate.notify_one();
     tokio::time::timeout(WAIT, shutdown).await.unwrap().unwrap();
 
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert_eq!(texts.len(), 1);
     assert!(texts[0].ends_with("\nhello</system_notification>"), "{}", texts[0]);
 }
@@ -340,8 +339,8 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
 #[tokio::test(flavor = "local")]
 async fn a_dropped_processes_kills_its_jobs_without_a_report() {
     let folder = folder("a_dropped_processes_kills_its_jobs_without_a_report");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let pid_file = folder.join("pid");
     // The rename writes the whole process id at once, so the read never sees a part of it.
@@ -367,8 +366,8 @@ async fn a_dropped_processes_kills_its_jobs_without_a_report() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     tokio::time::timeout(WAIT, host.job_ended.notified()).await.unwrap();
-    assert_eq!(host.changed.lock().unwrap().last().unwrap().state, JobState::Stopped);
-    assert!(host.inputs.lock().unwrap().is_empty());
+    assert_eq!(host.changed.borrow_mut().last().unwrap().state, JobState::Stopped);
+    assert!(host.inputs.borrow_mut().is_empty());
 }
 
 #[tokio::test(flavor = "local")]
@@ -442,8 +441,8 @@ async fn the_native_module_declares_the_names_that_it_exports() {
 #[tokio::test(flavor = "local")]
 async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let folder = folder("the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let start = |command: &'static str| {
         let exec = &exec["exec"];
@@ -454,13 +453,13 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     };
     let ended = start("exit 3").await;
     tokio::time::timeout(WAIT, host.job_ended.notified()).await.unwrap();
-    assert_eq!(host.changed.lock().unwrap().len(), 2);
+    assert_eq!(host.changed.borrow_mut().len(), 2);
     let stopped = start("exec sleep 30").await;
     let first_closed = start("exec sleep 31").await;
     let second_closed = start("exec sleep 32").await;
 
     let answered = processes.jobs().stop(host.session, &stopped).await;
-    let changed_at_answer = host.changed.lock().unwrap().len();
+    let changed_at_answer = host.changed.borrow_mut().len();
     processes.jobs().close_session(host.session).await;
 
     assert!(answered);
@@ -476,7 +475,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
             exit_code,
         },
     };
-    let changed = host.changed.lock().unwrap().clone();
+    let changed = host.changed.borrow_mut().clone();
     assert_eq!(
         changed[..6],
         [
@@ -501,14 +500,14 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    assert_eq!(host.inputs.lock().unwrap().len(), 1);
+    assert_eq!(host.inputs.borrow_mut().len(), 1);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
     let folder = folder("a_job_that_a_signal_ends_names_the_signal_in_its_report");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
     text_of(&exec["exec"], r#"{"command": "kill -TERM $$", "background": true}"#).await;
@@ -516,7 +515,7 @@ async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert!(texts[0].contains(" signal 15."), "{}", texts[0]);
     processes.shutdown().await.unwrap();
 }
@@ -524,8 +523,8 @@ async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
 #[tokio::test(flavor = "local")]
 async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters() {
     let folder = folder("a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let label = |command: String| {
         let exec = &exec["exec"];
@@ -575,8 +574,8 @@ async fn moved_text(
 #[tokio::test(flavor = "local")]
 async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_end() {
     let folder = folder("a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_end");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
     let arguments = r#"{"command": "echo before; touch ready; sleep 0.3; echo after; exit 3"}"#;
@@ -595,7 +594,7 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert!(texts[0].contains(&format!("{id} exited 3.")), "{}", texts[0]);
     assert!(texts[0].contains("before\nafter"), "{}", texts[0]);
     assert_eq!(processes.jobs().running(host.session), []);
@@ -605,8 +604,8 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
 #[tokio::test(flavor = "local")]
 async fn a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_report() {
     let folder = folder("a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_report");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let arguments = r#"{"command": "touch ready; exec sleep 30", "timeout_ms": 400}"#;
     let text = moved_text(&processes, &exec["exec"], &host, &folder, arguments).await;
@@ -620,15 +619,15 @@ async fn a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_repor
 
     assert_eq!(after_the_timeout, 1);
     assert!(stopped);
-    assert!(host.inputs.lock().unwrap().is_empty());
+    assert!(host.inputs.borrow_mut().is_empty());
     processes.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_call() {
     let folder = folder("a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_call");
-    let processes = Arc::new(Processes::without_jobs(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::without_jobs(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let arguments = r#"{"command": "touch ready; while [ ! -e go ]; do sleep 0.01; done; echo done"}"#;
     let answer = text_of(&exec["exec"], arguments);
@@ -654,8 +653,8 @@ async fn a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_cal
 #[tokio::test(flavor = "local")]
 async fn a_shutdown_stops_a_command_that_its_call_waits_for() {
     let folder = folder("a_shutdown_stops_a_command_that_its_call_waits_for");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let answer = text_of(&exec["exec"], r#"{"command": "touch ready; exec sleep 30"}"#);
     let mut answer = std::pin::pin!(answer);
@@ -679,7 +678,7 @@ async fn a_shutdown_stops_a_command_that_its_call_waits_for() {
 async fn a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends() {
     let folder = folder("a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends");
     let processes = Processes::new(folder.join("processes"));
-    let host = Arc::new(TestHost::new(&folder));
+    let host = Rc::new(TestHost::new(&folder));
     let pid_file = folder.join("pid");
     let (chunks, _texts) = tokio::sync::mpsc::unbounded_channel();
     let running = processes.run(
@@ -725,8 +724,8 @@ async fn a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends() {
 #[tokio::test(flavor = "local")]
 async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
     let folder = folder("the_report_of_a_job_holds_the_end_of_a_large_output");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
+    let processes = Rc::new(Processes::new(folder.join("processes")));
+    let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
     text_of(&exec["exec"], r#"{"command": "seq 1 200000", "background": true}"#).await;
@@ -734,7 +733,7 @@ async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
     tokio::time::timeout(WAIT, host.input_received.notified())
         .await
         .unwrap();
-    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
+    let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert!(
         texts[0].ends_with("\n200000\n</system_notification>") || texts[0].ends_with("\n200000</system_notification>"),
         "{}",
@@ -755,7 +754,7 @@ async fn a_dropped_command_stops_its_process() {
             timeout: Duration::from_secs(10),
             max_bytes: 1024,
             stop: CancellationToken::new(),
-            owner: Arc::new(TestHost::new(&folder)),
+            owner: Rc::new(TestHost::new(&folder)),
         },
         chunks,
     );

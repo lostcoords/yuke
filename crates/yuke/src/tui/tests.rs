@@ -1,6 +1,7 @@
 //! The interface host on a test display: notices in the core, the chat pane, and `/reload` with its snapshot.
 
 use std::io::Write;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -126,8 +127,8 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
         ..place.machine(Box::new(with_key), Box::new(ScriptedTransport::new([])))
     };
     let store = crate::app::open_store(&place.paths.data).await.unwrap();
-    let observer = Arc::new(Notices(Arc::clone(display)));
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Arc::new(crate::app::TokioTimer))
+    let observer = Rc::new(Notices(Arc::clone(display)));
+    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Rc::new(crate::app::TokioTimer))
         .await
         .unwrap();
     app.show(None);
