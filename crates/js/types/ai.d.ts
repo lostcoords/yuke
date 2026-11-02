@@ -60,7 +60,7 @@ declare module "yuke:ai" {
    * the endpoint, and so does `null`.
    */
   export interface GenerateTextOptions {
-    /** The model of the request. `s.model` names the model of the session. */
+    /** The model of the request. `s.settings.model` names the model of the session. */
     model: ModelReference;
     /** The system prompt. Empty or missing instructions send no system prompt. */
     instructions?: string | undefined;

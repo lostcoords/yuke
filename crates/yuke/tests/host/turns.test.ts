@@ -271,7 +271,7 @@ test("a plugin summarizes the context with the model of the session and replaces
       if (event.blocks < 3) return undefined;
       const instructions = "Summarize the conversation.";
       const answer = await generateText({
-        model: s.model,
+        model: s.settings.model,
         instructions,
         prompt: event.context(),
         abortSignal: event.signal,

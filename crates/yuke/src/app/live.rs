@@ -1145,8 +1145,8 @@ impl SessionHost for Host {
         Ok(model_of(reference, &self.shared)?)
     }
 
-    fn model_reference(&self) -> ModelReference {
-        self.settings.borrow().model.clone()
+    fn settings(&self) -> SessionSettings {
+        self.settings.borrow().clone()
     }
 }
 
@@ -1607,10 +1607,10 @@ mod tests {
     }
 
     #[tokio::test(flavor = "local")]
-    async fn after_new_settings_the_host_names_their_model_and_folder_before_any_turn() {
+    async fn after_new_settings_the_host_gives_them_and_their_folder_before_any_turn() {
         let place = Place::new(
             "live",
-            "after_new_settings_the_host_names_their_model_and_folder_before_any_turn",
+            "after_new_settings_the_host_gives_them_and_their_folder_before_any_turn",
         );
         let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
         let store = open_store(&place.paths.data).await.unwrap();
@@ -1634,22 +1634,22 @@ mod tests {
         let id = app.sessions().create(first.clone(), None).await.unwrap();
         let other = place.work.join("other");
         std::fs::create_dir(&other).unwrap();
-        let model = ModelReference {
-            provider: "minimax".to_owned(),
-            model: "MiniMax-M3.1-Flash".to_owned(),
-        };
-        let changed = SessionSettings {
-            model: model.clone(),
+        let mut changed = SessionSettings {
+            model: ModelReference {
+                provider: "minimax".to_owned(),
+                model: "MiniMax-M3.1-Flash".to_owned(),
+            },
             cwd: other.clone(),
             ..first
         };
+        changed.settings.reasoning.effort = Some(yuke_ai::Effort::High);
 
-        app.sessions().set_settings(id, changed).await.unwrap();
+        app.sessions().set_settings(id, changed.clone()).await.unwrap();
         let live = app.sessions().live(id).unwrap();
-        let named = (live.parts.host.model_reference(), live.parts.host.folder());
+        let named = (live.parts.host.settings(), live.parts.host.folder());
         drop(live);
         app.shutdown().await;
 
-        assert_eq!(named, (model, other));
+        assert_eq!(named, (changed, other));
     }
 }

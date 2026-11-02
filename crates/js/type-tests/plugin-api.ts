@@ -258,11 +258,11 @@ void sockets;
 async function models(): Promise<void> {
   const { generateText } = await import("yuke:ai");
   const prompt: Block[] = [{ user_text: "Hi." }];
-  const answer = await generateText({ model: s.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
-  await generateText({ model: s.model, instructions: "Be brief.", prompt: "Hi." });
-  await generateText({ model: s.model, prompt: "Hi.", reasoning: { effort: "high" } });
+  const answer = await generateText({ model: s.settings.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
+  await generateText({ model: s.settings.model, instructions: "Be brief.", prompt: "Hi." });
+  await generateText({ model: s.settings.model, prompt: "Hi.", reasoning: { effort: "high" } });
   await generateText({
-    model: s.model,
+    model: s.settings.model,
     prompt: "Describe.",
     attachments: [
       { mimeType: "image/png", bytes: new Uint8Array() },
@@ -270,14 +270,14 @@ async function models(): Promise<void> {
     ],
   });
   // @ts-expect-error: an attachment holds bytes or a path.
-  await generateText({ model: s.model, prompt: "Describe.", attachments: [{ mimeType: "image/png" }] });
+  await generateText({ model: s.settings.model, prompt: "Describe.", attachments: [{ mimeType: "image/png" }] });
   const text: string = answer.text;
   assert<Equal<typeof answer.finishReason, FinishReason>>();
   const input: number | null = answer.usage.input;
   // @ts-expect-error: a request names its model.
   await generateText({ prompt });
   // @ts-expect-error: a setting has its type.
-  await generateText({ model: s.model, prompt, temperature: "hot" });
+  await generateText({ model: s.settings.model, prompt, temperature: "hot" });
   assert<Equal<typeof answer.output, undefined>>();
   const { Output, NoObjectGeneratedError } = await import("yuke:ai");
   const schema = {
@@ -285,18 +285,18 @@ async function models(): Promise<void> {
     properties: { summary: { type: "string" }, count: { type: "integer" } },
     required: ["summary"],
   } as const;
-  const shaped = await generateText({ model: s.model, prompt, output: Output.object({ schema }) });
+  const shaped = await generateText({ model: s.settings.model, prompt, output: Output.object({ schema }) });
   assert<Equal<typeof shaped.output, { summary: string; count?: number }>>();
   // Options of the wide type can hold an output, so the checked object has no known type.
-  const wide: GenerateTextOptions = { model: s.model, prompt, output: Output.object({ schema }) };
+  const wide: GenerateTextOptions = { model: s.settings.model, prompt, output: Output.object({ schema }) };
   const unknownOutput = await generateText(wide);
   assert<Equal<typeof unknownOutput.output, unknown>>();
   // @ts-expect-error: an output schema is an object schema.
   Output.object({ schema: { type: "string" } });
   // @ts-expect-error: only `Output.object` gives the type of `output`.
-  await generateText<{ summary: string }>({ model: s.model, prompt });
+  await generateText<{ summary: string }>({ model: s.settings.model, prompt });
   // @ts-expect-error: only `Output.object` makes an output.
-  await generateText({ model: s.model, prompt, output: { schema, name: "response" } });
+  await generateText({ model: s.settings.model, prompt, output: { schema, name: "response" } });
   const failure: unknown = undefined;
   if (failure instanceof NoObjectGeneratedError) {
     const kept: string = failure.text;

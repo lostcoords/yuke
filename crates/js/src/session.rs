@@ -67,7 +67,7 @@ impl Handle {
         let job_host = Rc::clone(&host);
         let ask_host = Rc::clone(&host);
         let request_host = Rc::clone(&host);
-        let model_host = Rc::clone(&host);
+        let settings_host = Rc::clone(&host);
         let open = self
             .access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
@@ -81,10 +81,7 @@ impl Handle {
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
                     request: caught(&ctx, request_function(&ctx, request_host))?,
-                    model: caught(
-                        &ctx,
-                        Function::new(ctx.clone(), move || Json(model_host.model_reference())),
-                    )?,
+                    settings: caught(&ctx, Function::new(ctx.clone(), move || Json(settings_host.settings())))?,
                 };
                 if let Err(error) = caught(&ctx, open_session.call::<_, ()>((request,))) {
                     registry.close(open);
@@ -486,8 +483,8 @@ struct OpenRequest<'js> {
     ask: Function<'js>,
     /// The native `request(source, request, data)` of the session.
     request: Function<'js>,
-    /// The native `model()` of the session, which gives the model that the settings name now.
-    model: Function<'js>,
+    /// The native `settings()` of the session, which gives the settings of the session now.
+    settings: Function<'js>,
 }
 
 /// The native `startJob(plugin, id, label, inCall)` of the session of `host`. It answers `stopped` and `moved`, promises that

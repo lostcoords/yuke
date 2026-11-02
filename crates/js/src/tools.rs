@@ -84,8 +84,8 @@ pub trait SessionHost: MediaStore {
         reference: &yuke_protocol::ModelReference,
     ) -> Result<yuke_engine::Model, Box<dyn std::error::Error + Send + Sync>>;
 
-    /// The model that the session settings name now. A saved change of the settings takes effect at once.
-    fn model_reference(&self) -> yuke_protocol::ModelReference;
+    /// The settings of the session now. A saved change of the settings takes effect at once.
+    fn settings(&self) -> yuke_protocol::SessionSettings;
 }
 
 /// Why a request of a plugin to the client failed.

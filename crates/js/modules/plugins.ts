@@ -795,8 +795,8 @@ export interface SessionContext<O = Record<string, never>> {
   readonly parent: string | undefined;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
   readonly folder: string;
-  /** The model of the session now. A change of the settings changes it at once. */
-  readonly model: ModelReference;
+  /** A frozen copy of the settings of the session now. Each read gives a new copy. */
+  readonly settings: Frozen<SessionSettings>;
   /** The options of the plugin. They are the same object as `options` of `PluginContext`. */
   readonly options: Frozen<O>;
   /** The host aborts this signal when the session closes or `session` of this plugin fails. The plugin then stops. */

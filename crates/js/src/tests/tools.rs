@@ -50,8 +50,8 @@ pub(super) struct TestHost {
     pub(super) end_gate: Option<Rc<tokio::sync::Notify>>,
     /// Each input that the plugins and the jobs gave the session, in order.
     pub(super) inputs: RefCell<Vec<yuke_protocol::Input>>,
-    /// The model of the session. A test can change it.
-    pub(super) model: RefCell<yuke_protocol::ModelReference>,
+    /// The settings of the session. A test can change them.
+    pub(super) settings: RefCell<yuke_protocol::SessionSettings>,
     pub(super) failure: Option<Arc<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -68,9 +68,13 @@ impl TestHost {
             input_received: tokio::sync::Notify::new(),
             end_gate: None,
             inputs: RefCell::default(),
-            model: RefCell::new(yuke_protocol::ModelReference {
-                provider: "test".to_owned(),
-                model: "test-model".to_owned(),
+            settings: RefCell::new(yuke_protocol::SessionSettings {
+                model: yuke_protocol::ModelReference {
+                    provider: "test".to_owned(),
+                    model: "test-model".to_owned(),
+                },
+                settings: yuke_ai::Settings::new(),
+                cwd: folder.to_owned(),
             }),
             failure: None,
         }
@@ -158,8 +162,8 @@ impl SessionHost for TestHost {
         }))
     }
 
-    fn model_reference(&self) -> yuke_protocol::ModelReference {
-        self.model.borrow_mut().clone()
+    fn settings(&self) -> yuke_protocol::SessionSettings {
+        self.settings.borrow().clone()
     }
 }
 

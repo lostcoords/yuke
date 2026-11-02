@@ -34,7 +34,7 @@ import type {
   ToolCallResult,
 } from "yuke:plugins";
 import { ExtensionRequestError } from "yuke:plugins";
-import type { Block, ExtensionRequestParams, ModelReference, QuestionAnswer } from "yuke:protocol";
+import type { Block, ExtensionRequestParams, QuestionAnswer, SessionSettings } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The handlers of each hook point, in the order of their addition. Each point of `SessionHooks` is a key. */
@@ -119,8 +119,8 @@ interface OpenRequest {
   readonly folder: string;
   readonly ask: Ask;
   readonly request: SendRequest;
-  /** The model that the settings of the session name now. */
-  readonly model: () => ModelReference;
+  /** The settings of the session now. */
+  readonly settings: () => SessionSettings;
   readonly startJob: StartJob;
 }
 
@@ -129,9 +129,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, parent, folder, ask, model, startJob } = request;
+  const { open, sessionId, parent, folder, ask, settings, startJob } = request;
   const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, parent, folder, ask, request.request, model, startJob, entry),
+    start(open, sessionId, parent, folder, ask, request.request, settings, startJob, entry),
   );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -613,7 +613,7 @@ function start(
   folder: string,
   ask: Ask,
   send: SendRequest,
-  model: () => ModelReference,
+  settings: () => SessionSettings,
   startJob: StartJob,
   entry: (typeof sessionExports)[number],
 ): Scope {
@@ -707,8 +707,8 @@ function start(
     sessionId,
     parent,
     folder,
-    get model(): ModelReference {
-      return Object.freeze(model());
+    get settings(): SessionSettings {
+      return frozen(settings());
     },
     options,
     signal,

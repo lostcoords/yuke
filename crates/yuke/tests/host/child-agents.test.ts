@@ -1,14 +1,13 @@
 // The whole flow of a child agent: the smallest plugin that uses `parent` and `context.jobs` together.
 
 import type { PluginApply, PluginSession, QuestionAnswer, Sessions } from "yuke:plugins";
-import type { SessionSettings } from "yuke:protocol";
 import { createHost, equal, type Reply, reply, settled, test } from "yuke:test";
 
 /** The plugin. Its tool `spawn_subagent` runs the one child of a session as the job `explorer`. */
 function agents() {
   let sessions: Sessions | undefined;
   const opening = Promise.withResolvers<void>();
-  const state: { settings?: SessionSettings; child?: string; gate: Promise<void>; open: () => void } = {
+  const state: { child?: string; gate: Promise<void>; open: () => void } = {
     gate: opening.promise,
     open: opening.resolve,
   };
@@ -54,7 +53,7 @@ function agents() {
         const job = { id: "explorer", label: args.message, background: args.background };
         const outcome = await context.jobs.run(job, async (signal) => {
           const list = sessions as Sessions;
-          state.child ??= await list.create(state.settings as SessionSettings, { parent: s.sessionId });
+          state.child ??= await list.create(s.settings, { parent: s.sessionId });
           const child = state.child;
           const ended = new AbortController();
           const handle = await list.open(child, {
@@ -98,7 +97,6 @@ async function opened(replies: readonly Reply[], answer?: () => QuestionAnswer[]
     ...(answer === undefined ? {} : { answer }),
   });
   const parent = await host.openSession();
-  plugin.state.settings = parent.settings;
   return { host, parent, ...plugin };
 }
 

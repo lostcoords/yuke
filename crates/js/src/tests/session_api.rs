@@ -129,8 +129,8 @@ impl crate::SessionHost for Scripted {
     fn model(&self, _: &ModelReference) -> Result<yuke_engine::Model, SessionsError> {
         Err("unused".into())
     }
-    fn model_reference(&self) -> ModelReference {
-        settings().model
+    fn settings(&self) -> SessionSettings {
+        settings()
     }
 }
 

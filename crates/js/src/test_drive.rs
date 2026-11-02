@@ -303,7 +303,7 @@ struct OwnedRound {
 impl OwnedRound {
     /// The round of `event`. The model of the round is the model of the session of `script`, as in a turn.
     fn of(script: &ScriptSession, event: EventRound) -> Result<Self, TestError> {
-        let mut model = script.host.model(&script.host.model_reference())?;
+        let mut model = script.host.model(&script.host.settings().model)?;
         if let Some(window) = event.window {
             model.context_window = window;
         }

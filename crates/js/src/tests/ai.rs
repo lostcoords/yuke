@@ -366,10 +366,10 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn s_model_names_the_model_of_the_session_now() {
-    let folder = folder("s_model_names_the_model_of_the_session_now");
+async fn s_settings_gives_the_settings_of_the_session_now_frozen() {
+    let folder = folder("s_settings_gives_the_settings_of_the_session_now_frozen");
     let models = Rc::new(Recorded::default());
-    let runtime = runtime_with("s_model_names_the_model_of_the_session_now", &models).await;
+    let runtime = runtime_with("s_settings_gives_the_settings_of_the_session_now_frozen", &models).await;
     write(
         &folder,
         &[("entry.ts", "export function session(s) { globalThis.s = s; }")],
@@ -378,19 +378,38 @@ async fn s_model_names_the_model_of_the_session_now() {
     let host = Rc::new(TestHost::new(&folder));
     let _tools = Tools::open(&runtime, Rc::clone(&host) as Rc<dyn SessionHost>).await;
 
-    let first = evaluate::<String>(&runtime, "return JSON.stringify(s.model);")
+    let first = evaluate::<String>(&runtime, "return JSON.stringify(s.settings.model);")
         .await
         .unwrap();
-    *host.model.borrow_mut() = reference("test", "other-model");
+    {
+        let mut settings = host.settings.borrow_mut();
+        settings.model = reference("test", "other-model");
+        settings.settings.reasoning.effort = Some(Effort::High);
+    }
     let second = evaluate::<Vec<String>>(
         &runtime,
-        "return [JSON.stringify(s.model), String(Object.isFrozen(s.model))];",
+        "return [
+           JSON.stringify(s.settings.model),
+           s.settings.settings.reasoning.effort,
+           s.settings.cwd === s.folder,
+           Object.isFrozen(s.settings),
+           Object.isFrozen(s.settings.settings.reasoning),
+         ].map(String);",
     )
     .await
     .unwrap();
 
     assert_eq!(first, r#"{"provider":"test","model":"test-model"}"#);
-    assert_eq!(second, [r#"{"provider":"test","model":"other-model"}"#, "true"]);
+    assert_eq!(
+        second,
+        [
+            r#"{"provider":"test","model":"other-model"}"#,
+            "high",
+            "true",
+            "true",
+            "true"
+        ]
+    );
 }
 
 /// The JavaScript that defines `shape`, an output for an object with a required `summary` and an optional `count` of at
