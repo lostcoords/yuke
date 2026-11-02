@@ -11,10 +11,8 @@ use yuke_protocol::{
 };
 
 use super::lock::Lock;
-use super::{git, git_folder, manifest_plugin, repository_key};
-use crate::config::{
-    Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, without_comments, write_text,
-};
+use super::{git, git_folder, manifest_plugin, read_manifest, repository_key};
+use crate::config::{Config, Source, add_plugin_item, git_source, read_json, remove_plugin_item, write_text};
 use crate::paths::Paths;
 
 /// The plugins of `config.json`, with the state of each one. A plugin is loaded when `loaded` has its name. It uses no
@@ -75,9 +73,7 @@ pub(crate) async fn add(
         .await
         .map_err(fail)?;
     install(paths, &source, &commit).await.map_err(fail)?;
-    let name = manifest_plugin(&root(paths, &source, &commit), &paths.data, Map::new())
-        .map_err(fail)?
-        .name;
+    let name = read_manifest(&root(paths, &source, &commit)).map_err(fail)?.name;
     // The loader refuses two plugins of one name, so a clash would stop the next reload.
     let lock = Lock::read_for(&paths.config, &config)?;
     if config
@@ -104,16 +100,9 @@ pub(crate) async fn add(
         Err(error) if error.kind() == io::ErrorKind::NotFound => format!("{{\n  \"plugins\": [{item}]\n}}\n"),
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
-    // The edit works on the text, so its result is read again before it replaces the file of the user.
-    let edited: Config = serde_json::from_str(&without_comments(&text))
-        .map_err(|error| format!("{}: the edit gives no valid config: {error}", path.display()))?;
-    if !git_sources(&edited).contains(&&source) {
-        return Err(format!("{}: the edit did not add the plugin", path.display()));
-    }
-    // The lock reads before the write of `config.json`, so a bad lock changes no file. It keeps only the plugins of
-    // the new config.
+    // Read the lock before the config write, so a bad lock changes no file.
     let mut lock = Lock::read(&paths.config)?;
-    let sources = git_sources(&edited);
+    let sources = git_sources(&config);
     lock.commits.retain(|locked, _| sources.contains(&locked));
     lock.commits.insert(source.clone(), commit.clone());
     write_text(&path, &text)?;
@@ -154,9 +143,7 @@ fn name_of(paths: &Paths, lock: &Lock, source: &Source) -> Option<String> {
         Source::Folder(folder) => paths.config.join(folder),
         Source::Git(source) => root(paths, source, lock.commits.get(source)?),
     };
-    manifest_plugin(&root, &paths.data, Map::new())
-        .ok()
-        .map(|plugin| plugin.name)
+    read_manifest(&root).ok().map(|manifest| manifest.name)
 }
 
 /// Install the commit of `plugins.lock` of each Git plugin, and lock each new Git plugin at the commit of its ref. The
@@ -218,9 +205,9 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
             .get(source)
             .ok_or_else(|| fail("plugins.lock has no commit for this plugin: run `yuke plugin sync`".to_owned()));
         let named = named.and_then(|old| {
-            let plugin = manifest_plugin(&root(paths, source, old), &paths.data, Map::new())
+            let manifest = read_manifest(&root(paths, source, old))
                 .map_err(|error| fail(format!("{error}: run `yuke plugin sync`")))?;
-            Ok((old, plugin.name))
+            Ok((old, manifest.name))
         });
         match (named, target) {
             (Ok((old, name)), _) => targets.push((source, old, name)),
@@ -309,6 +296,7 @@ async fn install(paths: &Paths, source: &PluginSource, commit: &str) -> Result<(
         }
         fs::create_dir_all(&staging).map_err(fail)?;
         git::export(&cache, commit, &staging).await?;
+        // An install checks the whole manifest, so a plugin that cannot load fails here and not at the next reload.
         manifest_plugin(
             &staging.join(source.folder.as_deref().unwrap_or_default()),
             &paths.data,

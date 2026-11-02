@@ -402,7 +402,7 @@ fn load_items(root: &Path, items: Vec<ConfigPlugin>) -> Result<Vec<Plugin>, Stri
 
 /// Write `plugins.lock` of `root` with the entries `entries`.
 fn write_lock(root: &Path, entries: &Value) {
-    let text = json!({ "version": 1, "plugins": entries }).to_string();
+    let text = json!({ "plugins": entries }).to_string();
     std::fs::write(root.join("config/plugins.lock"), text).unwrap();
 }
 
@@ -466,21 +466,15 @@ fn a_git_plugin_whose_commit_is_not_installed_stops_the_start() {
 }
 
 #[test]
-fn a_lock_of_another_version_or_with_a_short_commit_fails_a_list_with_a_git_plugin() {
+fn a_lock_with_a_short_commit_fails_a_list_with_a_git_plugin() {
     let root = place("git_bad_lock");
     let lock = root.join("config/plugins.lock");
     write_plugin(&root, "config/local", &manifest("local", &json!({})));
 
-    std::fs::write(&lock, json!({ "version": 2, "plugins": [] }).to_string()).unwrap();
-    let version = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
-    let local = load(&root, &["local"]);
     write_lock(&root, &json!([{ "git": URL, "commit": "3f9c1a2" }]));
+    let local = load(&root, &["local"]);
     let short = load_items(&root, vec![git(URL, "clock", None)]).unwrap_err();
 
-    assert_eq!(
-        version,
-        format!("{}: this yuke reads version 1, not version 2", lock.display())
-    );
     // A list of local plugins does not read the lock.
     assert_eq!(local.map(|plugins| plugins.len()), Ok(1));
     assert_eq!(short, format!("{}: '3f9c1a2' is not a full commit id", lock.display()));

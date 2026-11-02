@@ -180,8 +180,7 @@ async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     let url = clock(&root, None).git;
     write_config(&paths, &json!([{ "git": url, "folder": "plugins/clock" }]));
     // A lock that the user formats by hand differs from the text that a write gives.
-    let text =
-        json!({ "version": 1, "plugins": [{ "git": url, "folder": "plugins/clock", "commit": first }] }).to_string();
+    let text = json!({ "plugins": [{ "git": url, "folder": "plugins/clock", "commit": first }] }).to_string();
     fs::write(paths.config.join("plugins.lock"), &text).unwrap();
 
     let SyncPluginsResult {
@@ -317,5 +316,40 @@ async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves
     assert_eq!(
         fs::read_to_string(paths.config.join("config.json")).unwrap(),
         r#"{ "plugins": ["./clock"] }"#
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
+    let (_, paths) = place("invalid_entry");
+    fs::create_dir_all(paths.config.join("clock")).unwrap();
+    fs::write(
+        paths.config.join("clock/plugin.json"),
+        json!({ "name": "clock", "extensions": { "sh.yuke": { "entry": "main.txt" } } }).to_string(),
+    )
+    .unwrap();
+    write_config(&paths, &json!(["./clock"]));
+    let config = read_config(&paths).unwrap();
+    let error = super::super::plugins(&paths.config, &config, &paths.data).unwrap_err();
+
+    let listed = list(&paths, &[]).unwrap();
+    remove(&paths, "clock").await.unwrap();
+
+    assert_eq!(
+        error,
+        "plugin folder ./clock: entry: 'main.txt' is not a .ts or a .js file"
+    );
+    assert_eq!(
+        listed,
+        [ManagedPlugin {
+            item: "./clock".to_owned(),
+            name: Some("clock".to_owned()),
+            loaded: false,
+            state: PluginState::Local,
+        }]
+    );
+    assert_eq!(
+        fs::read_to_string(paths.config.join("config.json")).unwrap(),
+        r#"{"plugins":[]}"#
     );
 }

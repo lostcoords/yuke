@@ -277,11 +277,18 @@ pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
     Ok(order)
 }
 
-/// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.
-pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
+/// Read the manifest of `root` and check its name.
+fn read_manifest(root: &Path) -> Result<Manifest, String> {
     let path = root.join(MANIFEST);
     let manifest: Manifest = read_json(&path)?.ok_or_else(|| format!("{}: the file does not exist", path.display()))?;
     valid_name(&manifest.name)?;
+    Ok(manifest)
+}
+
+/// The plugin of the folder `root`, from its manifest, with the `options` of `config.json`.
+pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Value>) -> Result<Plugin, String> {
+    let manifest = read_manifest(root)?;
+    let path = root.join(MANIFEST);
     let fields: YukeFields = match manifest.extensions.get(EXTENSION) {
         Some(value) => YukeFields::deserialize(value)
             .map_err(|error| format!("{}: extensions.\"{EXTENSION}\": {error}", path.display()))?,

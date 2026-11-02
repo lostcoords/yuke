@@ -14,9 +14,6 @@ use crate::config::{Config, Source, git_source, read_json, write_text};
 /// The name of the lock file in the config folder.
 pub(crate) const LOCK: &str = "plugins.lock";
 
-/// The version of the lock file that this yuke reads and writes.
-const VERSION: u32 = 1;
-
 /// The commits of `plugins.lock`, by source.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Lock {
@@ -26,7 +23,6 @@ pub(crate) struct Lock {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileText {
-    version: u32,
     plugins: Vec<Entry>,
 }
 
@@ -46,20 +42,13 @@ impl Lock {
     ///
     /// # Errors
     ///
-    /// Returns a text that names the file, for an unreadable file, another version, a bad folder, or a commit that is not
-    /// a full commit id.
+    /// Returns a text that names the file for an unreadable file, a bad source, or a commit that is not a full commit id.
     pub(crate) fn read(config_folder: &Path) -> Result<Self, String> {
         let path = config_folder.join(LOCK);
         let Some(file) = read_json::<FileText>(&path)? else {
             return Ok(Self::default());
         };
         let fail = |message: String| format!("{}: {message}", path.display());
-        if file.version != VERSION {
-            return Err(fail(format!(
-                "this yuke reads version {VERSION}, not version {}",
-                file.version
-            )));
-        }
         let mut commits = HashMap::with_capacity(file.plugins.len());
         for entry in file.plugins {
             // A commit id is a folder name of the install.
@@ -100,7 +89,6 @@ impl Lock {
         let mut entries: Vec<(&PluginSource, &String)> = self.commits.iter().collect();
         entries.sort();
         let file = FileText {
-            version: VERSION,
             plugins: entries
                 .into_iter()
                 .map(|(source, commit)| Entry {
