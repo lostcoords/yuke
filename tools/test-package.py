@@ -60,7 +60,7 @@ class PackageTests(unittest.TestCase):
         self.environment["XDG_CONFIG_HOME"] = str(self.home / ".config")
         self.environment["XDG_DATA_HOME"] = str(self.home / ".local/share")
         self.environment["XDG_CACHE_HOME"] = str(self.home / ".cache")
-        self.profile = self.home / ".config/yuke-rs"
+        self.profile = self.home / ".config/yuke"
         self.binary = self.home / ".local/bin/yuke"
         self.library = self.home / ".local/lib/yuke"
 
@@ -242,8 +242,8 @@ if ("result" in response) {
     def test_upgrade_preserves_user_configuration_skills_and_shell_files(self):
         self.seed_installation()
         files = {
-            ".config/yuke-rs/config.json": '{"model":"user/model"}\n',
-            ".config/yuke-rs/tsconfig.json": '{"compilerOptions":{"strict":true}}\n',
+            ".config/yuke/config.json": '{"model":"user/model"}\n',
+            ".config/yuke/tsconfig.json": '{"compilerOptions":{"strict":true}}\n',
             ".agents/skills/unrelated/SKILL.md": "user skill\n",
             ".bashrc": "user shell settings\n",
         }

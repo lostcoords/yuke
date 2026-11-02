@@ -3,8 +3,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// The folder name under each root. It is not `yuke`, because an older program keeps its sessions there.
-const APP_NAME: &str = "yuke-rs";
+/// The folder name under each root.
+const APP_NAME: &str = "yuke";
 
 /// The variable that replaces the folder name, so a second profile lives beside the first.
 const APP_NAME_VARIABLE: &str = "YUKE_APPNAME";
@@ -69,9 +69,9 @@ mod tests {
         assert_eq!(
             paths(&[], Some("/home/me")),
             Ok(Paths {
-                config: PathBuf::from("/home/me/.config/yuke-rs"),
-                data: PathBuf::from("/home/me/.local/share/yuke-rs"),
-                cache: PathBuf::from("/home/me/.cache/yuke-rs"),
+                config: PathBuf::from("/home/me/.config/yuke"),
+                data: PathBuf::from("/home/me/.local/share/yuke"),
+                cache: PathBuf::from("/home/me/.cache/yuke"),
             })
         );
     }
@@ -88,9 +88,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(rooted.config, PathBuf::from("/config/yuke-rs"));
-        assert_eq!(rooted.data, PathBuf::from("/home/me/.local/share/yuke-rs"));
-        assert_eq!(rooted.cache, PathBuf::from("/home/me/.cache/yuke-rs"));
+        assert_eq!(rooted.config, PathBuf::from("/config/yuke"));
+        assert_eq!(rooted.data, PathBuf::from("/home/me/.local/share/yuke"));
+        assert_eq!(rooted.cache, PathBuf::from("/home/me/.cache/yuke"));
     }
 
     #[test]
@@ -101,7 +101,7 @@ mod tests {
         assert_eq!(named.config, PathBuf::from("/home/me/.config/work"));
         assert_eq!(named.data, PathBuf::from("/home/me/.local/share/work"));
         assert_eq!(named.cache, PathBuf::from("/home/me/.cache/work"));
-        assert_eq!(empty.data, PathBuf::from("/home/me/.local/share/yuke-rs"));
+        assert_eq!(empty.data, PathBuf::from("/home/me/.local/share/yuke"));
     }
 
     #[test]

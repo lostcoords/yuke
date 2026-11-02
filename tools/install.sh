@@ -82,7 +82,7 @@ configure_editor() {
   local root name profile link
   root="${XDG_CONFIG_HOME:-}"
   case "${root}" in /*) ;; *) root="${HOME}/.config" ;; esac
-  name="${YUKE_APPNAME:-yuke-rs}"
+  name="${YUKE_APPNAME:-yuke}"
   case "${name}" in
     . | .. | */* | *\\*) printf 'warning: YUKE_APPNAME needs a plain profile name; editor configuration stays unchanged.\n' >&2; return ;;
   esac
