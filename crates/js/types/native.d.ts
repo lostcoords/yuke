@@ -448,8 +448,8 @@ declare module "yuke:internal/native" {
 
   /** One event of a view: its snapshot first, then each later update, then the close of its session. */
   export type ViewEvent = { readonly snapshot: SessionSnapshot } | { readonly update: SessionUpdate } | "closed";
-  /** Deliver the events of the views of this runtime to `deliver`, in batches of `[key, event]` pairs. Call it once. */
-  export function sessionsListen(deliver: (batch: readonly (readonly [number, ViewEvent])[]) => void): void;
+  /** Deliver the events of the views of this runtime to `deliver` with each view key. Call it once. */
+  export function sessionsListen(deliver: (key: number, event: ViewEvent) => void): void;
   /** Open the session `id` when it is not open, hold it, and watch it as the view `key` with its last `tail` events. */
   export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<void>;
   /** End the hold and the view `key`. */
@@ -470,8 +470,8 @@ declare module "yuke:internal/native" {
       }
     | { readonly event: "session.closed"; readonly data: { readonly sessionId: SessionId } }
     | { readonly event: "notice"; readonly data: NoticeParams };
-  /** Deliver the facts of this runtime to `deliver`, in batches of `[key, fact]` pairs. Call it once. */
-  export function factsListen(deliver: (batch: readonly (readonly [number, Fact])[]) => void): void;
+  /** Deliver the facts of this runtime to `deliver` with each watch key. Call it once. */
+  export function factsListen(deliver: (key: number, fact: Fact) => void): void;
   /** Watch the facts as the watch `key`, in place of the watch before. The open sessions come first. */
   export function factsWatch(key: number): void;
   /** End the watch of the facts. */

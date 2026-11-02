@@ -86,7 +86,7 @@ impl fmt::Debug for Options {
 /// A QuickJS runtime with a local drive task. A drop of the runtime asks the task to stop and does not wait.
 /// [`Runtime::shutdown`] waits.
 pub struct Runtime {
-    engine: Rc<Engine>,
+    access: EngineAccess,
     /// The models of the plugins.
     pub(crate) models: Rc<dyn Models>,
     /// Its drop asks the drive task to stop. Handles can still exist.
@@ -167,10 +167,13 @@ impl Runtime {
             )
             .await?,
         );
-        let task = tokio::task::spawn_local(drive_engine(Rc::clone(&engine), stopped, reports));
+        let access = EngineAccess {
+            engine: Rc::downgrade(&engine),
+        };
+        let task = tokio::task::spawn_local(drive_engine(engine, stopped, reports));
 
         let runtime = Self {
-            engine,
+            access,
             models,
             stop,
             stopping: Stopping(stopping),
@@ -211,9 +214,7 @@ impl Runtime {
     }
 
     pub(crate) fn access(&self) -> EngineAccess {
-        EngineAccess {
-            engine: Rc::downgrade(&self.engine),
-        }
+        self.access.clone()
     }
 
     /// A handle that opens sessions on this runtime.
@@ -243,7 +244,7 @@ impl Runtime {
     /// ends during the wait.
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
-            engine,
+            access: _,
             models: _,
             stop,
             stopping,
@@ -251,7 +252,6 @@ impl Runtime {
             show: _,
             task,
         } = self;
-        drop(engine);
         drop(stopping);
         drop(stop);
         task.await.map_err(|error| {

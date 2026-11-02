@@ -770,7 +770,6 @@ async fn start_job_delivers_host_events_before_its_reply() {
                 &host,
                 scripted.folder.clone(),
                 &yuke_engine::CancellationToken::new(),
-                &crate::native::delivery::Queue::of(&ctx),
             )
             .unwrap();
             ctx.globals().set("call", call).unwrap();
@@ -816,7 +815,6 @@ async fn stop_job_delivers_host_events_before_its_reply() {
                 &host,
                 scripted.folder.clone(),
                 &yuke_engine::CancellationToken::new(),
-                &crate::native::delivery::Queue::of(&ctx),
             )
             .unwrap();
             ctx.globals().set("call", call).unwrap();

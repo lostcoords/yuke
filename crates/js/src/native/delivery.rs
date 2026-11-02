@@ -162,11 +162,11 @@ async fn dispatch<'js>(
             let result = match delivery {
                 Delivery::View(key, event) => {
                     let deliver = routes.borrow().views.clone();
-                    deliver.map_or(Ok(()), |deliver| deliver.call((Json([(key, event)]),)))
+                    deliver.map_or(Ok(()), |deliver| deliver.call((key, Json(event))))
                 }
                 Delivery::Fact(key, fact) => {
                     let deliver = routes.borrow().facts.clone();
-                    deliver.map_or(Ok(()), |deliver| deliver.call((Json([(key, fact)]),)))
+                    deliver.map_or(Ok(()), |deliver| deliver.call((key, Json(fact))))
                 }
                 Delivery::Reply(key, result) => {
                     let reply = routes

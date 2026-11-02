@@ -56,7 +56,7 @@ use crate::providers::Providers;
 pub(crate) const SOURCE: &str = "host:yuke";
 
 /// A function that reads one environment variable.
-pub(crate) type Variable = dyn Fn(&str) -> Option<OsString> + Send + Sync;
+pub(crate) type Variable = dyn Fn(&str) -> Option<OsString>;
 
 /// The facts of the machine that the app reads.
 pub(crate) struct Machine {

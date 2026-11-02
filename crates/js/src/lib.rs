@@ -9,7 +9,7 @@
 //! (the terminal interface), `yuke:transcript` (the conversation of a session as data), and `yuke:chat` (the blocks of
 //! a chat). The runtime sets no heap limit and no default time limit. It checks the stack of the JavaScript, so a deep
 //! recursion throws and does not crash the thread. The thread needs [`THREAD_STACK`]. A shutdown stops the JavaScript
-//! and each running program.
+//! and its commands. Process jobs need [`Processes::shutdown`].
 //!
 //! A plugin runs `apply` once per runtime and `session` once per session. [`Handle::open_session`] opens the session
 //! of a [`SessionHost`]. [`ScriptSession::tools`] gives each tool of that session as a [`ScriptTool`]: the tools of

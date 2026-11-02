@@ -90,8 +90,8 @@ pub(super) fn add<'js>(
     add_calls(ctx, object, sessions)
 }
 
-/// Add `factsListen(deliver)`, `factsWatch(key)`, and `factsRelease()`, for the facts of `ctx.on`. One watch runs at a
-/// time. A new watch ends the old one. The key of each fact names the watch that sent it.
+/// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.on`. One watch runs at a time. A new watch ends
+/// the old one. The key of each fact names the watch that sent it.
 fn add_facts<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,

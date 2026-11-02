@@ -63,16 +63,14 @@ function call(listener: Listener, data: unknown): void {
   }
 }
 
-/** Give each fact of `batch` to the listeners of its event, in order. */
-function deliver(batch: readonly (readonly [number, Fact])[]): void {
-  for (const [from, fact] of batch) {
-    if (from !== key) continue;
-    track(fact);
-    const data = frozen(fact.data);
-    for (const listener of [...listeners]) {
-      // A listener that an earlier one removed gets nothing more.
-      if (listener.event === fact.event && listeners.has(listener)) call(listener, data);
-    }
+/** Give `fact` to the listeners of its event, in order. */
+function deliver(from: number, fact: Fact): void {
+  if (from !== key) return;
+  track(fact);
+  const data = frozen(fact.data);
+  for (const listener of [...listeners]) {
+    // A listener that an earlier one removed gets nothing more.
+    if (listener.event === fact.event && listeners.has(listener)) call(listener, data);
   }
 }
 

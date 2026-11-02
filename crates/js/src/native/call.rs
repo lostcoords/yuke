@@ -25,11 +25,9 @@ pub(crate) fn object<'js>(
     host: &Rc<dyn SessionHost>,
     folder: PathBuf,
     stop: &CancellationToken,
-    queue: &Queue<'js>,
 ) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
-    let exec_queue = queue.clone();
     let (exec_processes, exec_stop, exec_host) = (Rc::clone(processes), stop.clone(), Rc::clone(host));
     object.set(
         "exec",
@@ -38,7 +36,6 @@ pub(crate) fn object<'js>(
             Async(
                 move |ctx: Ctx<'js>, command: String, limits: Object<'js>, on_output: Function<'js>| {
                     let processes = Rc::clone(&exec_processes);
-                    let queue = exec_queue.clone();
                     let (folder, stop, owner) = (folder.clone(), exec_stop.clone(), Rc::clone(&exec_host));
                     async move {
                         let timeout_ms: u32 = limits.get("timeoutMs")?;
@@ -51,14 +48,13 @@ pub(crate) fn object<'js>(
                             stop,
                             owner,
                         };
-                        exec(ctx, processes, request, on_output, queue).await
+                        exec(ctx, processes, request, on_output).await
                     }
                 },
             ),
         )?,
     )?;
 
-    let start_queue = queue.clone();
     let (start_processes, start_host) = (Rc::clone(processes), Rc::clone(host));
     object.set(
         "startJob",
@@ -66,7 +62,7 @@ pub(crate) fn object<'js>(
             ctx.clone(),
             move |ctx: Ctx<'js>, command: String, timeout_ms: Option<u32>| {
                 let (processes, host) = (Rc::clone(&start_processes), Rc::clone(&start_host));
-                let (promise, _abort) = start_queue.request(
+                let (promise, _abort) = Queue::of(&ctx).request(
                     &ctx,
                     async move {
                         let timeout = timeout_ms.map(|ms| Duration::from_millis(ms.into()));
@@ -84,13 +80,12 @@ pub(crate) fn object<'js>(
     )?;
 
     let (stop_processes, stop_host, stop_call) = (Rc::clone(processes), Rc::clone(host), stop.clone());
-    let stop_queue = queue.clone();
     object.set(
         "stopJob",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: String| {
             let (processes, host, call) = (Rc::clone(&stop_processes), Rc::clone(&stop_host), stop_call.clone());
             // The answer goes through the queue, so the `job_changed` event of the stop reaches JavaScript first.
-            let (promise, _abort) = stop_queue.request(
+            let (promise, _abort) = Queue::of(&ctx).request(
                 &ctx,
                 async move {
                     // A plugin can take long to end its job, and a cancel of the call ends this wait, not the stop. The

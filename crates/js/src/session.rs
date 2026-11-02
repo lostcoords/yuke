@@ -73,15 +73,14 @@ impl Handle {
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let open_session: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("openSession"))?;
                 let open = registry.open();
-                let queue = Queue::of(&ctx);
                 let request = OpenRequest {
                     open,
                     session_id,
                     parent,
                     folder,
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
-                    ask: caught(&ctx, ask_function(&ctx, ask_host, queue.clone()))?,
-                    request: caught(&ctx, request_function(&ctx, request_host, queue))?,
+                    ask: caught(&ctx, ask_function(&ctx, ask_host))?,
+                    request: caught(&ctx, request_function(&ctx, request_host))?,
                     model: caught(
                         &ctx,
                         Function::new(ctx.clone(), move || Json(model_host.model_reference())),
@@ -183,7 +182,10 @@ impl ScriptSession {
     pub async fn close(&self) -> Result<(), Error> {
         let open = self.open;
         self.access
-            .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| close(&ctx, &registry, open).await)
+            .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
+                let promise = start_close(&ctx, &registry, open)?;
+                caught(&ctx, promise.into_future::<()>().await)
+            })
             .await
     }
 }
@@ -554,7 +556,7 @@ fn start_job_function<'js>(
 
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answers,
 /// or `undefined` without an answer. Its cancel ends the request.
-fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>, queue: Queue<'js>) -> rquickjs::Result<Function<'js>> {
+fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>,
@@ -562,10 +564,9 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>, queue: Queue<'js
               Json(request): Json<InteractionRequest>|
               -> rquickjs::Result<Operation<'js>> {
             let host = Rc::clone(&host);
-            let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
                 let _guard = stop.clone().drop_guard();
-                let (promise, _abort) = queue.request(
+                let (promise, _abort) = Queue::of(&ctx).request(
                     &ctx,
                     async move { host.ask(&source, request, stop).await },
                     |ctx, result| match result.map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string()))? {
@@ -582,11 +583,7 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>, queue: Queue<'js
 /// The native `request(source, request, data)` of the session of `host`, with `data` as JSON text. It answers an
 /// operation whose promise gives the result of the client. A failure rejects with a [`RequestError`], and a cancel with
 /// `{ cancelled: true }`. A cancel drops the wait, and the drop cancels the request.
-fn request_function<'js>(
-    ctx: &Ctx<'js>,
-    host: Rc<dyn SessionHost>,
-    queue: Queue<'js>,
-) -> rquickjs::Result<Function<'js>> {
+fn request_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>, source: String, request: String, data: String| -> rquickjs::Result<Operation<'js>> {
@@ -598,10 +595,9 @@ fn request_function<'js>(
                 )
             })?;
             let host = Rc::clone(&host);
-            let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
                 let _guard = stop.clone().drop_guard();
-                let (promise, _abort) = queue.request(
+                let (promise, _abort) = Queue::of(&ctx).request(
                     &ctx,
                     async move {
                         tokio::select! {
@@ -1005,23 +1001,20 @@ where
     answer.await.map_err(|_| Error::Stopped)?
 }
 
-/// Close the open session `open` on the engine task: remove its tools, then await `closeSession`.
-async fn close(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
-    let close_session: Function<'_> = caught(ctx, hooks(ctx).await?.get("closeSession"))?;
-    // No await comes between the two steps, so a dropped close cannot remove the tools without the close of the plugins.
-    registry.close(open);
-    let promise: Promise<'_> = caught(ctx, close_session.call((open,)))?;
-    caught(ctx, promise.into_future::<()>().await)
-}
-
-/// Start the close of a dropped session before the next call starts.
-pub(crate) fn close_dropped(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
+/// Start the close of the open session `open` and return its cleanup promise.
+fn start_close<'js>(ctx: &Ctx<'js>, registry: &Registry, open: u64) -> Result<Promise<'js>, Error> {
     // An open session has loaded this module. Finish its import before later work enters the queue.
     let imported = caught(ctx, Module::import(ctx, crate::plugins::HOOKS))?;
     let module: Object<'_> = caught(ctx, imported.finish())?;
     let close_session: Function<'_> = caught(ctx, module.get("closeSession"))?;
+    // No await comes between the two steps, so a dropped close cannot remove the tools without the close of the plugins.
     registry.close(open);
-    let promise: Promise<'_> = caught(ctx, close_session.call((open,)))?;
+    caught(ctx, close_session.call((open,)))
+}
+
+/// Start the close of a dropped session before the next call starts.
+pub(crate) fn close_dropped(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
+    let promise = start_close(ctx, registry, open)?;
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
         if caught(&ctx, promise.into_future::<()>().await).is_err() {

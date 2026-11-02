@@ -372,14 +372,7 @@ impl ScriptTool {
                 let _guard = stop.clone().drop_guard();
                 let call = caught(
                     &ctx,
-                    call::object(
-                        &ctx,
-                        &registry.processes,
-                        &host,
-                        session_folder,
-                        &stop,
-                        &crate::native::delivery::Queue::of(&ctx),
-                    ),
+                    call::object(&ctx, &registry.processes, &host, session_folder, &stop),
                 )?;
                 let request = CallRequest {
                     arguments: JsonText(arguments),

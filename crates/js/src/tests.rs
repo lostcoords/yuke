@@ -441,6 +441,39 @@ async fn shutdown_ends_a_pending_call_and_releases_reports_while_handles_live() 
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_drive_panic_stops_pending_and_later_calls() {
+    let folder = folder("a_drive_panic_stops_pending_and_later_calls");
+    let (runtime, _reports) = start(&folder).await;
+    let handle = runtime.handle();
+    let access = runtime.access();
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let call = tokio::task::spawn_local(async move {
+        access
+            .run(async move |ctx: Ctx<'_>, _registry| {
+                let promise: Promise<'_> = caught(&ctx, ctx.eval("new Promise(() => {})"))?;
+                started.send(()).unwrap();
+                caught(&ctx, promise.into_future::<()>().await)
+            })
+            .await
+    });
+    entered.await.unwrap();
+
+    runtime
+        .access()
+        .post(async move |_ctx: Ctx<'_>, _registry| panic!("drive failure"))
+        .await
+        .unwrap();
+
+    let pending = tokio::time::timeout(Duration::from_secs(5), call).await;
+    assert!(matches!(pending, Ok(Ok(Err(Error::Stopped)))), "{pending:?}");
+    let later = tokio::time::timeout(Duration::from_secs(5), handle.close_plugins()).await;
+    assert!(matches!(later, Ok(Err(Error::Stopped))), "{later:?}");
+    let imported = tokio::time::timeout(Duration::from_secs(5), runtime.import("yuke:tools")).await;
+    assert!(matches!(imported, Ok(Err(Error::Stopped))), "{imported:?}");
+    assert!(matches!(runtime.shutdown().await, Err(Error::Panicked(message)) if message == "drive failure"));
+}
+
+#[tokio::test(flavor = "local")]
 async fn javascript_runs_without_a_time_limit() {
     let folder = folder("javascript_runs_without_a_time_limit");
     let (runtime, mut faults) = start(&folder).await;

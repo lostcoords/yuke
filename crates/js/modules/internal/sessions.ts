@@ -51,20 +51,18 @@ const routes = new Map<number, Route>();
 let lastKey = 0;
 let listening = false;
 
-/** Give each event of `batch` to its view. A view that ended gets nothing. */
-function deliver(batch: readonly (readonly [number, NativeViewEvent])[]): void {
-  for (const [key, event] of batch) {
-    const route = routes.get(key);
-    if (route === undefined) continue;
-    if (event === "closed") {
-      route.closed();
-      continue;
-    }
-    try {
-      route.event(event);
-    } catch (error) {
-      reportError(error);
-    }
+/** Give `event` to its view. A view that ended gets nothing. */
+function deliver(key: number, event: NativeViewEvent): void {
+  const route = routes.get(key);
+  if (route === undefined) return;
+  if (event === "closed") {
+    route.closed();
+    return;
+  }
+  try {
+    route.event(event);
+  } catch (error) {
+    reportError(error);
   }
 }
 

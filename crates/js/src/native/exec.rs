@@ -18,7 +18,6 @@ pub(crate) async fn exec<'js>(
     processes: Rc<Processes>,
     request: Request,
     on_output: Function<'js>,
-    queue: Queue<'js>,
 ) -> rquickjs::Result<Object<'js>> {
     let (chunks, texts) = mpsc::unbounded_channel();
     // The command has its own token, so its end stops only this command, not the other commands of the call. When
@@ -28,7 +27,7 @@ pub(crate) async fn exec<'js>(
         ..request
     };
     let _guard = request.stop.clone().drop_guard();
-    let (promise, _abort) = queue.request(
+    let (promise, _abort) = Queue::of(&ctx).request(
         &ctx,
         async move { processes.run(request, chunks).await },
         |ctx, result| {
