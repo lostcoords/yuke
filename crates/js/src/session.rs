@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise, Value};
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Module, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::{InputDecision, InputHook, PromptSection};
 use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult, answer_text};
@@ -28,15 +28,15 @@ use crate::native::ai::{Round, context_tokens, side_request, tokens};
 use crate::native::delivery::Queue;
 use crate::native::{Cancelled, Operation};
 use crate::plugins::hooks;
-use crate::runtime::{Caller, Handle};
+use crate::runtime::{EngineAccess, Handle};
 use crate::tools::{
     Json, JsonText, MediaFile, Registry, RequestFailure, ScriptTool, SessionHost, error_text, store_media,
 };
 
-/// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
-/// not wait. The posted close runs only while the engine task runs, so close each session before a shutdown.
+/// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop asks the engine to close
+/// the session and does not wait. That close runs only while the engine runs, so close each session before a shutdown.
 pub struct ScriptSession {
-    caller: Caller,
+    access: EngineAccess,
     pub(crate) host: Arc<dyn SessionHost>,
     /// The open number of the registry. A new open of the same session gets a new number, so a late close of this
     /// handle never reaches it.
@@ -71,7 +71,7 @@ impl Handle {
         let request_host = Arc::clone(&host);
         let model_host = Arc::clone(&host);
         let open = self
-            .caller
+            .access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let open_session: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("openSession"))?;
                 let open = registry.open();
@@ -97,7 +97,7 @@ impl Handle {
             })
             .await?;
         Ok(ScriptSession {
-            caller: self.caller.clone(),
+            access: self.access.clone(),
             host,
             open,
             models: Arc::clone(&self.models),
@@ -116,7 +116,7 @@ impl ScriptSession {
     pub async fn tools(&self) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
         let open = self.open;
         let entries = self
-            .caller
+            .access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let ready: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("ready"))?;
                 let promise: Promise<'_> = caught(&ctx, ready.call((open,)))?;
@@ -128,7 +128,7 @@ impl ScriptSession {
             .into_iter()
             .map(|entry| {
                 let tool = ScriptTool {
-                    caller: self.caller.clone(),
+                    access: self.access.clone(),
                     id: entry.id,
                     open,
                     concurrency: entry.concurrency,
@@ -158,7 +158,7 @@ impl ScriptSession {
             sections: Json(sections.to_vec()),
         };
         let built: Option<Json<Vec<PromptSection>>> =
-            run_hook(&self.caller, "startPromptBuild", request, token.clone()).await?;
+            run_hook(&self.access, "startPromptBuild", request, token.clone()).await?;
         Ok(built.map_or_else(|| sections.to_vec(), |Json(built)| built))
     }
 
@@ -166,7 +166,7 @@ impl ScriptSession {
     /// aborts its signal.
     pub fn hooks(&self, token: CancellationToken) -> ScriptHooks {
         ScriptHooks {
-            caller: self.caller.clone(),
+            access: self.access.clone(),
             host: Arc::clone(&self.host),
             open: self.open,
             token,
@@ -184,7 +184,7 @@ impl ScriptSession {
     /// Returns [`Error::Stopped`] when the engine task has ended, which also ends the plugins.
     pub async fn close(&self) -> Result<(), Error> {
         let open = self.open;
-        self.caller
+        self.access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| close(&ctx, &registry, open).await)
             .await
     }
@@ -192,22 +192,14 @@ impl ScriptSession {
 
 impl Drop for ScriptSession {
     fn drop(&mut self) {
-        let open = self.open;
-        let posted = self.caller.post(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
-            if close(&ctx, &registry, open).await.is_err() {
-                // Only the end of the engine fails the close, and that end drops the plugins too.
-            }
-        });
-        if posted.is_err() {
-            // The engine task has ended, so no plugin of the session runs.
-        }
+        self.access.close_session(self.open);
     }
 }
 
 /// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them. While the engine task
 /// runs, each hook that they do not handle keeps its default.
 pub struct ScriptHooks {
-    caller: Caller,
+    access: EngineAccess,
     host: Arc<dyn SessionHost>,
     open: u64,
     token: CancellationToken,
@@ -257,7 +249,7 @@ impl Hooks for ScriptHooks {
             blocks: round.context.len(),
             round: self.natives(round),
         };
-        let answer: Option<PlannedRound> = run_hook(&self.caller, "startRoundBefore", request, self.token.clone())
+        let answer: Option<PlannedRound> = run_hook(&self.access, "startRoundBefore", request, self.token.clone())
             .await
             .map_err(|error| failure_text("round.before", &error))?;
         // A cancel ends the turn, so the driver does not read this plan.
@@ -289,7 +281,7 @@ impl Hooks for ScriptHooks {
             blocks: round.context.len(),
             round: self.natives(round),
         };
-        let answer: Option<PlannedRound> = run_hook(&self.caller, "startRoundRetry", request, self.token.clone())
+        let answer: Option<PlannedRound> = run_hook(&self.access, "startRoundRetry", request, self.token.clone())
             .await
             .map_err(|error| failure_text("round.retry", &error))?;
         // No answer ends the turn with the failure. A cancel ends the turn, so the driver does not read the plan.
@@ -312,7 +304,7 @@ impl Hooks for ScriptHooks {
             finish_reason: finish_reason.map(FinishReason::as_str),
             continues: self.continues.load(Ordering::Relaxed),
         };
-        let answer: Option<RoundAnswer> = run_hook(&self.caller, "startRoundAfter", request, self.token.clone())
+        let answer: Option<RoundAnswer> = run_hook(&self.access, "startRoundAfter", request, self.token.clone())
             .await
             .map_err(|error| failure_text("round.after", &error))?;
         Ok(match answer {
@@ -335,7 +327,7 @@ impl Hooks for ScriptHooks {
             call: HookCall::of(call),
         };
         let answer: Result<Option<String>, Error> =
-            run_hook(&self.caller, "startToolBefore", request, self.token.clone()).await;
+            run_hook(&self.access, "startToolBefore", request, self.token.clone()).await;
         match answer {
             Ok(Some(reason)) => ToolDecision::Block(reason),
             // A cancel stops the turn, so the driver does not start the call.
@@ -365,7 +357,7 @@ impl Hooks for ScriptHooks {
             },
         };
         let answer: Result<Option<ChangedResult>, Error> =
-            run_hook(&self.caller, "startToolAfter", request, self.token.clone()).await;
+            run_hook(&self.access, "startToolAfter", request, self.token.clone()).await;
         let changed = match answer {
             Ok(Some(changed)) => self.changed(result, changed).await,
             Ok(None) => return None,
@@ -457,7 +449,7 @@ impl InputHook for ScriptHooks {
             kind: Json(input.input.kind()),
             blocks: Json(input.input.model_content().to_vec()),
         };
-        let answer: Option<PlannedInput> = run_hook(&self.caller, "startInputBefore", request, self.token.clone())
+        let answer: Option<PlannedInput> = run_hook(&self.access, "startInputBefore", request, self.token.clone())
             .await
             .map_err(|error| failure_text("input.before", &error))?;
         // A cancel ends the turn, so the input stays pending as it is.
@@ -985,7 +977,7 @@ fn failure_text(point: &str, error: &Error) -> String {
 /// starts. A run without an answer gives `None`. When the caller cancels `token`, the run aborts its signal, and the call
 /// returns `None` too, because a cancelled turn reads no answer.
 async fn run_hook<R, T>(
-    caller: &Caller,
+    access: &EngineAccess,
     start: &'static str,
     request: R,
     token: CancellationToken,
@@ -996,22 +988,24 @@ where
 {
     // A driver drops a hook future at a cancel. A posted run goes on after that drop, so the cancel still reaches it.
     let (reply, answer) = oneshot::channel();
-    caller.post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
-        let answer = async {
-            let function: Function<'_> = caught(&ctx, hooks(&ctx).await?.get(start))?;
-            let Operation { promise, cancel } = caught(&ctx, function.call((request,)))?;
-            tokio::select! {
-                answer = promise.into_future::<Option<T>>() => caught(&ctx, answer),
-                () = token.cancelled() => {
-                    caught(&ctx, cancel.call::<_, ()>(()))?;
-                    Ok(None)
+    access
+        .post(async move |ctx: Ctx<'_>, _: Rc<Registry>| {
+            let answer = async {
+                let function: Function<'_> = caught(&ctx, hooks(&ctx).await?.get(start))?;
+                let Operation { promise, cancel } = caught(&ctx, function.call((request,)))?;
+                tokio::select! {
+                    answer = promise.into_future::<Option<T>>() => caught(&ctx, answer),
+                    () = token.cancelled() => {
+                        caught(&ctx, cancel.call::<_, ()>(()))?;
+                        Ok(None)
+                    }
                 }
+            };
+            if reply.send(answer.await).is_err() {
+                // The caller has left, and the run has ended.
             }
-        };
-        if reply.send(answer.await).is_err() {
-            // The caller has left, and the run has ended.
-        }
-    })?;
+        })
+        .await?;
     answer.await.map_err(|_| Error::Stopped)?
 }
 
@@ -1022,4 +1016,21 @@ async fn close(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Erro
     registry.close(open);
     let promise: Promise<'_> = caught(ctx, close_session.call((open,)))?;
     caught(ctx, promise.into_future::<()>().await)
+}
+
+/// Start the close of a dropped session before the next call starts.
+pub(crate) fn close_dropped(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
+    // An open session has loaded this module. Finish its import before later work enters the queue.
+    let imported = caught(ctx, Module::import(ctx, crate::plugins::HOOKS))?;
+    let module: Object<'_> = caught(ctx, imported.finish())?;
+    let close_session: Function<'_> = caught(ctx, module.get("closeSession"))?;
+    registry.close(open);
+    let promise: Promise<'_> = caught(ctx, close_session.call((open,)))?;
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        if caught(&ctx, promise.into_future::<()>().await).is_err() {
+            // Only the end of the engine fails the close, and that end drops the plugins too.
+        }
+    });
+    Ok(())
 }

@@ -282,7 +282,7 @@ where
 {
     let source = format!("(async () => {{ {body} }})()");
     runtime
-        .caller
+        .access()
         .run(async move |ctx: Ctx<'_>, _registry| {
             let promise: Promise<'_> = caught(&ctx, ctx.eval(source))?;
             caught(&ctx, promise.into_future::<T>().await)
@@ -312,7 +312,7 @@ where
 /// Free each unreachable value, and run the finalization callbacks.
 async fn collect_garbage(runtime: &Runtime) {
     runtime
-        .caller
+        .access()
         .run(async |ctx: Ctx<'_>, _registry| {
             ctx.run_gc();
             Ok(())
@@ -353,18 +353,24 @@ fn script_error(result: Result<impl std::fmt::Debug, Error>) -> ScriptError {
 #[tokio::test(flavor = "local")]
 async fn concurrent_callers_get_the_values_of_their_promises() {
     let folder = folder("concurrent_callers_get_the_values_of_their_promises");
-    let runtime = Arc::new(start(&folder).await.0);
+    let (runtime, _reports) = start(&folder).await;
 
     let mut calls = Vec::new();
     for number in 0..50 {
-        let runtime = Arc::clone(&runtime);
+        let access = runtime.access();
         calls.push(tokio::task::spawn_local(async move {
-            evaluate::<i32>(
-                &runtime,
-                &format!("return await new Promise(resolve => setTimeout(() => resolve({number}), 10));"),
-            )
-            .await
-            .unwrap()
+            access
+                .run(async move |ctx: Ctx<'_>, _registry| {
+                    let promise: Promise<'_> = caught(
+                        &ctx,
+                        ctx.eval(format!(
+                            "new Promise(resolve => setTimeout(() => resolve({number}), 10))"
+                        )),
+                    )?;
+                    caught(&ctx, promise.into_future::<i32>().await)
+                })
+                .await
+                .unwrap()
         }));
     }
     let mut numbers = Vec::new();
@@ -375,27 +381,62 @@ async fn concurrent_callers_get_the_values_of_their_promises() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
-    let folder = folder("a_dropped_call_stops_its_future_on_the_javascript_thread");
+async fn a_dropped_call_stops_its_future() {
+    let folder = folder("a_dropped_call_stops_its_future");
     let (runtime, _faults) = start(&folder).await;
+    let access = runtime.access();
+    let (started, entered) = tokio::sync::oneshot::channel();
 
-    let call = runtime.caller.run(async |ctx: Ctx<'_>, _registry| {
-        let promise: Promise<'_> = caught(&ctx, ctx.eval("new Promise(resolve => setTimeout(resolve, 100))"))?;
-        caught(&ctx, promise.into_future::<()>().await)?;
-        caught(&ctx, ctx.globals().set("finished", true))
-    });
-    assert!(tokio::time::timeout(Duration::from_millis(10), call).await.is_err());
+    {
+        let call = access.run(async move |ctx: Ctx<'_>, _registry| {
+            let promise: Promise<'_> = caught(
+                &ctx,
+                ctx.eval("new Promise(resolve => { globalThis.finishCall = resolve; })"),
+            )?;
+            started.send(()).unwrap();
+            caught(&ctx, promise.into_future::<()>().await)?;
+            caught(&ctx, ctx.globals().set("finished", true))
+        });
+        tokio::select! {
+            result = call => panic!("the call ended before its promise resolved: {result:?}"),
+            result = entered => result.unwrap(),
+        }
+    }
+    crate::settled().await;
+    evaluate::<()>(&runtime, "finishCall();").await.unwrap();
+    crate::settled().await;
 
-    // A timer set later with the same delay fires after the timer of the call.
     assert_eq!(
-        evaluate::<Option<bool>>(
-            &runtime,
-            "await new Promise(resolve => setTimeout(resolve, 100)); return globalThis.finished;"
-        )
-        .await
-        .unwrap(),
+        evaluate::<Option<bool>>(&runtime, "return globalThis.finished;")
+            .await
+            .unwrap(),
         None
     );
+}
+
+#[tokio::test(flavor = "local")]
+async fn shutdown_ends_a_pending_call_and_releases_reports_while_handles_live() {
+    let folder = folder("shutdown_ends_a_pending_call_and_releases_reports_while_handles_live");
+    let (runtime, mut reports) = start(&folder).await;
+    let handle = runtime.handle();
+    let access = runtime.access();
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let call = tokio::task::spawn_local(async move {
+        access
+            .run(async move |ctx: Ctx<'_>, _registry| {
+                let promise: Promise<'_> = caught(&ctx, ctx.eval("new Promise(() => {})"))?;
+                started.send(()).unwrap();
+                caught(&ctx, promise.into_future::<()>().await)
+            })
+            .await
+    });
+    entered.await.unwrap();
+
+    runtime.shutdown().await.unwrap();
+
+    assert!(matches!(call.await.unwrap(), Err(Error::Stopped)));
+    assert!(matches!(handle.close_plugins().await, Err(Error::Stopped)));
+    assert!(reports.recv().await.is_none());
 }
 
 #[tokio::test(flavor = "local")]

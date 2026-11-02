@@ -23,7 +23,7 @@ use crate::error::{Error, caught};
 use crate::models::Attachment;
 use crate::native::{Operation, call};
 use crate::processes::Processes;
-use crate::runtime::Caller;
+use crate::runtime::EngineAccess;
 
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
 /// once, so each session gives its own host. Give the same host to every
@@ -263,7 +263,7 @@ pub(crate) struct Entry {
 /// A tool that the JavaScript defined, for one session. Each call runs on the engine task.
 #[derive(Clone)]
 pub struct ScriptTool {
-    pub(crate) caller: Caller,
+    pub(crate) access: EngineAccess,
     pub(crate) id: u64,
     pub(crate) open: u64,
     pub(crate) concurrency: Concurrency,
@@ -357,7 +357,7 @@ impl ScriptTool {
         let call_id = call_id.to_owned();
         let session_id = self.host.session_id().to_string();
         let answer = self
-            .caller
+            .access
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let start = registry.start(&ctx, open, id)?;
                 let output = caught(

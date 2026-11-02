@@ -10,7 +10,7 @@ async fn a_throwing_notice_listener_is_removed_and_reported_and_the_next_listene
     let folder = folder("a_throwing_notice_listener_is_reported");
     let (runtime, mut reports) = start(&folder).await;
     runtime
-        .caller
+        .access()
         .run(async move |ctx: Ctx<'_>, _registry| {
             let promise = caught(&ctx, Module::import(&ctx, "yuke:internal/tui/notices"))?;
             let namespace = caught(&ctx, promise.into_future::<Object<'_>>().await)?;

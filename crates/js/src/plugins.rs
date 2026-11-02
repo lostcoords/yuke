@@ -14,7 +14,7 @@ use crate::{Handle, Runtime};
 const LOADER: &str = "yuke:internal/plugins";
 
 /// The name of the internal module that opens the sessions of the plugins and runs their hooks.
-const HOOKS: &str = "yuke:internal/hooks";
+pub(crate) const HOOKS: &str = "yuke:internal/hooks";
 
 /// One plugin of the list. The consumer checks the names and the order before the load, and the manifest of a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +133,7 @@ impl Handle {
     ///
     /// Returns [`Error::Stopped`] when the engine task has ended or ends during the close.
     pub async fn close_plugins(&self) -> Result<(), Error> {
-        self.caller
+        self.access
             .run(async move |ctx: Ctx<'_>, _registry| {
                 let close: Function<'_> = caught(&ctx, loader(&ctx).await?.get("closePlugins"))?;
                 let promise: Promise<'_> = caught(&ctx, close.call(()))?;
@@ -177,7 +177,7 @@ impl Handle {
     /// Load `plugin` on the engine task.
     pub(crate) async fn load_plugin(&self, plugin: &Plugin) -> Result<(), Error> {
         let plugin = plugin.clone();
-        self.caller
+        self.access
             .run(async move |ctx: Ctx<'_>, _registry| {
                 let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();

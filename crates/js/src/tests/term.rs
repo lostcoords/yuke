@@ -57,7 +57,7 @@ impl Output {
 /// Put the `term` of `yuke:internal/term` on the global object. Only the host imports an internal module.
 async fn global_term(runtime: &Runtime) {
     runtime
-        .caller
+        .access()
         .run(async move |ctx: Ctx<'_>, _registry| {
             let promise = caught(&ctx, Module::import(&ctx, "yuke:internal/term"))?;
             let namespace = caught(&ctx, promise.into_future::<Object<'_>>().await)?;

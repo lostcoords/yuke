@@ -342,7 +342,7 @@ async fn run_test(
         .ok_or_else(|| Error::Folder(scratch.to_owned()))?
         .to_owned();
     runtime
-        .caller
+        .access()
         .run(async move |ctx: Ctx<'_>, _registry| {
             let set: Function<'_> = caught(&ctx, registry(&ctx).await?.get("setFolder"))?;
             caught(&ctx, set.call::<_, ()>((scratch,)))
@@ -362,7 +362,7 @@ async fn run_test(
     }
     let names = if expected.is_none() {
         let names: Vec<String> = runtime
-            .caller
+            .access()
             .run(async |ctx: Ctx<'_>, _registry| {
                 let names: Function<'_> = caught(&ctx, registry(&ctx).await?.get("names"))?;
                 caught(&ctx, names.call(()))
@@ -381,7 +381,8 @@ async fn run_test(
         .or_else(|| names.as_ref().and_then(|names| names.get(index)).map(String::as_str))
         .unwrap_or_default()
         .to_owned();
-    let call = runtime.caller.run(async move |ctx: Ctx<'_>, _registry| {
+    let access = runtime.access();
+    let call = access.run(async move |ctx: Ctx<'_>, _registry| {
         let run: Function<'_> = caught(&ctx, registry(&ctx).await?.get("run"))?;
         let promise: Promise<'_> = caught(&ctx, run.call((index, name)))?;
         let failure: Option<Object<'_>> = caught(&ctx, promise.into_future().await)?;

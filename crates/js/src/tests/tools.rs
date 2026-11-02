@@ -294,7 +294,7 @@ async fn every_built_in_module_loads_from_its_bytecode() {
     let (runtime, _faults) = start(&folder).await;
 
     let loaded = runtime
-        .caller
+        .access()
         .run(async |ctx: Ctx<'_>, _registry| {
             let mut loaded = Vec::new();
             for name in baked::names() {

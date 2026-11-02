@@ -1,19 +1,17 @@
-//! The JavaScript engine. It runs as a local task of the host runtime, because the engine values are not `Send`.
-//! Callers send it calls through a channel and await the answers.
+//! The JavaScript engine and the local task that drives it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::pin;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::rc::{Rc, Weak};
+use std::sync::Arc;
 use std::task::Poll;
 use std::time::Instant;
 
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::display::Interface;
 use crate::error::{Error, Report, ScriptError, caught};
@@ -85,22 +83,18 @@ impl fmt::Debug for Options {
     }
 }
 
-/// A call for the engine task. It receives the tool registry.
-type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>)>;
-
-/// A QuickJS runtime as a local task. Share it through an `Arc`. A drop asks the task to end and does not wait.
+/// A QuickJS runtime with a local drive task. A drop of the runtime asks the task to stop and does not wait.
 /// [`Runtime::shutdown`] waits.
 pub struct Runtime {
-    pub(crate) caller: Caller,
+    engine: Rc<Engine>,
     /// The models of the plugins.
     pub(crate) models: Arc<dyn Models>,
-    /// The drop of this sender ends the task. A tool keeps a clone of the caller, so the call channel can outlive the
-    /// runtime.
+    /// Its drop asks the drive task to stop. Handles can still exist.
     stop: oneshot::Sender<()>,
     /// Its drop stops each later stretch of JavaScript, so the task ends at its next poll.
     stopping: Stopping,
     /// The engine stops each stretch of JavaScript after this time. A busy loop holds the thread, so no timer can stop it.
-    deadline: Arc<Mutex<Option<Instant>>>,
+    deadline: Rc<Cell<Option<Instant>>>,
     /// Starts the frame loop with the snapshot of the start event. [`Runtime::show`] takes it.
     show: Option<oneshot::Sender<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
@@ -109,79 +103,74 @@ pub struct Runtime {
 impl fmt::Debug for Runtime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Runtime")
-            .field("caller", &self.caller)
+            .field("access", &self.access())
             .finish_non_exhaustive()
     }
 }
 
 /// The flag of the interrupt handler. A drop sets it, and the engine then stops each stretch of JavaScript.
 #[derive(Debug)]
-struct Stopping(Arc<AtomicBool>);
+struct Stopping(Rc<Cell<bool>>);
 
 impl Drop for Stopping {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.0.set(true);
     }
 }
 
-/// A cheap clone of a [`Runtime`] that opens sessions.
+/// A weak handle that opens sessions on a runtime.
 #[derive(Clone)]
 pub struct Handle {
-    pub(crate) caller: Caller,
+    pub(crate) access: EngineAccess,
     pub(crate) models: Arc<dyn Models>,
 }
 
 impl fmt::Debug for Handle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Handle")
-            .field("caller", &self.caller)
+            .field("access", &self.access)
             .finish_non_exhaustive()
     }
 }
 
-/// The sender of calls to the engine task. A tool keeps a clone, so its calls reach the task.
+/// Weak access to the engine. Script handles can outlive the engine.
 #[derive(Debug, Clone)]
-pub(crate) struct Caller {
-    calls: mpsc::UnboundedSender<Call>,
+pub(crate) struct EngineAccess {
+    pub(crate) engine: Weak<Engine>,
 }
 
 impl Runtime {
-    /// Start the engine task on the local runtime of the caller. The receiver gets each [`Report`]: a script failure that belongs to no call, a notice
-    /// or an event of a plugin, or a `console` entry.
+    /// Build the engine and start its local drive task. The receiver gets each [`Report`]: a script failure that
+    /// belongs to no call, a notice or an event of a plugin, or a `console` entry.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Script`] when the engine does not start, and [`Error::Stopped`] when the task ends before it is
-    /// ready.
+    /// Returns [`Error::Script`] when the engine does not start.
     ///
     /// # Panics
     ///
     /// Panics outside a [`tokio::runtime::LocalRuntime`] or a [`tokio::task::LocalSet`].
     pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
         let models = Arc::clone(&options.models);
-        let (calls, call_receiver) = mpsc::unbounded_channel();
         let (reports, report_receiver) = mpsc::unbounded_channel();
-        let (ready, started) = oneshot::channel();
         let (stop, stopped) = oneshot::channel();
         let (show, shown) = oneshot::channel();
-        let stopping = Arc::new(AtomicBool::new(false));
-        let interrupt = Arc::clone(&stopping);
-        let deadline = Arc::new(Mutex::new(None));
-
-        // The engine runs as a local task of the host runtime, so the host and the JavaScript share one scheduler.
-        let task = tokio::task::spawn_local(serve_calls(
-            options,
-            interrupt,
-            Arc::clone(&deadline),
-            call_receiver,
-            stopped,
-            shown,
-            reports,
-            ready,
-        ));
+        let stopping = Rc::new(Cell::new(false));
+        let deadline = Rc::new(Cell::new(None));
+        let engine = Rc::new(
+            Engine::new(
+                options,
+                Rc::clone(&stopping),
+                Rc::clone(&deadline),
+                shown,
+                reports.clone(),
+            )
+            .await?,
+        );
+        let task = tokio::task::spawn_local(drive_engine(Rc::clone(&engine), stopped, reports));
 
         let runtime = Self {
-            caller: Caller { calls },
+            engine,
             models,
             stop,
             stopping: Stopping(stopping),
@@ -189,7 +178,6 @@ impl Runtime {
             show: Some(show),
             task,
         };
-        started.await.map_err(|_| Error::Stopped)??;
         Ok((runtime, report_receiver))
     }
 
@@ -202,7 +190,7 @@ impl Runtime {
     /// Returns [`Error::Stopped`] when the task has ended or ends during the import.
     pub async fn import(&self, name: &str) -> Result<(), Error> {
         let name = name.to_owned();
-        self.caller
+        self.access()
             .run(async move |ctx: Ctx<'_>, _registry: Rc<Registry>| {
                 let promise = caught(&ctx, Module::import(&ctx, name))?;
                 caught(&ctx, promise.into_future::<Value<'_>>().await)?;
@@ -214,18 +202,24 @@ impl Runtime {
     /// Stop each later stretch of JavaScript. The task stays until [`Runtime::shutdown`].
     /// A test that runs past its time limit calls it, so a cleanup does not wait for the loop of the test.
     pub fn interrupt(&self) {
-        self.stopping.0.store(true, Ordering::Relaxed);
+        self.stopping.0.set(true);
     }
 
     /// Stop each stretch of JavaScript after `deadline`, or never with `None`.
     pub(crate) fn set_deadline(&self, deadline: Option<Instant>) {
-        *self.deadline.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = deadline;
+        self.deadline.set(deadline);
+    }
+
+    pub(crate) fn access(&self) -> EngineAccess {
+        EngineAccess {
+            engine: Rc::downgrade(&self.engine),
+        }
     }
 
     /// A handle that opens sessions on this runtime.
     pub fn handle(&self) -> Handle {
         Handle {
-            caller: self.caller.clone(),
+            access: self.access(),
             models: Arc::clone(&self.models),
         }
     }
@@ -249,7 +243,7 @@ impl Runtime {
     /// ends during the wait.
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
-            caller,
+            engine,
             models: _,
             stop,
             stopping,
@@ -257,7 +251,7 @@ impl Runtime {
             show: _,
             task,
         } = self;
-        drop(caller);
+        drop(engine);
         drop(stopping);
         drop(stop);
         task.await.map_err(|error| {
@@ -276,21 +270,35 @@ impl Runtime {
     }
 }
 
-impl Caller {
-    /// Post `f` to the engine task without an answer. It runs to its end, unless the runtime stops first.
+impl EngineAccess {
+    pub(crate) fn close_session(&self, open: u64) {
+        let Some(engine) = self.engine.upgrade() else {
+            // The engine is gone, so no plugin of the session runs.
+            return;
+        };
+        engine.sessions_to_close.borrow_mut().push(open);
+        engine.close_requested.notify_one();
+    }
+
+    /// Launch `f` on the engine with no result. The engine runs `f` until it ends or the engine stops.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the task has ended.
-    pub(crate) fn post<F>(&self, f: F) -> Result<(), Error>
+    /// Returns [`Error::Stopped`] when the engine has ended.
+    pub(crate) async fn post<F>(&self, f: F) -> Result<(), Error>
     where
         F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) + 'static,
     {
-        let call: Call = Box::new(move |ctx: Ctx<'_>, registry: &Rc<Registry>| {
-            let registry = Rc::clone(registry);
-            ctx.clone().spawn(async move { f(ctx, registry).await });
-        });
-        self.calls.send(call).map_err(|_| Error::Stopped)
+        let engine = self.engine.upgrade().ok_or(Error::Stopped)?;
+        engine
+            .context
+            .with(|ctx| {
+                engine.close_sessions(&ctx);
+                let registry = Rc::clone(&engine.registry);
+                ctx.clone().spawn(async move { f(ctx, registry).await });
+            })
+            .await;
+        Ok(())
     }
 
     /// Run `f` on the engine task, and return its answer. A drop of the returned future drops the future of `f` at
@@ -310,45 +318,20 @@ impl Caller {
                 }
                 () = reply.closed() => {}
             }
-        })?;
+        })
+        .await?;
         answer.await.map_err(|_| Error::Stopped)?
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "the task takes each part of its start")]
-async fn serve_calls(
-    options: Options,
-    stopping: Arc<AtomicBool>,
-    deadline: Arc<Mutex<Option<Instant>>>,
-    mut calls: mpsc::UnboundedReceiver<Call>,
-    mut stopped: oneshot::Receiver<()>,
-    shown: oneshot::Receiver<Option<String>>,
-    reports: mpsc::UnboundedSender<Report>,
-    ready: oneshot::Sender<Result<(), Error>>,
-) {
-    let engine = match Engine::new(options, stopping, deadline, shown, reports.clone()).await {
-        Ok(engine) => engine,
-        Err(error) => {
-            if ready.send(Err(error)).is_err() {
-                // The caller of `start` has left.
-            }
-            return;
-        }
-    };
-    if ready.send(Ok(())).is_err() {
-        // The caller of `start` has left.
-        return;
-    }
-
+async fn drive_engine(engine: Rc<Engine>, mut stopped: oneshot::Receiver<()>, reports: mpsc::UnboundedSender<Report>) {
     // The drive runs the promise reactions and the spawned futures. It holds the runtime, so it drops before the engine.
     let mut drive = pin!(engine.runtime.drive());
     loop {
+        engine.context.with(|ctx| engine.close_sessions(&ctx)).await;
         tokio::select! {
             _ = &mut stopped => break,
-            call = calls.recv() => match call {
-                Some(call) => engine.context.with(|ctx| call(ctx, &engine.registry)).await,
-                None => break,
-            },
+            () = engine.close_requested.notified() => {},
             () = std::future::poll_fn(|context| {
                 // The drive ends only with the runtime, and the runtime outlives it.
                 let polled = drive.as_mut().poll(context);
@@ -374,20 +357,31 @@ async fn serve_calls(
 }
 
 /// The engine of the task, and the state that its callbacks share.
-struct Engine {
+pub(crate) struct Engine {
     context: AsyncContext,
     runtime: AsyncRuntime,
     rejections: Rc<Rejections>,
     timers: Rc<Timers>,
     registry: Rc<Registry>,
     frames: Rc<Frames>,
+    sessions_to_close: RefCell<Vec<u64>>,
+    close_requested: Notify,
 }
 
 impl Engine {
+    fn close_sessions(&self, ctx: &Ctx<'_>) {
+        let sessions = self.sessions_to_close.take();
+        for open in sessions {
+            if crate::session::close_dropped(ctx, &self.registry, open).is_err() {
+                // Only the end of the engine fails the close, and that end drops the plugins too.
+            }
+        }
+    }
+
     async fn new(
         options: Options,
-        stopping: Arc<AtomicBool>,
-        deadline: Arc<Mutex<Option<Instant>>>,
+        stopping: Rc<Cell<bool>>,
+        deadline: Rc<Cell<Option<Instant>>>,
         shown: oneshot::Receiver<Option<String>>,
         reports: mpsc::UnboundedSender<Report>,
     ) -> Result<Self, Error> {
@@ -405,11 +399,7 @@ impl Engine {
         // The engine asks once for each 10,000 interrupt checks.
         runtime
             .set_interrupt_handler(Some(Box::new(move || {
-                stopping.load(Ordering::Relaxed)
-                    || deadline
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .is_some_and(|deadline| Instant::now() >= deadline)
+                stopping.get() || deadline.get().is_some_and(|deadline| Instant::now() >= deadline)
             })))
             .await;
 
@@ -425,31 +415,36 @@ impl Engine {
         let timers = Rc::new(Timers::default());
         let registry = Rc::new(Registry::new(Arc::clone(&options.processes)));
         let frames = Rc::new(Frames::new(options.interface.clone()));
-        context
-            .with(|ctx| {
-                timers::install(&ctx, &timers, reports.clone())?;
-                crate::error::install_report_error(&ctx, reports.clone())?;
-                native::install(&ctx, &registry, &options, &frames, reports.clone())?;
-                ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, reports));
-                Ok(())
-            })
-            .await
-            .map_err(engine_error)?;
-        context
-            .with(|ctx| {
-                let promise = caught(&ctx, Module::import(&ctx, WEB))?;
-                caught(&ctx, promise.finish::<Value<'_>>()).map(drop)
-            })
-            .await?;
-
-        Ok(Self {
+        let engine = Self {
             context,
             runtime,
             rejections,
             timers,
             registry,
             frames,
-        })
+            sessions_to_close: RefCell::new(Vec::new()),
+            close_requested: Notify::new(),
+        };
+        engine
+            .context
+            .with(|ctx| {
+                timers::install(&ctx, &engine.timers, reports.clone())?;
+                crate::error::install_report_error(&ctx, reports.clone())?;
+                native::install(&ctx, &engine.registry, &options, &engine.frames, reports.clone())?;
+                ctx.spawn(drive(ctx.clone(), Rc::clone(&engine.frames), shown, reports));
+                Ok(())
+            })
+            .await
+            .map_err(engine_error)?;
+        engine
+            .context
+            .with(|ctx| {
+                let promise = caught(&ctx, Module::import(&ctx, WEB))?;
+                caught(&ctx, promise.finish::<Value<'_>>()).map(drop)
+            })
+            .await?;
+
+        Ok(engine)
     }
 }
 

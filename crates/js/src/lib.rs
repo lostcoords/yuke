@@ -1,5 +1,4 @@
-//! The JavaScript runtime of yuke: the QuickJS engine as a local task of the tokio runtime of its consumer. Callers
-//! import modules through a channel.
+//! The JavaScript runtime of yuke. The host enters the engine directly, and a local task drives its pending work.
 //!
 //! A module is a built-in module with a `yuke:` name, or a `.ts` or a `.js` file. The built-in modules are bytecode in
 //! the binary. The runtime removes the types of a `.ts` file and keeps the JavaScript in a cache folder. The globals

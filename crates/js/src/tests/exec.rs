@@ -430,7 +430,7 @@ async fn the_native_module_declares_the_names_that_it_exports() {
     declared.dedup();
 
     let mut exported = runtime
-        .caller
+        .access()
         .run(async |ctx: rquickjs::Ctx<'_>, _registry| Ok(native::names(&ctx).unwrap()))
         .await
         .unwrap();

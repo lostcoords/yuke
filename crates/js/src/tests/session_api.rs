@@ -760,7 +760,7 @@ async fn start_job_delivers_host_events_before_its_reply() {
     });
     let runtime = started(name, &scripted).await;
     runtime
-        .caller
+        .access()
         .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
             let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
             let call = crate::native::call::object(
@@ -806,7 +806,7 @@ async fn stop_job_delivers_host_events_before_its_reply() {
     });
     let runtime = started(name, &scripted).await;
     runtime
-        .caller
+        .access()
         .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
             let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
             let call = crate::native::call::object(

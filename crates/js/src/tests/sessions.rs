@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use super::plugins::tool;
 use super::tools::{TestHost, Tools, call, error_of};
 use super::{evaluate, folder, load_entry, start, write};
-use crate::{Report, Runtime, SessionHost};
+use crate::{Error, Report, Runtime, SessionHost};
 
 /// A runtime in a new folder `name` with the plugin `test` whose entry is `source`.
 async fn loaded(name: &str, source: &str) -> (PathBuf, Runtime, mpsc::UnboundedReceiver<Report>) {
@@ -108,12 +108,12 @@ async fn a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_clo
     let closed = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
 
     drop(dropped);
-    crate::settled().await;
+    // The close that the drop requests comes before the next call.
     let after_drop = evaluate::<i32>(&runtime, "return globalThis.cleaned;").await.unwrap();
     closed.session.close().await.unwrap();
     closed.session.close().await.unwrap();
     drop(closed);
-    // The close that the drop posts comes before this call on the engine task.
+    // A drop after an awaited close must not run the cleanup again.
     let after_close = evaluate::<i32>(&runtime, "return globalThis.cleaned;").await.unwrap();
 
     assert_eq!(after_drop, 1);
@@ -132,7 +132,7 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
 
     first.session.close().await.unwrap();
     let second = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
-    // The close that this drop posts names the old open, so it leaves the new one open.
+    // The close that this drop asks for names the old open, so it leaves the new one open.
     drop(first);
 
     assert_eq!(
@@ -159,5 +159,59 @@ async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
     let ended = tokio::time::timeout(Duration::from_secs(5), runtime.shutdown()).await;
 
     assert!(matches!(ended, Ok(Ok(()))), "{ended:?}");
-    drop(session);
+    let closed = tokio::time::timeout(Duration::from_secs(5), session.close()).await;
+    assert!(matches!(closed, Ok(Err(Error::Stopped))), "{closed:?}");
+}
+
+#[tokio::test(flavor = "local")]
+async fn sessions_and_tools_do_not_keep_the_engine_alive_after_shutdown() {
+    let (folder, runtime, _reports) = loaded(
+        "sessions_and_tools_do_not_keep_the_engine_alive_after_shutdown",
+        &format!("export function session(s) {{ s.tools.define({}); }}", tool("held")),
+    )
+    .await;
+    let access = runtime.access();
+    let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+
+    runtime.shutdown().await.unwrap();
+
+    assert!(access.engine.upgrade().is_none());
+    let session_call = tokio::time::timeout(Duration::ZERO, tools.session.tools())
+        .await
+        .unwrap();
+    assert!(matches!(session_call, Err(Error::Stopped)));
+    let tool_call = tokio::time::timeout(Duration::ZERO, call(&tools["held"], "{}"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        tool_call.unwrap_err().downcast_ref::<Error>(),
+        Some(Error::Stopped)
+    ));
+}
+
+#[test]
+fn a_session_drop_without_a_local_executor_wakes_the_drive() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build_local(tokio::runtime::LocalOptions::default())
+        .unwrap();
+    let (runtime, mut reports, tools) = executor.block_on(async {
+        let (folder, runtime, reports) = loaded(
+            "a_session_drop_without_a_local_executor_wakes_the_drive",
+            "export function session() { return () => { console.log('closed'); }; }",
+        )
+        .await;
+        let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+        (runtime, reports, tools)
+    });
+
+    drop(tools);
+
+    executor.block_on(async {
+        assert!(matches!(
+            super::next_report(&mut reports).await,
+            Report::Console { text, .. } if text == "closed"
+        ));
+        runtime.shutdown().await.unwrap();
+    });
 }
