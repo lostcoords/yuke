@@ -33,12 +33,6 @@ const SELECTION = "editor.selection";
 const LABEL = "editor.label";
 const PLACEHOLDER = "editor.placeholder";
 
-/** The default look of the style groups. */
-export const STYLES = {
-  [SELECTION]: { reverse: true },
-  [LABEL]: { fg: "accent" },
-  [PLACEHOLDER]: { dim: true },
-} as const;
 const NEWLINE_KEYS = new Set(["shift+enter", "alt+enter", "ctrl+j"]);
 /** The readline forms of Home and End. */
 const LINE_KEYS = new Map([

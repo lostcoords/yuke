@@ -6,11 +6,10 @@ import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
 import { callEach } from "yuke:internal/chat/listeners";
 import { ChatQuestions } from "yuke:internal/chat/questions";
-import { STYLES as chatStyles } from "yuke:internal/chat/rows";
 import { ChatWorking } from "yuke:internal/chat/working";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 
-export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking, chatStyles };
+export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking };
 
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
@@ -211,6 +210,5 @@ const declared = {
   ChatDocument,
   ChatQuestions,
   ChatWorking,
-  chatStyles,
 } satisfies typeof import("yuke:chat");
 void declared;

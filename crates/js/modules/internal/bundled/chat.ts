@@ -5,7 +5,7 @@
  * shows a session in a pane for other plugins.
  */
 
-import { type ChatRow, type ChatRowsContext, chatStyles } from "yuke:chat";
+import type { ChatRow, ChatRowsContext } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
@@ -155,7 +155,6 @@ export async function apply(ctx: PluginContext): Promise<void> {
     },
   });
   if (tui === undefined) return undefined;
-  tui.styles.set(chatStyles);
   const chat: Chat = {
     ctx,
     tui,

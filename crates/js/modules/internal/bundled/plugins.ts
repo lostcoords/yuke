@@ -21,19 +21,11 @@ import {
 
 const TITLE = "plugins.title";
 const DETAIL = "plugins.detail";
-const SELECTED = "plugins.selected";
-
-/** The look of the list of plugins. */
-const STYLES = {
-  [TITLE]: { bold: true },
-  [DETAIL]: { dim: true },
-  [SELECTED]: { fg: "surfaceFg", bg: "accentMuted" },
-} as const;
+const SELECTED = "picker.selected";
 
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
-  tui.styles.set(STYLES);
   const plugins = ctx.get("plugins");
   const report = (what: string) => (error: unknown) => ctx.notify("error", `${what}: ${String(error)}`);
   tui.commands.add({

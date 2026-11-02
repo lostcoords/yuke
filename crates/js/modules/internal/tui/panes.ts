@@ -48,7 +48,7 @@ export interface DefaultPaneEntry {
 }
 
 /** What the tree needs from the core. */
-export interface PaneHost {
+interface PaneHost {
   /** The default pane, or `undefined` without one. */
   readonly defaultPane: () => DefaultPaneEntry | undefined;
   /** Give the focus to `view`, a view of a leaf. */
@@ -58,9 +58,6 @@ export interface PaneHost {
 }
 
 const DIVIDER = "panes.divider";
-
-/** The default look of the style groups. */
-export const STYLES = { [DIVIDER]: { dim: true } } as const;
 
 export class PaneTree {
   readonly #host: PaneHost;

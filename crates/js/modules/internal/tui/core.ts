@@ -10,25 +10,20 @@ import type { TermStyle } from "yuke:internal/native";
 import type { TermEvent } from "yuke:internal/term";
 import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
-import { STYLES as dialogStyles } from "yuke:internal/tui/dialog";
-import { STYLES as editorStyles } from "yuke:internal/tui/editor";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { strokeOf } from "yuke:internal/tui/keys";
-import { STYLES as markdownStyles } from "yuke:internal/tui/markdown";
 import { Notices } from "yuke:internal/tui/notices";
-import { type DefaultPaneEntry, PaneTree, STYLES as paneStyles } from "yuke:internal/tui/panes";
-import { STYLES as pickerStyles } from "yuke:internal/tui/picker";
+import { type DefaultPaneEntry, PaneTree } from "yuke:internal/tui/panes";
 import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/restore";
-import { Scene, STYLES as sceneStyles } from "yuke:internal/tui/scene";
+import { Scene } from "yuke:internal/tui/scene";
 import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
-import { STYLES as textViewStyles } from "yuke:internal/tui/text-view";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
 import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
-export interface DefaultPaneSlot extends DefaultPaneEntry {
+interface DefaultPaneSlot extends DefaultPaneEntry {
   readonly signal: AbortSignal;
 }
 
@@ -86,16 +81,6 @@ export class Core {
     const themeChanged = (): void =>
       announce("theme.changed", { name: this.styles.theme, background: driver.background() });
     this.styles = new Styles(driver.truecolor, driver.background, frame, themeChanged);
-    // The widgets of `yuke:tui` have their look without a plugin.
-    this.styles.set({
-      ...dialogStyles,
-      ...editorStyles,
-      ...markdownStyles,
-      ...paneStyles,
-      ...pickerStyles,
-      ...sceneStyles,
-      ...textViewStyles,
-    });
     // A notice changes what a listener, such as the toasts, draws.
     this.notices.on(frame);
     // A command name starts with the plugin that owns it, so its fault names that plugin.

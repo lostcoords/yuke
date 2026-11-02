@@ -181,11 +181,16 @@ declare module "yuke:tui" {
      * no view draws.
      */
     readonly palette?: { readonly [K in PaletteColor]?: number | `#${string}` | "reset" } | undefined;
+    /** The colors for a terminal without 24-bit color. A color that this leaves out comes from `palette`. */
+    readonly palette256?: { readonly [K in PaletteColor]?: number | "reset" } | undefined;
     /** The changes of style groups. They win per field over each `styles.set`, and `null` deletes a field. */
     readonly groups?: Readonly<Record<string, StylePatch>> | undefined;
   }
 
-  /** A theme. With one look it gives that look for both backgrounds. */
+  /**
+   * A theme. With one look it gives that look for both backgrounds. What it leaves out comes from the theme that it
+   * inherits, then from each `styles.set`, then from the theme `default`.
+   */
   export interface Theme {
     /** The name of a theme below this one. This theme wins per field and per color. */
     readonly inherits?: string | undefined;
@@ -957,14 +962,17 @@ declare module "yuke:tui" {
     readonly styles: {
       /** Change style groups, and return the disposer of the change. A later call wins per field. */
       readonly set: (groups: Readonly<Record<string, StylePatch>>) => () => void;
-      /** Add a theme, and return its remover. It applies nothing until it is active. The newest of a name wins. */
+      /**
+       * Add a theme, and return its remover. It applies nothing until it is active. The newest of a name wins. The name
+       * `default` is reserved for the look of yuke.
+       */
       readonly addTheme: (name: string, theme: Theme) => () => void;
-      /** The names of the themes. */
+      /** The names of the themes, `default` first. */
       readonly themes: () => readonly string[];
       /** The name of the active theme. `ctx.on("theme.changed")` tells each change. */
-      readonly theme: string | undefined;
-      /** Make `name` the active theme, also before that theme comes. `undefined` gives the look without a theme. */
-      readonly setTheme: (name: string | undefined) => void;
+      readonly theme: string;
+      /** Make `name` the active theme, also before that theme comes. */
+      readonly setTheme: (name: string) => void;
     };
     /**
      * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from

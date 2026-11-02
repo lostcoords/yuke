@@ -346,7 +346,7 @@ test("the dashboard has a default look that a plugin changes", async () => {
   frame.surface("theme").tui.styles.set({
     "plugins.title": { fg: 1, bold: null },
     "plugins.detail": { fg: 2, dim: null },
-    "plugins.selected": { fg: 3, bg: null },
+    "picker.selected": { fg: 3, bg: null },
   });
   equal(
     [before, looks()],

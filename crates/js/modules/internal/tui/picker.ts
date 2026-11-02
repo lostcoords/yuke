@@ -27,13 +27,6 @@ const MATCH = "picker.match";
 const DETAIL = "picker.detail";
 const SELECTED = "picker.selected";
 
-/** The default look of the style groups. */
-export const STYLES = {
-  [MATCH]: { fg: "accent", bold: true },
-  [DETAIL]: { dim: true },
-  [SELECTED]: { fg: "surfaceFg", bg: "accentMuted" },
-} as const;
-
 /** A shown match, its key, and whether it is selected. A new selection gives a new entry, so its rows render again. */
 interface Entry<T> {
   readonly match: PickerMatch<T>;

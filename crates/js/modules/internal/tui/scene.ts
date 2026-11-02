@@ -24,7 +24,7 @@ import type {
 } from "yuke:tui";
 
 /** What the scene needs from the core. */
-export interface SceneHost {
+interface SceneHost {
   readonly screen: Screen;
   readonly size: () => Size;
   readonly cursor: (cursor: Cursor | undefined) => void;
@@ -45,7 +45,7 @@ export interface SceneHost {
 }
 
 /** A pane of the tree: the plugin of its view, and its handle (none for an empty pane). */
-export interface PaneLeaf {
+interface PaneLeaf {
   readonly owner: string;
   readonly pane: Pane | undefined;
 }
@@ -75,8 +75,6 @@ interface Layer {
 const NO_MOUNT: Mount = Object.freeze({ close(): void {}, signal: AbortSignal.abort() });
 const ERROR = "view.error";
 
-/** The default look of the style groups. */
-export const STYLES = { [ERROR]: { fg: "danger" } } as const;
 const SHAPES: readonly unknown[] = ["block", "underline", "bar"] satisfies CursorShape[];
 
 export class Scene {

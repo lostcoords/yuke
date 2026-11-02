@@ -13,7 +13,7 @@ declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
   import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { CanvasStyle, CommandItem, EditorState, StylePatch, TextDocument, TextEditor, View } from "yuke:tui";
+  import type { CanvasStyle, CommandItem, EditorState, TextDocument, TextEditor, View } from "yuke:tui";
 
   export interface ChatSessionOptions {
     /** Its abort ends the handle. */
@@ -202,12 +202,6 @@ declare module "yuke:chat" {
     /** Call `listener` after each change of `active`. A throw removes it and reports the error. */
     onChange(listener: () => void): () => void;
   }
-
-  /**
-   * The default look of the style groups that `ChatDocument` draws with, such as `chat.user` and `chat.title`. A chat
-   * without the bundled chat sets them: `tui.styles.set(chatStyles)`.
-   */
-  export const chatStyles: Readonly<Record<string, StylePatch>>;
 
   /**
    * The default look of a conversation, as a text document for a `TextView`: user messages, Markdown answers, thoughts

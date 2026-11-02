@@ -2,7 +2,7 @@
  * `Markdown` of `yuke:tui`: Markdown to styled rows. A stream parses again only its last two blocks. Each closed block
  * keeps its rows for its newest width. A segment with a source maps back to the source. A layout segment, such as the
  * continuation indent of a list item, has none. A link keeps its brackets and its target, so a copy keeps the target.
- * The style groups are `markdown.*`. The core gives most of them a default look, and a plugin can change each one.
+ * The style groups are `markdown.*`. The default theme gives most of them a look, and a plugin can change each one.
  */
 import { termGraphemes, termMeasure } from "yuke:internal/native";
 import type { MarkdownBlock, SourceMapping, TextRow } from "yuke:tui";
@@ -48,22 +48,6 @@ const STYLE = {
   linkText: "markdown.linkText",
   /** The brackets and the target of a link. */
   link: "markdown.link",
-} as const;
-
-/** The default look of the style groups. A group that this list does not name, such as `markdown.text`, has none. */
-export const STYLES = {
-  [STYLE.strong]: { bold: true },
-  [STYLE.emphasis]: { italic: true },
-  [STYLE.strongEmphasis]: { bold: true, italic: true },
-  [STYLE.code]: { dim: true },
-  [STYLE.heading]: { bold: true },
-  [STYLE.quote]: { dim: true },
-  [STYLE.codeBlock]: { dim: true },
-  [STYLE.rule]: { dim: true },
-  [STYLE.listMark]: { dim: true },
-  [STYLE.tableBorder]: { dim: true },
-  [STYLE.linkText]: { underline: true },
-  [STYLE.link]: { dim: true },
 } as const;
 
 /** A contiguous source range of inline text: the inline index `at` maps to the source offset `src`. */

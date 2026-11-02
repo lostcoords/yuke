@@ -78,7 +78,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
       tui.styles.theme,
       accent(frame, tui) !== base,
     ],
-    [true, "nord", undefined, "nord", "nord", true],
+    [true, "nord", "default", "nord", "nord", true],
   );
 });
 
@@ -94,16 +94,34 @@ test("a saved theme applies at the load, also when its plugin comes later, and d
   frame.surface("themes").tui.commands.run("themes:open");
   frame.draw();
   frame.key("d e f enter");
-  await saves(dataDir, "{}");
-  equal([active, color, tui.styles.theme, notices], ["nord", 1, undefined, []]);
+  await saves(dataDir, '{"name":"default"}');
+  equal([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
 });
 
-test("a bad saved file is a notice, and yuke starts without a theme", async () => {
+test("a saved file without a name gives the default theme and no notice", async () => {
+  using frame = createFrame({ width: 40, height: 10 });
+  const dataDir = folder();
+  await writeTextFile("theme.json", "{}", { baseDir: dataDir });
+  const { tui, notices } = await load(frame, dataDir);
+  equal([tui.styles.theme, notices], ["default", []]);
+});
+
+test("the picker opens on the active theme, so its first selection changes nothing", async () => {
+  using frame = createFrame({ width: 40, height: 10 });
+  const { tui } = await load(frame, folder());
+  tui.styles.addTheme("nord", NORD);
+  tui.styles.setTheme("nord");
+  frame.surface("themes").tui.commands.run("themes:open");
+  frame.draw();
+  equal(tui.styles.theme, "nord");
+});
+
+test("a bad saved file is a notice, and yuke starts on the default theme", async () => {
   using frame = createFrame({ width: 40, height: 10 });
   const dataDir = folder();
   await writeTextFile("theme.json", "{", { baseDir: dataDir });
   const { tui, notices } = await load(frame, dataDir);
-  equal([tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")], [undefined, 1, true]);
+  equal([tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")], ["default", 1, true]);
 });
 
 test("theme.changed tells each new theme and each new background", () => {
@@ -116,7 +134,7 @@ test("theme.changed tells each new theme and each new background", () => {
   core.styles.setTheme("nord");
   core.event({ type: "background", background: "light" });
   stop.abort();
-  core.styles.setTheme(undefined);
+  core.styles.setTheme("default");
   equal(seen, [
     ["nord", "dark"],
     ["nord", "light"],
@@ -128,7 +146,7 @@ test("the abort of a plugin that owns the active theme and listens gives that pl
   const stop = new AbortController();
   const tui = createSurface(core, "pack", stop.signal);
   const other = new AbortController();
-  const seen: (string | undefined)[] = [];
+  const seen: string[] = [];
   let own = 0;
   on("pack", stop.signal, "theme.changed", () => {
     own += 1;
@@ -181,7 +199,7 @@ test("a plugin supports a theme for now, and the theme wins once it names the gr
   const supported = color();
   tui.styles.addTheme("nord", { dark: { groups: { "b.title": { fg: 5 } } } });
   const native = color();
-  tui.styles.setTheme(undefined);
+  tui.styles.setTheme("default");
   const left = color();
   stop.abort();
   equal(

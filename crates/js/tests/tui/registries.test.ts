@@ -565,7 +565,7 @@ test("a theme changes nothing until it is active, and its groups win over each s
   const active = styles.resolve("title");
   styles.set({ title: { fg: 3, italic: true } });
   const later = styles.resolve("title");
-  styles.setTheme(undefined);
+  styles.setTheme("default");
   equal(
     [before, active, later, styles.resolve("title")],
     [
@@ -629,7 +629,7 @@ test("the newest theme of a name wins, and its remover gives the older one back"
   const newest = styles.resolve("a").fg;
   undo();
   undo();
-  equal([newest, styles.resolve("a").fg, styles.themes(), state.changes - first], [2, 1, ["nord"], 3]);
+  equal([newest, styles.resolve("a").fg, styles.themes(), state.changes - first], [2, 1, ["default", "nord"], 3]);
 });
 
 test("the change of the look of the active theme is told once, and another theme is not told", () => {
@@ -641,11 +641,13 @@ test("the change of the look of the active theme is told once, and another theme
   equal(state.changes, 1);
   const undo = styles.addTheme("nord", {});
   equal(state.changes, 2);
-  styles.addTheme("base", {});
+  const other = styles.addTheme("base", {});
+  equal(state.changes, 2);
+  other();
   equal(state.changes, 2);
   undo();
   equal(state.changes, 3);
-  styles.setTheme(undefined);
+  styles.setTheme("default");
   equal(state.changes, 4);
 });
 
@@ -667,8 +669,9 @@ test("a bad theme throws and adds nothing", () => {
     assert(throws(() => styles.addTheme("bad", theme as never)) instanceof TypeError, JSON.stringify(theme));
   }
   assert(throws(() => styles.addTheme("", {})) instanceof TypeError);
+  assert(throws(() => styles.addTheme("default", {})) instanceof TypeError);
   assert(throws(() => styles.setTheme("")) instanceof TypeError);
-  equal(styles.themes(), []);
+  equal(styles.themes(), ["default"]);
 });
 
 test("the palette color fg reaches each cell without a color, and it wins over no color that a style sets", () => {
@@ -679,7 +682,7 @@ test("the palette color fg reaches each cell without a color, and it wins over n
     band: { bg: 2 },
     reset: { fg: "reset" },
   });
-  const noTheme = [styles.cell(undefined), styles.cell("plain"), styles.cell(["colored", "band"])];
+  const onDefault = [styles.cell(undefined), styles.cell("plain"), styles.cell(["colored", "band"])];
   styles.addTheme("nord", { dark: { palette: { fg: "#eceff4" } } });
   styles.setTheme("nord");
   const fg = "#eceff4";
@@ -695,7 +698,7 @@ test("the palette color fg reaches each cell without a color, and it wins over n
   ];
   state.truecolor = false;
   equal(
-    [noTheme, themedCells, styles.cell(undefined)],
+    [onDefault, themedCells, styles.cell(undefined)],
     [
       [{}, { bold: true }, { fg: 1, bg: 2 }],
       [
@@ -778,5 +781,42 @@ test("a terminal without 24-bit color gets the nearest index for each hex color"
       styles.resolve("themed").fg,
     ],
     [196, 231, 244, 110, 9, "reset", 16],
+  );
+});
+
+test("the default theme sits below each set and each other theme, and a name that it holds keeps its other fields", () => {
+  const { styles } = themed();
+  equal(
+    [styles.theme, styles.resolve("chat.error").fg, styles.resolve("chat.error").bold],
+    ["default", "#FF7B72", true],
+  );
+  const undo = styles.set({ "chat.error": { fg: 1 } });
+  equal(styles.resolve("chat.error"), { fg: 1, bold: true });
+  styles.addTheme("nord", { dark: { groups: { "chat.error": { fg: 2 } } } });
+  styles.setTheme("nord");
+  equal(styles.resolve("chat.error"), { fg: 2, bold: true });
+  styles.setTheme("default");
+  undo();
+  equal(styles.resolve("chat.error"), { fg: "#FF7B72", bold: true });
+});
+
+test("a theme with a 256-color palette uses it only without 24-bit color, and inherits the rest", () => {
+  const { state, styles } = themed();
+  styles.set({ a: { fg: "accent" }, d: { fg: "danger" }, w: { fg: "warn" } });
+  styles.addTheme("base", { dark: { palette: { warn: 7 } } });
+  styles.addTheme("nord", {
+    inherits: "base",
+    dark: { palette: { accent: "#ff0000", danger: "#00ff00" }, palette256: { accent: 99 } },
+  });
+  styles.setTheme("nord");
+  const colors = () => [styles.resolve("a").fg, styles.resolve("d").fg, styles.resolve("w").fg];
+  const truecolor = colors();
+  state.truecolor = false;
+  equal(
+    [truecolor, colors()],
+    [
+      ["#ff0000", "#00ff00", 7],
+      [99, 46, 7],
+    ],
   );
 });

@@ -5,7 +5,7 @@
 
 import { fit, measure, type Segment, type TextItem, type TextRow, type TextSection, wrap } from "yuke:tui";
 
-/** The style groups of the chat. Each one gets its default look from `STYLES`. */
+/** The style groups of the chat. The default theme gives their look. */
 export const STYLE = {
   user: "chat.user",
   meta: "chat.meta",
@@ -15,7 +15,7 @@ export const STYLE = {
   error: "chat.error",
   hint: "chat.hint",
   rule: "chat.rule",
-  commandSelected: "chat.commands.selected",
+  selected: "picker.selected",
   toolOutput: "chat.tool.output",
   toolError: "chat.tool.error",
   toolPending: "chat.tool.pending",
@@ -25,28 +25,6 @@ export const STYLE = {
   diffAdd: "chat.diff.add",
   diffDelete: "chat.diff.delete",
   diffContext: "chat.diff.context",
-} as const;
-
-/** The default look of each style group. A later `tui.styles.set` changes it. */
-export const STYLES = {
-  [STYLE.user]: { fg: "surfaceFg", bg: "surface" },
-  [STYLE.meta]: { dim: true },
-  [STYLE.title]: { bold: true },
-  [STYLE.subject]: { fg: "accent" },
-  [STYLE.thought]: { dim: true, italic: true },
-  [STYLE.error]: { fg: "danger", bold: true },
-  [STYLE.hint]: { fg: "accent" },
-  [STYLE.rule]: { dim: true },
-  [STYLE.commandSelected]: { fg: "surfaceFg", bg: "accentMuted" },
-  [STYLE.toolOutput]: { fg: "surfaceFg", dim: true },
-  [STYLE.toolError]: { fg: "danger" },
-  [STYLE.toolPending]: { bg: "pendingBg" },
-  [STYLE.toolFailed]: { bg: "errorBg" },
-  [STYLE.diffHeader]: { bold: true },
-  [STYLE.diffHunk]: { fg: "accent", dim: true },
-  [STYLE.diffAdd]: { fg: "strongFg", bg: "diffAddBg" },
-  [STYLE.diffDelete]: { fg: "danger", bg: "diffDelBg" },
-  [STYLE.diffContext]: { fg: "surfaceFg", dim: true },
 } as const;
 
 /** The cells at the left of each row. They stay out of a copy. */

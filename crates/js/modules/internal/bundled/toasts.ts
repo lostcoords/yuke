@@ -21,15 +21,6 @@ const HISTORY_ROWS = 16;
 const BODY = "toast.body";
 const TITLE = "toast.title";
 
-/** The look of a toast. Each level that shows a toast has its own group, for the mark and the title. */
-const STYLES = {
-  [BODY]: { fg: "surfaceFg", bg: "surface" },
-  [TITLE]: { bold: true },
-  "toast.info": { link: BODY, fg: "accent" },
-  "toast.warn": { link: BODY, fg: "warn" },
-  "toast.error": { link: BODY, fg: "danger" },
-} as const;
-
 /** A notice on the screen. `count` counts its equal notices, and `cancel` stops its timer. */
 interface Toast {
   readonly notice: Notice;
@@ -40,7 +31,6 @@ interface Toast {
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
-  tui.styles.set(STYLES);
   const toasts: Toast[] = [];
 
   const remove = (toast: Toast | undefined): void => {

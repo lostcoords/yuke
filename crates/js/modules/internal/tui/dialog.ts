@@ -7,9 +7,6 @@ import type { DialogKey, DialogOptions, Size, View } from "yuke:tui";
 const TITLE = "dialog.title";
 const KEYS = "dialog.keys";
 
-/** The default look of the style groups. */
-export const STYLES = { [TITLE]: { dim: true }, [KEYS]: { dim: true } } as const;
-
 /** The rows that one press of each scroll key moves, as a part of the body height for a page. */
 const STEPS: Readonly<Record<string, (page: number) => number>> = {
   up: () => -1,

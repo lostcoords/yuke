@@ -97,7 +97,7 @@ test("a dispose closes the root, so the mounts of its widgets end", () => {
   );
 });
 
-test("the palette color bg of a theme fills each cell of the frame, and no theme fills nothing", () => {
+test("the palette color bg of a theme fills each cell of the frame, and the default theme fills nothing", () => {
   using frame = createFrame({ width: 6, height: 2 }, () => ({
     draw: (canvas) => {
       canvas.text(0, 0, "ab");

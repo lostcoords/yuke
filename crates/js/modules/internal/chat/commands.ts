@@ -48,7 +48,7 @@ export class ChatCommands {
       const first = Math.max(0, selected - canvas.height + 1);
       const width = Math.max(0, ...matches.map((item) => measure(label(item.name))));
       for (const [at, item] of matches.slice(first, first + canvas.height).entries()) {
-        const style = first + at === selected ? STYLE.commandSelected : undefined;
+        const style = first + at === selected ? STYLE.selected : undefined;
         if (style !== undefined) canvas.fill(0, at, canvas.width, 1, style);
         const name = label(item.name).padEnd(width);
         const text = `${name}  ${item.description ?? ""}`;

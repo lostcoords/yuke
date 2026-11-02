@@ -8,39 +8,39 @@ import type { PluginContext } from "yuke:plugins";
 import { Picker, type Tui } from "yuke:tui";
 
 const FILE = "theme.json";
+const DEFAULT = "default";
 
-/** The name of the saved theme. A missing file gives none, and another failure is a notice. */
-async function saved(ctx: PluginContext): Promise<string | undefined> {
+/** The name of the saved theme, or the default theme without one. A file that does not read gives a notice too. */
+async function saved(ctx: PluginContext): Promise<string> {
   try {
     const value: unknown = JSON.parse(await readTextFile(FILE, { baseDir: ctx.dataDir, fatal: true }));
     const name = (value as { name?: unknown } | null)?.name;
-    return typeof name === "string" && name !== "" ? name : undefined;
+    return typeof name === "string" && name !== "" ? name : DEFAULT;
   } catch (error) {
     if (!(error instanceof FileSystemError && error.code === "ENOENT")) {
       ctx.notify("error", `the saved theme did not load: ${String(error)}`);
     }
-    return undefined;
+    return DEFAULT;
   }
 }
 
 function open(ctx: PluginContext, tui: Tui): void {
   const before = tui.styles.theme;
   // The active theme comes first, so the first selection changes nothing.
-  const names = [before, ...[undefined, ...tui.styles.themes()].filter((name) => name !== before)];
+  const names = [before, ...tui.styles.themes().filter((name) => name !== before)];
   const items = names.map((name) => ({ name }));
   const picker = new Picker({
     items,
-    key: (item) => item.name ?? "",
-    label: (item) => item.name ?? "default",
+    key: (item) => item.name,
+    label: (item) => item.name,
     select: (item) => {
       if (item !== undefined) tui.styles.setTheme(item.name);
     },
     choose: (item) => {
       dialog.close();
       tui.styles.setTheme(item.name);
-      const text = JSON.stringify(item.name === undefined ? {} : { name: item.name });
-      writeTextFile(FILE, text, { baseDir: ctx.dataDir, atomic: true }).catch((error: unknown) =>
-        ctx.notify("error", `the theme did not save: ${String(error)}`),
+      writeTextFile(FILE, JSON.stringify({ name: item.name }), { baseDir: ctx.dataDir, atomic: true }).catch(
+        (error: unknown) => ctx.notify("error", `the theme did not save: ${String(error)}`),
       );
     },
     cancel: () => {
