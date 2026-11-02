@@ -9,22 +9,22 @@ export type Job = {
  */
 id: string, 
 /**
- * The command of the job.
+ * A short text for display.
+ */
+label: string, } & ({ "state": "running" } | { "state": "ended" } | { "state": "stopped" }) & ({ "kind": "process", 
+/**
+ * The exact command.
  */
 command: string, 
 /**
- * The file that holds the output of the job.
+ * The file that holds the output.
  */
-log: string, } & ({ "state": "running" } | { "state": "ended", 
+log: string, 
 /**
- * The exit code, when the process exited.
+ * The exit code, when the process exited. An ended process without one did not exit by itself.
  */
-exitCode?: number | null, 
+exitCode?: number | null, } | { "kind": "plugin", 
 /**
- * The signal that ended the process.
+ * The name of the plugin.
  */
-signal?: number | null, 
-/**
- * A stop ended the job: `job/stop`, a close, or the end of the server.
- */
-stopped: boolean, });
+plugin: string, });

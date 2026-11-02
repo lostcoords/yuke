@@ -204,12 +204,12 @@ pub trait Sessions: Send + Sync {
     /// Returns why the request failed.
     fn mcp_servers(&self, id: SessionId) -> Result<Vec<McpServer>, SessionsError>;
 
-    /// Close session `id` at once. With `stop_jobs`, its running jobs stop. Without it, a running job makes the close fail.
+    /// Close session `id` at once. Its running jobs stop.
     ///
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn close(&self, id: SessionId, stop_jobs: bool) -> Result<(), SessionsError>;
+    async fn close(&self, id: SessionId) -> Result<(), SessionsError>;
 
     /// The providers of the catalog with their models: every provider with `all`, else only the ready ones.
     ///

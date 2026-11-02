@@ -101,7 +101,7 @@ async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
     let app = started(&place).await;
     let sessions = app.sessions();
     let id = sessions.create(settings(&place)).await.unwrap();
-    sessions.close(id, true).await.unwrap();
+    sessions.close(id).await.unwrap();
 
     let opening = sessions.reserve(id).unwrap();
     let second = sessions.load(id, None).await;
@@ -122,10 +122,10 @@ async fn no_session_opens_or_closes_during_a_reload() {
     let sessions = app.sessions();
     let id = sessions.create(settings(&place)).await.unwrap();
     let closed = sessions.create(settings(&place)).await.unwrap();
-    sessions.close(closed, true).await.unwrap();
+    sessions.close(closed).await.unwrap();
 
     let reload = sessions.start_reload().unwrap();
-    let close = sessions.close(id, true).await;
+    let close = sessions.close(id).await;
     let load = sessions.load(closed, None).await;
     let create = sessions.create(settings(&place)).await;
     let during = saved(sessions).await;
@@ -135,7 +135,7 @@ async fn no_session_opens_or_closes_during_a_reload() {
     assert!(matches!(load, Err(AppError::Reloading)));
     assert!(matches!(create, Err(AppError::Reloading)));
     assert_eq!(during, 2);
-    sessions.close(id, true).await.unwrap();
+    sessions.close(id).await.unwrap();
     app.shutdown().await;
 }
 
@@ -246,7 +246,7 @@ async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_i
         .await
         .unwrap();
 
-    sessions.close(id, false).await.unwrap();
+    sessions.close(id).await.unwrap();
     let at_the_close = lock(&events).len();
     sessions.open(id, |_, _| Ok(None)).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
@@ -336,7 +336,7 @@ async fn an_attachment_of_an_earlier_open_does_not_release_a_later_open() {
     let sessions = app.sessions();
     let id = sessions.create(settings(&place)).await.unwrap();
     let earlier = sessions.attach(id).unwrap();
-    sessions.close(id, true).await.unwrap();
+    sessions.close(id).await.unwrap();
     sessions.load(id, None).await.unwrap();
     let later = sessions.attach(id).unwrap();
     tokio::time::pause();

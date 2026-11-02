@@ -1211,9 +1211,13 @@ mod tests {
     fn running_job() -> Job {
         Job {
             id: "job-1a2b".to_owned(),
-            command: "sleep 30".to_owned(),
-            log: PathBuf::from("/tmp/job-1a2b.log"),
+            label: "sleep 30".to_owned(),
             state: yuke_protocol::JobState::Running,
+            kind: yuke_protocol::JobKind::Process {
+                command: "sleep 30".to_owned(),
+                log: PathBuf::from("/tmp/job-1a2b.log"),
+                exit_code: None,
+            },
         }
     }
 

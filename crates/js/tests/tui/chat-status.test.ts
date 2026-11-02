@@ -22,7 +22,14 @@ const SAVED: StoredEvent[] = [
   }),
 ];
 
-const JOB = { id: "j1", command: "npm run dev", log: "/tmp/j1.log", state: "running" } as unknown as Job;
+const JOB: Job = {
+  id: "j1",
+  label: "npm run dev",
+  state: "running",
+  kind: "process",
+  command: "npm run dev",
+  log: "/tmp/j1.log",
+};
 
 /** `CATALOG` with a context window of `window` tokens for `p/m`. */
 function withWindow(window: number): ListCatalogResult {

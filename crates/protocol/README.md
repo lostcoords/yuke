@@ -31,8 +31,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
 - `session/remove` deletes a saved session with its events, pending inputs, and blobs. Its forks stay. It fails for an
-  open session, so a client closes it first with `session/close`. That method stops the turn and needs
-  `stopJobs: true` when jobs run. It fails with -32003 while another writer holds the session.
+  open session, so a client closes it first with `session/close`. That method stops the turn and the jobs. A removal
+  fails with -32003 while another writer holds the session.
 - `auth/login { provider }` starts the device login of a provider with a login flow, and answers its `loginId`,
   `verificationUrl`, and `userCode` at once. A login in progress of the provider ends as `cancelled` first. The
   client shows the page and the code. The server polls the provider, saves the login in `auth.json`, and sends
@@ -70,8 +70,9 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   runs. That close stops its jobs.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
-  `session/close` fails while jobs run, unless it has `stopJobs: true`. A job that ends by itself also sends an input
-  from `host:jobs`, after its `job` update.
+  `session/close` stops the jobs of the session. A client that wants a warning first reads `job/list`. A job that ends
+  by itself also sends an input from `host:jobs`, after its `job` update. The `state` of a job is `running`, `ended`, or
+  `stopped`. Its `kind` is `process` (`command`, `log`, `exitCode`) or `plugin` (`plugin`).
 - Server requests: `extension/request`. A client answers each one. It answers -32601 for a method or an extension
   that it does not know. The server numbers its requests from 1, apart from the ids of the client.
 - Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`, `extension/cancel`,

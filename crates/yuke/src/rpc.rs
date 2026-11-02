@@ -383,7 +383,7 @@ impl Server {
                 result(&EmptyResult {})
             }
             ClientRequest::CloseSession(params) => {
-                app.sessions().close(params.session_id, params.stop_jobs).await?;
+                app.sessions().close(params.session_id).await?;
                 self.attachments.remove(&params.session_id);
                 result(&EmptyResult {})
             }
@@ -705,7 +705,6 @@ fn response_error(error: &AppError) -> ResponseError {
         AppError::Open(_)
         | AppError::Busy
         | AppError::TurnRuns
-        | AppError::JobsRun(_)
         | AppError::Changing(_)
         | AppError::Reloading
         | AppError::Stopped => ResponseError::INVALID_REQUEST,

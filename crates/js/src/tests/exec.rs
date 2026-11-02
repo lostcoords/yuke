@@ -288,7 +288,7 @@ async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
     assert_eq!(
         running
             .iter()
-            .map(|job| (job.id.as_str(), job.command.as_str()))
+            .map(|job| (job.id.as_str(), job.label.as_str()))
             .collect::<Vec<_>>(),
         [(kept.as_str(), "sleep 31")]
     );
@@ -472,40 +472,80 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     assert_eq!(answered.map(|(label, _)| label), Some("stopped".to_owned()));
     // The host has the end of the stopped job before the stop answers.
     assert_eq!(changed_at_answer, 6);
-    let job = |id: &str, command: &str, state| yuke_protocol::Job {
+    let job = |id: &str, command: &str, state, exit_code| yuke_protocol::Job {
         id: id.to_owned(),
-        command: command.to_owned(),
-        log: folder.join("processes").join(format!("{id}.log")),
+        label: command.to_owned(),
         state,
-    };
-    let end = |exit_code, signal, stopped| JobState::Ended {
-        exit_code,
-        signal,
-        stopped,
+        kind: yuke_protocol::JobKind::Process {
+            command: command.to_owned(),
+            log: folder.join("processes").join(format!("{id}.log")),
+            exit_code,
+        },
     };
     let changed = host.changed.lock().unwrap().clone();
     assert_eq!(
         changed[..6],
         [
-            job(&ended, "exit 3", JobState::Running),
-            job(&ended, "exit 3", end(Some(3), None, false)),
-            job(&stopped, "exec sleep 30", JobState::Running),
-            job(&first_closed, "exec sleep 31", JobState::Running),
-            job(&second_closed, "exec sleep 32", JobState::Running),
-            job(&stopped, "exec sleep 30", end(None, Some(15), true)),
+            job(&ended, "exit 3", JobState::Running, None),
+            job(&ended, "exit 3", JobState::Ended, Some(3)),
+            job(&stopped, "exec sleep 30", JobState::Running, None),
+            job(&first_closed, "exec sleep 31", JobState::Running, None),
+            job(&second_closed, "exec sleep 32", JobState::Running, None),
+            job(&stopped, "exec sleep 30", JobState::Stopped, None),
         ]
     );
     // The close stops both of its jobs, in any order.
     let mut closed = changed[6..].to_vec();
     closed.sort_by(|left, right| left.id.cmp(&right.id));
     let mut expected = vec![
-        job(&first_closed, "exec sleep 31", end(None, Some(15), true)),
-        job(&second_closed, "exec sleep 32", end(None, Some(15), true)),
+        job(&first_closed, "exec sleep 31", JobState::Stopped, None),
+        job(&second_closed, "exec sleep 32", JobState::Stopped, None),
     ];
     expected.sort_by(|left, right| left.id.cmp(&right.id));
     assert_eq!(closed, expected);
     // A stopped job sends no end message.
     assert_eq!(host.inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
+    let folder = folder("a_job_that_a_signal_ends_names_the_signal_in_its_report");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+
+    text_of(&exec["exec"], r#"{"command": "kill -TERM $$", "background": true}"#).await;
+
+    let texts = ended_texts(&host, 1).await;
+    assert!(texts[0].contains(" signal 15."), "{}", texts[0]);
+    processes.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters() {
+    let folder = folder("a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    let label = |command: String| {
+        let exec = &exec["exec"];
+        async move {
+            let arguments = serde_json::json!({ "command": command, "background": true }).to_string();
+            let started = text_of(exec, &arguments).await;
+            let label = started.split_once(" started: ").unwrap().1;
+            label.split_once(". Log: ").unwrap().0.to_owned()
+        }
+    };
+    let comment = |length: usize| format!("exit 0 # {}", "é".repeat(length - 9));
+
+    let fits = label(comment(60)).await;
+    let long = label(comment(61)).await;
+    let lines = label("  exit 0\nexit 1".to_owned()).await;
+
+    assert_eq!(fits, comment(60));
+    assert_eq!(long, format!("{}...", comment(57)));
+    assert_eq!(lines, "exit 0...");
+    processes.shutdown().await.unwrap();
 }
 
 #[tokio::test]

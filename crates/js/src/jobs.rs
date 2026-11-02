@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use rustix::process::{Pid, Signal};
 use tokio::sync::watch;
 use yuke_engine::CancellationToken;
-use yuke_protocol::{JobState, SessionId};
+use yuke_protocol::{JobKind, JobState, SessionId};
 
 use crate::processes::signal_group;
 use crate::tools::SessionHost;
@@ -48,6 +48,7 @@ struct List {
 /// A background job.
 struct Job {
     id: String,
+    label: String,
     command: String,
     session: SessionId,
     log: PathBuf,
@@ -85,10 +86,10 @@ impl JobEnd {
     }
 
     pub(crate) fn state(self) -> JobState {
-        JobState::Ended {
-            exit_code: self.exit_code,
-            signal: self.signal,
-            stopped: self.stopped,
+        if self.stopped {
+            JobState::Stopped
+        } else {
+            JobState::Ended
         }
     }
 }
@@ -107,6 +108,7 @@ impl Jobs {
         &self,
         owner: &dyn SessionHost,
         id: String,
+        label: String,
         command: String,
         log: PathBuf,
     ) -> Result<RunningJob, String> {
@@ -125,6 +127,7 @@ impl Jobs {
         }
         list.running.push(Job {
             id: id.clone(),
+            label,
             command,
             session: owner.session_id(),
             log,
@@ -185,9 +188,13 @@ impl Jobs {
             .filter(|job| job.group.is_some() && job.session == session)
             .map(|job| yuke_protocol::Job {
                 id: job.id.clone(),
-                command: job.command.clone(),
-                log: job.log.clone(),
+                label: job.label.clone(),
                 state: JobState::Running,
+                kind: JobKind::Process {
+                    command: job.command.clone(),
+                    log: job.log.clone(),
+                    exit_code: None,
+                },
             })
             .collect()
     }

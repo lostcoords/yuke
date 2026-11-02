@@ -143,9 +143,7 @@ async fn a_closed_session_cancels_its_pending_requests() {
     }
     let session = opened.iter().find(|message| is_response(message, id)).unwrap()["result"]["sessionId"].clone();
     let request = opened.iter().find(|message| is_request(message)).unwrap();
-    client
-        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
+    client.request("session/close", json!({ "sessionId": session })).await;
     let mut seen = Vec::new();
     while !(seen
         .iter()

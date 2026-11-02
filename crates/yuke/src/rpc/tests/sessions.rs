@@ -528,14 +528,10 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
         .await
         .unwrap();
 
-    let id = client
-        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
+    let id = client.request("session/close", json!({ "sessionId": session })).await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
     let refused = client.call("session/input", input_params(&session, "third")).await;
-    let closed_again = client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
+    let closed_again = client.call("session/close", json!({ "sessionId": session })).await;
     let loaded = client.load(&session, json!({})).await;
 
     let labels: Vec<String> = closed.iter().filter_map(label).collect();
@@ -673,7 +669,7 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
     let refused_open = client.call("session/remove", json!({ "sessionId": open })).await;
     let refused_held = client.call("session/remove", json!({ "sessionId": held })).await;
     client
-        .call("session/close", json!({ "sessionId": open, "stopJobs": false }))
+        .call("session/close", json!({ "sessionId": open }))
         .await
         .unwrap();
     let closed = client.call("session/remove", json!({ "sessionId": open })).await;
@@ -781,7 +777,7 @@ async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close
         .await;
     client.until(is_idle).await;
     client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .call("session/close", json!({ "sessionId": session }))
         .await
         .unwrap();
     let read = client

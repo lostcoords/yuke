@@ -228,7 +228,7 @@ defineTool({
       if (args.timeout_ms !== undefined) throw new Error("Remove timeout_ms, or set background to false.");
       const job = await callOf(context).startJob(command);
       return (
-        `[${job.id} started: ${shortCommand(command)}. Log: ${job.log}. Its end arrives as a message, so never ` +
+        `[${job.id} started: ${job.label}. Log: ${job.log}. Its end arrives as a message, so never ` +
         `sleep or poll. Use stop with ${job.id} to end it.]`
       );
     }
@@ -288,11 +288,3 @@ defineTool({
     return `[${id} ${stopped.label}.] Log: ${stopped.log}`;
   },
 });
-
-/** The first line of `command`, at most 60 characters, for a job start. */
-function shortCommand(command: string): string {
-  const text = command.trim();
-  const end = text.indexOf("\n");
-  const line = end < 0 ? text : text.slice(0, end);
-  return line.length > 60 || end >= 0 ? `${line.slice(0, 57)}...` : line;
-}

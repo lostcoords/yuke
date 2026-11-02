@@ -154,7 +154,7 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
     client.until(is_question).await;
 
     client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
+        .call("session/close", json!({ "sessionId": session }))
         .await
         .unwrap();
     client.load(&session, json!({})).await;

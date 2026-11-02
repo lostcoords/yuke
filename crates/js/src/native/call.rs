@@ -62,11 +62,7 @@ pub(crate) fn object<'js>(
                 let (processes, host) = (Arc::clone(&start_processes), Arc::clone(&start_host));
                 async move {
                     let started = processes.start_job(command, host).await;
-                    let (id, log) = started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
-                    Ok::<_, rquickjs::Error>(StartedJob {
-                        id,
-                        log: log.to_string_lossy().into_owned(),
-                    })
+                    started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))
                 }
             }),
         )?,
@@ -105,13 +101,6 @@ pub(crate) fn object<'js>(
         })?,
     )?;
     Ok(object)
-}
-
-/// What `startJob` gives: the id of the job and its log file.
-#[derive(IntoJs)]
-struct StartedJob {
-    id: String,
-    log: String,
 }
 
 /// What `stopJob` gives: how the job ended and its log file.

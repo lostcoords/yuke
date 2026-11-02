@@ -196,8 +196,8 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
     },
     open: (id, options) => open(plugin, signal, id, options),
     events: (id, page) => sessionsEvents([id, page.before ?? null, page.limit]),
-    async close(id, options) {
-      await sessionClose([id, options?.stopJobs === true]);
+    async close(id) {
+      await sessionClose(id);
       // The close sends each view its end on another channel, so the handles end before the close resolves.
       await flush();
     },

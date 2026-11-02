@@ -179,7 +179,7 @@ impl crate::Sessions for NoSessions {
     fn mcp_servers(&self, _: yuke_protocol::SessionId) -> Result<Vec<yuke_protocol::McpServer>, crate::SessionsError> {
         no_sessions()
     }
-    async fn close(&self, _: yuke_protocol::SessionId, _: bool) -> Result<(), crate::SessionsError> {
+    async fn close(&self, _: yuke_protocol::SessionId) -> Result<(), crate::SessionsError> {
         no_sessions()
     }
     async fn list_plugins(&self) -> Result<yuke_protocol::ListPluginsResult, crate::SessionsError> {

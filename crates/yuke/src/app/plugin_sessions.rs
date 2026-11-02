@@ -126,8 +126,8 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.mcp_servers(id)?)
     }
 
-    async fn close(&self, id: SessionId, stop_jobs: bool) -> Result<(), SessionsError> {
-        Ok(self.service()?.close(id, stop_jobs).await?)
+    async fn close(&self, id: SessionId) -> Result<(), SessionsError> {
+        Ok(self.service()?.close(id).await?)
     }
 
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, SessionsError> {

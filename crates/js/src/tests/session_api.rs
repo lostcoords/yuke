@@ -167,8 +167,8 @@ impl Sessions for Scripted {
     fn mcp_servers(&self, _: SessionId) -> Result<Vec<McpServer>, SessionsError> {
         Ok(Vec::new())
     }
-    async fn close(&self, id: SessionId, stop_jobs: bool) -> Result<(), SessionsError> {
-        self.record(format!("close {id} {stop_jobs}"));
+    async fn close(&self, id: SessionId) -> Result<(), SessionsError> {
+        self.record(format!("close {id}"));
         for sink in self.sinks.lock().unwrap().iter() {
             sink(ViewEvent::Closed);
         }
@@ -443,7 +443,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              await sessions.events(id, {{ limit: 3 }});
              await sessions.list();
              await catalog.list();
-             await sessions.close(id, {{ stopJobs: true }});
+             await sessions.close(id);
              return JSON.stringify([input, removed]);",
             session()
         ),
@@ -471,7 +471,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             format!("events {id} None 3"),
             "list None".to_owned(),
             "catalog false".to_owned(),
-            format!("close {id} true"),
+            format!("close {id}"),
         ]
     );
 }

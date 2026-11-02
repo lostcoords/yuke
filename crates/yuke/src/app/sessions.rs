@@ -522,14 +522,13 @@ impl SessionService {
             .events)
     }
 
-    /// Close session `id`: its turn stops, and its task ends. Waiting input stays saved. A session with running jobs
-    /// closes only with `stop_jobs`, which stops them.
+    /// Close session `id`: its turn stops, its task ends, and its jobs stop. Waiting input stays saved.
     ///
     /// # Errors
     ///
-    /// Returns [`AppError::NotOpen`], [`AppError::JobsRun`] for running jobs without `stop_jobs`,
-    /// [`AppError::Changing`] while another call opens or closes the session, and [`AppError::Reloading`].
-    pub(crate) async fn close(&self, id: SessionId, stop_jobs: bool) -> Result<(), AppError> {
+    /// Returns [`AppError::NotOpen`], [`AppError::Changing`] while another call opens or closes the session, and
+    /// [`AppError::Reloading`].
+    pub(crate) async fn close(&self, id: SessionId) -> Result<(), AppError> {
         let live = {
             let mut registry = lock(&self.registry);
             admit(registry.phase)?;
@@ -538,12 +537,6 @@ impl SessionService {
                 Some(Slot::Opening | Slot::Closing) => return Err(AppError::Changing(id)),
                 None => return Err(AppError::NotOpen(id)),
             };
-            if !stop_jobs {
-                let jobs = live.jobs();
-                if !jobs.is_empty() {
-                    return Err(AppError::JobsRun(jobs.into_iter().map(|job| job.id).collect()));
-                }
-            }
             registry.slots.insert(id, Slot::Closing);
             live
         };

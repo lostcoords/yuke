@@ -13,13 +13,13 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rquickjs::FromJs;
+use rquickjs::{FromJs, IntoJs};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use yuke_engine::CancellationToken;
-use yuke_protocol::{Input, JobState};
+use yuke_protocol::{Input, JobKind, JobState};
 
 use crate::jobs::{JobEnd, Jobs, RunningJob};
 use crate::tools::SessionHost;
@@ -193,19 +193,17 @@ impl Processes {
         self.handle.spawn(task).await.map_err(|error| error.to_string())?
     }
 
-    /// Start `command` in the folder of `owner` as a job, and answer its id and log file. A job that ends by itself
-    /// reports to `owner`. Without jobs, the start fails with a text for the model.
-    pub(crate) async fn start_job(
-        &self,
-        command: String,
-        owner: Arc<dyn SessionHost>,
-    ) -> Result<(String, PathBuf), String> {
+    /// Start `command` in the folder of `owner` as a job. A job that ends by itself reports to `owner`. Without jobs, the
+    /// start fails with a text for the model.
+    pub(crate) async fn start_job(&self, command: String, owner: Arc<dyn SessionHost>) -> Result<StartedJob, String> {
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
+        let label = short_command(&command);
         let job = JobTask {
             job: self
                 .jobs
-                .add(owner.as_ref(), id.clone(), command.clone(), log.clone())?,
+                .add(owner.as_ref(), id.clone(), label.clone(), command.clone(), log.clone())?,
+            label: label.clone(),
             command,
             log: log.clone(),
         };
@@ -216,13 +214,18 @@ impl Processes {
         started
             .await
             .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
-        Ok((id, log))
+        Ok(StartedJob {
+            id,
+            label,
+            log: log.to_string_lossy().into_owned(),
+        })
     }
 }
 
 /// The task of one job: it spawns the process, waits for its end, and delivers the end.
 struct JobTask {
     job: RunningJob,
+    label: String,
     command: String,
     log: PathBuf,
 }
@@ -248,14 +251,14 @@ impl JobTask {
             }
         };
         self.job.set_group(Some(group));
-        owner.job_changed(self.protocol_job(JobState::Running));
+        owner.job_changed(self.protocol_job(JobState::Running, None));
         answer_start(started, Ok(()));
         // A stop that came during the spawn ends the process here, with the grace.
         let end = wait_job(child, group, &self.job.stop).await;
         // A process that ended by itself sends its end message, also when a close came after the end. A stop of this
         // one job sends none.
         let silenced = self.job.set_group(None);
-        owner.job_changed(self.protocol_job(end.state()));
+        owner.job_changed(self.protocol_job(end.state(), end.exit_code));
         if !end.stopped && !silenced {
             let text = end_message(&self.job.id, &end.label(), self.log.clone()).await;
             let display = format!("{} ended", self.job.id);
@@ -267,13 +270,36 @@ impl JobTask {
     }
 
     /// The job in `state`, for its owner.
-    fn protocol_job(&self, state: JobState) -> yuke_protocol::Job {
+    fn protocol_job(&self, state: JobState, exit_code: Option<i32>) -> yuke_protocol::Job {
         yuke_protocol::Job {
             id: self.job.id.clone(),
-            command: self.command.clone(),
-            log: self.log.clone(),
+            label: self.label.clone(),
             state,
+            kind: JobKind::Process {
+                command: self.command.clone(),
+                log: self.log.clone(),
+                exit_code,
+            },
         }
+    }
+}
+
+/// What a job start gives: the id of the job, its label, and its log file.
+#[derive(IntoJs)]
+pub(crate) struct StartedJob {
+    id: String,
+    label: String,
+    log: String,
+}
+
+/// The first line of `command`, at most 60 characters.
+fn short_command(command: &str) -> String {
+    let text = command.trim();
+    let (line, more) = text.split_once('\n').map_or((text, false), |(line, _)| (line, true));
+    if more || line.chars().count() > 60 {
+        format!("{}...", line.chars().take(57).collect::<String>())
+    } else {
+        line.to_owned()
     }
 }
 

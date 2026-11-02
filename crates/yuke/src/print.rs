@@ -171,10 +171,7 @@ async fn run_turn(
         }
     }
     // The close cancels a running turn, and that turn saves its end before the close returns.
-    app.sessions()
-        .close(id, true)
-        .await
-        .map_err(|error| chain_text(&error))?;
+    app.sessions().close(id).await.map_err(|error| chain_text(&error))?;
     let watched = lock(&watcher.watched).remove(&id).unwrap_or_default();
     // A cancel before the turn leaves the input pending, and a later run must not answer it. After a failure, the input
     // stays for a later run.

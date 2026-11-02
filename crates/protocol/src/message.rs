@@ -72,9 +72,9 @@ pub enum ClientRequest {
     #[serde(rename = "session/load")]
     LoadSession(LoadSessionParams),
     /// Stop the running turn and the background jobs of a session, and free the session. The session stays saved, and
-    /// a load opens it again. A session with running jobs closes only with `stopJobs: true`. Result: [`EmptyResult`].
+    /// a load opens it again. Result: [`EmptyResult`].
     #[serde(rename = "session/close")]
-    CloseSession(CloseSessionParams),
+    CloseSession(SessionParams),
     /// Add input to a session. An idle session starts a turn. During a turn, the input joins the turn at its next
     /// round. Result: [`InputResult`].
     #[serde(rename = "session/input")]
@@ -483,18 +483,6 @@ pub struct LoadSessionParams {
     pub after: Option<EventNumber>,
 }
 
-/// The params of `session/close`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "camelCase")]
-pub struct CloseSessionParams {
-    /// The open session.
-    pub session_id: SessionId,
-    /// Whether to stop the running background jobs of the session. With `false`, a session with running jobs does not
-    /// close.
-    pub stop_jobs: bool,
-}
-
 /// The params of `session/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -542,7 +530,8 @@ pub struct RemoveSessionParams {
     pub session_id: SessionId,
 }
 
-/// The params of a message that names only an open session: `job/list`, `mcp/list`, and `session/cancel`.
+/// The params of a message that names only an open session: `session/close`, `job/list`, `mcp/list`, and
+/// `session/cancel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -567,32 +556,48 @@ pub struct ListJobsResult {
 pub struct Job {
     /// The id of the job, for example `job-1a2b`.
     pub id: String,
-    /// The command of the job.
-    pub command: String,
-    /// The file that holds the output of the job.
-    pub log: PathBuf,
+    /// A short text for display.
+    pub label: String,
     /// Whether the job runs, and how it ended.
     #[serde(flatten)]
     pub state: JobState,
+    /// What runs.
+    #[serde(flatten)]
+    pub kind: JobKind,
 }
 
 /// Whether a job runs, and how it ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(tag = "state", rename_all = "snake_case")]
 pub enum JobState {
-    /// The process runs.
+    /// The job runs.
     Running,
-    /// The process ended. Without an exit code and a signal, the wait for the process failed.
-    Ended {
-        /// The exit code, when the process exited.
+    /// The job ended by itself.
+    Ended,
+    /// A stop ended the job: `job/stop`, a close, or the end of the server.
+    Stopped,
+}
+
+/// What a job runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+pub enum JobKind {
+    /// A shell command.
+    Process {
+        /// The exact command.
+        command: String,
+        /// The file that holds the output.
+        log: PathBuf,
+        /// The exit code, when the process exited. An ended process without one did not exit by itself.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exit_code: Option<i32>,
-        /// The signal that ended the process.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        signal: Option<i32>,
-        /// A stop ended the job: `job/stop`, a close, or the end of the server.
-        stopped: bool,
+    },
+    /// The work of a plugin.
+    Plugin {
+        /// The name of the plugin.
+        plugin: String,
     },
 }
 

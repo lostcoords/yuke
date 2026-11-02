@@ -61,9 +61,10 @@ declare module "yuke:internal/native" {
     readonly display: readonly DisplayBlock[];
   }
 
-  /** A started job: its id and its log file. */
+  /** A started job: its id, its label, and its log file. */
   export interface StartedJob {
     readonly id: string;
+    readonly label: string;
     readonly log: string;
   }
 
@@ -502,7 +503,7 @@ declare module "yuke:internal/native" {
   /** Save `bytes` in the store of session `id`. Bytes over the attachment limit throw before the store gets them. */
   export function sessionPutBlob(id: SessionId, bytes: Uint8Array): Promise<Blob>;
   export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
-  export function sessionClose(request: readonly [id: SessionId, stopJobs: boolean]): Promise<null>;
+  export function sessionClose(id: SessionId): Promise<null>;
   export function sessionCancel(id: SessionId): void;
   export function sessionRespond(
     request: readonly [id: SessionId, interactionId: InteractionId, response: InteractionResponse],

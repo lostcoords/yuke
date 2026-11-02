@@ -236,7 +236,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       },
       async close(): Promise<void> {
         closed.add(id);
-        await sessions.close(id, { stopJobs: true });
+        await sessions.close(id);
         await settle();
       },
     } satisfies TestSession);

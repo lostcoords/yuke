@@ -807,8 +807,6 @@ pub(crate) enum AppError {
     Busy,
     /// A turn runs in an open session, so the plugins cannot reload.
     TurnRuns,
-    /// The session runs the jobs with these ids.
-    JobsRun(Vec<String>),
     /// The session runs no job with this id.
     NoJob(String),
     /// The session has no open question with this id.
@@ -837,11 +835,6 @@ impl fmt::Display for AppError {
             AppError::Invalid(text) | AppError::Internal(text) => f.write_str(text),
             AppError::Busy => f.write_str("a turn runs or waits: change the settings after it ends"),
             AppError::TurnRuns => f.write_str("a turn runs: reload after it ends"),
-            AppError::JobsRun(ids) => write!(
-                f,
-                "the session runs the jobs {}: stop them, or close with stopJobs: true",
-                ids.join(", ")
-            ),
             AppError::NoJob(id) => write!(f, "the session runs no job {id}"),
             AppError::NoInteraction(id) => write!(f, "the session has no open question {}", id.0),
             AppError::NoLogin(id) => write!(f, "no login {} is in progress", id.0),

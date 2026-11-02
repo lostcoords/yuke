@@ -58,8 +58,8 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
         (&jobs[0]["id"], &jobs[0]["command"], &jobs[0]["log"])
     );
     assert_eq!(
-        (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["stopped"]),
-        (&json!("ended"), &json!(3), &json!(false))
+        (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["kind"]),
+        (&json!("ended"), &json!(3), &json!("process"))
     );
     let shown = job_input["content"][0]["user_text"].as_str().unwrap();
     assert!(shown.starts_with("job-") && shown.ends_with(" ended"), "{shown}");
@@ -129,6 +129,9 @@ async fn the_job(client: &mut Client, session: &Value) -> Value {
         jobs[0]["command"].as_str().unwrap().ends_with(" && exec sleep 3600"),
         "{listed}"
     );
+    // The command is long, so its label is a shorter text.
+    let shown = jobs[0]["label"].as_str().unwrap();
+    assert!(shown.starts_with("echo $$") && shown.ends_with("..."), "{listed}");
     let id = jobs[0]["id"].as_str().unwrap();
     let log = PathBuf::from(jobs[0]["log"].as_str().unwrap());
     assert_eq!(log.file_name().unwrap(), format!("{id}.log").as_str(), "{listed}");
@@ -171,35 +174,21 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
 }
 
 #[tokio::test]
-async fn a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them() {
-    let place = Place::new("rpc", "a_close_needs_stop_jobs_while_jobs_run_and_then_ends_them");
+async fn a_close_ends_the_running_jobs_and_their_updates_come_first() {
+    let place = Place::new("rpc", "a_close_ends_the_running_jobs_and_their_updates_come_first");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
     let job = the_job(&mut client, &session).await;
+    let runs_before_close = job_runs(&place);
 
-    let refused = client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
-    let runs_after_refusal = job_runs(&place);
-    let id = client
-        .request("session/close", json!({ "sessionId": session, "stopJobs": true }))
-        .await;
+    let id = client.request("session/close", json!({ "sessionId": session })).await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
     let loaded = client.load(&session, json!({})).await;
 
-    let refused = refused.unwrap_err();
-    assert_eq!(refused["code"], json!(ResponseError::INVALID_REQUEST));
-    assert!(
-        refused["message"].as_str().unwrap().contains(job.as_str().unwrap()),
-        "{refused}"
-    );
-    assert!(runs_after_refusal);
+    assert!(runs_before_close);
     let labels: Vec<String> = closed.iter().filter_map(label).collect();
     assert_eq!(labels, ["job", "response"]);
     let ended = &closed[0]["params"]["update"]["job"];
-    assert_eq!(
-        (&ended["id"], &ended["state"], &ended["stopped"]),
-        (&job, &json!("ended"), &json!(true))
-    );
+    assert_eq!((&ended["id"], &ended["state"]), (&job, &json!("stopped")));
     assert_eq!(closed[1]["result"], json!({}));
     // The close waits for the end of the job, so its process is gone.
     assert!(!job_runs(&place));
@@ -222,9 +211,7 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
         .call("job/stop", json!({ "sessionId": session, "jobId": job }))
         .await;
     // The close waits for the job task, so an end input of the stopped job would come before its response.
-    let id = client
-        .request("session/close", json!({ "sessionId": session, "stopJobs": false }))
-        .await;
+    let id = client.request("session/close", json!({ "sessionId": session })).await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
 
     assert_eq!(loaded.jobs.len(), 1);
@@ -249,10 +236,7 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
     assert_eq!(stopped[1]["result"], json!({}));
     let ended = &stopped[0]["params"]["update"]["job"];
     assert_eq!(ended["id"], job);
-    assert_eq!(ended["state"], "ended");
-    assert_eq!(ended["stopped"], true);
-    // The job is `exec sleep`, so SIGTERM ends it.
-    assert_eq!(ended["signal"], 15, "{ended}");
+    assert_eq!(ended["state"], "stopped");
     assert_eq!(again.unwrap_err()["code"], json!(ResponseError::JOB_NOT_FOUND));
     assert_eq!(closed.iter().filter_map(label).collect::<Vec<_>>(), ["response"]);
     assert_eq!(closed[0]["result"], json!({}));
@@ -289,7 +273,7 @@ async fn a_job_of_an_open_session_still_runs_after_a_reload() {
     assert!(job_runs(&place));
     the_job(&mut client, &session).await;
     client
-        .call("session/close", json!({ "sessionId": session, "stopJobs": true }))
+        .call("session/close", json!({ "sessionId": session }))
         .await
         .unwrap();
     client.end().await;

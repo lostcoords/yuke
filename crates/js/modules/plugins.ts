@@ -140,10 +140,10 @@ export interface Sessions {
   /** At most `page.limit` saved events of session `id` before the event `page.before`, or its last ones, in order. */
   readonly events: (id: SessionId, page: EventsPage) => Promise<readonly Frozen<StoredEvent>[]>;
   /**
-   * Close session `id` at once for each holder, and end each handle on it. A close with running jobs fails unless
-   * `options.stopJobs` is true. A cleanup of the session must not await the close of its own session.
+   * Close session `id` at once for each holder, end each handle on it, and stop its jobs. A cleanup of the session must
+   * not await the close of its own session.
    */
-  readonly close: (id: SessionId, options?: { readonly stopJobs?: boolean }) => Promise<void>;
+  readonly close: (id: SessionId) => Promise<void>;
 }
 
 /** How `Sessions.open` watches a session. */

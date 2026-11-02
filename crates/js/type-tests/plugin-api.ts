@@ -192,7 +192,7 @@ export async function drive(sessions: Sessions): Promise<void> {
   await sessions.open("id", { event: () => undefined });
   // @ts-expect-error: a handle ends by its signal. Only `sessions.close` closes the session for each holder.
   await handle.close();
-  await sessions.close(handle.id, { stopJobs: true });
+  await sessions.close(handle.id);
 }
 
 // `yuke:fs` takes a base folder and a signal, and its failure has a code.

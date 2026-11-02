@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 use yuke_engine::{Commit, CommitDisplay, Outcome, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionCancelParams, ExtensionEventParams,
-    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobState, ListMcpServersResult,
-    LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel, NoticeParams, Notification,
-    Request, Response, ServerNotification, ServerRequest, SessionEvent, SessionId, SessionSettings, SessionUpdate,
-    SessionUpdateParams, StoredEvent,
+    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobKind, JobState,
+    ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
+    NoticeParams, Notification, Request, Response, ServerNotification, ServerRequest, SessionEvent, SessionId,
+    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -131,14 +131,11 @@ fn each_request_reads_and_writes_its_json() {
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 7, "method": "session/close", "params": {
-                "sessionId": SESSION, "stopJobs": true
+                "sessionId": SESSION
             } }),
             request(
                 7,
-                ClientRequest::CloseSession(yuke_protocol::CloseSessionParams {
-                    session_id: session(),
-                    stop_jobs: true,
-                }),
+                ClientRequest::CloseSession(yuke_protocol::SessionParams { session_id: session() }),
             ),
         ),
     ];
@@ -382,19 +379,26 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
     );
     assert_json(&json!({}), &yuke_protocol::EmptyResult {});
     assert_json(
-        &json!({ "jobs": [{ "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "running" }] }),
+        &json!({ "jobs": [{
+            "id": "job-1a2b", "label": "sleep 30", "state": "running",
+            "kind": "process", "command": "sleep 30", "log": "/tmp/job-1a2b.log"
+        }] }),
         &yuke_protocol::ListJobsResult {
-            jobs: vec![job(JobState::Running)],
+            jobs: vec![process_job(JobState::Running, None)],
         },
     );
 }
 
-fn job(state: JobState) -> yuke_protocol::Job {
+fn process_job(state: JobState, exit_code: Option<i32>) -> yuke_protocol::Job {
     yuke_protocol::Job {
         id: "job-1a2b".to_owned(),
-        command: "sleep 30".to_owned(),
-        log: "/tmp/job-1a2b.log".into(),
+        label: "sleep 30".to_owned(),
         state,
+        kind: JobKind::Process {
+            command: "sleep 30".to_owned(),
+            log: "/tmp/job-1a2b.log".into(),
+            exit_code,
+        },
     }
 }
 
@@ -407,25 +411,31 @@ fn a_job_update_holds_the_whole_job_and_its_end() {
 
     assert_json(
         &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
-            "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "ended", "exitCode": 0,
-            "stopped": false
+            "id": "job-1a2b", "label": "sleep 30", "state": "ended",
+            "kind": "process", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "exitCode": 0
         } } }),
-        &update(job(JobState::Ended {
-            exit_code: Some(0),
-            signal: None,
-            stopped: false,
-        })),
+        &update(process_job(JobState::Ended, Some(0))),
     );
     assert_json(
         &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
-            "id": "job-1a2b", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "state": "ended", "signal": 15,
-            "stopped": true
+            "id": "job-1a2b", "label": "sleep 30", "state": "stopped",
+            "kind": "process", "command": "sleep 30", "log": "/tmp/job-1a2b.log"
         } } }),
-        &update(job(JobState::Ended {
-            exit_code: None,
-            signal: Some(15),
-            stopped: true,
-        })),
+        &update(process_job(JobState::Stopped, None)),
+    );
+    assert_json(
+        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+            "id": "explorer", "label": "explore the store", "state": "running",
+            "kind": "plugin", "plugin": "agents"
+        } } }),
+        &update(yuke_protocol::Job {
+            id: "explorer".to_owned(),
+            label: "explore the store".to_owned(),
+            state: JobState::Running,
+            kind: JobKind::Plugin {
+                plugin: "agents".to_owned(),
+            },
+        }),
     );
 }
 

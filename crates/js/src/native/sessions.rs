@@ -250,11 +250,9 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
         "sessionStopJob",
         |sessions, (id, job_id): (SessionId, String)| async move { sessions.stop_job(id, &job_id).await },
     )?;
-    request.add(
-        object,
-        "sessionClose",
-        |sessions, (id, stop_jobs): (SessionId, bool)| async move { sessions.close(id, stop_jobs).await },
-    )?;
+    request.add(object, "sessionClose", |sessions, id: SessionId| async move {
+        sessions.close(id).await
+    })?;
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
