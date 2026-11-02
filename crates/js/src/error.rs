@@ -13,13 +13,10 @@ pub enum Error {
     /// The JavaScript threw, or the engine refused the operation.
     Script(ScriptError),
 
-    /// The JavaScript thread has ended.
+    /// The engine task has ended.
     Stopped,
 
-    /// The JavaScript thread or its tokio runtime did not start.
-    Thread(std::io::Error),
-
-    /// The JavaScript thread panicked. The text is the message of the panic.
+    /// The engine task panicked. The text is the message of the panic.
     Panicked(String),
 
     /// The workspace folder of a session is not UTF-8, so the JavaScript cannot name it.
@@ -85,10 +82,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Script(error) => error.fmt(f),
-            Self::Stopped => f.write_str("the JavaScript thread has ended"),
-            // The text names no cause, because `source` returns it.
-            Self::Thread(_) => f.write_str("the JavaScript thread did not start"),
-            Self::Panicked(message) => write!(f, "the JavaScript thread panicked: {message}"),
+            Self::Stopped => f.write_str("the JavaScript runtime has ended"),
+            Self::Panicked(message) => write!(f, "the JavaScript runtime panicked: {message}"),
             Self::Folder(folder) => write!(f, "the workspace folder {} is not UTF-8", folder.display()),
         }
     }
@@ -99,7 +94,6 @@ impl std::error::Error for Error {
         match self {
             // The text is the text of the inner error, so the source is the source of the inner error.
             Self::Script(error) => error.source(),
-            Self::Thread(error) => Some(error),
             Self::Stopped | Self::Panicked(_) | Self::Folder(_) => None,
         }
     }

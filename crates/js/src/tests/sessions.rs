@@ -38,7 +38,7 @@ async fn global_once(runtime: &Runtime, name: &str, expected: i32) -> i32 {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running() {
     let (folder, runtime, _reports) = loaded(
         "the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running",
@@ -66,7 +66,7 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
 
 // A removed tool can still be in the tools of a running turn, so its handle answers an error, also after a new tool
 // takes its name.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
     let (folder, runtime, _reports) = loaded(
         "a_held_tool_that_its_plugin_removed_answers_an_error",
@@ -87,7 +87,7 @@ async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
     assert_eq!(error_of(&tools["gone"], "{}").await, "the tool is no longer defined");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_closed_session_has_no_tools() {
     let folder = folder("a_closed_session_has_no_tools");
     let (runtime, _reports) = start(&folder).await;
@@ -99,7 +99,7 @@ async fn a_closed_session_has_no_tools() {
     assert!(session.tools().await.unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_close_does_nothing() {
     let (folder, runtime, _reports) = loaded(
         "a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_close_does_nothing",
@@ -115,14 +115,14 @@ async fn a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_clo
     closed.session.close().await.unwrap();
     closed.session.close().await.unwrap();
     drop(closed);
-    // The close that the drop posts comes before this call on the thread.
+    // The close that the drop posts comes before this call on the engine task.
     let after_close = evaluate::<i32>(&runtime, "return globalThis.cleaned;").await.unwrap();
 
     assert_eq!(after_drop, 1);
     assert_eq!(after_close, 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_revive_it() {
     let folder = folder("a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_revive_it");
     write(&folder, &[("notes.txt", "alpha\n")]);
@@ -145,7 +145,7 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
     assert_eq!(second.session.tools().await.unwrap().len(), 5);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
     let (folder, runtime, _reports) = loaded(
         "a_shutdown_ends_while_a_session_waits_for_its_setup",

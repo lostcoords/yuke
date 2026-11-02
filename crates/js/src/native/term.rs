@@ -309,7 +309,7 @@ fn add_text<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     )
 }
 
-/// Run the frame loop of `frames` on the JavaScript thread once `shown` gives the snapshot: take each waiting input,
+/// Run the frame loop of `frames` on the engine task once `shown` gives the snapshot: take each waiting input,
 /// give its events to the handler, then draw one frame. An asked frame comes at its deadline, and no sooner than one
 /// interval after the last frame. Without a display, or when the runtime ends before the show, the loop ends at once.
 pub(crate) async fn drive(

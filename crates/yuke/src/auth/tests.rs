@@ -124,7 +124,7 @@ impl Exchange for Gated {
     }
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test(flavor = "local", start_paused = true)]
 async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone() {
     let folder = folder("a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone");
     let other = json!({"other": {"access_token": "a", "refresh_token": "r", "expires_at": 1}});
@@ -160,7 +160,7 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
     assert_eq!(mode & 0o777, 0o600);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test(flavor = "local", start_paused = true)]
 async fn a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing() {
     let folder = folder("a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing");
     let answers = Answers::default();
@@ -183,7 +183,7 @@ async fn a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing() {
     assert_eq!(file(&folder), json!({}));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test(flavor = "local", start_paused = true)]
 async fn login_errors_keep_the_complete_transport_cause_text() {
     let folder = folder("login_errors_keep_the_complete_transport_cause_text");
     let answers = Answers::default();
@@ -208,7 +208,7 @@ async fn login_errors_keep_the_complete_transport_cause_text() {
     assert_eq!(saved(&folder), Some(("at".to_owned(), "rt".to_owned())));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test(flavor = "local", start_paused = true)]
 async fn a_login_without_an_approval_ends_at_its_limit() {
     let folder = folder("a_login_without_an_approval_ends_at_its_limit");
     let answers = Answers::default();
@@ -230,7 +230,7 @@ async fn a_login_without_an_approval_ends_at_its_limit() {
     assert_eq!(answers.bodies().len(), 4);
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test(flavor = "local", start_paused = true)]
 async fn the_login_limit_counts_the_time_of_the_requests() {
     let folder = folder("the_login_limit_counts_the_time_of_the_requests");
     let slow = Slow {
@@ -255,7 +255,7 @@ async fn the_login_limit_counts_the_time_of_the_requests() {
     assert_eq!(slow.script.bodies().len(), 3);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_valid_login_serves_each_attempt_with_no_refresh() {
     let folder = folder("a_valid_login_serves_each_attempt_with_no_refresh");
     save(&folder, "at", "rt", 3600);
@@ -267,7 +267,7 @@ async fn a_valid_login_serves_each_attempt_with_no_refresh() {
     assert_eq!(answers.bodies(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn no_login_is_an_error_that_names_the_login_command() {
     let folder = folder("no_login_is_an_error_that_names_the_login_command");
 
@@ -279,7 +279,7 @@ async fn no_login_is_an_error_that_names_the_login_command() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_comes() {
     let folder = folder("a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_comes");
     save(&folder, "at", "rt", 60);
@@ -299,7 +299,7 @@ async fn a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_co
 }
 
 // Another process can refresh while this one waits for the lock. The spent token must not go out again.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh() {
     let folder = folder("a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh");
     save(&folder, "at", "rt", 60);
@@ -319,7 +319,7 @@ async fn a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh
     assert_eq!(answers.bodies(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes() {
     let folder = folder("past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes");
     let answers = Answers::default();
@@ -344,7 +344,7 @@ async fn past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes() {
     assert_eq!(answers.bodies(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_refresh_that_fails_for_now_serves_a_valid_token_and_keeps_the_login() {
     let folder = folder("a_refresh_that_fails_for_now_serves_a_valid_token_and_keeps_the_login");
     let answers = Answers::default();
@@ -366,7 +366,7 @@ async fn a_refresh_that_fails_for_now_serves_a_valid_token_and_keeps_the_login()
 }
 
 // The refresh can take long, so a token that ends during it must not serve.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_token_that_ends_during_a_failed_refresh_does_not_serve() {
     let folder = folder("a_token_that_ends_during_a_failed_refresh_does_not_serve");
     save(&folder, "at", "rt", 1);
@@ -384,7 +384,7 @@ async fn a_token_that_ends_during_a_failed_refresh_does_not_serve() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_refused_or_unknown_refresh_removes_the_login() {
     let folder = folder("a_refused_or_unknown_refresh_removes_the_login");
     let answers = Answers::default();
@@ -408,7 +408,7 @@ async fn a_refused_or_unknown_refresh_removes_the_login() {
 }
 
 // A refresh that cannot save its login can have spent the old token, which the file still holds.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_refresh_that_cannot_save_never_sends_the_old_token_again() {
     let folder = folder("a_refresh_that_cannot_save_never_sends_the_old_token_again");
     save(&folder, "at", "rt", 60);
@@ -429,7 +429,7 @@ async fn a_refresh_that_cannot_save_never_sends_the_old_token_again() {
     assert_eq!(answers.bodies().len(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
     let folder = folder("a_cancelled_attempt_still_saves_the_login_of_its_refresh");
     save(&folder, "at", "rt", 60);
@@ -453,7 +453,7 @@ async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
 }
 
 // A refresh answer can omit the ID token. The account must stay, or each later request loses its account header.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
     let folder = folder("a_refresh_keeps_the_account_and_each_credential_names_it");
     let expires_at = millis(SystemTime::now() + Duration::from_secs(60));
@@ -493,7 +493,7 @@ fn pushed(access_token: &str, ends_in: i64) -> Pushed {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_pushed_token_replaces_a_valid_login_and_the_newest_push_wins() {
     let folder = folder("pushed_replaces_login");
     save(&folder, "from-file", "refresh", 3600);
@@ -509,7 +509,7 @@ async fn a_pushed_token_replaces_a_valid_login_and_the_newest_push_wins() {
     assert_eq!(saved(&folder), Some(("from-file".to_owned(), "refresh".to_owned())));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() {
     let folder = folder("expired_push");
     // A refresh would take an answer that the script does not have, and the test would panic.
@@ -526,7 +526,7 @@ async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() 
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_pushed_token_of_the_codex_flow_names_its_account() {
     let source = LoginSource::new(
         "openai-codex".to_owned(),
@@ -551,7 +551,7 @@ async fn a_pushed_token_of_the_codex_flow_names_its_account() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_push_during_the_refresh_of_the_login_serves_that_attempt() {
     let folder = folder("push_during_refresh");
     save(&folder, "old", "rt", 1);
@@ -575,7 +575,7 @@ async fn a_push_during_the_refresh_of_the_login_serves_that_attempt() {
     assert_eq!(saved(&folder), Some(("refreshed".to_owned(), "rt2".to_owned())));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_logout_removes_one_login_and_without_a_login_writes_nothing() {
     let folder = folder("a_logout_removes_one_login_and_without_a_login_writes_nothing");
     let empty = folder.join("empty");

@@ -1131,7 +1131,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_console_entry_and_a_fault_become_notices() {
         let (reports, receiver) = mpsc::unbounded_channel();
         let recorder = Arc::new(Recorder::default());

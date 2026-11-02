@@ -1,4 +1,4 @@
-//! The host side of the hooks: a cancel, a close during a handler, and an ended JavaScript thread. It also covers the
+//! The host side of the hooks: a cancel, a close during a handler, and an ended engine task. It also covers the
 //! parts of an answer that only Rust sees. The TypeScript tests of `yuke:test` cover the answers of the handlers.
 
 use std::time::Duration;
@@ -128,7 +128,7 @@ async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) 
 
 // A cancel ends the turn, so the host answers at once, the handler sees its signal abort, and its late answer does not
 // count.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once() {
     for (point, late, expected) in CANCELLED {
         let (runtime, session, _reports) = opened(
@@ -166,7 +166,7 @@ async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once()
 }
 
 // The driver drops the hook future at a cancel, as this `select!` does. The signal of the hook still aborts.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future() {
     let (runtime, session, _reports) = opened(
         "a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future",
@@ -204,7 +204,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
 }
 
 // A close during a handler ends the turn, so a late answer of the closed session does not count.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
     for (point, answer, expected) in [
         ("tool.before", "{ block: 'too late' }", "Run"),
@@ -235,10 +235,10 @@ async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
 }
 
 // A hook that cannot answer never lets a call run, and never shows the original result.
-#[tokio::test]
-async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_thread_has_ended() {
+#[tokio::test(flavor = "local")]
+async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_engine_task_has_ended() {
     let (runtime, session, _reports) = opened(
-        "tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_thread_has_ended",
+        "tool_before_blocks_and_tool_after_gives_an_error_when_the_engine_task_has_ended",
         &[("quiet", "export function session(s) {}")],
     )
     .await;
@@ -253,10 +253,10 @@ async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_th
 
     assert_eq!(
         before,
-        ToolDecision::Block("the tool.before hooks failed: the JavaScript thread has ended".to_owned())
+        ToolDecision::Block("the tool.before hooks failed: the JavaScript runtime has ended".to_owned())
     );
     let failed = ToolResult {
-        content: "the tool.after hooks failed: the JavaScript thread has ended".to_owned(),
+        content: "the tool.after hooks failed: the JavaScript runtime has ended".to_owned(),
         is_error: true,
         media: Vec::new(),
         ..result()
@@ -267,7 +267,7 @@ async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_javascript_th
 
 // An answer replaces only its own fields, so the result keeps its media, its display, and its loaded tools. The test
 // host of `yuke:test` shows no loaded tools.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_result() {
     let (_runtime, session, _reports) = opened(
         "an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_result",
@@ -297,7 +297,7 @@ async fn an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_resul
 }
 
 // The test host of `yuke:test` builds one text block, so only Rust gives an answer of several texts.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn round_after_joins_the_texts_of_the_answer_with_newlines() {
     let (runtime, session, _reports) = opened(
         "round_after_joins_the_texts_of_the_answer_with_newlines",

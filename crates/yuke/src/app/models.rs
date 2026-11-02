@@ -162,7 +162,7 @@ mod tests {
         .unwrap()
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_retry_of_a_plugin_request_waits_with_the_timer_of_the_app() {
         let transport = ScriptedTransport::new([overloaded_reply(), text_reply("A summary.")]);
         let timer = Arc::new(CountedWaits::default());
@@ -200,7 +200,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_request_sends_its_prompt_and_settings_without_tools_and_answers_with_the_text_the_finish_and_the_usage()
     {
         let transport = ScriptedTransport::new([counted(&text_reply("A summary."), 42)]);
@@ -234,7 +234,7 @@ mod tests {
         assert!(!requests[0].contains(r#""tools""#), "{}", requests[0]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn an_attachment_reaches_the_provider_after_the_prompt() {
         let transport = ScriptedTransport::new([text_reply("A cat.")]);
         let app = app(
@@ -263,7 +263,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_call_in_the_answer_ends_the_request_without_a_second_request() {
         let transport = ScriptedTransport::new([tool_reply(&[("c1", "read", "{}")]), text_reply("never sent")]);
         let app = app(
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(transport.requests().len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_cancel_ends_a_request_that_waits_for_the_model() {
         let transport = ScriptedTransport::default().then_stall(String::new());
         let app = app(
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(transport.requests().len(), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_side_request_reads_the_media_of_its_session_and_offers_its_tools() {
         let transport = ScriptedTransport::new([text_reply("A cat.")]);
         let app = app(
@@ -363,7 +363,7 @@ mod tests {
     }
 
     // A turn of the session sends the same key and marker, so the provider serves both requests from one cache entry.
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_side_request_keeps_the_cache_key_and_the_cache_marker_of_its_round() {
         let reply =
             yuke_ai::scripted::sse(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#]);
@@ -408,7 +408,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_model_that_the_catalog_lacks_fails_before_any_request() {
         let transport = ScriptedTransport::default();
         let app = app(

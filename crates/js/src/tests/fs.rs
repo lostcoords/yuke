@@ -33,7 +33,7 @@ fn js_string(path: &Path) -> String {
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn mkdir_makes_parents_only_when_recursive_and_refuses_a_folder_that_exists() {
     let (text, folder) = run_fs(
         "mkdir_makes_parents_only_when_recursive_and_refuses_a_folder_that_exists",
@@ -53,7 +53,7 @@ async fn mkdir_makes_parents_only_when_recursive_and_refuses_a_folder_that_exist
     assert_eq!(mode & 0o077, 0, "{mode:o}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_that_it_replaces() {
     let (_text, folder) = run_fs(
         "a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_that_it_replaces",
@@ -79,7 +79,7 @@ async fn a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_
     assert_eq!(names, ["open.json", "secret.json"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not_cut_it() {
     let (_text, folder) = run_fs(
         "the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not_cut_it",
@@ -104,7 +104,7 @@ async fn the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_atomic_write_keeps_a_mode_that_the_umask_would_cut() {
     let (_text, folder) = run_fs(
         "an_atomic_write_keeps_a_mode_that_the_umask_would_cut",
@@ -125,7 +125,7 @@ async fn an_atomic_write_keeps_a_mode_that_the_umask_would_cut() {
     assert_eq!(mode, 0o666);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_write_tool_writes_a_file_at_the_top_of_the_folder_without_a_parent_folder() {
     let folder = folder("the_write_tool_writes_a_file_at_the_top_of_the_folder_without_a_parent_folder");
     let (_runtime, _host, tools) = super::tools::tools_of(&folder, &["yuke:internal/builtins"]).await;

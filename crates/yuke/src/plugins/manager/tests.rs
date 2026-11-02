@@ -47,7 +47,7 @@ fn clock(root: &Path, reference: Option<&str>) -> PluginSource {
     git_source(url, Some("plugins/clock"), reference.map(str::to_owned)).unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update_moves_it() {
     let (root, paths) = place("lifecycle");
     let first = commit(&root, "first");
@@ -105,7 +105,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
     let (root, paths) = place("new_plugin");
     let first = commit(&root, "first");
@@ -136,7 +136,7 @@ async fn a_new_plugin_locks_at_its_ref_and_a_locked_plugin_keeps_its_commit() {
     assert!(written);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
     let (root, paths) = place("unknown_name");
     commit(&root, "first");
@@ -156,7 +156,7 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin() {
     let (root, paths) = place("locked");
     commit(&root, "first");
@@ -173,7 +173,7 @@ async fn a_locked_sync_fails_and_changes_nothing_when_the_lock_misses_a_plugin()
     assert!(!paths.data.join("git").join(repository_key(&url)).exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     let (root, paths) = place("locked_match");
     let first = commit(&root, "first");
@@ -195,7 +195,7 @@ async fn a_locked_sync_installs_the_locked_commit_and_keeps_the_lock_text() {
     assert!(git_folder(&paths.data, &url, &first).is_dir());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_linked_lock_stays_a_link_and_its_target_gets_the_commits() {
     let (root, paths) = place("linked");
     let first = commit(&root, "first");
@@ -215,7 +215,7 @@ async fn a_linked_lock_stays_a_link_and_its_target_gets_the_commits() {
     assert!(text.contains(&first), "{text}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_apply_with_a_commit_that_is_not_a_full_id_fails_and_keeps_the_lock() {
     let (root, paths) = place("apply_short");
     let first = commit(&root, "first");
@@ -244,7 +244,7 @@ async fn an_apply_with_a_commit_that_is_not_a_full_id_fails_and_keeps_the_lock()
     assert_eq!(Lock::read(&paths.config).unwrap().commits[&clock(&root, None)], first);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_added_plugin_joins_config_json_and_the_lock_and_a_removed_one_leaves_both_with_the_comments() {
     let (root, paths) = place("add_remove");
     let first = commit(&root, "first");

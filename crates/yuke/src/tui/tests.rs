@@ -140,7 +140,7 @@ const BOARD: &str = "export function apply(ctx) {
   }));
 }";
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_console_of_a_plugin_reaches_the_screen_as_a_notice() {
     let place = Place::new("tui", "console_notice");
     place.plugin("board", BOARD);
@@ -173,7 +173,7 @@ const NOTES: &str = "export function apply(ctx) {
   }));
 }";
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_pane_comes_back_after_a_reload() {
     let place = Place::new("tui", "reload_snapshot");
     place.plugin("notes", NOTES);
@@ -190,7 +190,7 @@ async fn a_plugin_pane_comes_back_after_a_reload() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
     let place = Place::new("tui", "reload_failure");
     let (display, output) = display();
@@ -209,7 +209,7 @@ async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat() {
     let place = Place::new("tui", "sessions_list");
     place.plugin(
@@ -227,7 +227,7 @@ async fn the_bundled_sessions_list_opens_through_the_service_of_the_bundled_chat
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
     let place = Place::new("tui", "bundled_options");
     // The item shows only in the bar, so it shows that the bar loaded.
@@ -297,7 +297,7 @@ async fn opened(app: &App, id: SessionId) {
     assert!(opened.is_ok(), "the session {id} did not open");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_start_pane_opens_the_session_of_the_startup() {
     let place = Place::new("tui", "start_session");
     let id = saved_session(&place).await;
@@ -315,7 +315,7 @@ const STARTUP: &str = "export function apply(ctx) {
   tui.setRoot(() => ({ draw: (canvas) => { canvas.text(0, 0, JSON.stringify(tui.startup)); } }));
 }";
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_startup_gives_the_folder_and_the_session_of_the_start() {
     let place = Place::new("tui", "startup_config");
     place.plugin("startup", STARTUP);
@@ -327,7 +327,7 @@ async fn the_startup_gives_the_folder_and_the_session_of_the_start() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reload_while_the_first_plugins_load_gives_a_notice() {
     let (display, _output) = display();
 

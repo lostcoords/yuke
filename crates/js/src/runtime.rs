@@ -1,5 +1,5 @@
-//! The JavaScript thread. One OS thread owns the engine, because the engine values are not `Send`. Callers on other
-//! threads send it calls through a channel and await the answers.
+//! The JavaScript engine. It runs as a local task of the runtime of its consumer, because the engine values are not
+//! `Send`. Callers send it calls through a channel and await the answers.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -7,10 +7,10 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::pin;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::Poll;
-use std::thread::JoinHandle;
+use std::time::Instant;
 
 use rquickjs::{AsyncContext, AsyncRuntime, Ctx, Module, Persistent, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -32,9 +32,11 @@ use crate::tools::Registry;
 /// `RangeError` instead of an overflow of the thread, which would abort the process.
 const STACK: usize = 8 << 20;
 
-/// The stack of the JavaScript thread above [`STACK`]. The engine checks only its own frames, so the thread needs room
-/// for the Rust frames too.
+/// The room above [`STACK`] for the Rust frames. The engine checks only its own frames.
 const THREAD_HEADROOM: usize = 2 << 20;
+
+/// The stack of a thread that runs an engine: the stack of the engine and the room for the Rust frames.
+pub const THREAD_STACK: usize = STACK + THREAD_HEADROOM;
 
 /// The built-in module that adds the web globals, such as `AbortController`. It runs before any other module.
 const WEB: &str = "yuke:internal/web";
@@ -83,23 +85,25 @@ impl fmt::Debug for Options {
     }
 }
 
-/// A call for the JavaScript thread. It receives the tool registry.
+/// A call for the engine task. It receives the tool registry.
 type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
 
-/// A QuickJS runtime on its own thread. Share it through an `Arc`. A drop asks the thread to end and does not wait;
+/// A QuickJS runtime as a local task. Share it through an `Arc`. A drop asks the task to end and does not wait.
 /// [`Runtime::shutdown`] waits.
 pub struct Runtime {
     pub(crate) caller: Caller,
     /// The models of the plugins, on the runtime of the consumer.
     pub(crate) models: Arc<dyn Models>,
-    /// The drop of this sender ends the thread. A tool keeps a clone of the caller, so the call channel can outlive the
+    /// The drop of this sender ends the task. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
     stop: oneshot::Sender<()>,
-    /// Its drop stops the JavaScript that runs, so the thread can end even inside a loop without an `await`.
+    /// Its drop stops each later stretch of JavaScript, so the task ends at its next poll.
     stopping: Stopping,
+    /// The engine stops each stretch of JavaScript after this time. A busy loop holds the thread, so no timer can stop it.
+    deadline: Arc<Mutex<Option<Instant>>>,
     /// Starts the frame loop with the snapshot of the start event. [`Runtime::show`] takes it.
     show: Option<oneshot::Sender<Option<String>>>,
-    thread: JoinHandle<()>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl fmt::Debug for Runtime {
@@ -135,20 +139,24 @@ impl fmt::Debug for Handle {
     }
 }
 
-/// The sender of calls to the JavaScript thread. A tool keeps a clone, so its calls reach the thread.
+/// The sender of calls to the engine task. A tool keeps a clone, so its calls reach the task.
 #[derive(Debug, Clone)]
 pub(crate) struct Caller {
     calls: mpsc::UnboundedSender<Call>,
 }
 
 impl Runtime {
-    /// Start the JavaScript thread. The receiver gets each [`Report`]: a script failure that belongs to no call, a notice
+    /// Start the engine task on the local runtime of the caller. The receiver gets each [`Report`]: a script failure that belongs to no call, a notice
     /// or an event of a plugin, or a `console` entry.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Thread`] when the thread or its tokio runtime does not start. Returns [`Error::Script`] when the
-    /// engine does not start, and [`Error::Stopped`] when the thread ends before it is ready.
+    /// Returns [`Error::Script`] when the engine does not start, and [`Error::Stopped`] when the task ends before it is
+    /// ready.
+    ///
+    /// # Panics
+    ///
+    /// Panics outside a [`tokio::runtime::LocalRuntime`] or a [`tokio::task::LocalSet`].
     pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
         let options = Options {
             models: Arc::new(OnConsumer {
@@ -167,31 +175,29 @@ impl Runtime {
         let (show, shown) = oneshot::channel();
         let stopping = Arc::new(AtomicBool::new(false));
         let interrupt = Arc::clone(&stopping);
+        let deadline = Arc::new(Mutex::new(None));
 
-        let thread = std::thread::Builder::new()
-            .name("yuke-js".into())
-            .stack_size(STACK + THREAD_HEADROOM)
-            .spawn(move || {
-                serve(
-                    options,
-                    consumer,
-                    interrupt,
-                    call_receiver,
-                    stopped,
-                    shown,
-                    reports,
-                    ready,
-                );
-            })
-            .map_err(Error::Thread)?;
+        // The engine runs as a local task of the consumer runtime, so the host and the JavaScript share one scheduler.
+        let task = tokio::task::spawn_local(serve_calls(
+            options,
+            consumer,
+            interrupt,
+            Arc::clone(&deadline),
+            call_receiver,
+            stopped,
+            shown,
+            reports,
+            ready,
+        ));
 
         let runtime = Self {
             caller: Caller { calls },
             models,
             stop,
             stopping: Stopping(stopping),
+            deadline,
             show: Some(show),
-            thread,
+            task,
         };
         started.await.map_err(|_| Error::Stopped)??;
         Ok((runtime, report_receiver))
@@ -203,7 +209,7 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns [`Error::Script`] when a module of the import graph fails to resolve, to load, or to evaluate.
-    /// Returns [`Error::Stopped`] when the thread has ended or ends during the import.
+    /// Returns [`Error::Stopped`] when the task has ended or ends during the import.
     pub async fn import(&self, name: &str) -> Result<(), Error> {
         let name = name.to_owned();
         self.caller
@@ -215,10 +221,15 @@ impl Runtime {
             .await
     }
 
-    /// Stop the JavaScript that runs now, and each later stretch of it. The thread stays until [`Runtime::shutdown`].
+    /// Stop each later stretch of JavaScript. The task stays until [`Runtime::shutdown`].
     /// A test that runs past its time limit calls it, so a cleanup does not wait for the loop of the test.
     pub fn interrupt(&self) {
         self.stopping.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Stop each stretch of JavaScript after `deadline`, or never with `None`.
+    pub(crate) fn set_deadline(&self, deadline: Option<Instant>) {
+        *self.deadline.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = deadline;
     }
 
     /// A handle that opens sessions on this runtime.
@@ -240,11 +251,11 @@ impl Runtime {
         }
     }
 
-    /// Stop the JavaScript and wait for the end of the thread. The JavaScript that runs stops, also inside a loop.
+    /// Stop the JavaScript and wait for the end of the task.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Panicked`] when the thread panicked, and [`Error::Stopped`] when the tokio runtime of the caller
+    /// Returns [`Error::Panicked`] when the task panicked, and [`Error::Stopped`] when the tokio runtime of the caller
     /// ends during the wait.
     pub async fn shutdown(self) -> Result<(), Error> {
         let Self {
@@ -252,16 +263,18 @@ impl Runtime {
             models: _,
             stop,
             stopping,
+            deadline: _,
             show: _,
-            thread,
+            task,
         } = self;
         drop(caller);
         drop(stopping);
         drop(stop);
-        let joined = tokio::task::spawn_blocking(move || thread.join())
-            .await
-            .map_err(|_| Error::Stopped)?;
-        joined.map_err(|panic| {
+        task.await.map_err(|error| {
+            if !error.is_panic() {
+                return Error::Stopped;
+            }
+            let panic = error.into_panic();
             let message = match panic.downcast::<String>() {
                 Ok(text) => *text,
                 Err(panic) => panic
@@ -274,11 +287,11 @@ impl Runtime {
 }
 
 impl Caller {
-    /// Post `f` to the JavaScript thread without an answer. It runs to its end, unless the runtime stops first.
+    /// Post `f` to the engine task without an answer. It runs to its end, unless the runtime stops first.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the thread has ended.
+    /// Returns [`Error::Stopped`] when the task has ended.
     pub(crate) fn post<F>(&self, f: F) -> Result<(), Error>
     where
         F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) + Send + 'static,
@@ -290,8 +303,8 @@ impl Caller {
         self.calls.send(call).map_err(|_| Error::Stopped)
     }
 
-    /// Run `f` on the JavaScript thread, and return its answer. A drop of the returned future drops the future of `f` at
-    /// its next await. Only the end of the runtime stops a loop without an await.
+    /// Run `f` on the engine task, and return its answer. A drop of the returned future drops the future of `f` at
+    /// its next await. Only an interrupt or a deadline stops a loop without an await.
     pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>
     where
         F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
@@ -312,45 +325,19 @@ impl Caller {
     }
 }
 
-/// The body of the JavaScript thread.
-#[expect(clippy::too_many_arguments, reason = "the thread takes each part of its start")]
-fn serve(
-    options: Options,
-    consumer: tokio::runtime::Handle,
-    stopping: Arc<AtomicBool>,
-    calls: mpsc::UnboundedReceiver<Call>,
-    stopped: oneshot::Receiver<()>,
-    shown: oneshot::Receiver<Option<String>>,
-    reports: mpsc::UnboundedSender<Report>,
-    ready: oneshot::Sender<Result<(), Error>>,
-) {
-    // `fetch` runs its sockets on this thread, so the runtime has the IO driver too.
-    let tokio_runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-        Ok(tokio_runtime) => tokio_runtime,
-        Err(error) => {
-            if ready.send(Err(Error::Thread(error))).is_err() {
-                // The caller of `start` has left.
-            }
-            return;
-        }
-    };
-    tokio_runtime.block_on(serve_calls(
-        options, consumer, stopping, calls, stopped, shown, reports, ready,
-    ));
-}
-
-#[expect(clippy::too_many_arguments, reason = "the thread takes each part of its start")]
+#[expect(clippy::too_many_arguments, reason = "the task takes each part of its start")]
 async fn serve_calls(
     options: Options,
     consumer: tokio::runtime::Handle,
     stopping: Arc<AtomicBool>,
+    deadline: Arc<Mutex<Option<Instant>>>,
     mut calls: mpsc::UnboundedReceiver<Call>,
     mut stopped: oneshot::Receiver<()>,
     shown: oneshot::Receiver<Option<String>>,
     reports: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let engine = match Engine::new(options, &consumer, stopping, shown, reports.clone()).await {
+    let engine = match Engine::new(options, &consumer, stopping, deadline, shown, reports.clone()).await {
         Ok(engine) => engine,
         Err(error) => {
             if ready.send(Err(error)).is_err() {
@@ -397,7 +384,7 @@ async fn serve_calls(
     }
 }
 
-/// The engine of the thread, and the state that its callbacks share.
+/// The engine of the task, and the state that its callbacks share.
 struct Engine {
     context: AsyncContext,
     runtime: AsyncRuntime,
@@ -412,6 +399,7 @@ impl Engine {
         options: Options,
         consumer: &tokio::runtime::Handle,
         stopping: Arc<AtomicBool>,
+        deadline: Arc<Mutex<Option<Instant>>>,
         shown: oneshot::Receiver<Option<String>>,
         reports: mpsc::UnboundedSender<Report>,
     ) -> Result<Self, Error> {
@@ -426,9 +414,15 @@ impl Engine {
                 ModuleLoader::new(Cache::new(options.cache.clone())),
             )
             .await;
-        // The engine asks once for each 10,000 interrupt checks. Only the end of the runtime stops the JavaScript.
+        // The engine asks once for each 10,000 interrupt checks.
         runtime
-            .set_interrupt_handler(Some(Box::new(move || stopping.load(Ordering::Relaxed))))
+            .set_interrupt_handler(Some(Box::new(move || {
+                stopping.load(Ordering::Relaxed)
+                    || deadline
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .is_some_and(|deadline| Instant::now() >= deadline)
+            })))
             .await;
 
         let rejections = Rc::new(Rejections::default());
@@ -473,7 +467,7 @@ impl Engine {
 
 impl Drop for Engine {
     /// Drop each saved value before the fields drop the context and the runtime: a saved value that outlives the
-    /// runtime aborts the process. A panic of the thread drops the engine this way too.
+    /// runtime aborts the process. A panic of the task drops the engine this way too.
     fn drop(&mut self) {
         self.timers.clear();
         self.registry.clear();

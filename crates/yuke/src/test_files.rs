@@ -36,12 +36,11 @@ pub(crate) fn collect(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 
 /// Run each test of `files` in its own app, with folders below the empty folder `work` and the time limit `limit`.
 /// With `internal_imports`, the tests can import the `yuke:internal/` modules, as the tests of yuke do.
-pub(crate) async fn run(files: &[PathBuf], work: &Path, limit: Duration, internal_imports: bool) -> TestSummary {
+pub(crate) fn run(files: &[PathBuf], work: &Path, limit: Duration, internal_imports: bool) -> TestSummary {
     let cache = work.join("cache");
     run_test_files(files, work, limit, async |place: &Path| {
         TestPlace::start(place, &cache, internal_imports).await
     })
-    .await
 }
 
 #[cfg(test)]

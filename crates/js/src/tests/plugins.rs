@@ -44,7 +44,7 @@ fn texts(failures: &[PluginFailure]) -> Vec<(String, String)> {
         .collect()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
     let folder = folder("a_failed_apply_aborts_its_signal_and_its_session_never_runs");
     let (runtime, _reports) = start(&folder).await;
@@ -88,7 +88,7 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
     let folder = folder("a_load_during_or_after_the_close_fails_and_runs_its_cleanup");
     let (runtime, _reports) = start(&folder).await;
@@ -137,7 +137,7 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
     let folder = folder("a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root");
     let (runtime, _reports) = start(&folder).await;

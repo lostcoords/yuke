@@ -70,7 +70,7 @@ pub enum Fact {
 pub type FactSink = Arc<dyn Fn(Fact) + Send + Sync>;
 
 /// The sessions and the catalog that the plugins use. The consumer gives one value to each runtime. Each async call runs
-/// on the tokio runtime of the consumer. A sync call runs on the JavaScript thread, so it must not block.
+/// on the tokio runtime of the consumer. A sync call runs on the engine task, so it must not block.
 #[async_trait]
 pub trait Sessions: Send + Sync {
     /// Create a session with `settings`, and open it.

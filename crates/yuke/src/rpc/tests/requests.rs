@@ -36,7 +36,7 @@ fn is_request(message: &Value) -> bool {
     message["method"] == "extension/request"
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_client_answer_becomes_the_tool_result_of_a_plugin_request() {
     let (transport, mut client, session) =
         reader("a_client_answer_becomes_the_tool_result_of_a_plugin_request", READER).await;
@@ -63,7 +63,7 @@ async fn a_client_answer_becomes_the_tool_result_of_a_plugin_request() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_client_error_rejects_the_plugin_request_with_its_code_and_data() {
     let (transport, mut client, session) = reader(
         "a_client_error_rejects_the_plugin_request_with_its_code_and_data",
@@ -89,7 +89,7 @@ async fn a_client_error_rejects_the_plugin_request_with_its_code_and_data() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancelled_plugin_request_sends_a_cancel_and_drops_the_late_answer() {
     let (transport, mut client, session) = reader(
         "a_cancelled_plugin_request_sends_a_cancel_and_drops_the_late_answer",
@@ -124,7 +124,7 @@ async fn a_cancelled_plugin_request_sends_a_cancel_and_drops_the_late_answer() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_closed_session_cancels_its_pending_requests() {
     let place = Place::new("rpc", "a_closed_session_cancels_its_pending_requests");
     place.plugin(
@@ -168,7 +168,7 @@ async fn a_closed_session_cancels_its_pending_requests() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_new_client_fails_the_requests_of_the_old_one() {
     let place = Place::new("rpc", "a_new_client_fails_the_requests_of_the_old_one");
     place.plugin("boarhat", READER);

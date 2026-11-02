@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::{evaluate, folder, next_fault, options};
 use crate::{Options, Processes, Runtime};
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throwing_change_listener_is_removed_with_one_fault_and_the_others_still_run() {
     let place = folder("chat_listeners");
     let (runtime, mut reports) = Runtime::start(Options {

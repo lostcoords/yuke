@@ -1,5 +1,5 @@
-//! The JavaScript runtime of yuke: the QuickJS engine on its own thread. Callers on any thread import modules through
-//! a channel.
+//! The JavaScript runtime of yuke: the QuickJS engine as a local task of the tokio runtime of its consumer. Callers
+//! import modules through a channel.
 //!
 //! A module is a built-in module with a `yuke:` name, or a `.ts` or a `.js` file. The built-in modules are bytecode in
 //! the binary. The runtime removes the types of a `.ts` file and keeps the JavaScript in a cache folder. The globals
@@ -8,10 +8,9 @@
 //! `performance`. The public modules are `yuke:tools`, `yuke:plugins`, `yuke:fs` (files), `yuke:process` (programs),
 //! `yuke:net` (Unix sockets), and `yuke:ai` (model requests). Three more public modules serve frontends: `yuke:tui`
 //! (the terminal interface), `yuke:transcript` (the conversation of a session as data), and `yuke:chat` (the blocks of
-//! a chat). The runtime sets
-//! no heap and no time limit. It checks the stack of the JavaScript, so a deep recursion throws and does not crash the
-//! thread. A shutdown stops running JavaScript and each running
-//! program.
+//! a chat). The runtime sets no heap limit and no default time limit. It checks the stack of the JavaScript, so a deep
+//! recursion throws and does not crash the thread. The thread needs [`THREAD_STACK`]. A shutdown stops the JavaScript
+//! and each running program.
 //!
 //! A plugin runs `apply` once per runtime and `session` once per session. [`Handle::open_session`] opens the session
 //! of a [`SessionHost`]. [`ScriptSession::tools`] gives each tool of that session as a [`ScriptTool`]: the tools of
@@ -48,7 +47,7 @@ pub use jobs::Jobs;
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};
-pub use runtime::{Handle, Options, Runtime};
+pub use runtime::{Handle, Options, Runtime, THREAD_STACK};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent, ViewSink};
 pub use test_host::TestHost;

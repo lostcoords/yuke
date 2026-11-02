@@ -35,7 +35,7 @@ pub trait TestHost: Send + Sync {
     async fn create(&self, request: serde_json::Value) -> Result<(), TestError>;
 
     /// What the host recorded so far, as the JSON of `yuke:test`: the notices, the events, and the model requests. The
-    /// call runs on the JavaScript thread, so it must not block.
+    /// call runs on the engine task, so it must not block.
     fn record(&self) -> serde_json::Value;
 
     /// Close the sessions and the plugins of the host, then check the model script.
@@ -129,7 +129,7 @@ pub(crate) fn add<'js>(
     )
 }
 
-/// Add the native `name`. The JavaScript thread reads its argument, and `run` runs on the runtime of the consumer. It
+/// Add the native `name`. The engine task reads its argument, and `run` runs on the runtime of the consumer. It
 /// answers an operation that gives the result. A cancel of the operation cancels the token of `run`.
 fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
@@ -176,19 +176,32 @@ fn joined<T>(ctx: &Ctx<'_>, joined: Result<Result<T, TestError>, tokio::task::Jo
 mod tests {
     use super::joined;
 
+    /// A host error with an I/O cause.
+    #[derive(Debug)]
+    struct HostFailed(std::io::Error);
+
+    impl std::fmt::Display for HostFailed {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("the host failed")
+        }
+    }
+
+    impl std::error::Error for HostFailed {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
     #[test]
     fn a_host_task_error_reaches_javascript_with_each_cause() {
         let runtime = rquickjs::Runtime::new().unwrap();
         let context = rquickjs::Context::full(&runtime).unwrap();
         context.with(|ctx| {
-            let failure = crate::Error::Thread(std::io::Error::other("the cause"));
+            let failure = HostFailed(std::io::Error::other("the cause"));
             let result = joined::<()>(&ctx, Ok(Err(failure.into())));
             let error = crate::error::caught(&ctx, result).unwrap_err();
 
-            assert_eq!(
-                error.to_string(),
-                "Error: the JavaScript thread did not start: the cause"
-            );
+            assert_eq!(error.to_string(), "Error: the host failed: the cause");
         });
     }
 }

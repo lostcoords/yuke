@@ -1,6 +1,6 @@
 //! `readLines` of the native module: the numbered lines of a file for the `read` tool, or an image. A relative path starts
-//! in the folder that the caller gives. The read runs off the JavaScript thread, because a blocking call would hold up
-//! the other JavaScript.
+//! in the folder that the caller gives. The read runs on a blocking thread of tokio, because a blocking call would hold
+//! up the other JavaScript and the host.
 
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader};

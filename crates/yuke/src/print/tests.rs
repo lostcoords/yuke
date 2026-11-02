@@ -58,7 +58,7 @@ fn completed() -> TurnEnd {
     })
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_text() {
     let place = Place::new("print", "new_run");
 
@@ -106,7 +106,7 @@ async fn run_with_providers(
 }
 
 // The window comes from the catalog of the app, so this test covers the way from the catalog to a plugin.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_context() {
     let place = Place::new("print", "round_before_window");
     let plugin = place.paths.config.join("windowed");
@@ -142,7 +142,7 @@ async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_c
     assert!(request.contains("Hi."), "{request}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential() {
     let place = Place::new("print", "added_provider");
     let task = Task {
@@ -175,7 +175,7 @@ async fn a_provider_that_providers_json_adds_serves_a_run_without_a_credential()
     assert_eq!(finished.unwrap().end, completed());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
     let place = Place::new("print", "changed_provider");
     let providers = r#"{ "providers": [
@@ -190,7 +190,7 @@ async fn providers_json_changes_the_url_and_the_key_of_a_built_in_provider() {
     assert_eq!(transport.header("Authorization"), [Some("Bearer proxy-key".to_owned())]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bad_providers_json_stops_the_run_before_a_request() {
     let place = Place::new("print", "bad_providers");
 
@@ -212,7 +212,7 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
     assert_eq!(transport.urls(), Vec::<String>::new());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothing() {
     let place = Place::new("print", "no_model");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
@@ -245,7 +245,7 @@ async fn a_run_without_a_model_or_a_reasoning_choice_is_an_error_and_sends_nothi
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
     let place = Place::new("print", "no_key");
     let empty: Box<Variable> = Box::new(|_| Some(OsString::new()));
@@ -269,7 +269,7 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
     assert_eq!(page.sessions, []);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_level_that_the_model_does_not_take_is_an_error() {
     let place = Place::new("print", "bad_level");
     let task = Task {
@@ -286,7 +286,7 @@ async fn a_level_that_the_model_does_not_take_is_an_error() {
 }
 
 // The overflow error comes from the stream of the provider, so this test covers the way from its classification to a plugin.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_round_goes_again() {
     let place = Place::new("print", "round_retry_overflow");
     place.plugin(
@@ -329,7 +329,7 @@ fn long(letter: &str, tokens: usize) -> String {
 /// nears it.
 const NEAR_WINDOW: u64 = 950_000;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_near_the_window_compacts_before_the_round_and_keeps_the_summary() {
     let place = Place::new("print", "compaction_before");
     let first = long("a", 25_000);
@@ -367,7 +367,7 @@ async fn a_session_near_the_window_compacts_before_the_round_and_keeps_the_summa
     assert!(third[0].contains("## Goal\\nThe work.") && !third[0].contains(&first));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_overflow_compacts_the_part_before_the_cut_and_the_round_goes_again() {
     let place = Place::new("print", "compaction_overflow");
     let first = long("a", 25_000);
@@ -396,7 +396,7 @@ async fn an_overflow_compacts_the_part_before_the_cut_and_the_round_goes_again()
     assert!(round.contains("A summary.") && round.contains(&second) && !round.contains(&first));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn disable_in_the_config_turns_the_compaction_off() {
     let place = Place::new("print", "compaction_disabled");
     std::fs::create_dir_all(&place.paths.config).unwrap();
@@ -427,7 +427,7 @@ async fn disable_in_the_config_turns_the_compaction_off() {
     assert!(requests[0].contains(&first));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     let place = Place::new("print", "input_before_handled");
     place.plugin(
@@ -452,7 +452,7 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     assert!(pending.is_empty(), "{pending:?}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     let place = Place::new("print", "continue");
     run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
@@ -474,7 +474,7 @@ async fn continue_takes_the_session_of_the_folder_with_the_newest_event() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn continue_in_a_folder_without_a_session_is_an_error() {
     let place = Place::new("print", "continue_none");
 
@@ -483,7 +483,7 @@ async fn continue_in_a_folder_without_a_session_is_an_error() {
     assert_eq!(finished, Err(format!("no session works in {}", place.work.display())));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_id_continues_that_session_and_an_unknown_id_is_an_error() {
     let place = Place::new("print", "session_id");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
@@ -513,7 +513,7 @@ async fn a_session_id_continues_that_session_and_an_unknown_id_is_an_error() {
     assert_eq!(missing, Err(format!("no session has the id {unknown}")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     let place = Place::new("print", "new_settings");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
@@ -572,7 +572,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     assert_eq!(settings[2].settings.reasoning, yuke_ai::ReasoningSettings::default());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() {
     let place = Place::new("print", "waiting_input");
     let first = run_with(&place, &task("First.", SessionChoice::New), &[text_reply("One.")])
@@ -600,7 +600,7 @@ async fn a_new_model_on_a_continued_session_also_answers_the_input_that_waits() 
     assert_in_order(&requests[0], &["Waits.", "Next."]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
     let place = Place::new("print", "tools");
 
@@ -622,7 +622,7 @@ async fn the_model_runs_the_built_in_tools_in_the_folder_of_the_session() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
     let place = Place::new("print", "plugin_tool");
     place.plugin(
@@ -651,7 +651,7 @@ async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
     assert!(requests[1].contains("hello from greeter"), "{}", requests[1]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
     let place = Place::new("print", "question");
     place.plugin(
@@ -680,7 +680,7 @@ async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
     assert!(requests[1].contains("answer: undefined"), "{}", requests[1]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_project_mcp_server_stays_off_because_the_run_has_no_client_to_confirm_it() {
     let place = Place::new("print", "project_mcp");
     // The program does not exist, so a start would fail the server instead of leaving it untrusted.
@@ -694,7 +694,7 @@ async fn a_project_mcp_server_stays_off_because_the_run_has_no_client_to_confirm
     assert!(!place.paths.data.join("mcp-trust").exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "plugin_job");
     place.plugin(
@@ -723,7 +723,7 @@ async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "background");
 
@@ -745,7 +745,7 @@ async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     assert!(!place.work.join("started").exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_run_cancelled_before_its_turn_ends_as_cancelled_and_leaves_no_input() {
     let place = Place::new("print", "cancelled");
     let cancellation_token = CancellationToken::new();
@@ -781,7 +781,7 @@ impl Transport for CancelsAtRequest {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
     let place = Place::new("print", "cancelled_turn");
     let cancellation_token = CancellationToken::new();
@@ -801,7 +801,7 @@ async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
     assert_eq!(opened.context.first(), Some(&Block::user_text("Hi.")));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
     let place = Place::new("print", "rejected");
     let machine = place.machine(Box::new(with_key), Box::new(Rejecting));

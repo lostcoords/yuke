@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
     let place = Place::new("rpc", "an_input_starts_a_turn_and_the_client_sees_its_updates_in_order");
     let transport = ScriptedTransport::new([text_reply("hello")]);
@@ -36,7 +36,7 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_content() {
     let place = Place::new(
         "rpc",
@@ -77,7 +77,7 @@ async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_c
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
     let place = Place::new(
         "rpc",
@@ -102,7 +102,7 @@ async fn a_load_sends_the_saved_events_then_the_state_then_an_empty_answer() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
     let place = Place::new(
         "rpc",
@@ -132,7 +132,7 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answers_not_removed() {
     let place = Place::new(
         "rpc",
@@ -171,7 +171,7 @@ async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answe
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
     let place = Place::new("rpc", "the_server_builds_the_prompt_of_a_new_session_from_its_folder");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
@@ -186,7 +186,7 @@ async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
     let place = Place::new("rpc", "a_regular_file_is_no_folder_for_a_new_session_or_new_settings");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
@@ -209,7 +209,7 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_notice() {
     let place = Place::new(
         "rpc",
@@ -277,7 +277,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
     let place = Place::new(
         "rpc",
@@ -336,7 +336,7 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
     id
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     let place = Place::new("rpc", "a_load_only_reads_and_waiting_input_blocks_new_settings");
     let session = saved_session(&place, "minimax", "MiniMax-M3").await;
@@ -379,7 +379,7 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
     let place = Place::new("rpc", "a_fork_that_has_no_credential_fails_and_leaves_no_session");
     let source = saved_session(&place, "anthropic", "claude-sonnet-4-5").await;
@@ -395,7 +395,7 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
     assert_eq!(ids, [source]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_prompt_hook_leaves_the_saved_prompt_of_the_session() {
     let place = Place::new("rpc", "the_prompt_hook_leaves_the_saved_prompt_of_the_session");
     place.plugin(
@@ -426,7 +426,7 @@ async fn the_prompt_hook_leaves_the_saved_prompt_of_the_session() {
 
 // The request is an input of the plugin in the same turn: the model reads the notice, and the saved record keeps what
 // the user saw.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
     let place = Place::new("rpc", "a_plugin_sends_the_model_on_once_after_its_final_answer");
     place.plugin(
@@ -483,7 +483,7 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_skipped_skill_reaches_the_client_as_a_warning_of_the_new_session() {
     let place = Place::new("rpc", "a_skipped_skill_reaches_the_client");
     let skill = place.work.join(".agents/skills/broken");
@@ -511,7 +511,7 @@ async fn a_skipped_skill_reaches_the_client_as_a_warning_of_the_new_session() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_again() {
     let place = Place::new(
         "rpc",
@@ -568,7 +568,7 @@ fn activities(listed: &Value) -> BTreeMap<String, String> {
         .collect()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
     let place = Place::new("rpc", "the_list_and_a_get_give_each_saved_session_with_its_activity");
     let saved = saved_session(&place, "minimax", "MiniMax-M3").await;
@@ -601,7 +601,7 @@ async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit() {
     let place = Place::new(
         "rpc",
@@ -650,7 +650,7 @@ async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit(
     assert_eq!(refused, vec![json!(ResponseError::INVALID_PARAMS); 5]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or_held_one() {
     let place = Place::new(
         "rpc",
@@ -692,7 +692,7 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
     assert_eq!(fork_row["session"]["forkOf"], json!(source));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn process_and_session_events_of_a_plugin_reach_the_client_under_its_name() {
     let place = Place::new(
         "rpc",
@@ -737,7 +737,7 @@ async fn process_and_session_events_of_a_plugin_reach_the_client_under_its_name(
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_that_a_client_created_stays_open_after_its_turn() {
     let place = Place::new("rpc", "a_session_that_a_client_created_stays_open_after_its_turn");
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([text_reply("hello")]))).await;
@@ -757,7 +757,7 @@ async fn a_session_that_a_client_created_stays_open_after_its_turn() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close() {
     let place = Place::new(
         "rpc",
@@ -792,7 +792,7 @@ async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close
     assert_eq!(read.unwrap(), json!({ "data": "AQID" }));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_blob_request_refuses_bad_base64_too_many_bytes_and_an_unknown_blob_or_session() {
     let place = Place::new(
         "rpc",

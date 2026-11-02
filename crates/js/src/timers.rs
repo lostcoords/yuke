@@ -41,7 +41,7 @@ struct Timer {
 }
 
 impl Timers {
-    /// Drop each waiting timer. The runtime must outlive each saved value, so the thread calls this before it drops
+    /// Drop each waiting timer. The runtime must outlive each saved value, so the engine calls this before it drops
     /// the runtime.
     pub(crate) fn clear(&self) {
         self.state.borrow_mut().waiting.clear();

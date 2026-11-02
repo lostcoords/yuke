@@ -33,7 +33,7 @@ use crate::tools::{
 };
 
 /// An open session of the plugins. Call [`ScriptSession::close`] to await the cleanups. A drop posts the close and does
-/// not wait. The posted close runs only while the runtime thread runs, so close each session before a shutdown.
+/// not wait. The posted close runs only while the engine task runs, so close each session before a shutdown.
 pub struct ScriptSession {
     caller: Caller,
     pub(crate) host: Arc<dyn SessionHost>,
@@ -58,8 +58,8 @@ impl Handle {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Folder`] when the folder of `host` is not UTF-8, and [`Error::Stopped`] when the thread has
-    /// ended.
+    /// Returns [`Error::Folder`] when the folder of `host` is not UTF-8, and [`Error::Stopped`] when the engine task
+    /// has ended.
     pub async fn open_session(&self, host: Arc<dyn SessionHost>) -> Result<ScriptSession, Error> {
         let folder = host.folder();
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
@@ -110,7 +110,7 @@ impl ScriptSession {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the thread has ended.
+    /// Returns [`Error::Stopped`] when the engine task has ended.
     pub async fn tools(&self) -> Result<Vec<(yuke_ai::ToolDefinition, ScriptTool)>, Error> {
         let open = self.open;
         let entries = self
@@ -145,7 +145,7 @@ impl ScriptSession {
     /// # Errors
     ///
     /// Returns [`Error::Script`] when a handler throws or gives an answer that is not valid. Returns
-    /// [`Error::Stopped`] when the thread has ended.
+    /// [`Error::Stopped`] when the engine task has ended.
     pub async fn build_prompt(
         &self,
         sections: &[PromptSection],
@@ -179,7 +179,7 @@ impl ScriptSession {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the thread has ended, which also ends the plugins.
+    /// Returns [`Error::Stopped`] when the engine task has ended, which also ends the plugins.
     pub async fn close(&self) -> Result<(), Error> {
         let open = self.open;
         self.caller
@@ -197,13 +197,13 @@ impl Drop for ScriptSession {
             }
         });
         if posted.is_err() {
-            // The thread has ended, so no plugin of the session runs.
+            // The engine task has ended, so no plugin of the session runs.
         }
     }
 }
 
-/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them. While the JavaScript
-/// thread runs, each hook that they do not handle keeps its default.
+/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them. While the engine task
+/// runs, each hook that they do not handle keeps its default.
 pub struct ScriptHooks {
     caller: Caller,
     host: Arc<dyn SessionHost>,
@@ -929,7 +929,7 @@ fn failure_text(point: &str, error: &Error) -> String {
     }
 }
 
-/// Call the loader function `start` with `request` on the JavaScript thread, and return the answer of the run that it
+/// Call the loader function `start` with `request` on the engine task, and return the answer of the run that it
 /// starts. A run without an answer gives `None`. When the caller cancels `token`, the run aborts its signal, and the call
 /// returns `None` too, because a cancelled turn reads no answer.
 async fn run_hook<R, T>(
@@ -963,7 +963,7 @@ where
     answer.await.map_err(|_| Error::Stopped)?
 }
 
-/// Close the open session `open` on the JavaScript thread: remove its tools, then await `closeSession`.
+/// Close the open session `open` on the engine task: remove its tools, then await `closeSession`.
 async fn close(ctx: &Ctx<'_>, registry: &Registry, open: u64) -> Result<(), Error> {
     let close_session: Function<'_> = caught(ctx, hooks(ctx).await?.get("closeSession"))?;
     // No await comes between the two steps, so a dropped close cannot remove the tools without the close of the plugins.

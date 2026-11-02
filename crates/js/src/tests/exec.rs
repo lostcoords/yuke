@@ -53,7 +53,7 @@ async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     let folder = folder("a_cancel_stops_the_command_and_the_tool_still_answers");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -71,7 +71,7 @@ async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     assert!(content.is_error);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dropped_exec_call_stops_its_command() {
     let folder = folder("a_dropped_exec_call_stops_its_command");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -90,7 +90,7 @@ async fn a_dropped_exec_call_stops_its_command() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_job_starts_and_its_end_reaches_the_session() {
     let folder = folder("a_background_job_starts_and_its_end_reaches_the_session");
     let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -129,7 +129,7 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     let folder = folder("a_background_start_fails_when_the_processes_start_no_jobs");
     let (runtime, _faults) = Runtime::start(options(
@@ -156,7 +156,7 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn stop_ends_a_job_and_no_end_message_follows() {
     let folder = folder("stop_ends_a_job_and_no_end_message_follows");
     let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -168,7 +168,7 @@ async fn stop_ends_a_job_and_no_end_message_follows() {
     assert!(host.inputs.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn stop_of_an_unknown_id_names_the_running_jobs() {
     let folder = folder("stop_of_an_unknown_id_names_the_running_jobs");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -182,7 +182,7 @@ async fn stop_of_an_unknown_id_names_the_running_jobs() {
     text_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_command_takes_no_timeout() {
     let folder = folder("a_background_command_takes_no_timeout");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -204,7 +204,7 @@ async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<Test
     (runtime, tools)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_job_outlives_a_reload_of_the_runtime() {
     let folder = folder("a_job_outlives_a_reload_of_the_runtime");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -229,7 +229,7 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
     assert!(texts[0].ends_with("\ndone</system_notification>"), "{}", texts[0]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_of_the_processes_removes_their_folder() {
     let folder = folder("a_shutdown_of_the_processes_removes_their_folder");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -245,7 +245,7 @@ async fn a_shutdown_of_the_processes_removes_their_folder() {
 }
 
 // A job start after the shutdown fails, and it leaves no job and no folder.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     let folder = folder("a_job_start_after_the_shutdown_fails_and_leaves_no_job");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -260,7 +260,7 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     assert!(!folder.join("processes").exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
     let folder = folder("closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -290,7 +290,7 @@ async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
     processes.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     let folder = folder("a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -319,7 +319,7 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     assert!(texts[0].ends_with("\nhello</system_notification>"), "{}", texts[0]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
     let folder = folder("a_shutdown_of_the_processes_stops_each_job_without_an_end_message");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -335,7 +335,7 @@ async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
     assert!(host.inputs.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
     let folder = folder("a_dropped_processes_kills_its_jobs_without_an_end_message");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -368,7 +368,7 @@ async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
     assert!(host.inputs.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn each_job_of_a_process_gets_a_new_id() {
     let folder = folder("each_job_of_a_process_gets_a_new_id");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -385,7 +385,7 @@ async fn each_job_of_a_process_gets_a_new_id() {
     assert_eq!(ids.len(), 3, "{ids:?}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn processes_start_their_job_ids_at_different_numbers() {
     let folder = folder("processes_start_their_job_ids_at_different_numbers");
 
@@ -408,7 +408,7 @@ fn a_child_gets_the_home_folder_of_the_user_when_home_is_missing_or_empty() {
     assert_eq!(recovered_home(Some(OsStr::new("/home/someone"))), None);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_native_module_declares_the_names_that_it_exports() {
     let folder = folder("the_native_module_declares_the_names_that_it_exports");
     let (runtime, _reports) = start(&folder).await;
@@ -436,7 +436,7 @@ async fn the_native_module_declares_the_names_that_it_exports() {
     assert_eq!(declared, exported);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let folder = folder("the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -501,7 +501,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     assert_eq!(host.inputs.lock().unwrap().len(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
     let folder = folder("a_job_that_a_signal_ends_names_the_signal_in_its_report");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -515,7 +515,7 @@ async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
     processes.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters() {
     let folder = folder("a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters");
     let processes = Arc::new(Processes::new(folder.join("processes")));
@@ -542,7 +542,7 @@ async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters(
     processes.shutdown().await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dropped_command_stops_its_process() {
     let folder = folder("a_dropped_command_stops_its_process");
     let processes = Processes::new(folder.join("processes"));

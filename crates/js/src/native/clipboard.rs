@@ -22,7 +22,7 @@ pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
         Function::new(ctx.clone(), |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
             let error_ctx = ctx.clone();
             Promise::wrap_future(&ctx, async move {
-                // The read and the PNG encoding block, so they run off the thread of JavaScript.
+                // The read and the PNG encoding block, so they run on a blocking thread of tokio.
                 match tokio::task::spawn_blocking(read_image).await {
                     Ok(Ok(png)) => Ok(png.map(Bytes)),
                     Ok(Err(error)) => Err(throw(&error_ctx, ErrorClass::Error, &chain_text(&*error))),

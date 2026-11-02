@@ -258,7 +258,7 @@ async fn open(runtime: &Runtime, signal: &str) -> String {
     .unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn idle_delivers_each_update_in_order_after_the_snapshot() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("idle_delivers_each_update_in_order_after_the_snapshot", &scripted).await;
@@ -282,7 +282,7 @@ async fn idle_delivers_each_update_in_order_after_the_snapshot() {
     assert_eq!(scripted.calls(), [format!("open {} 5", session())]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn idle_waits_for_queued_updates_but_not_for_later_updates() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("idle_waits_for_queued_updates_but_not_for_later_updates", &scripted).await;
@@ -316,7 +316,7 @@ async fn idle_waits_for_queued_updates_but_not_for_later_updates() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("an_aborted_handle_ends_its_hold_and_gets_no_later_update", &scripted).await;
@@ -351,7 +351,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
 }
 
 // The abort comes before the hold exists, so the open itself ends the hold.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("an_abort_during_the_open_rejects_it_and_ends_its_hold", &scripted).await;
@@ -373,7 +373,7 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
     assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_stop_of_the_plugin_ends_its_handles() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("the_stop_of_the_plugin_ends_its_handles", &scripted).await;
@@ -390,7 +390,7 @@ async fn the_stop_of_the_plugin_ends_its_handles() {
     assert_eq!(scripted.released.load(Ordering::SeqCst), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_close_of_the_session_ends_each_handle_on_it() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("the_close_of_the_session_ends_each_handle_on_it", &scripted).await;
@@ -420,7 +420,7 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
     assert_eq!(scripted.released.load(Ordering::SeqCst), 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started(
@@ -476,7 +476,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_its_task() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started(
@@ -536,7 +536,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit_throw_at_once() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started(
@@ -573,7 +573,7 @@ async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit
     assert_eq!(puts, [format!("put blob {id} 3"), format!("put blob {id} 3932160")]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failed_request_rejects_with_the_text_of_its_failure() {
     let scripted = Arc::new(Scripted::default());
     let runtime = started("a_failed_request_rejects_with_the_text_of_its_failure", &scripted).await;

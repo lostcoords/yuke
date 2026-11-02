@@ -14,7 +14,7 @@ async fn next_line(reports: &mut mpsc::UnboundedReceiver<Report>) -> (NoticeLeve
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn console_writes_one_formatted_entry_at_the_level_of_its_method() {
     let folder = folder("console_writes_one_formatted_entry_at_the_level_of_its_method");
     let (runtime, mut reports) = start(&folder).await;
@@ -62,7 +62,7 @@ async fn console_writes_one_formatted_entry_at_the_level_of_its_method() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn console_asserts_counts_groups_and_tables_as_the_console_standard() {
     let folder = folder("console_asserts_counts_groups_and_tables_as_the_console_standard");
     let (runtime, mut reports) = start(&folder).await;
@@ -122,7 +122,7 @@ async fn console_asserts_counts_groups_and_tables_as_the_console_standard() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn console_timers_and_traces_name_their_label_and_stack() {
     let folder = folder("console_timers_and_traces_name_their_label_and_stack");
     let (runtime, mut reports) = start(&folder).await;
@@ -159,7 +159,7 @@ async fn console_timers_and_traces_name_their_label_and_stack() {
     assert!(lines.next().is_some_and(|frame| frame.contains("inner")), "{text}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn console_directives_convert_as_the_console_standard() {
     let folder = folder("console_directives_convert_as_the_console_standard");
     let (runtime, mut reports) = start(&folder).await;
@@ -176,7 +176,7 @@ async fn console_directives_convert_as_the_console_standard() {
     assert_eq!(next_line(&mut reports).await.1, "NaN NaN");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_value_that_throws_when_console_reads_it_shows_as_unreadable() {
     let folder = folder("a_value_that_throws_when_console_reads_it_shows_as_unreadable");
     let (runtime, mut reports) = start(&folder).await;

@@ -118,7 +118,7 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the thread has ended or ends during the close.
+    /// Returns [`Error::Stopped`] when the engine task has ended or ends during the close.
     pub async fn close_plugins(&self) -> Result<(), Error> {
         self.handle().close_plugins().await
     }
@@ -131,7 +131,7 @@ impl Handle {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Stopped`] when the thread has ended or ends during the close.
+    /// Returns [`Error::Stopped`] when the engine task has ended or ends during the close.
     pub async fn close_plugins(&self) -> Result<(), Error> {
         self.caller
             .run(async move |ctx: Ctx<'_>, _registry| {
@@ -174,7 +174,7 @@ impl Handle {
         failures
     }
 
-    /// Load `plugin` on the JavaScript thread.
+    /// Load `plugin` on the engine task.
     pub(crate) async fn load_plugin(&self, plugin: &Plugin) -> Result<(), Error> {
         let plugin = plugin.clone();
         self.caller

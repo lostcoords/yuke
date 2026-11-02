@@ -15,7 +15,7 @@ fn tool_plugin(name: &str) -> String {
     )
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn after_a_reload_the_next_turn_of_an_open_session_has_the_tools_of_the_changed_plugin() {
     let place = Place::new("rpc", "reload_tools");
     place.plugin("tools", &tool_plugin("alpha"));
@@ -42,7 +42,7 @@ async fn after_a_reload_the_next_turn_of_an_open_session_has_the_tools_of_the_ch
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_gets_the_options_of_its_config_item_and_a_reload_reads_them_again() {
     let place = Place::new("rpc", "reload_options");
     place.plugin(
@@ -83,7 +83,7 @@ async fn a_plugin_gets_the_options_of_its_config_item_and_a_reload_reads_them_ag
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reload_during_a_turn_answers_an_error() {
     let place = Place::new("rpc", "reload_during_a_turn");
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
@@ -102,7 +102,7 @@ async fn a_reload_during_a_turn_answers_an_error() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bad_config_fails_the_reload_and_keeps_the_old_plugins() {
     let place = Place::new("rpc", "reload_bad_config");
     place.plugin("tools", &tool_plugin("alpha"));
@@ -120,7 +120,7 @@ async fn a_bad_config_fails_the_reload_and_keeps_the_old_plugins() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_that_does_not_load_fails_the_reload_and_keeps_the_old_plugins() {
     let place = Place::new("rpc", "reload_broken_plugin");
     place.plugin("tools", &tool_plugin("alpha"));
@@ -166,7 +166,7 @@ async fn a_plugin_that_does_not_load_fails_the_reload_and_keeps_the_old_plugins(
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_after_a_reload_has_a_new_provider_and_the_skills_of_a_new_plugin_folder() {
     let place = Place::new("rpc", "reload_profile");
     std::fs::create_dir_all(&place.paths.config).unwrap();
@@ -205,7 +205,7 @@ async fn a_session_after_a_reload_has_a_new_provider_and_the_skills_of_a_new_plu
 }
 
 // A rejected reload closes the plugins of its new runtime and keeps the old ones open.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_rejected_reload_runs_the_cleanups_of_its_new_plugins_only() {
     let place = Place::new("rpc", "reload_rejected_cleanups");
     let marks = place.work.join("marks");
@@ -238,7 +238,7 @@ async fn a_rejected_reload_runs_the_cleanups_of_its_new_plugins_only() {
 }
 
 // The old plugins close during the reload, so the cleanup of each one runs once.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reload_runs_the_cleanups_of_the_old_plugins() {
     let place = Place::new("rpc", "reload_cleanups");
     let marks = place.work.join("marks");
@@ -263,7 +263,7 @@ async fn a_reload_runs_the_cleanups_of_the_old_plugins() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bad_providers_file_fails_the_reload_and_keeps_the_old_providers() {
     let place = Place::new("rpc", "reload_bad_providers");
     let transport = ScriptedTransport::new([text_reply("one")]);
@@ -281,7 +281,7 @@ async fn a_bad_providers_file_fails_the_reload_and_keeps_the_old_providers() {
 }
 
 // The new plugins load after the swap of the providers, so their `apply` can call a model of the new providers.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_apply_of_a_new_plugin_can_call_a_model_of_the_new_providers() {
     let place = Place::new("rpc", "reload_apply_providers");
     std::fs::create_dir_all(&place.paths.config).unwrap();

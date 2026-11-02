@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends() {
     let place = Place::new(
         "rpc",
@@ -31,7 +31,7 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     ended.expect("the server still waits for the client").unwrap().unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
     let place = Place::new("rpc", "a_server_that_ends_without_its_shutdown_still_stops_its_turns");
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
@@ -51,7 +51,7 @@ async fn a_server_that_ends_without_its_shutdown_still_stops_its_turns() {
     assert!(drained.is_ok(), "a turn still runs after the server ended");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_turn_outlives_its_socket_client_and_the_next_client_takes_it_over() {
     let place = Place::new("rpc", "turn_outlives_client");
     let listening = Listening::start(&place, Box::new(Stalled));
@@ -83,7 +83,7 @@ async fn a_turn_outlives_its_socket_client_and_the_next_client_takes_it_over() {
     listening.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_new_socket_client_replaces_the_active_client() {
     let place = Place::new("rpc", "new_client_replaces");
     let listening = Listening::start(&place, Box::new(ScriptedTransport::default()));
@@ -99,7 +99,7 @@ async fn a_new_socket_client_replaces_the_active_client() {
     listening.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_socket_server_outlives_its_clients_and_its_shutdown_ends_the_turns_then_the_connection() {
     let place = Place::new("rpc", "socket_shutdown");
     let listening = Listening::start(&place, Box::new(Stalled));
@@ -128,7 +128,7 @@ async fn a_socket_server_outlives_its_clients_and_its_shutdown_ends_the_turns_th
     assert!(!path.exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bind_replaces_a_stale_socket_and_refuses_a_held_lock_and_a_file_that_is_no_socket() {
     let stale = socket_path();
     // The standard listener leaves its socket file when it drops, as a server that ends without its shutdown does.
@@ -159,7 +159,7 @@ async fn a_bind_replaces_a_stale_socket_and_refuses_a_held_lock_and_a_file_that_
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_refused_bind_opens_no_connection_to_the_running_server() {
     let path = socket_path();
     let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
@@ -177,7 +177,7 @@ async fn a_refused_bind_opens_no_connection_to_the_running_server() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn connect_bridges_the_socket_until_the_end_of_its_input() {
     let place = Place::new("rpc", "connect_bridges");
     let listening = Listening::start(&place, Box::new(ScriptedTransport::default()));
@@ -197,7 +197,7 @@ async fn connect_bridges_the_socket_until_the_end_of_its_input() {
     listening.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_ends_a_stdio_server_while_its_input_stays_open() {
     let place = Place::new("rpc", "stdio_shutdown");
     let (_input, server_input) = tokio::io::duplex(1 << 16);
@@ -242,7 +242,7 @@ impl AsyncWrite for CountedOutput {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_writer_writes_a_burst_of_lines_in_order_with_one_flush() {
     let counted = Arc::new(Mutex::new((Vec::new(), 0)));
     let (writer, written) = Writer::start(CountedOutput(Arc::clone(&counted)));
@@ -259,7 +259,7 @@ async fn the_writer_writes_a_burst_of_lines_in_order_with_one_flush() {
     assert_eq!(*flushes, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_burst_past_the_batch_size_writes_in_two_batches_and_loses_no_line() {
     let counted = Arc::new(Mutex::new((Vec::new(), 0)));
     let (writer, written) = Writer::start(CountedOutput(Arc::clone(&counted)));

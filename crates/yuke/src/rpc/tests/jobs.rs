@@ -2,7 +2,7 @@
 
 use super::*;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_model_reads() {
     let place = Place::new("rpc", "background_job_end");
     let arguments = json!({ "command": "exit 3", "background": true }).to_string();
@@ -139,7 +139,7 @@ async fn the_job(client: &mut Client, session: &Value) -> Value {
     jobs[0]["id"].clone()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old_jobs() {
     let place = Place::new(
         "rpc",
@@ -173,7 +173,7 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_close_ends_the_running_jobs_and_their_updates_come_first() {
     let place = Place::new("rpc", "a_close_ends_the_running_jobs_and_their_updates_come_first");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
@@ -196,7 +196,7 @@ async fn a_close_ends_the_running_jobs_and_their_updates_come_first() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
     let place = Place::new("rpc", "job_stop_waits_for_the_end_and_its_job_update_comes_first");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
@@ -243,7 +243,7 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_cannot_stop_the_job_of_another_session() {
     let place = Place::new("rpc", "a_session_cannot_stop_the_job_of_another_session");
     let (mut client, owner, _transport) = session_with_a_job(&place).await;
@@ -262,7 +262,7 @@ async fn a_session_cannot_stop_the_job_of_another_session() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_job_of_an_open_session_still_runs_after_a_reload() {
     let place = Place::new("rpc", "reload_job");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
@@ -308,7 +308,7 @@ async fn session_with_a_plugin_job(place: &Place) -> (Client, Value) {
     (client, session)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn job_stop_of_a_slow_plugin_job_leaves_the_connection_free() {
     let place = Place::new("rpc", "job_stop_of_a_slow_plugin_job_leaves_the_connection_free");
     job_plugin(&place, 300);
@@ -334,7 +334,7 @@ async fn job_stop_of_a_slow_plugin_job_leaves_the_connection_free() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reload_stops_a_plugin_job() {
     let place = Place::new("rpc", "a_reload_stops_a_plugin_job");
     job_plugin(&place, 0);

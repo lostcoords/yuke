@@ -37,7 +37,7 @@ async fn login_session(client: &mut Client, place: &Place) -> Value {
     input_params(&session, "hi")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_pushed_token_serves_each_open_session_and_a_new_push_serves_the_next_request() {
     let place = place_with_login_model("pushed_token");
     let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
@@ -59,7 +59,7 @@ async fn a_pushed_token_serves_each_open_session_and_a_new_push_serves_the_next_
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_before_it() {
     let place = place_with_login_model("refused_push");
     let transport = ScriptedTransport::new([text_reply("one")]);
@@ -115,7 +115,7 @@ async fn a_credential_update_that_cannot_serve_is_refused_and_keeps_the_token_be
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_pushed_token_still_serves_after_a_reload() {
     let place = place_with_login_model("reload_pushed_token");
     let transport = ScriptedTransport::new([text_reply("one")]);
@@ -141,7 +141,7 @@ fn provider_states(listed: &Value) -> BTreeMap<String, Value> {
         .collect()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state() {
     let place = Place::new(
         "rpc",
@@ -211,7 +211,7 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     assert_eq!(levels, ["default", "off", "high"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn each_reasoning_choice_of_the_catalog_gives_the_settings_of_its_level() {
     let place = Place::new(
         "rpc",
@@ -255,7 +255,7 @@ fn finished(message: &Value, id: &Value) -> bool {
     message["method"] == "auth/login_finished" && message["params"]["loginId"] == *id
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
     let place = Place::new("rpc", "a_login_gives_its_code_at_once_and_its_end_saves_the_login");
     let answers = Answers::default();
@@ -282,7 +282,7 @@ async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
     assert_eq!(saved["xai-grok"]["access_token"], "at");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
     let place = Place::new("rpc", "a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once");
     let answers = Answers::default();
@@ -319,7 +319,7 @@ async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
     assert!(!place.paths.data.join("auth.json").exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_login_of_a_provider_without_a_flow_or_a_refused_start_fails() {
     let place = Place::new("rpc", "a_login_of_a_provider_without_a_flow_or_a_refused_start_fails");
     let answers = Answers::default();
@@ -337,7 +337,7 @@ async fn a_login_of_a_provider_without_a_flow_or_a_refused_start_fails() {
     assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INTERNAL_ERROR));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_login_in_progress() {
     let place = Place::new(
         "rpc",
@@ -409,7 +409,7 @@ async fn run_turn(client: &mut Client, session: &Value) {
     client.until(is_idle).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_wins_over_it() {
     let place = Place::new(
         "rpc",
@@ -472,7 +472,7 @@ async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_w
     assert_eq!(providers, ["minimax", "xai-grok"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refused() {
     let place = Place::new(
         "rpc",

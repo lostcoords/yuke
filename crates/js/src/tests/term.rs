@@ -133,7 +133,7 @@ fn wheel(button: Button, column: u16) -> Input {
     }))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_start_frame_writes_its_cells_to_the_output() {
     let (runtime, _reports, _display, output, _requests) =
         started("the_start_frame_writes_its_cells_to_the_output").await;
@@ -144,7 +144,7 @@ async fn the_start_frame_writes_its_cells_to_the_output() {
     assert!(output.text().contains("frame 1"), "{:?}", output.text());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
     let (runtime, _reports, _display, output, _requests) = started("a_cursor_shape_reaches_the_terminal").await;
     output.0.lock().unwrap().clear();
@@ -170,7 +170,7 @@ async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
     assert_eq!(error, "TypeError: a cursor shape is block, underline, or bar, not beam");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     let (mut runtime, _reports, display, output, _requests) =
         hidden("a_runtime_draws_and_takes_input_only_after_the_show").await;
@@ -196,7 +196,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     assert!(output.text().contains("frame 1"), "{:?}", output.text());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
     let (runtime, _reports, display, _output, _requests) =
         started("a_notice_comes_as_an_event_with_its_level_source_and_text").await;
@@ -210,7 +210,7 @@ async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_notice_of_a_session_keeps_its_session_id() {
     let (runtime, _reports, display, _output, _requests) = started("a_notice_of_a_session_keeps_its_session_id").await;
     let session = SessionId::generate();
@@ -227,7 +227,7 @@ async fn a_notice_of_a_session_keeps_its_session_id() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn take_notices_gives_the_waiting_notices_and_drops_the_other_inputs() {
     let (display, _requests) = Display::new(
         Size { columns: 20, rows: 3 },
@@ -250,7 +250,7 @@ async fn take_notices_gives_the_waiting_notices_and_drops_the_other_inputs() {
     assert_eq!(display.take_notices(), []);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_batch_of_inputs_draws_one_frame() {
     let (runtime, _reports, display, _output, _requests) = started("a_batch_of_inputs_draws_one_frame").await;
     for character in ['a', 'b', 'c'] {
@@ -271,7 +271,7 @@ async fn a_batch_of_inputs_draws_one_frame() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn asks_for_frames_give_one_frame() {
     let (runtime, _reports, _display, _output, _requests) = started("asks_for_frames_give_one_frame").await;
     evaluate::<()>(&runtime, "term.requestFrame(); term.requestFrame(5);")
@@ -282,7 +282,7 @@ async fn asks_for_frames_give_one_frame() {
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_frame_of_an_input_answers_an_ask_of_its_handler() {
     let (runtime, _reports, display, _output, _requests) = started("the_frame_of_an_input_answers_an_ask").await;
     evaluate::<()>(
@@ -297,7 +297,7 @@ async fn the_frame_of_an_input_answers_an_ask_of_its_handler() {
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_ask_of_the_draw_gives_the_next_frame() {
     let (runtime, _reports, _display, _output, _requests) = started("an_ask_of_the_draw_gives_the_next_frame").await;
     evaluate::<()>(
@@ -312,7 +312,7 @@ async fn an_ask_of_the_draw_gives_the_next_frame() {
     wait_until(&runtime, "return frames === 4;").await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_focus_event_says_whether_the_window_has_the_focus() {
     let (runtime, _reports, display, _output, _requests) = started("a_focus_event_says_whether").await;
     display.send(Input::Event(Event::FocusLost));
@@ -327,7 +327,7 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
     assert_eq!(text, "focus:false focus:true");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
     let (runtime, _reports, display, _output, _requests) = started("a_mouse_event_gives_column_row").await;
     display.send(Input::Event(Event::Mouse(Mouse {
@@ -346,7 +346,7 @@ async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throwing_handler_reports_and_the_next_event_runs() {
     let (runtime, mut reports, display, _output, _requests) =
         started("a_throwing_handler_reports_and_the_next_event_runs").await;
@@ -369,7 +369,7 @@ async fn a_throwing_handler_reports_and_the_next_event_runs() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     let folder = folder("each_event_of_a_batch_comes_alone_with_the_state_of_its_time");
     let (display, _requests) = Display::new(
@@ -405,7 +405,7 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     assert_eq!(text, "start@20 mouse@20 mouse@20 resize@30 resize@40");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
     let (runtime, _reports, display, output, _requests) = started("a_resize_sets_the_size_before_its_event").await;
     evaluate::<()>(&runtime, "globalThis.widths = []; const keep = seen.push.bind(seen); seen.push = (event) => { widths.push(term.width); return keep(event); };")
@@ -427,7 +427,7 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
     assert!(written.contains("\x1b[4;1H"), "{written:?}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the_background() {
     let (runtime, _reports, display, output, mut requests) = started("quit_and_suspend_reach_the_host").await;
     evaluate::<()>(&runtime, "term.quit(); term.suspend(); term.reload('{\"panes\":2}');")
@@ -451,7 +451,7 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_background_event_comes_only_when_the_class_changes() {
     let (runtime, _reports, display, _output, _requests) =
         started("a_background_event_comes_only_when_the_class_changes").await;
@@ -479,7 +479,7 @@ async fn a_background_event_comes_only_when_the_class_changes() {
     assert_eq!(text, "light light key");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_frame_asked_before_the_run_waits_for_it() {
     let folder = folder("a_frame_asked_before_the_run_waits_for_it");
     let (display, _requests) = Display::new(
@@ -505,7 +505,7 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
     wait_until(&runtime, "return frames === 1;").await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn term_run_runs_once_and_draws_need_a_display() {
     let (runtime, _reports, _display, _output, _requests) = started("term_run_runs_once").await;
     let second = evaluate::<String>(
@@ -527,7 +527,7 @@ async fn term_run_runs_once_and_draws_need_a_display() {
     assert_eq!(without, "Error Error Error");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn styles_take_indices_hex_colors_and_reset() {
     let (runtime, _reports, _display, _output, _requests) = started("styles_take_indices_hex_colors_and_reset").await;
     let names = evaluate::<String>(

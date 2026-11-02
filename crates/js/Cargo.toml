@@ -1,7 +1,7 @@
 [package]
 name = "yuke-js"
 version = "0.0.1-dev"
-description = "The JavaScript runtime of yuke: QuickJS on its own thread, with TypeScript modules and tools."
+description = "The JavaScript runtime of yuke: QuickJS as a local tokio task, with TypeScript modules and tools."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -44,8 +44,6 @@ oxc_transformer = "=0.153.0"
 rquickjs = { version = "0.14.0", default-features = false, features = ["std", "loader"] }
 
 [dev-dependencies]
-# A test calls the runtime from the worker threads of a multi-thread tokio runtime.
-tokio = { version = "1.53", features = ["rt-multi-thread"] }
 yuke-http = { path = "../http", features = ["testing"] }
 yuke-testing = { path = "../testing" }
 

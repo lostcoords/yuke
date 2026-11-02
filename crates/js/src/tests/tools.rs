@@ -15,6 +15,22 @@ use super::{evaluate, folder, load_entry, module, next_fault, script_error, star
 use crate::tools::forward;
 use crate::{RequestFailure, Runtime, ScriptSession, ScriptTool, SessionHost, baked};
 
+/// A host error with an I/O cause.
+#[derive(Debug)]
+struct HostFailed(std::io::Error);
+
+impl std::fmt::Display for HostFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the host failed")
+    }
+}
+
+impl std::error::Error for HostFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 /// A session host that keeps the bytes of each stored attachment and each input.
 #[derive(Debug)]
 pub(super) struct TestHost {
@@ -235,7 +251,7 @@ pub(super) async fn error_of(tool: &ScriptTool, arguments: &str) -> String {
     yuke_engine::chain_text(call(tool, arguments).await.0.unwrap_err().as_ref())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
     use yuke_engine::{Hooks, RoundStart};
 
@@ -254,15 +270,12 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
     );
     let (runtime, _faults) = start(&folder).await;
     let host = Arc::new(TestHost {
-        failure: Some(Arc::new(crate::Error::Thread(std::io::Error::other("the cause")))),
+        failure: Some(Arc::new(HostFailed(std::io::Error::other("the cause")))),
         ..TestHost::new(&folder)
     });
     let (_runtime, _host, tools) = tools_in(runtime, host, &[&module(&folder, "tools.ts")]).await;
 
-    assert_eq!(
-        error_of(&tools["image"], "{}").await,
-        "the JavaScript thread did not start: the cause"
-    );
+    assert_eq!(error_of(&tools["image"], "{}").await, "the host failed: the cause");
     let model = yuke_testing::model();
     let settings = yuke_ai::Settings::new();
     let error = tools
@@ -280,11 +293,11 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
         .unwrap_err();
     assert_eq!(
         yuke_engine::chain_text(error.as_ref()),
-        "round.before of plugin test failed: the JavaScript thread did not start: the cause"
+        "round.before of plugin test failed: the host failed: the cause"
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn every_built_in_module_loads_from_its_bytecode() {
     let folder = folder("every_built_in_module_loads_from_its_bytecode");
     let (runtime, _faults) = start(&folder).await;
@@ -307,7 +320,7 @@ async fn every_built_in_module_loads_from_its_bytecode() {
     assert!(loaded.contains(&"yuke:internal/builtins".to_owned()), "{loaded:?}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_user_module_cannot_import_an_internal_module() {
     let folder = folder("a_user_module_cannot_import_an_internal_module");
     write(
@@ -329,7 +342,7 @@ async fn a_user_module_cannot_import_an_internal_module() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_long_syntax_error_keeps_every_byte_of_its_message() {
     let folder = folder("a_long_syntax_error_keeps_every_byte_of_its_message");
     // The path alone is longer than the 255 bytes of a typed throw of the engine.
@@ -348,7 +361,7 @@ async fn a_long_syntax_error_keeps_every_byte_of_its_message() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_built_in_tools_come_with_their_definitions() {
     let folder = folder("the_built_in_tools_come_with_their_definitions");
     let (runtime, _faults) = start(&folder).await;
@@ -364,9 +377,9 @@ async fn the_built_in_tools_come_with_their_definitions() {
     assert_eq!(tools.list[1].1.concurrency(), Concurrency::Serial);
 }
 
-#[tokio::test]
-async fn a_shutdown_ends_the_thread_while_a_tool_lives() {
-    let folder = folder("a_shutdown_ends_the_thread_while_a_tool_lives");
+#[tokio::test(flavor = "local")]
+async fn a_shutdown_ends_the_engine_task_while_a_tool_lives() {
+    let folder = folder("a_shutdown_ends_the_engine_task_while_a_tool_lives");
     let (runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
 
     tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
@@ -376,11 +389,11 @@ async fn a_shutdown_ends_the_thread_while_a_tool_lives() {
 
     assert_eq!(
         error_of(&tools["read"], r#"{"path": "a.txt"}"#).await,
-        "the JavaScript thread has ended"
+        "the JavaScript runtime has ended"
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     let folder = folder("a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs");
     write(

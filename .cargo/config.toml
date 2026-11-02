@@ -2,3 +2,5 @@
 # The CPU jitter source of aws-lc costs about 37 ms of CPU at the first TLS handshake of each process. Without it, the
 # OS seeds aws-lc. A CPU random instruction then adds only a personalization string and no prediction resistance.
 AWS_LC_SYS_NO_JITTER_ENTROPY = "1"
+# The JavaScript engine runs on the thread of each test, so a test thread needs the stack of the engine.
+RUST_MIN_STACK = "10485760"

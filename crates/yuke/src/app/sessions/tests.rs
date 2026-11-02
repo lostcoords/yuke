@@ -38,7 +38,7 @@ fn deadline(sessions: &SessionService, id: SessionId) -> Option<tokio::time::Ins
     }
 }
 
-/// The longest real wait for work on the other threads: the store, the plugins, and the jobs.
+/// The longest real wait for work outside the runtime: the store thread and the job processes.
 const REAL: Duration = Duration::from_secs(10);
 
 /// Wait until `ready` holds, and fail with `what` after [`REAL`]. The paused clock does not advance meanwhile.
@@ -51,7 +51,7 @@ async fn until(what: &str, ready: impl Fn() -> bool) {
 }
 
 /// Wait until a countdown closes session `id`: move the paused clock on by `within`, so the countdown fires in that
-/// time, then wait up to [`REAL`] for the close, which runs on other threads in real time.
+/// time, then wait up to [`REAL`] for the close, which waits for the store thread in real time.
 async fn closed(sessions: &SessionService, id: SessionId, within: Duration) {
     tokio::time::advance(within).await;
     let what = format!("the session {id} did not close within {within:?}");
@@ -94,7 +94,7 @@ async fn saved(sessions: &SessionService) -> usize {
         .len()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
     let place = Place::new(
         "sessions",
@@ -117,7 +117,7 @@ async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn no_session_opens_or_closes_during_a_reload() {
     let place = Place::new("sessions", "no_session_opens_or_closes_during_a_reload");
     let app = started(&place).await;
@@ -141,7 +141,7 @@ async fn no_session_opens_or_closes_during_a_reload() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_reload_refuses_to_start_while_a_session_opens() {
     let place = Place::new("sessions", "a_reload_refuses_to_start_while_a_session_opens");
     let app = started(&place).await;
@@ -156,7 +156,7 @@ async fn a_reload_refuses_to_start_while_a_session_opens() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn after_the_shutdown_starts_no_session_opens() {
     let place = Place::new("sessions", "after_the_shutdown_starts_no_session_opens");
     let app = started(&place).await;
@@ -175,7 +175,7 @@ async fn after_the_shutdown_starts_no_session_opens() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_without_a_holder_closes_after_the_grace() {
     let place = Place::new("sessions", "a_session_without_a_holder_closes_after_the_grace");
     let app = started(&place).await;
@@ -193,7 +193,7 @@ async fn a_session_without_a_holder_closes_after_the_grace() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_that_nobody_attaches_closes_after_the_grace() {
     let place = Place::new("sessions", "a_session_that_nobody_attaches_closes_after_the_grace");
     let app = started(&place).await;
@@ -209,7 +209,7 @@ async fn a_session_that_nobody_attaches_closes_after_the_grace() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_with_a_holder_stays_open_after_its_turn() {
     let place = Place::new("sessions", "a_session_with_a_holder_stays_open_after_its_turn");
     let transport = ScriptedTransport::new([text_reply("Hello.")]);
@@ -219,7 +219,7 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
     let attachment = sessions.attach(id).unwrap();
 
     sessions.input(id, said("Hi.")).await.unwrap();
-    // The first turn waits for the plugins on their own thread, so the clock pauses after the turn.
+    // The first turn waits for the plugins to load, so the clock pauses after the turn.
     while transport.requests().is_empty() || sessions.live(id).unwrap().state() == SessionState::Running {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -231,7 +231,7 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_it() {
     let place = Place::new(
         "sessions",
@@ -265,7 +265,7 @@ async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_i
 }
 
 // The input leaves the session idle until its task wakes, so only the count of the accepted inputs makes idle wait.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
     let place = Place::new("sessions", "idle_waits_for_the_turn_of_an_input_that_came_before_it");
     let transport = ScriptedTransport::new([text_reply("Hello.")]);
@@ -283,7 +283,7 @@ async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app() {
     let place = Place::new(
         "sessions",
@@ -309,7 +309,7 @@ async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app(
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_attachment_during_the_countdown_keeps_the_session_open() {
     let place = Place::new("sessions", "an_attachment_during_the_countdown_keeps_the_session_open");
     let app = started(&place).await;
@@ -328,7 +328,7 @@ async fn an_attachment_during_the_countdown_keeps_the_session_open() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_attachment_of_an_earlier_open_does_not_release_a_later_open() {
     let place = Place::new(
         "sessions",
@@ -351,7 +351,7 @@ async fn an_attachment_of_an_earlier_open_does_not_release_a_later_open() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_input_during_the_countdown_keeps_the_session_open_until_its_turn_ends() {
     let place = Place::new(
         "sessions",
@@ -383,7 +383,7 @@ async fn an_input_during_the_countdown_keeps_the_session_open_until_its_turn_end
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_countdown_that_ends_during_a_reload_starts_again() {
     let place = Place::new("sessions", "a_countdown_that_ends_during_a_reload_starts_again");
     let app = started(&place).await;
@@ -404,7 +404,7 @@ async fn a_countdown_that_ends_during_a_reload_starts_again() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs() {
     let place = Place::new(
         "sessions",
@@ -425,7 +425,7 @@ async fn a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs()
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_repeated_idle_report_does_not_extend_the_countdown() {
     let place = Place::new("sessions", "a_repeated_idle_report_does_not_extend_the_countdown");
     let app = started(&place).await;
@@ -443,7 +443,7 @@ async fn a_repeated_idle_report_does_not_extend_the_countdown() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_session_with_a_running_job_waits_the_idle_minutes_then_stops_the_job() {
     let place = Place::new(
         "sessions",
@@ -493,7 +493,7 @@ fn runs(process: u32) -> bool {
         .success()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_pages() {
     let place = Place::new(
         "sessions",
@@ -556,7 +556,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_removal_of_a_parent_removes_its_whole_tree() {
     let place = Place::new("sessions", "a_removal_of_a_parent_removes_its_whole_tree");
     let app = started(&place).await;
@@ -578,7 +578,7 @@ async fn a_removal_of_a_parent_removes_its_whole_tree() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_removal_fails_while_a_session_of_the_tree_is_open_and_removes_nothing() {
     let place = Place::new("sessions", "a_removal_fails_while_a_session_of_the_tree_is_open");
     let app = started(&place).await;
@@ -598,7 +598,7 @@ async fn a_removal_fails_while_a_session_of_the_tree_is_open_and_removes_nothing
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_create_with_an_unknown_parent_fails_and_saves_nothing() {
     let place = Place::new("sessions", "a_create_with_an_unknown_parent_fails");
     let app = started(&place).await;
@@ -615,7 +615,7 @@ async fn a_create_with_an_unknown_parent_fails_and_saves_nothing() {
     app.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cursor_reads_only_in_the_list_of_its_parent() {
     let place = Place::new("sessions", "a_cursor_reads_only_in_the_list_of_its_parent");
     let app = started(&place).await;

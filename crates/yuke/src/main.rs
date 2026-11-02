@@ -215,7 +215,26 @@ impl Cli {
 }
 
 fn main() -> ExitCode {
-    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+    // The JavaScript engine runs on the runtime of this thread, so the thread needs the stack of the engine.
+    let thread = std::thread::Builder::new()
+        .name("yuke".into())
+        .stack_size(yuke_js::THREAD_STACK)
+        .spawn(run);
+    match thread.map(std::thread::JoinHandle::join) {
+        Ok(Ok(code)) => code,
+        Ok(Err(panic)) => std::panic::resume_unwind(panic),
+        Err(error) => {
+            warn(&format!("yuke could not start its thread: {error}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> ExitCode {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build_local(tokio::runtime::LocalOptions::default())
+    {
         Ok(runtime) => runtime,
         Err(error) => {
             warn(&format!("yuke could not start its runtime: {error}"));
@@ -227,7 +246,7 @@ fn main() -> ExitCode {
         let ran = match cli.command.take() {
             Some(Command::Login { provider }) => login(&provider).await,
             Some(Command::Logout { provider }) => logout(&provider).await,
-            Some(Command::Test { paths }) => test(paths).await,
+            Some(Command::Test { paths }) => test(paths),
             Some(Command::Plugin { command }) => plugin(command).await,
             None => match cli.into_mode() {
                 Mode::Tui(session) => run_tui(session).await,
@@ -268,7 +287,7 @@ async fn print_task(task: &Task, json: bool) -> Result<ExitCode, String> {
 
 /// Run the test files at `paths`, or below the current folder. Print each failure and a count, and fail when a test
 /// fails.
-async fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
+fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     let paths = if paths.is_empty() {
         vec![PathBuf::from(".")]
     } else {
@@ -280,7 +299,7 @@ async fn test(paths: Vec<PathBuf>) -> Result<ExitCode, String> {
     }
     let work = std::env::temp_dir().join(format!("yuke-test-{}", std::process::id()));
     std::fs::create_dir_all(&work).map_err(|error| format!("{}: {error}", work.display()))?;
-    let summary = test_files::run(&files, &work, test_files::TIME_LIMIT, false).await;
+    let summary = test_files::run(&files, &work, test_files::TIME_LIMIT, false);
     if let Err(error) = std::fs::remove_dir_all(&work) {
         warn(&format!("{}: {error}", work.display()));
     }
@@ -612,7 +631,7 @@ mod tests {
         parse(arguments).map(|cli| cli.command)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn a_second_signal_stops_an_operation_that_does_not_end() {
         let cancellation_token = CancellationToken::new();
         let send = async {

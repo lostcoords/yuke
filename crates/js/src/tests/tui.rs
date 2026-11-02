@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Module, Object};
 use super::{evaluate, folder, next_fault, start};
 use crate::error::caught;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throwing_notice_listener_is_removed_and_reported_and_the_next_listener_runs() {
     let folder = folder("a_throwing_notice_listener_is_reported");
     let (runtime, mut reports) = start(&folder).await;

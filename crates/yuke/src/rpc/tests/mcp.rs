@@ -9,7 +9,7 @@ fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
 
 // A server of the user config starts with the session: its state reaches the client, its tool reaches the model, and
 // `mcp/list` and a load give its state.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_client() {
     let place = Place::new(
         "rpc",
@@ -113,7 +113,7 @@ fn answer(session: &Value, question: &Value, start: bool) -> Value {
 
 // A yes starts the project server and keeps the trust, so the next session in the folder asks nothing. A changed list
 // asks again.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_project_mcp_server_starts_after_a_yes_and_the_trust_lasts_until_the_list_changes() {
     let place = Place::new(
         "rpc",
@@ -161,7 +161,7 @@ async fn a_project_mcp_server_starts_after_a_yes_and_the_trust_lasts_until_the_l
 }
 
 // A no leaves the project server untrusted, and the next session asks again.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_no_leaves_a_project_mcp_server_untrusted_and_the_next_session_asks_again() {
     let place = Place::new(
         "rpc",

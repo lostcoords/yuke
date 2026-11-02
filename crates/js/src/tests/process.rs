@@ -26,7 +26,7 @@ async fn gone(pid: i32) -> bool {
     true
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_end_of_the_runtime_stops_a_running_program() {
     let folder = folder("the_end_of_the_runtime_stops_a_running_program");
     let (runtime, _reports) = start(&folder).await;

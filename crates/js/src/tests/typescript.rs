@@ -29,8 +29,8 @@ async fn start(place: &Path, cache: &Path) -> Result<(Runtime, mpsc::UnboundedRe
     Ok(Runtime::start(options).await?)
 }
 
-#[tokio::test]
-async fn the_typescript_tests_pass() {
+#[test]
+fn the_typescript_tests_pass() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let files = find_test_files(&root).unwrap();
     assert!(!files.is_empty(), "no test file below {}", root.display());
@@ -39,8 +39,7 @@ async fn the_typescript_tests_pass() {
     let cache = work.join("cache");
     let summary = run_test_files(&files, &work, TIME_LIMIT, async |place: &Path| {
         start(place, &cache).await
-    })
-    .await;
+    });
 
     assert!(summary.failures.is_empty(), "\n{}", summary.failures);
     assert!(summary.passed > 0);
@@ -84,7 +83,7 @@ fn statuses(outcomes: &[TestOutcome]) -> Vec<(String, String)> {
 }
 
 // The rejection settles after the test ends, so only the fence before the drain gives it to its own test.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failure_and_a_stray_rejection_fail_only_their_own_tests() {
     let outcomes = ran(
         "a_failure_and_a_stray_rejection_fail_only_their_own_tests",
@@ -111,7 +110,7 @@ async fn a_failure_and_a_stray_rejection_fail_only_their_own_tests() {
     assert!(outcomes[0].reports.is_empty(), "{:?}", outcomes[0].reports);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_test_past_the_time_limit_stops_its_runtime_and_the_later_tests_still_run() {
     let outcomes = ran(
         "a_test_past_the_time_limit_stops_its_runtime_and_the_later_tests_still_run",
@@ -134,7 +133,7 @@ async fn a_test_past_the_time_limit_stops_its_runtime_and_the_later_tests_still_
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_file_that_fails_before_its_tests_runs_no_test() {
     let thrown = ran(
         "a_file_that_fails_before_its_tests_runs_no_test/thrown",
@@ -177,7 +176,7 @@ async fn a_file_that_fails_before_its_tests_runs_no_test() {
 }
 
 // The second runtime registers other tests, so the name guard fails the test that it no longer has.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_test_that_a_later_import_does_not_register_fails() {
     let outcomes = ran(
         "a_test_that_a_later_import_does_not_register_fails",
@@ -201,7 +200,7 @@ async fn a_test_that_a_later_import_does_not_register_fails() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_run_into_a_used_folder_fails_before_its_tests() {
     let place = folder("runner/a_run_into_a_used_folder_fails_before_its_tests");
     let file = place.join("a.test.ts");

@@ -4,7 +4,7 @@
 use super::*;
 use crate::testing::commit_plugin;
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_load_it() {
     let place = Place::new("rpc", "plugins_sync");
     let remote = place.work.join("remote");
@@ -51,7 +51,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_plugin_that_does_not_load_at_the_start_lists_as_not_loaded() {
     let place = Place::new("rpc", "plugins_not_loaded");
     place.plugin("broken", "export function apply() { throw new Error('no'); }");
@@ -75,7 +75,7 @@ async fn a_plugin_that_does_not_load_at_the_start_lists_as_not_loaded() {
     client.end().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both_back() {
     let place = Place::new("rpc", "plugins_add_remove");
     let remote = place.work.join("remote");

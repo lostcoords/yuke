@@ -114,7 +114,7 @@ impl fmt::Display for RequestFailure {
 
 impl std::error::Error for RequestFailure {}
 
-/// The state of the JavaScript thread: the tools that the JavaScript defined, the open sessions, and the processes that
+/// The state of the engine task: the tools that the JavaScript defined, the open sessions, and the processes that
 /// the calls start.
 pub(crate) struct Registry {
     pub(crate) processes: Arc<Processes>,
@@ -247,7 +247,7 @@ impl Registry {
         caught(ctx, start.restore(ctx))
     }
 
-    /// Drop each saved function. The thread calls this before it drops the runtime, because a saved value that
+    /// Drop each saved function. The engine calls this before it drops the runtime, because a saved value that
     /// outlives the runtime aborts the process.
     pub(crate) fn clear(&self) {
         self.tools.borrow_mut().clear();
@@ -262,7 +262,7 @@ pub(crate) struct Entry {
     pub(crate) hints: ToolHints,
 }
 
-/// A tool that the JavaScript defined, for one session. Each call runs on the JavaScript thread.
+/// A tool that the JavaScript defined, for one session. Each call runs on the engine task.
 #[derive(Clone)]
 pub struct ScriptTool {
     pub(crate) caller: Caller,

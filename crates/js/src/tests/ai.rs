@@ -12,12 +12,11 @@ use super::tools::{TestHost, Tools};
 use super::{evaluate, folder, load_entry, options, write};
 use crate::{Attachment, CompleteAnswer, CompleteRequest, Models, Processes, Runtime, SessionHost, SideRequest};
 
-/// Records each request and the name of its thread. With `answer`, it returns that answer. Without one, it waits for
+/// Records each request. With `answer`, it returns that answer. Without one, it waits for
 /// the cancel.
 #[derive(Default)]
 struct Recorded {
     requests: Mutex<Vec<CompleteRequest>>,
-    threads: Mutex<Vec<String>>,
     answer: Option<Result<CompleteAnswer, String>>,
     cancelled: Mutex<bool>,
 }
@@ -30,8 +29,6 @@ impl Models for Recorded {
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
         self.requests.lock().unwrap().push(request);
-        let thread = std::thread::current().name().unwrap_or_default().to_owned();
-        self.threads.lock().unwrap().push(thread);
         if let Some(answer) = &self.answer {
             return Ok(answer.clone()?);
         }
@@ -66,7 +63,7 @@ fn reference(provider: &str, model: &str) -> ModelReference {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_and_the_usage() {
     let models = Arc::new(Recorded {
         answer: Some(Ok(CompleteAnswer {
@@ -114,8 +111,6 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
             r#"{"input":42,"output":7,"reasoning":null,"cacheRead":null,"cacheWrite":null}"#,
         ]
     );
-    // The JavaScript thread has no I/O driver, so a request runs on the runtime of the test.
-    assert!(!models.threads.lock().unwrap().contains(&"yuke-js".to_owned()));
     assert_eq!(
         *models.requests.lock().unwrap(),
         [
@@ -160,7 +155,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing() {
     // The model answers at once, so a misuse that the checks miss gives `none`, and the test does not hang.
     let models = Arc::new(Recorded {
@@ -217,7 +212,7 @@ async fn a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing() {
     assert!(models.requests.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failed_request_rejects_with_an_error_that_holds_the_text_of_the_failure() {
     let models = Arc::new(Recorded {
         answer: Some(Err("the provider is overloaded".to_owned())),
@@ -241,7 +236,7 @@ async fn a_failed_request_rejects_with_an_error_that_holds_the_text_of_the_failu
     assert_eq!(failure, "Error: the provider is overloaded");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() {
     let models = Arc::new(Recorded::default());
     let runtime = runtime_with(
@@ -273,7 +268,7 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
     assert!(*models.cancelled.lock().unwrap());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     let models = Arc::new(Recorded::default());
     let runtime = runtime_with("a_shutdown_stops_a_request_that_waits_for_its_answer", &models).await;
@@ -297,7 +292,7 @@ async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     tokio::time::timeout(Duration::from_secs(5), wait).await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn s_model_names_the_model_of_the_session_now() {
     let folder = folder("s_model_names_the_model_of_the_session_now");
     let models = Arc::new(Recorded::default());
@@ -362,7 +357,7 @@ async fn answering(name: &str, text: &str, finish_reason: FinishReason) -> (Runt
     (runtime_with(name, &models).await, models)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_output_sends_the_schema_and_answers_with_the_checked_object() {
     let (runtime, models) = answering(
         "an_output_sends_the_schema_and_answers_with_the_checked_object",
@@ -398,7 +393,7 @@ async fn an_output_sends_the_schema_and_answers_with_the_checked_object() {
     assert_eq!(requests[1].settings.output_schema, None);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_answer_that_is_not_the_object_throws_a_no_object_generated_error_that_keeps_the_answer() {
     // The engine words a JSON error itself, so only the start of the cause counts.
     let cases = [
@@ -467,7 +462,7 @@ async fn an_answer_that_is_not_the_object_throws_a_no_object_generated_error_tha
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
     // The model answers at once, so a bad output that the checks miss gives `none`, and the test does not hang.
     let (runtime, models) = answering(
@@ -508,7 +503,7 @@ async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
     assert!(models.requests.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn attachments_reach_the_request_after_a_read_of_each_path() {
     let folder = folder("attachments_reach_the_request_after_a_read_of_each_path");
     write(&folder, &[("shot.png", "file bytes")]);
@@ -553,7 +548,7 @@ async fn attachments_reach_the_request_after_a_read_of_each_path() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bad_attachment_fails_before_a_request() {
     let folder = folder("a_bad_attachment_fails_before_a_request");
     let (runtime, models) = answering(
@@ -608,7 +603,7 @@ async fn a_bad_attachment_fails_before_a_request() {
     assert!(models.requests.lock().unwrap().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_abort_ends_the_wait_for_an_attachment_that_does_not_read() {
     let folder = folder("an_abort_ends_the_wait_for_an_attachment_that_does_not_read");
     let fifo = folder.join("input.fifo");

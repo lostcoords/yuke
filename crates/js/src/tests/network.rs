@@ -55,7 +55,7 @@ fn leak(text: String) -> &'static str {
     Box::leak(text.into_boxed_str())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_fetch_sends_the_request_and_reads_the_response() {
     let (port, server) = listen(Server {
         status: 201,
@@ -91,7 +91,7 @@ async fn a_fetch_sends_the_request_and_reads_the_response() {
     assert_eq!(seen.body, b"data");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_header_list_of_a_headers_init_reaches_the_wire_as_it_is() {
     let (port, server) = listen(Server {
         status: 200,
@@ -116,7 +116,7 @@ async fn the_header_list_of_a_headers_init_reaches_the_wire_as_it_is() {
     assert_eq!(seen.values("accept-encoding"), ["gzip"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_redirect_to_another_origin_drops_the_authorization() {
     let (target, last) = listen(Server {
         status: 200,
@@ -149,7 +149,7 @@ async fn a_redirect_to_another_origin_drops_the_authorization() {
     assert_eq!(last.values("x-keep"), ["1"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_303_turns_a_post_into_a_get_without_its_body_and_a_307_keeps_both() {
     for (status, method, body, content_type) in [(303, "GET", "", None), (307, "POST", "x", Some("text/x"))] {
         let (target, last) = listen(Server {
@@ -186,7 +186,7 @@ async fn a_303_turns_a_post_into_a_get_without_its_body_and_a_307_keeps_both() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_manual_redirect_gives_the_redirect_and_an_error_redirect_rejects() {
     let mut ports = Vec::new();
     for headers in [
@@ -226,7 +226,7 @@ async fn a_manual_redirect_gives_the_redirect_and_an_error_redirect_rejects() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_fetch_follows_at_most_twenty_redirects() {
     // Each server redirects to the one before it, so the first request starts a chain of 21 redirects.
     let mut port = listen(Server {
@@ -258,7 +258,7 @@ async fn a_fetch_follows_at_most_twenty_redirects() {
     assert_eq!(text, "TypeError:redirect");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_network_failure_rejects_with_a_type_error_that_names_its_cause() {
     let closed = {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -288,7 +288,7 @@ async fn a_network_failure_rejects_with_a_type_error_that_names_its_cause() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_abort_rejects_the_fetch_and_errors_the_body_with_the_reason() {
     let (silent, waiting) = listen(Server {
         silent: true,
@@ -331,7 +331,7 @@ async fn an_abort_rejects_the_fetch_and_errors_the_body_with_the_reason() {
     assert_eq!(text, "early head a body body");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancel_of_the_body_stops_the_read_and_closes_the_connection() {
     let (port, server) = listen(Server {
         status: 200,
@@ -360,7 +360,7 @@ async fn a_cancel_of_the_body_stops_the_read_and_closes_the_connection() {
     assert_eq!(text, "true true");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_unread_body_closes_its_connection_although_its_signal_lives() {
     let (port, server) = listen(Server {
         status: 200,
@@ -384,7 +384,7 @@ async fn an_unread_body_closes_its_connection_although_its_signal_lives() {
     assert_eq!(text, "200");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_head_request_and_a_null_body_status_give_no_body() {
     let mut ports = Vec::new();
     for status in [200, 204] {
@@ -412,7 +412,7 @@ async fn a_head_request_and_a_null_body_status_give_no_body() {
     assert_eq!(text, "200:null 204:null");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_fetch_of_a_request_uses_its_body() {
     let (port, server) = listen(Server {
         status: 200,
@@ -444,7 +444,7 @@ fn socket_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("yuke-{name}-{}.sock", std::process::id()))
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused() {
     let path = socket_path("refused");
     // The socket file stays after the drop of the listener, and nothing listens at it.
@@ -462,7 +462,7 @@ async fn a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused() {
     assert_eq!(code, "true ECONNREFUSED");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_shutdown_of_the_runtime_closes_an_open_connection_during_a_read() {
     let path = socket_path("shutdown");
     let listener = tokio::net::UnixListener::bind(&path).unwrap();

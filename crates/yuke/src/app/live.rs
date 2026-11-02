@@ -1531,7 +1531,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "local")]
     async fn after_new_settings_the_host_names_their_model_and_folder_before_any_turn() {
         let place = Place::new(
             "live",

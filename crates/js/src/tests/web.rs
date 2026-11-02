@@ -21,7 +21,7 @@ async fn collect_garbage(runtime: &Runtime) {
         .unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_listener_object_without_handle_event_is_a_fault_and_the_next_listener_runs() {
     let folder = folder("a_listener_object_without_handle_event_is_a_fault_and_the_next_listener_runs");
     let (runtime, mut faults) = start(&folder).await;
@@ -44,7 +44,7 @@ async fn a_listener_object_without_handle_event_is_a_fault_and_the_next_listener
     assert_eq!(fault.message, "the listener has no handleEvent function");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dependent_signal_with_an_abort_listener_survives_without_a_reference() {
     let folder = folder("a_dependent_signal_with_an_abort_listener_survives_without_a_reference");
     let (runtime, _faults) = start(&folder).await;
@@ -65,7 +65,7 @@ async fn a_dependent_signal_with_an_abort_listener_survives_without_a_reference(
     assert!(fired);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_unreachable_dependent_signal_without_an_abort_listener_is_collected() {
     let folder = folder("an_unreachable_dependent_signal_without_an_abort_listener_is_collected");
     let (runtime, _faults) = start(&folder).await;
@@ -97,7 +97,7 @@ async fn an_unreachable_dependent_signal_without_an_abort_listener_is_collected(
     assert_eq!(collected, "option plain removed");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_runs() {
     let folder = folder("a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_runs");
     let (runtime, mut faults) = start(&folder).await;
@@ -142,7 +142,7 @@ async fn a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_run
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_unreachable_aborted_dependent_signal_is_collected() {
     let folder = folder("an_unreachable_aborted_dependent_signal_is_collected");
     let (runtime, _faults) = start(&folder).await;
@@ -165,7 +165,7 @@ async fn an_unreachable_aborted_dependent_signal_is_collected() {
     assert!(evaluate::<bool>(&runtime, "return collected;").await.unwrap());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dependent_signal_does_not_keep_its_sources_alive() {
     let folder = folder("a_dependent_signal_does_not_keep_its_sources_alive");
     let (runtime, _faults) = start(&folder).await;
@@ -187,7 +187,7 @@ async fn a_dependent_signal_does_not_keep_its_sources_alive() {
     assert!(evaluate::<bool>(&runtime, "return collected;").await.unwrap());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dependent_signal_works_on_after_one_of_its_sources_is_collected() {
     let folder = folder("a_dependent_signal_works_on_after_one_of_its_sources_is_collected");
     let (runtime, _faults) = start(&folder).await;

@@ -133,7 +133,7 @@ enum Point {
     PromptBuild(Vec<PromptSection>),
 }
 
-/// A request of `run`: `[id, point, event]`. The JavaScript thread reads it before the host runs it.
+/// A request of `run`: `[id, point, event]`. The engine task reads it before the host runs it.
 pub(crate) struct RunRequest {
     pub(crate) id: SessionId,
     point: Point,

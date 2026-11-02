@@ -142,7 +142,7 @@ impl Terminal {
         Ok(())
     }
 
-    /// A second handle of the device, for writes from another thread, such as the frames of a
+    /// A second handle of the device, for writes that do not go through this terminal, such as the frames of a
     /// [`Screen`](crate::Screen).
     ///
     /// # Errors

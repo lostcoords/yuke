@@ -17,7 +17,7 @@ mod web;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rquickjs::{Ctx, FromJs, Promise};
 use tokio::sync::mpsc;
@@ -342,15 +342,15 @@ fn script_error(result: Result<impl std::fmt::Debug, Error>) -> ScriptError {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn callers_on_many_threads_get_the_values_of_their_promises() {
-    let folder = folder("callers_on_many_threads_get_the_values_of_their_promises");
+#[tokio::test(flavor = "local")]
+async fn concurrent_callers_get_the_values_of_their_promises() {
+    let folder = folder("concurrent_callers_get_the_values_of_their_promises");
     let runtime = Arc::new(start(&folder).await.0);
 
     let mut calls = Vec::new();
     for number in 0..50 {
         let runtime = Arc::clone(&runtime);
-        calls.push(tokio::spawn(async move {
+        calls.push(tokio::task::spawn_local(async move {
             evaluate::<i32>(
                 &runtime,
                 &format!("return await new Promise(resolve => setTimeout(() => resolve({number}), 10));"),
@@ -366,7 +366,7 @@ async fn callers_on_many_threads_get_the_values_of_their_promises() {
     assert_eq!(numbers, (0..50).collect::<Vec<_>>());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
     let folder = folder("a_dropped_call_stops_its_future_on_the_javascript_thread");
     let (runtime, _faults) = start(&folder).await;
@@ -390,7 +390,7 @@ async fn a_dropped_call_stops_its_future_on_the_javascript_thread() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn javascript_runs_without_a_time_limit() {
     let folder = folder("javascript_runs_without_a_time_limit");
     let (runtime, mut faults) = start(&folder).await;
@@ -406,55 +406,9 @@ async fn javascript_runs_without_a_time_limit() {
     assert!(faults.try_recv().is_err());
 }
 
-#[tokio::test]
-async fn a_shutdown_stops_a_loop_without_an_await() {
-    let folder = folder("a_shutdown_stops_a_loop_without_an_await");
-    let (runtime, mut reports) = start(&folder).await;
-    let runtime = Arc::new(runtime);
-    let looping = tokio::spawn({
-        let runtime = Arc::clone(&runtime);
-        async move { evaluate::<()>(&runtime, "console.log('loops'); for (;;) {}").await }
-    });
-    // The console entry shows that the loop runs.
-    assert!(matches!(next_report(&mut reports).await, Report::Console { .. }));
-    looping.abort();
-    assert!(looping.await.unwrap_err().is_cancelled());
-
-    tokio::time::timeout(Duration::from_secs(5), Arc::into_inner(runtime).unwrap().shutdown())
-        .await
-        .unwrap()
-        .unwrap();
-}
-
-#[tokio::test]
-async fn a_shutdown_ends_a_call_in_flight_as_stopped() {
-    let folder = folder("a_shutdown_ends_a_call_in_flight_as_stopped");
-    let (runtime, mut reports) = start(&folder).await;
-    // A tool keeps a clone of the caller, so its call can outlive the runtime.
-    let caller = runtime.caller.clone();
-    let looping = tokio::spawn(async move {
-        caller
-            .run(async |ctx: Ctx<'_>, _registry| caught(&ctx, ctx.eval::<(), _>("console.log('loops'); for (;;) {}")))
-            .await
-    });
-    // The console entry shows that the loop runs.
-    assert!(matches!(next_report(&mut reports).await, Report::Console { .. }));
-
-    tokio::time::timeout(Duration::from_secs(5), runtime.shutdown())
-        .await
-        .unwrap()
-        .unwrap();
-
-    let ended = tokio::time::timeout(Duration::from_secs(5), looping)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(matches!(ended, Err(Error::Stopped)), "{ended:?}");
-}
-
-#[tokio::test]
-async fn a_shutdown_with_waiting_timers_ends_the_thread() {
-    let folder = folder("a_shutdown_with_waiting_timers_ends_the_thread");
+#[tokio::test(flavor = "local")]
+async fn a_shutdown_with_waiting_timers_ends_the_engine_task() {
+    let folder = folder("a_shutdown_with_waiting_timers_ends_the_engine_task");
     let (runtime, _faults) = start(&folder).await;
     evaluate::<()>(
         &runtime,
@@ -471,26 +425,7 @@ async fn a_shutdown_with_waiting_timers_ends_the_thread() {
         .unwrap();
 }
 
-#[tokio::test]
-async fn a_drop_does_not_wait_for_the_javascript() {
-    let folder = folder("a_drop_does_not_wait_for_the_javascript");
-    let (runtime, _faults) = start(&folder).await;
-    let runtime = Arc::new(runtime);
-    let looping = tokio::spawn({
-        let runtime = Arc::clone(&runtime);
-        async move { evaluate::<()>(&runtime, "for (;;) {}").await }
-    });
-    tokio::time::sleep(Duration::from_millis(20)).await;
-
-    // The loop holds the thread until the drop stops it, and the drop of the last handle must not wait for it.
-    looping.abort();
-    assert!(looping.await.unwrap_err().is_cancelled());
-    let begin = Instant::now();
-    drop(Arc::into_inner(runtime).unwrap());
-    assert!(begin.elapsed() < Duration::from_millis(50), "{:?}", begin.elapsed());
-}
-
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_in_a_timer_callback_is_a_fault() {
     let folder = folder("a_throw_in_a_timer_callback_is_a_fault");
     let (runtime, mut faults) = start(&folder).await;
@@ -504,7 +439,7 @@ async fn a_throw_in_a_timer_callback_is_a_fault() {
     assert_eq!(error.message, "late");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_in_a_microtask_of_a_timer_is_a_fault() {
     let folder = folder("a_throw_in_a_microtask_of_a_timer_is_a_fault");
     let (runtime, mut faults) = start(&folder).await;
@@ -519,7 +454,7 @@ async fn a_throw_in_a_microtask_of_a_timer_is_a_fault() {
     assert_eq!(next_fault(&mut faults).await.message, "from a timer");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_in_a_microtask_is_a_fault() {
     let folder = folder("a_throw_in_a_microtask_is_a_fault");
     let (runtime, mut faults) = start(&folder).await;
@@ -538,7 +473,7 @@ async fn a_throw_in_a_microtask_is_a_fault() {
     assert_eq!(next_fault(&mut faults).await.message, "direct");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_rejection_without_a_handler_is_a_fault() {
     let folder = folder("a_rejection_without_a_handler_is_a_fault");
     let (runtime, mut faults) = start(&folder).await;
@@ -551,7 +486,7 @@ async fn a_rejection_without_a_handler_is_a_fault() {
 }
 
 // The report of a rejection reads the message of its error, and that read runs script that can reject again.
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_rejection_during_the_report_of_a_rejection_is_a_fault_too() {
     let folder = folder("a_rejection_during_the_report_of_a_rejection_is_a_fault_too");
     let (runtime, mut faults) = start(&folder).await;
@@ -579,7 +514,7 @@ async fn a_rejection_during_the_report_of_a_rejection_is_a_fault_too() {
     assert_eq!(messages, ["inner", "outer"]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_rejection_that_gets_a_handler_in_its_drive_is_no_fault() {
     let folder = folder("a_rejection_that_gets_a_handler_in_its_drive_is_no_fault");
     let (runtime, mut faults) = start(&folder).await;
@@ -600,7 +535,7 @@ async fn a_rejection_that_gets_a_handler_in_its_drive_is_no_fault() {
     assert!(faults.try_recv().is_err());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_thrown_value_that_is_no_error_keeps_its_string_form() {
     let folder = folder("a_thrown_value_that_is_no_error_keeps_its_string_form");
     let (runtime, _faults) = start(&folder).await;
@@ -616,7 +551,7 @@ async fn a_thrown_value_that_is_no_error_keeps_its_string_form() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_suppressed_error_names_the_first_error_and_the_error_of_the_disposal() {
     let folder = folder("a_suppressed_error_names_the_first_error_and_the_error_of_the_disposal");
     let (runtime, _faults) = start(&folder).await;
@@ -635,7 +570,7 @@ async fn a_suppressed_error_names_the_first_error_and_the_error_of_the_disposal(
     assert!(then.starts_with("TypeError: close failed\n"), "{then}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_typescript_module_imports_typescript_modules_by_relative_paths() {
     let folder = folder("a_typescript_module_imports_typescript_modules_by_relative_paths");
     write(
@@ -659,7 +594,7 @@ async fn a_typescript_module_imports_typescript_modules_by_relative_paths() {
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.count;").await.unwrap(), 42);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn two_names_of_one_file_give_one_module() {
     let folder = folder("two_names_of_one_file_give_one_module");
     write(
@@ -680,7 +615,7 @@ async fn two_names_of_one_file_give_one_module() {
     assert_eq!(evaluate::<i32>(&runtime, "return globalThis.loads;").await.unwrap(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_throw_in_a_typescript_module_names_the_file_in_its_stack() {
     let folder = folder("a_throw_in_a_typescript_module_names_the_file_in_its_stack");
     write(
@@ -699,7 +634,7 @@ async fn a_throw_in_a_typescript_module_names_the_file_in_its_stack() {
     assert!(stack.contains(&*folder.join("broken.ts").to_string_lossy()), "{stack}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_typescript_syntax_error_names_its_line_and_column() {
     let folder = folder("a_typescript_syntax_error_names_its_line_and_column");
     write(&folder, &[("broken.ts", "const fine = 1;\nconst broken: = 2;\n")]);
@@ -712,7 +647,7 @@ async fn a_typescript_syntax_error_names_its_line_and_column() {
     assert!(error.message.starts_with(&place), "{}", error.message);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_bare_module_name_does_not_resolve() {
     let folder = folder("a_bare_module_name_does_not_resolve");
     write(&folder, &[("main.js", "import 'lodash';\n")]);
@@ -724,7 +659,7 @@ async fn a_bare_module_name_does_not_resolve() {
     assert!(error.message.contains("cannot resolve 'lodash'"), "{}", error.message);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_typescript_file_loads_from_its_cache_file() {
     let folder = folder("a_typescript_file_loads_from_its_cache_file");
     write(&folder, &[("main.ts", "globalThis.origin = 'source' as string;\n")]);
@@ -749,7 +684,7 @@ async fn a_typescript_file_loads_from_its_cache_file() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_changed_typescript_file_gets_a_new_cache_file() {
     let folder = folder("a_changed_typescript_file_gets_a_new_cache_file");
     write(
