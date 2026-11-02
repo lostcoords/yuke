@@ -87,8 +87,6 @@ The fields are `fg`, `bg`, `underlineColor`, `bold`, `dim`, `italic`, `reverse`,
 
 [`default-theme.ts`](../crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
 
-Note: yuke does not check the names of groups. A group name with an error has no effect. A theme field with an error or a bad color stops the plugin. At startup, yuke does not load the plugin. On `/reload`, the reload fails and yuke keeps the old plugins.
-
 ## Start from a different theme
 
 ```ts
@@ -98,7 +96,7 @@ ctx.get("tui")?.styles.addTheme("my-nord", {
 });
 ```
 
-The order in which the plugins load has no effect. A name in `inherits` with an error gives no error message. The theme then starts from `default`.
+The order in which the plugins load has no effect.
 
 If two plugins add a theme with the same name, yuke uses the newest theme. You cannot use the name `default`. The call `addTheme("default", ...)` gives an error.
 
