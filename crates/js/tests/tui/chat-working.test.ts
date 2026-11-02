@@ -133,13 +133,14 @@ async function runningExec(width: number, command: string) {
   frame.start();
   await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
+  const call = { callId: "c1", name: "spawn_subagent", arguments: JSON.stringify({ command }) };
   sessions.push(
     commit(3, [{ tool_call: call }], { display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] } }),
   );
   const before = workingRow(frame);
   sessions.push({ sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 0 }, call });
-  // A frame draws each spinner step, and the row counts the delay from the first draw of the running command.
+  sessions.state.movable = true;
+  // A frame draws each spinner step, and the row counts the delay from the first draw of the movable work.
   frame.draw();
   return { frame, sessions, before };
 }
@@ -150,7 +151,7 @@ function workingRow(frame: FrameTest): string {
   return rows(frame.frame).find((text) => text.includes(" (") && /\d+s/.test(text)) ?? "";
 }
 
-test("a running exec shows the background hint after a delay, and the key asks to move it", async () => {
+test("movable work shows the background hint after a delay, and the key asks to move it", async () => {
   const { frame, sessions, before } = await runningExec(100, "cargo test");
   using _frame = frame;
   const early = workingRow(frame);

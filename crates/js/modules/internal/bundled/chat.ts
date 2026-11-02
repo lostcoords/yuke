@@ -57,7 +57,7 @@ const COMMANDS: readonly {
   },
   {
     name: "background",
-    description: "Move the running command to the background",
+    description: "Move the waiting tool calls to the background",
     keys: ["ctrl+b"],
     in: "chat",
     run: (pane) => pane.moveToBackground(),

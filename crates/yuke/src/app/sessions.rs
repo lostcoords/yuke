@@ -577,11 +577,16 @@ impl SessionService {
         Ok(())
     }
 
-    /// Move each running command of session `id` to a job. A session with no running command does nothing.
+    /// Move each job that a call of session `id` waits for out of its call. A session without such a job does nothing.
     pub(crate) fn background(&self, id: SessionId) {
         if let Ok(live) = self.live(id) {
             live.background();
         }
+    }
+
+    /// Whether [`SessionService::background`] moves a job of session `id` now.
+    pub(crate) fn has_movable(&self, id: SessionId) -> bool {
+        self.live(id).is_ok_and(|live| live.has_movable())
     }
 
     /// Cancel the running turn of session `id`. A session that is not open or runs no turn has nothing to cancel.

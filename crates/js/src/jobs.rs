@@ -1,6 +1,6 @@
-//! The jobs: background work of one session that outlives the tool call that starts it. A job is a process or the work
-//! of a plugin. When a job ends by itself, its session gets one report. A stop ends it without a report. The list
-//! outlives a reload of the JavaScript.
+//! The jobs: work of one session that can outlive the tool call that starts it. A job is a process or the work of a
+//! plugin. A job in a call stays hidden until a background request moves it. When a job without a call ends by itself, its
+//! session gets one report. A stop ends it without a report. The list outlives a reload of the JavaScript.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -56,6 +56,9 @@ struct Job {
     silenced: bool,
     /// Cancelled after the job left the list.
     ended: CancellationToken,
+    /// Cancelled when the job runs without a call. Until then a call waits for the job, and neither a list nor a stop
+    /// finds it.
+    moved: CancellationToken,
 }
 
 /// What a job runs.
@@ -74,8 +77,21 @@ enum Work {
 }
 
 impl Job {
+    /// Whether a call still waits for the job.
+    fn in_call(&self) -> bool {
+        !self.moved.is_cancelled()
+    }
+
+    /// Whether a background request of `session` moves the job. A stopped job ends with its call.
+    fn movable(&self, session: SessionId) -> bool {
+        self.session == session && self.in_call() && !self.stop.is_cancelled()
+    }
+
     /// Whether the job counts as running: a stop finds it, and a list shows it.
     fn runs(&self) -> bool {
+        if self.in_call() {
+            return false;
+        }
         match self.work {
             Work::Process { group, .. } => group.is_some(),
             Work::Plugin { running, .. } => running,
@@ -92,8 +108,8 @@ impl Jobs {
         }
     }
 
-    /// Add a process job of `owner` to the list, so a close or a shutdown finds it in each state. The caller runs the job,
-    /// and the drop of the answer ends it. An error is a text for the model.
+    /// Add a process job of `owner` to the list, so a close or a shutdown finds it in each state. With `in_call`, a call
+    /// waits for it. The caller runs the job, and the drop of the answer ends it. An error is a text for the model.
     pub(crate) fn add_process(
         &self,
         owner: &dyn SessionHost,
@@ -101,44 +117,64 @@ impl Jobs {
         label: String,
         command: String,
         log: PathBuf,
+        in_call: bool,
     ) -> Result<RunningJob, String> {
         let work = Work::Process {
             command,
             log,
             group: None,
         };
-        self.add(owner, id, label, work)
+        self.add(owner, id, label, work, in_call)
     }
 
-    /// Start a job of the plugin `plugin` for `owner`. An error is a text for the plugin.
+    /// Start a job of the plugin `plugin` for `owner`. With `in_call`, a call waits for it. An error is a text for the
+    /// plugin.
     pub(crate) fn start_plugin(
         &self,
         owner: Arc<dyn SessionHost>,
         plugin: String,
         id: String,
         label: String,
+        in_call: bool,
     ) -> Result<PluginJob, String> {
         let work = Work::Plugin {
             plugin: plugin.clone(),
             running: true,
         };
-        let job = self.add(owner.as_ref(), id, label.clone(), work)?;
+        let job = self.add(owner.as_ref(), id, label.clone(), work, in_call)?;
         let job = PluginJob {
             job,
             plugin,
             label,
             owner,
         };
-        job.owner.job_changed(job.protocol_job(JobState::Running));
+        if !in_call {
+            job.announce();
+        }
         Ok(job)
     }
 
-    fn add(&self, owner: &dyn SessionHost, id: String, label: String, work: Work) -> Result<RunningJob, String> {
-        if !self.starts {
+    fn add(
+        &self,
+        owner: &dyn SessionHost,
+        id: String,
+        label: String,
+        work: Work,
+        in_call: bool,
+    ) -> Result<RunningJob, String> {
+        // A job in a call ends with its call, so a process that ends with its turn can run it.
+        if !self.starts && !in_call {
             return Err(NO_JOBS.to_owned());
         }
         let session = owner.session_id();
-        let (stop, ended) = (CancellationToken::new(), CancellationToken::new());
+        let (stop, ended, moved) = (
+            CancellationToken::new(),
+            CancellationToken::new(),
+            CancellationToken::new(),
+        );
+        if !in_call {
+            moved.cancel();
+        }
         let mut list = lock(&self.list);
         if list.closed {
             return Err(SHUTTING_DOWN.to_owned());
@@ -158,6 +194,7 @@ impl Jobs {
             stop: stop.clone(),
             silenced: false,
             ended: ended.clone(),
+            moved: moved.clone(),
         });
         Ok(RunningJob {
             id,
@@ -165,7 +202,26 @@ impl Jobs {
             list: Arc::clone(&self.list),
             stop,
             ended,
+            moved,
         })
+    }
+
+    /// Move each job of `session` that a call waits for out of its call. The call answers, and the job goes on. A process
+    /// that ends with its turn has no one to receive the end of a job, so its jobs stay in their calls.
+    pub fn move_to_background(&self, session: SessionId) {
+        if !self.starts {
+            return;
+        }
+        for job in &lock(&self.list).running {
+            if job.movable(session) {
+                job.moved.cancel();
+            }
+        }
+    }
+
+    /// Whether [`Jobs::move_to_background`] would move a job of `session`.
+    pub fn has_movable(&self, session: SessionId) -> bool {
+        self.starts && lock(&self.list).running.iter().any(|job| job.movable(session))
     }
 
     /// Stop the running job `id` of `session`, and wait for its end. Answer `false` when `session` runs no such job.
@@ -272,6 +328,7 @@ pub(crate) struct RunningJob {
     session: SessionId,
     list: Arc<Mutex<List>>,
     pub(crate) stop: CancellationToken,
+    pub(crate) moved: CancellationToken,
     ended: CancellationToken,
 }
 
@@ -294,32 +351,13 @@ impl RunningJob {
     }
 }
 
-impl RunningJob {
-    /// Mark a plugin job as no longer running, and answer whether a stop came first. A stop takes the same lock, so a
-    /// later stop finds no job and the report still goes out.
-    fn finish(&self) -> bool {
-        let mut list = lock(&self.list);
-        let job = list
-            .running
-            .iter_mut()
-            .find(|job| job.id == self.id && job.session == self.session);
-        if let Some(Job {
-            work: Work::Plugin { running, .. },
-            ..
-        }) = job
-        {
-            *running = false;
-        }
-        self.stop.is_cancelled()
-    }
-}
-
 impl Drop for RunningJob {
     fn drop(&mut self) {
         lock(&self.list)
             .running
             .retain(|job| job.id != self.id || job.session != self.session);
         self.stop.cancel();
+        self.moved.cancel();
         self.ended.cancel();
     }
 }
@@ -338,10 +376,38 @@ impl PluginJob {
         self.job.stop.clone()
     }
 
-    /// End the job, and send `report` as the status and the text of the one report. A stop drops the report. The job stays
-    /// in the list until the session has the report.
-    pub(crate) fn end(self, report: Option<(String, String)>) {
-        let stopped = self.job.finish();
+    /// The token that a move out of the call cancels.
+    pub(crate) fn moved(&self) -> CancellationToken {
+        self.job.moved.clone()
+    }
+
+    /// Show the job in the lists of its session.
+    pub(crate) fn announce(&self) {
+        self.owner.job_changed(self.protocol_job(JobState::Running));
+    }
+
+    /// End the job. Answer `true` when a call still waits for it: the call takes the answer, and the job never showed.
+    /// Else `report` goes to the session as the status and the text of the one report, unless a stop came. The job stays in
+    /// the list until the session has the report. One lock decides, so a later stop finds no job and a later move finds
+    /// no job in a call.
+    pub(crate) fn end(self, report: Option<(String, String)>) -> bool {
+        let (in_call, stopped) = {
+            let mut list = lock(&self.job.list);
+            let job = list
+                .running
+                .iter_mut()
+                .find(|job| job.id == self.job.id && job.session == self.job.session);
+            let in_call = job.is_some_and(|job| {
+                if let Work::Plugin { running, .. } = &mut job.work {
+                    *running = false;
+                }
+                job.in_call()
+            });
+            (in_call, self.job.stop.is_cancelled())
+        };
+        if in_call {
+            return true;
+        }
         let state = if stopped { JobState::Stopped } else { JobState::Ended };
         self.owner.job_changed(self.protocol_job(state));
         if let Some((status, text)) = report.filter(|_| !stopped) {
@@ -350,6 +416,7 @@ impl PluginJob {
                 self.owner.accept_input(input).await;
             });
         }
+        false
     }
 
     fn protocol_job(&self, state: JobState) -> yuke_protocol::Job {

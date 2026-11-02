@@ -15,6 +15,7 @@ import {
   sessionBackground,
   sessionCancel,
   sessionClose,
+  sessionHasMovable,
   sessionIdle,
   sessionInput,
   sessionJobs,
@@ -152,6 +153,10 @@ async function open(
     background() {
       live();
       sessionBackground(id);
+    },
+    hasMovable() {
+      live();
+      return sessionHasMovable(id);
     },
     async idle() {
       live();

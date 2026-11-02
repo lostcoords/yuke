@@ -84,7 +84,7 @@ pub(crate) enum Mode {
     /// A background job runs until it ends, until a stop, or until the close of its session. A question waits for an
     /// answer, also while no client is connected.
     Server,
-    /// A job start fails, because the run ends with its turn. A question gets no answer.
+    /// A background job start fails, because the run ends with its turn. A job in a call runs. A question gets no answer.
     Print,
 }
 

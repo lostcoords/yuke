@@ -507,6 +507,7 @@ declare module "yuke:internal/native" {
   export function sessionClose(id: SessionId): Promise<null>;
   export function sessionCancel(id: SessionId): void;
   export function sessionBackground(id: SessionId): void;
+  export function sessionHasMovable(id: SessionId): boolean;
   export function sessionRespond(
     request: readonly [id: SessionId, interactionId: InteractionId, response: InteractionResponse],
   ): void;

@@ -176,7 +176,7 @@ declare module "yuke:chat" {
   export interface ChatWorkingTextOptions {
     /** The key of the interrupt hint. */
     readonly cancelKey?: string | undefined;
-    /** The key of the background hint. The hint shows when `exec` has run for two seconds. */
+    /** The key of the background hint. The hint shows when a tool call has waited for a job for two seconds. */
     readonly backgroundKey?: string | undefined;
     /** The columns of the text. A long phase is clipped. A narrow row drops the background hint, then the interrupt hint. */
     readonly width?: number | undefined;

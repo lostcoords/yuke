@@ -5,11 +5,20 @@ import { type Answer, register } from "yuke:internal/native";
 import { displayOf, fieldsOf, hintsOf, mediaOf } from "yuke:internal/values";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolHints, ToolMedia } from "yuke:tools";
 
+/** The jobs of a built-in tool, which uses none of them. */
+const NO_JOBS: ToolContext["jobs"] = {
+  run: () => Promise.reject(new Error("a built-in tool has no jobs")),
+};
+
 /**
  * Define `tool` for the open session `open`, or for every session without `open`, and return its id. A name that the
  * session already has throws a `TypeError`. A plugin defines its tools with `s.tools.define` of its `session`.
  */
-export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: number): number {
+export function defineTool<const S extends ObjectSchema>(
+  tool: Tool<S>,
+  open?: number,
+  jobsOf: (signal: AbortSignal) => ToolContext["jobs"] = () => NO_JOBS,
+): number {
   const execute = tool.execute;
   if (typeof execute !== "function") throw new TypeError("execute is not a function");
   // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
@@ -29,7 +38,7 @@ export function defineTool<const S extends ObjectSchema>(tool: Tool<S>, open?: n
   return register(description, (request) =>
     hostOperation(async (signal, abort) => {
       const { arguments: args, sessionId, callId, folder, output, call } = request;
-      const context: ToolContext = { sessionId, callId, folder, signal, output };
+      const context: ToolContext = { sessionId, callId, folder, signal, output, jobs: jobsOf(signal) };
       bindCall(context, call);
       try {
         return answerOf(await execute(checkArguments(parameters, args) as Infer<S>, context));

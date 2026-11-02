@@ -35,8 +35,6 @@ impl std::error::Error for HostFailed {
 #[derive(Debug)]
 pub(super) struct TestHost {
     pub(super) session: SessionId,
-    /// The token of the next background request. A test cancels it.
-    pub(super) background: CancellationToken,
     /// Whether the session closed. A test sets it.
     pub(super) closed: std::sync::atomic::AtomicBool,
     /// The folder of the session. A test can change it while a call runs.
@@ -60,7 +58,6 @@ impl TestHost {
     pub(super) fn new(folder: &Path) -> Self {
         TestHost {
             session: SessionId::generate(),
-            background: CancellationToken::new(),
             closed: std::sync::atomic::AtomicBool::new(false),
             folder: Mutex::new(folder.to_owned()),
             media: Mutex::default(),
@@ -105,10 +102,6 @@ impl SessionHost for TestHost {
 
     fn folder(&self) -> PathBuf {
         self.folder.lock().unwrap().clone()
-    }
-
-    fn background(&self) -> CancellationToken {
-        self.background.clone()
     }
 
     fn is_closed(&self) -> bool {

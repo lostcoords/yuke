@@ -72,7 +72,6 @@ impl LiveSession {
             wake: Notify::new(),
             accepted: AtomicU64::new(0),
             handled: watch::Sender::new(0),
-            background: Mutex::new(CancellationToken::new()),
             closed: CancellationToken::new(),
         });
         let script = runtime
@@ -185,9 +184,24 @@ impl LiveSession {
         self.parts.host.output.answer_question(id, response)
     }
 
-    /// Move each running command of the session to a job.
+    /// Move each job that a call of the session waits for out of its call.
     pub(super) fn background(&self) {
-        std::mem::replace(&mut *lock(&self.parts.host.background), CancellationToken::new()).cancel();
+        self.parts
+            .host
+            .shared
+            .processes
+            .jobs()
+            .move_to_background(self.parts.host.output.session);
+    }
+
+    /// Whether a background request moves a job now.
+    pub(super) fn has_movable(&self) -> bool {
+        self.parts
+            .host
+            .shared
+            .processes
+            .jobs()
+            .has_movable(self.parts.host.output.session)
     }
 
     /// Cancel the running turn.
@@ -1010,8 +1024,6 @@ struct Host {
     accepted: AtomicU64,
     /// The accepted inputs at the start of the last run of the turns that ended.
     handled: watch::Sender<u64>,
-    /// The token of the next background request. Each request cancels it and leaves a new one.
-    background: Mutex<CancellationToken>,
     /// The close of the session. It ends each open question.
     closed: CancellationToken,
 }
@@ -1056,10 +1068,6 @@ impl SessionHost for Host {
 
     fn folder(&self) -> PathBuf {
         lock(&self.settings).cwd.clone()
-    }
-
-    fn background(&self) -> CancellationToken {
-        lock(&self.background).clone()
     }
 
     fn is_closed(&self) -> bool {

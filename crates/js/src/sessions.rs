@@ -142,8 +142,11 @@ pub trait Sessions: Send + Sync {
     /// Cancel the running turn of session `id`.
     fn cancel(&self, id: SessionId);
 
-    /// Move each running command of session `id` to a job.
+    /// Move each job that a call of session `id` waits for out of its call.
     fn background(&self, id: SessionId);
+
+    /// Whether [`Sessions::background`] moves a job of session `id` now.
+    fn has_movable(&self, id: SessionId) -> bool;
 
     /// Wait until the open session `id` runs no turn and has handled each input that it accepted before the call, or until
     /// its close. A failed turn counts as handled, and its input waits for the next wake.

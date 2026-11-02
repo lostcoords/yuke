@@ -695,6 +695,35 @@ async fn a_project_mcp_server_stays_off_because_the_run_has_no_client_to_confirm
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_job_in_a_call_runs_and_answers_in_print() {
+    let place = Place::new("print", "job_in_a_call");
+    place.plugin(
+        "agents",
+        "export function session(s) {
+           s.tools.define({
+             name: 'work', description: 'work', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute: async (args, context) => {
+               const job = { id: 'explorer', label: 'explore' };
+               const outcome = await context.jobs.run(job, () => ({ status: 'completed', text: 'the answer' }));
+               return outcome.report.text;
+             },
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["agents"] }"#).unwrap();
+
+    let (_, requests) = run_with(
+        &place,
+        &task("Work.", SessionChoice::New),
+        &[tool_reply(&[("call-1", "work", "{}")]), text_reply("Done.")],
+    )
+    .await;
+
+    assert!(requests[1].contains("the answer"), "{}", requests[1]);
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "plugin_job");
     place.plugin(
@@ -703,7 +732,10 @@ async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
            s.tools.define({
              name: 'work', description: 'work', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
-             execute() { s.jobs.start({ id: 'explorer', label: 'explore' }); return 'started'; },
+             execute: async () => {
+               await s.jobs.run({ id: 'explorer', label: 'explore' }, () => undefined);
+               return 'started';
+             },
            });
          }",
     );

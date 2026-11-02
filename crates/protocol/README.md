@@ -80,8 +80,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `stopped`. Its `kind` is `process` (`command`, `log`, `exitCode`) or `plugin` (`plugin`).
 - Server requests: `extension/request`. A client answers each one. It answers -32601 for a method or an extension
   that it does not know. The server numbers its requests from 1, apart from the ids of the client.
-- Notifications: `session/cancel` and `session/background` from a client. `session/background` moves each running command
-  of the session to a job, and the turn goes on. `session/update`, `notice`, `extension/event`, `extension/cancel`,
+- Notifications: `session/cancel` and `session/background` from a client. `session/background` moves each tool call of the
+  session that waits for a job, such as a running command, to the background, and the turn goes on. `session/update`, `notice`, `extension/event`, `extension/cancel`,
   and `auth/login_finished` from the server.
 - `notice` is a message for the user, for the whole process or one session. It is not part of session history.
 - `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
@@ -101,7 +101,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   commit names it in `consumed`, or when `input_removed` names it.
 - Turns: `session/input` starts a turn when the session is idle. During a turn, an input joins the turn at its next
   round. A `state` update tells when a turn runs. `session/load` starts no turn.
-- During a turn, a client can add and remove inputs, cancel the turn, move its running commands to the background, close
+- During a turn, a client can add and remove inputs, cancel the turn, move its waiting tool calls to the background, close
   the session, and list and stop jobs. The
   settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.

@@ -286,9 +286,9 @@ fn job_plugin(place: &Place, wait_ms: u32) {
            s.tools.define({{
              name: 'work', description: 'work', concurrency: 'serial',
              parameters: {{ type: 'object', properties: {{}} }},
-             execute() {{
-               const job = s.jobs.start({{ id: 'explorer', label: 'explore' }});
-               job.signal.addEventListener('abort', () => setTimeout(() => job.end(), {wait_ms}));
+             async execute() {{
+               await s.jobs.run({{ id: 'explorer', label: 'explore' }}, (signal) => new Promise((resolve) =>
+                 signal.addEventListener('abort', () => setTimeout(resolve, {wait_ms}))));
                return 'started';
              }},
            }});
@@ -337,7 +337,8 @@ async fn job_stop_of_a_slow_plugin_job_leaves_the_connection_free() {
 #[tokio::test(flavor = "local")]
 async fn a_reload_stops_a_plugin_job() {
     let place = Place::new("rpc", "a_reload_stops_a_plugin_job");
-    job_plugin(&place, 0);
+    // The work ends a while after the abort, so the update shows that the reload waits for it.
+    job_plugin(&place, 100);
     let (mut client, session) = session_with_a_plugin_job(&place).await;
 
     let id = client.request("profile/reload", json!({})).await;

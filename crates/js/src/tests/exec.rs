@@ -550,7 +550,13 @@ async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters(
 
 /// The text of `exec` with `arguments` once `host` asks to move the command. The file `ready` in `folder` tells that the
 /// command runs.
-async fn moved_text(exec: &crate::ScriptTool, host: &TestHost, folder: &Path, arguments: &str) -> String {
+async fn moved_text(
+    processes: &Processes,
+    exec: &crate::ScriptTool,
+    host: &TestHost,
+    folder: &Path,
+    arguments: &str,
+) -> String {
     let answer = text_of(exec, arguments);
     let mut answer = std::pin::pin!(answer);
     let deadline = Instant::now() + WAIT;
@@ -562,7 +568,7 @@ async fn moved_text(exec: &crate::ScriptTool, host: &TestHost, folder: &Path, ar
             () = tokio::time::sleep(Duration::from_millis(10)) => {}
         }
     }
-    host.background.cancel();
+    processes.jobs().move_to_background(host.session);
     tokio::time::timeout(WAIT, answer).await.unwrap()
 }
 
@@ -574,7 +580,7 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
     let arguments = r#"{"command": "echo before; touch ready; sleep 0.3; echo after; exit 3"}"#;
-    let text = moved_text(&exec["exec"], &host, &folder, arguments).await;
+    let text = moved_text(&processes, &exec["exec"], &host, &folder, arguments).await;
 
     let id = text.split(" as ").nth(1).unwrap().split('.').next().unwrap().to_owned();
     assert!(
@@ -603,7 +609,7 @@ async fn a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_repor
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let arguments = r#"{"command": "touch ready; exec sleep 30", "timeout_ms": 400}"#;
-    let text = moved_text(&exec["exec"], &host, &folder, arguments).await;
+    let text = moved_text(&processes, &exec["exec"], &host, &folder, arguments).await;
     let id = text.split(" as ").nth(1).unwrap().split('.').next().unwrap().to_owned();
 
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -624,17 +630,54 @@ async fn a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_cal
     let processes = Arc::new(Processes::without_jobs(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    host.background.cancel();
+    let arguments = r#"{"command": "touch ready; while [ ! -e go ]; do sleep 0.01; done; echo done"}"#;
+    let answer = text_of(&exec["exec"], arguments);
+    let mut answer = std::pin::pin!(answer);
+    while !folder.join("ready").exists() {
+        tokio::select! {
+            biased;
+            text = &mut answer => panic!("the command ended first: {text}"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
 
-    let text = text_of(&exec["exec"], r#"{"command": "sleep 0.1; echo done"}"#).await;
+    processes.jobs().move_to_background(host.session);
+    let waited = tokio::time::timeout(Duration::from_millis(100), &mut answer).await;
+    std::fs::write(folder.join("go"), "").unwrap();
+    let text = tokio::time::timeout(WAIT, answer).await.unwrap();
 
+    assert!(waited.is_err(), "the call did not wait");
     assert_eq!(text, "done\n[exit code: 0]");
     processes.shutdown().await.unwrap();
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_call_dropped_during_a_move_stops_its_process() {
-    let folder = folder("a_call_dropped_during_a_move_stops_its_process");
+async fn a_shutdown_stops_a_command_that_its_call_waits_for() {
+    let folder = folder("a_shutdown_stops_a_command_that_its_call_waits_for");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    let answer = text_of(&exec["exec"], r#"{"command": "touch ready; exec sleep 30"}"#);
+    let mut answer = std::pin::pin!(answer);
+    while !folder.join("ready").exists() {
+        tokio::select! {
+            biased;
+            text = &mut answer => panic!("the command ended first: {text}"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
+
+    let (shut, text) = tokio::time::timeout(WAIT, async { tokio::join!(processes.shutdown(), &mut answer) })
+        .await
+        .unwrap();
+
+    shut.unwrap();
+    assert!(text.contains("[stopped: the tool call was cancelled.]"), "{text}");
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends() {
+    let folder = folder("a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends");
     let processes = Processes::new(folder.join("processes"));
     let host = Arc::new(TestHost::new(&folder));
     let pid_file = folder.join("pid");
@@ -665,16 +708,18 @@ async fn a_call_dropped_during_a_move_stops_its_process() {
     }
     let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
 
-    // The wait task finishes its move, and no call takes the command.
-    host.background.cancel();
+    // The task moves the command, and no call takes the answer.
+    processes.jobs().move_to_background(host.session);
     tokio::time::sleep(Duration::from_millis(100)).await;
     drop(running);
+    let listed = processes.jobs().running(host.session);
+    let stopped = tokio::time::timeout(WAIT, processes.jobs().stop(host.session, &listed[0].id))
+        .await
+        .unwrap();
 
+    assert!(stopped);
     let pid = rustix::process::Pid::from_raw(pid).unwrap();
-    while rustix::process::test_kill_process(pid).is_ok() {
-        assert!(Instant::now() < deadline, "the command still runs");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    assert!(rustix::process::test_kill_process(pid).is_err());
 }
 
 #[tokio::test(flavor = "local")]

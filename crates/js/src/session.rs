@@ -486,7 +486,7 @@ struct OpenRequest<'js> {
     session_id: String,
     parent: Option<String>,
     folder: String,
-    /// The native `startJob(plugin, id, label)` of the session.
+    /// The native `startJob(plugin, id, label, inCall)` of the session.
     start_job: Function<'js>,
     /// The native `ask(source, question)` of the session.
     ask: Function<'js>,
@@ -496,8 +496,9 @@ struct OpenRequest<'js> {
     model: Function<'js>,
 }
 
-/// The native `startJob(plugin, id, label)` of the session of `host`. It answers `stopped`, a promise that settles at a stop
-/// or at the end of the job, `stop()`, and `end(status, text)`. A garbage collection of `end` ends the job with no update.
+/// The native `startJob(plugin, id, label, inCall)` of the session of `host`. It answers `stopped` and `moved`, promises that
+/// settle at a stop or a move and at the end of the job, `stop()`, `inCall()`, `announce()`, and `end(status, text)`, which
+/// answers whether a call still waits. A garbage collection of `end` ends the job with no update.
 fn start_job_function<'js>(
     ctx: &Ctx<'js>,
     registry: &Registry,
@@ -506,13 +507,19 @@ fn start_job_function<'js>(
     let processes = Arc::clone(&registry.processes);
     Function::new(
         ctx.clone(),
-        move |ctx: Ctx<'js>, plugin: String, id: String, label: String| -> rquickjs::Result<Object<'js>> {
+        move |ctx: Ctx<'js>,
+              plugin: String,
+              id: String,
+              label: String,
+              in_call: bool|
+              -> rquickjs::Result<Object<'js>> {
             let job = processes
                 .jobs()
-                .start_plugin(Arc::clone(&host), plugin, id, label)
+                .start_plugin(Arc::clone(&host), plugin, id, label, in_call)
                 .map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
             let (stopped, stop) = (job.stop(), job.stop());
-            let job = RefCell::new(Some(job));
+            let (moved, in_call_now) = (job.moved(), job.moved());
+            let job = Rc::new(RefCell::new(Some(job)));
             let object = Object::new(ctx.clone())?;
             object.set(
                 "stopped",
@@ -521,13 +528,31 @@ fn start_job_function<'js>(
                     Ok::<_, rquickjs::Error>(())
                 })?,
             )?;
+            object.set(
+                "moved",
+                Promise::wrap_future(&ctx, async move {
+                    moved.cancelled().await;
+                    Ok::<_, rquickjs::Error>(())
+                })?,
+            )?;
             object.set("stop", Function::new(ctx.clone(), move || stop.cancel())?)?;
+            object.set(
+                "inCall",
+                Function::new(ctx.clone(), move || !in_call_now.is_cancelled())?,
+            )?;
+            let shown = Rc::clone(&job);
+            object.set(
+                "announce",
+                Function::new(ctx.clone(), move || {
+                    if let Some(job) = shown.borrow().as_ref() {
+                        job.announce();
+                    }
+                })?,
+            )?;
             object.set(
                 "end",
                 Function::new(ctx.clone(), move |status: Option<String>, text: Option<String>| {
-                    if let Some(job) = job.borrow_mut().take() {
-                        job.end(status.zip(text));
-                    }
+                    job.borrow_mut().take().is_some_and(|job| job.end(status.zip(text)))
                 })?,
             )?;
             Ok(object)

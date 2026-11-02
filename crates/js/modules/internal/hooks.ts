@@ -14,10 +14,11 @@ import type {
   InputKind,
   InputSource,
   JobOptions,
+  JobOutcome,
   JobReport,
+  JobWork,
   KeptMedia,
   NoticeLevel,
-  PluginJob,
   RequestOptions,
   ResultMedia,
   RoundAfterAnswer,
@@ -62,19 +63,27 @@ interface Scope {
 interface ScopeJob {
   /** Tell the host that a stop came, so a report that comes later is dropped. */
   readonly stop: () => void;
-  readonly end: () => void;
+  /** Settles when the work of the job ends. */
+  readonly ended: Promise<void>;
 }
 
 /** What the native `startJob` gives. */
 interface NativeJob {
   /** Settles at a stop, and at the end of the job. */
   readonly stopped: Promise<void>;
+  /** Settles at a move out of the call, and at the end of the job. */
+  readonly moved: Promise<void>;
   readonly stop: () => void;
-  readonly end: (status?: string, text?: string) => void;
+  /** Whether a call still waits for the job. */
+  readonly inCall: () => boolean;
+  /** Show the job in the lists of its session. */
+  readonly announce: () => void;
+  /** End the job. It answers whether a call still waits: the call then takes the answer, and the host drops `status`. */
+  readonly end: (status?: string, text?: string) => boolean;
 }
 
 /** Start a job of the plugin `plugin`. A refusal throws. */
-type StartJob = (plugin: string, id: string, label: string) => NativeJob;
+type StartJob = (plugin: string, id: string, label: string, inCall: boolean) => NativeJob;
 
 /** The scopes of each open session, by the open number of the host. */
 const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
@@ -563,9 +572,9 @@ function hookFailure(point: string, plugin: string, error: unknown): Error {
 }
 
 /**
- * Close the open session `open`: mark each scope closed, stop each job, abort each signal, await each cleanup, and end
- * each job that remains. The close waits for each `session` to settle, also one that ignores the abort. A failed cleanup
- * sends a notice.
+ * Close the open session `open`: mark each scope closed, stop each job, abort each signal, await each cleanup, and await
+ * the work of each job. The close waits for each `session` and each work to settle, also one that ignores the abort. A
+ * failed cleanup sends a notice.
  */
 export async function closeSession(open: number): Promise<void> {
   const state = opens.get(open);
@@ -580,8 +589,8 @@ export async function closeSession(open: number): Promise<void> {
     state.scopes.map(async (scope) => {
       const cleanup = await scope.settled;
       if (cleanup !== undefined) await scope.clean(cleanup);
-      // After its cleanup the plugin has no more work, so a job that it did not end must not hold the close.
-      for (const job of scope.jobs) job.end();
+      // The work of a job can use what the cleanup leaves, so the close waits for it.
+      await Promise.all([...scope.jobs].map((job) => job.ended));
     }),
   );
 }
@@ -641,6 +650,59 @@ function start(
     settled: Promise.resolve(undefined),
     clean,
   };
+  /**
+   * Run `work` as a job of the scope. With `call`, the signal of a tool call, the call waits for the job until a background
+   * request moves it. The native job decides where the end of `work` goes, so a move and an end cannot both answer.
+   */
+  const runJob = async (job: JobOptions, work: JobWork, call: AbortSignal | undefined): Promise<JobOutcome> => {
+    if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
+    const id = String(job.id);
+    const native = startJob(plugin, id, String(job.label), call !== undefined);
+    const stopped = new AbortController();
+    const stop = (): void => stopped.abort(new Error("the job stopped"));
+    // The end of a call aborts its signal, so a cancel counts only while the call waits.
+    const cancel = (): void => {
+      if (!native.inCall()) return;
+      native.stop();
+      stop();
+    };
+    const outcome = Promise.withResolvers<JobOutcome>();
+    let ended = false;
+    const finish = (report: JobReport | undefined, failure?: { readonly error: unknown }): void => {
+      if (ended) return;
+      ended = true;
+      signal.removeEventListener("abort", stop);
+      call?.removeEventListener("abort", cancel);
+      scope.jobs.delete(running);
+      workEnded.resolve();
+      if (!native.end(report?.status, report?.text)) outcome.resolve({ kind: "background", id });
+      else if (failure !== undefined) outcome.reject(failure.error);
+      else outcome.resolve({ kind: "completed", report });
+    };
+    const workEnded = Promise.withResolvers<void>();
+    const running: ScopeJob = { stop: native.stop, ended: workEnded.promise };
+    scope.jobs.add(running);
+    signal.addEventListener("abort", stop, { once: true });
+    call?.addEventListener("abort", cancel, { once: true });
+    if (call?.aborted === true) cancel();
+    void native.stopped.then(() => {
+      if (!ended) stop();
+    });
+    if (call === undefined) {
+      outcome.resolve({ kind: "background", id });
+    } else {
+      void native.moved.then(() => {
+        if (ended) return;
+        native.announce();
+        outcome.resolve({ kind: "background", id });
+      });
+    }
+    void (async () => work(stopped.signal))().then(
+      (report) => finish(report ?? undefined),
+      (error: unknown) => finish({ status: "failed", text: failureOf(error) }, { error }),
+    );
+    return await outcome.promise;
+  };
   const s: SessionContext<Options> = Object.freeze({
     sessionId,
     parent,
@@ -653,32 +715,17 @@ function start(
     tools: Object.freeze({
       define<const S extends ObjectSchema>(tool: Tool<S>): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
-        const id = defineTool(tool, open);
+        const id = defineTool(tool, open, (call) => ({
+          run: (job, work) => runJob(job, work, job.background === true ? undefined : call),
+        }));
         scope.tools.push(id);
         // Each id is new, so a second removal finds nothing, and the removal at a failure skips a removed id.
         return () => unregister([id]);
       },
     }),
     jobs: Object.freeze({
-      start(job: JobOptions): PluginJob {
-        if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
-        const native = startJob(plugin, String(job.id), String(job.label));
-        const stopped = new AbortController();
-        const stop = (): void => stopped.abort(new Error("the job stopped"));
-        let ended = false;
-        const end = (report?: JobReport): void => {
-          ended = true;
-          signal.removeEventListener("abort", stop);
-          scope.jobs.delete(running);
-          native.end(report?.status, report?.text);
-        };
-        const running: ScopeJob = { stop: native.stop, end };
-        scope.jobs.add(running);
-        signal.addEventListener("abort", stop, { once: true });
-        void native.stopped.then(() => {
-          if (!ended) stop();
-        });
-        return Object.freeze({ signal: stopped.signal, end });
+      async run(job: JobOptions, work: JobWork): Promise<void> {
+        await runJob(job, work, undefined);
       },
     }),
     hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {

@@ -1,13 +1,17 @@
-// The whole flow of a child agent: the smallest plugin that uses `parent` and `s.jobs` together.
+// The whole flow of a child agent: the smallest plugin that uses `parent` and `context.jobs` together.
 
 import type { PluginApply, PluginSession, QuestionAnswer, Sessions } from "yuke:plugins";
 import type { SessionSettings } from "yuke:protocol";
-import { createHost, equal, type Reply, reply, test } from "yuke:test";
+import { createHost, equal, type Reply, reply, settled, test } from "yuke:test";
 
-/** The plugin. Its tool `delegate` runs the one child of a session as the job `explorer`. */
+/** The plugin. Its tool `spawn_subagent` runs the one child of a session as the job `explorer`. */
 function agents() {
   let sessions: Sessions | undefined;
-  const state: { settings?: SessionSettings; child?: string } = {};
+  const opening = Promise.withResolvers<void>();
+  const state: { settings?: SessionSettings; child?: string; gate: Promise<void>; open: () => void } = {
+    gate: opening.promise,
+    open: opening.resolve,
+  };
   const apply: PluginApply = (ctx) => {
     sessions = ctx.get("sessions");
     return undefined;
@@ -26,42 +30,59 @@ function agents() {
           }),
         ),
     });
+    // The child waits here until a test opens the gate.
     s.tools.define({
-      name: "delegate",
+      name: "gate",
+      description: "Wait for the test.",
+      concurrency: "parallel",
+      parameters: { type: "object", properties: {} },
+      execute: async () => {
+        await state.gate;
+        return "open";
+      },
+    });
+    s.tools.define({
+      name: "spawn_subagent",
       description: "Run a child.",
       concurrency: "parallel",
-      parameters: { type: "object", properties: { message: { type: "string" } }, required: ["message"] },
-      execute: async (args) => {
-        const job = s.jobs.start({ id: "explorer", label: args.message });
-        const list = sessions as Sessions;
-        state.child ??= await list.create(state.settings as SessionSettings, { parent: s.sessionId });
-        const child = state.child;
-        const handle = await list.open(child, {
-          tail: 0,
-          event: (event) => {
-            if ("snapshot" in event || event.update.sessionUpdate !== "interaction_requested") return;
-            const update = event.update;
-            void s
-              .ask({ questions: update.request.questions })
-              .then((answers) =>
-                handle.respond(
-                  update.interactionId,
-                  answers === undefined ? { kind: "canceled" } : { kind: "questions", answers },
-                ),
-              );
-          },
-        });
-        job.signal.addEventListener("abort", () => handle.cancel());
-        void handle
-          .input([{ user_text: args.message }])
-          .then(() => handle.idle())
-          .then(() => list.events(child, { limit: 2 }))
-          .then((events) => {
-            const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
-            const text = blocks.flatMap((block) => ("assistant_text" in block ? [block.assistant_text] : [])).join("");
-            job.end({ status: "completed", text });
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" }, background: { type: "boolean" } },
+        required: ["message", "background"],
+      },
+      execute: async (args, context) => {
+        const job = { id: "explorer", label: args.message, background: args.background };
+        const outcome = await context.jobs.run(job, async (signal) => {
+          const list = sessions as Sessions;
+          state.child ??= await list.create(state.settings as SessionSettings, { parent: s.sessionId });
+          const child = state.child;
+          const ended = new AbortController();
+          const handle = await list.open(child, {
+            tail: 0,
+            signal: ended.signal,
+            event: (event) => {
+              if ("snapshot" in event || event.update.sessionUpdate !== "interaction_requested") return;
+              const update = event.update;
+              void s
+                .ask({ questions: update.request.questions })
+                .then((answers) =>
+                  handle.respond(
+                    update.interactionId,
+                    answers === undefined ? { kind: "canceled" } : { kind: "questions", answers },
+                  ),
+                );
+            },
           });
-        return "started";
+          signal.addEventListener("abort", () => handle.cancel());
+          await handle.input([{ user_text: args.message }]);
+          await handle.idle();
+          const events = await list.events(child, { limit: 2 });
+          ended.abort();
+          const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
+          const text = blocks.flatMap((block) => ("assistant_text" in block ? [block.assistant_text] : [])).join("");
+          return { status: "completed", text };
+        });
+        return outcome.kind === "background" ? `[${outcome.id} runs in the background.]` : (outcome.report?.text ?? "");
       },
     });
   };
@@ -93,12 +114,12 @@ test("a child reports to its parent, stays out of the list, and takes a follow-u
   ]);
   await using _host = host;
 
-  await parent.call("delegate", { message: "Read the store." });
+  await parent.call("spawn_subagent", { message: "Read the store.", background: true });
   equal(host.requests.length, 2);
   const first = newest(host);
   const roots = (await list().list()).sessions.map((row) => row.session.sessionId);
   const children = (await list().list({ parent: parent.id })).sessions.map((row) => row.session.sessionId);
-  const followup = await parent.call("delegate", { message: "And the indexes?" });
+  const followup = await parent.call("spawn_subagent", { message: "And the indexes?", background: true });
   equal(followup.isError, false);
   equal(host.requests.length, 4);
 
@@ -112,7 +133,7 @@ test("a stop cancels the child, and the parent gets no report", async () => {
   const { host, parent } = await opened([reply.stall("Reading")]);
   await using _host = host;
 
-  await parent.call("delegate", { message: "Read the store." });
+  await parent.call("spawn_subagent", { message: "Read the store.", background: true });
   equal(host.requests.length, 1);
   const stopped = await parent.call("stop", { id: "explorer" });
 
@@ -127,7 +148,7 @@ test("a question of the child reaches the parent, and its answer returns to the 
   );
   await using _host = host;
 
-  await parent.call("delegate", { message: "Ask first." });
+  await parent.call("spawn_subagent", { message: "Ask first.", background: true });
   equal(host.requests.length, 3);
 
   equal(
@@ -135,4 +156,42 @@ test("a question of the child reaches the parent, and its answer returns to the 
     [parent.id],
   );
   equal(newest(host), '<system_notification plugin="agents">explorer completed.\nIt said yes.</system_notification>');
+});
+
+test("a foreground child answers as the tool result, shows no job, and sends no report", async () => {
+  const { host, parent, list } = await opened([reply.text("Two tables.")]);
+  await using _host = host;
+  const handle = await list().open(parent.id, { tail: 0, event() {} });
+
+  const result = await parent.call("spawn_subagent", { message: "Read the store.", background: false });
+
+  equal(result.text, "Two tables.");
+  equal(handle.jobs(), []);
+  equal(host.requests.length, 1);
+});
+
+test("ctrl+b moves a foreground child: the call answers, the child goes on, and its report reaches the parent", async () => {
+  const { host, parent, list, state } = await opened([
+    reply.toolCall("gate", {}),
+    reply.text("Two tables."),
+    reply.text("Thanks."),
+  ]);
+  await using _host = host;
+  const handle = await list().open(parent.id, { tail: 0, event() {} });
+  const running = parent.call("spawn_subagent", { message: "Read the store.", background: false });
+  await settled();
+  const movable = handle.hasMovable();
+
+  handle.background();
+  const result = await running;
+  await settled();
+  const jobs = handle.jobs().map((job) => [job.id, job.state]);
+  state.open();
+  await settled();
+
+  equal(movable, true);
+  equal(result.text, "[explorer runs in the background.]");
+  equal(jobs, [["explorer", "running"]]);
+  equal(handle.jobs(), []);
+  equal(newest(host), '<system_notification plugin="agents">explorer completed.\nTwo tables.</system_notification>');
 });

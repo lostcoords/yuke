@@ -89,6 +89,10 @@ impl Sessions for PluginSessions {
         }
     }
 
+    fn has_movable(&self, id: SessionId) -> bool {
+        self.service().is_ok_and(|service| service.has_movable(id))
+    }
+
     fn cancel(&self, id: SessionId) {
         if let Ok(service) = self.service() {
             service.cancel(id);

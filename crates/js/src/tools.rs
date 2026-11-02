@@ -41,9 +41,6 @@ pub trait SessionHost: MediaStore {
     /// The workspace folder of the session now. Relative paths and commands of the tools start here.
     fn folder(&self) -> PathBuf;
 
-    /// The token that the next background request of the session cancels. A running command moves to a job at that cancel.
-    fn background(&self) -> CancellationToken;
-
     /// Whether the session closed. A close must set this before it stops the jobs of the session. A job start then fails.
     fn is_closed(&self) -> bool;
 

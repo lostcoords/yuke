@@ -34,6 +34,9 @@ const JOBS_SOURCE: &str = "host:jobs";
 const FIRST_JOB_NUMBER: u32 = 36 * 36 * 36;
 const JOB_NUMBERS: u32 = 36 * 36 * 36 * 36 - FIRST_JOB_NUMBER;
 
+/// The answer to a call whose task ended without an answer.
+const ENDED: &str = "the command did not start: the runtime of yuke ended";
+
 /// The time between SIGTERM and SIGKILL when a process group stops.
 const GRACE: Duration = Duration::from_secs(2);
 
@@ -108,7 +111,7 @@ impl Processes {
         Self::with_jobs(folder, true)
     }
 
-    /// Create process state for a process that ends with its turn: a job start fails. The full outputs go to `folder`.
+    /// Create process state for a process that ends with its turn: a background job start fails. The full outputs go to `folder`.
     pub fn without_jobs(folder: PathBuf) -> Self {
         Self::with_jobs(folder, false)
     }
@@ -144,11 +147,6 @@ impl Processes {
         &self.jobs
     }
 
-    /// The next number of a full output file.
-    fn next_output_number(&self) -> u64 {
-        self.last_number.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
     /// A new job id: `job-` and four base-36 digits. The counter gives each id once, until it wraps after every
     /// four-digit number.
     pub(crate) fn next_job_id(&self) -> String {
@@ -158,8 +156,7 @@ impl Processes {
 
     /// Run `request.command` until it ends, `request.timeout` expires, the caller cancels `request.stop`, or a background
     /// request moves it to a job. Each chunk in `chunks` holds whole UTF-8 characters. The answer keeps at most
-    /// `request.max_bytes` output bytes. A dropped wait stops the command. A session that refuses a job keeps the command
-    /// here.
+    /// `request.max_bytes` output bytes. A dropped wait stops a command that has not moved.
     pub(crate) async fn run(
         &self,
         request: Request,
@@ -173,48 +170,42 @@ impl Processes {
             stop,
             owner,
         } = request;
-        let file = self.folder.join(format!("exec-{}.log", self.next_output_number()));
+        let number = self.last_number.fetch_add(1, Ordering::Relaxed) + 1;
+        let log = self.folder.join(format!("exec-{number}.log"));
+        let id = self.next_job_id();
+        let label = short_command(&command);
+        let job = self.jobs.add_process(
+            owner.as_ref(),
+            id.clone(),
+            label.clone(),
+            command.clone(),
+            log.clone(),
+            true,
+        )?;
+        // A dropped call stops a command that it waits for.
         let _guard = stop.clone().drop_guard();
-        let deadline = tokio::time::Instant::now() + timeout;
-        let (shell, first_stop, background) = (command.clone(), stop.clone(), owner.background());
-        let log = file.clone();
-        // One task starts and waits, so a dropped call still stops the process.
-        let mut waiting = tokio::task::spawn_local(async move {
-            match start_command(shell, folder, log, max_bytes, chunks).await {
-                Ok(running) => wait_command(running, deadline, first_stop, background).await,
-                Err(error) => Err(format!("the command did not start: {error}")),
-            }
-        });
-        loop {
-            let moved = match waiting.await.map_err(|error| error.to_string())?? {
-                Waited::Ended(end) => return Ok(end),
-                Waited::Move(moved) => moved,
-            };
-            let id = self.next_job_id();
-            let label = short_command(&command);
-            let added = self
-                .jobs
-                .add_process(owner.as_ref(), id.clone(), label.clone(), command.clone(), file.clone());
-            let Ok(job) = added else {
-                waiting =
-                    tokio::task::spawn_local(wait_command(moved, deadline, stop.clone(), CancellationToken::new()));
-                continue;
-            };
-            let job = JobTask {
-                job,
-                label,
-                command,
-                log: file.clone(),
-                // A person moved this command because it runs long, so its timeout ends here.
-                timeout: None,
-            };
-            job.announce(owner.as_ref(), &moved);
-            // No await comes between the add and this spawn, so a dropped call cannot lose the process.
-            tokio::task::spawn_local(job.wait(owner, moved));
-            return Ok(CommandEnd {
+        let (answer, answered) = oneshot::channel();
+        let task = CommandTask {
+            job,
+            label,
+            command,
+            log: log.clone(),
+            folder,
+            owner,
+        };
+        let mode = Mode::InCall {
+            max_bytes,
+            chunks,
+            deadline: tokio::time::Instant::now() + timeout,
+            stop,
+        };
+        tokio::task::spawn_local(task.run(mode, answer));
+        match answered.await.map_err(|_| ENDED.to_owned())?? {
+            Answer::Ended(end) => Ok(end),
+            Answer::Running => Ok(CommandEnd {
                 output: String::new(),
-                cause: EndCause::Moved { id, log: file },
-            });
+                cause: EndCause::Moved { id, log },
+            }),
         }
     }
 
@@ -239,22 +230,25 @@ impl Processes {
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
         let label = short_command(&command);
-        let job = JobTask {
-            job: self
-                .jobs
-                .add_process(owner.as_ref(), id.clone(), label.clone(), command.clone(), log.clone())?,
+        let job = self.jobs.add_process(
+            owner.as_ref(),
+            id.clone(),
+            label.clone(),
+            command.clone(),
+            log.clone(),
+            false,
+        )?;
+        let (answer, answered) = oneshot::channel();
+        let task = CommandTask {
+            job,
             label: label.clone(),
             command,
             log: log.clone(),
-            timeout,
+            folder: owner.folder(),
+            owner,
         };
-        let (started_sender, started) = oneshot::channel();
-        // One local task owns the job from its spawn to the delivery of its end, so a dropped
-        // call loses no child.
-        tokio::task::spawn_local(job.run(owner, started_sender));
-        started
-            .await
-            .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
+        tokio::task::spawn_local(task.run(Mode::Job { timeout }, answer));
+        answered.await.map_err(|_| ENDED.to_owned())??;
         Ok(StartedJob {
             id,
             label,
@@ -263,55 +257,118 @@ impl Processes {
     }
 }
 
-/// The task of one job: it spawns the process, waits for its end, and delivers the end.
-struct JobTask {
+/// How a command starts.
+enum Mode {
+    /// A call waits for the command, until a background request moves it.
+    InCall {
+        max_bytes: usize,
+        chunks: mpsc::UnboundedSender<String>,
+        deadline: tokio::time::Instant,
+        stop: CancellationToken,
+    },
+    /// The command runs as a job from its start. It keeps no output in memory.
+    Job { timeout: Option<Duration> },
+}
+
+/// What the task of a command answers its call.
+enum Answer {
+    /// The command ended in its call.
+    Ended(CommandEnd),
+    /// The command runs on as a job.
+    Running,
+}
+
+/// The task of one command. It owns the process and its entry in the job list from the spawn to the delivery of the end,
+/// so a close and a shutdown wait for the whole command, and a dropped call loses no child.
+struct CommandTask {
     job: RunningJob,
     label: String,
     command: String,
     log: PathBuf,
-    /// The time from the wait until yuke stops the process and reports the end.
-    timeout: Option<Duration>,
+    folder: PathBuf,
+    owner: Arc<dyn SessionHost>,
 }
 
-impl JobTask {
-    async fn run(self, owner: Arc<dyn SessionHost>, started: oneshot::Sender<Result<(), String>>) {
-        // A job keeps no output in memory, and no call reads its chunks.
-        let (chunks, _) = mpsc::unbounded_channel();
-        let spawned = start_command(self.command.clone(), owner.folder(), self.log.clone(), 0, chunks)
-            .await
-            .map_err(|error| format!("the job did not start: {error}"));
-        let running = match spawned {
+impl CommandTask {
+    async fn run(self, mode: Mode, answer: oneshot::Sender<Result<Answer, String>>) {
+        let (max_bytes, chunks) = match &mode {
+            Mode::InCall { max_bytes, chunks, .. } => (*max_bytes, chunks.clone()),
+            Mode::Job { .. } => (0, mpsc::unbounded_channel().0),
+        };
+        let spawned = start_command(
+            self.command.clone(),
+            self.folder.clone(),
+            self.log.clone(),
+            max_bytes,
+            chunks,
+        )
+        .await;
+        let mut running = match spawned {
             Ok(running) => running,
             Err(error) => {
-                answer_start(started, Err(error));
+                let text = match mode {
+                    Mode::InCall { .. } => format!("the command did not start: {error}"),
+                    Mode::Job { .. } => format!("the job did not start: {error}"),
+                };
+                reply(answer, Err(text));
                 return;
             }
         };
-        self.announce(owner.as_ref(), &running);
-        answer_start(started, Ok(()));
-        self.wait(owner, running).await;
+        // Before the first wait, so a drop of the job list kills each process.
+        self.job.set_group(Some(running.group));
+        let timeout = match mode {
+            Mode::Job { timeout } => timeout,
+            Mode::InCall { deadline, stop, .. } => {
+                let (status, stopped) = tokio::select! {
+                    // The job list accepted a move, so the entry already counts as a job. Nothing else can win.
+                    biased;
+                    () = self.job.moved.cancelled() => {
+                        self.show_running(&running);
+                        reply(answer, Ok(Answer::Running));
+                        // A person moved this command because it runs long, so its timeout ends here.
+                        return self.wait(running, None).await;
+                    }
+                    status = running.child.wait() => (status, None),
+                    () = tokio::time::sleep_until(deadline) => {
+                        (stop_group(running.group, &mut running.child).await, Some(EndCause::Timeout))
+                    }
+                    () = stop.cancelled() => {
+                        (stop_group(running.group, &mut running.child).await, Some(EndCause::Cancelled))
+                    }
+                    () = self.job.stop.cancelled() => {
+                        (stop_group(running.group, &mut running.child).await, Some(EndCause::Cancelled))
+                    }
+                };
+                reply(
+                    answer,
+                    finish_in_call(running, status, stopped).await.map(Answer::Ended),
+                );
+                return;
+            }
+        };
+        self.show_running(&running);
+        reply(answer, Ok(Answer::Running));
+        self.wait(running, timeout).await;
     }
 
     /// Show the job with its process. The log gets its file, so its path is valid before the first output.
-    fn announce(&self, owner: &dyn SessionHost, running: &Running) {
+    fn show_running(&self, running: &Running) {
         running
             .capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .write_file(&[]);
-        self.job.set_group(Some(running.group));
-        owner.job_changed(self.protocol_job(JobState::Running, None));
+        self.owner.job_changed(self.protocol_job(JobState::Running, None));
     }
 
-    /// Wait for the end of the process or a stop, and deliver the end.
-    async fn wait(self, owner: Arc<dyn SessionHost>, mut running: Running) {
-        // A stop that came during the spawn ends the process here, with the grace.
-        let deadline = tokio::time::Instant::now() + self.timeout.unwrap_or_default();
+    /// Wait for the end of the process, a stop, or `timeout`, and deliver the end.
+    async fn wait(self, mut running: Running, timeout: Option<Duration>) {
+        let deadline = tokio::time::Instant::now() + timeout.unwrap_or_default();
         let (status, stopped, timed_out) = tokio::select! {
             // A stop can end the process at once, so both can be ready, and the stop must win.
             biased;
             () = self.job.stop.cancelled() => (stop_group(running.group, &mut running.child).await, true, false),
-            () = tokio::time::sleep_until(deadline), if self.timeout.is_some() => {
+            () = tokio::time::sleep_until(deadline), if timeout.is_some() => {
                 (stop_group(running.group, &mut running.child).await, false, true)
             }
             status = running.child.wait() => (status, false, false),
@@ -323,10 +380,10 @@ impl JobTask {
         // job sends none.
         let silenced = self.job.set_group(None);
         let state = if stopped { JobState::Stopped } else { JobState::Ended };
-        owner.job_changed(self.protocol_job(state, exit_code));
+        self.owner.job_changed(self.protocol_job(state, exit_code));
         if !stopped && !silenced {
             let signal = status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status));
-            let end = match (exit_code, signal, self.timeout.filter(|_| timed_out)) {
+            let end = match (exit_code, signal, timeout.filter(|_| timed_out)) {
                 (_, _, Some(timeout)) => format!("timed out after {} ms", timeout.as_millis()),
                 (Some(code), _, None) => format!("exited {code}"),
                 (None, Some(signal), None) => format!("signal {signal}"),
@@ -334,7 +391,7 @@ impl JobTask {
             };
             let text = end_text(self.log.clone()).await;
             let input = report_input(JOBS_SOURCE, &self.job.id, &end, &text);
-            owner.accept_input(input).await;
+            self.owner.accept_input(input).await;
         }
     }
 
@@ -350,6 +407,13 @@ impl JobTask {
                 exit_code,
             },
         }
+    }
+}
+
+/// Give a call its answer. A dropped call gets no answer, and the task still owns the command.
+fn reply(answer: oneshot::Sender<Result<Answer, String>>, value: Result<Answer, String>) {
+    if answer.send(value).is_err() {
+        // The call has left.
     }
 }
 
@@ -369,13 +433,6 @@ fn short_command(command: &str) -> String {
         format!("{}...", line.chars().take(57).collect::<String>())
     } else {
         line.to_owned()
-    }
-}
-
-/// Answer the call that started a job. A dropped call gets no answer, and the task still owns the job.
-fn answer_start(sender: oneshot::Sender<Result<(), String>>, answer: Result<(), String>) {
-    if sender.send(answer).is_err() {
-        // The call has left.
     }
 }
 
@@ -622,17 +679,6 @@ struct Running {
     group: Pid,
     reading: JoinHandle<io::Result<()>>,
     capture: Arc<Mutex<Capture>>,
-    /// The process ended, so the group id can name a new group.
-    ended: bool,
-}
-
-// A dropped command has no owner left to stop it, because a child of tokio does not end with its handle.
-impl Drop for Running {
-    fn drop(&mut self) {
-        if !self.ended {
-            kill_rest_of_group(self.group);
-        }
-    }
 }
 
 impl Running {
@@ -641,8 +687,11 @@ impl Running {
     /// Answer the read when it ended in the grace.
     async fn finish_read(&mut self) -> Option<Result<io::Result<()>, tokio::task::JoinError>> {
         kill_rest_of_group(self.group);
-        self.ended = true;
-        tokio::time::timeout(GRACE, &mut self.reading).await.ok()
+        let read = tokio::time::timeout(GRACE, &mut self.reading).await.ok();
+        if read.is_none() {
+            self.reading.abort();
+        }
+        read
     }
 }
 
@@ -671,33 +720,15 @@ async fn start_command(
         group,
         reading,
         capture,
-        ended: false,
     })
 }
 
-/// How the wait for a command ended.
-enum Waited {
-    Ended(CommandEnd),
-    /// A background request came, and the command still runs.
-    Move(Running),
-}
-
-/// Wait until the command of `running` ends, `deadline` passes, `stop` cancels, or `background` cancels.
-async fn wait_command(
+/// The end of a command that ended in its call, with the status `status` of its process.
+async fn finish_in_call(
     mut running: Running,
-    deadline: tokio::time::Instant,
-    stop: CancellationToken,
-    background: CancellationToken,
-) -> Result<Waited, String> {
-    let group = running.group;
-    let (status, stopped) = tokio::select! {
-        // A command that ended or stopped does not become a job.
-        biased;
-        status = running.child.wait() => (status, None),
-        () = tokio::time::sleep_until(deadline) => (stop_group(group, &mut running.child).await, Some(EndCause::Timeout)),
-        () = stop.cancelled() => (stop_group(group, &mut running.child).await, Some(EndCause::Cancelled)),
-        () = background.cancelled() => return Ok(Waited::Move(running)),
-    };
+    status: io::Result<ExitStatus>,
+    stopped: Option<EndCause>,
+) -> Result<CommandEnd, String> {
     let status = status.map_err(|error| error.to_string())?;
     if let Some(read) = running.finish_read().await {
         read.map_err(|error| error.to_string())?
@@ -713,7 +744,7 @@ async fn wait_command(
         (None, None, Some(signal)) => EndCause::Signal(signal),
         (None, None, None) => return Err("the command ended without an exit code or a signal".to_owned()),
     };
-    let capture = Arc::clone(&running.capture);
+    let capture = running.capture;
     // The removal of an unneeded file is blocking work.
     let output = tokio::task::spawn_blocking(move || {
         capture
@@ -723,7 +754,7 @@ async fn wait_command(
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(Waited::Ended(CommandEnd { output, cause }))
+    Ok(CommandEnd { output, cause })
 }
 
 /// Read the output until its end: give each chunk to `chunks` and keep it in `capture`. The wait for output uses no thread.

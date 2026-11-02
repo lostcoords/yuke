@@ -1,3 +1,4 @@
+import type { JobOptions, JobOutcome, JobWork } from "yuke:plugins";
 import type { DisplayBlock, Preview } from "yuke:protocol";
 
 export type { DisplayBlock, Preview };
@@ -164,6 +165,17 @@ export interface ToolContext {
   readonly signal: AbortSignal;
   /** Show `text` to the user while the call runs. The model does not receive it. */
   readonly output: (this: void, text: string) => void;
+  /** The jobs of the call. */
+  readonly jobs: {
+    /**
+     * Run `work` as a job that this call waits for, unless `job.background` holds. The job stays out of each list until a
+     * background request moves it. The answer is `completed` with the report of `work`, or `background` after a move, and
+     * `work` then goes on. A throw of `work` while the call waits rejects. Give `work` no `context.signal`: the end of
+     * the call aborts it. Use the signal of `work`. The start rejects for an id that still runs in this session, after
+     * the close of the session, and with `job.background` in `yuke -p`.
+     */
+    readonly run: (this: void, job: JobOptions, work: JobWork) => Promise<JobOutcome>;
+  };
 }
 
 /**

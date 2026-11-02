@@ -128,6 +128,9 @@ impl Sessions for Scripted {
     fn background(&self, id: SessionId) {
         self.record(format!("background {id}"));
     }
+    fn has_movable(&self, _: SessionId) -> bool {
+        false
+    }
     fn cancel(&self, id: SessionId) {
         if self.echo_updates.load(Ordering::SeqCst) {
             self.send(0, state(SessionState::Running));

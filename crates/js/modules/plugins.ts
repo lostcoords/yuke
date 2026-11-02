@@ -196,8 +196,10 @@ export interface SessionHandle {
   readonly sendNotification: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
   readonly cancel: () => void;
-  /** Move each running command to a background job. The turn goes on. A session without a running command does nothing. */
+  /** Move each tool call that waits for a job, such as a running command, to the background. The turn goes on. */
   readonly background: () => void;
+  /** Whether `background` moves a job now. */
+  readonly hasMovable: () => boolean;
   /**
    * Wait until the session runs no turn and has handled each input that it accepted before the call, or until its close.
    * A failed turn counts as handled, and its input waits for the next input.
@@ -753,15 +755,17 @@ export interface AskRequest {
   readonly questions: readonly Frozen<Question>[];
 }
 
-/** What `s.jobs.start` takes. */
+/** What `s.jobs.run` takes. */
 export interface JobOptions {
   /** The id of the job, unique among the running jobs of the session. It can stay the same across restarts of the work. */
   readonly id: string;
   /** A short text for display. */
   readonly label: string;
+  /** For `context.jobs.run`: run without the call from the start. */
+  readonly background?: boolean | undefined;
 }
 
-/** The report of a job that ended by itself. */
+/** The report of a job. */
 export interface JobReport {
   /** The end in words, for example `completed`. The user reads `{id} {status}`. */
   readonly status: string;
@@ -769,16 +773,19 @@ export interface JobReport {
   readonly text: string;
 }
 
-/** A running job of a plugin. */
-export interface PluginJob {
-  /** The host aborts this signal at a stop of the job and at the close of the session. It stays quiet after `end`. */
-  readonly signal: AbortSignal;
-  /**
-   * End the job. A report goes to the session as one notification, and a turn starts when the session is idle. After a
-   * stop, the host drops the report. A later call does nothing.
-   */
-  readonly end: (report?: JobReport) => void;
-}
+/**
+ * The work of a job. `signal` aborts at a stop of the job, at the close of the session, and at a cancel of the call that
+ * waits for the job, so end the work at the abort. A move out of the call does not abort it. The returned report goes to
+ * the call that waits, else to the session as one notification, and a turn starts when the session is idle. After a stop,
+ * the host drops the report. Nothing returned sends no report. A throw rejects the wait of the call, else it reports
+ * `failed`.
+ */
+export type JobWork = (signal: AbortSignal) => JobReport | undefined | Promise<JobReport | undefined>;
+
+/** How `context.jobs.run` ended: the work ended while the call waited, or it runs on without the call. */
+export type JobOutcome =
+  | { readonly kind: "completed"; readonly report: JobReport | undefined }
+  | { readonly kind: "background"; readonly id: string };
 
 /** What `session` of a plugin gets for one session. `O` is the type of the options, as in `PluginContext`. */
 export interface SessionContext<O = Record<string, never>> {
@@ -806,14 +813,14 @@ export interface SessionContext<O = Record<string, never>> {
   /** The background jobs of the plugin in this session. */
   readonly jobs: {
     /**
-     * Start a job, and list it with the jobs of the session. The start throws in three cases: the id still runs in this
-     * session, the session closed, or the run is `yuke -p`.
-     * - A stop aborts `signal` of the job and waits for `end`, so end the work at the abort. The `stop` tool, `job/stop`,
-     *   and `stopJob` of a handle are stops.
-     * - A close of the session and a reload abort `signal` too. After the cleanup of the session, the host ends each job.
+     * Run `work` as a job without a call, and list it with the jobs of the session. For work inside a tool call, use
+     * `context.jobs.run`. The start rejects in three cases: the id still runs in this session, the session closed, or
+     * the run is `yuke -p`.
+     * - The `stop` tool, `job/stop`, and `stopJob` of a handle abort the signal of `work`, and wait for its end.
+     * - A close of the session and a reload abort the signal too, and they wait for `work` to end.
      * - During a reload the old job still runs while the new `session` starts, so start the same id later.
      */
-    readonly start: (job: JobOptions) => PluginJob;
+    readonly run: (job: JobOptions, work: JobWork) => Promise<void>;
   };
   /**
    * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order

@@ -306,6 +306,11 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
     )?;
     let calls = Arc::clone(sessions);
     object.set(
+        "sessionHasMovable",
+        Function::new(ctx.clone(), move |id: Json<SessionId>| calls.has_movable(id.0))?,
+    )?;
+    let calls = Arc::clone(sessions);
+    object.set(
         "sessionRespond",
         Function::new(
             ctx.clone(),

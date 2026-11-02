@@ -236,7 +236,8 @@ pub enum ClientNotification {
     /// Ask the server to stop the running turn of a session. The end of the turn arrives as a saved commit.
     #[serde(rename = "session/cancel")]
     Cancel(SessionParams),
-    /// Ask the server to move each running command of a session to a background job. The turn goes on.
+    /// Ask the server to move each tool call of a session that waits for a job, such as a running command, to the background.
+    /// The turn goes on.
     #[serde(rename = "session/background")]
     Background(SessionParams),
 }

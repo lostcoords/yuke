@@ -75,7 +75,7 @@ export interface PaneActions {
   readonly clear: () => void;
   /** Drop the selection of the transcript, else cancel the running turn. */
   readonly interrupt: () => void;
-  /** Move the running command of the session to the background. */
+  /** Move the waiting tool calls of the session to the background. */
   readonly moveToBackground: () => void;
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
   /** A question of a plugin shows, so the composer takes no message. */

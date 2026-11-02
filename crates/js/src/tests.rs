@@ -144,6 +144,9 @@ impl crate::Sessions for NoSessions {
     }
     fn cancel(&self, _: yuke_protocol::SessionId) {}
     fn background(&self, _: yuke_protocol::SessionId) {}
+    fn has_movable(&self, _: yuke_protocol::SessionId) -> bool {
+        false
+    }
     async fn idle(&self, _: yuke_protocol::SessionId) -> Result<(), crate::SessionsError> {
         no_sessions()
     }

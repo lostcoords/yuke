@@ -14,7 +14,7 @@ const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
 const FRAME_MS = 80;
 
-/** How long a command runs before the row offers to move it, so a quick command does not flash the hint. */
+/** How long a tool call waits before the row offers to move it, so a quick call does not flash the hint. */
 const BACKGROUND_HINT_MS = 2000;
 
 /** The columns that the phase keeps. A narrower row drops a hint first. */
@@ -53,9 +53,8 @@ export class ChatWorking {
   #retryAt: number | undefined;
   // The status of the transcript at the last change, so a new retry starts its countdown once.
   #status: Status | undefined;
-  // The running `exec` call and its first sight on the clock `now`, for the delay of the background hint.
-  #exec: string | undefined;
-  #execSeen = 0;
+  // The first sight of work that a background request moves, on the clock `now`, for the delay of the hint.
+  #movableSince: number | undefined;
 
   constructor(chat: ChatSession, options: ChatWorkingOptions) {
     this.#chat = chat;
@@ -78,15 +77,16 @@ export class ChatWorking {
     if (start === undefined) return undefined;
     const now = this.#now();
     const spinner = SPINNER[Math.floor((now - start) / FRAME_MS) % SPINNER.length] ?? "";
-    const last = this.#chat.transcript.entries.at(-1);
-    const exec = last?.kind === "tool" && last.name === "exec" && last.status === "running" ? last.key : undefined;
-    if (exec !== this.#exec) {
-      this.#exec = exec;
-      this.#execSeen = now;
-    }
+    const movable = this.#chat.handle?.hasMovable() === true;
+    if (!movable) this.#movableSince = undefined;
+    else this.#movableSince ??= now;
     const hints: string[] = [];
     if (options.cancelKey !== undefined) hints.push(`${options.cancelKey} to interrupt`);
-    if (exec !== undefined && options.backgroundKey !== undefined && now - this.#execSeen >= BACKGROUND_HINT_MS) {
+    if (
+      options.backgroundKey !== undefined &&
+      this.#movableSince !== undefined &&
+      now - this.#movableSince >= BACKGROUND_HINT_MS
+    ) {
       hints.push(`${options.backgroundKey} to background`);
     }
     const tail = (): string => `(${[elapsed(now - start), ...hints].join(" · ")})`;
