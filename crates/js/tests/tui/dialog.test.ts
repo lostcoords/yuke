@@ -1,4 +1,4 @@
-// The dialog of `tui.dialog`: its head and footer rows, the order of the keys, the scroll of its body, and its close.
+// `tui.dialog`: its head and footer rows, the order of the keys, the scroll of its body, and its close. `tui.select`: its answers.
 
 import { createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type KeyEvent, Picker, strokeOf, TextView, type View } from "yuke:tui";
