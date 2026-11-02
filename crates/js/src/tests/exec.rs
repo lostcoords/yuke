@@ -157,18 +157,6 @@ async fn a_background_start_fails_when_the_processes_start_no_jobs() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn stop_ends_a_job_and_no_end_message_follows() {
-    let folder = folder("stop_ends_a_job_and_no_end_message_follows");
-    let (_runtime, host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
-    let id = job_id(&text_of(&tools["exec"], r#"{"command": "sleep 30", "background": true}"#).await);
-
-    let text = text_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await;
-
-    assert_eq!(text, format!("[{id} stopped.]"));
-    assert!(host.inputs.lock().unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "local")]
 async fn stop_of_an_unknown_id_names_the_running_jobs() {
     let folder = folder("stop_of_an_unknown_id_names_the_running_jobs");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
@@ -205,8 +193,8 @@ async fn runtime_with(folder: &Path, processes: &Arc<Processes>, host: &Arc<Test
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_job_outlives_a_reload_of_the_runtime() {
-    let folder = folder("a_job_outlives_a_reload_of_the_runtime");
+async fn a_process_job_outlives_a_reload_of_the_runtime() {
+    let folder = folder("a_process_job_outlives_a_reload_of_the_runtime");
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
@@ -230,8 +218,8 @@ async fn a_job_outlives_a_reload_of_the_runtime() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_shutdown_of_the_processes_removes_their_folder() {
-    let folder = folder("a_shutdown_of_the_processes_removes_their_folder");
+async fn a_shutdown_stops_each_job_without_a_report_and_removes_the_folder() {
+    let folder = folder("a_shutdown_stops_each_job_without_a_report_and_removes_the_folder");
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
@@ -242,6 +230,8 @@ async fn a_shutdown_of_the_processes_removes_their_folder() {
 
     assert!(had_log);
     assert!(!folder.join("processes").exists());
+    // A shutdown stops each job, and a stopped job sends no report.
+    assert!(host.inputs.lock().unwrap().is_empty());
 }
 
 // A job start after the shutdown fails, and it leaves no job and no folder.
@@ -320,24 +310,8 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_shutdown_of_the_processes_stops_each_job_without_an_end_message() {
-    let folder = folder("a_shutdown_of_the_processes_stops_each_job_without_an_end_message");
-    let processes = Arc::new(Processes::new(folder.join("processes")));
-    let host = Arc::new(TestHost::new(&folder));
-    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    text_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
-
-    tokio::time::timeout(Duration::from_secs(5), processes.shutdown())
-        .await
-        .unwrap()
-        .unwrap();
-
-    assert!(host.inputs.lock().unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_dropped_processes_kills_its_jobs_without_an_end_message() {
-    let folder = folder("a_dropped_processes_kills_its_jobs_without_an_end_message");
+async fn a_dropped_processes_kills_its_jobs_without_a_report() {
+    let folder = folder("a_dropped_processes_kills_its_jobs_without_a_report");
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (runtime, exec) = runtime_with(&folder, &processes, &host).await;
@@ -542,6 +516,150 @@ async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters(
     processes.shutdown().await.unwrap();
 }
 
+/// The text of `exec` with `arguments` once `host` asks to move the command. The file `ready` in `folder` tells that the
+/// command runs.
+async fn moved_text(exec: &crate::ScriptTool, host: &TestHost, folder: &Path, arguments: &str) -> String {
+    let answer = text_of(exec, arguments);
+    let mut answer = std::pin::pin!(answer);
+    let deadline = Instant::now() + WAIT;
+    while !folder.join("ready").exists() {
+        assert!(Instant::now() < deadline, "the command did not start");
+        tokio::select! {
+            biased;
+            text = &mut answer => panic!("the command ended first: {text}"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
+    host.background.cancel();
+    tokio::time::timeout(WAIT, answer).await.unwrap()
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_end() {
+    let folder = folder("a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_end");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+
+    let arguments = r#"{"command": "echo before; touch ready; sleep 0.3; echo after; exit 3"}"#;
+    let text = moved_text(&exec["exec"], &host, &folder, arguments).await;
+
+    let id = text.split(" as ").nth(1).unwrap().split('.').next().unwrap().to_owned();
+    assert!(
+        text.starts_with("[The user moved the command to the background as job-"),
+        "{text}"
+    );
+    let listed = processes.jobs().running(host.session);
+    assert_eq!(
+        listed.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+        [id.as_str()]
+    );
+    let texts = ended_texts(&host, 1).await;
+    assert!(texts[0].contains(&format!("{id} exited 3.")), "{}", texts[0]);
+    assert!(texts[0].contains("before\nafter"), "{}", texts[0]);
+    assert_eq!(processes.jobs().running(host.session), []);
+    processes.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_report() {
+    let folder = folder("a_moved_command_outlives_its_timeout_and_a_stop_ends_it_without_a_report");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    let arguments = r#"{"command": "touch ready; exec sleep 30", "timeout_ms": 400}"#;
+    let text = moved_text(&exec["exec"], &host, &folder, arguments).await;
+    let id = text.split(" as ").nth(1).unwrap().split('.').next().unwrap().to_owned();
+
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let after_the_timeout = processes.jobs().running(host.session).len();
+    let stopped = tokio::time::timeout(WAIT, processes.jobs().stop(host.session, &id))
+        .await
+        .unwrap();
+
+    assert_eq!(after_the_timeout, 1);
+    assert!(stopped);
+    assert!(host.inputs.lock().unwrap().is_empty());
+    processes.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_call() {
+    let folder = folder("a_background_request_in_a_run_without_jobs_keeps_the_command_in_the_call");
+    let processes = Arc::new(Processes::without_jobs(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+    host.background.cancel();
+
+    let text = text_of(&exec["exec"], r#"{"command": "sleep 0.1; echo done"}"#).await;
+
+    assert_eq!(text, "done\n[exit code: 0]");
+    processes.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_call_dropped_during_a_move_stops_its_process() {
+    let folder = folder("a_call_dropped_during_a_move_stops_its_process");
+    let processes = Processes::new(folder.join("processes"));
+    let host = Arc::new(TestHost::new(&folder));
+    let pid_file = folder.join("pid");
+    let (chunks, _texts) = tokio::sync::mpsc::unbounded_channel();
+    let running = processes.run(
+        Request {
+            command: format!(
+                "echo $$ > {pid}.part && mv {pid}.part {pid} && exec sleep 3600",
+                pid = pid_file.display()
+            ),
+            folder: folder.clone(),
+            timeout: Duration::from_secs(600),
+            max_bytes: 1024,
+            stop: CancellationToken::new(),
+            owner: host.clone(),
+        },
+        chunks,
+    );
+    let mut running = Box::pin(running);
+    let deadline = Instant::now() + WAIT;
+    while !pid_file.exists() {
+        assert!(Instant::now() < deadline, "the command did not start");
+        tokio::select! {
+            biased;
+            _ = &mut running => panic!("the command ended first"),
+            () = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+    }
+    let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+
+    // The wait task finishes its move, and no call takes the command.
+    host.background.cancel();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(running);
+
+    let pid = rustix::process::Pid::from_raw(pid).unwrap();
+    while rustix::process::test_kill_process(pid).is_ok() {
+        assert!(Instant::now() < deadline, "the command still runs");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "local")]
+async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
+    let folder = folder("the_report_of_a_job_holds_the_end_of_a_large_output");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
+
+    text_of(&exec["exec"], r#"{"command": "seq 1 200000", "background": true}"#).await;
+
+    let texts = ended_texts(&host, 1).await;
+    assert!(
+        texts[0].ends_with("\n200000\n</system_notification>") || texts[0].ends_with("\n200000</system_notification>"),
+        "{}",
+        &texts[0][texts[0].len() - 60..]
+    );
+    processes.shutdown().await.unwrap();
+}
+
 #[tokio::test(flavor = "local")]
 async fn a_dropped_command_stops_its_process() {
     let folder = folder("a_dropped_command_stops_its_process");
@@ -554,6 +672,7 @@ async fn a_dropped_command_stops_its_process() {
             timeout: Duration::from_secs(10),
             max_bytes: 1024,
             stop: CancellationToken::new(),
+            owner: Arc::new(TestHost::new(&folder)),
         },
         chunks,
     );

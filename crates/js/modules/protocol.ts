@@ -369,7 +369,11 @@ id: string,
 /**
  * A short text for display.
  */
-label: string, } & ({ "state": "running" } | { "state": "ended" } | { "state": "stopped" }) & ({ "kind": "process", 
+label: string, 
+/**
+ * Whether the job runs, and how it ended.
+ */
+state: JobState, } & ({ "kind": "process", 
 /**
  * The exact command.
  */
@@ -386,6 +390,11 @@ exitCode?: number | null, } | { "kind": "plugin",
  * The name of the plugin.
  */
 plugin: string, });
+
+/**
+ * Whether a job runs, and how it ended.
+ */
+export type JobState = "running" | "ended" | "stopped";
 
 /**
  * The result of `catalog/list`.

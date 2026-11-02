@@ -101,7 +101,7 @@ pub trait Sessions: Send + Sync {
     /// Returns why the request failed.
     async fn get(&self, id: SessionId) -> Result<SessionRow, SessionsError>;
 
-    /// Delete the saved session `id`, which is not open.
+    /// Delete the saved session `id` and its descendants, which are not open.
     ///
     /// # Errors
     ///
@@ -141,6 +141,9 @@ pub trait Sessions: Send + Sync {
 
     /// Cancel the running turn of session `id`.
     fn cancel(&self, id: SessionId);
+
+    /// Move each running command of session `id` to a job.
+    fn background(&self, id: SessionId);
 
     /// Wait until the open session `id` runs no turn and has handled each input that it accepted before the call, or until
     /// its close. A failed turn counts as handled, and its input waits for the next wake.

@@ -7,6 +7,7 @@ use std::fmt;
 use std::fs::File;
 use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -15,9 +16,12 @@ use std::time::Duration;
 
 use rquickjs::{FromJs, IntoJs};
 use rustix::process::{Pid, Signal, kill_process_group};
+use tokio::io::AsyncReadExt;
+use tokio::net::unix::pipe::Receiver;
 use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{JobKind, JobState};
 
@@ -30,9 +34,6 @@ const JOBS_SOURCE: &str = "host:jobs";
 /// The job numbers with four base-36 digits: from `1000` to `zzzz`.
 const FIRST_JOB_NUMBER: u32 = 36 * 36 * 36;
 const JOB_NUMBERS: u32 = 36 * 36 * 36 * 36 - FIRST_JOB_NUMBER;
-
-/// The answer to a job start that a stop ended before the spawn.
-const STOPPED_BEFORE_START: &str = "the job did not start: it was stopped first";
 
 /// The time between SIGTERM and SIGKILL when a process group stops.
 const GRACE: Duration = Duration::from_secs(2);
@@ -54,6 +55,8 @@ pub(crate) struct Request {
     pub(crate) max_bytes: usize,
     /// The token that stops the command.
     pub(crate) stop: CancellationToken,
+    /// The session of the command. Its background request moves the command to a job.
+    pub(crate) owner: Arc<dyn SessionHost>,
 }
 
 /// The child processes of the tools. The consumer creates one for the process inside its tokio runtime, which must
@@ -77,39 +80,6 @@ impl fmt::Debug for Processes {
     }
 }
 
-/// How a process job ended.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct JobEnd {
-    exit_code: Option<i32>,
-    signal: Option<i32>,
-    /// A stop ended the job.
-    stopped: bool,
-}
-
-impl JobEnd {
-    /// The end in words, for example `exited 0`.
-    fn label(self) -> String {
-        match self {
-            JobEnd { stopped: true, .. } => "stopped".to_owned(),
-            JobEnd {
-                exit_code: Some(code), ..
-            } => format!("exited {code}"),
-            JobEnd {
-                signal: Some(signal), ..
-            } => format!("signal {signal}"),
-            JobEnd { .. } => "failed".to_owned(),
-        }
-    }
-
-    fn state(self) -> JobState {
-        if self.stopped {
-            JobState::Stopped
-        } else {
-            JobState::Ended
-        }
-    }
-}
-
 /// How a command ended.
 #[derive(Debug)]
 pub(crate) struct CommandEnd {
@@ -120,7 +90,7 @@ pub(crate) struct CommandEnd {
 }
 
 /// Why a command ended. A stop by yuke wins over the exit status that the stop caused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum EndCause {
     /// The command exited with this code.
     Exit(i32),
@@ -130,6 +100,8 @@ pub(crate) enum EndCause {
     Timeout,
     /// The cancel of the call stopped the command.
     Cancelled,
+    /// A background request moved the running command to the job `id`, with its output in the file `log`.
+    Moved { id: String, log: PathBuf },
 }
 
 impl Processes {
@@ -165,7 +137,7 @@ impl Processes {
         }
     }
 
-    /// Stop each running job: SIGTERM to its process group, then SIGKILL after a grace. Wait for the ends. Then remove
+    /// Stop each running job, and wait for the ends. A process group gets SIGTERM, then SIGKILL after a grace. Then remove
     /// the folder of the full outputs and the logs.
     ///
     /// # Errors
@@ -196,34 +168,76 @@ impl Processes {
         format!("job-{}", base36(FIRST_JOB_NUMBER + next % JOB_NUMBERS))
     }
 
-    /// Run `request.command` until it ends, `request.timeout` expires, or the caller cancels `request.stop`. Each chunk
-    /// in `chunks` holds whole UTF-8 characters. The answer keeps at most `request.max_bytes` output bytes. A dropped
-    /// wait stops the command.
+    /// Run `request.command` until it ends, `request.timeout` expires, the caller cancels `request.stop`, or a background
+    /// request moves it to a job. Each chunk in `chunks` holds whole UTF-8 characters. The answer keeps at most
+    /// `request.max_bytes` output bytes. A dropped wait stops the command. A session that refuses a job keeps the command
+    /// here.
     pub(crate) async fn run(
         &self,
         request: Request,
         chunks: mpsc::UnboundedSender<String>,
     ) -> Result<CommandEnd, String> {
+        let Request {
+            command,
+            folder,
+            timeout,
+            max_bytes,
+            stop,
+            owner,
+        } = request;
         let file = self.folder.join(format!("exec-{}.log", self.next_output_number()));
-        let stop = request.stop.clone();
-        self.guarded(stop, run(request, file, chunks)).await
+        let _guard = stop.clone().drop_guard();
+        let deadline = tokio::time::Instant::now() + timeout;
+        let (shell, first_stop, background) = (command.clone(), stop.clone(), owner.background());
+        let log = file.clone();
+        // One task starts and waits, so a dropped call still stops the process.
+        let mut waiting = self.handle.spawn(async move {
+            match start_command(shell, folder, log, max_bytes, chunks).await {
+                Ok(running) => wait_command(running, deadline, first_stop, background).await,
+                Err(error) => Err(format!("the command did not start: {error}")),
+            }
+        });
+        loop {
+            let moved = match waiting.await.map_err(|error| error.to_string())?? {
+                Waited::Ended(end) => return Ok(end),
+                Waited::Move(moved) => moved,
+            };
+            let id = self.next_job_id();
+            let label = short_command(&command);
+            let added = self
+                .jobs
+                .add_process(owner.as_ref(), id.clone(), label.clone(), command.clone(), file.clone());
+            let Ok(job) = added else {
+                waiting = self
+                    .handle
+                    .spawn(wait_command(moved, deadline, stop.clone(), CancellationToken::new()));
+                continue;
+            };
+            let job = JobTask {
+                job,
+                label,
+                command,
+                log: file.clone(),
+            };
+            job.announce(owner.as_ref(), &moved);
+            // No await comes between the add and this spawn, so a dropped call cannot lose the process.
+            self.handle.spawn(job.wait(owner, moved));
+            return Ok(CommandEnd {
+                output: String::new(),
+                cause: EndCause::Moved { id, log: file },
+            });
+        }
     }
 
     /// Run `program` until it ends, and answer its end and its output. A cancel of `stop` stops its process group:
     /// SIGTERM, then SIGKILL after a grace. A dropped wait stops it too.
     pub(crate) async fn output(&self, program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
-        self.guarded(stop.clone(), run_program(program, stop)).await
-    }
-
-    /// Await `task` on the runtime of the processes, which drives the pipes of the child. The end of the wait, a drop
-    /// included, cancels `stop`.
-    async fn guarded<T: Send + 'static>(
-        &self,
-        stop: CancellationToken,
-        task: impl Future<Output = Result<T, String>> + Send + 'static,
-    ) -> Result<T, String> {
-        let _guard = stop.drop_guard();
-        self.handle.spawn(task).await.map_err(|error| error.to_string())?
+        // The runtime of the processes drives the pipes of the child. A dropped wait cancels `stop`.
+        let _guard = stop.clone().drop_guard();
+        self.handle
+            .spawn(run_program(program, stop))
+            .await
+            .map_err(|error| error.to_string())?
     }
 
     /// Start `command` in the folder of `owner` as a job. A job that ends by itself reports to `owner`. Without jobs, the
@@ -265,36 +279,58 @@ struct JobTask {
 
 impl JobTask {
     async fn run(self, owner: Arc<dyn SessionHost>, started: oneshot::Sender<Result<(), String>>) {
-        let spawned = if self.job.stop.is_cancelled() {
-            Err(STOPPED_BEFORE_START.to_owned())
-        } else {
-            let (command, folder, log) = (self.command.clone(), owner.folder(), self.log.clone());
-            // The log file is blocking work.
-            tokio::task::spawn_blocking(move || spawn_logged(&command, &folder, &log))
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|spawned| spawned.map_err(|error| error.to_string()))
-                .map_err(|error| format!("the job did not start: {error}"))
-        };
-        let (child, group) = match spawned {
-            Ok(spawned) => spawned,
+        // A job keeps no output in memory, and no call reads its chunks.
+        let (chunks, _) = mpsc::unbounded_channel();
+        let spawned = start_command(self.command.clone(), owner.folder(), self.log.clone(), 0, chunks)
+            .await
+            .map_err(|error| format!("the job did not start: {error}"));
+        let running = match spawned {
+            Ok(running) => running,
             Err(error) => {
                 answer_start(started, Err(error));
                 return;
             }
         };
-        self.job.set_group(Some(group));
-        owner.job_changed(self.protocol_job(JobState::Running, None));
+        self.announce(owner.as_ref(), &running);
         answer_start(started, Ok(()));
+        self.wait(owner, running).await;
+    }
+
+    /// Show the job with its process. The log gets its file, so its path is valid before the first output.
+    fn announce(&self, owner: &dyn SessionHost, running: &Running) {
+        running
+            .capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .write_file(&[]);
+        self.job.set_group(Some(running.group));
+        owner.job_changed(self.protocol_job(JobState::Running, None));
+    }
+
+    /// Wait for the end of the process or a stop, and deliver the end.
+    async fn wait(self, owner: Arc<dyn SessionHost>, mut running: Running) {
         // A stop that came during the spawn ends the process here, with the grace.
-        let end = wait_job(child, group, &self.job.stop).await;
+        let (status, stopped) = tokio::select! {
+            status = running.child.wait() => (status, false),
+            () = self.job.stop.cancelled() => (stop_group(running.group, &mut running.child).await, true),
+        };
+        running.finish_read().await;
+        let status = status.ok();
+        let exit_code = status.and_then(|status| status.code());
         // A process that ended by itself sends its report, also when a close came after the end. A stop of this one
         // job sends none.
         let silenced = self.job.set_group(None);
-        owner.job_changed(self.protocol_job(end.state(), end.exit_code));
-        if !end.stopped && !silenced {
+        let state = if stopped { JobState::Stopped } else { JobState::Ended };
+        owner.job_changed(self.protocol_job(state, exit_code));
+        if !stopped && !silenced {
+            let signal = status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status));
+            let end = match (exit_code, signal) {
+                (Some(code), _) => format!("exited {code}"),
+                (None, Some(signal)) => format!("signal {signal}"),
+                (None, None) => "failed".to_owned(),
+            };
             let text = end_text(self.log.clone()).await;
-            let input = report_input(JOBS_SOURCE, &self.job.id, &end.label(), &text);
+            let input = report_input(JOBS_SOURCE, &self.job.id, &end, &text);
             owner.accept_input(input).await;
         }
     }
@@ -533,7 +569,7 @@ async fn run_program(program: Program, stop: CancellationToken) -> Result<Progra
 async fn read_all(pipe: Option<impl tokio::io::AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     if let Some(mut pipe) = pipe {
-        tokio::io::AsyncReadExt::read_to_end(&mut pipe, &mut bytes).await?;
+        pipe.read_to_end(&mut bytes).await?;
     }
     Ok(bytes)
 }
@@ -577,50 +613,93 @@ fn signal_name(number: i32) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
-/// The run of one command: start it, read its output, and stop it at the deadline or at a stop.
-async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<String>) -> Result<CommandEnd, String> {
-    let Request {
-        command,
-        folder,
-        timeout,
-        max_bytes,
-        stop,
-    } = request;
-    let (reader, writer) = io::pipe().map_err(|error| format!("the command did not start: {error}"))?;
+/// A started command: its process, and the read of its output, which goes on when the command moves to a job.
+struct Running {
+    child: Child,
+    group: Pid,
+    reading: JoinHandle<io::Result<()>>,
+    capture: Arc<Mutex<Capture>>,
+    /// The process ended, so the group id can name a new group.
+    ended: bool,
+}
+
+// A dropped command has no owner left to stop it, because a child of tokio does not end with its handle.
+impl Drop for Running {
+    fn drop(&mut self) {
+        if !self.ended {
+            kill_rest_of_group(self.group);
+        }
+    }
+}
+
+impl Running {
+    /// End each process that the shell left in the group, and wait for the read. A process that left the group can hold
+    /// the pipe open, so the read gets one grace and no more. After the grace the output so far stays in the capture.
+    /// Answer the read when it ended in the grace.
+    async fn finish_read(&mut self) -> Option<Result<io::Result<()>, tokio::task::JoinError>> {
+        kill_rest_of_group(self.group);
+        self.ended = true;
+        tokio::time::timeout(GRACE, &mut self.reading).await.ok()
+    }
+}
+
+/// Start `command` in `folder`. Its output goes to `chunks` and to a capture of `max_bytes` with the file `file`.
+async fn start_command(
+    command: String,
+    folder: PathBuf,
+    file: PathBuf,
+    max_bytes: usize,
+    chunks: mpsc::UnboundedSender<String>,
+) -> io::Result<Running> {
+    let (reader, writer) = io::pipe()?;
     let mut shell_command = shell_command(&command, &folder);
-    let error_writer = writer
-        .try_clone()
-        .map_err(|error| format!("the command did not start: {error}"))?;
+    let error_writer = writer.try_clone()?;
     // One pipe for stdout and stderr keeps the order of their writes.
     shell_command
         .stdout(Stdio::from(writer))
         .stderr(Stdio::from(error_writer));
-    let mut child = spawn(shell_command)
-        .await
-        .map_err(|error| format!("the command did not start: {error}"))?;
-    let group = group_of(&child).map_err(|error| error.to_string())?;
-
+    let child = spawn(shell_command).await?;
+    let group = group_of(&child)?;
     let capture = Arc::new(Mutex::new(Capture::new(max_bytes, file)));
-    let reading = {
-        let capture = Arc::clone(&capture);
-        tokio::task::spawn_blocking(move || read_output(reader, &capture, &chunks))
-    };
+    let reader = Receiver::from_owned_fd(OwnedFd::from(reader))?;
+    let reading = tokio::spawn(read_output(reader, Arc::clone(&capture), chunks));
+    Ok(Running {
+        child,
+        group,
+        reading,
+        capture,
+        ended: false,
+    })
+}
 
+/// How the wait for a command ended.
+enum Waited {
+    Ended(CommandEnd),
+    /// A background request came, and the command still runs.
+    Move(Running),
+}
+
+/// Wait until the command of `running` ends, `deadline` passes, `stop` cancels, or `background` cancels.
+async fn wait_command(
+    mut running: Running,
+    deadline: tokio::time::Instant,
+    stop: CancellationToken,
+    background: CancellationToken,
+) -> Result<Waited, String> {
+    let group = running.group;
     let (status, stopped) = tokio::select! {
-        status = child.wait() => (status, None),
-        () = tokio::time::sleep(timeout) => (stop_group(group, &mut child).await, Some(EndCause::Timeout)),
-        () = stop.cancelled() => (stop_group(group, &mut child).await, Some(EndCause::Cancelled)),
+        // A command that ended or stopped does not become a job.
+        biased;
+        status = running.child.wait() => (status, None),
+        () = tokio::time::sleep_until(deadline) => (stop_group(group, &mut running.child).await, Some(EndCause::Timeout)),
+        () = stop.cancelled() => (stop_group(group, &mut running.child).await, Some(EndCause::Cancelled)),
+        () = background.cancelled() => return Ok(Waited::Move(running)),
     };
     let status = status.map_err(|error| error.to_string())?;
-    // A process that the shell left in the group ends with the call.
-    kill_rest_of_group(group);
-    // A process that left the group can hold the pipe open, so the read gets one grace and no more. After the grace,
-    // the output so far stays in the capture.
-    if let Ok(read) = tokio::time::timeout(GRACE, reading).await {
+    if let Some(read) = running.finish_read().await {
         read.map_err(|error| error.to_string())?
             .map_err(|error| format!("the output of the command did not read: {error}"))?;
     }
-
     let cause = match (
         stopped,
         status.code(),
@@ -631,6 +710,7 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
         (None, None, Some(signal)) => EndCause::Signal(signal),
         (None, None, None) => return Err("the command ended without an exit code or a signal".to_owned()),
     };
+    let capture = Arc::clone(&running.capture);
     // The removal of an unneeded file is blocking work.
     let output = tokio::task::spawn_blocking(move || {
         capture
@@ -640,31 +720,37 @@ async fn run(request: Request, file: PathBuf, chunks: mpsc::UnboundedSender<Stri
     })
     .await
     .map_err(|error| error.to_string())?;
-    Ok(CommandEnd { output, cause })
+    Ok(Waited::Ended(CommandEnd { output, cause }))
 }
 
-/// Read the output until its end: give each chunk to `chunks` and keep it in `capture`.
-fn read_output(
-    mut reader: io::PipeReader,
-    capture: &Mutex<Capture>,
-    chunks: &mpsc::UnboundedSender<String>,
+/// Read the output until its end: give each chunk to `chunks` and keep it in `capture`. The wait for output uses no thread.
+async fn read_output(
+    mut reader: Receiver,
+    capture: Arc<Mutex<Capture>>,
+    chunks: mpsc::UnboundedSender<String>,
 ) -> io::Result<()> {
     let mut buffer = vec![0; CHUNK];
     let mut partial = Vec::new();
     loop {
-        let count = match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => count,
-            // A signal stopped the read before any byte came, so the read goes on.
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        };
-        let bytes = &buffer[..count];
-        capture
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .add(bytes);
-        partial.extend_from_slice(bytes);
+        let count = reader.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        let bytes = buffer[..count].to_vec();
+        let keep = Arc::clone(&capture);
+        // The write of the file is blocking work.
+        tokio::task::spawn_blocking(move || {
+            keep.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .add(&bytes);
+        })
+        .await
+        .map_err(io::Error::other)?;
+        // A job has no reader of its chunks.
+        if chunks.is_closed() {
+            continue;
+        }
+        partial.extend_from_slice(&buffer[..count]);
         // Only an incomplete character at the end waits for the next read.
         let (text, rest) = crate::bytes::decode(&partial, false, true).unwrap_or_default();
         partial.drain(..partial.len() - rest);
@@ -784,36 +870,6 @@ async fn spawn(mut command: Command) -> io::Result<Child> {
     tokio::task::spawn_blocking(move || command.spawn())
         .await
         .map_err(io::Error::other)?
-}
-
-/// Start `command` in `folder` with its output in the file `log`, in a new process group.
-fn spawn_logged(command: &str, folder: &Path, log: &Path) -> io::Result<(Child, Pid)> {
-    if let Some(parent) = log.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let output = File::create(log)?;
-    let mut shell_command = shell_command(command, folder);
-    shell_command
-        .stdout(Stdio::from(output.try_clone()?))
-        .stderr(Stdio::from(output));
-    let child = shell_command.spawn()?;
-    let group = group_of(&child)?;
-    Ok((child, group))
-}
-
-/// Wait for the end of a job, or stop it, and answer how it ended.
-async fn wait_job(mut child: Child, group: Pid, stop: &CancellationToken) -> JobEnd {
-    let (status, stopped) = tokio::select! {
-        status = child.wait() => (status, false),
-        () = stop.cancelled() => (stop_group(group, &mut child).await, true),
-    };
-    kill_rest_of_group(group);
-    let status = status.ok();
-    JobEnd {
-        exit_code: status.and_then(|status| status.code()),
-        signal: status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status)),
-        stopped,
-    }
 }
 
 /// The text of the report of a process job: the log file and the last lines of the log.

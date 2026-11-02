@@ -143,6 +143,7 @@ impl crate::Sessions for NoSessions {
         no_sessions()
     }
     fn cancel(&self, _: yuke_protocol::SessionId) {}
+    fn background(&self, _: yuke_protocol::SessionId) {}
     async fn idle(&self, _: yuke_protocol::SessionId) -> Result<(), crate::SessionsError> {
         no_sessions()
     }

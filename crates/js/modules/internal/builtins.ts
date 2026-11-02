@@ -203,7 +203,8 @@ defineTool({
   name: "exec",
   description:
     "Run a shell command in the workspace. Return stdout and stderr in write order, and the exit status. " +
-    "Each call starts a fresh shell and ends every process it starts. For a server or watcher, set background to " +
+    "Each call starts a fresh shell and ends every process it starts, unless the user moves the running command to " +
+    "the background: the result then names the job. For a server or watcher, set background to " +
     "true. Do not use &, nohup, or setsid.",
   parameters: {
     type: "object",
@@ -258,6 +259,13 @@ defineTool({
         return { text: `${text}[signal: ${end.signal}]`, isError: true };
       case "exit":
         return { text: `${text}[exit code: ${end.code}]`, isError: end.code !== 0 };
+      case "moved":
+        return {
+          text:
+            `[The user moved the command to the background as ${end.id}. Log: ${end.log}. Its end arrives as a ` +
+            `message, so never sleep or poll. Use stop with ${end.id} to end it.]`,
+          isError: false,
+        };
     }
   },
 });

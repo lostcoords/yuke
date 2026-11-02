@@ -81,16 +81,6 @@ test("an id that still runs throws, and its end frees the id", async () => {
   equal(labels, ["three"]);
 });
 
-test("an end without a report sends no input", async () => {
-  const { host, s, handle } = await opened();
-  await using _host = host;
-
-  s.jobs.start({ id: "explorer", label: "one" }).end();
-  await noJobs(handle);
-
-  equal(host.requests.length, 0);
-});
-
 test("the stop tool aborts the signal, waits for the end, and drops the report", async () => {
   const { host, session, s, handle } = await opened();
   await using _host = host;
@@ -245,16 +235,19 @@ test("a job start fails while its session closes", async () => {
   assert(refusal.includes("its session is closed"), refusal);
 });
 
-test("the signal of a job that ended does not abort at the close of the session", async () => {
+test("an end without a report sends no input, and the signal stays quiet at the close of the session", async () => {
   const { host, session, s, handle } = await opened();
   await using _host = host;
   const job = s.jobs.start({ id: "explorer", label: "one" });
 
   job.end();
   await noJobs(handle);
+  const requests = host.requests.length;
   await session.close();
 
   equal(job.signal.aborted, false);
+  // An end without a report starts no turn.
+  equal(requests, 0);
 });
 
 test("a second end does nothing", async () => {

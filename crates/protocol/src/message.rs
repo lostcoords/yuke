@@ -57,7 +57,7 @@ pub enum ClientRequest {
     /// Agree on the protocol version. The first request of a connection.
     #[serde(rename = "initialize")]
     Initialize(InitializeParams),
-    /// Create a session with these settings. Each field is required. The server builds the system prompt of the session
+    /// Create a session with these settings. Each field of the settings is required. The server builds the system prompt of the session
     /// from its folder. Result: [`SessionResult`].
     #[serde(rename = "session/new")]
     NewSession(NewSessionParams),
@@ -236,6 +236,9 @@ pub enum ClientNotification {
     /// Ask the server to stop the running turn of a session. The end of the turn arrives as a saved commit.
     #[serde(rename = "session/cancel")]
     Cancel(SessionParams),
+    /// Ask the server to move each running command of a session to a background job. The turn goes on.
+    #[serde(rename = "session/background")]
+    Background(SessionParams),
 }
 
 /// The method and the params of a server request. A client answers each one. It answers
@@ -546,8 +549,8 @@ pub struct RemoveSessionParams {
     pub session_id: SessionId,
 }
 
-/// The params of a message that names only an open session: `session/close`, `job/list`, `mcp/list`, and
-/// `session/cancel`.
+/// The params of a message that names only an open session: `session/close`, `job/list`, `mcp/list`,
+/// `session/cancel`, and `session/background`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -575,7 +578,6 @@ pub struct Job {
     /// A short text for display.
     pub label: String,
     /// Whether the job runs, and how it ended.
-    #[serde(flatten)]
     pub state: JobState,
     /// What runs.
     #[serde(flatten)]
@@ -585,7 +587,7 @@ pub struct Job {
 /// Whether a job runs, and how it ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "state", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum JobState {
     /// The job runs.
     Running,

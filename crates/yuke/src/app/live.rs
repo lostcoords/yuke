@@ -40,7 +40,7 @@ struct Parts {
     session: tokio::sync::Mutex<Session>,
     /// The cancellation token of the running turn, or `None` while the session is idle.
     turn: Mutex<Option<CancellationToken>>,
-    /// The host of the tools. The jobs of the session belong to the host. The `closed` token of the host ends the task,
+    /// The host of the tools. The `closed` token of the host ends the task,
     /// and the token of each turn is a child of that token.
     host: Arc<Host>,
     /// The session of the plugins. Each turn takes its tools. A reload replaces it while it holds the session lock.
@@ -72,6 +72,7 @@ impl LiveSession {
             wake: Notify::new(),
             accepted: AtomicU64::new(0),
             handled: watch::Sender::new(0),
+            background: Mutex::new(CancellationToken::new()),
             closed: CancellationToken::new(),
         });
         let script = runtime
@@ -182,6 +183,11 @@ impl LiveSession {
     /// Give `response` to the open question `id`.
     pub(super) fn answer(&self, id: InteractionId, response: InteractionResponse) -> Result<(), AppError> {
         self.parts.host.output.answer_question(id, response)
+    }
+
+    /// Move each running command of the session to a job.
+    pub(super) fn background(&self) {
+        std::mem::replace(&mut *lock(&self.parts.host.background), CancellationToken::new()).cancel();
     }
 
     /// Cancel the running turn.
@@ -1004,6 +1010,8 @@ struct Host {
     accepted: AtomicU64,
     /// The accepted inputs at the start of the last run of the turns that ended.
     handled: watch::Sender<u64>,
+    /// The token of the next background request. Each request cancels it and leaves a new one.
+    background: Mutex<CancellationToken>,
     /// The close of the session. It ends each open question.
     closed: CancellationToken,
 }
@@ -1048,6 +1056,10 @@ impl SessionHost for Host {
 
     fn folder(&self) -> PathBuf {
         lock(&self.settings).cwd.clone()
+    }
+
+    fn background(&self) -> CancellationToken {
+        lock(&self.background).clone()
     }
 
     fn is_closed(&self) -> bool {

@@ -83,6 +83,12 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.input(id, input).await?)
     }
 
+    fn background(&self, id: SessionId) {
+        if let Ok(service) = self.service() {
+            service.background(id);
+        }
+    }
+
     fn cancel(&self, id: SessionId) {
         if let Ok(service) = self.service() {
             service.cancel(id);

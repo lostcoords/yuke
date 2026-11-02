@@ -16,7 +16,7 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 - Each commit and each settings change take the next event number in the same transaction, so the numbers have no gap.
 - Blocks and settings are JSON. The answer facts and the turn end are columns.
 - `open` loads the context from the newest replacement: its head, the blocks that it keeps, and the commits after it.
-- `load(id, after)` reads the events after event number `after` (every event for `None`) and the pending inputs in one
+- `load(id, EventPage::After(after))` reads the events after event number `after` (every event for `None`) and the pending inputs in one
   read transaction, so both come from one moment.
 
 ## Owner lock

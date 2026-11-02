@@ -8,7 +8,7 @@ use crate::processes::{EndCause, Processes, Request};
 use crate::tools::forward;
 
 /// Run the command of `request`. Each chunk of output goes to `on_output`. The stop of the call stops the command. It
-/// answers `{ output, cause }`. The cause is `exit` with `code`, `signal` with `signal`, `timeout`, or `cancelled`.
+/// answers `{ output, cause }`. The cause is `exit` with `code`, `signal` with `signal`, `moved` with `id` and `log`, `timeout`, or `cancelled`.
 pub(crate) async fn exec<'js>(
     ctx: Ctx<'js>,
     processes: &Processes,
@@ -41,6 +41,11 @@ pub(crate) async fn exec<'js>(
         }
         EndCause::Timeout => object.set("cause", "timeout")?,
         EndCause::Cancelled => object.set("cause", "cancelled")?,
+        EndCause::Moved { id, log } => {
+            object.set("cause", "moved")?;
+            object.set("id", id)?;
+            object.set("log", log.to_string_lossy().into_owned())?;
+        }
     }
     Ok(object)
 }

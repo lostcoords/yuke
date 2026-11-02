@@ -56,6 +56,13 @@ const COMMANDS: readonly {
     run: (pane) => pane.clear(),
   },
   {
+    name: "background",
+    description: "Move the running command to the background",
+    keys: ["ctrl+b"],
+    in: "chat",
+    run: (pane) => pane.moveToBackground(),
+  },
+  {
     name: "interrupt",
     description: "Drop the selection, or stop the turn",
     keys: ["esc"],

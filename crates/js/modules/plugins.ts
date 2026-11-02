@@ -117,8 +117,8 @@ export interface Services {
 }
 
 /**
- * The sessions of yuke. A session that a plugin creates is an ordinary session: each client sees it, can load it, and
- * can send it input. A failed request rejects with an `Error` that tells why.
+ * The sessions of yuke. A session that a plugin creates is an ordinary session: each client can load it and send it
+ * input. A session with a parent stays out of the default list. A failed request rejects with an `Error` that tells why.
  */
 export interface Sessions {
   /**
@@ -127,7 +127,7 @@ export interface Sessions {
    * parent removes it. An unknown parent rejects.
    */
   readonly create: (settings: SessionSettings, options?: { readonly parent?: SessionId }) => Promise<SessionId>;
-  /** Fork session `id` through the event `through`, or through its last event, and open the fork. */
+  /** Fork session `id` through the end of the completed turn `through`, or its newest one, and open the fork. */
   readonly fork: (id: SessionId, through?: EventNumber) => Promise<SessionId>;
   /**
    * A page of the saved sessions, newest first. `nextCursor` continues the list. Without `parent`, the page holds only
@@ -197,6 +197,8 @@ export interface SessionHandle {
   readonly sendNotification: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
   readonly cancel: () => void;
+  /** Move each running command to a background job. The turn goes on. A session without a running command does nothing. */
+  readonly background: () => void;
   /**
    * Wait until the session runs no turn and has handled each input that it accepted before the call, or until its close.
    * A failed turn counts as handled, and its input waits for the next input.

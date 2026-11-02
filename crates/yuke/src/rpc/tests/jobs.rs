@@ -263,7 +263,7 @@ async fn a_session_cannot_stop_the_job_of_another_session() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_job_of_an_open_session_still_runs_after_a_reload() {
+async fn a_process_job_of_an_open_session_still_runs_after_a_reload() {
     let place = Place::new("rpc", "reload_job");
     let (mut client, session, _transport) = session_with_a_job(&place).await;
 
@@ -353,5 +353,55 @@ async fn a_reload_stops_a_plugin_job() {
         Some((&json!("explorer"), &json!("stopped")))
     );
     assert_eq!(listed["jobs"], json!([]));
+    client.end().await;
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_background_request_moves_the_running_command_and_the_turn_goes_on() {
+    let place = Place::new("rpc", "a_background_request_moves_the_running_command");
+    let ready = place.work.join("ready");
+    let command = format!("touch {}; sleep 0.3; echo finished", ready.display());
+    let arguments = json!({ "command": command }).to_string();
+    let transport = ScriptedTransport::new([
+        tool_reply(&[("c1", "exec", &arguments)]),
+        text_reply("moved on"),
+        tool_reply(&[("c2", "exec", r#"{"command":"echo again"}"#)]),
+        text_reply("read the report"),
+    ]);
+    let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+    client.request("session/input", input_params(&session, "run it")).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !ready.exists() {
+        assert!(std::time::Instant::now() < deadline, "the command did not start");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    client
+        .notify("session/background", json!({ "sessionId": session }))
+        .await;
+    let messages = client
+        .until(|message| message["params"]["update"]["input"]["kind"] == "notification")
+        .await;
+    client.until(is_idle).await;
+
+    let job = messages
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .map(|message| &message["params"]["update"]["job"]);
+    assert_eq!(job.map(|job| &job["state"]), Some(&json!("running")));
+    let bodies = transport.requests();
+    assert!(
+        bodies[1].contains("The user moved the command to the background as job-"),
+        "{}",
+        bodies[1]
+    );
+    assert!(
+        bodies[2].contains("exited 0.") && bodies[2].contains("finished"),
+        "{}",
+        bodies[2]
+    );
+    // The request moved only the command that ran then, so the next command stays in its call.
+    assert!(bodies[3].contains("again\\n[exit code: 0]"), "{}", bodies[3]);
     client.end().await;
 }

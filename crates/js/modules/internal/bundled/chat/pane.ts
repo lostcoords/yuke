@@ -75,6 +75,8 @@ export interface PaneActions {
   readonly clear: () => void;
   /** Drop the selection of the transcript, else cancel the running turn. */
   readonly interrupt: () => void;
+  /** Move the running command of the session to the background. */
+  readonly moveToBackground: () => void;
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
   /** A question of a plugin shows, so the composer takes no message. */
   readonly asking: () => boolean;
@@ -450,7 +452,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // While the list shows, Esc hides the list, so the row shows no cancel key.
       const key = listRows > 0 ? undefined : tui.keys.keysOf("chat:interrupt")[0];
-      const row = workingRows === 1 ? working.text(key) : undefined;
+      const row =
+        workingRows === 1
+          ? working.text({
+              cancelKey: key,
+              backgroundKey: tui.keys.keysOf("chat:background")[0],
+              width: Math.max(0, canvas.width - 2),
+            })
+          : undefined;
       if (row !== undefined) {
         canvas.text(0, listRow - 1, row.spinner, STYLE.hint);
         canvas.text(2, listRow - 1, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
@@ -522,6 +531,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       if (composer.state.text === "") chatSession.handle?.cancel();
       else chatComposer.setDraft(EMPTY);
     },
+    moveToBackground: () => chatSession.handle?.background(),
     interrupt: () => {
       if (view.selection !== undefined) view.selection = undefined;
       else chatSession.handle?.cancel();

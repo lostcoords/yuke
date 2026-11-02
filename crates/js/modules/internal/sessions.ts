@@ -12,6 +12,7 @@ import {
   pluginsList,
   pluginsRemove,
   pluginsSync,
+  sessionBackground,
   sessionCancel,
   sessionClose,
   sessionIdle,
@@ -147,6 +148,10 @@ async function open(
     cancel() {
       live();
       sessionCancel(id);
+    },
+    background() {
+      live();
+      sessionBackground(id);
     },
     async idle() {
       live();

@@ -4,4 +4,4 @@ import type { SessionParams } from "./SessionParams";
 /**
  * The method and the params of a client notification.
  */
-export type ClientNotification = { "method": "session/cancel", "params": SessionParams };
+export type ClientNotification = { "method": "session/cancel", "params": SessionParams } | { "method": "session/background", "params": SessionParams };

@@ -90,6 +90,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     failing: boolean;
     accept: Promise<void> | undefined;
     cancels: number;
+    backgrounds: number;
     openFails: number;
     refuseSettings: boolean;
     removal: Promise<void> | undefined;
@@ -101,6 +102,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     failing: false,
     accept: undefined,
     cancels: 0,
+    backgrounds: 0,
     openFails: 0,
     refuseSettings: false,
     removal: undefined,
@@ -159,6 +161,9 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           inputs.push(content);
           await state.accept;
           return inputs.length;
+        },
+        background() {
+          state.backgrounds += 1;
         },
         cancel() {
           state.cancels += 1;

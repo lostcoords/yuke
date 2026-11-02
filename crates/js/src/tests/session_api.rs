@@ -126,6 +126,9 @@ impl Sessions for Scripted {
         ));
         Ok(InputId(3))
     }
+    fn background(&self, id: SessionId) {
+        self.record(format!("background {id}"));
+    }
     fn cancel(&self, id: SessionId) {
         if self.echo_updates.load(Ordering::SeqCst) {
             self.send(0, state(SessionState::Running));
@@ -439,6 +442,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              await handle.input([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
              await handle.sendNotification('shown', 'told');
              handle.cancel();
+             handle.background();
              await sessions.fork(id);
              await sessions.events(id, {{ limit: 3 }});
              await sessions.list();
@@ -467,6 +471,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
                 InputKind::Notification
             ),
             format!("cancel {id}"),
+            format!("background {id}"),
             format!("fork {id} None"),
             format!("events {id} None 3"),
             "list None".to_owned(),

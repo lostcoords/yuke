@@ -307,6 +307,10 @@ impl Server {
                     message: ClientNotification::Cancel(params),
                     ..
                 }) => self.app.sessions().cancel(params.session_id),
+                Ok(Notification {
+                    message: ClientNotification::Background(params),
+                    ..
+                }) => self.app.sessions().background(params.session_id),
                 Err(error) => warn(&format!("a notification does not read: {error}")),
             }
             return;

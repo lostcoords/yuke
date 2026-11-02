@@ -173,6 +173,16 @@ declare module "yuke:chat" {
     readonly view: View;
   }
 
+  /** What `ChatWorking.text` shows. */
+  export interface ChatWorkingTextOptions {
+    /** The key of the interrupt hint. */
+    readonly cancelKey?: string | undefined;
+    /** The key of the background hint. The hint shows when `exec` has run for two seconds. */
+    readonly backgroundKey?: string | undefined;
+    /** The columns of the text. A long phase is clipped. A narrow row drops the background hint, then the interrupt hint. */
+    readonly width?: number | undefined;
+  }
+
   export interface ChatWorkingOptions {
     /** Its abort ends the watch of the chat session. */
     readonly signal: AbortSignal;
@@ -187,7 +197,7 @@ declare module "yuke:chat" {
    *
    * ```ts
    * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
-   * const row = working.text("esc"); // in draw
+   * const row = working.text({ cancelKey: "esc" }); // in draw
    * if (row !== undefined) canvas.text(0, 0, `${row.spinner} ${row.text}`);
    * ```
    */
@@ -197,8 +207,8 @@ declare module "yuke:chat" {
     get active(): boolean;
     /** The time of one frame of the spinner, in milliseconds. */
     get frameMs(): number;
-    /** The spinner and the text now, with `cancelKey` as the interrupt hint, or `undefined` while no turn runs. */
-    text(cancelKey?: string): { readonly spinner: string; readonly text: string } | undefined;
+    /** The spinner and the text now, or `undefined` while no turn runs. */
+    text(options?: ChatWorkingTextOptions): { readonly spinner: string; readonly text: string } | undefined;
     /** Call `listener` after each change of `active`. A throw removes it and reports the error. */
     onChange(listener: () => void): () => void;
   }

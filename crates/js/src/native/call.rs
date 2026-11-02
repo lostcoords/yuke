@@ -27,7 +27,7 @@ pub(crate) fn object<'js>(
 ) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
-    let (exec_processes, exec_stop) = (Arc::clone(processes), stop.clone());
+    let (exec_processes, exec_stop, exec_host) = (Arc::clone(processes), stop.clone(), Arc::clone(host));
     object.set(
         "exec",
         Function::new(
@@ -35,7 +35,7 @@ pub(crate) fn object<'js>(
             Async(
                 move |ctx: Ctx<'js>, command: String, limits: Object<'js>, on_output: Function<'js>| {
                     let processes = Arc::clone(&exec_processes);
-                    let (folder, stop) = (folder.clone(), exec_stop.clone());
+                    let (folder, stop, owner) = (folder.clone(), exec_stop.clone(), Arc::clone(&exec_host));
                     async move {
                         let timeout_ms: u32 = limits.get("timeoutMs")?;
                         let max_bytes: u32 = limits.get("maxBytes")?;
@@ -45,6 +45,7 @@ pub(crate) fn object<'js>(
                             timeout: Duration::from_millis(timeout_ms.into()),
                             max_bytes: max_bytes as usize,
                             stop,
+                            owner,
                         };
                         exec(ctx, &processes, request, on_output).await
                     }

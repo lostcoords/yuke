@@ -387,7 +387,7 @@ impl SessionService {
     }
 
     /// A page of the saved sessions, newest first, with the activity of each one. `params.cursor` continues the list
-    /// with the same `params.cwd`.
+    /// with the same `params.cwd` and `params.parent`.
     ///
     /// # Errors
     ///
@@ -575,6 +575,13 @@ impl SessionService {
         let _transition = Transition { service: self, id };
         live.close().await;
         Ok(())
+    }
+
+    /// Move each running command of session `id` to a job. A session with no running command does nothing.
+    pub(crate) fn background(&self, id: SessionId) {
+        if let Ok(live) = self.live(id) {
+            live.background();
+        }
     }
 
     /// Cancel the running turn of session `id`. A session that is not open or runs no turn has nothing to cancel.

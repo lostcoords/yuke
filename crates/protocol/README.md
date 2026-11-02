@@ -55,10 +55,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   input kinds, and the reasoning choices with the reasoning settings that a session sends for each. A provider is
   ready when its API key variable holds UTF-8 text that is not empty, when it has a stored key, a login, or a pushed
   token, or when it needs no key. The server does not test the credential. A client asks again after `profile/reload`.
-- A row holds the saved facts (model, folder, preview, times, fork source) and the activity now: `closed`, `idle`, or
+- A row holds the saved facts (model, folder, preview, times, fork source, parent) and the activity now: `closed`, `idle`, or
   `running`. The preview is the trimmed user text of the first message input with text, at most 200 characters.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
-  stay open, and their jobs go on. It fails while a turn runs, and a failure keeps the old plugins and providers. The
+  stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, and a failure keeps the old plugins and providers. The
   next request of an open session can miss the prompt cache when the reload changes its tools.
 - Each connection starts with `initialize`. Its `instanceId` is the id of the server process. A client that
   reconnects and gets another id talks to a new process, so the turns and jobs of the old process are gone. The client
@@ -74,12 +74,14 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   runs. That close stops its jobs.
 - The background jobs of a session run while the session is open. `job/list` lists them. A `job` update holds the
   whole job at its start and at its end. `job/stop` waits for the end, and its `job` update comes first.
-  `session/close` stops the jobs of the session. A client that wants a warning first reads `job/list`. A job that ends
-  by itself also sends an input from `host:jobs`, after its `job` update. The `state` of a job is `running`, `ended`, or
+  `session/close` stops the jobs of the session. A client that wants a warning first reads `job/list`. A process job that
+  ends by itself also sends an input from `host:jobs`, after its `job` update. A plugin job sends an input from its plugin
+  only when the plugin ends it with a report. The `state` of a job is `running`, `ended`, or
   `stopped`. Its `kind` is `process` (`command`, `log`, `exitCode`) or `plugin` (`plugin`).
 - Server requests: `extension/request`. A client answers each one. It answers -32601 for a method or an extension
   that it does not know. The server numbers its requests from 1, apart from the ids of the client.
-- Notifications: `session/cancel` from a client. `session/update`, `notice`, `extension/event`, `extension/cancel`,
+- Notifications: `session/cancel` and `session/background` from a client. `session/background` moves each running command
+  of the session to a job, and the turn goes on. `session/update`, `notice`, `extension/event`, `extension/cancel`,
   and `auth/login_finished` from the server.
 - `notice` is a message for the user, for the whole process or one session. It is not part of session history.
 - `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
@@ -99,7 +101,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   commit names it in `consumed`, or when `input_removed` names it.
 - Turns: `session/input` starts a turn when the session is idle. During a turn, an input joins the turn at its next
   round. A `state` update tells when a turn runs. `session/load` starts no turn.
-- During a turn, a client can add and remove inputs, cancel the turn, close the session, and list and stop jobs. The
+- During a turn, a client can add and remove inputs, cancel the turn, move its running commands to the background, close
+  the session, and list and stop jobs. The
   settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
 - `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each

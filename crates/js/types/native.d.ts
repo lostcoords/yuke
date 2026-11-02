@@ -68,7 +68,7 @@ declare module "yuke:internal/native" {
     readonly log: string;
   }
 
-  /** The output and the cause of the end of a command: `exit`, `signal`, `timeout`, or `cancelled`. */
+  /** The output and the cause of the end of a command: `exit`, `signal`, `timeout`, `cancelled`, or `moved`. */
   export type CommandEnd = {
     /** stdout and stderr in the order of their writes. A cut keeps a head and a tail around a marker. */
     readonly output: string;
@@ -79,6 +79,8 @@ declare module "yuke:internal/native" {
     | { readonly cause: "timeout" }
     /** A cancel of the call, or its end, stopped the command. */
     | { readonly cause: "cancelled" }
+    /** A background request moved the running command to the job `id`, with its output in the file `log`. */
+    | { readonly cause: "moved"; readonly id: string; readonly log: string }
   );
 
   /** The native functions that need the session or the life of a call. */
@@ -504,6 +506,7 @@ declare module "yuke:internal/native" {
   export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
   export function sessionClose(id: SessionId): Promise<null>;
   export function sessionCancel(id: SessionId): void;
+  export function sessionBackground(id: SessionId): void;
   export function sessionRespond(
     request: readonly [id: SessionId, interactionId: InteractionId, response: InteractionResponse],
   ): void;

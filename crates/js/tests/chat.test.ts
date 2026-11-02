@@ -291,7 +291,7 @@ test("the working time starts again for another running session, and the end of 
   const changes: boolean[] = [];
   working.onChange(() => changes.push(working.active));
   now = 61_000;
-  const first = working.text("esc")?.text;
+  const first = working.text({ cancelKey: "esc" })?.text;
   await chat.open("s2");
   const second = working.text()?.text;
   // An event that keeps the turn running changes no `active`.
