@@ -79,7 +79,7 @@ cleanup() {
 }
 
 configure_editor() {
-  local root name profile link
+  local root name profile
   root="${XDG_CONFIG_HOME:-}"
   case "${root}" in /*) ;; *) root="${HOME}/.config" ;; esac
   name="${YUKE_APPNAME:-yuke}"
@@ -87,26 +87,16 @@ configure_editor() {
     . | .. | */* | *\\*) printf 'warning: YUKE_APPNAME needs a plain profile name; editor configuration stays unchanged.\n' >&2; return ;;
   esac
   profile="${root}/${name}"
-  link="${profile}/yuke-library"
   if ! mkdir -p "${profile}"; then
     printf 'warning: cannot create %s; editor configuration stays unchanged.\n' "${profile}" >&2
     return
   fi
-  if [ -e "${link}" ] || [ -L "${link}" ]; then
-    if [ ! -L "${link}" ] || [ "$(readlink "${link}")" != "${lib_dir}" ]; then
-      printf 'warning: %s belongs to the user; it stays unchanged.\n' "${link}" >&2
-      return
-    fi
-  elif ! ln -s "${lib_dir}" "${link}"; then
-    printf 'warning: cannot link %s.\n' "${link}" >&2
-    return
-  fi
   if [ ! -e "${profile}/tsconfig.json" ] && [ ! -L "${profile}/tsconfig.json" ]; then
-    if ! (set -C; cat > "${profile}/tsconfig.json" <<'JSON'
+    if ! (set -C; cat > "${profile}/tsconfig.json" <<JSON
 {
-  "extends": "./yuke-library/tsconfig.json",
+  "extends": "${lib_dir}/tsconfig.json",
   "include": ["./**/*.ts"],
-  "exclude": ["./yuke-library", "./node_modules"]
+  "exclude": ["./node_modules"]
 }
 JSON
     ); then

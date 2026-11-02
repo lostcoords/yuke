@@ -136,7 +136,9 @@ else:
         self.assertEqual(result, "yuke " + self.identity["version"] + "\n")
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
         self.assertFalse((self.library / "README.md").exists())
-        self.assertEqual((self.profile / "yuke-library").resolve(), self.library.resolve())
+        configuration = json.loads((self.profile / "tsconfig.json").read_text())
+        self.assertEqual(configuration["extends"], str(self.library / "tsconfig.json"))
+        self.assertFalse((self.profile / "yuke-library").exists())
         self.assertFalse((self.home / ".local/share").exists())
         self.assertFalse((self.home / ".agents").exists())
 
@@ -209,7 +211,7 @@ else:
         self.assertEqual(response, {"jsonrpc": "2.0", "id": 7, "result": {
             "protocolVersion": 1, "agentInfo": {"name": "yuke", "version": self.identity["version"]}}})
 
-    def test_editor_checks_consumer_source_and_protocol_types_through_the_profile_link(self):
+    def test_editor_checks_consumer_source_and_protocol_types_through_the_profile_configuration(self):
         self.install()
         consumer = self.profile / "consumer.ts"
         consumer.write_text('''import type { Tool } from "yuke:tools";
@@ -435,16 +437,12 @@ os.execv(os.environ["REAL_MV"], ["mv"] + sys.argv[1:])
         self.profile.symlink_to(shared, target_is_directory=True)
         self.install()
         self.assertEqual(configuration.read_text(), '{"compilerOptions":{"strict":true}}\n')
-        self.assertEqual((shared / "yuke-library").resolve(), self.library.resolve())
         self.assertEqual(self.profile.resolve(), shared.resolve())
 
-    def test_existing_editor_link_and_dangling_user_configuration_stay_unchanged(self):
+    def test_dangling_user_configuration_stays_unchanged(self):
         self.profile.mkdir(parents=True)
-        (self.profile / "yuke-library").mkdir()
-        (self.profile / "yuke-library/user-file").write_text("keep me\n")
         (self.profile / "tsconfig.json").symlink_to("missing-user-configuration.json")
         self.install()
-        self.assertEqual((self.profile / "yuke-library/user-file").read_text(), "keep me\n")
         self.assertEqual(os.readlink(self.profile / "tsconfig.json"), "missing-user-configuration.json")
         self.assertEqual(digest(self.binary), digest(self.extracted / "bin/yuke"))
 
