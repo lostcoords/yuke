@@ -25,7 +25,7 @@ import { Styles } from "yuke:internal/tui/styles";
 import { STYLES as textViewStyles } from "yuke:internal/tui/text-view";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, Style, View } from "yuke:tui";
+import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 export interface DefaultPaneSlot extends DefaultPaneEntry {
@@ -139,11 +139,7 @@ export class Core {
         screen: {
           text: driver.text,
           fill: driver.fill,
-          resolve: (style: CanvasStyle | undefined) => {
-            if (style === undefined) return {};
-            if (!Array.isArray(style)) return this.styles.resolve(style as string | Style);
-            return Object.freeze(Object.assign({}, ...style.map((item) => this.styles.resolve(item))));
-          },
+          resolve: (style: CanvasStyle | undefined) => this.styles.cell(style),
         },
         size: () => ({ width: driver.width(), height: driver.height() }),
         cursor: driver.cursor,

@@ -175,7 +175,10 @@ declare module "yuke:tui" {
 
   /** What a theme gives for one background. Each part is optional, and what it leaves out keeps its look. */
   export interface ThemeLook {
-    /** The colors of the palette. A group takes the color that it names, also a group that the theme does not name. */
+    /**
+     * The colors of the palette. A group takes the color that it names, also a group that the theme does not name.
+     * A cell without a color takes `fg`.
+     */
     readonly palette?: { readonly [K in PaletteColor]?: number | `#${string}` | "reset" } | undefined;
     /** The changes of style groups. They win per field over each `styles.set`, and `null` deletes a field. */
     readonly groups?: Readonly<Record<string, StylePatch>> | undefined;

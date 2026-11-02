@@ -671,6 +671,48 @@ test("a bad theme throws and adds nothing", () => {
   equal(styles.themes(), []);
 });
 
+test("the palette color fg reaches each cell without a color, and it wins over no color that a style sets", () => {
+  const { state, styles } = themed();
+  styles.set({
+    plain: { bold: true },
+    colored: { fg: 1 },
+    band: { bg: 2 },
+    reset: { fg: "reset" },
+  });
+  const noTheme = [styles.cell(undefined), styles.cell("plain"), styles.cell(["colored", "band"])];
+  styles.addTheme("nord", { dark: { palette: { fg: "#eceff4" } } });
+  styles.setTheme("nord");
+  const fg = "#eceff4";
+  const themedCells = [
+    styles.cell(undefined),
+    styles.cell("unknown"),
+    styles.cell("plain"),
+    styles.cell({ italic: true }),
+    styles.cell(["plain", "band"]),
+    styles.cell(["colored", "band"]),
+    styles.cell("reset"),
+    styles.cell([]),
+  ];
+  state.truecolor = false;
+  equal(
+    [noTheme, themedCells, styles.cell(undefined)],
+    [
+      [{}, { bold: true }, { fg: 1, bg: 2 }],
+      [
+        { fg },
+        { fg },
+        { fg, bold: true },
+        { fg, italic: true },
+        { fg, bold: true, bg: 2 },
+        { fg: 1, bg: 2 },
+        { fg: "reset" },
+        { fg },
+      ],
+      { fg: 255 },
+    ],
+  );
+});
+
 test("a terminal without 24-bit color gets the nearest index for each hex color", () => {
   const { state, styles } = themed();
   state.truecolor = false;

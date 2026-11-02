@@ -10,7 +10,7 @@ import type { Canvas, CanvasStyle, Rect } from "yuke:tui";
 export interface Screen {
   readonly text: (column: number, row: number, text: string, style: TermStyle) => void;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
-  /** Resolve a style, or merge a list of styles: a later style wins per field. */
+  /** The cell style of a style or of a list of styles: a later style wins per field. See `Styles.cell`. */
   readonly resolve: (style: CanvasStyle | undefined) => TermStyle;
 }
 

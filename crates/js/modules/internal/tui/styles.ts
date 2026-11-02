@@ -4,7 +4,7 @@
  * the color depth and the background of the terminal.
  */
 import type { TermColor, TermStyle } from "yuke:internal/native";
-import type { Color, PaletteColor, Style, StylePatch, Theme, ThemeLook } from "yuke:tui";
+import type { CanvasStyle, Color, PaletteColor, Style, StylePatch, Theme, ThemeLook } from "yuke:tui";
 
 type Palette = Readonly<Record<PaletteColor, TermColor>>;
 
@@ -80,6 +80,7 @@ const COLORS = ["fg", "bg", "underlineColor"] as const;
 /** The field of the cell style for each color field: the native style names the underline color `ul`. */
 const CELL_FIELD = { fg: "fg", bg: "bg", underlineColor: "ul" } as const;
 const FLAGS = ["bold", "dim", "italic", "reverse", "underline"] as const;
+const NO_STYLE: TermStyle = Object.freeze({});
 
 /** What the active theme gives for the background now. Without a theme it is the base palette and no group. */
 interface Look {
@@ -234,6 +235,20 @@ export class Styles {
       this.#cache.set(group, style);
     }
     return style;
+  }
+
+  /**
+   * The cell style of a draw: each item of `style` in order, and a later item wins per field. A cell without a color
+   * then takes the palette color `fg`, unless it is `reset`. It comes last, so a band keeps the color of its text.
+   */
+  cell(style: CanvasStyle | undefined): TermStyle {
+    let merged: TermStyle = NO_STYLE;
+    if (Array.isArray(style)) merged = Object.freeze(Object.assign({}, ...style.map((item) => this.resolve(item))));
+    else if (style !== undefined) merged = this.resolve(style as string | Style);
+    if (merged.fg !== undefined) return merged;
+    const fg = this.#lookNow().palette.fg;
+    if (fg === "reset") return merged;
+    return Object.freeze({ ...merged, fg: this.#truecolor() ? fg : indexed(fg) });
   }
 
   #named(name: string, look: Look, seen: Set<string>): TermStyle {

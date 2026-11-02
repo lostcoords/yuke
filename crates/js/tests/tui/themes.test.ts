@@ -5,7 +5,7 @@ import { apply } from "yuke:internal/bundled/themes";
 import { on } from "yuke:internal/facts";
 import { createSurface } from "yuke:internal/tui/surface";
 import { createFrame, equal, type FrameTest, folder, test } from "yuke:test";
-import type { Tui } from "yuke:tui";
+import { Markdown, type Tui } from "yuke:tui";
 import { rows, waitFor } from "./chat.ts";
 import { fakeTerminal, newCore } from "./terminal.ts";
 
@@ -142,6 +142,22 @@ test("the abort of a plugin that owns the active theme and listens gives that pl
   other.abort();
   // The other plugin still hears of the removal of the theme.
   equal([own - before, seen], [0, ["nord", "nord"]]);
+});
+
+test("the palette color fg of a theme reaches the plain text of a Markdown text", () => {
+  using frame = createFrame({ width: 20, height: 2 });
+  const tui = frame.surface("author").tui;
+  const rows = new Markdown("plain **bold**").rows(20);
+  tui.setRoot(() => ({
+    draw: (canvas) => {
+      let column = 0;
+      for (const segment of rows[0]?.segments ?? []) column = canvas.text(column, 0, segment.text, segment.style);
+    },
+  }));
+  tui.styles.addTheme("nord", { dark: { palette: { fg: 3 } } });
+  tui.styles.setTheme("nord");
+  const cells = frame.draw().cells[0];
+  equal([cells?.[0]?.style, cells?.[6]?.style], [{ fg: 3 }, { fg: 3, bold: true }]);
 });
 
 test("a plugin supports a theme for now, and the theme wins once it names the group", () => {
