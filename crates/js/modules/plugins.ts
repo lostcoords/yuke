@@ -747,7 +747,7 @@ export interface AskRequest {
    * The questions, in display order. The ids are unique. The labels of a question are unique, and each question has an
    * option or `other`. Only a question without options has `secret`.
    */
-  readonly questions: readonly Question[];
+  readonly questions: readonly Frozen<Question>[];
 }
 
 /** What `s.jobs.start` takes. */
@@ -768,7 +768,7 @@ export interface JobReport {
 
 /** A running job of a plugin. */
 export interface PluginJob {
-  /** The host aborts this signal at a stop of the job and at the close of the session. */
+  /** The host aborts this signal at a stop of the job and at the close of the session. It stays quiet after `end`. */
   readonly signal: AbortSignal;
   /**
    * End the job. A report goes to the session as one notification, and a turn starts when the session is idle. After a

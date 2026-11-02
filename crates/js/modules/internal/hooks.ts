@@ -664,18 +664,21 @@ function start(
         if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
         const native = startJob(plugin, String(job.id), String(job.label));
         const stopped = new AbortController();
+        const stop = (): void => stopped.abort(new Error("the job stopped"));
         let ended = false;
         const end = (report?: JobReport): void => {
           ended = true;
+          signal.removeEventListener("abort", stop);
           scope.jobs.delete(running);
           native.end(report?.status, report?.text);
         };
         const running: ScopeJob = { stop: native.stop, end };
         scope.jobs.add(running);
+        signal.addEventListener("abort", stop, { once: true });
         void native.stopped.then(() => {
-          if (!ended) stopped.abort(new Error("the job stopped"));
+          if (!ended) stop();
         });
-        return Object.freeze({ signal: AbortSignal.any([signal, stopped.signal]), end });
+        return Object.freeze({ signal: stopped.signal, end });
       },
     }),
     hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
