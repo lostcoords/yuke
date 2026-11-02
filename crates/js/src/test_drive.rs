@@ -19,6 +19,7 @@ use yuke_engine::{
 use yuke_protocol::{Input, InputId, InputKind, InputSource, PendingInput, SessionId};
 
 use crate::ScriptSession;
+use crate::session::InputItem;
 use crate::test_host::TestHost;
 use crate::test_runner::TestError;
 use crate::tools::{Json, MediaFile, forward, store_media};
@@ -93,23 +94,6 @@ impl<'js> FromJs<'js> for EventRound {
     }
 }
 
-/// An item of the blocks of an `input.before` event: a media item or a block.
-enum EventBlock {
-    Media(MediaFile),
-    Block(Block),
-}
-
-impl<'js> FromJs<'js> for EventBlock {
-    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-        let object = Object::from_value(value.clone())?;
-        if object.contains_key("mimeType")? {
-            Ok(EventBlock::Media(MediaFile::from_js(ctx, value)?))
-        } else {
-            Ok(EventBlock::Block(Json::from_js(ctx, value)?.0))
-        }
-    }
-}
-
 /// One hook point of `run` with its event.
 enum Point {
     ToolBefore(ToolCall),
@@ -128,7 +112,7 @@ enum Point {
     InputBefore {
         source: InputSource,
         kind: InputKind,
-        blocks: Vec<EventBlock>,
+        blocks: Vec<InputItem>,
     },
     PromptBuild(Vec<PromptSection>),
 }
@@ -468,8 +452,8 @@ pub(crate) async fn run_point(
             let mut stored_blocks = Vec::with_capacity(blocks.len());
             for item in blocks {
                 match item {
-                    EventBlock::Block(block) => stored_blocks.push(block),
-                    EventBlock::Media(media) => {
+                    InputItem::Block(block) => stored_blocks.push(block),
+                    InputItem::Media(media) => {
                         stored_blocks.extend(stored(&script, vec![media]).await?.into_iter().map(Block::Media));
                     }
                 }

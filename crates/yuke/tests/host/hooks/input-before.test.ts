@@ -103,12 +103,16 @@ test("a throw removes the input, and an error notice names the plugin", async ()
   );
 });
 
-test("a replace keeps a media block, and a later handler sees the bytes of a new media item", async () => {
+test("a replace keeps blocks in order and stores media from bytes and a path", async () => {
   let size = 0;
   const media: PluginSession = (s) => {
     s.hook("input.before", (event) => {
       const added = { mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) };
-      return { replace: { blocks: [...event.blocks, added] } } as InputBeforeAnswer;
+      return {
+        replace: {
+          blocks: [...event.blocks, added, { user_text: "look" }, { mimeType: "image/png", path: "added.png" }],
+        },
+      } as InputBeforeAnswer;
     });
     s.hook("input.before", (event) => {
       const added = event.blocks[1];
@@ -118,6 +122,7 @@ test("a replace keeps a media block, and a later handler sees the bytes of a new
   };
   await using host = await createHost({ plugins: [{ name: "media", session: media }] });
   const session = await host.openSession();
+  await writeFile(`${folder()}/added.png`, new Uint8Array([4, 5]));
 
   const decision = await session.run("input.before", {
     source: { kind: "user" },
@@ -128,10 +133,7 @@ test("a replace keeps a media block, and a later handler sees the bytes of a new
   const blocks = typeof decision === "object" ? decision.replace.blocks : [];
   equal(
     blocks.map((block) => ("bytes" in block ? [block.mimeType, [...block.bytes]] : block)),
-    [
-      ["image/jpeg", [9, 9, 9, 9]],
-      ["image/png", [1, 2, 3]],
-    ],
+    [["image/jpeg", [9, 9, 9, 9]], ["image/png", [1, 2, 3]], { user_text: "look" }, ["image/png", [4, 5]]],
   );
   equal(size, 3);
 });

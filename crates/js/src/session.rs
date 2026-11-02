@@ -462,8 +462,8 @@ impl InputHook for ScriptHooks {
         let answered = items
             .into_iter()
             .map(|item| match item {
-                InputItem::Block(Json(block)) => Answered::Kept(block),
-                InputItem::New(file) => Answered::New(file),
+                InputItem::Block(block) => Answered::Kept(block),
+                InputItem::Media(file) => Answered::New(file),
             })
             .collect();
         Ok(InputDecision::Replace(
@@ -925,23 +925,21 @@ struct PlannedInput {
     blocks: Option<Vec<InputItem>>,
 }
 
-/// One item of the new blocks of an input.
-enum InputItem {
+/// A protocol block or a new media item of an input.
+pub(crate) enum InputItem {
     /// A block, also a media block that the session holds. It crosses as its JSON.
-    Block(Json<Block>),
+    Block(Block),
     /// A new media item: a `ToolMedia`, with a `mimeType`.
-    New(MediaFile),
+    Media(MediaFile),
 }
 
 impl<'js> FromJs<'js> for InputItem {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
-        let media = value
-            .as_object()
-            .is_some_and(|object| object.contains_key("mimeType").unwrap_or(false));
-        if media {
-            MediaFile::from_js(ctx, value).map(Self::New)
+        let object = Object::from_value(value.clone())?;
+        if object.contains_key("mimeType")? {
+            MediaFile::from_js(ctx, value).map(Self::Media)
         } else {
-            Json::from_js(ctx, value).map(Self::Block)
+            Ok(Self::Block(Json::from_js(ctx, value)?.0))
         }
     }
 }
