@@ -1,0 +1,180 @@
+// The themes of a plugin: the bundled plugin `themes`, the picker and the saved choice, and the event `theme.changed`.
+
+import { readTextFile, writeTextFile } from "yuke:fs";
+import { apply } from "yuke:internal/bundled/themes";
+import { on } from "yuke:internal/facts";
+import { createSurface } from "yuke:internal/tui/surface";
+import { createFrame, equal, type FrameTest, folder, test } from "yuke:test";
+import type { Tui } from "yuke:tui";
+import { rows, waitFor } from "./chat.ts";
+import { fakeTerminal, newCore } from "./terminal.ts";
+
+/** Load the plugin in `frame` on the folder `dataDir`, and give the theme author surface and the notices. */
+async function load(frame: FrameTest, dataDir: string): Promise<{ tui: Tui; notices: string[] }> {
+  const surface = frame.surface("themes");
+  const notices: string[] = [];
+  await apply({
+    get: () => surface.tui,
+    dataDir,
+    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
+  } as never);
+  return { tui: frame.surface("author").tui, notices };
+}
+
+/** The color of a text in `accent` on `frame`. */
+function accent(frame: FrameTest, tui: Tui): unknown {
+  tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", { fg: "accent" }) }));
+  return frame.draw().cells[0]?.[0]?.style.fg;
+}
+
+/** Wait until the saved file holds `text`. A save writes its file after the choice. */
+async function saves(dataDir: string, text: string): Promise<void> {
+  await waitFor(async () => {
+    try {
+      return (await readTextFile("theme.json", { baseDir: dataDir })) === text;
+    } catch {
+      return false;
+    }
+  });
+}
+
+const NORD = { dark: { palette: { accent: 1 } } } as const;
+const DAWN = { dark: { palette: { accent: 2 } } } as const;
+
+test("the picker shows a theme at once, esc gives the old one back, and enter saves the new one", async () => {
+  using frame = createFrame({ width: 40, height: 10 });
+  const dataDir = folder();
+  const { tui } = await load(frame, dataDir);
+  tui.styles.addTheme("nord", NORD);
+  tui.styles.addTheme("dawn", DAWN);
+  const base = accent(frame, tui);
+  const open = (): void => {
+    frame.surface("themes").tui.commands.run("themes:open");
+    frame.draw();
+  };
+
+  open();
+  const listed = rows(frame).join("\n");
+  frame.key("down");
+  const preview = tui.styles.theme;
+  frame.key("esc");
+  const canceled = tui.styles.theme;
+
+  // A query without a result keeps the theme from before it.
+  open();
+  frame.key("down z z z");
+  const noResult = tui.styles.theme;
+  frame.key("esc");
+
+  open();
+  frame.key("n o r d enter");
+  await saves(dataDir, '{"name":"nord"}');
+  equal(
+    [
+      ["default", "nord", "dawn"].every((name) => listed.includes(name)),
+      preview,
+      canceled,
+      noResult,
+      tui.styles.theme,
+      accent(frame, tui) !== base,
+    ],
+    [true, "nord", undefined, "nord", "nord", true],
+  );
+});
+
+test("a saved theme applies at the load, also when its plugin comes later, and default clears it", async () => {
+  using frame = createFrame({ width: 40, height: 10 });
+  const dataDir = folder();
+  await writeTextFile("theme.json", JSON.stringify({ name: "nord" }), { baseDir: dataDir });
+  const { tui, notices } = await load(frame, dataDir);
+  const active = tui.styles.theme;
+  tui.styles.addTheme("nord", NORD);
+  const color = accent(frame, tui);
+
+  frame.surface("themes").tui.commands.run("themes:open");
+  frame.draw();
+  frame.key("d e f enter");
+  await saves(dataDir, "{}");
+  equal([active, color, tui.styles.theme, notices], ["nord", 1, undefined, []]);
+});
+
+test("a bad saved file is a notice, and yuke starts without a theme", async () => {
+  using frame = createFrame({ width: 40, height: 10 });
+  const dataDir = folder();
+  await writeTextFile("theme.json", "{", { baseDir: dataDir });
+  const { tui, notices } = await load(frame, dataDir);
+  equal([tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")], [undefined, 1, true]);
+});
+
+test("theme.changed tells each new theme and each new background", () => {
+  const core = newCore(fakeTerminal());
+  const stop = new AbortController();
+  const seen: unknown[] = [];
+  on("author", stop.signal, "theme.changed", (data) => seen.push([data.name, data.background]));
+  on("author", stop.signal, "notice", () => seen.push("a notice"));
+  core.styles.setTheme("nord");
+  core.styles.setTheme("nord");
+  core.event({ type: "background", background: "light" });
+  stop.abort();
+  core.styles.setTheme(undefined);
+  equal(seen, [
+    ["nord", "dark"],
+    ["nord", "light"],
+  ]);
+});
+
+test("the abort of a plugin that owns the active theme and listens gives that plugin no call", () => {
+  const core = newCore(fakeTerminal());
+  const stop = new AbortController();
+  const tui = createSurface(core, "pack", stop.signal);
+  const other = new AbortController();
+  const seen: (string | undefined)[] = [];
+  let own = 0;
+  on("pack", stop.signal, "theme.changed", () => {
+    own += 1;
+    return tui.styles.theme;
+  });
+  on("other", other.signal, "theme.changed", (data) => seen.push(data.name));
+  tui.styles.addTheme("nord", {});
+  tui.styles.setTheme("nord");
+  const before = own;
+  stop.abort();
+  other.abort();
+  // The other plugin still hears of the removal of the theme.
+  equal([own - before, seen], [0, ["nord", "nord"]]);
+});
+
+test("a plugin supports a theme for now, and the theme wins once it names the group", () => {
+  using frame = createFrame({ width: 10, height: 2 });
+  const tui = frame.surface("b").tui;
+  const stop = new AbortController();
+  tui.styles.set({ "b.title": { fg: 9, bold: true } });
+  let undo = (): void => {};
+  const look = (): void => {
+    undo();
+    undo = tui.styles.theme === "nord" ? tui.styles.set({ "b.title": { fg: 3 } }) : () => {};
+  };
+  on("b", stop.signal, "theme.changed", look);
+  const color = (): unknown => {
+    tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", "b.title") }));
+    return frame.draw().cells[0]?.[0]?.style;
+  };
+  const before = color();
+  tui.styles.addTheme("nord", {});
+  tui.styles.setTheme("nord");
+  const supported = color();
+  tui.styles.addTheme("nord", { dark: { groups: { "b.title": { fg: 5 } } } });
+  const native = color();
+  tui.styles.setTheme(undefined);
+  const left = color();
+  stop.abort();
+  equal(
+    [before, supported, native, left],
+    [
+      { fg: 9, bold: true },
+      { fg: 3, bold: true },
+      { fg: 5, bold: true },
+      { fg: 9, bold: true },
+    ],
+  );
+});

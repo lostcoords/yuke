@@ -541,3 +541,160 @@ test("one set changes many groups with one frame and one disposer, and a bad gro
   assert(throws(() => styles.set({ c: { fg: 3 }, d: { color: 1 } })) instanceof TypeError);
   equal([styles.resolve("c"), asked], [{}, 2]);
 });
+
+/** Styles on a dark 24-bit terminal, with the background and the depth that a test can change. */
+function themed() {
+  const state = { truecolor: true, background: "dark" as "dark" | "light", changes: 0 };
+  const styles = new Styles(
+    () => state.truecolor,
+    () => state.background,
+    () => {},
+    () => {
+      state.changes += 1;
+    },
+  );
+  return { state, styles };
+}
+
+test("a theme changes nothing until it is active, and its groups win over each set per field", () => {
+  const { styles } = themed();
+  styles.set({ title: { fg: 1, bold: true } });
+  styles.addTheme("nord", { dark: { groups: { title: { fg: 2, underline: true } } } });
+  const before = styles.resolve("title");
+  styles.setTheme("nord");
+  const active = styles.resolve("title");
+  styles.set({ title: { fg: 3, italic: true } });
+  const later = styles.resolve("title");
+  styles.setTheme(undefined);
+  equal(
+    [before, active, later, styles.resolve("title")],
+    [
+      { fg: 1, bold: true },
+      { fg: 2, bold: true, underline: true },
+      { fg: 2, bold: true, italic: true, underline: true },
+      { fg: 3, bold: true, italic: true },
+    ],
+  );
+});
+
+test("a group that a theme does not name follows the palette of the theme, also through a link", () => {
+  const { styles } = themed();
+  styles.set({ "b.title": { fg: "accent", bold: true }, "b.link": { link: "b.title" }, "b.fixed": { fg: "#ff0000" } });
+  styles.addTheme("nord", { dark: { palette: { accent: "#88c0d0" } } });
+  styles.setTheme("nord");
+  equal(
+    [styles.resolve("b.title"), styles.resolve("b.link"), styles.resolve("b.fixed")],
+    [{ fg: "#88c0d0", bold: true }, { fg: "#88c0d0", bold: true }, { fg: "#ff0000" }],
+  );
+});
+
+test("a theme gives the look of the background, and one look serves both", () => {
+  const { state, styles } = themed();
+  styles.set({ title: { fg: "accent" } });
+  styles.addTheme("two", { dark: { palette: { accent: 1 } }, light: { palette: { accent: 2 } } });
+  styles.addTheme("one", { light: { palette: { accent: 3 } } });
+  styles.setTheme("two");
+  const dark = styles.resolve("title").fg;
+  state.background = "light";
+  const light = styles.resolve("title").fg;
+  styles.setTheme("one");
+  const onlyLight = styles.resolve("title").fg;
+  state.background = "dark";
+  equal([dark, light, onlyLight, styles.resolve("title").fg], [1, 2, 3, 3]);
+});
+
+test("a theme inherits by name in any order, wins per field, and a cycle stops", () => {
+  const { styles } = themed();
+  styles.setTheme("mine");
+  styles.addTheme("mine", {
+    inherits: "nord",
+    dark: { palette: { danger: 7 }, groups: { title: { fg: 2, bold: null } } },
+  });
+  styles.addTheme("nord", {
+    dark: { palette: { accent: 5, danger: 6 }, groups: { title: { fg: 1, bold: true, underline: true } } },
+  });
+  styles.set({ a: { fg: "accent" }, d: { fg: "danger" } });
+  equal([styles.resolve("title"), styles.resolve("a").fg, styles.resolve("d").fg], [{ fg: 2, underline: true }, 5, 7]);
+  styles.addTheme("nord", { inherits: "mine", dark: { palette: { accent: 8 } } });
+  equal(styles.resolve("a").fg, 8);
+});
+
+test("the newest theme of a name wins, and its remover gives the older one back", () => {
+  const { state, styles } = themed();
+  styles.set({ a: { fg: "accent" } });
+  styles.setTheme("nord");
+  const first = state.changes;
+  styles.addTheme("nord", { dark: { palette: { accent: 1 } } });
+  const undo = styles.addTheme("nord", { dark: { palette: { accent: 2 } } });
+  const newest = styles.resolve("a").fg;
+  undo();
+  undo();
+  equal([newest, styles.resolve("a").fg, styles.themes(), state.changes - first], [2, 1, ["nord"], 3]);
+});
+
+test("the change of the look of the active theme is told once, and another theme is not told", () => {
+  const { state, styles } = themed();
+  styles.addTheme("other", {});
+  equal(state.changes, 0);
+  styles.setTheme("nord");
+  styles.setTheme("nord");
+  equal(state.changes, 1);
+  const undo = styles.addTheme("nord", {});
+  equal(state.changes, 2);
+  styles.addTheme("base", {});
+  equal(state.changes, 2);
+  undo();
+  equal(state.changes, 3);
+  styles.setTheme(undefined);
+  equal(state.changes, 4);
+});
+
+test("a bad theme throws and adds nothing", () => {
+  const { styles } = themed();
+  const bad: unknown[] = [
+    null,
+    { inherits: "" },
+    { dark: null },
+    { dark: { palette: { nope: 1 } } },
+    { dark: { palette: { accent: "danger" } } },
+    { dark: { palette: { accent: "red" } } },
+    { dark: { groups: { "": {} } } },
+    { dark: { groups: { a: { color: 1 } } } },
+    { dakr: {} },
+    { dark: { pallete: {} } },
+  ];
+  for (const theme of bad) {
+    assert(throws(() => styles.addTheme("bad", theme as never)) instanceof TypeError, JSON.stringify(theme));
+  }
+  assert(throws(() => styles.addTheme("", {})) instanceof TypeError);
+  assert(throws(() => styles.setTheme("")) instanceof TypeError);
+  equal(styles.themes(), []);
+});
+
+test("a terminal without 24-bit color gets the nearest index for each hex color", () => {
+  const { state, styles } = themed();
+  state.truecolor = false;
+  styles.set({
+    red: { fg: "#ff0000" },
+    white: { fg: "#ffffff" },
+    gray: { bg: "#808080" },
+    mid: { fg: "#87afd7" },
+    index: { fg: 9 },
+    reset: { fg: "reset" },
+    themed: { fg: "accent" },
+  });
+  styles.addTheme("hex", { dark: { palette: { accent: "#000000" } } });
+  styles.setTheme("hex");
+  equal(
+    [
+      styles.resolve("red").fg,
+      styles.resolve("white").fg,
+      styles.resolve("gray").bg,
+      styles.resolve("mid").fg,
+      styles.resolve("index").fg,
+      styles.resolve("reset").fg,
+      styles.resolve("themed").fg,
+    ],
+    [196, 231, 244, 110, 9, "reset", 16],
+  );
+});

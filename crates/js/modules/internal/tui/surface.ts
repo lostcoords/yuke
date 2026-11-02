@@ -24,6 +24,7 @@ import type {
   StatusEntry,
   StatusItem,
   StylePatch,
+  Theme,
   Tui,
   View,
   ViewFactory,
@@ -216,6 +217,13 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
     styles: Object.freeze({
       set: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.set(groups))),
+      addTheme: live((name: string, theme: Theme): (() => void) => scope.own(core.styles.addTheme(name, theme))),
+      themes: live((): readonly string[] => core.styles.themes()),
+      get theme(): string | undefined {
+        scope.check();
+        return core.styles.theme;
+      },
+      setTheme: live((name: string | undefined): void => core.styles.setTheme(name)),
     }),
     status: Object.freeze({
       set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),

@@ -190,3 +190,14 @@ test("the rows of a picker have a default look that a plugin changes", () => {
     ],
   );
 });
+
+test("the select option tells each change of the selection, and a query without a result gives nothing", () => {
+  const seen: (string | undefined)[] = [];
+  const view = picker(["alpha", "beta"], [], { select: (item) => seen.push(item?.name) });
+  using frame = createFrame({ width: 10, height: 3 }, () => view);
+  const first = [...seen];
+  frame.key("down");
+  frame.key("down");
+  frame.key("z");
+  equal([first, seen], [["alpha"], ["alpha", "beta", undefined]]);
+});

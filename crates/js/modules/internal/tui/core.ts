@@ -4,6 +4,7 @@
  * and along the focus path. An Escape that nothing takes closes the top modal.
  */
 
+import { announce } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import type { TermStyle } from "yuke:internal/native";
 import type { TermEvent } from "yuke:internal/term";
@@ -82,7 +83,9 @@ export class Core {
     this.startup = frozen(driver.startup());
     const frame = (): void => driver.requestFrame();
     const report = (source: string, text: string): void => this.notices.add("error", source, text);
-    this.styles = new Styles(driver.truecolor, driver.background, frame);
+    const themeChanged = (): void =>
+      announce("theme.changed", { name: this.styles.theme, background: driver.background() });
+    this.styles = new Styles(driver.truecolor, driver.background, frame, themeChanged);
     // The widgets of `yuke:tui` have their look without a plugin.
     this.styles.set({
       ...dialogStyles,
@@ -234,8 +237,10 @@ export class Core {
         if (event.snapshot !== undefined) this.restore(event.snapshot);
         else this.#startWaits = !this.panes.start();
         return;
-      case "resize":
       case "background":
+        announce("theme.changed", { name: this.styles.theme, background: event.background });
+        return;
+      case "resize":
         return;
     }
   }

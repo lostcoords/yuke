@@ -59,6 +59,13 @@ const BUNDLED: &[Bundled] = &[
         uses: &[],
         provides: &[],
     },
+    // The saved theme comes before the plugins that draw, so their first frame has its look.
+    Bundled {
+        name: "themes",
+        module: "yuke:internal/bundled/themes",
+        uses: &[],
+        provides: &[],
+    },
     Bundled {
         name: "chat",
         module: "yuke:internal/bundled/chat",

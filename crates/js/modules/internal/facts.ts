@@ -9,11 +9,21 @@ import type { InteractionId, SessionId, SessionState } from "yuke:protocol";
 
 type Event = keyof HostEvents;
 
-const EVENTS: readonly string[] = ["session.update", "session.opened", "session.closed", "notice"] satisfies Event[];
+const EVENTS: readonly string[] = [
+  "session.update",
+  "session.opened",
+  "session.closed",
+  "notice",
+  "theme.changed",
+] satisfies Event[];
+
+/** The event that starts in this runtime. Its listeners need no watch of the host. */
+const LOCAL: Event = "theme.changed";
 
 interface Listener {
   readonly plugin: string;
   readonly event: Event;
+  readonly signal: AbortSignal;
   readonly call: (data: never) => void;
 }
 
@@ -66,6 +76,17 @@ function deliver(batch: readonly (readonly [number, Fact])[]): void {
   }
 }
 
+/**
+ * Give `data` to the listeners of `event`, for a fact that starts in this runtime and not in the host. The abort of a
+ * plugin can cause the fact, so a listener of that plugin gets nothing.
+ */
+export function announce<K extends Event>(event: K, data: HostEvents[K]): void {
+  const shown = frozen(data);
+  for (const listener of [...listeners]) {
+    if (listener.event === event && listeners.has(listener) && !listener.signal.aborted) call(listener, shown);
+  }
+}
+
 /** Wait until the listeners receive each fact queued before this call. */
 export async function flush(): Promise<void> {
   if (listening) await factsFlush();
@@ -73,7 +94,7 @@ export async function flush(): Promise<void> {
 
 /** Remove `listener`. The last removal ends the watch. */
 function remove(listener: Listener): void {
-  if (!listeners.delete(listener) || listeners.size > 0) return;
+  if (!listeners.delete(listener) || key === 0 || [...listeners].some((other) => other.event !== LOCAL)) return;
   factsRelease();
   key = 0;
   open.clear();
@@ -89,16 +110,18 @@ export function on<K extends Event>(
   if (!EVENTS.includes(event)) throw new TypeError(`on: '${String(event)}' is not an event`);
   if (typeof listener !== "function") throw new TypeError("on: the listener is no function");
   if (signal.aborted) return () => {};
-  const entry: Listener = { plugin, event, call: listener as (data: never) => void };
+  const entry: Listener = { plugin, event, signal, call: listener as (data: never) => void };
   listeners.add(entry);
-  if (!listening) {
-    factsListen(deliver);
-    listening = true;
-  }
-  if (key === 0) {
-    lastKey += 1;
-    key = lastKey;
-    factsWatch(key);
+  if (event !== LOCAL) {
+    if (!listening) {
+      factsListen(deliver);
+      listening = true;
+    }
+    if (key === 0) {
+      lastKey += 1;
+      key = lastKey;
+      factsWatch(key);
+    }
   }
   const stop = (): void => {
     signal.removeEventListener("abort", stop);

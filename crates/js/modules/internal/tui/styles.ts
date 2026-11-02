@@ -1,9 +1,10 @@
 /**
  * The style groups of the terminal interface. Each `set` adds a layer of groups, and the newest layer wins per field.
- * A color can name the base palette, which follows the color depth and the background of the terminal.
+ * The active theme sits above each layer, and it changes the palette too. A color can name the palette, which follows
+ * the color depth and the background of the terminal.
  */
 import type { TermColor, TermStyle } from "yuke:internal/native";
-import type { Color, PaletteColor, Style, StylePatch } from "yuke:tui";
+import type { Color, PaletteColor, Style, StylePatch, Theme, ThemeLook } from "yuke:tui";
 
 type Palette = Readonly<Record<PaletteColor, TermColor>>;
 
@@ -80,23 +81,126 @@ const COLORS = ["fg", "bg", "underlineColor"] as const;
 const CELL_FIELD = { fg: "fg", bg: "bg", underlineColor: "ul" } as const;
 const FLAGS = ["bold", "dim", "italic", "reverse", "underline"] as const;
 
+/** What the active theme gives for the background now. Without a theme it is the base palette and no group. */
+interface Look {
+  readonly palette: Palette;
+  readonly groups: ReadonlyMap<string, StylePatch>;
+}
+
+interface NamedTheme {
+  readonly name: string;
+  readonly theme: Theme;
+}
+
 export class Styles {
   readonly #truecolor: () => boolean;
   readonly #background: () => "dark" | "light";
   readonly #changed: () => void;
+  readonly #themeChanged: () => void;
+  readonly #themes: NamedTheme[] = [];
+  #active: string | undefined;
   readonly #layers: ReadonlyMap<string, StylePatch>[] = [];
   readonly #cache = new Map<string, TermStyle>();
-  /** The palette of the cached styles. */
-  #palette: Palette | undefined;
+  /** The look of the cached styles, and the base palette that it starts from. */
+  #look: Look | undefined;
+  #base: Palette | undefined;
 
   /**
    * `truecolor` and `background` give the state of the terminal, which picks the base palette. `changed` asks for a
-   * frame after each change.
+   * frame after each change. `themeChanged` tells each change of the active theme or of its look.
    */
-  constructor(truecolor: () => boolean, background: () => "dark" | "light", changed: () => void) {
+  constructor(
+    truecolor: () => boolean,
+    background: () => "dark" | "light",
+    changed: () => void,
+    themeChanged: () => void = () => {},
+  ) {
     this.#truecolor = truecolor;
     this.#background = background;
     this.#changed = changed;
+    this.#themeChanged = themeChanged;
+  }
+
+  /** The name of the active theme. A name that no theme has yet applies when that theme comes. */
+  get theme(): string | undefined {
+    return this.#active;
+  }
+
+  /** The names of the themes, each one once, in the order they came. */
+  themes(): readonly string[] {
+    return [...new Set(this.#themes.map((entry) => entry.name))];
+  }
+
+  /** Make `name` the active theme. `undefined` gives the look without a theme. */
+  setTheme(name: string | undefined): void {
+    if (name !== undefined && (typeof name !== "string" || name === "")) {
+      throw new TypeError("a theme has a name that is not empty");
+    }
+    if (name === this.#active) return;
+    this.#active = name;
+    this.#lookChanged();
+    this.#themeChanged();
+  }
+
+  /** Add `theme` as `name`, and return its remover. The newest theme of a name wins. A bad field throws. */
+  addTheme(name: string, theme: Theme): () => void {
+    if (typeof name !== "string" || name === "") throw new TypeError("a theme has a name that is not empty");
+    const entry: NamedTheme = { name, theme: checkedTheme(theme) };
+    this.#themes.push(entry);
+    this.#themesChanged(this.#chain().includes(entry));
+    return () => {
+      const at = this.#themes.indexOf(entry);
+      if (at < 0) return;
+      const active = this.#chain().includes(entry);
+      this.#themes.splice(at, 1);
+      this.#themesChanged(active);
+    };
+  }
+
+  #themesChanged(active: boolean): void {
+    if (!active) return;
+    this.#lookChanged();
+    this.#themeChanged();
+  }
+
+  #lookChanged(): void {
+    this.#look = undefined;
+    this.#cache.clear();
+    this.#changed();
+  }
+
+  /** The active theme after the themes that it inherits, the base first. A cycle stops at the first repeated name. */
+  #chain(): readonly NamedTheme[] {
+    const chain: NamedTheme[] = [];
+    const seen = new Set<string>();
+    for (let name = this.#active; name !== undefined && !seen.has(name); ) {
+      seen.add(name);
+      const entry = this.#themes.findLast((candidate) => candidate.name === name);
+      if (entry === undefined) break;
+      chain.unshift(entry);
+      name = entry.theme.inherits;
+    }
+    return chain;
+  }
+
+  /** The look for the color depth and the background now. A new base palette drops the cached styles. */
+  #lookNow(): Look {
+    const background = this.#background();
+    const base = PALETTES[this.#truecolor() ? "truecolor" : "256"][background];
+    if (this.#look !== undefined && base === this.#base) return this.#look;
+    const palette: Record<string, TermColor> = { ...base };
+    const groups = new Map<string, StylePatch>();
+    for (const { theme } of this.#chain()) {
+      // A theme with one mode gives it for both.
+      const look = theme[background] ?? theme[background === "dark" ? "light" : "dark"];
+      Object.assign(palette, look?.palette);
+      for (const [name, patch] of Object.entries(look?.groups ?? {}))
+        groups.set(name, { ...groups.get(name), ...patch });
+    }
+    this.#base = base;
+    this.#look = { palette: palette as Palette, groups };
+    this.#cache.clear();
+    return this.#look;
   }
 
   /** Change `groups`, and return the disposer of the change. A bad name or field throws and changes nothing. */
@@ -121,41 +225,39 @@ export class Styles {
 
   /** The cell style of the group `group`, or of the style object `group`. A group with no layer has no field. */
   resolve(group: string | Style): TermStyle {
-    const palette = PALETTES[this.#truecolor() ? "truecolor" : "256"][this.#background()];
-    if (palette !== this.#palette) {
-      this.#cache.clear();
-      this.#palette = palette;
-    }
-    if (typeof group !== "string") return this.#cell(checked(group, false) as Style, palette, new Set());
+    const look = this.#lookNow();
+    if (typeof group !== "string") return this.#cell(checked(group, false) as Style, look, new Set());
     // Only a whole resolve enters the cache: a group inside a link cycle depends on the group where the cycle starts.
     let style = this.#cache.get(group);
     if (style === undefined) {
-      style = this.#named(group, palette, new Set());
+      style = this.#named(group, look, new Set());
       this.#cache.set(group, style);
     }
     return style;
   }
 
-  #named(name: string, palette: Palette, seen: Set<string>): TermStyle {
+  #named(name: string, look: Look, seen: Set<string>): TermStyle {
     // A link cycle stops at the first repeated group.
     if (seen.has(name)) return {};
     seen.add(name);
     const fields: Record<string, unknown> = {};
-    for (const layer of this.#layers) {
+    for (const layer of [...this.#layers, look.groups]) {
       for (const [field, value] of Object.entries(layer.get(name) ?? {})) {
         if (value === null) delete fields[field];
         else if (value !== undefined) fields[field] = value;
       }
     }
-    return this.#cell(fields as Style, palette, seen);
+    return this.#cell(fields as Style, look, seen);
   }
 
   /** The cell style of `style`: its link first, then its own fields, with each color from the palette. */
-  #cell(style: Style, palette: Palette, seen: Set<string>): TermStyle {
-    const cell: Record<string, unknown> = style.link === undefined ? {} : { ...this.#named(style.link, palette, seen) };
+  #cell(style: Style, look: Look, seen: Set<string>): TermStyle {
+    const cell: Record<string, unknown> = style.link === undefined ? {} : { ...this.#named(style.link, look, seen) };
     for (const field of COLORS) {
       const color = style[field];
-      if (color !== undefined) cell[CELL_FIELD[field]] = isPaletteColor(color) ? palette[color] : color;
+      if (color === undefined) continue;
+      const value = isPaletteColor(color) ? look.palette[color] : color;
+      cell[CELL_FIELD[field]] = this.#truecolor() ? value : indexed(value);
     }
     for (const field of FLAGS) {
       const flag = style[field];
@@ -163,6 +265,67 @@ export class Styles {
     }
     return Object.freeze(cell) as TermStyle;
   }
+}
+
+/** The steps of the color cube of the 256-color palette, which starts at index 16. */
+const CUBE = [0, 95, 135, 175, 215, 255];
+
+/** `color` for a terminal without 24-bit color: a `#rrggbb` becomes the nearest index of the cube or the grays. */
+function indexed(color: TermColor): TermColor {
+  if (typeof color !== "string" || !color.startsWith("#")) return color;
+  const parts = [1, 3, 5].map((at) => Number.parseInt(color.slice(at, at + 2), 16));
+  const distance = (others: readonly number[]): number =>
+    others.reduce((sum, other, at) => sum + (other - (parts[at] as number)) ** 2, 0);
+  const steps = parts.map((part) =>
+    CUBE.reduce((best, step, at) => (Math.abs(step - part) < Math.abs((CUBE[best] as number) - part) ? at : best), 0),
+  );
+  const [red, green, blue] = steps as [number, number, number];
+  const gray = Math.min(23, Math.max(0, Math.round((parts.reduce((sum, part) => sum + part, 0) / 3 - 8) / 10)));
+  const level = 8 + 10 * gray;
+  const cube = distance(steps.map((step) => CUBE[step] as number));
+  return cube <= distance([level, level, level]) ? 16 + 36 * red + 6 * green + blue : 232 + gray;
+}
+
+/** A copy of `theme` with its fields checked. */
+function checkedTheme(theme: Theme): Theme {
+  if (typeof theme !== "object" || theme === null) throw new TypeError("a theme is an object");
+  knownFields(theme, ["inherits", "dark", "light"], "theme");
+  const { inherits, dark, light } = theme;
+  if (inherits !== undefined && (typeof inherits !== "string" || inherits === "")) {
+    throw new TypeError("the theme field inherits names a theme");
+  }
+  return Object.freeze({
+    ...(inherits === undefined ? {} : { inherits }),
+    ...(dark === undefined ? {} : { dark: checkedLook(dark) }),
+    ...(light === undefined ? {} : { light: checkedLook(light) }),
+  });
+}
+
+/** Throw for a field of `value` outside `fields`, so a typing error in a theme does not pass in silence. */
+function knownFields(value: object, fields: readonly string[], what: string): void {
+  for (const field of Object.keys(value)) {
+    if (!fields.includes(field)) throw new TypeError(`'${field}' is no ${what} field`);
+  }
+}
+
+function checkedLook(look: ThemeLook): ThemeLook {
+  if (typeof look !== "object" || look === null) throw new TypeError("the look of a theme is an object");
+  knownFields(look, ["palette", "groups"], "theme look");
+  const palette = Object.entries(look.palette ?? {});
+  for (const [name, color] of palette) {
+    if (!isPaletteColor(name)) throw new TypeError(`'${name}' is no palette color`);
+    if (!isColor(color) || isPaletteColor(color)) {
+      throw new TypeError(`the palette color ${name} is an index from 0 to 255, #rrggbb, or reset`);
+    }
+  }
+  const groups = Object.entries(look.groups ?? {}).map(([name, patch]) => {
+    if (name === "") throw new TypeError("a style group has a name that is not empty");
+    return [name, checked(patch, true)] as const;
+  });
+  return Object.freeze({
+    palette: Object.freeze(Object.fromEntries(palette)),
+    groups: Object.freeze(Object.fromEntries(groups)),
+  });
 }
 
 /** A copy of `value` with its fields checked. `nulls` allows `null`, which a patch uses to delete a field. */

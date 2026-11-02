@@ -325,6 +325,12 @@ export interface HostEvents {
    * before a listener: `tui.notices`.
    */
   readonly notice: Frozen<NoticeParams>;
+  /**
+   * The active theme or its look changed: another name, a change of that theme, or another background of the terminal.
+   * Only the terminal interface sends it. A listener gets nothing for the theme from before it, so read
+   * `tui.styles.theme` at its start.
+   */
+  readonly "theme.changed": { readonly name: string | undefined; readonly background: "dark" | "light" };
 }
 
 /**

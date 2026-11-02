@@ -173,6 +173,22 @@ declare module "yuke:tui" {
   /** A change of a style group: a field changes, `null` deletes it, and a missing field stays. */
   export type StylePatch = { readonly [K in keyof Style]?: Style[K] | null };
 
+  /** What a theme gives for one background. Each part is optional, and what it leaves out keeps its look. */
+  export interface ThemeLook {
+    /** The colors of the palette. A group takes the color that it names, also a group that the theme does not name. */
+    readonly palette?: { readonly [K in PaletteColor]?: number | `#${string}` | "reset" } | undefined;
+    /** The changes of style groups. They win per field over each `styles.set`, and `null` deletes a field. */
+    readonly groups?: Readonly<Record<string, StylePatch>> | undefined;
+  }
+
+  /** A theme. With one look it gives that look for both backgrounds. */
+  export interface Theme {
+    /** The name of a theme below this one. This theme wins per field and per color. */
+    readonly inherits?: string | undefined;
+    readonly dark?: ThemeLook | undefined;
+    readonly light?: ThemeLook | undefined;
+  }
+
   /** A command: a key binding names it, and `commands.list` gives it to a list of commands, such as the slash list. */
   export interface Command {
     /** The name: letters, digits, and `:`, `-`, `_`, `.`. */
@@ -742,6 +758,8 @@ declare module "yuke:tui" {
     readonly choose: (item: T) => void;
     /** Esc cancels. The owner closes the picker. */
     readonly cancel: () => void;
+    /** Called after each change of the selection, also the first one. A query without a result gives `undefined`. */
+    readonly select?: ((item: T | undefined) => void) | undefined;
   }
 
   /**
@@ -935,6 +953,14 @@ declare module "yuke:tui" {
     readonly styles: {
       /** Change style groups, and return the disposer of the change. A later call wins per field. */
       readonly set: (groups: Readonly<Record<string, StylePatch>>) => () => void;
+      /** Add a theme, and return its remover. It applies nothing until it is active. The newest of a name wins. */
+      readonly addTheme: (name: string, theme: Theme) => () => void;
+      /** The names of the themes. */
+      readonly themes: () => readonly string[];
+      /** The name of the active theme. `ctx.on("theme.changed")` tells each change. */
+      readonly theme: string | undefined;
+      /** Make `name` the active theme, also before that theme comes. `undefined` gives the look without a theme. */
+      readonly setTheme: (name: string | undefined) => void;
     };
     /**
      * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from
