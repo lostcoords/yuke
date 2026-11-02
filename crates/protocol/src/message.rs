@@ -122,7 +122,7 @@ pub enum ClientRequest {
     #[serde(rename = "job/list")]
     ListJobs(SessionParams),
     /// Stop a running background job, and wait for its end. The `job` update with the end comes before the answer. A
-    /// stopped job sends no end input. Result: [`EmptyResult`].
+    /// stopped job sends no report. Result: [`EmptyResult`].
     #[serde(rename = "job/stop")]
     StopJob(StopJobParams),
     /// Use `accessToken` for each model request of a provider with a login flow, from the next attempt on, also in a

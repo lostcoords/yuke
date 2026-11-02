@@ -1,5 +1,5 @@
 //! The child processes of the tools: the commands of `exec` and the process jobs. The processes run on the tokio runtime
-//! of the consumer, so a job outlives a reload of the JavaScript.
+//! of the consumer, so a process job outlives a reload of the JavaScript.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
@@ -19,9 +19,9 @@ use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use yuke_engine::CancellationToken;
-use yuke_protocol::{Input, JobKind, JobState};
+use yuke_protocol::{JobKind, JobState};
 
-use crate::jobs::{JobEnd, Jobs, RunningJob};
+use crate::jobs::{Jobs, RunningJob, report_input};
 use crate::tools::SessionHost;
 
 /// The plugin name of the input that a background job sends when it ends.
@@ -43,7 +43,7 @@ const GROUP_POLL: Duration = Duration::from_millis(20);
 /// The bytes that one read of the output takes.
 const CHUNK: usize = 64 * 1024;
 
-/// The lines of the log that the end message of a job shows.
+/// The lines of the log that the report of a job shows.
 const TAIL_LINES: usize = 20;
 
 /// The parameters for one command call.
@@ -74,6 +74,39 @@ impl fmt::Debug for Processes {
         f.debug_struct("Processes")
             .field("folder", &self.folder)
             .finish_non_exhaustive()
+    }
+}
+
+/// How a process job ended.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct JobEnd {
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    /// A stop ended the job.
+    stopped: bool,
+}
+
+impl JobEnd {
+    /// The end in words, for example `exited 0`.
+    fn label(self) -> String {
+        match self {
+            JobEnd { stopped: true, .. } => "stopped".to_owned(),
+            JobEnd {
+                exit_code: Some(code), ..
+            } => format!("exited {code}"),
+            JobEnd {
+                signal: Some(signal), ..
+            } => format!("signal {signal}"),
+            JobEnd { .. } => "failed".to_owned(),
+        }
+    }
+
+    fn state(self) -> JobState {
+        if self.stopped {
+            JobState::Stopped
+        } else {
+            JobState::Ended
+        }
     }
 }
 
@@ -128,7 +161,7 @@ impl Processes {
             last_job: AtomicU32::new(
                 u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
             ),
-            jobs: Jobs::new(starts_jobs),
+            jobs: Jobs::new(starts_jobs, Handle::current()),
         }
     }
 
@@ -202,7 +235,7 @@ impl Processes {
         let job = JobTask {
             job: self
                 .jobs
-                .add(owner.as_ref(), id.clone(), label.clone(), command.clone(), log.clone())?,
+                .add_process(owner.as_ref(), id.clone(), label.clone(), command.clone(), log.clone())?,
             label: label.clone(),
             command,
             log: log.clone(),
@@ -247,7 +280,7 @@ impl JobTask {
             Ok(spawned) => spawned,
             Err(error) => {
                 answer_start(started, Err(error));
-                return self.job.end(None);
+                return;
             }
         };
         self.job.set_group(Some(group));
@@ -255,18 +288,15 @@ impl JobTask {
         answer_start(started, Ok(()));
         // A stop that came during the spawn ends the process here, with the grace.
         let end = wait_job(child, group, &self.job.stop).await;
-        // A process that ended by itself sends its end message, also when a close came after the end. A stop of this
-        // one job sends none.
+        // A process that ended by itself sends its report, also when a close came after the end. A stop of this one
+        // job sends none.
         let silenced = self.job.set_group(None);
         owner.job_changed(self.protocol_job(end.state(), end.exit_code));
         if !end.stopped && !silenced {
-            let text = end_message(&self.job.id, &end.label(), self.log.clone()).await;
-            let display = format!("{} ended", self.job.id);
-            owner
-                .accept_input(Input::notification(JOBS_SOURCE, &display, &text))
-                .await;
+            let text = end_text(self.log.clone()).await;
+            let input = report_input(JOBS_SOURCE, &self.job.id, &end.label(), &text);
+            owner.accept_input(input).await;
         }
-        self.job.end(Some(end));
     }
 
     /// The job in `state`, for its owner.
@@ -786,8 +816,8 @@ async fn wait_job(mut child: Child, group: Pid, stop: &CancellationToken) -> Job
     }
 }
 
-/// The end message of a job for the model: the end, the log file, and the last lines of the log.
-async fn end_message(id: &str, label: &str, log: PathBuf) -> String {
+/// The text of the report of a process job: the log file and the last lines of the log.
+async fn end_text(log: PathBuf) -> String {
     let shown = log.display().to_string();
     let tail = tokio::task::spawn_blocking(move || last_lines(&log))
         .await
@@ -795,7 +825,7 @@ async fn end_message(id: &str, label: &str, log: PathBuf) -> String {
         .and_then(Result::ok)
         .filter(|tail| !tail.is_empty())
         .unwrap_or_else(|| "[no output]".to_owned());
-    format!("{id} {label}.\nLog: {shown}\n{tail}")
+    format!("Log: {shown}\n{tail}")
 }
 
 /// The last lines of the file at `path`, from its last 8 KiB.

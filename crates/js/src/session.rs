@@ -2,6 +2,7 @@
 //! `session` exports define. Its hooks are the hooks that the `session` exports add.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::error::Error as StdError;
 use std::fmt::Display;
 use std::rc::Rc;
@@ -53,7 +54,7 @@ impl std::fmt::Debug for ScriptSession {
 
 impl Handle {
     /// Open the session of `host`: start `session(s)` of each loaded plugin. The open does not wait for them;
-    /// [`ScriptSession::tools`] does. Keep `host` for the whole session: its jobs belong to it.
+    /// [`ScriptSession::tools`] does. Keep `host` for the whole session: its jobs report to it.
     ///
     /// # Errors
     ///
@@ -63,6 +64,7 @@ impl Handle {
         let folder = host.folder();
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
+        let job_host = Arc::clone(&host);
         let ask_host = Arc::clone(&host);
         let request_host = Arc::clone(&host);
         let model_host = Arc::clone(&host);
@@ -75,6 +77,7 @@ impl Handle {
                     open,
                     session_id,
                     folder,
+                    start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
                     request: caught(&ctx, request_function(&ctx, request_host))?,
                     model: caught(
@@ -480,12 +483,53 @@ struct OpenRequest<'js> {
     open: u64,
     session_id: String,
     folder: String,
+    /// The native `startJob(plugin, id, label)` of the session.
+    start_job: Function<'js>,
     /// The native `ask(source, question)` of the session.
     ask: Function<'js>,
     /// The native `request(source, request, data)` of the session.
     request: Function<'js>,
     /// The native `model()` of the session, which gives the model that the settings name now.
     model: Function<'js>,
+}
+
+/// The native `startJob(plugin, id, label)` of the session of `host`. It answers `stopped`, a promise that settles at a stop
+/// or at the end of the job, `stop()`, and `end(status, text)`. A garbage collection of `end` ends the job with no update.
+fn start_job_function<'js>(
+    ctx: &Ctx<'js>,
+    registry: &Registry,
+    host: Arc<dyn SessionHost>,
+) -> rquickjs::Result<Function<'js>> {
+    let processes = Arc::clone(&registry.processes);
+    Function::new(
+        ctx.clone(),
+        move |ctx: Ctx<'js>, plugin: String, id: String, label: String| -> rquickjs::Result<Object<'js>> {
+            let job = processes
+                .jobs()
+                .start_plugin(Arc::clone(&host), plugin, id, label)
+                .map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
+            let (stopped, stop) = (job.stop(), job.stop());
+            let job = RefCell::new(Some(job));
+            let object = Object::new(ctx.clone())?;
+            object.set(
+                "stopped",
+                Promise::wrap_future(&ctx, async move {
+                    stopped.cancelled().await;
+                    Ok::<_, rquickjs::Error>(())
+                })?,
+            )?;
+            object.set("stop", Function::new(ctx.clone(), move || stop.cancel())?)?;
+            object.set(
+                "end",
+                Function::new(ctx.clone(), move |status: Option<String>, text: Option<String>| {
+                    if let Some(job) = job.borrow_mut().take() {
+                        job.end(status.zip(text));
+                    }
+                })?,
+            )?;
+            Ok(object)
+        },
+    )
 }
 
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answers,

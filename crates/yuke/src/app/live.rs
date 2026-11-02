@@ -264,7 +264,6 @@ impl LiveSession {
             .jobs()
             .stop(self.parts.host.output.session, id)
             .await
-            .is_some()
     }
 
     /// Stop the running turn, and start no other.

@@ -695,6 +695,35 @@ async fn a_project_mcp_server_stays_off_because_the_run_has_no_client_to_confirm
 }
 
 #[tokio::test]
+async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
+    let place = Place::new("print", "plugin_job");
+    place.plugin(
+        "agents",
+        "export function session(s) {
+           s.tools.define({
+             name: 'work', description: 'work', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} },
+             execute() { s.jobs.start({ id: 'explorer', label: 'explore' }); return 'started'; },
+           });
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["agents"] }"#).unwrap();
+
+    let (_, requests) = run_with(
+        &place,
+        &task("Work.", SessionChoice::New),
+        &[tool_reply(&[("call-1", "work", "{}")]), text_reply("Done.")],
+    )
+    .await;
+
+    assert!(
+        requests[1].contains("This run ends with its turn, so it cannot start a background job."),
+        "{}",
+        requests[1]
+    );
+}
+
+#[tokio::test]
 async fn a_background_command_fails_because_the_run_ends_with_its_turn() {
     let place = Place::new("print", "background");
 

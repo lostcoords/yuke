@@ -740,6 +740,33 @@ export interface AskRequest {
   readonly questions: readonly Question[];
 }
 
+/** What `s.jobs.start` takes. */
+export interface JobOptions {
+  /** The id of the job, unique among the running jobs of the session. It can stay the same across restarts of the work. */
+  readonly id: string;
+  /** A short text for display. */
+  readonly label: string;
+}
+
+/** The report of a job that ended by itself. */
+export interface JobReport {
+  /** The end in words, for example `completed`. The user reads `{id} {status}`. */
+  readonly status: string;
+  /** The text that the model reads after the id and the status. */
+  readonly text: string;
+}
+
+/** A running job of a plugin. */
+export interface PluginJob {
+  /** The host aborts this signal at a stop of the job and at the close of the session. */
+  readonly signal: AbortSignal;
+  /**
+   * End the job. A report goes to the session as one notification, and a turn starts when the session is idle. After a
+   * stop, the host drops the report. A later call does nothing.
+   */
+  readonly end: (report?: JobReport) => void;
+}
+
 /** What `session` of a plugin gets for one session. `O` is the type of the options, as in `PluginContext`. */
 export interface SessionContext<O = Record<string, never>> {
   /** The id of the session. */
@@ -760,6 +787,18 @@ export interface SessionContext<O = Record<string, never>> {
      * - A change of the tools makes the next turn miss the prompt cache of the provider.
      */
     readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
+  };
+  /** The background jobs of the plugin in this session. */
+  readonly jobs: {
+    /**
+     * Start a job, and list it with the jobs of the session. The start throws in three cases: the id still runs in this
+     * session, the session closed, or the run is `yuke -p`.
+     * - A stop aborts `signal` of the job and waits for `end`, so end the work at the abort. The `stop` tool, `job/stop`,
+     *   and `stopJob` of a handle are stops.
+     * - A close of the session and a reload abort `signal` too. After the cleanup of the session, the host ends each job.
+     * - During a reload the old job still runs while the new `session` starts, so start the same id later.
+     */
+    readonly start: (job: JobOptions) => PluginJob;
   };
   /**
    * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order

@@ -13,8 +13,11 @@ import type {
   FinishReason,
   InputKind,
   InputSource,
+  JobOptions,
+  JobReport,
   KeptMedia,
   NoticeLevel,
+  PluginJob,
   RequestOptions,
   ResultMedia,
   RoundAfterAnswer,
@@ -47,11 +50,31 @@ interface Scope {
   readonly tools: number[];
   /** The hook handlers of the scope. */
   readonly hooks: HookLists;
+  /** The running jobs that the scope started. */
+  readonly jobs: Set<ScopeJob>;
   /** Settles with the cleanup that `session` returns, or `undefined` after a failure. It never rejects. */
   settled: Promise<Cleanup | undefined>;
   /** Run `cleanup`. A failure is a notice. */
   readonly clean: (cleanup: Cleanup) => Promise<void>;
 }
+
+/** A running job of a scope, as the close of the session needs it. */
+interface ScopeJob {
+  /** Tell the host that a stop came, so a report that comes later is dropped. */
+  readonly stop: () => void;
+  readonly end: () => void;
+}
+
+/** What the native `startJob` gives. */
+interface NativeJob {
+  /** Settles at a stop, and at the end of the job. */
+  readonly stopped: Promise<void>;
+  readonly stop: () => void;
+  readonly end: (status?: string, text?: string) => void;
+}
+
+/** Start a job of the plugin `plugin`. A refusal throws. */
+type StartJob = (plugin: string, id: string, label: string) => NativeJob;
 
 /** The scopes of each open session, by the open number of the host. */
 const opens = new Map<number, { readonly scopes: readonly Scope[]; readonly ready: Promise<void> }>();
@@ -88,6 +111,7 @@ interface OpenRequest {
   readonly request: SendRequest;
   /** The model that the settings of the session name now. */
   readonly model: () => ModelReference;
+  readonly startJob: StartJob;
 }
 
 /**
@@ -95,8 +119,10 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, folder, ask, model } = request;
-  const scopes = sessionExports.map((entry) => start(open, sessionId, folder, ask, request.request, model, entry));
+  const { open, sessionId, folder, ask, model, startJob } = request;
+  const scopes = sessionExports.map((entry) =>
+    start(open, sessionId, folder, ask, request.request, model, startJob, entry),
+  );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
 }
@@ -536,19 +562,25 @@ function hookFailure(point: string, plugin: string, error: unknown): Error {
 }
 
 /**
- * Close the open session `open`: mark each scope closed, abort each signal, and await each cleanup. The close waits
- * for each `session` to settle, also one that ignores the abort. A failed cleanup sends a notice.
+ * Close the open session `open`: mark each scope closed, stop each job, abort each signal, await each cleanup, and end
+ * each job that remains. The close waits for each `session` to settle, also one that ignores the abort. A failed cleanup
+ * sends a notice.
  */
 export async function closeSession(open: number): Promise<void> {
   const state = opens.get(open);
   if (state === undefined) return;
   opens.delete(open);
   for (const scope of state.scopes) scope.closed = true;
+  for (const scope of state.scopes) {
+    for (const job of scope.jobs) job.stop();
+  }
   for (const scope of state.scopes) scope.abort("the session closed");
   await Promise.all(
     state.scopes.map(async (scope) => {
       const cleanup = await scope.settled;
       if (cleanup !== undefined) await scope.clean(cleanup);
+      // After its cleanup the plugin has no more work, so a job that it did not end must not hold the close.
+      for (const job of scope.jobs) job.end();
     }),
   );
 }
@@ -571,6 +603,7 @@ function start(
   ask: Ask,
   send: SendRequest,
   model: () => ModelReference,
+  startJob: StartJob,
   entry: (typeof sessionExports)[number],
 ): Scope {
   const { plugin, session, options } = entry;
@@ -593,6 +626,7 @@ function start(
     closed: false,
     abort,
     tools: [],
+    jobs: new Set(),
     hooks: {
       "input.before": [],
       "round.before": [],
@@ -620,6 +654,25 @@ function start(
         scope.tools.push(id);
         // Each id is new, so a second removal finds nothing, and the removal at a failure skips a removed id.
         return () => unregister([id]);
+      },
+    }),
+    jobs: Object.freeze({
+      start(job: JobOptions): PluginJob {
+        if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
+        const native = startJob(plugin, String(job.id), String(job.label));
+        const stopped = new AbortController();
+        let ended = false;
+        const end = (report?: JobReport): void => {
+          ended = true;
+          scope.jobs.delete(running);
+          native.end(report?.status, report?.text);
+        };
+        const running: ScopeJob = { stop: native.stop, end };
+        scope.jobs.add(running);
+        void native.stopped.then(() => {
+          if (!ended) stopped.abort(new Error("the job stopped"));
+        });
+        return Object.freeze({ signal: AbortSignal.any([signal, stopped.signal]), end });
       },
     }),
     hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {

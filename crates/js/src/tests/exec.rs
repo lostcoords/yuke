@@ -120,9 +120,9 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     );
     assert_eq!(
         host.inputs.lock().unwrap()[0].content(),
-        [Block::user_text(format!("{id} ended"))]
+        [Block::user_text(format!("{id} exited 4"))]
     );
-    // An ended job leaves the list: its end message has told the model already.
+    // An ended job leaves the list: its report has told the model already.
     assert_eq!(
         error_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await,
         format!("The id {id} does not exist. Nothing runs.")
@@ -164,13 +164,7 @@ async fn stop_ends_a_job_and_no_end_message_follows() {
 
     let text = text_of(&tools["stop"], &format!(r#"{{"id": "{id}"}}"#)).await;
 
-    assert_eq!(
-        text,
-        format!(
-            "[{id} stopped.] Log: {}",
-            folder.join(format!("processes/{id}.log")).display()
-        )
-    );
+    assert_eq!(text, format!("[{id} stopped.]"));
     assert!(host.inputs.lock().unwrap().is_empty());
 }
 
@@ -469,7 +463,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let changed_at_answer = host.changed.lock().unwrap().len();
     processes.jobs().close_session(host.session).await;
 
-    assert_eq!(answered.map(|(label, _)| label), Some("stopped".to_owned()));
+    assert!(answered);
     // The host has the end of the stopped job before the stop answers.
     assert_eq!(changed_at_answer, 6);
     let job = |id: &str, command: &str, state, exit_code| yuke_protocol::Job {
@@ -503,7 +497,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     ];
     expected.sort_by(|left, right| left.id.cmp(&right.id));
     assert_eq!(closed, expected);
-    // A stopped job sends no end message.
+    // A stopped job sends no report.
     assert_eq!(host.inputs.lock().unwrap().len(), 1);
 }
 

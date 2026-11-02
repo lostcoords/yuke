@@ -84,7 +84,7 @@ pub(crate) enum Mode {
     /// A background job runs until it ends, until a stop, or until the close of its session. A question waits for an
     /// answer, also while no client is connected.
     Server,
-    /// A background command fails, because the run ends with its turn. A question gets no answer.
+    /// A job start fails, because the run ends with its turn. A question gets no answer.
     Print,
 }
 
@@ -458,8 +458,8 @@ impl App {
         }
     }
 
-    /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
-    /// its jobs go on. Its next turn takes the tools and hooks of the new plugins. A new session scans the skill folders
+    /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open. Its
+    /// process jobs go on, and its plugin jobs stop. Its next turn takes the tools and hooks of the new plugins. A new session scans the skill folders
     /// of the new plugin list.
     ///
     /// # Errors
@@ -902,8 +902,8 @@ async fn start_runtime(
     Ok((runtime, reporter))
 }
 
-/// Close the plugins of `runtime`, and stop the runtime. Then wait for the end of `reporter`. The jobs go on, because
-/// they belong to the processes.
+/// Close the plugins of `runtime`, and stop the runtime. Then wait for the end of `reporter`. The process jobs go on,
+/// because they belong to the processes.
 async fn stop_runtime(shared: &Shared, runtime: Runtime, reporter: JoinHandle<()>) {
     if let Err(error) = runtime.close_plugins().await {
         shared.warn(&chain_text(&error));

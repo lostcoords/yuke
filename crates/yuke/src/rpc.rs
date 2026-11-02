@@ -339,6 +339,17 @@ impl Server {
         };
         let result = if !connection.initialized && !matches!(request.call, ClientRequest::Initialize(_)) {
             Err(error_with(ResponseError::INVALID_REQUEST, "send initialize first"))
+        } else if let ClientRequest::StopJob(params) = request.call {
+            // A plugin sets no limit on the end of its job, so this wait must leave the connection free to read.
+            let (sessions, writer) = (Arc::clone(self.app.sessions()), connection.writer.clone());
+            tokio::spawn(async move {
+                let stopped = sessions.stop_job(params.session_id, &params.job_id).await;
+                let answer = stopped
+                    .and_then(|()| result(&EmptyResult {}))
+                    .map_err(|error| response_error(&error));
+                writer.respond(Some(request.id), answer);
+            });
+            return;
         } else {
             connection.initialized = true;
             self.dispatch(request.call)
@@ -410,10 +421,7 @@ impl Server {
             ClientRequest::ListJobs(params) => result(&ListJobsResult {
                 jobs: app.sessions().jobs(params.session_id)?,
             }),
-            ClientRequest::StopJob(params) => {
-                app.sessions().stop_job(params.session_id, &params.job_id).await?;
-                result(&EmptyResult {})
-            }
+            ClientRequest::StopJob(_) => unreachable!("`handle` answers this request"),
             ClientRequest::Input(params) => {
                 let input = Input::new(InputSource::User, InputKind::Message, params.content);
                 let input = match params.model_content {
@@ -487,14 +495,7 @@ impl Connection {
     }
 
     fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
-        self.writer.send(&Response {
-            jsonrpc: JsonRpc::V2,
-            id,
-            outcome: match result {
-                Ok(value) => ResponseOutcome::Result(value),
-                Err(error) => ResponseOutcome::Error(error),
-            },
-        });
+        self.writer.respond(id, result);
     }
 
     /// Take this connection from `active`, and close it in the background.
@@ -666,6 +667,17 @@ impl Writer {
             task: task.abort_handle(),
         };
         (writer, task)
+    }
+
+    fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
+        self.send(&Response {
+            jsonrpc: JsonRpc::V2,
+            id,
+            outcome: match result {
+                Ok(value) => ResponseOutcome::Result(value),
+                Err(error) => ResponseOutcome::Error(error),
+            },
+        });
     }
 
     /// Queue `message` as one line. A full queue ends the connection, because the client fell behind and a write can

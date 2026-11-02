@@ -68,12 +68,6 @@ declare module "yuke:internal/native" {
     readonly log: string;
   }
 
-  /** The result of a stop: how the job ended, for example `stopped` or `exited 0`, and its log file. */
-  export interface StoppedJob {
-    readonly label: string;
-    readonly log: string;
-  }
-
   /** The output and the cause of the end of a command: `exit`, `signal`, `timeout`, or `cancelled`. */
   export type CommandEnd = {
     /** stdout and stderr in the order of their writes. A cut keeps a head and a tail around a marker. */
@@ -100,8 +94,11 @@ declare module "yuke:internal/native" {
     ) => Promise<CommandEnd>;
     /** Start `command` in the workspace folder as a job. Its end reaches the session as a message. */
     readonly startJob: (command: string) => Promise<StartedJob>;
-    /** Stop the job `id` of the session. `undefined` when the session has no such job. */
-    readonly stopJob: (id: string) => Promise<StoppedJob | undefined>;
+    /**
+     * Stop the job `id` of the session, and wait for its end: `stopped`. `unknown` when the session has no such job.
+     * `stopping` when a cancel of the call ended the wait. The stop goes on.
+     */
+    readonly stopJob: (id: string) => Promise<"stopped" | "stopping" | "unknown">;
     /** The ids of the running jobs of the session. */
     readonly runningJobs: () => string[];
   }

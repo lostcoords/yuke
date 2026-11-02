@@ -265,7 +265,7 @@ defineTool({
 defineTool({
   name: "stop",
   description:
-    "Stop background work by the id that its start result names. A job ends in the result, and no end message follows.",
+    "Stop background work by the id that its start result names. A job ends in the result, and no report follows.",
   parameters: {
     type: "object",
     properties: {
@@ -278,13 +278,13 @@ defineTool({
   async execute(args, context) {
     const id = args.id;
     const call = callOf(context);
-    const stopped = await call.stopJob(id);
-    if (stopped === undefined) {
+    const answer = await call.stopJob(id);
+    if (answer === "unknown") {
       const ids = call.runningJobs();
       throw new Error(
         `The id ${id} does not exist. ${ids.length === 0 ? "Nothing runs." : `The ids are: ${ids.join(", ")}.`}`,
       );
     }
-    return `[${id} ${stopped.label}.] Log: ${stopped.log}`;
+    return `[${id} ${answer}.]`;
   },
 });

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rquickjs::function::Async;
-use rquickjs::{Ctx, Function, IntoJs, Object};
+use rquickjs::{Ctx, Function, Object};
 use yuke_engine::CancellationToken;
 
 use super::exec::exec;
@@ -68,21 +68,22 @@ pub(crate) fn object<'js>(
         )?,
     )?;
 
-    let (stop_processes, stop_host) = (Arc::clone(processes), Arc::clone(host));
+    let (stop_processes, stop_host, stop_call) = (Arc::clone(processes), Arc::clone(host), stop.clone());
     object.set(
         "stopJob",
         Function::new(
             ctx.clone(),
             Async(move |id: String| {
-                let (processes, host) = (Arc::clone(&stop_processes), Arc::clone(&stop_host));
+                let (processes, host, call) = (Arc::clone(&stop_processes), Arc::clone(&stop_host), stop_call.clone());
                 async move {
-                    let Some((label, log)) = processes.jobs().stop(host.session_id(), &id).await else {
-                        return Ok(None);
+                    // A plugin can take long to end its job, and a cancel of the call ends this wait, not the stop. The
+                    // stop polls first, so a cancelled call still sends the stop.
+                    let answer = tokio::select! {
+                        biased;
+                        found = processes.jobs().stop(host.session_id(), &id) => if found { "stopped" } else { "unknown" },
+                        () = call.cancelled() => "stopping",
                     };
-                    Ok::<_, rquickjs::Error>(Some(StoppedJob {
-                        label,
-                        log: log.to_string_lossy().into_owned(),
-                    }))
+                    Ok::<_, rquickjs::Error>(answer)
                 }
             }),
         )?,
@@ -101,11 +102,4 @@ pub(crate) fn object<'js>(
         })?,
     )?;
     Ok(object)
-}
-
-/// What `stopJob` gives: how the job ended and its log file.
-#[derive(IntoJs)]
-struct StoppedJob {
-    label: String,
-    log: String,
 }

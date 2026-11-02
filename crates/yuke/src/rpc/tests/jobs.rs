@@ -48,7 +48,7 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
         .filter(|message| message["params"]["update"]["sessionUpdate"] == "job")
         .map(|message| &message["params"]["update"]["job"])
         .collect();
-    // The start and the end update come before the end input.
+    // The start and the end update come before the report.
     assert_eq!(jobs.len(), 2, "{jobs:?}");
     assert_eq!(jobs[0]["state"], "running");
     assert_eq!(jobs[0]["command"], "exit 3");
@@ -62,8 +62,8 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
         (&json!("ended"), &json!(3), &json!("process"))
     );
     let shown = job_input["content"][0]["user_text"].as_str().unwrap();
-    assert!(shown.starts_with("job-") && shown.ends_with(" ended"), "{shown}");
-    let job = shown.trim_end_matches(" ended");
+    assert!(shown.starts_with("job-") && shown.ends_with(" exited 3"), "{shown}");
+    let job = shown.trim_end_matches(" exited 3");
     let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
     assert!(
         model_text.starts_with(&format!(r#"<system_notification plugin="host:jobs">{job} exited 3."#)),
@@ -210,7 +210,7 @@ async fn job_stop_waits_for_the_end_and_its_job_update_comes_first() {
     let again = client
         .call("job/stop", json!({ "sessionId": session, "jobId": job }))
         .await;
-    // The close waits for the job task, so an end input of the stopped job would come before its response.
+    // The close waits for the job task, so a report of the stopped job would come before its response.
     let id = client.request("session/close", json!({ "sessionId": session })).await;
     let closed = client.until(|message| message["id"] == json!(id)).await;
 
@@ -276,5 +276,82 @@ async fn a_job_of_an_open_session_still_runs_after_a_reload() {
         .call("session/close", json!({ "sessionId": session }))
         .await
         .unwrap();
+    client.end().await;
+}
+
+/// A plugin whose tool `work` starts the job `explorer`, which ends `wait_ms` after a stop.
+fn job_plugin(place: &Place, wait_ms: u32) {
+    let source = format!(
+        "export function session(s) {{
+           s.tools.define({{
+             name: 'work', description: 'work', concurrency: 'serial',
+             parameters: {{ type: 'object', properties: {{}} }},
+             execute() {{
+               const job = s.jobs.start({{ id: 'explorer', label: 'explore' }});
+               job.signal.addEventListener('abort', () => setTimeout(() => job.end(), {wait_ms}));
+               return 'started';
+             }},
+           }});
+         }}"
+    );
+    place.plugin("agents", &source);
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["agents"] }"#).unwrap();
+}
+
+/// A session of `place` whose turn ran the tool `work` of [`job_plugin`].
+async fn session_with_a_plugin_job(place: &Place) -> (Client, Value) {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "work", "{}")]), text_reply("started")]);
+    let mut client = Client::initialized(place, Box::new(transport)).await;
+    let session = client.call("session/new", settings(place)).await.unwrap()["sessionId"].clone();
+    client.request("session/input", input_params(&session, "work")).await;
+    client.until(is_idle).await;
+    (client, session)
+}
+
+#[tokio::test]
+async fn job_stop_of_a_slow_plugin_job_leaves_the_connection_free() {
+    let place = Place::new("rpc", "job_stop_of_a_slow_plugin_job_leaves_the_connection_free");
+    job_plugin(&place, 300);
+    let (mut client, session) = session_with_a_plugin_job(&place).await;
+
+    let stop = client
+        .request("job/stop", json!({ "sessionId": session, "jobId": "explorer" }))
+        .await;
+    // The server answers this request while the stop waits for the plugin.
+    let listed = client.request("job/list", json!({ "sessionId": session })).await;
+    let before = client.until(|message| message["id"] == json!(listed)).await;
+    let after = client.until(|message| message["id"] == json!(stop)).await;
+
+    assert!(!before.iter().any(|message| message["id"] == json!(stop)), "{before:?}");
+    let jobs = &before.last().unwrap()["result"]["jobs"];
+    assert_eq!(
+        (&jobs[0]["id"], &jobs[0]["kind"]),
+        (&json!("explorer"), &json!("plugin"))
+    );
+    assert_eq!(after.iter().filter_map(label).collect::<Vec<_>>(), ["job", "response"]);
+    let ended = &after[0]["params"]["update"]["job"];
+    assert_eq!((&ended["id"], &ended["state"]), (&json!("explorer"), &json!("stopped")));
+    client.end().await;
+}
+
+#[tokio::test]
+async fn a_reload_stops_a_plugin_job() {
+    let place = Place::new("rpc", "a_reload_stops_a_plugin_job");
+    job_plugin(&place, 0);
+    let (mut client, session) = session_with_a_plugin_job(&place).await;
+
+    let id = client.request("profile/reload", json!({})).await;
+    let reloaded = client.until(|message| message["id"] == json!(id)).await;
+    let listed = client.call("job/list", json!({ "sessionId": session })).await.unwrap();
+
+    let ended = reloaded
+        .iter()
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .map(|message| &message["params"]["update"]["job"]);
+    assert_eq!(
+        ended.map(|job| (&job["id"], &job["state"])),
+        Some((&json!("explorer"), &json!("stopped")))
+    );
+    assert_eq!(listed["jobs"], json!([]));
     client.end().await;
 }
