@@ -713,6 +713,46 @@ test("the palette color fg reaches each cell without a color, and it wins over n
   );
 });
 
+test("the palette color bg reaches each cell without a background, and fg stays apart from it", () => {
+  const { state, styles } = themed();
+  styles.set({
+    plain: { bold: true },
+    band: { bg: 2 },
+    colored: { fg: 1 },
+    terminal: { bg: "reset" },
+    reversed: { reverse: true },
+  });
+  styles.addTheme("dusk", { dark: { palette: { bg: "#2e3440" } } });
+  styles.addTheme("both", { dark: { palette: { fg: 5, bg: 6 } } });
+  styles.setTheme("dusk");
+  const bg = "#2e3440";
+  const dusk = [
+    styles.cell(undefined),
+    styles.cell("plain"),
+    styles.cell("band"),
+    styles.cell(["colored", "plain"]),
+    styles.cell("terminal"),
+    styles.cell("reversed"),
+  ];
+  styles.setTheme("both");
+  const both = [styles.cell(undefined), styles.cell("colored"), styles.cell("band"), styles.cell(["colored", "band"])];
+  styles.setTheme("dusk");
+  state.truecolor = false;
+  equal(
+    [dusk, both, styles.cell(undefined)],
+    [
+      [{ bg }, { bold: true, bg }, { bg: 2 }, { fg: 1, bold: true, bg }, { bg: "reset" }, { reverse: true, bg }],
+      [
+        { fg: 5, bg: 6 },
+        { fg: 1, bg: 6 },
+        { fg: 5, bg: 2 },
+        { fg: 1, bg: 2 },
+      ],
+      { bg: 237 },
+    ],
+  );
+});
+
 test("a terminal without 24-bit color gets the nearest index for each hex color", () => {
   const { state, styles } = themed();
   state.truecolor = false;

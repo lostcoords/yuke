@@ -35,7 +35,7 @@ export function apply(ctx: PluginContext<Options>): undefined {
   if (tui === undefined) return undefined;
   const hide = new Set(ctx.options.hide ?? []);
   const order = ctx.options.order ?? [];
-  // The bar has no background, so it stays quiet below the panes.
+  // The bar sets no background of its own, so it stays quiet below the panes.
   tui.styles.set({ [STYLE]: { dim: true } });
   const bar: View = {
     draw: (canvas) => {

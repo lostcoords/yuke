@@ -170,11 +170,17 @@ export class Scene {
   /** Draw the root tree, then each overlay over a blank rect, then the cursor of the focused view. */
   draw(): void {
     const focused = new Set(this.#path.map((target) => target.view));
+    // The frame starts blank in the terminal colors, so only a theme with a background needs this fill.
+    const blank = this.#host.screen.resolve(undefined);
+    if (blank.bg !== undefined) {
+      const size = this.#host.size();
+      this.#host.screen.fill(0, 0, size.width, size.height, blank);
+    }
     if (this.#root.tree !== undefined) this.#drawTarget(this.#root.tree, focused);
     for (const layer of this.#overlays) {
       if (layer.tree === undefined) continue;
       const { rect } = layer.tree;
-      this.#host.screen.fill(rect.column, rect.row, rect.width, rect.height, this.#host.screen.resolve(undefined));
+      this.#host.screen.fill(rect.column, rect.row, rect.width, rect.height, blank);
       this.#drawTarget(layer.tree, focused);
     }
     this.#host.cursor(this.#cursor());

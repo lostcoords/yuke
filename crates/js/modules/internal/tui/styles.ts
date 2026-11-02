@@ -238,17 +238,24 @@ export class Styles {
   }
 
   /**
-   * The cell style of a draw: each item of `style` in order, and a later item wins per field. A cell without a color
-   * then takes the palette color `fg`, unless it is `reset`. It comes last, so a band keeps the color of its text.
+   * The cell style of a draw: each item of `style` in order, and a later item wins per field. Each missing `fg` or `bg`
+   * then takes its palette color, unless that color is `reset`. It comes last, so a band keeps the color of its text.
    */
   cell(style: CanvasStyle | undefined): TermStyle {
     let merged: TermStyle = NO_STYLE;
     if (Array.isArray(style)) merged = Object.freeze(Object.assign({}, ...style.map((item) => this.resolve(item))));
     else if (style !== undefined) merged = this.resolve(style as string | Style);
-    if (merged.fg !== undefined) return merged;
-    const fg = this.#lookNow().palette.fg;
-    if (fg === "reset") return merged;
-    return Object.freeze({ ...merged, fg: this.#truecolor() ? fg : indexed(fg) });
+    if (merged.fg !== undefined && merged.bg !== undefined) return merged;
+    const palette = this.#lookNow().palette;
+    const fg = merged.fg === undefined ? palette.fg : "reset";
+    const bg = merged.bg === undefined ? palette.bg : "reset";
+    if (fg === "reset" && bg === "reset") return merged;
+    const shown = (color: TermColor): TermColor => (this.#truecolor() ? color : indexed(color));
+    return Object.freeze({
+      ...merged,
+      ...(fg === "reset" ? {} : { fg: shown(fg) }),
+      ...(bg === "reset" ? {} : { bg: shown(bg) }),
+    });
   }
 
   #named(name: string, look: Look, seen: Set<string>): TermStyle {

@@ -97,6 +97,26 @@ test("a dispose closes the root, so the mounts of its widgets end", () => {
   );
 });
 
+test("the palette color bg of a theme fills each cell of the frame, and no theme fills nothing", () => {
+  using frame = createFrame({ width: 6, height: 2 }, () => ({
+    draw: (canvas) => {
+      canvas.text(0, 0, "ab");
+    },
+  }));
+  const tui = frame.surface("theme").tui;
+  const before = frame
+    .draw()
+    .cells.flat()
+    .map((cell) => cell.style.bg);
+  tui.styles.addTheme("dusk", { dark: { palette: { bg: 4 } } });
+  tui.styles.setTheme("dusk");
+  const themed = frame
+    .draw()
+    .cells.flat()
+    .map((cell) => cell.style.bg);
+  equal([before.every((bg) => bg === undefined), themed], [true, Array.from({ length: 12 }, () => 4)]);
+});
+
 test("the error of a view has a default look that a plugin changes", () => {
   using frame = createFrame({ width: 10, height: 3 }, () => ({
     draw: () => {
