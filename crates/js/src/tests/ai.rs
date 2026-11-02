@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Effort, FinishReason, OutputSchema, ReasoningSettings, Settings, Thinking, Usage};
-use yuke_engine::CancellationToken;
+use yuke_engine::{CancellationToken, Hooks, RoundStart};
 use yuke_protocol::ModelReference;
 
 use super::tools::{TestHost, Tools};
@@ -18,7 +18,26 @@ use crate::{Attachment, CompleteAnswer, CompleteRequest, Models, Processes, Runt
 struct Recorded {
     requests: Mutex<Vec<CompleteRequest>>,
     answer: Option<Result<CompleteAnswer, String>>,
+    request_tokens: Mutex<Vec<CancellationToken>>,
     cancelled: Mutex<bool>,
+    /// The request futures that have not ended or dropped yet.
+    alive: Arc<Mutex<usize>>,
+}
+
+/// Counts a request future as alive until it ends or drops.
+struct Alive(Arc<Mutex<usize>>);
+
+impl Alive {
+    fn new(count: &Arc<Mutex<usize>>) -> Self {
+        *count.lock().unwrap() += 1;
+        Self(Arc::clone(count))
+    }
+}
+
+impl Drop for Alive {
+    fn drop(&mut self) {
+        *self.0.lock().unwrap() -= 1;
+    }
 }
 
 #[async_trait]
@@ -29,6 +48,8 @@ impl Models for Recorded {
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
         self.requests.lock().unwrap().push(request);
+        self.request_tokens.lock().unwrap().push(cancel.clone());
+        let _alive = Alive::new(&self.alive);
         if let Some(answer) = &self.answer {
             return Ok(answer.clone()?);
         }
@@ -39,9 +60,13 @@ impl Models for Recorded {
     async fn side_request(
         &self,
         _request: SideRequest,
-        _cancel: CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn std::error::Error + Send + Sync>> {
-        Err("no side request".into())
+        self.request_tokens.lock().unwrap().push(cancel.clone());
+        let _alive = Alive::new(&self.alive);
+        cancel.cancelled().await;
+        *self.cancelled.lock().unwrap() = true;
+        Err("the request was cancelled".into())
     }
 }
 
@@ -153,6 +178,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
             },
         ]
     );
+    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
 }
 
 #[tokio::test(flavor = "local")]
@@ -267,6 +293,7 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
 
     assert_eq!(reason, "stopped by the plugin");
     assert!(*models.cancelled.lock().unwrap());
+    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
 }
 
 #[tokio::test(flavor = "local")]
@@ -283,11 +310,58 @@ async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     .unwrap();
     crate::settled().await;
     assert_eq!(models.requests.lock().unwrap().len(), 1);
+    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
 
     runtime.shutdown().await.unwrap();
 
     crate::settled().await;
-    assert!(*models.cancelled.lock().unwrap());
+    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert_eq!(*models.alive.lock().unwrap(), 0);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
+    let folder = folder("a_shutdown_stops_a_side_request_that_waits_for_its_answer");
+    let models = Arc::new(Recorded::default());
+    let runtime = runtime_with("a_shutdown_stops_a_side_request_that_waits_for_its_answer", &models).await;
+    write(
+        &folder,
+        &[(
+            "entry.ts",
+            "export function session(s) {
+               s.hook('round.before', (event) => {
+                 globalThis.answer = event.sideRequest({ prompt: 'Summarize.' });
+               });
+             }",
+        )],
+    );
+    load_entry(&runtime, &folder.join("entry.ts")).await.unwrap();
+    let host = Arc::new(TestHost::new(&folder));
+    let tools = Tools::open(&runtime, host).await;
+    let model = yuke_testing::model();
+    let settings = Settings::new();
+    tools
+        .session
+        .hooks(CancellationToken::new())
+        .before_round(&RoundStart {
+            context: &[],
+            model: &model,
+            settings: &settings,
+            system: "",
+            tools: &[],
+            input_tokens: None,
+        })
+        .await
+        .unwrap();
+    crate::settled().await;
+    assert_eq!(models.request_tokens.lock().unwrap().len(), 1);
+    assert!(!models.request_tokens.lock().unwrap()[0].is_cancelled());
+
+    runtime.shutdown().await.unwrap();
+
+    crate::settled().await;
+    assert!(models.request_tokens.lock().unwrap()[0].is_cancelled());
+    assert_eq!(*models.alive.lock().unwrap(), 0);
 }
 
 #[tokio::test(flavor = "local")]

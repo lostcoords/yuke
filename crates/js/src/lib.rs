@@ -15,8 +15,9 @@
 //! A plugin runs `apply` once per runtime and `session` once per session. [`Handle::open_session`] opens the session
 //! of a [`SessionHost`]. [`ScriptSession::tools`] gives each tool of that session as a [`ScriptTool`]: the tools of
 //! yuke and the tools that the `session` exports define. `yuke:internal/builtins` defines the tools `read`, `write`,
-//! `edit`, `exec`, and `stop`. [`Processes`] runs the commands and the background jobs on the tokio runtime of the consumer,
-//! so a process job outlives a reload of the JavaScript. The consumer gives the [`Models`] that the plugins call.
+//! `edit`, `exec`, and `stop`. [`Processes`] runs the commands and the background jobs as local tasks of the host
+//! runtime, so a process job outlives a reload of the JavaScript. The consumer gives the [`Models`] that the plugins
+//! call.
 
 mod baked;
 mod bytes;

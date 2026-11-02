@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rustix::process::{Pid, Signal};
-use tokio::runtime::Handle;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, JobKind, JobState, SessionId};
 
@@ -27,7 +26,6 @@ pub struct Jobs {
     list: Arc<Mutex<List>>,
     /// Whether a job can start. A process that ends with its turn has no one to receive the end of a job.
     starts: bool,
-    handle: Handle,
 }
 
 impl fmt::Debug for Jobs {
@@ -86,12 +84,11 @@ impl Job {
 }
 
 impl Jobs {
-    /// The jobs on the tokio runtime of `handle`.
-    pub(crate) fn new(starts: bool, handle: Handle) -> Self {
+    /// The jobs of this process.
+    pub(crate) fn new(starts: bool) -> Self {
         Self {
             list: Arc::new(Mutex::new(List::default())),
             starts,
-            handle,
         }
     }
 
@@ -131,7 +128,6 @@ impl Jobs {
             plugin,
             label,
             owner,
-            handle: self.handle.clone(),
         };
         job.owner.job_changed(job.protocol_job(JobState::Running));
         Ok(job)
@@ -334,7 +330,6 @@ pub(crate) struct PluginJob {
     plugin: String,
     label: String,
     owner: Arc<dyn SessionHost>,
-    handle: Handle,
 }
 
 impl PluginJob {
@@ -350,7 +345,7 @@ impl PluginJob {
         let state = if stopped { JobState::Stopped } else { JobState::Ended };
         self.owner.job_changed(self.protocol_job(state));
         if let Some((status, text)) = report.filter(|_| !stopped) {
-            self.handle.clone().spawn(async move {
+            tokio::task::spawn_local(async move {
                 let input = report_input(&self.plugin, &self.job.id, &status, &text);
                 self.owner.accept_input(input).await;
             });

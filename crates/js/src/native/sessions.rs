@@ -10,7 +10,6 @@ use std::sync::Arc;
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
-use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use yuke_ai::{Block, MAX_MEDIA_BYTES};
 use yuke_engine::chain_text;
@@ -105,13 +104,12 @@ impl Serialize for ViewEvent {
     }
 }
 
-/// Add the session functions to `object`, the export object of the native module. Each request runs on the runtime of
-/// the consumer, so a request that JavaScript stops awaiting still ends.
+/// Add the session functions to `object`, the export object of the native module. Each request runs as a local task,
+/// so a request that JavaScript stops awaiting still ends.
 pub(super) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     sessions: &Arc<dyn Sessions>,
-    consumer: &Handle,
     faults: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let feed = Feed::<ViewEvent>::add(ctx, object, "sessionsListen", "sessionsFlush", faults.clone())?;
@@ -120,7 +118,7 @@ pub(super) fn add<'js>(
 
     add_facts(ctx, object, sessions, faults)?;
 
-    let (open_sessions, open_consumer, open_held) = (Arc::clone(sessions), consumer.clone(), Rc::clone(&held));
+    let (open_sessions, open_held) = (Arc::clone(sessions), Rc::clone(&held));
     object.set(
         "sessionsOpen",
         Function::new(
@@ -129,7 +127,7 @@ pub(super) fn add<'js>(
                 let (key, id, tail) = arguments.0;
                 let (sessions, feed, held) = (Arc::clone(&open_sessions), Arc::clone(&feed), Rc::clone(&open_held));
                 let sink = Arc::new(move |event| feed.push(key, event));
-                let task = open_consumer.spawn(async move { sessions.open(id, tail, sink).await });
+                let task = tokio::task::spawn_local(async move { sessions.open(id, tail, sink).await });
                 let error_ctx = ctx.clone();
                 Promise::wrap_future(&ctx, async move {
                     let guard = joined(&error_ctx, task.await)?;
@@ -147,7 +145,7 @@ pub(super) fn add<'js>(
         })?,
     )?;
 
-    add_requests(object, sessions, consumer)?;
+    add_requests(object, sessions)?;
     add_calls(ctx, object, sessions)
 }
 
@@ -178,12 +176,11 @@ fn add_facts<'js>(
     )
 }
 
-/// Add the asynchronous requests, which run on the runtime of the consumer.
-fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Handle) -> rquickjs::Result<()> {
-    add_put_blob(object, sessions, consumer)?;
+/// Add the asynchronous requests, which run as local tasks.
+fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
+    add_put_blob(object, sessions)?;
     let request = Requests {
         sessions: Arc::clone(sessions),
-        consumer: consumer.clone(),
     };
     request.add(
         object,
@@ -381,8 +378,8 @@ async fn deliver_events<'js, E: Serialize>(
 
 /// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
 /// task runs. Bytes over the limit of an attachment throw before the store sees them.
-fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, consumer: &Handle) -> rquickjs::Result<()> {
-    let (sessions, consumer) = (Arc::clone(sessions), consumer.clone());
+fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
+    let sessions = Arc::clone(sessions);
     object.set(
         "sessionPutBlob",
         Function::new(
@@ -394,7 +391,7 @@ fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, consume
                     return Err(throw(&ctx, ErrorClass::Error, &text));
                 }
                 let sessions = Arc::clone(&sessions);
-                let task = consumer.spawn(async move { sessions.put_blob(id.0, bytes).await });
+                let task = tokio::task::spawn_local(async move { sessions.put_blob(id.0, bytes).await });
                 let error_ctx = ctx.clone();
                 Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
             },
@@ -416,11 +413,10 @@ fn failure(ctx: &Ctx<'_>, error: &SessionsError) -> rquickjs::Error {
     throw(ctx, ErrorClass::Error, &chain_text(&**error))
 }
 
-/// Adds the asynchronous requests: each one takes its arguments as one JSON value, runs on the runtime of the consumer,
-/// and answers a promise of its JSON.
+/// Adds the asynchronous requests: each one takes its arguments as one JSON value, runs as a local task, and answers a
+/// promise of its JSON.
 struct Requests {
     sessions: Arc<dyn Sessions>,
-    consumer: Handle,
 }
 
 impl Requests {
@@ -432,16 +428,17 @@ impl Requests {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + Send + 'static,
-        F: Future<Output = Result<T, SessionsError>> + Send + 'static,
+        T: Serialize + 'static,
+        F: Future<Output = Result<T, SessionsError>> + 'static,
     {
-        let (sessions, consumer) = (Arc::clone(&self.sessions), self.consumer.clone());
+        let sessions = Arc::clone(&self.sessions);
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Promise<'js>> {
-                    let task = consumer.spawn(run(Arc::clone(&sessions), arguments.0));
+                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
+                    let task = tokio::task::spawn_local(run(Arc::clone(&sessions), arguments.0));
                     let error_ctx = ctx.clone();
                     Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
                 },
@@ -459,16 +456,17 @@ impl Requests {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + Send + 'static,
-        F: Future<Output = Result<T, SessionsError>> + Send + 'static,
+        T: Serialize + 'static,
+        F: Future<Output = Result<T, SessionsError>> + 'static,
     {
-        let (sessions, consumer) = (Arc::clone(&self.sessions), self.consumer.clone());
+        let sessions = Arc::clone(&self.sessions);
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
-                    let task = consumer.spawn(run(Arc::clone(&sessions), arguments.0));
+                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
+                    let task = tokio::task::spawn_local(run(Arc::clone(&sessions), arguments.0));
                     Operation::start(&ctx, move |ctx, stop| async move {
                         let abort = task.abort_handle();
                         tokio::select! {

@@ -55,7 +55,10 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, models: &Arc<dyn Mo
                         () = stop.cancelled() => return Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?)),
                     };
                     request.attachments = read.map_err(|error| throw(&ctx, ErrorClass::Error, &error))?;
+                    // The guard cancels the request token when a shutdown drops this future.
+                    let guard = stop.clone().drop_guard();
                     let answer = models.complete(request, stop.clone()).await;
+                    guard.disarm();
                     completion(&ctx, answer, &stop)
                 })
             },
@@ -204,7 +207,10 @@ pub(crate) fn side_request<'js>(
             };
             let models = Arc::clone(&models);
             Operation::start(&ctx, move |ctx, stop| async move {
+                // The guard cancels the request token when a shutdown drops this future.
+                let guard = stop.clone().drop_guard();
                 let answer = models.side_request(request, stop.clone()).await;
+                guard.disarm();
                 completion(&ctx, answer, &stop)
             })
         },

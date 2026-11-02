@@ -113,11 +113,10 @@ pub(crate) fn install(
     registry: &Rc<Registry>,
     options: &Options,
     frames: &Rc<term::Frames>,
-    consumer: &tokio::runtime::Handle,
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
-    sessions::add(ctx, &object, &options.sessions, consumer, reports.clone())?;
+    sessions::add(ctx, &object, &options.sessions, reports.clone())?;
     term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
@@ -130,7 +129,7 @@ pub(crate) fn install(
     url::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
-    crate::test_host::add(ctx, &object, options.test_host.as_ref(), consumer)?;
+    crate::test_host::add(ctx, &object, options.test_host.as_ref())?;
     match ctx.store_userdata(object) {
         Ok(_) => Ok(()),
         Err(_) => Err(throw(ctx, ErrorClass::Error, "the native module cannot be stored")),

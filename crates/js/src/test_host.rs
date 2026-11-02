@@ -6,7 +6,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rquickjs::prelude::Async;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
-use tokio::runtime::Handle;
 use yuke_ai::Blob;
 use yuke_engine::CancellationToken;
 use yuke_protocol::SessionId;
@@ -22,7 +21,7 @@ use crate::tools::Json;
 const NO_HOST: &str = "no test host: run this file with yuke test";
 
 /// The host of the tests of a runtime: the app around the runtime of one test. The runtime calls each method from a
-/// native of `yuke:test`. Each async method runs on the tokio runtime of the consumer.
+/// native of `yuke:test`. Each async method runs as a local task.
 #[async_trait]
 pub trait TestHost: Send + Sync {
     /// Load the plugins and the model script of a new host. `request` is the JSON of `createHost`: the plugins under
@@ -61,12 +60,7 @@ pub trait TestHost: Send + Sync {
 }
 
 /// Add the natives of the test host to `object`, the export object of the native module.
-pub(crate) fn add<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    host: Option<&Arc<dyn TestHost>>,
-    consumer: &Handle,
-) -> rquickjs::Result<()> {
+pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, host: Option<&Arc<dyn TestHost>>) -> rquickjs::Result<()> {
     object.set(
         "testSettled",
         Function::new(
@@ -94,47 +88,42 @@ pub(crate) fn add<'js>(
         object,
         "testHostCreate",
         host,
-        consumer,
         |host, request: Json<serde_json::Value>, _token| async move { host.create(request.0).await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostClose",
         host,
-        consumer,
         |host, _request: Json<()>, _token| async move { host.close().await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostRun",
         host,
-        consumer,
         |host, request: RunRequest, token| async move { run_point(&*host, request, token).await },
     )?;
     add_operation(
         object,
         "testHostCall",
         host,
-        consumer,
         |host, request: CallRequest, token| async move { call_tool(&*host, request, token).await },
     )
 }
 
-/// Add the native `name`. The engine task reads its argument, and `run` runs on the runtime of the consumer. It
+/// Add the native `name`. The engine task reads its argument, and `run` runs as a local task. It
 /// answers an operation that gives the result. A cancel of the operation cancels the token of `run`.
 fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
     name: &str,
     host: Option<&Arc<dyn TestHost>>,
-    consumer: &Handle,
     run: impl Fn(Arc<dyn TestHost>, A, CancellationToken) -> F + 'js,
 ) -> rquickjs::Result<()>
 where
-    A: FromJs<'js> + Send + 'static,
-    T: IntoJs<'js> + Send + 'static,
-    F: Future<Output = Result<T, TestError>> + Send + 'static,
+    A: FromJs<'js> + 'static,
+    T: IntoJs<'js> + 'static,
+    F: Future<Output = Result<T, TestError>> + 'static,
 {
-    let (host, consumer) = (host.cloned(), consumer.clone());
+    let host = host.cloned();
     object.set(
         name,
         Function::new(
@@ -142,7 +131,8 @@ where
             move |ctx: Ctx<'js>, argument: A| -> rquickjs::Result<Operation<'js>> {
                 let host = host.clone().ok_or_else(|| throw(&ctx, ErrorClass::Error, NO_HOST))?;
                 Operation::start(&ctx, |ctx, token| {
-                    let task = consumer.spawn(run(host, argument, token));
+                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
+                    let task = tokio::task::spawn_local(run(host, argument, token));
                     async move { joined(&ctx, task.await) }
                 })
             },

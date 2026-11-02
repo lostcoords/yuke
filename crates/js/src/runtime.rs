@@ -1,5 +1,5 @@
-//! The JavaScript engine. It runs as a local task of the runtime of its consumer, because the engine values are not
-//! `Send`. Callers send it calls through a channel and await the answers.
+//! The JavaScript engine. It runs as a local task of the host runtime, because the engine values are not `Send`.
+//! Callers send it calls through a channel and await the answers.
 
 use std::cell::RefCell;
 use std::fmt;
@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::display::Interface;
 use crate::error::{Error, Report, ScriptError, caught};
 use crate::loader::{ModuleLoader, NameResolver};
-use crate::models::{Models, OnConsumer};
+use crate::models::Models;
 use crate::native;
 use crate::native::term::{Frames, drive};
 use crate::processes::Processes;
@@ -92,7 +92,7 @@ type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
 /// [`Runtime::shutdown`] waits.
 pub struct Runtime {
     pub(crate) caller: Caller,
-    /// The models of the plugins, on the runtime of the consumer.
+    /// The models of the plugins.
     pub(crate) models: Arc<dyn Models>,
     /// The drop of this sender ends the task. A tool keeps a clone of the caller, so the call channel can outlive the
     /// runtime.
@@ -158,16 +158,7 @@ impl Runtime {
     ///
     /// Panics outside a [`tokio::runtime::LocalRuntime`] or a [`tokio::task::LocalSet`].
     pub async fn start(options: Options) -> Result<(Self, mpsc::UnboundedReceiver<Report>), Error> {
-        let options = Options {
-            models: Arc::new(OnConsumer {
-                models: options.models,
-                handle: tokio::runtime::Handle::current(),
-            }),
-            ..options
-        };
         let models = Arc::clone(&options.models);
-        // The sessions of the consumer run on its runtime.
-        let consumer = tokio::runtime::Handle::current();
         let (calls, call_receiver) = mpsc::unbounded_channel();
         let (reports, report_receiver) = mpsc::unbounded_channel();
         let (ready, started) = oneshot::channel();
@@ -177,10 +168,9 @@ impl Runtime {
         let interrupt = Arc::clone(&stopping);
         let deadline = Arc::new(Mutex::new(None));
 
-        // The engine runs as a local task of the consumer runtime, so the host and the JavaScript share one scheduler.
+        // The engine runs as a local task of the host runtime, so the host and the JavaScript share one scheduler.
         let task = tokio::task::spawn_local(serve_calls(
             options,
-            consumer,
             interrupt,
             Arc::clone(&deadline),
             call_receiver,
@@ -328,7 +318,6 @@ impl Caller {
 #[expect(clippy::too_many_arguments, reason = "the task takes each part of its start")]
 async fn serve_calls(
     options: Options,
-    consumer: tokio::runtime::Handle,
     stopping: Arc<AtomicBool>,
     deadline: Arc<Mutex<Option<Instant>>>,
     mut calls: mpsc::UnboundedReceiver<Call>,
@@ -337,7 +326,7 @@ async fn serve_calls(
     reports: mpsc::UnboundedSender<Report>,
     ready: oneshot::Sender<Result<(), Error>>,
 ) {
-    let engine = match Engine::new(options, &consumer, stopping, deadline, shown, reports.clone()).await {
+    let engine = match Engine::new(options, stopping, deadline, shown, reports.clone()).await {
         Ok(engine) => engine,
         Err(error) => {
             if ready.send(Err(error)).is_err() {
@@ -397,7 +386,6 @@ struct Engine {
 impl Engine {
     async fn new(
         options: Options,
-        consumer: &tokio::runtime::Handle,
         stopping: Arc<AtomicBool>,
         deadline: Arc<Mutex<Option<Instant>>>,
         shown: oneshot::Receiver<Option<String>>,
@@ -441,7 +429,7 @@ impl Engine {
             .with(|ctx| {
                 timers::install(&ctx, &timers, reports.clone())?;
                 crate::error::install_report_error(&ctx, reports.clone())?;
-                native::install(&ctx, &registry, &options, &frames, consumer, reports.clone())?;
+                native::install(&ctx, &registry, &options, &frames, reports.clone())?;
                 ctx.spawn(drive(ctx.clone(), Rc::clone(&frames), shown, reports));
                 Ok(())
             })

@@ -513,7 +513,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     )
     .await
     .unwrap();
-    // The abort of the task drops it at the next poll of the consumer runtime.
+    // The abort of the task drops it at the next poll of the host runtime.
     crate::settled().await;
 
     assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);

@@ -1,11 +1,9 @@
 //! The model requests of the plugins.
 
 use std::error::Error;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value};
-use tokio::runtime::Handle;
 use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
 use yuke_engine::{CancellationToken, Model};
 use yuke_protocol::{ModelReference, SessionId};
@@ -65,7 +63,8 @@ pub struct CompleteAnswer {
     pub usage: Usage,
 }
 
-/// The models that the plugins call. The consumer gives one value to each runtime.
+/// The models that the plugins call. The consumer gives one value to each runtime. A request runs inside the engine
+/// task, so it must not call back into the JavaScript runtime.
 #[async_trait]
 pub trait Models: Send + Sync {
     /// Send `request`, and wait for the first answer. The token `cancel` stops the request.
@@ -89,54 +88,6 @@ pub trait Models: Send + Sync {
         request: SideRequest,
         cancel: CancellationToken,
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
-}
-
-/// The models of the consumer on the tokio runtime of the consumer. A request runs there, and the drop of its wait
-/// cancels it.
-pub(crate) struct OnConsumer {
-    pub(crate) models: Arc<dyn Models>,
-    pub(crate) handle: Handle,
-}
-
-impl OnConsumer {
-    /// Run the request that `send` makes on the runtime of the consumer.
-    async fn run<F>(
-        &self,
-        cancel: CancellationToken,
-        send: impl FnOnce(CancellationToken) -> F + Send + 'static,
-    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>
-    where
-        F: Future<Output = Result<CompleteAnswer, Box<dyn Error + Send + Sync>>> + Send + 'static,
-    {
-        // A drop of the wait, as at a shutdown, cancels the token too.
-        let guard = cancel.clone().drop_guard();
-        let answer = self.handle.spawn(send(cancel)).await;
-        guard.disarm();
-        answer?
-    }
-}
-
-#[async_trait]
-impl Models for OnConsumer {
-    async fn complete(
-        &self,
-        request: CompleteRequest,
-        cancel: CancellationToken,
-    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
-        let models = Arc::clone(&self.models);
-        self.run(cancel, async move |cancel| models.complete(request, cancel).await)
-            .await
-    }
-
-    async fn side_request(
-        &self,
-        request: SideRequest,
-        cancel: CancellationToken,
-    ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>> {
-        let models = Arc::clone(&self.models);
-        self.run(cancel, async move |cancel| models.side_request(request, cancel).await)
-            .await
-    }
 }
 
 /// `base` with the fields of `changes`, a part of the JSON of [`Settings`]. A field replaces the whole value of `base`.

@@ -1,5 +1,5 @@
-//! The child processes of the tools: the commands of `exec` and the process jobs. The processes run on the tokio runtime
-//! of the consumer, so a process job outlives a reload of the JavaScript.
+//! The child processes of the tools: the commands of `exec` and the process jobs. Their tasks run on the host runtime,
+//! and every JavaScript runtime shares one `Processes`, so a process job outlives a reload of the JavaScript.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
@@ -19,7 +19,6 @@ use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::io::AsyncReadExt;
 use tokio::net::unix::pipe::Receiver;
 use tokio::process::{Child, Command};
-use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use yuke_engine::CancellationToken;
@@ -59,12 +58,11 @@ pub(crate) struct Request {
     pub(crate) owner: Arc<dyn SessionHost>,
 }
 
-/// The child processes of the tools. The consumer creates one for the process inside its tokio runtime, which must
-/// enable I/O and time. It gives the same value to every JavaScript runtime of the process. The full outputs of the
-/// commands and the logs of the jobs go to `folder`. [`Processes::shutdown`] removes the folder.
+/// The child processes of the tools. Run commands on a local tokio runtime with I/O and time. Give the same value to
+/// every JavaScript runtime of the process. The full outputs of the commands and the logs of the jobs go to `folder`.
+/// [`Processes::shutdown`] removes the folder.
 pub struct Processes {
     folder: PathBuf,
-    handle: Handle,
     last_number: AtomicU64,
     /// The counter of the job ids. It starts at a random number, so an id in the transcript of an earlier process
     /// rarely names a job of this one.
@@ -105,21 +103,12 @@ pub(crate) enum EndCause {
 }
 
 impl Processes {
-    /// The processes of this tokio runtime. The full outputs and the logs go to `folder`.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the caller runs outside a tokio runtime.
+    /// Create process state. The full outputs and the logs go to `folder`.
     pub fn new(folder: PathBuf) -> Self {
         Self::with_jobs(folder, true)
     }
 
-    /// The processes of this tokio runtime, for a process that ends with its turn: a job start fails. The full outputs
-    /// go to `folder`.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the caller runs outside a tokio runtime.
+    /// Create process state for a process that ends with its turn: a job start fails. The full outputs go to `folder`.
     pub fn without_jobs(folder: PathBuf) -> Self {
         Self::with_jobs(folder, false)
     }
@@ -127,13 +116,12 @@ impl Processes {
     fn with_jobs(folder: PathBuf, starts_jobs: bool) -> Self {
         Self {
             folder,
-            handle: Handle::current(),
             last_number: AtomicU64::new(0),
             // A fresh `RandomState` has random keys, so its hash is a random number.
             last_job: AtomicU32::new(
                 u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
             ),
-            jobs: Jobs::new(starts_jobs, Handle::current()),
+            jobs: Jobs::new(starts_jobs),
         }
     }
 
@@ -191,7 +179,7 @@ impl Processes {
         let (shell, first_stop, background) = (command.clone(), stop.clone(), owner.background());
         let log = file.clone();
         // One task starts and waits, so a dropped call still stops the process.
-        let mut waiting = self.handle.spawn(async move {
+        let mut waiting = tokio::task::spawn_local(async move {
             match start_command(shell, folder, log, max_bytes, chunks).await {
                 Ok(running) => wait_command(running, deadline, first_stop, background).await,
                 Err(error) => Err(format!("the command did not start: {error}")),
@@ -208,9 +196,8 @@ impl Processes {
                 .jobs
                 .add_process(owner.as_ref(), id.clone(), label.clone(), command.clone(), file.clone());
             let Ok(job) = added else {
-                waiting = self
-                    .handle
-                    .spawn(wait_command(moved, deadline, stop.clone(), CancellationToken::new()));
+                waiting =
+                    tokio::task::spawn_local(wait_command(moved, deadline, stop.clone(), CancellationToken::new()));
                 continue;
             };
             let job = JobTask {
@@ -223,7 +210,7 @@ impl Processes {
             };
             job.announce(owner.as_ref(), &moved);
             // No await comes between the add and this spawn, so a dropped call cannot lose the process.
-            self.handle.spawn(job.wait(owner, moved));
+            tokio::task::spawn_local(job.wait(owner, moved));
             return Ok(CommandEnd {
                 output: String::new(),
                 cause: EndCause::Moved { id, log: file },
@@ -236,8 +223,7 @@ impl Processes {
     pub(crate) async fn output(&self, program: Program, stop: CancellationToken) -> Result<ProgramEnd, String> {
         // The runtime of the processes drives the pipes of the child. A dropped wait cancels `stop`.
         let _guard = stop.clone().drop_guard();
-        self.handle
-            .spawn(run_program(program, stop))
+        tokio::task::spawn_local(run_program(program, stop))
             .await
             .map_err(|error| error.to_string())?
     }
@@ -263,9 +249,9 @@ impl Processes {
             timeout,
         };
         let (started_sender, started) = oneshot::channel();
-        // One task on the runtime of the consumer owns the job from its spawn to the delivery of its end, so a dropped
+        // One local task owns the job from its spawn to the delivery of its end, so a dropped
         // call loses no child.
-        self.handle.spawn(job.run(owner, started_sender));
+        tokio::task::spawn_local(job.run(owner, started_sender));
         started
             .await
             .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
