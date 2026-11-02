@@ -55,7 +55,9 @@ async fn a_removed_input_leaves_the_store_and_starts_no_turn() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let input_id = store.accept_input(session.id(), user_input("drop")).await.unwrap();
     let observer = Capture::default();
 
@@ -80,7 +82,9 @@ async fn a_replaced_input_gives_the_model_the_new_blocks_and_keeps_the_sent_cont
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("done")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store
         .accept_input(session.id(), user_input("/skill:pdf"))
         .await
@@ -109,7 +113,9 @@ async fn an_input_during_a_turn_passes_the_hook_at_the_take_after_the_round() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let mut toolset = Toolset::new();
     let send = SendsInput {
@@ -136,7 +142,9 @@ async fn a_failed_hook_fails_the_turn_and_the_input_stays_pending() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("fail")).await.unwrap();
 
     let ran = session
@@ -157,7 +165,9 @@ async fn a_failed_hook_fails_the_turn_and_the_input_stays_pending() {
 async fn the_note_of_the_session_passes_without_the_hook() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     let token = CancellationToken::new();
     {
@@ -206,7 +216,9 @@ async fn an_input_that_a_client_removes_during_the_hook_starts_no_turn() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("hi")).await.unwrap();
     let hook = RemovedMeanwhile(store.clone(), session.id(), InputDecision::Keep);
 
@@ -226,7 +238,9 @@ async fn an_input_that_a_client_removes_during_the_hook_starts_no_turn() {
 async fn a_removal_of_the_hook_after_a_removal_of_the_client_sends_no_second_update() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("hi")).await.unwrap();
     let hook = RemovedMeanwhile(store.clone(), session.id(), InputDecision::Remove);
     let observer = Capture::default();

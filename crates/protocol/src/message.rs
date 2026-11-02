@@ -60,7 +60,7 @@ pub enum ClientRequest {
     /// Create a session with these settings. Each field is required. The server builds the system prompt of the session
     /// from its folder. Result: [`SessionResult`].
     #[serde(rename = "session/new")]
-    NewSession(SessionSettings),
+    NewSession(NewSessionParams),
     /// Fork a session at the end of a completed turn. Result: [`SessionResult`].
     #[serde(rename = "session/fork")]
     ForkSession(ForkSessionParams),
@@ -93,8 +93,8 @@ pub enum ClientRequest {
     /// The row of one saved session. Result: [`SessionRow`](crate::SessionRow).
     #[serde(rename = "session/get")]
     GetSession(GetSessionParams),
-    /// Delete a saved session with its events, its pending inputs, and its blobs. Its forks stay. It fails for an open
-    /// session: close it first with `session/close`. Result: [`EmptyResult`].
+    /// Delete a saved session and its descendants, with their events, pending inputs, and blobs. Its forks stay. It fails
+    /// while one of these sessions is open: close them first with `session/close`. Result: [`EmptyResult`].
     #[serde(rename = "session/remove")]
     RemoveSession(RemoveSessionParams),
     /// Start a device login of a provider, and give its code at once. A login in progress of the provider ends as
@@ -471,6 +471,19 @@ pub struct ForkSessionParams {
     pub through: Option<EventNumber>,
 }
 
+/// The params of `session/new`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct NewSessionParams {
+    /// The settings of the session.
+    #[serde(flatten)]
+    pub settings: SessionSettings,
+    /// The parent session. A session with a parent stays out of the default list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
+}
+
 /// The params of `session/load`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -484,17 +497,20 @@ pub struct LoadSessionParams {
 }
 
 /// The params of `session/list`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsParams {
     /// Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    /// Only the children of this session. None lists the sessions without a parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<SessionId>,
     /// The most rows of the page, from 1 to 100. None gives 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// The `nextCursor` of the page before, with the same `cwd`. None starts at the newest session.
+    /// The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }

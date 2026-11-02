@@ -109,8 +109,13 @@ impl FailingStore {
 
 #[async_trait]
 impl Store for FailingStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
-        self.store.create_session(settings, prompt).await
+    async fn create_session(
+        &self,
+        settings: &SessionSettings,
+        prompt: &[PromptSection],
+        parent: Option<SessionId>,
+    ) -> Result<Opened, StoreError> {
+        self.store.create_session(settings, prompt, parent).await
     }
 
     async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
@@ -136,10 +141,11 @@ impl Store for FailingStore {
     async fn list_sessions(
         &self,
         cwd: Option<&Path>,
+        parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        self.store.list_sessions(cwd, after, limit).await
+        self.store.list_sessions(cwd, parent, after, limit).await
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {

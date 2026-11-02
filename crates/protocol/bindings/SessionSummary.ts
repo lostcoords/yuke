@@ -34,4 +34,8 @@ updatedAt: number,
 /**
  * The source of a fork. The source can be gone.
  */
-forkOf?: SessionId | null, };
+forkOf?: SessionId | null, 
+/**
+ * The parent session. A removal of the parent removes this session.
+ */
+parent?: SessionId | null, };

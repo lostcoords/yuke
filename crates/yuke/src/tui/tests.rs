@@ -270,14 +270,17 @@ async fn saved_session(place: &Place) -> SessionId {
     let app = started(place, &display).await;
     let id = app
         .sessions()
-        .create(SessionSettings {
-            model: ModelReference {
-                provider: "minimax".to_owned(),
-                model: "MiniMax-M3".to_owned(),
+        .create(
+            SessionSettings {
+                model: ModelReference {
+                    provider: "minimax".to_owned(),
+                    model: "MiniMax-M3".to_owned(),
+                },
+                settings: yuke_ai::Settings::new(),
+                cwd: place.work.clone(),
             },
-            settings: yuke_ai::Settings::new(),
-            cwd: place.work.clone(),
-        })
+            None,
+        )
         .await
         .unwrap();
     app.shutdown().await;

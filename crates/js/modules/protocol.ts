@@ -414,11 +414,15 @@ export type ListSessionsParams = {
  */
 cwd?: string | null, 
 /**
+ * Only the children of this session. None lists the sessions without a parent.
+ */
+parent?: SessionId | null, 
+/**
  * The most rows of the page, from 1 to 100. None gives 50.
  */
 limit?: number | null, 
 /**
- * The `nextCursor` of the page before, with the same `cwd`. None starts at the newest session.
+ * The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
  */
 cursor?: string | null, };
 
@@ -1211,7 +1215,11 @@ updatedAt: number,
 /**
  * The source of a fork. The source can be gone.
  */
-forkOf?: SessionId | null, };
+forkOf?: SessionId | null, 
+/**
+ * The parent session. A removal of the parent removes this session.
+ */
+parent?: SessionId | null, };
 
 /**
  * A saved event or a temporary fact of a turn.

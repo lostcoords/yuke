@@ -106,6 +106,7 @@ export function setResponder(respond: typeof responder): void {
 interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
+  readonly parent: string | undefined;
   readonly folder: string;
   readonly ask: Ask;
   readonly request: SendRequest;
@@ -119,9 +120,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, folder, ask, model, startJob } = request;
+  const { open, sessionId, parent, folder, ask, model, startJob } = request;
   const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, folder, ask, request.request, model, startJob, entry),
+    start(open, sessionId, parent, folder, ask, request.request, model, startJob, entry),
   );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -599,6 +600,7 @@ function requestFailureOf(error: unknown, signal: AbortSignal): unknown {
 function start(
   open: number,
   sessionId: string,
+  parent: string | undefined,
   folder: string,
   ask: Ask,
   send: SendRequest,
@@ -641,6 +643,7 @@ function start(
   };
   const s: SessionContext<Options> = Object.freeze({
     sessionId,
+    parent,
     folder,
     get model(): ModelReference {
       return Object.freeze(model());

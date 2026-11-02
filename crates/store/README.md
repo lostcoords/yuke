@@ -9,7 +9,7 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
   power loss (plain `fsync`).
 - One connection runs each read and write in call order on its own thread.
 - The `sessions` table holds one row for each session: a copy of its newest settings, its preview, its fork source,
-  its times, and the id of its newest event, which orders `list_sessions`.
+  its parent, its times, and the id of its newest event, which orders `list_sessions`.
 - The `events` table holds the engine commits and the settings of each session, numbered 1, 2, 3, and so on. The
   first event of a session holds its settings, and the newest settings event holds the current settings.
 - The `pending_inputs` table holds the inputs that no commit consumed.

@@ -9,6 +9,7 @@ use yuke_protocol::{
 use super::*;
 use crate::app::{App, Mode, Observer, TokioTimer, open_store};
 use crate::testing::{CountedWaits, Place, with_key};
+use yuke_agent::StoreError;
 
 /// Drops each notification.
 struct Silent;
@@ -83,6 +84,7 @@ async fn saved(sessions: &SessionService) -> usize {
     sessions
         .list(ListSessionsParams {
             cwd: None,
+            parent: None,
             limit: None,
             cursor: None,
         })
@@ -100,7 +102,7 @@ async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
     );
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     sessions.close(id).await.unwrap();
 
     let opening = sessions.reserve(id).unwrap();
@@ -120,14 +122,14 @@ async fn no_session_opens_or_closes_during_a_reload() {
     let place = Place::new("sessions", "no_session_opens_or_closes_during_a_reload");
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
-    let closed = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
+    let closed = sessions.create(settings(&place), None).await.unwrap();
     sessions.close(closed).await.unwrap();
 
     let reload = sessions.start_reload().unwrap();
     let close = sessions.close(id).await;
     let load = sessions.load(closed, None).await;
-    let create = sessions.create(settings(&place)).await;
+    let create = sessions.create(settings(&place), None).await;
     let during = saved(sessions).await;
     drop(reload);
 
@@ -159,11 +161,11 @@ async fn after_the_shutdown_starts_no_session_opens() {
     let place = Place::new("sessions", "after_the_shutdown_starts_no_session_opens");
     let app = started(&place).await;
     let sessions = Arc::clone(app.sessions());
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
 
     sessions.close_all().await;
     let closed = sessions.jobs(id);
-    let create = sessions.create(settings(&place)).await;
+    let create = sessions.create(settings(&place), None).await;
     let load = sessions.load(id, None).await;
 
     assert!(matches!(closed, Err(AppError::NotOpen(_))));
@@ -178,7 +180,7 @@ async fn a_session_without_a_holder_closes_after_the_grace() {
     let place = Place::new("sessions", "a_session_without_a_holder_closes_after_the_grace");
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     tokio::time::pause();
 
@@ -198,7 +200,7 @@ async fn a_session_that_nobody_attaches_closes_after_the_grace() {
     let sessions = app.sessions();
     tokio::time::pause();
 
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     tokio::time::sleep(GRACE.saturating_sub(Duration::from_secs(1))).await;
     let before_the_grace = sessions.live(id).is_ok();
     closed(sessions, id, Duration::from_secs(2)).await;
@@ -213,7 +215,7 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
     let transport = ScriptedTransport::new([text_reply("Hello.")]);
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
 
     sessions.input(id, said("Hi.")).await.unwrap();
@@ -238,7 +240,7 @@ async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_i
     let transport = ScriptedTransport::new([text_reply("Hello.")]);
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let events = Arc::new(Mutex::new(Vec::new()));
     let kept = Arc::clone(&events);
     let view = sessions
@@ -269,7 +271,7 @@ async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
     let transport = ScriptedTransport::new([text_reply("Hello.")]);
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
 
     sessions.input(id, said("Hi.")).await.unwrap();
@@ -295,7 +297,7 @@ async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app(
         .await
         .unwrap();
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
 
     sessions.input(id, said("Hi.")).await.unwrap();
@@ -312,7 +314,7 @@ async fn an_attachment_during_the_countdown_keeps_the_session_open() {
     let place = Place::new("sessions", "an_attachment_during_the_countdown_keeps_the_session_open");
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let first = sessions.attach(id).unwrap();
     tokio::time::pause();
     release(sessions, id, first).await;
@@ -334,7 +336,7 @@ async fn an_attachment_of_an_earlier_open_does_not_release_a_later_open() {
     );
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let earlier = sessions.attach(id).unwrap();
     sessions.close(id).await.unwrap();
     sessions.load(id, None).await.unwrap();
@@ -357,7 +359,7 @@ async fn an_input_during_the_countdown_keeps_the_session_open_until_its_turn_end
     );
     let app = started_with(&place, Box::new(Stalled)).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     tokio::time::pause();
     release(sessions, id, attachment).await;
@@ -386,7 +388,7 @@ async fn a_countdown_that_ends_during_a_reload_starts_again() {
     let place = Place::new("sessions", "a_countdown_that_ends_during_a_reload_starts_again");
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     tokio::time::pause();
     release(sessions, id, attachment).await;
@@ -410,7 +412,7 @@ async fn a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs()
     );
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     tokio::time::pause();
     drop(attachment);
@@ -428,7 +430,7 @@ async fn a_repeated_idle_report_does_not_extend_the_countdown() {
     let place = Place::new("sessions", "a_repeated_idle_report_does_not_extend_the_countdown");
     let app = started(&place).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     tokio::time::pause();
     release(sessions, id, attachment).await;
@@ -458,7 +460,7 @@ async fn a_session_with_a_running_job_waits_the_idle_minutes_then_stops_the_job(
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "exec", &arguments)]), text_reply("Started.")]);
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     sessions.input(id, said("Start a job.")).await.unwrap();
     // The turn ends before the release, so the task reports once.
@@ -500,7 +502,7 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let transport = ScriptedTransport::new([text_reply("One."), text_reply("Two."), text_reply("Three.")]);
     let app = started_with(&place, Box::new(transport.clone())).await;
     let sessions = app.sessions();
-    let id = sessions.create(settings(&place)).await.unwrap();
+    let id = sessions.create(settings(&place), None).await.unwrap();
     let attachment = sessions.attach(id).unwrap();
     for (turn, text) in ["One?", "Two?"].into_iter().enumerate() {
         sessions.input(id, said(text)).await.unwrap();
@@ -551,5 +553,100 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let older: Vec<u64> = older.iter().map(|event| event.event_number.0).collect();
     assert_eq!(older, (1..last).collect::<Vec<_>>());
     drop(attachment);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_removal_of_a_parent_removes_its_whole_tree() {
+    let place = Place::new("sessions", "a_removal_of_a_parent_removes_its_whole_tree");
+    let app = started(&place).await;
+    let sessions = app.sessions();
+    let parent = sessions.create(settings(&place), None).await.unwrap();
+    let child = sessions.create(settings(&place), Some(parent)).await.unwrap();
+    let grandchild = sessions.create(settings(&place), Some(child)).await.unwrap();
+    let other = sessions.create(settings(&place), None).await.unwrap();
+    for id in [parent, child, grandchild, other] {
+        sessions.close(id).await.unwrap();
+    }
+
+    sessions.remove(parent).await.unwrap();
+
+    for id in [parent, child, grandchild] {
+        assert!(sessions.get(id).await.is_err(), "{id}");
+    }
+    assert!(sessions.get(other).await.is_ok());
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_removal_fails_while_a_session_of_the_tree_is_open_and_removes_nothing() {
+    let place = Place::new("sessions", "a_removal_fails_while_a_session_of_the_tree_is_open");
+    let app = started(&place).await;
+    let sessions = app.sessions();
+    let parent = sessions.create(settings(&place), None).await.unwrap();
+    let first = sessions.create(settings(&place), Some(parent)).await.unwrap();
+    let open = sessions.create(settings(&place), Some(first)).await.unwrap();
+    sessions.close(parent).await.unwrap();
+    sessions.close(first).await.unwrap();
+
+    let refused = sessions.remove(parent).await;
+
+    assert!(matches!(refused, Err(AppError::Open(id)) if id == open), "{refused:?}");
+    for id in [parent, first, open] {
+        assert!(sessions.get(id).await.is_ok(), "{id}");
+    }
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_create_with_an_unknown_parent_fails_and_saves_nothing() {
+    let place = Place::new("sessions", "a_create_with_an_unknown_parent_fails");
+    let app = started(&place).await;
+    let sessions = app.sessions();
+
+    let refused = sessions.create(settings(&place), Some(SessionId::generate())).await;
+    let listed = sessions.list(ListSessionsParams::default()).await.unwrap();
+
+    assert!(
+        matches!(refused, Err(AppError::Store(StoreError::NotFound))),
+        "{refused:?}"
+    );
+    assert_eq!(listed.sessions.len(), 0);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cursor_reads_only_in_the_list_of_its_parent() {
+    let place = Place::new("sessions", "a_cursor_reads_only_in_the_list_of_its_parent");
+    let app = started(&place).await;
+    let sessions = app.sessions();
+    let parent = sessions.create(settings(&place), None).await.unwrap();
+    let older = sessions.create(settings(&place), Some(parent)).await.unwrap();
+    let newer = sessions.create(settings(&place), Some(parent)).await.unwrap();
+    let of_parent = |limit, cursor| ListSessionsParams {
+        parent: Some(parent),
+        limit,
+        cursor,
+        ..ListSessionsParams::default()
+    };
+
+    let first = sessions.list(of_parent(Some(1), None)).await.unwrap();
+    let cursor = first.next_cursor.clone().unwrap();
+    let second = sessions.list(of_parent(None, Some(cursor.clone()))).await.unwrap();
+    let wrong = sessions
+        .list(ListSessionsParams {
+            cursor: Some(cursor),
+            ..ListSessionsParams::default()
+        })
+        .await;
+
+    let ids = |page: &ListSessionsResult| {
+        page.sessions
+            .iter()
+            .map(|row| row.session.session_id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!((ids(&first), ids(&second)), (vec![newer], vec![older]));
+    assert!(matches!(wrong, Err(AppError::Invalid(_))), "{wrong:?}");
     app.shutdown().await;
 }

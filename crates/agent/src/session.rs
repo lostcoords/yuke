@@ -44,6 +44,8 @@ fn interruption_note(newest_turn: &NewestTurn) -> Option<Input> {
 /// A session that one writer owns. Each turn runs on the context of the session. The session saves each commit of
 /// the turn in its store before the turn goes on.
 pub struct Session {
+    /// The parent session.
+    parent: Option<SessionId>,
     settings: SessionSettings,
     /// The sections of the system prompt of each turn. They never change.
     prompt: Vec<PromptSection>,
@@ -218,8 +220,9 @@ impl Session {
         store: Arc<dyn Store>,
         settings: &SessionSettings,
         prompt: &[PromptSection],
+        parent: Option<SessionId>,
     ) -> Result<Session, StoreError> {
-        let opened = store.create_session(settings, prompt).await?;
+        let opened = store.create_session(settings, prompt, parent).await?;
         Ok(Session::from_opened(store, opened))
     }
 
@@ -259,6 +262,7 @@ impl Session {
             context: opened.context,
             store,
             id: opened.id,
+            parent: opened.parent,
             lease: opened.lease,
             newest_turn: opened.newest_turn,
             input_tokens: opened.input_tokens,
@@ -268,6 +272,11 @@ impl Session {
     /// The id of the session.
     pub fn id(&self) -> SessionId {
         self.id
+    }
+
+    /// The parent session.
+    pub fn parent(&self) -> Option<SessionId> {
+        self.parent
     }
 
     /// The current settings.

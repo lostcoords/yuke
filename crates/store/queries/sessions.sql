@@ -1,7 +1,7 @@
 -- The queries of the sessions table.
 
---! insert_session (id: [u8; 16], prompt: String, settings: String)
-INSERT INTO sessions(id, prompt, settings) VALUES (:id, :prompt, :settings);
+--! insert_session (id: [u8; 16], prompt: String, settings: String, parent?: [u8; 16])
+INSERT INTO sessions(id, prompt, settings, parent) VALUES (:id, :prompt, :settings, :parent);
 
 --! copy_session (source: [u8; 16], id: [u8; 16], cut: u64)
 --- Add session `id` as a fork of session `source`: its prompt, its preview, and its newest settings at event
@@ -40,20 +40,21 @@ WHERE id = :id;
 --- Give the session the preview `preview` when it has none.
 UPDATE sessions SET preview = :preview WHERE id = :id AND preview IS NULL;
 
---! list_sessions (cwd?: &str, before: i64, limit: usize) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], created_at: u64, updated_at: u64, newest_event: i64)
---- The sessions whose newest event id is below `before`, newest first. With `cwd`, only the sessions of that folder.
-SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
+--! list_sessions (parent?: [u8; 16], cwd?: &str, before: i64, limit: usize) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], parent?: [u8; 16], created_at: u64, updated_at: u64, newest_event: i64)
+--- The sessions of `parent`, or without a parent, whose newest event id is below `before`, newest first. With `cwd`,
+--- only the sessions of that folder.
+SELECT id, settings, preview, fork_of, parent, created_at, updated_at, newest_event FROM sessions
+WHERE parent IS :parent AND (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
 ORDER BY newest_event DESC
 LIMIT :limit;
 
---! session_summary (id: [u8; 16]) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], created_at: u64, updated_at: u64)
+--! session_summary (id: [u8; 16]) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], parent?: [u8; 16], created_at: u64, updated_at: u64)
 --- The saved facts for `session/list` and `session/get`. It returns no row for an unknown session.
-SELECT id, settings, preview, fork_of, created_at, updated_at FROM sessions WHERE id = :id;
+SELECT id, settings, preview, fork_of, parent, created_at, updated_at FROM sessions WHERE id = :id;
 
---! session_prompt (id: [u8; 16]) : (prompt: crate::Json<Vec<yuke_agent::PromptSection>>)
---- The sections of the system prompt of the session. It returns no row for an unknown session.
-SELECT prompt FROM sessions WHERE id = :id;
+--! session_prompt (id: [u8; 16]) : (prompt: crate::Json<Vec<yuke_agent::PromptSection>>, parent?: [u8; 16])
+--- The sections of the system prompt of the session, and its parent. It returns no row for an unknown session.
+SELECT prompt, parent FROM sessions WHERE id = :id;
 
 --! session_exists (id: [u8; 16]) : (present: bool)
 --- Whether a session has this id.

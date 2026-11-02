@@ -45,7 +45,9 @@ async fn a_session_that_opens_again_has_the_same_context() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     session
@@ -67,7 +69,9 @@ async fn a_session_keeps_its_lease_after_a_turn() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     session
@@ -85,7 +89,9 @@ async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing()
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let before = store.load(session.id(), EventPage::After(None)).await.unwrap().events;
 
     let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
@@ -103,7 +109,9 @@ async fn a_session_keeps_its_lease_after_a_failed_request() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
@@ -116,7 +124,7 @@ async fn a_session_keeps_its_lease_after_a_failed_request() {
 #[tokio::test]
 async fn an_open_turn_ends_with_an_error_result_for_each_call_without_a_result() {
     let store = Arc::new(MemoryStore::new());
-    let id = store.create_session(&settings(), &prompt()).await.unwrap().id;
+    let id = store.create_session(&settings(), &prompt(), None).await.unwrap().id;
     let answered = [
         Block::user_text("one"),
         // A provider can give an id again in a later answer.
@@ -162,7 +170,9 @@ async fn a_pending_input_waits_for_the_next_turn_after_an_open() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let id = session.id();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     drop(session);
@@ -188,7 +198,9 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
     let store = FailingStore::new(StoreBehavior::StallSettings);
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let mut brief = settings();
     brief.settings = yuke_ai::Settings::new().temperature(0.25);
     {
@@ -225,7 +237,7 @@ async fn a_turn_sends_the_prompt_the_settings_and_the_id_of_its_session() {
         PromptSection::new("empty", ""),
         PromptSection::new("environment", "Here."),
     ];
-    let mut session = Session::create(store.clone(), &session_settings, &sections)
+    let mut session = Session::create(store.clone(), &session_settings, &sections, None)
         .await
         .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
@@ -254,7 +266,9 @@ async fn a_turn_sends_the_bytes_of_its_media_from_the_store() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("seen")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let blob = store.put_blob(session.id(), b"image-bytes".to_vec()).await.unwrap();
     let input = vec![Block::user_text("look"), Block::Media(Media::new(blob, "image/png"))];
     store
@@ -280,7 +294,9 @@ async fn input_that_arrives_during_a_turn_joins_the_next_request_and_stays_pendi
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let mut toolset = Toolset::new();
     let tool = SendsInput {
         store: store.clone(),
@@ -318,7 +334,9 @@ async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open
     let store = FailingStore::new(StoreBehavior::FailCommit(2));
     let transport = ScriptedTransport::new([text_reply("lost"), text_reply("three")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
@@ -364,7 +382,9 @@ async fn the_input_of_a_failed_commit_joins_the_next_turn_and_is_consumed_once()
     let store = FailingStore::new(StoreBehavior::FailCommit(1));
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let input = store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
@@ -397,7 +417,9 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("noted")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let source = InputSource::Plugin {
         name: "host:jobs".to_owned(),
     };
@@ -452,7 +474,9 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
 async fn a_dropped_turn_releases_the_lease_and_the_next_turn_reads_a_note_about_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     {
@@ -512,7 +536,9 @@ async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let removed = store.accept_input(session.id(), user_input("removed")).await.unwrap();
     store.accept_input(session.id(), user_input("kept")).await.unwrap();
 
@@ -534,7 +560,9 @@ async fn new_settings_give_their_event_number_and_a_removed_input_never_reaches_
 async fn a_stale_session_refuses_new_settings_and_its_recovery_gets_owned_while_another_writer_holds_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     {
         let mut run = pin!(session.turn(Driver::new(&Stalled, &model, &NoWait)).run());
@@ -569,7 +597,9 @@ async fn a_stale_session_refuses_new_settings_and_its_recovery_gets_owned_while_
 async fn a_cancelled_turn_gives_the_next_turn_a_note_after_its_input() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     let token = yuke_engine::CancellationToken::new();
     {
@@ -617,7 +647,9 @@ async fn a_failed_turn_gives_the_next_turn_a_note_also_after_an_open_and_a_compl
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("three"), text_reply("five")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     let id = session.id();
@@ -657,7 +689,9 @@ async fn a_failed_turn_gives_the_next_turn_of_the_same_session_a_note() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("three")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
     store.accept_input(session.id(), user_input("two")).await.unwrap();
@@ -679,7 +713,9 @@ async fn a_failed_read_of_the_inbox_after_a_round_ends_the_turn_as_failed_and_ke
     let store = FailingStore::new(StoreBehavior::FailPendingAfterCommits(2));
     let transport = ScriptedTransport::new([text_reply("two")]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
 
     let ran = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
@@ -701,7 +737,9 @@ async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once()
     // The first turn saves its input and its cancelled end. The first commit of the second turn fails.
     let store = FailingStore::new(StoreBehavior::FailCommit(3));
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
     let token = yuke_engine::CancellationToken::new();
     {
@@ -735,7 +773,9 @@ async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once()
 #[tokio::test]
 async fn a_recovery_of_a_session_that_holds_its_lease_opens_it_again() {
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
 
     let recovered = session.recover().await;
     let other_writer = store.open(session.id(), Access::Write).await;
@@ -749,7 +789,9 @@ async fn a_recovery_of_a_session_that_holds_its_lease_opens_it_again() {
 #[tokio::test]
 async fn a_recovery_under_the_lease_needs_no_open_for_writing() {
     let store = FailingStore::new(StoreBehavior::RefuseWriteOpen);
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
 
     let recovered = session.recover().await;
 
@@ -782,7 +824,9 @@ async fn a_turn_starts_from_the_input_tokens_of_the_newest_answer_also_after_an_
     ]);
     let model = model();
     let hooks = InputTokens::default();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     for text in ["one", "three"] {
         store.accept_input(session.id(), user_input(text)).await.unwrap();
         let driver = Driver::new(&transport, &model, &NoWait).hooks(&hooks);
@@ -837,7 +881,9 @@ async fn a_saved_replacement_clears_the_input_tokens_of_the_next_turn() {
     ]);
     let model = model();
     let hooks = ReplacesSecondRound::default();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let mut results = Vec::new();
     for text in ["one", "three", "four"] {
         store.accept_input(session.id(), user_input(text)).await.unwrap();

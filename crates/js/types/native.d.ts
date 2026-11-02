@@ -478,7 +478,9 @@ declare module "yuke:internal/native" {
   export function factsWatch(key: number): void;
   /** End the watch of the facts. */
   export function factsRelease(): void;
-  export function sessionsCreate(settings: SessionSettings): Promise<SessionId>;
+  export function sessionsCreate(
+    request: readonly [settings: SessionSettings, parent: SessionId | null],
+  ): Promise<SessionId>;
   export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | null]): Promise<SessionId>;
   export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;
   export function sessionsGet(id: SessionId): Promise<SessionRow>;

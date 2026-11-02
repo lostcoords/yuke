@@ -64,6 +64,7 @@ impl Handle {
         let folder = host.folder();
         let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
+        let parent = host.parent().map(|parent| parent.to_string());
         let job_host = Arc::clone(&host);
         let ask_host = Arc::clone(&host);
         let request_host = Arc::clone(&host);
@@ -76,6 +77,7 @@ impl Handle {
                 let request = OpenRequest {
                     open,
                     session_id,
+                    parent,
                     folder,
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
@@ -482,6 +484,7 @@ impl InputHook for ScriptHooks {
 struct OpenRequest<'js> {
     open: u64,
     session_id: String,
+    parent: Option<String>,
     folder: String,
     /// The native `startJob(plugin, id, label)` of the session.
     start_job: Function<'js>,

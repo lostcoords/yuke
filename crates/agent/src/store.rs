@@ -27,7 +27,12 @@ pub trait Store: Send + Sync {
     /// # Errors
     ///
     /// Returns [`StoreError::Failed`] when the save fails.
-    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError>;
+    async fn create_session(
+        &self,
+        settings: &SessionSettings,
+        prompt: &[PromptSection],
+        parent: Option<SessionId>,
+    ) -> Result<Opened, StoreError>;
 
     /// Save a new session with the events of session `source` up to the end of a completed turn, and open it for
     /// writing. `through` is the event number of that end. `None` takes the newest completed turn, and a source with no
@@ -69,7 +74,8 @@ pub trait Store: Send + Sync {
 
     /// The saved facts of at most `limit` sessions after `after`, newest first: the newest event orders them. A fork
     /// saves its copied events anew, so it comes first. With `cwd`, only the sessions whose newest settings name that folder
-    /// count. `None` for `after` starts at the newest session.
+    /// count. With `parent`, only the sessions of that parent count, and `None` takes the sessions without a parent. `None` for
+    /// `after` starts at the newest session.
     ///
     /// # Errors
     ///
@@ -77,6 +83,7 @@ pub trait Store: Send + Sync {
     async fn list_sessions(
         &self,
         cwd: Option<&Path>,
+        parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError>;
@@ -257,6 +264,8 @@ pub struct Opened {
     pub prompt: Vec<PromptSection>,
     /// The model context: the head of the newest replacement, the blocks that it keeps, and the blocks after it.
     pub context: Vec<yuke_ai::Block>,
+    /// The parent session.
+    pub parent: Option<SessionId>,
     /// The newest turn of the session.
     pub newest_turn: NewestTurn,
     /// The input tokens of the newest answer. It is `None` without an answer, without a provider count, or after a newer

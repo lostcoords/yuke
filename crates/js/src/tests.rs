@@ -93,6 +93,7 @@ impl crate::Sessions for NoSessions {
     async fn create(
         &self,
         _: yuke_protocol::SessionSettings,
+        _: Option<yuke_protocol::SessionId>,
     ) -> Result<yuke_protocol::SessionId, crate::SessionsError> {
         no_sessions()
     }

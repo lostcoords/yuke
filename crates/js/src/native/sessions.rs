@@ -188,7 +188,9 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
     request.add(
         object,
         "sessionsCreate",
-        |sessions, settings: SessionSettings| async move { sessions.create(settings).await },
+        |sessions, (settings, parent): (SessionSettings, Option<SessionId>)| async move {
+            sessions.create(settings, parent).await
+        },
     )?;
     request.add(
         object,

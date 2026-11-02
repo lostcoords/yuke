@@ -81,7 +81,9 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
         ..target()
     });
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -182,7 +184,9 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
         ..target()
     });
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -256,7 +260,9 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
     let model = model();
     let tools = tools();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -327,7 +333,9 @@ async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
     let transport = ScriptedTransport::new([overloaded, text_reply("done")]);
     let model = model();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -373,7 +381,9 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let model = model();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
@@ -439,7 +449,9 @@ async fn a_round_failure_reaches_clients_with_each_cause() {
         context_window: None,
     };
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
 
@@ -468,7 +480,9 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
     let store = FailingStore::new(StoreBehavior::FailCommit(2));
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")])]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     assert!(
@@ -511,7 +525,9 @@ async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update(
     let store = FailingStore::new(StoreBehavior::FailPending);
     let transport = ScriptedTransport::new([]);
     let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     let capture = Capture::default();
 
     let failed = session
@@ -529,7 +545,9 @@ async fn a_failed_load_of_the_pending_inputs_starts_no_turn_and_sends_no_update(
 async fn a_dropped_turn_discards_its_draft() {
     let model = model();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     {
@@ -566,7 +584,9 @@ async fn cancelled_text_reconciles_to_the_terminal_commit() {
     let transport = ScriptedTransport::new([text_reply("partial")]);
     let model = model();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     let cancellation = CancellationToken::new();
@@ -617,7 +637,9 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
     });
     let tools = tools();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -672,7 +694,9 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         ..target()
     });
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -733,7 +757,9 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
     ])]);
     let model = model();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     let cancellation = CancellationToken::new();
@@ -784,7 +810,9 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
     });
     let tools = tools();
     let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
     store.accept_input(session.id(), user_input("go")).await.unwrap();
     let capture = Capture::default();
     session
@@ -844,7 +872,9 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
         ])]);
         let model = model();
         let store = Arc::new(MemoryStore::new());
-        let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+        let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+            .await
+            .unwrap();
         store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         let cancellation = CancellationToken::new();
@@ -898,7 +928,9 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
         let model = model();
         let tools = tools();
-        let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+        let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+            .await
+            .unwrap();
         store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         assert!(
@@ -960,7 +992,9 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
         let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
         let model = model();
         let tools = tools();
-        let mut session = Session::create(store.clone(), &settings(), &prompt()).await.unwrap();
+        let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+            .await
+            .unwrap();
         store.accept_input(session.id(), user_input("go")).await.unwrap();
         let capture = Capture::default();
         {

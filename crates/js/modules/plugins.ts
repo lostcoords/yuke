@@ -121,15 +121,22 @@ export interface Services {
  * can send it input. A failed request rejects with an `Error` that tells why.
  */
 export interface Sessions {
-  /** Create a session with `settings`, and open it. It closes by itself when nothing holds it and it has no work. */
-  readonly create: (settings: SessionSettings) => Promise<SessionId>;
+  /**
+   * Create a session with `settings`, and open it. It closes by itself when nothing holds it and it has no work.
+   * With `options.parent`, the session works for that session. It stays out of the default list, and the removal of the
+   * parent removes it. An unknown parent rejects.
+   */
+  readonly create: (settings: SessionSettings, options?: { readonly parent?: SessionId }) => Promise<SessionId>;
   /** Fork session `id` through the event `through`, or through its last event, and open the fork. */
   readonly fork: (id: SessionId, through?: EventNumber) => Promise<SessionId>;
-  /** A page of the saved sessions, newest first. `nextCursor` continues the list. */
+  /**
+   * A page of the saved sessions, newest first. `nextCursor` continues the list. Without `parent`, the page holds only
+   * the sessions without a parent. With `parent`, it holds the sessions of that parent.
+   */
   readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
   /** The row of the saved session `id`, with its activity now. */
   readonly get: (id: SessionId) => Promise<SessionRow>;
-  /** Delete the saved session `id`. An open session cannot be removed. */
+  /** Delete the saved session `id` and its descendants. The call fails while one of these sessions is open. */
   readonly remove: (id: SessionId) => Promise<void>;
   /**
    * Open session `id`, also a closed one, and hold it: it does not close by itself until the handle ends.
@@ -137,7 +144,10 @@ export interface Sessions {
    * the snapshot.
    */
   readonly open: (id: SessionId, options: OpenOptions) => Promise<SessionHandle>;
-  /** At most `page.limit` saved events of session `id` before the event `page.before`, or its last ones, in order. */
+  /**
+   * At most `page.limit` saved events of session `id` before the event `page.before`, or its last ones, in order. The
+   * session can be closed. A newest commit with no `end` is an unfinished turn, for example after a crash of yuke.
+   */
   readonly events: (id: SessionId, page: EventsPage) => Promise<readonly Frozen<StoredEvent>[]>;
   /**
    * Close session `id` at once for each holder, end each handle on it, and stop its jobs. A cleanup of the session must
@@ -771,6 +781,8 @@ export interface PluginJob {
 export interface SessionContext<O = Record<string, never>> {
   /** The id of the session. */
   readonly sessionId: string;
+  /** The parent session. A fork has no parent. */
+  readonly parent: string | undefined;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
   readonly folder: string;
   /** The model of the session now. A change of the settings changes it at once. */

@@ -60,6 +60,7 @@ impl LiveSession {
     ) -> Result<LiveSession, AppError> {
         let host = Arc::new(Host {
             settings: Mutex::new(session.settings().clone()),
+            parent: session.parent(),
             output: Arc::new(Output::new(
                 session.id(),
                 Arc::clone(&shared.observer),
@@ -989,6 +990,8 @@ fn check_answer(request: &InteractionRequest, response: &InteractionResponse) ->
 
 /// The session of the tools: its folder, its blob store, and the input of its background jobs.
 struct Host {
+    /// The parent session.
+    parent: Option<SessionId>,
     /// The settings of the session now. A saved change of the settings and each turn set them.
     settings: Mutex<SessionSettings>,
     shared: Arc<Shared>,
@@ -1037,6 +1040,10 @@ impl MediaStore for Host {
 impl SessionHost for Host {
     fn session_id(&self) -> SessionId {
         self.output.session
+    }
+
+    fn parent(&self) -> Option<SessionId> {
+        self.parent
     }
 
     fn folder(&self) -> PathBuf {
@@ -1549,7 +1556,7 @@ mod tests {
             settings: yuke_ai::Settings::new(),
             cwd: place.work.clone(),
         };
-        let id = app.sessions().create(first.clone()).await.unwrap();
+        let id = app.sessions().create(first.clone(), None).await.unwrap();
         let other = place.work.join("other");
         std::fs::create_dir(&other).unwrap();
         let model = ModelReference {

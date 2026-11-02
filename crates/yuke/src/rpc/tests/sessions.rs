@@ -321,6 +321,7 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
         Arc::clone(&store),
         &settings,
         &[PromptSection::new("base", "the prompt")],
+        None,
     )
     .await
     .unwrap();
@@ -389,7 +390,7 @@ async fn a_fork_that_has_no_credential_fails_and_leaves_no_session() {
 
     assert_eq!(forked.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     let store = place.store().await;
-    let page = store.list_sessions(None, None, 10).await.unwrap();
+    let page = store.list_sessions(None, None, None, 10).await.unwrap();
     let ids: Vec<_> = page.sessions.iter().map(|session| session.session_id).collect();
     assert_eq!(ids, [source]);
 }

@@ -61,6 +61,8 @@ struct Saved {
     preview: Option<String>,
     /// The source of a fork.
     fork_of: Option<SessionId>,
+    /// The parent session.
+    parent: Option<SessionId>,
     /// The creation time, in milliseconds since the Unix epoch.
     created_at: u64,
     /// The time of the newest event, in milliseconds since the Unix epoch.
@@ -97,6 +99,7 @@ impl Saved {
             created_at: self.created_at,
             updated_at: self.updated_at,
             fork_of: self.fork_of,
+            parent: self.parent,
         }
     }
 
@@ -133,6 +136,7 @@ impl Saved {
             id,
             settings: settings.expect("the session has a settings event").clone(),
             prompt: self.prompt.clone(),
+            parent: self.parent,
             context,
             newest_turn,
             input_tokens,
@@ -204,7 +208,12 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
+    async fn create_session(
+        &self,
+        settings: &SessionSettings,
+        prompt: &[PromptSection],
+        parent: Option<SessionId>,
+    ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
         let now = now_ms();
@@ -216,6 +225,7 @@ impl Store for MemoryStore {
             newest_write: 0,
             preview: None,
             fork_of: None,
+            parent,
             created_at: now,
             updated_at: now,
         };
@@ -239,6 +249,7 @@ impl Store for MemoryStore {
             newest_write: write,
             preview: saved.preview.clone(),
             fork_of: Some(source),
+            parent: None,
             created_at: now,
             updated_at: now,
         };
@@ -281,6 +292,7 @@ impl Store for MemoryStore {
     async fn list_sessions(
         &self,
         cwd: Option<&Path>,
+        parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
@@ -288,6 +300,7 @@ impl Store for MemoryStore {
         let mut listed: Vec<(&SessionId, &Saved)> = state
             .sessions
             .iter()
+            .filter(|(_, saved)| saved.parent == parent)
             .filter(|(_, saved)| after.is_none_or(|ListPosition(before)| saved.newest_write < before))
             .filter(|(_, saved)| cwd.is_none_or(|cwd| saved.settings().is_some_and(|settings| settings.cwd == cwd)))
             .collect();

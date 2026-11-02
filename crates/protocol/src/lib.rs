@@ -33,10 +33,10 @@ pub use message::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, ExtensionCancelParams, ExtensionEventParams,
     ExtensionRequestParams, ForkSessionParams, GetBlobParams, GetBlobResult, GetSessionParams, Implementation,
     InitializeParams, InitializeResult, InputParams, InputResult, Job, JobKind, JobState, JsonRpc, ListJobsResult,
-    ListSessionsParams, ListSessionsResult, LoadSessionParams, NoticeLevel, NoticeParams, Notification,
-    PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams, Request, RequestId,
-    Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionParams, SessionResult,
-    SetSettingsParams, StopJobParams, UpdateCredentialParams,
+    ListSessionsParams, ListSessionsResult, LoadSessionParams, NewSessionParams, NoticeLevel, NoticeParams,
+    Notification, PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams, Request,
+    RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionParams,
+    SessionResult, SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use plugin::{
     AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,

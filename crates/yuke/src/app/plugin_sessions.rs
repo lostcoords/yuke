@@ -29,8 +29,8 @@ impl PluginSessions {
 
 #[async_trait]
 impl Sessions for PluginSessions {
-    async fn create(&self, settings: SessionSettings) -> Result<SessionId, SessionsError> {
-        Ok(self.service()?.create(settings).await?)
+    async fn create(&self, settings: SessionSettings, parent: Option<SessionId>) -> Result<SessionId, SessionsError> {
+        Ok(self.service()?.create(settings, parent).await?)
     }
 
     async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, SessionsError> {

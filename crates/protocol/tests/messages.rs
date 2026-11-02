@@ -80,7 +80,13 @@ fn each_request_reads_and_writes_its_json() {
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 1, "method": "session/new", "params": settings_json() }),
-            request(1, ClientRequest::NewSession(settings())),
+            request(
+                1,
+                ClientRequest::NewSession(yuke_protocol::NewSessionParams {
+                    settings: settings(),
+                    parent: None,
+                }),
+            ),
         ),
         (
             json!({ "jsonrpc": "2.0", "id": 2, "method": "session/fork", "params": {
@@ -386,6 +392,24 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
         &yuke_protocol::ListJobsResult {
             jobs: vec![process_job(JobState::Running, None)],
         },
+    );
+}
+
+#[test]
+fn a_new_session_takes_the_settings_and_its_parent_in_one_object() {
+    let message = request(
+        1,
+        ClientRequest::NewSession(yuke_protocol::NewSessionParams {
+            settings: settings(),
+            parent: Some(session()),
+        }),
+    );
+    let mut params = settings_json();
+    params["parent"] = json!(SESSION);
+
+    assert_json(
+        &json!({ "jsonrpc": "2.0", "id": 1, "method": "session/new", "params": params }),
+        &message,
     );
 }
 

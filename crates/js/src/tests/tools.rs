@@ -76,6 +76,10 @@ impl SessionHost for TestHost {
         self.session
     }
 
+    fn parent(&self) -> Option<SessionId> {
+        None
+    }
+
     fn folder(&self) -> PathBuf {
         self.folder.lock().unwrap().clone()
     }

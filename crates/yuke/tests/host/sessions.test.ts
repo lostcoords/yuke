@@ -81,3 +81,64 @@ test("a blob that a plugin saves reaches the model as the image of an input", as
   // "AQID" is the base64 of the bytes 1, 2, 3.
   equal([blob.len, JSON.stringify(host.requests[0]?.body).includes("AQID")], [3, true]);
 });
+
+test("a child session names its parent, stays out of the default list, and leaves with its parent", async () => {
+  const parents: (string | undefined)[] = [];
+  let sessions: Sessions | undefined;
+  const plugin: PluginApply = (ctx) => {
+    sessions = ctx.get("sessions");
+    return undefined;
+  };
+  const scope: PluginSession = (s) => {
+    parents.push(s.parent);
+    return undefined;
+  };
+  await using host = await createHost({ plugins: [{ name: "agents", apply: plugin, session: scope }] });
+  const session = await host.openSession();
+  if (sessions === undefined) throw new Error("the plugin got no sessions service");
+  const child = await sessions.create(session.settings, { parent: session.id });
+
+  const roots = await sessions.list();
+  const children = await sessions.list({ parent: session.id });
+  await session.close();
+  await sessions.close(child);
+  await sessions.remove(session.id);
+  const failure = await rejects(sessions.get(child));
+
+  equal(parents, [undefined, session.id]);
+  equal(
+    roots.sessions.map((row) => row.session.sessionId),
+    [session.id],
+  );
+  equal(
+    children.sessions.map((row) => [row.session.sessionId, row.session.parent]),
+    [[child, session.id]],
+  );
+  equal(String(failure).length > 0, true);
+});
+
+test("a child that opens again names its saved parent", async () => {
+  const contexts: { readonly parent: string | undefined }[] = [];
+  let sessions: Sessions | undefined;
+  const plugin: PluginApply = (ctx) => {
+    sessions = ctx.get("sessions");
+    return undefined;
+  };
+  const scope: PluginSession = (s) => {
+    contexts.push(s);
+    return undefined;
+  };
+  await using host = await createHost({ plugins: [{ name: "agents", apply: plugin, session: scope }] });
+  const session = await host.openSession();
+  if (sessions === undefined) throw new Error("the plugin got no sessions service");
+
+  const child = await sessions.create(session.settings, { parent: session.id });
+  await sessions.close(child);
+  contexts.length = 0;
+  await sessions.open(child, { tail: 0, event: () => undefined });
+
+  equal(
+    contexts.map((context) => context.parent),
+    [session.id],
+  );
+});

@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cwd: std::env::current_dir()?,
     };
     let opened = store
-        .create_session(&settings, &[PromptSection::new("base", "the prompt")])
+        .create_session(&settings, &[PromptSection::new("base", "the prompt")], None)
         .await?;
     let id = opened.id;
 

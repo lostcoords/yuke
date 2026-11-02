@@ -344,9 +344,16 @@ impl SessionService {
     /// Returns [`AppError::Invalid`] for a folder that does not exist or a model that cannot run, [`AppError::Store`]
     /// when the store fails, [`AppError::Internal`] when the plugins do not open, [`AppError::Reloading`], and
     /// [`AppError::Stopped`].
-    pub(crate) async fn create(&self, mut settings: SessionSettings) -> Result<SessionId, AppError> {
+    pub(crate) async fn create(
+        &self,
+        mut settings: SessionSettings,
+        parent: Option<SessionId>,
+    ) -> Result<SessionId, AppError> {
         // A refusal before the work saves no session in the common case. The reserve checks again.
         admit(lock(&self.registry).phase)?;
+        if let Some(parent) = parent {
+            self.shared.store.session_summary(parent).await?;
+        }
         settings.cwd = canonical(settings.cwd).await?;
         let prompt = system_prompt(
             settings.cwd.clone(),
@@ -354,7 +361,7 @@ impl SessionService {
             self.shared.plugin_folders().to_vec(),
         )
         .await?;
-        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt.sections).await?;
+        let session = Session::create(Arc::clone(&self.shared.store), &settings, &prompt.sections, parent).await?;
         let id = self.start_new(session).await?;
         for warning in prompt.warnings {
             self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
@@ -387,7 +394,12 @@ impl SessionService {
     /// Returns [`AppError::Invalid`] for a limit outside 1 to 100 or an invalid cursor, and [`AppError::Store`] when
     /// the store fails.
     pub(crate) async fn list(&self, params: ListSessionsParams) -> Result<ListSessionsResult, AppError> {
-        let ListSessionsParams { cwd, limit, cursor } = params;
+        let ListSessionsParams {
+            cwd,
+            parent,
+            limit,
+            cursor,
+        } = params;
         let limit = limit.unwrap_or(PAGE_ROWS);
         if !(1..=MOST_PAGE_ROWS).contains(&limit) {
             return Err(AppError::Invalid(format!(
@@ -396,16 +408,16 @@ impl SessionService {
         }
         let after = cursor
             .as_deref()
-            .map(|cursor| position_of(cursor, cwd.as_deref()))
+            .map(|cursor| position_of(cursor, cwd.as_deref(), parent))
             .transpose()?;
         let page = self
             .shared
             .store
-            .list_sessions(cwd.as_deref(), after, limit as usize)
+            .list_sessions(cwd.as_deref(), parent, after, limit as usize)
             .await?;
         Ok(ListSessionsResult {
             sessions: page.sessions.into_iter().map(|session| self.row(session)).collect(),
-            next_cursor: page.next.map(|next| cursor_of(next, cwd.as_deref())),
+            next_cursor: page.next.map(|next| cursor_of(next, cwd.as_deref(), parent)),
         })
     }
 
@@ -419,17 +431,37 @@ impl SessionService {
         Ok(self.row(session))
     }
 
-    /// Delete the saved session `id` with its events, its pending inputs, and its blobs. Its forks stay.
+    /// Delete the saved session `id` and its descendants, with their events, pending inputs, and blobs. Its forks stay. A
+    /// failed delete leaves a valid tree, because children go first, so a second call can finish the work.
     ///
     /// # Errors
     ///
     /// Returns [`AppError::Open`] for an open session, and [`AppError::Store`] for an unknown session, a session that
     /// another process holds, or a failed delete.
     pub(crate) async fn remove(&self, id: SessionId) -> Result<(), AppError> {
-        if lock(&self.registry).slots.contains_key(&id) {
-            return Err(AppError::Open(id));
+        // The parents come first in the tree, so a reverse walk removes each child before its parent.
+        let mut tree = vec![id];
+        let mut next = 0;
+        while let Some(&parent) = tree.get(next) {
+            next += 1;
+            // One read of all children, so a child that moves in the list during a walk of pages stays in the tree.
+            let children = self
+                .shared
+                .store
+                .list_sessions(None, Some(parent), None, ALL_CHILDREN)
+                .await?;
+            tree.extend(children.sessions.iter().map(|child| child.session_id));
         }
-        Ok(self.shared.store.delete_session(id).await?)
+        {
+            let registry = lock(&self.registry);
+            if let Some(open) = tree.iter().find(|session| registry.slots.contains_key(session)) {
+                return Err(AppError::Open(*open));
+            }
+        }
+        for session in tree.into_iter().rev() {
+            self.shared.store.delete_session(session).await?;
+        }
+        Ok(())
     }
 
     /// The row of `session` with its activity in this app now.
@@ -739,11 +771,18 @@ fn admit(phase: Phase) -> Result<(), AppError> {
 const PAGE_ROWS: u32 = 50;
 const MOST_PAGE_ROWS: u32 = 100;
 
-/// The cursor of the page after `next` in the list of `cwd`. It holds the folder, so a cursor of another list does not
-/// read.
-fn cursor_of(next: ListPosition, cwd: Option<&Path>) -> String {
+/// The limit of a read of all children of a session.
+const ALL_CHILDREN: usize = u32::MAX as usize;
+
+/// The cursor of the page after `next` in the list of `cwd` and `parent`. It holds both, so a cursor of another list does
+/// not read.
+fn cursor_of(next: ListPosition, cwd: Option<&Path>, parent: Option<SessionId>) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut cursor = format!("{}.", next.0);
+    if let Some(parent) = parent {
+        cursor.push_str(&parent.to_string());
+        cursor.push('.');
+    }
     for byte in cwd.map_or(&[][..], |cwd| cwd.as_os_str().as_encoded_bytes()) {
         cursor.push(char::from(HEX[usize::from(byte >> 4)]));
         cursor.push(char::from(HEX[usize::from(byte & 0x0f)]));
@@ -751,15 +790,15 @@ fn cursor_of(next: ListPosition, cwd: Option<&Path>) -> String {
     cursor
 }
 
-/// The position that `cursor`, a cursor of the list of `cwd`, names.
-fn position_of(cursor: &str, cwd: Option<&Path>) -> Result<ListPosition, AppError> {
+/// The position that `cursor`, a cursor of the list of `cwd` and `parent`, names.
+fn position_of(cursor: &str, cwd: Option<&Path>, parent: Option<SessionId>) -> Result<ListPosition, AppError> {
     let invalid = || AppError::Invalid(format!("the cursor '{cursor}' is invalid for this list"));
     let (position, _) = cursor.split_once('.').ok_or_else(invalid)?;
     // A store gives no position above `i64::MAX`, the largest SQLite integer.
     let position: i64 = position.parse().map_err(|_| invalid())?;
     let position = ListPosition(position.unsigned_abs());
     // A cursor of this list encodes to the same text again.
-    if cursor_of(position, cwd) == cursor {
+    if cursor_of(position, cwd, parent) == cursor {
         Ok(position)
     } else {
         Err(invalid())

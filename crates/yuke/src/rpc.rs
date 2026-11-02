@@ -376,8 +376,8 @@ impl Server {
                     instance_id: self.instance_id,
                 })
             }
-            ClientRequest::NewSession(settings) => {
-                let session_id = app.sessions().create(settings).await?;
+            ClientRequest::NewSession(params) => {
+                let session_id = app.sessions().create(params.settings, params.parent).await?;
                 self.attachments.insert(session_id, app.sessions().attach(session_id)?);
                 result(&SessionResult { session_id })
             }

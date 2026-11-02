@@ -139,7 +139,12 @@ impl SqliteStore {
 
 #[async_trait]
 impl Store for SqliteStore {
-    async fn create_session(&self, settings: &SessionSettings, prompt: &[PromptSection]) -> Result<Opened, StoreError> {
+    async fn create_session(
+        &self,
+        settings: &SessionSettings,
+        prompt: &[PromptSection],
+        parent: Option<SessionId>,
+    ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let folder = self.folder(id);
         let sessions_folder = self.sessions.clone();
@@ -149,6 +154,7 @@ impl Store for SqliteStore {
             id: session,
             prompt: serde_json::to_string(prompt).map_err(failed)?,
             settings: settings_json.clone(),
+            parent: parent.map(|parent| *parent.as_bytes()),
         };
 
         let lock = self
@@ -173,6 +179,7 @@ impl Store for SqliteStore {
             id,
             settings: settings.clone(),
             prompt: prompt.to_vec(),
+            parent,
             context: Vec::new(),
             newest_turn: NewestTurn::Empty,
             input_tokens: None,
@@ -284,6 +291,7 @@ impl Store for SqliteStore {
     async fn list_sessions(
         &self,
         cwd: Option<&Path>,
+        parent: Option<SessionId>,
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
@@ -308,6 +316,7 @@ impl Store for SqliteStore {
         let mut listed = self
             .call(move |connection| {
                 let params = sessions::ListSessionsParams {
+                    parent: parent.map(|parent| *parent.as_bytes()),
                     cwd: cwd.as_deref(),
                     before,
                     limit: rows,
@@ -325,6 +334,7 @@ impl Store for SqliteStore {
                             created_at: row.created_at,
                             updated_at: row.updated_at,
                             fork_of: row.fork_of.map(SessionId::from_bytes),
+                            parent: row.parent.map(SessionId::from_bytes),
                         };
                         (summary, row.newest_event)
                     })
@@ -361,6 +371,7 @@ impl Store for SqliteStore {
             created_at: row.created_at,
             updated_at: row.updated_at,
             fork_of: row.fork_of.map(SessionId::from_bytes),
+            parent: row.parent.map(SessionId::from_bytes),
         })
     }
 

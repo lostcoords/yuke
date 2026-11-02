@@ -328,7 +328,7 @@ mod tests {
             settings: yuke_ai::Settings::new(),
             cwd: std::env::temp_dir(),
         };
-        let session = app.shared.store.create_session(&settings, &[]).await.unwrap();
+        let session = app.shared.store.create_session(&settings, &[], None).await.unwrap();
         let blob = app
             .shared
             .store

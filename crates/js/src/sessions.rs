@@ -78,7 +78,7 @@ pub trait Sessions: Send + Sync {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn create(&self, settings: SessionSettings) -> Result<SessionId, SessionsError>;
+    async fn create(&self, settings: SessionSettings, parent: Option<SessionId>) -> Result<SessionId, SessionsError>;
 
     /// Fork session `id` through event `through`, and open the fork.
     ///

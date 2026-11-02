@@ -426,6 +426,7 @@ pub(crate) mod sessions {
         pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
         pub(crate) preview: Option<String>,
         pub(crate) fork_of: Option<[u8; 16]>,
+        pub(crate) parent: Option<[u8; 16]>,
         pub(crate) created_at: u64,
         pub(crate) updated_at: u64,
         pub(crate) newest_event: i64,
@@ -437,8 +438,15 @@ pub(crate) mod sessions {
         pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
         pub(crate) preview: Option<String>,
         pub(crate) fork_of: Option<[u8; 16]>,
+        pub(crate) parent: Option<[u8; 16]>,
         pub(crate) created_at: u64,
         pub(crate) updated_at: u64,
+    }
+
+    #[derive(Debug, PartialEq)]
+    pub(crate) struct SessionPrompt {
+        pub(crate) prompt: crate::Json<Vec<yuke_agent::PromptSection>>,
+        pub(crate) parent: Option<[u8; 16]>,
     }
 
     #[derive(Debug)]
@@ -446,16 +454,18 @@ pub(crate) mod sessions {
         pub(crate) id: [u8; 16],
         pub(crate) prompt: String,
         pub(crate) settings: String,
+        pub(crate) parent: Option<[u8; 16]>,
     }
 
     pub(crate) fn insert_session(connection: &Connection, params: &InsertSessionParams) -> Result<usize> {
         execute(
             connection,
-            r"INSERT INTO sessions(id, prompt, settings) VALUES (:id, :prompt, :settings);",
+            r"INSERT INTO sessions(id, prompt, settings, parent) VALUES (:id, :prompt, :settings, :parent);",
             &[
                 (":id", &params.id),
                 (":prompt", &params.prompt),
                 (":settings", &params.settings),
+                (":parent", &params.parent),
             ],
         )
     }
@@ -543,23 +553,26 @@ WHERE id = :id;",
 
     #[derive(Debug)]
     pub(crate) struct ListSessionsParams<'a> {
+        pub(crate) parent: Option<[u8; 16]>,
         pub(crate) cwd: Option<&'a str>,
         pub(crate) before: i64,
         pub(crate) limit: usize,
     }
 
-    /// The sessions whose newest event id is below `before`, newest first. With `cwd`, only the sessions of that folder.
+    /// The sessions of `parent`, or without a parent, whose newest event id is below `before`, newest first. With `cwd`,
+    /// only the sessions of that folder.
     pub(crate) fn list_sessions<'a>(
         connection: &'a Connection,
         params: &ListSessionsParams<'_>,
     ) -> Query<'a, ListSessions> {
         Query::new(
             connection,
-            r"SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
+            r"SELECT id, settings, preview, fork_of, parent, created_at, updated_at, newest_event FROM sessions
+WHERE parent IS :parent AND (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
 ORDER BY newest_event DESC
 LIMIT :limit;",
             &[
+                (":parent", &params.parent),
                 (":cwd", &params.cwd),
                 (":before", &params.before),
                 (":limit", &params.limit),
@@ -570,6 +583,7 @@ LIMIT :limit;",
                     settings: row.get("settings")?,
                     preview: row.get("preview")?,
                     fork_of: row.get("fork_of")?,
+                    parent: row.get("parent")?,
                     created_at: row.get("created_at")?,
                     updated_at: row.get("updated_at")?,
                     newest_event: row.get("newest_event")?,
@@ -582,7 +596,7 @@ LIMIT :limit;",
     pub(crate) fn session_summary(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionSummary> {
         Query::new(
             connection,
-            r"SELECT id, settings, preview, fork_of, created_at, updated_at FROM sessions WHERE id = :id;",
+            r"SELECT id, settings, preview, fork_of, parent, created_at, updated_at FROM sessions WHERE id = :id;",
             &[(":id", &id)],
             |row| {
                 Ok(SessionSummary {
@@ -590,6 +604,7 @@ LIMIT :limit;",
                     settings: row.get("settings")?,
                     preview: row.get("preview")?,
                     fork_of: row.get("fork_of")?,
+                    parent: row.get("parent")?,
                     created_at: row.get("created_at")?,
                     updated_at: row.get("updated_at")?,
                 })
@@ -597,16 +612,18 @@ LIMIT :limit;",
         )
     }
 
-    /// The sections of the system prompt of the session. It returns no row for an unknown session.
-    pub(crate) fn session_prompt(
-        connection: &Connection,
-        id: [u8; 16],
-    ) -> Query<'_, crate::Json<Vec<yuke_agent::PromptSection>>> {
+    /// The sections of the system prompt of the session, and its parent. It returns no row for an unknown session.
+    pub(crate) fn session_prompt(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionPrompt> {
         Query::new(
             connection,
-            r"SELECT prompt FROM sessions WHERE id = :id;",
+            r"SELECT prompt, parent FROM sessions WHERE id = :id;",
             &[(":id", &id)],
-            |row| row.get("prompt"),
+            |row| {
+                Ok(SessionPrompt {
+                    prompt: row.get("prompt")?,
+                    parent: row.get("parent")?,
+                })
+            },
         )
     }
 

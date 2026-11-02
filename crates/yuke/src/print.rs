@@ -72,18 +72,18 @@ pub(crate) enum SessionChoice {
     New,
     /// The session with this id.
     Id(SessionId),
-    /// The session of the current folder with the newest event.
+    /// The session without a parent of the current folder with the newest event.
     Newest,
 }
 
-/// Find the session of `cwd` with the newest event.
+/// Find the session without a parent of `cwd` with the newest event.
 ///
 /// # Errors
 ///
 /// Returns a text for the user when `cwd` has no session, or when the store fails.
 pub(crate) async fn newest_session(store: &dyn Store, cwd: &Path) -> Result<SessionId, String> {
     let page = store
-        .list_sessions(Some(cwd), None, 1)
+        .list_sessions(Some(cwd), None, None, 1)
         .await
         .map_err(|error| chain_text(&error))?;
     page.sessions
@@ -142,7 +142,7 @@ async fn run_turn(
             let choice = task.reasoning.ok_or(NO_REASONING)?;
             let settings = new_settings(&app.providers(), selector, choice, cwd)?;
             app.sessions()
-                .create(settings)
+                .create(settings, None)
                 .await
                 .map_err(|error| chain_text(&error))?
         }

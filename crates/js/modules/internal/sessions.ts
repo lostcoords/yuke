@@ -187,7 +187,7 @@ async function open(
 /** The sessions for the plugin `plugin`. Its signal ends each handle that it opened. */
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
   return Object.freeze({
-    create: (settings) => sessionsCreate(settings),
+    create: (settings, options) => sessionsCreate([settings, options?.parent ?? null]),
     fork: (id, through) => sessionsFork([id, through ?? null]),
     list: (params) => sessionsList(params ?? {}),
     get: (id) => sessionsGet(id),

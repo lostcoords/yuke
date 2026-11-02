@@ -51,6 +51,9 @@ pub struct SessionSummary {
     /// The source of a fork. The source can be gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_of: Option<crate::SessionId>,
+    /// The parent session. A removal of the parent removes this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<crate::SessionId>,
 }
 
 /// Whether a session is open in the server, and whether a turn runs in it.

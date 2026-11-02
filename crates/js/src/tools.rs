@@ -37,6 +37,9 @@ pub trait SessionHost: MediaStore {
     /// The id of the session. A tool gets it as `sessionId`.
     fn session_id(&self) -> yuke_protocol::SessionId;
 
+    /// The parent session.
+    fn parent(&self) -> Option<yuke_protocol::SessionId>;
+
     /// The workspace folder of the session now. Relative paths and commands of the tools start here.
     fn folder(&self) -> PathBuf;
 

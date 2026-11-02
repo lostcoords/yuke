@@ -72,7 +72,7 @@ fn session() -> SessionId {
 
 #[async_trait::async_trait]
 impl Sessions for Scripted {
-    async fn create(&self, _: SessionSettings) -> Result<SessionId, SessionsError> {
+    async fn create(&self, _: SessionSettings, _: Option<SessionId>) -> Result<SessionId, SessionsError> {
         Err("unused".into())
     }
     async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, SessionsError> {
