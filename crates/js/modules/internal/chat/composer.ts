@@ -17,7 +17,10 @@ const IMAGE = "￼";
 
 export const EMPTY: EditorState = Object.freeze({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
 
-/** The blocks of `draft`: its text between its images, each image a media block. A draft of white space has none. */
+/**
+ * The blocks of `draft`: its text between its images, each image a media block. The edges of the whole draft trim, and
+ * a run of white space alone makes no block.
+ */
 function blocksOf(draft: EditorState): Block[] {
   const blocks: Block[] = [];
   let from = 0;
@@ -31,8 +34,12 @@ function blocksOf(draft: EditorState): Block[] {
     from = span.to;
   }
   text(draft.text.length);
-  const blank = blocks.every((block) => "user_text" in block && block.user_text.trim() === "");
-  return blank ? [] : blocks;
+  // Only the edges of the whole draft trim, so the space between a text and an image stays.
+  const first = blocks[0];
+  if (first !== undefined && "user_text" in first) blocks[0] = { user_text: first.user_text.trimStart() };
+  const last = blocks.at(-1);
+  if (last !== undefined && "user_text" in last) blocks[blocks.length - 1] = { user_text: last.user_text.trimEnd() };
+  return blocks.filter((block) => !("user_text" in block) || block.user_text.trim() !== "");
 }
 
 /** The draft of the blocks of an input, with an image span for each media block. The caret is at the end. */

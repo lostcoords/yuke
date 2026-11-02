@@ -285,7 +285,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   equal([composerOf(failing).state.text, failing.notices], ["hi", ["error the models did not load: Error: offline"]]);
 });
 
-test("a paste over 300 characters shows a label, and the input gets the whole text", async () => {
+test("the edges of a draft trim, and a paste over 300 characters shows a label and sends the whole text", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -296,7 +296,11 @@ test("a paste over 300 characters shows a label, and the input gets the whole te
   frame.key("enter");
   await settle();
   equal([sessions.inputs, composerOf(chat).state.text], [[], "  "]);
-  frame.key("ctrl+c");
+  // The edges of a draft trim, and the line ends inside it stay.
+  frame.paste("\n hi\n\nthere \n\n");
+  frame.key("enter");
+  await settle();
+  equal(sessions.inputs, [[{ user_text: "hi\n\nthere" }]]);
   frame.paste("a".repeat(300));
   equal(composerOf(chat).state.spans, []);
   frame.key("ctrl+c");
@@ -304,7 +308,7 @@ test("a paste over 300 characters shows a label, and the input gets the whole te
   equal(rows(frame).at(-1), "[Pasted text · 301 chars]");
   frame.key("enter");
   await settle();
-  equal(sessions.inputs, [[{ user_text: "b".repeat(301) }]]);
+  equal(sessions.inputs.at(-1), [{ user_text: "b".repeat(301) }]);
 });
 
 test("up in an empty composer shows the older messages of the user, down past the newest empties it, and an edit ends it", async () => {
