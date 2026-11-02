@@ -284,13 +284,6 @@ impl Store for MemoryStore {
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        // The SQLite store saves a folder as UTF-8 JSON text, so a folder that is not UTF-8 lists no session.
-        if cwd.is_some_and(|cwd| cwd.to_str().is_none()) {
-            return Ok(SessionPage {
-                sessions: Vec::new(),
-                next: None,
-            });
-        }
         let state = lock(&self.state);
         let mut listed: Vec<(&SessionId, &Saved)> = state
             .sessions
@@ -423,25 +416,4 @@ mod tests {
     }
 
     crate::store_tests!(make_store);
-
-    /// A session of a folder that is not UTF-8 lists in no folder, as in the SQLite store, which cannot save one.
-    #[tokio::test]
-    async fn a_session_in_a_folder_that_is_not_utf8_lists_in_no_folder() {
-        use std::os::unix::ffi::OsStrExt;
-        use std::path::{Path, PathBuf};
-
-        use crate::Store;
-
-        let store = MemoryStore::new();
-        let folder = Path::new(std::ffi::OsStr::from_bytes(b"/work\xff"));
-        let settings = yuke_protocol::SessionSettings {
-            cwd: PathBuf::from(folder),
-            ..crate::testing::settings("one")
-        };
-        store.create_session(&settings, &[]).await.unwrap();
-
-        let page = store.list_sessions(Some(folder), None, 10).await.unwrap();
-
-        assert_eq!(page.sessions, []);
-    }
 }

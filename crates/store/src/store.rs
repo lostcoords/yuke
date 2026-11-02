@@ -307,48 +307,28 @@ impl Store for SqliteStore {
 
         let mut listed = self
             .call(move |connection| {
-                let listed: Vec<(SessionSummary, i64)> = match &cwd {
-                    None => sessions::list_sessions(connection, &sessions::ListSessionsParams { before, limit: rows })
-                        .all()
-                        .map_err(failed)?
-                        .into_iter()
-                        .map(|row| {
-                            let summary = summary_of(
-                                row.id,
-                                row.settings,
-                                row.preview,
-                                row.fork_of,
-                                row.created_at,
-                                row.updated_at,
-                            );
-                            (summary, row.newest_event)
-                        })
-                        .collect(),
-                    Some(cwd) => {
-                        let params = sessions::ListSessionsInParams {
-                            cwd,
-                            before,
-                            limit: rows,
-                        };
-                        sessions::list_sessions_in(connection, &params)
-                            .all()
-                            .map_err(failed)?
-                            .into_iter()
-                            .map(|row| {
-                                let summary = summary_of(
-                                    row.id,
-                                    row.settings,
-                                    row.preview,
-                                    row.fork_of,
-                                    row.created_at,
-                                    row.updated_at,
-                                );
-                                (summary, row.newest_event)
-                            })
-                            .collect()
-                    }
+                let params = sessions::ListSessionsParams {
+                    cwd: cwd.as_deref(),
+                    before,
+                    limit: rows,
                 };
-                Ok(listed)
+                let found = sessions::list_sessions(connection, &params).all().map_err(failed)?;
+                Ok(found
+                    .into_iter()
+                    .map(|row| {
+                        let SessionSettings { model, cwd, .. } = row.settings.0;
+                        let summary = SessionSummary {
+                            session_id: SessionId::from_bytes(row.id),
+                            model,
+                            cwd,
+                            preview: row.preview,
+                            created_at: row.created_at,
+                            updated_at: row.updated_at,
+                            fork_of: row.fork_of.map(SessionId::from_bytes),
+                        };
+                        (summary, row.newest_event)
+                    })
+                    .collect::<Vec<(SessionSummary, i64)>>())
             })
             .await?;
 
@@ -372,14 +352,16 @@ impl Store for SqliteStore {
             .call(move |connection| sessions::session_summary(connection, session).opt().map_err(failed))
             .await?
             .ok_or(StoreError::NotFound)?;
-        Ok(summary_of(
-            row.id,
-            row.settings,
-            row.preview,
-            row.fork_of,
-            row.created_at,
-            row.updated_at,
-        ))
+        let SessionSettings { model, cwd, .. } = row.settings.0;
+        Ok(SessionSummary {
+            session_id: SessionId::from_bytes(row.id),
+            model,
+            cwd,
+            preview: row.preview,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            fork_of: row.fork_of.map(SessionId::from_bytes),
+        })
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -652,27 +634,6 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
     events::copy_events(&transaction, rows).map_err(failed)?;
     sessions::place_fork(&transaction, rows.session_id).map_err(failed)?;
     transaction.commit().map_err(failed)
-}
-
-/// The saved facts of a session row.
-fn summary_of(
-    id: [u8; 16],
-    settings: crate::Json<SessionSettings>,
-    preview: Option<String>,
-    fork_of: Option<[u8; 16]>,
-    created_at: u64,
-    updated_at: u64,
-) -> SessionSummary {
-    let SessionSettings { model, cwd, .. } = settings.0;
-    SessionSummary {
-        session_id: SessionId::from_bytes(id),
-        model,
-        cwd,
-        preview,
-        created_at,
-        updated_at,
-        fork_of: fork_of.map(SessionId::from_bytes),
-    }
 }
 
 /// Delete the rows and the folder of a new session whose creation or fork failed. Its lock is already free. An error

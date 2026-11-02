@@ -1474,7 +1474,7 @@ pub async fn a_session_lists_in_the_folder_of_its_newest_settings(store: &dyn St
     assert_eq!(store.session_summary(id).await.unwrap().cwd, Path::new("/other"));
 }
 
-/// A folder that is not UTF-8 lists no session, because a saved folder is UTF-8.
+/// A filter on a folder that is not UTF-8 excludes a session of another folder.
 pub async fn a_folder_that_is_not_utf8_lists_no_session(store: &dyn Store) {
     use std::os::unix::ffi::OsStrExt;
     store.create_session(&settings_in("/work"), &prompt()).await.unwrap();

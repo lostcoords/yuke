@@ -40,17 +40,10 @@ WHERE id = :id;
 --- Give the session the preview `preview` when it has none.
 UPDATE sessions SET preview = :preview WHERE id = :id AND preview IS NULL;
 
---! list_sessions (before: i64, limit: usize) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], created_at: u64, updated_at: u64, newest_event: i64)
---- The sessions whose newest event id is below `before`, newest first.
+--! list_sessions (cwd?: &str, before: i64, limit: usize) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], created_at: u64, updated_at: u64, newest_event: i64)
+--- The sessions whose newest event id is below `before`, newest first. With `cwd`, only the sessions of that folder.
 SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE newest_event < :before
-ORDER BY newest_event DESC
-LIMIT :limit;
-
---! list_sessions_in (cwd: &str, before: i64, limit: usize) : (id: [u8; 16], settings: crate::Json<yuke_protocol::SessionSettings>, preview?, fork_of?: [u8; 16], created_at: u64, updated_at: u64, newest_event: i64)
---- The sessions of the folder `cwd` whose newest event id is below `before`, newest first.
-SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE cwd = :cwd AND newest_event < :before
+WHERE (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
 ORDER BY newest_event DESC
 LIMIT :limit;
 

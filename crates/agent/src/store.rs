@@ -68,8 +68,8 @@ pub trait Store: Send + Sync {
     async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError>;
 
     /// The saved facts of at most `limit` sessions after `after`, newest first: the newest event orders them. A fork
-    /// saves its copied events anew, so it comes first. With `cwd`, only the sessions whose newest settings name that folder count, and a
-    /// folder that is not UTF-8 lists none. `None` for `after` starts at the newest session.
+    /// saves its copied events anew, so it comes first. With `cwd`, only the sessions whose newest settings name that folder
+    /// count. `None` for `after` starts at the newest session.
     ///
     /// # Errors
     ///

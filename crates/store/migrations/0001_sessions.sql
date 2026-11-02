@@ -14,9 +14,8 @@ CREATE TABLE sessions (
     updated_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),
     newest_event INTEGER NOT NULL DEFAULT 0 -- the events id of the newest event row. It orders the list.
 ) STRICT;
--- The list gives the newest sessions first, of all folders or of one folder.
+-- The list gives the newest sessions first.
 CREATE INDEX sessions_newest ON sessions(newest_event DESC);
-CREATE INDEX sessions_cwd_newest ON sessions(cwd, newest_event DESC);
 
 CREATE TABLE events (                      -- the commits and the settings of each session, numbered 1, 2, 3, and so on
     -- AUTOINCREMENT gives each new row an id above each id that the table ever gave, and a VACUUM keeps the ids.

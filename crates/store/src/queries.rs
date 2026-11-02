@@ -432,17 +432,6 @@ pub(crate) mod sessions {
     }
 
     #[derive(Debug, PartialEq)]
-    pub(crate) struct ListSessionsIn {
-        pub(crate) id: [u8; 16],
-        pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
-        pub(crate) preview: Option<String>,
-        pub(crate) fork_of: Option<[u8; 16]>,
-        pub(crate) created_at: u64,
-        pub(crate) updated_at: u64,
-        pub(crate) newest_event: i64,
-    }
-
-    #[derive(Debug, PartialEq)]
     pub(crate) struct SessionSummary {
         pub(crate) id: [u8; 16],
         pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
@@ -553,53 +542,21 @@ WHERE id = :id;",
     }
 
     #[derive(Debug)]
-    pub(crate) struct ListSessionsParams {
+    pub(crate) struct ListSessionsParams<'a> {
+        pub(crate) cwd: Option<&'a str>,
         pub(crate) before: i64,
         pub(crate) limit: usize,
     }
 
-    /// The sessions whose newest event id is below `before`, newest first.
+    /// The sessions whose newest event id is below `before`, newest first. With `cwd`, only the sessions of that folder.
     pub(crate) fn list_sessions<'a>(
         connection: &'a Connection,
-        params: &ListSessionsParams,
+        params: &ListSessionsParams<'_>,
     ) -> Query<'a, ListSessions> {
         Query::new(
             connection,
             r"SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE newest_event < :before
-ORDER BY newest_event DESC
-LIMIT :limit;",
-            &[(":before", &params.before), (":limit", &params.limit)],
-            |row| {
-                Ok(ListSessions {
-                    id: row.get("id")?,
-                    settings: row.get("settings")?,
-                    preview: row.get("preview")?,
-                    fork_of: row.get("fork_of")?,
-                    created_at: row.get("created_at")?,
-                    updated_at: row.get("updated_at")?,
-                    newest_event: row.get("newest_event")?,
-                })
-            },
-        )
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct ListSessionsInParams<'a> {
-        pub(crate) cwd: &'a str,
-        pub(crate) before: i64,
-        pub(crate) limit: usize,
-    }
-
-    /// The sessions of the folder `cwd` whose newest event id is below `before`, newest first.
-    pub(crate) fn list_sessions_in<'a>(
-        connection: &'a Connection,
-        params: &ListSessionsInParams<'_>,
-    ) -> Query<'a, ListSessionsIn> {
-        Query::new(
-            connection,
-            r"SELECT id, settings, preview, fork_of, created_at, updated_at, newest_event FROM sessions
-WHERE cwd = :cwd AND newest_event < :before
+WHERE (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
 ORDER BY newest_event DESC
 LIMIT :limit;",
             &[
@@ -608,7 +565,7 @@ LIMIT :limit;",
                 (":limit", &params.limit),
             ],
             |row| {
-                Ok(ListSessionsIn {
+                Ok(ListSessions {
                     id: row.get("id")?,
                     settings: row.get("settings")?,
                     preview: row.get("preview")?,
