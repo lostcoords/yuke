@@ -214,7 +214,7 @@ defineTool({
         type: "integer",
         minimum: 1,
         maximum: LONGEST_TIMEOUT,
-        description: `The default is ${DEFAULT_TIMEOUT}.`,
+        description: `The default is ${DEFAULT_TIMEOUT}. A background job has no timeout by default.`,
       },
       background: { type: "boolean", description: "Run a server or watcher as a job and return at once." },
     },
@@ -226,8 +226,7 @@ defineTool({
     const command = args.command;
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
     if (args.background === true) {
-      if (args.timeout_ms !== undefined) throw new Error("Remove timeout_ms, or set background to false.");
-      const job = await callOf(context).startJob(command);
+      const job = await callOf(context).startJob(command, args.timeout_ms);
       return (
         `[${job.id} started: ${job.label}. Log: ${job.log}. Its end arrives as a message, so never ` +
         `sleep or poll. Use stop with ${job.id} to end it.]`

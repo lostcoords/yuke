@@ -171,17 +171,30 @@ async fn stop_of_an_unknown_id_names_the_running_jobs() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_background_command_takes_no_timeout() {
-    let folder = folder("a_background_command_takes_no_timeout");
-    let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
+async fn a_background_job_with_a_timeout_ends_and_reports_it() {
+    let folder = folder("a_background_job_with_a_timeout_ends_and_reports_it");
+    let processes = Arc::new(Processes::new(folder.join("processes")));
+    let host = Arc::new(TestHost::new(&folder));
+    let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
 
-    let error = error_of(
-        &tools["exec"],
-        r#"{"command": "sleep 1", "background": true, "timeout_ms": 10}"#,
+    let started = text_of(
+        &exec["exec"],
+        r#"{"command": "echo started; exec sleep 30", "background": true, "timeout_ms": 200}"#,
     )
     .await;
 
-    assert_eq!(error, "Remove timeout_ms, or set background to false.");
+    let id = job_id(&started);
+    let texts = ended_texts(&host, 1).await;
+    assert!(
+        texts[0].contains(&format!("{id} timed out after 200 ms.")),
+        "{}",
+        texts[0]
+    );
+    assert!(texts[0].contains("started"), "{}", texts[0]);
+    assert_eq!(processes.jobs().running(host.session), []);
+    let changed = host.changed.lock().unwrap().clone();
+    assert_eq!(changed.last().map(|job| job.state), Some(JobState::Ended));
+    processes.shutdown().await.unwrap();
 }
 
 /// A runtime with `processes` and the built-in tools, for the session of `host`.

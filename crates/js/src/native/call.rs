@@ -59,10 +59,11 @@ pub(crate) fn object<'js>(
         "startJob",
         Function::new(
             ctx.clone(),
-            Async(move |ctx: Ctx<'js>, command: String| {
+            Async(move |ctx: Ctx<'js>, command: String, timeout_ms: Option<u32>| {
                 let (processes, host) = (Arc::clone(&start_processes), Arc::clone(&start_host));
                 async move {
-                    let started = processes.start_job(command, host).await;
+                    let timeout = timeout_ms.map(|ms| Duration::from_millis(ms.into()));
+                    let started = processes.start_job(command, timeout, host).await;
                     started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))
                 }
             }),

@@ -94,8 +94,8 @@ declare module "yuke:internal/native" {
       limits: { readonly timeoutMs: number; readonly maxBytes: number },
       onOutput: (text: string) => void,
     ) => Promise<CommandEnd>;
-    /** Start `command` in the workspace folder as a job. Its end reaches the session as a message. */
-    readonly startJob: (command: string) => Promise<StartedJob>;
+    /** Start `command` in the workspace folder as a job, with an optional timeout. Its end reaches the session as a message. */
+    readonly startJob: (command: string, timeoutMs: number | undefined) => Promise<StartedJob>;
     /**
      * Stop the job `id` of the session, and wait for its end: `stopped`. `unknown` when the session has no such job.
      * `stopping` when a cancel of the call ended the wait. The stop goes on.

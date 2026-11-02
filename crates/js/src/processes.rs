@@ -218,6 +218,8 @@ impl Processes {
                 label,
                 command,
                 log: file.clone(),
+                // A person moved this command because it runs long, so its timeout ends here.
+                timeout: None,
             };
             job.announce(owner.as_ref(), &moved);
             // No await comes between the add and this spawn, so a dropped call cannot lose the process.
@@ -240,9 +242,14 @@ impl Processes {
             .map_err(|error| error.to_string())?
     }
 
-    /// Start `command` in the folder of `owner` as a job. A job that ends by itself reports to `owner`. Without jobs, the
-    /// start fails with a text for the model.
-    pub(crate) async fn start_job(&self, command: String, owner: Arc<dyn SessionHost>) -> Result<StartedJob, String> {
+    /// Start `command` in the folder of `owner` as a job, which ends after `timeout` when it has one. A job that ends by
+    /// itself reports to `owner`. Without jobs, the start fails with a text for the model.
+    pub(crate) async fn start_job(
+        &self,
+        command: String,
+        timeout: Option<Duration>,
+        owner: Arc<dyn SessionHost>,
+    ) -> Result<StartedJob, String> {
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
         let label = short_command(&command);
@@ -253,6 +260,7 @@ impl Processes {
             label: label.clone(),
             command,
             log: log.clone(),
+            timeout,
         };
         let (started_sender, started) = oneshot::channel();
         // One task on the runtime of the consumer owns the job from its spawn to the delivery of its end, so a dropped
@@ -275,6 +283,8 @@ struct JobTask {
     label: String,
     command: String,
     log: PathBuf,
+    /// The time from the wait until yuke stops the process and reports the end.
+    timeout: Option<Duration>,
 }
 
 impl JobTask {
@@ -310,9 +320,13 @@ impl JobTask {
     /// Wait for the end of the process or a stop, and deliver the end.
     async fn wait(self, owner: Arc<dyn SessionHost>, mut running: Running) {
         // A stop that came during the spawn ends the process here, with the grace.
-        let (status, stopped) = tokio::select! {
-            status = running.child.wait() => (status, false),
-            () = self.job.stop.cancelled() => (stop_group(running.group, &mut running.child).await, true),
+        let deadline = tokio::time::Instant::now() + self.timeout.unwrap_or_default();
+        let (status, stopped, timed_out) = tokio::select! {
+            status = running.child.wait() => (status, false, false),
+            () = self.job.stop.cancelled() => (stop_group(running.group, &mut running.child).await, true, false),
+            () = tokio::time::sleep_until(deadline), if self.timeout.is_some() => {
+                (stop_group(running.group, &mut running.child).await, false, true)
+            }
         };
         running.finish_read().await;
         let status = status.ok();
@@ -324,10 +338,11 @@ impl JobTask {
         owner.job_changed(self.protocol_job(state, exit_code));
         if !stopped && !silenced {
             let signal = status.and_then(|status| std::os::unix::process::ExitStatusExt::signal(&status));
-            let end = match (exit_code, signal) {
-                (Some(code), _) => format!("exited {code}"),
-                (None, Some(signal)) => format!("signal {signal}"),
-                (None, None) => "failed".to_owned(),
+            let end = match (exit_code, signal, self.timeout.filter(|_| timed_out)) {
+                (_, _, Some(timeout)) => format!("timed out after {} ms", timeout.as_millis()),
+                (Some(code), _, None) => format!("exited {code}"),
+                (None, Some(signal), None) => format!("signal {signal}"),
+                (None, None, None) => "failed".to_owned(),
             };
             let text = end_text(self.log.clone()).await;
             let input = report_input(JOBS_SOURCE, &self.job.id, &end, &text);
