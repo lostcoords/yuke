@@ -1,5 +1,5 @@
 /** The web class `Headers` of the Fetch Standard. `yuke:internal/web` installs it as a global. */
-import { byteString, needs, pairIterable, pairsOf, webClass } from "yuke:internal/webidl";
+import { byteString, pairIterable, pairsOf, webClass } from "yuke:internal/webidl";
 
 /** A header list: the names keep the case of their first use, and a name can repeat. */
 type HeaderList = [name: string, value: string][];
@@ -89,29 +89,26 @@ export class Headers {
   }
 
   /** Add a value of `name`. */
-  append(...args: [name: string, value: string]): void {
+  append(nameValue: string, inputValue: string): void {
     const state = headersState(this);
-    needs(args, 2, "append");
-    const name = headerNameOf(args[0]);
-    const value = headerValueOf(args[1]);
+    const name = headerNameOf(nameValue);
+    const value = headerValueOf(inputValue);
     checkMutable(state);
     appendHeader(state.list, name, value);
   }
 
   /** Remove each value of `name`. */
-  delete(...args: [name: string]): void {
+  delete(name: string): void {
     const state = headersState(this);
-    needs(args, 1, "delete");
-    const lower = headerNameOf(args[0]).toLowerCase();
+    const lower = headerNameOf(name).toLowerCase();
     checkMutable(state);
     state.list = state.list.filter((pair) => pair[0].toLowerCase() !== lower);
   }
 
   /** The values of `name` joined with `, `, or `null`. */
-  get(...args: [name: string]): string | null {
+  get(name: string): string | null {
     const state = headersState(this);
-    needs(args, 1, "get");
-    return combined(state.list, headerNameOf(args[0]));
+    return combined(state.list, headerNameOf(name));
   }
 
   /** The values of each `set-cookie` header, in order. */
@@ -122,19 +119,17 @@ export class Headers {
   }
 
   /** Whether a header has `name`. */
-  has(...args: [name: string]): boolean {
+  has(name: string): boolean {
     const state = headersState(this);
-    needs(args, 1, "has");
-    const lower = headerNameOf(args[0]).toLowerCase();
+    const lower = headerNameOf(name).toLowerCase();
     return state.list.some((pair) => pair[0].toLowerCase() === lower);
   }
 
   /** Give `name` the one value `value`: replace the first value, and remove the others. */
-  set(...args: [name: string, value: string]): void {
+  set(nameValue: string, inputValue: string): void {
     const state = headersState(this);
-    needs(args, 2, "set");
-    const name = headerNameOf(args[0]);
-    const value = headerValueOf(args[1]);
+    const name = headerNameOf(nameValue);
+    const value = headerValueOf(inputValue);
     checkMutable(state);
     const lower = name.toLowerCase();
     const first = state.list.findIndex((pair) => pair[0].toLowerCase() === lower);

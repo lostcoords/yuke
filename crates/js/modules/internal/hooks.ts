@@ -717,20 +717,6 @@ function start(
     },
     async ask(request: AskRequest, options?: AskOptions): Promise<QuestionAnswer[] | undefined> {
       const questions = request.questions;
-      const ids = new Set<string>();
-      for (const question of questions) {
-        const id = JSON.stringify(question.id);
-        if (ids.has(question.id)) throw new TypeError(`ask: the id ${id} is twice`);
-        ids.add(question.id);
-        const labels = new Set(question.options.map((option) => option.label));
-        if (labels.size !== question.options.length) throw new TypeError(`ask: the question ${id} has a label twice`);
-        if (labels.size === 0 && question.other !== true) {
-          throw new TypeError(`ask: the question ${id} has no option and no other`);
-        }
-        if (labels.size > 0 && question.secret === true)
-          throw new TypeError(`ask: the question ${id} has options and secret`);
-      }
-      if (ids.size === 0) throw new TypeError("ask: the request has no question");
       const ended = endedBy(options?.signal);
       // An ended wait closes the request, and the request answers `undefined`.
       if (ended.aborted) return undefined;
@@ -739,11 +725,7 @@ function start(
   });
   scope.settled = (async () => {
     try {
-      const result: unknown = await session(s);
-      if (result !== undefined && typeof result !== "function") {
-        throw new TypeError("session must return nothing or a cleanup function");
-      }
-      return result as Cleanup | undefined;
+      return await session(s);
     } catch (error) {
       // The close owns the scope, so a failure after the close needs no rollback.
       if (scope.closed) return undefined;

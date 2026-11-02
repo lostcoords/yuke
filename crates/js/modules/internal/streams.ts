@@ -3,7 +3,7 @@
  * no byte stream, no BYOB reader, no `tee`, no pipe, and no `ReadableStream.from`. `yuke:internal/web` installs the
  * classes as globals.
  */
-import { dictionary, needs, webClass } from "yuke:internal/webidl";
+import { dictionary, webClass } from "yuke:internal/webidl";
 
 interface StreamState {
   state: "readable" | "closed" | "errored";
@@ -14,15 +14,9 @@ interface StreamState {
   controller: ControllerState;
 }
 
-interface ReadRequest {
-  readonly chunk: (chunk: unknown) => void;
-  readonly close: () => void;
-  readonly error: (error: unknown) => void;
-}
-
 interface ReaderState {
   stream: StreamState | undefined;
-  readRequests: ReadRequest[];
+  readRequests: PromiseWithResolvers<ReadableStreamReadResult<unknown>>[];
   closed: PromiseWithResolvers<undefined>;
 }
 
@@ -239,7 +233,7 @@ export class ReadableStreamDefaultController<R = unknown> {
     if (!canCloseOrEnqueue(state)) throw new TypeError("the stream is closed, errored, or has a close request");
     const reader = state.stream.reader;
     const request = reader?.readRequests.shift();
-    if (request !== undefined) request.chunk(chunk);
+    if (request !== undefined) request.resolve({ done: false, value: chunk });
     else {
       let size: number;
       try {
@@ -265,9 +259,8 @@ export class ReadableStreamDefaultController<R = unknown> {
 }
 
 export class ReadableStreamDefaultReader<R = unknown> {
-  constructor(...args: [stream: ReadableStream<R>]) {
-    needs(args, 1, "ReadableStreamDefaultReader");
-    const stream = streamState(args[0]);
+  constructor(streamValue: ReadableStream<R>) {
+    const stream = streamState(streamValue);
     if (stream.reader !== undefined) throw new TypeError("a reader holds the stream");
     const closed = closedPromise();
     const state: ReaderState = { stream, readRequests: [], closed };
@@ -296,17 +289,12 @@ export class ReadableStreamDefaultReader<R = unknown> {
     }
     const stream = state.stream;
     if (stream === undefined) return Promise.reject(new TypeError("the reader has no stream"));
-    const { promise, resolve, reject } = Promise.withResolvers<ReadableStreamReadResult<R>>();
-    const request: ReadRequest = {
-      chunk: (chunk) => resolve({ done: false, value: chunk as R }),
-      close: () => resolve({ done: true, value: undefined }),
-      error: reject,
-    };
+    const request = Promise.withResolvers<ReadableStreamReadResult<unknown>>();
     stream.disturbed = true;
-    if (stream.state === "closed") request.close();
-    else if (stream.state === "errored") request.error(stream.storedError);
+    if (stream.state === "closed") request.resolve({ done: true, value: undefined });
+    else if (stream.state === "errored") request.reject(stream.storedError);
     else pullSteps(stream.controller, state, request);
-    return promise;
+    return request.promise as Promise<ReadableStreamReadResult<R>>;
   }
 
   /** Release the stream. Each waiting read rejects with a `TypeError`. */
@@ -324,7 +312,7 @@ export class ReadableStreamDefaultReader<R = unknown> {
     state.stream = undefined;
     const requests = state.readRequests;
     state.readRequests = [];
-    for (const request of requests) request.error(released);
+    for (const request of requests) request.reject(released);
   }
 
   /** Cancel the stream with `reason`. */
@@ -394,7 +382,11 @@ function errorController(state: ControllerState, error: unknown): void {
 }
 
 /** Answer `request` for `reader` from the queue of `state`, or wait for a chunk. */
-function pullSteps(state: ControllerState, reader: ReaderState, request: ReadRequest): void {
+function pullSteps(
+  state: ControllerState,
+  reader: ReaderState,
+  request: PromiseWithResolvers<ReadableStreamReadResult<unknown>>,
+): void {
   const head = state.queue.shift();
   if (head === undefined) {
     reader.readRequests.push(request);
@@ -407,7 +399,7 @@ function pullSteps(state: ControllerState, reader: ReaderState, request: ReadReq
     clearAlgorithms(state);
     closeStream(state.stream);
   } else callPullIfNeeded(state);
-  request.chunk(head.value);
+  request.resolve({ done: false, value: head.value });
 }
 
 function cancelStream(stream: StreamState, reason: unknown): Promise<undefined> {
@@ -431,7 +423,7 @@ function closeStream(stream: StreamState): void {
   reader.closed.resolve(undefined);
   const requests = reader.readRequests;
   reader.readRequests = [];
-  for (const request of requests) request.close();
+  for (const request of requests) request.resolve({ done: true, value: undefined });
 }
 
 function errorStream(stream: StreamState, error: unknown): void {
@@ -442,7 +434,7 @@ function errorStream(stream: StreamState, error: unknown): void {
   reader.closed.reject(error);
   const requests = reader.readRequests;
   reader.readRequests = [];
-  for (const request of requests) request.error(error);
+  for (const request of requests) request.reject(error);
 }
 
 /** Whether `value` is a `ReadableStream`. */

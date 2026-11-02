@@ -33,7 +33,6 @@ interface Leaf {
 interface Split {
   readonly kind: "split";
   readonly direction: Direction;
-  readonly ratio: number;
   first: Node;
   second: Node;
 }
@@ -128,7 +127,7 @@ export class PaneTree {
     const walk = (node: Node): SavedPane =>
       node.kind === "leaf"
         ? save(node.view, node.owner)
-        : { split: node.direction, ratio: node.ratio, first: walk(node.first), second: walk(node.second) };
+        : { split: node.direction, first: walk(node.first), second: walk(node.second) };
     return { tree: walk(this.#root), focus: Math.max(0, this.#leaves().indexOf(this.#active)) };
   }
 
@@ -151,7 +150,7 @@ export class PaneTree {
         const second = build(pane.second);
         if (first === undefined) return second;
         if (second === undefined) return first;
-        return { kind: "split", direction: pane.split, ratio: pane.ratio, first, second };
+        return { kind: "split", direction: pane.split, first, second };
       }
       const leaf = this.#restoreLeaf(pane.state, factoryOf(pane.type));
       order.push(leaf);
@@ -245,7 +244,7 @@ export class PaneTree {
   /** Put `leaf` after the active pane in a new split along `direction`, and give it the focus. */
   #insert(leaf: Leaf, direction: Direction): void {
     const old = this.#active;
-    this.#replace(old, { kind: "split", direction, ratio: 0.5, first: old, second: leaf });
+    this.#replace(old, { kind: "split", direction, first: old, second: leaf });
     this.#activate(leaf);
   }
 
@@ -315,8 +314,8 @@ export class PaneTree {
   }
 
   /**
-   * Place each leaf. A split gives the first part `ratio` of its cells less the divider. With 3 cells or more, each
-   * part gets at least 1; a smaller split can leave a part empty.
+   * Place each leaf. A split divides its cells equally after the divider.
+   * The first part gets the extra cell when the available count is odd.
    */
   #layout(size: Size): readonly Placement[] {
     this.#leafRects = new Map();
@@ -332,7 +331,7 @@ export class PaneTree {
       }
       const row = node.direction === "row";
       const total = (row ? rect.width : rect.height) - 1;
-      const first = total <= 1 ? Math.max(0, total) : Math.min(total - 1, Math.max(1, Math.round(total * node.ratio)));
+      const first = Math.max(0, Math.round(total / 2));
       const second = Math.max(0, total - first);
       if (row) {
         walk(node.first, { ...rect, width: first });

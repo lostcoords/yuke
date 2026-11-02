@@ -66,7 +66,7 @@ pub struct PluginFailure {
 /// Why a plugin did not load.
 #[derive(Debug)]
 pub(crate) enum PluginError {
-    /// The import of the entry, the check of its exports, or its `apply` failed.
+    /// The import of the entry or its `apply` failed.
     Load(Error),
     /// The plugin uses `service`, and its provider `provider` did not load. The plugin did not run.
     Provider {
@@ -192,8 +192,6 @@ impl Handle {
                     options: Json(plugin.options),
                     given: matches!(plugin.origin, Origin::Given),
                     entry,
-                    uses: plugin.uses,
-                    provides: plugin.provides,
                 };
                 let promise: Promise<'_> = caught(&ctx, load.call((spec,)))?;
                 caught(&ctx, promise.into_future::<()>().await)
@@ -212,8 +210,6 @@ struct PluginSpec {
     entry: Option<String>,
     /// The runtime holds the exports, given with the name of the plugin.
     given: bool,
-    uses: Vec<String>,
-    provides: Vec<String>,
 }
 
 /// The internal module that loads the plugins.

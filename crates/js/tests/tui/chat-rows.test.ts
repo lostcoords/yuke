@@ -74,25 +74,6 @@ test("plugin rows take at most half the rows above the rule and give way to the 
   equal([half, plugin()], [["a1", "a2", "a3"], []]);
 });
 
-test("a row source that throws is removed and gives one notice, and the other sources stay", async () => {
-  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, fakeSessions());
-  let calls = 0;
-  chat.chat.addRows(() => {
-    calls += 1;
-    throw new Error("broken");
-  });
-  chat.chat.addRows(() => [{ text: "kept" }]);
-  frame.start();
-  await settled();
-  frame.draw();
-  frame.draw();
-  equal(
-    [calls, chat.notices, rows(frame.frame).includes("kept")],
-    [1, ["error a row source of the chat failed: Error: broken"], true],
-  );
-});
-
 test("each add is its own source, so the same source shows twice and a disposer removes only its own", async () => {
   using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions());

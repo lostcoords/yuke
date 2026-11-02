@@ -137,19 +137,9 @@ test("the engine gives base64 and microtasks", async () => {
   equal([btoa("hi"), atob("aGk="), order], ["aGk=", "hi", ["now", "microtask"]]);
 });
 
-test("a resizable buffer throws and a detached one has no bytes", () => {
+test("a detached buffer has no bytes and a shared buffer decodes", () => {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  const resizable = () => new ArrayBuffer(2, { maxByteLength: 4 });
-  equal(
-    [
-      () => decoder.decode(resizable()),
-      () => decoder.decode(new Uint8Array(resizable())),
-      () => encoder.encodeInto("a", new Uint8Array(resizable())),
-    ].map(thrownName),
-    ["TypeError", "TypeError", "TypeError"],
-  );
-
   const buffer = new ArrayBuffer(2);
   const view = new Uint8Array(buffer);
   const data = new DataView(buffer);

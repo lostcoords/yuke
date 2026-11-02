@@ -86,10 +86,8 @@ test("a value loses its outer whitespace and an invalid name or value throws", (
       () => new Headers([["a"]]),
       () => new Headers("a: b"),
       () => new Headers({ [Symbol()]: "x" }),
-      // @ts-expect-error: an append takes a value.
-      () => headers.append("a"),
     ]),
-    new Array<string>(10).fill("TypeError"),
+    new Array<string>(9).fill("TypeError"),
   );
   equal(new Headers({ a: "é" }).get("a"), "é");
 });

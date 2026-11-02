@@ -5,7 +5,7 @@
  */
 import type { TermColor, TermStyle } from "yuke:internal/native";
 import { DEFAULT_THEME, type Palette } from "yuke:internal/tui/default-theme";
-import type { CanvasStyle, Color, PaletteColor, Style, StylePatch, Theme, ThemeLook } from "yuke:tui";
+import type { CanvasStyle, PaletteColor, Style, StylePatch, Theme, ThemeLook } from "yuke:tui";
 
 const COLORS = ["fg", "bg", "underlineColor"] as const;
 /** The field of the cell style for each color field: the native style names the underline color `ul`. */
@@ -69,17 +69,15 @@ export class Styles {
 
   /** Make `name` the active theme. */
   setTheme(name: string): void {
-    if (typeof name !== "string" || name === "") throw new TypeError("a theme has a name that is not empty");
     if (name === this.#active) return;
     this.#active = name;
     this.#lookChanged();
   }
 
-  /** Add `theme` as `name`, and return its remover. The newest theme of a name wins. A bad field throws. */
+  /** Add `theme` as `name`, and return its remover. The newest theme of a name wins. */
   addTheme(name: string, theme: Theme): () => void {
-    if (typeof name !== "string" || name === "") throw new TypeError("a theme has a name that is not empty");
     if (name === DEFAULT) throw new TypeError(`the theme name ${DEFAULT} is reserved: choose another name`);
-    const entry: NamedTheme = { name, theme: checkedTheme(theme) };
+    const entry: NamedTheme = { name, theme: { ...theme, dark: copyLook(theme.dark), light: copyLook(theme.light) } };
     this.#themes.push(entry);
     if (this.#chain().includes(entry)) this.#lookChanged();
     return () => {
@@ -137,13 +135,11 @@ export class Styles {
     return this.#look;
   }
 
-  /** Change `groups`, and return the disposer of the change. A bad name or field throws and changes nothing. */
+  /** Change `groups`, and return the disposer of the change. */
   set(groups: Readonly<Record<string, StylePatch>>): () => void {
-    if (typeof groups !== "object" || groups === null) throw new TypeError("the style groups are an object");
     const layer = new Map<string, StylePatch>();
     for (const [name, patch] of Object.entries(groups)) {
-      if (name === "") throw new TypeError("a style group has a name that is not empty");
-      layer.set(name, checked(patch, true));
+      layer.set(name, { ...patch });
     }
     this.#layers.push(layer);
     this.#cache.clear();
@@ -160,7 +156,7 @@ export class Styles {
   /** The cell style of the group `group`, or of the style object `group`. A group with no layer has no field. */
   resolve(group: string | Style): TermStyle {
     const look = this.#lookNow();
-    if (typeof group !== "string") return this.#cell(checked(group, false) as Style, look, new Set());
+    if (typeof group !== "string") return this.#cell(group, look, new Set());
     // Only a whole resolve enters the cache: a group inside a link cycle depends on the group where the cycle starts.
     let style = this.#cache.get(group);
     if (style === undefined) {
@@ -241,82 +237,15 @@ function indexed(color: TermColor): TermColor {
   return cube <= distance([level, level, level]) ? 16 + 36 * red + 6 * green + blue : 232 + gray;
 }
 
-/** A copy of `theme` with its fields checked. */
-function checkedTheme(theme: Theme): Theme {
-  if (typeof theme !== "object" || theme === null) throw new TypeError("a theme is an object");
-  knownFields(theme, ["inherits", "dark", "light"], "theme");
-  const { inherits, dark, light } = theme;
-  if (inherits !== undefined && (typeof inherits !== "string" || inherits === "")) {
-    throw new TypeError("the theme field inherits names a theme");
-  }
-  return Object.freeze({
-    ...(inherits === undefined ? {} : { inherits }),
-    ...(dark === undefined ? {} : { dark: checkedLook(dark) }),
-    ...(light === undefined ? {} : { light: checkedLook(light) }),
-  });
-}
-
-/** Throw for a field of `value` outside `fields`, so a typing error in a theme does not pass in silence. */
-function knownFields(value: object, fields: readonly string[], what: string): void {
-  for (const field of Object.keys(value)) {
-    if (!fields.includes(field)) throw new TypeError(`'${field}' is no ${what} field`);
-  }
-}
-
-function checkedLook(look: ThemeLook): ThemeLook {
-  if (typeof look !== "object" || look === null) throw new TypeError("the look of a theme is an object");
-  knownFields(look, ["palette", "palette256", "groups"], "theme look");
-  const palette = checkedPalette(look.palette);
-  const palette256 = checkedPalette(look.palette256);
-  const groups = Object.entries(look.groups ?? {}).map(([name, patch]) => {
-    if (name === "") throw new TypeError("a style group has a name that is not empty");
-    return [name, checked(patch, true)] as const;
-  });
-  return Object.freeze({ palette, palette256, groups: Object.freeze(Object.fromEntries(groups)) });
-}
-
-function checkedPalette<P extends ThemeLook["palette"]>(palette: P): P {
-  const colors = Object.entries(palette ?? {});
-  for (const [name, color] of colors) {
-    if (!isPaletteColor(name)) throw new TypeError(`'${name}' is no palette color`);
-    if (!isColor(color) || isPaletteColor(color)) {
-      throw new TypeError(`the palette color ${name} is an index from 0 to 255, #rrggbb, or reset`);
-    }
-  }
-  return Object.freeze(Object.fromEntries(colors)) as P;
-}
-
-/** A copy of `value` with its fields checked. `nulls` allows `null`, which a patch uses to delete a field. */
-function checked(value: StylePatch, nulls: boolean): StylePatch {
-  if (typeof value !== "object" || value === null) throw new TypeError("a style is an object");
-  const copy: Record<string, unknown> = {};
-  for (const [field, item] of Object.entries(value)) {
-    if (item === undefined || (nulls && item === null)) {
-      copy[field] = item;
-    } else if ((COLORS as readonly string[]).includes(field)) {
-      if (!isColor(item)) {
-        throw new TypeError(
-          `the style field ${field} is a color: an index from 0 to 255, #rrggbb, reset, or a palette name`,
-        );
-      }
-      copy[field] = item;
-    } else if ((FLAGS as readonly string[]).includes(field)) {
-      if (typeof item !== "boolean") throw new TypeError(`the style field ${field} is a boolean`);
-      copy[field] = item;
-    } else if (field === "link") {
-      if (typeof item !== "string" || item === "") throw new TypeError("the style field link names a style group");
-      copy[field] = item;
-    } else {
-      throw new TypeError(`'${field}' is no style field`);
-    }
-  }
-  return Object.freeze(copy);
-}
-
-function isColor(value: unknown): value is Color {
-  if (typeof value === "number") return Number.isInteger(value) && value >= 0 && value <= 255;
-  if (typeof value !== "string") return false;
-  return value === "reset" || /^#[0-9A-Fa-f]{6}$/.test(value) || isPaletteColor(value);
+/** Copy the registered look so later plugin changes do not change cached styles. */
+function copyLook(look: ThemeLook | undefined): ThemeLook | undefined {
+  if (look === undefined) return undefined;
+  return {
+    ...look,
+    palette: { ...look.palette },
+    palette256: { ...look.palette256 },
+    groups: Object.fromEntries(Object.entries(look.groups ?? {}).map(([name, patch]) => [name, { ...patch }])),
+  };
 }
 
 function isPaletteColor(value: unknown): value is PaletteColor {

@@ -157,7 +157,7 @@ declare class TextEncoder {
   encode(input?: string): Uint8Array;
   /**
    * Write as many whole UTF-8 characters of `source` as fit in `destination`. `read` counts the UTF-16 units of `source`
-   * that went into `destination`, and `written` counts the bytes. A resizable buffer throws a `TypeError`.
+   * that went into `destination`, and `written` counts the bytes.
    */
   encodeInto(source: string, destination: Uint8Array): { read: number; written: number };
 }
@@ -172,7 +172,7 @@ declare class TextDecoder {
   readonly ignoreBOM: boolean;
   /**
    * The text of `input`. With `stream: true`, an incomplete sequence at the end waits for the next call. A detached
-   * buffer has no bytes, and a resizable buffer throws a `TypeError`.
+   * buffer has no bytes.
    */
   decode(input?: ArrayBuffer | SharedArrayBuffer | ArrayBufferView, options?: { stream?: boolean | undefined }): string;
 }
@@ -509,7 +509,6 @@ interface CustomEventInit<T = unknown> extends EventInit {
 
 /** An event that an `EventTarget` dispatches to its listeners. */
 declare class Event {
-  /** A missing `type` throws a `TypeError`. */
   constructor(type: string, eventInit?: EventInit);
   readonly type: string;
   /** The target of the last dispatch, or `null` before the first dispatch. */

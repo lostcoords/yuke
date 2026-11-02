@@ -219,22 +219,6 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   equal(after, "true plugin bad defines a tool after the end of its session");
 });
 
-test("a session that returns a value that is no cleanup drops its tools and sends its notice", async () => {
-  // @ts-expect-error: a session returns nothing or a cleanup.
-  const setup: PluginSession = (s) => {
-    s.tools.define(tool("gone"));
-    return 5;
-  };
-  await using host = await createHost({ plugins: [{ name: "failing", session: setup }] });
-  const session = await host.openSession();
-
-  equal(await refusal(session.call("gone", {})), "the session has no tool gone");
-  equal(
-    host.notices.map((notice) => notice.message),
-    [`${SETUP_FAILED}TypeError: session must return nothing or a cleanup function`],
-  );
-});
-
 test("a notice of a session names its session", async () => {
   await using host = await createHost({ plugins: [{ name: "loud", session: (s) => void s.notify("info", "opened") }] });
   const session = await host.openSession();

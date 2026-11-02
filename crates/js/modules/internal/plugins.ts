@@ -29,8 +29,6 @@ interface PluginSpec {
   readonly entry: string | undefined;
   /** The exports are the ones that `give` keeps for this name, not the ones of an entry module. */
   readonly given: boolean;
-  readonly uses: readonly string[];
-  readonly provides: readonly string[];
 }
 
 /** The type of the options in the loader. */
@@ -83,14 +81,13 @@ export function give(name: string, exports: object): void {
 }
 
 /**
- * Load the plugin `spec`: import its entry, check its exports, and await `apply(ctx)`. A failure aborts the signal of
+ * Load the plugin `spec`: import its entry and await `apply(ctx)`. A failure aborts the signal of
  * the plugin and throws. Only a loaded plugin runs `session`.
  */
 export async function load(spec: PluginSpec): Promise<void> {
   if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
   const { signal, abort } = hostSignal();
   const pending = new Map<string, unknown>();
-  let applying = true;
   // One surface per plugin activation: each call of `get("tui")` gives the same one, and its signal stops it.
   let tui: { readonly surface: Tui | undefined } | undefined;
   let sessions: Sessions | undefined;
@@ -105,27 +102,14 @@ export async function load(spec: PluginSpec): Promise<void> {
       : spec.entry === undefined
         ? undefined
         : import(spec.entry));
-    if (spec.given && source === undefined) throw new TypeError(`plugin ${spec.name} has no given exports`);
     if (source !== undefined) {
       const exports = source as {
-        readonly apply?: unknown;
-        readonly session?: unknown;
+        readonly apply?: PluginApply<Options>;
+        readonly session?: PluginSession<Options>;
         readonly optionsSchema?: unknown;
       };
-      if (exports.apply === undefined && exports.session === undefined) {
-        if (spec.entry === undefined) {
-          throw new TypeError(`the given exports of plugin ${spec.name} hold neither apply nor session`);
-        }
-        throw new TypeError(`${spec.entry} exports neither apply nor session: a plugin entry exports one or both`);
-      }
-      if (exports.apply !== undefined && typeof exports.apply !== "function") {
-        throw new TypeError("the apply export is no function");
-      }
-      if (exports.session !== undefined && typeof exports.session !== "function") {
-        throw new TypeError("the session export is no function");
-      }
-      apply = exports.apply as PluginApply<Options> | undefined;
-      session = exports.session as PluginSession<Options> | undefined;
+      apply = exports.apply;
+      session = exports.session;
       optionsSchema = exports.optionsSchema;
     }
     const options = optionsOf(spec.options, optionsSchema);
@@ -135,12 +119,6 @@ export async function load(spec: PluginSpec): Promise<void> {
       options,
       signal,
       provide(name: string, value: unknown): void {
-        if (!spec.provides.includes(name))
-          throw new TypeError(`provide: plugin ${spec.name} has no '${name}' in provides`);
-        if (!applying) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' after its apply`);
-        if (pending.has(name)) throw new TypeError(`provide: plugin ${spec.name} provides '${name}' twice`);
-        if (value === undefined || value === null)
-          throw new TypeError(`provide: plugin ${spec.name} cannot provide '${name}' as null or undefined`);
         pending.set(name, value);
       },
       get<K extends keyof Services & string>(name: K): ServiceOf<K> {
@@ -154,10 +132,7 @@ export async function load(spec: PluginSpec): Promise<void> {
         }
         if (name === "catalog") return catalog as ServiceOf<K>;
         if (name === "plugins") return plugins as ServiceOf<K>;
-        if (!spec.uses.includes(name)) throw new TypeError(`get: plugin ${spec.name} has no '${name}' in uses`);
-        const service = services.get(name);
-        if (service === undefined) throw new Error(`get: no loaded plugin provides '${name}'`);
-        return service as ServiceOf<K>;
+        return services.get(name) as ServiceOf<K>;
       },
       notify(level: NoticeLevel, message: string): void {
         notify(spec.name, level, String(message), undefined);
@@ -169,22 +144,12 @@ export async function load(spec: PluginSpec): Promise<void> {
         return on(spec.name, signal, event, listener);
       },
     });
-    if (apply !== undefined) {
-      const result: unknown = await apply(ctx);
-      if (result !== undefined && typeof result !== "function") {
-        throw new TypeError("apply must return nothing or a cleanup function");
-      }
-      cleanup = result as Cleanup | undefined;
-    }
-    applying = false;
+    if (apply !== undefined) cleanup = await apply(ctx);
     if (closing) throw new TypeError(`plugin ${spec.name} loads after the close of the plugins`);
-    const missing = spec.provides.filter((name) => !pending.has(name));
-    if (missing.length > 0) throw new TypeError(`apply did not provide ${missing.join(", ")} of provides`);
     for (const [name, value] of pending) services.set(name, value);
     if (session !== undefined) sessionExports.push({ plugin: spec.name, session, options });
     loaded.push(cleanup === undefined ? { plugin: spec.name, abort } : { plugin: spec.name, abort, cleanup });
   } catch (error) {
-    applying = false;
     abort(`plugin ${spec.name} did not load`);
     if (cleanup !== undefined) await clean(spec.name, cleanup);
     throw error;

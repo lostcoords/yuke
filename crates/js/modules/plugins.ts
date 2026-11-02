@@ -7,7 +7,6 @@
  * - The declarations need TypeScript 5.4 or later.
  *
  * Errors:
- * - A misuse of the API throws a `TypeError`.
  * - A cancellation aborts a signal with a `DOMException` named `AbortError`.
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
@@ -259,7 +258,7 @@ export interface PluginManager {
   readonly remove: (name: string) => Promise<void>;
 }
 
-/** The value of `ctx.get(name)`: never null, except `tui`, which can be `undefined`. */
+/** The value of `ctx.get(name)`. A service in `uses` is present, because its provider loads first. `tui` can be `undefined`. */
 export type ServiceOf<K extends keyof Services> = K extends "tui" ? Services[K] : NonNullable<Services[K]>;
 
 /** `T` with each field read-only at each depth. */
@@ -290,14 +289,17 @@ export interface PluginContext<O = Record<string, never>> {
    * `apply`. The plugin must then clear its timers, because the host does not clear them.
    */
   readonly signal: AbortSignal;
-  /** Publish the service `name` once, during `apply`. The value is not null or undefined. `name` must be in `provides`. */
+  /**
+   * Publish the service `name` during `apply`. Declare `name` in `provides` of the manifest, so the plugins that use
+   * the service load after this plugin.
+   */
   readonly provide: <K extends Exclude<keyof Services & string, "tui">>(
     name: K,
     value: NonNullable<Services[NoInfer<K>]>,
   ) => void;
   /**
-   * The service `name`. The service of a plugin must be in `uses` of the manifest and is never null. `get("tui")` gives
-   * the terminal interface of this plugin, or `undefined` outside it; it needs no `uses` entry.
+   * The service `name`. Declare `name` in `uses` of the manifest, so this plugin loads after its provider. `get("tui")`
+   * gives the terminal interface of this plugin, or `undefined` outside it. It needs no `uses` entry.
    */
   readonly get: <K extends keyof Services & string>(name: K) => ServiceOf<K>;
   /** Send a notice with this plugin as its source. */
@@ -839,7 +841,7 @@ export interface SessionContext<O = Record<string, never>> {
   readonly request: (request: string, data?: unknown, options?: RequestOptions) => Promise<unknown>;
   /**
    * Ask the user `request` with this plugin as its source, and wait for the answers: one per question, in question
-   * order. A request that breaks a rule of `AskRequest` rejects with a `TypeError`.
+   * order.
    * - A yes or no question is a question with two options. A text field is a question without options and with `other`.
    * - The answer is `undefined` when the user cancels, the signal aborts, the session closes, or no client can answer,
    *   as in `yuke -p`.

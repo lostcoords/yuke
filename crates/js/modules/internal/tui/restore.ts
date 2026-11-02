@@ -13,12 +13,12 @@ export interface ViewType {
 
 /**
  * A saved pane: a typed view, a split, or `null`.
- * `null` is an empty pane, a failed view, or a view without a snapshot.
+ * `null` is an empty pane or a view without a snapshot.
  */
 export type SavedPane =
   | null
   | { readonly type: string; readonly state: JsonValue }
-  | { readonly split: Direction; readonly ratio: number; readonly first: SavedPane; readonly second: SavedPane };
+  | { readonly split: Direction; readonly first: SavedPane; readonly second: SavedPane };
 
 /** The pane tree and the index of the focused leaf, in tree order. */
 export interface SavedPanes {

@@ -50,7 +50,6 @@ const GROUPS: Readonly<Record<string, Style>> = {
   "dialog.title": { dim: true },
   "dialog.keys": { dim: true },
   "panes.divider": { dim: true },
-  "view.error": { fg: "danger" },
 
   bar: { dim: true },
   "toast.body": { fg: "surfaceFg", bg: "surface" },

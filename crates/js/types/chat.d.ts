@@ -53,8 +53,7 @@ declare module "yuke:chat" {
     /** Load one page of history: the missing events of a gap first, else the page before the first held event. */
     older(): Promise<void>;
     /**
-     * Call `listener` after each change: an open, an event, the end of the handle, or a page. A throw removes it and
-     * reports the error.
+     * Call `listener` after each change: an open, an event, the end of the handle, or a page.
      */
     onChange(listener: () => void): () => void;
   }
@@ -142,7 +141,7 @@ declare module "yuke:chat" {
     get current(): ChatQuestion | undefined;
     /** Answer the shown request with a cancel. */
     cancel(): void;
-    /** Call `listener` after each change of `current`. A throw removes it and reports the error. */
+    /** Call `listener` after each change of `current`. */
     onChange(listener: () => void): () => void;
   }
 
@@ -209,7 +208,7 @@ declare module "yuke:chat" {
     get frameMs(): number;
     /** The spinner and the text now, or `undefined` while no turn runs. */
     text(options?: ChatWorkingTextOptions): { readonly spinner: string; readonly text: string } | undefined;
-    /** Call `listener` after each change of `active`. A throw removes it and reports the error. */
+    /** Call `listener` after each change of `active`. */
     onChange(listener: () => void): () => void;
   }
 
@@ -260,7 +259,7 @@ declare module "yuke:chat" {
     readonly show: (id: SessionId) => Promise<void>;
     /** The session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
     readonly session: (view: View) => SessionId | undefined;
-    /** Call `listener` after each change of the session of a chat pane. A throw removes the listener and reports it. */
+    /** Call `listener` after each change of the session of a chat pane. */
     readonly onChange: (listener: (view: View) => void) => () => void;
     /**
      * Add rows above the composer of each chat pane. The rows sit below the transcript and above the rows of the chat:
@@ -268,9 +267,8 @@ declare module "yuke:chat" {
      * must be cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
      *
      * Plugin rows get the rows that the chat leaves, at most half the rows above the rule. The chat shows all rows of a
-     * source, or none. The sources show in add order, and the first source that does not fit hides the later sources. A
-     * throw removes the source, and a notice shows the error. Each call adds one source, and its disposer removes only
-     * that source.
+     * source, or none. The sources show in add order, and the first source that does not fit hides the later sources.
+     * Each call adds one source, and its disposer removes only that source.
      *
      * ```ts
      * chat.addRows((pane) => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : []));

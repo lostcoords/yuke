@@ -24,7 +24,6 @@ function choiceOf(value: unknown): Choice | undefined {
  */
 export class SavedChoice {
   readonly #dataDir: string;
-  readonly #listeners = new Set<() => void>();
   #choice: Choice | undefined;
 
   private constructor(dataDir: string, choice: Choice | undefined) {
@@ -51,15 +50,5 @@ export class SavedChoice {
   async save(choice: Choice): Promise<void> {
     await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: this.#dataDir, atomic: true });
     this.#choice = choice;
-    this.#changed();
-  }
-
-  onChange(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  }
-
-  #changed(): void {
-    for (const listener of this.#listeners) listener();
   }
 }

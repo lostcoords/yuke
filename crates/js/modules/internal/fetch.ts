@@ -9,7 +9,7 @@ import { Headers, headerList, headersOf, isHeaders, isToken } from "yuke:interna
 import { type HttpBody, type HttpHead, httpClose, httpRead, httpSend } from "yuke:internal/native";
 import { isDisturbed, isReadableStream, ReadableStream } from "yuke:internal/streams";
 import { queryOf, URL } from "yuke:internal/url";
-import { byteString, bytesOf, dictionary, needs, usvString, webClass } from "yuke:internal/webidl";
+import { byteString, bytesOf, dictionary, usvString, webClass } from "yuke:internal/webidl";
 
 interface BodyState {
   /** The stream of the body, or `null` for no body. */
@@ -180,13 +180,12 @@ function redirectOf(value: unknown): Redirect {
 }
 
 export class Request {
-  constructor(...args: [input: string | URL | Request, init?: RequestInit]) {
-    needs(args, 1, "Request");
+  constructor(inputValue: string | URL | Request, initValue?: RequestInit) {
     // Web IDL converts the arguments before the steps: the input, then the members of the init in the order of
     // their names.
-    const base = requests.get(args[0] as Request);
-    const input = base === undefined ? usvString(args[0]) : undefined;
-    const init = dictionary(args[1], "the request init");
+    const base = requests.get(inputValue as Request);
+    const input = base === undefined ? usvString(inputValue) : undefined;
+    const init = dictionary(initValue, "the request init");
     const initBody = init.body;
     const extracted = initBody === undefined || initBody === null ? undefined : extractBody(initBody, true);
     // A `Headers` gives its header list as it is, without the combined values of its iteration.
@@ -342,10 +341,9 @@ export class Response {
   }
 
   /** A redirect to `url` with `status`, which is 301, 302, 303, 307, or 308. */
-  static redirect(...args: [url: string | URL, status?: number]): Response {
-    needs(args, 1, "Response.redirect");
-    const text = usvString(args[0]);
-    const status = args[1] === undefined ? 302 : unsignedShort(args[1]);
+  static redirect(url: string | URL, statusValue?: number): Response {
+    const text = usvString(url);
+    const status = statusValue === undefined ? 302 : unsignedShort(statusValue);
     const parsed = URL.parse(text);
     if (parsed === null) throw new TypeError(`'${text}' is not a valid URL`);
     if (!REDIRECT_STATUSES.includes(status)) throw new RangeError(`the status ${status} is not a redirect status`);
@@ -361,11 +359,10 @@ export class Response {
   }
 
   /** A response with the JSON text of `data`. It adds `application/json` when `init` has no `content-type`. */
-  static json(...args: [data: unknown, init?: ResponseInit]): Response {
-    needs(args, 1, "Response.json");
-    const text: string | undefined = JSON.stringify(args[0]);
+  static json(data: unknown, init?: ResponseInit): Response {
+    const text: string | undefined = JSON.stringify(data);
     if (text === undefined) throw new TypeError("the data has no JSON form");
-    return responseOf(initialize(byteBody(new TextEncoder().encode(text), "application/json"), args[1]));
+    return responseOf(initialize(byteBody(new TextEncoder().encode(text), "application/json"), init));
   }
 
   get type(): ResponseType {
@@ -525,11 +522,10 @@ function fetchedResponse(
  * Fetch `input` with `init`, as `new Request(input, init)` describes it. A network failure rejects with a `TypeError`
  * whose cause names the failure, and an abort rejects with the reason of the signal.
  */
-export function fetch(...args: [input: RequestInfo | URL, init?: RequestInit]): Promise<Response> {
+export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   let state: RequestState;
   try {
-    needs(args, 1, "fetch");
-    state = requestState(new Request(args[0], args[1]));
+    state = requestState(new Request(input, init));
   } catch (error) {
     return Promise.reject(error);
   }

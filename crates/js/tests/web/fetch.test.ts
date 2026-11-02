@@ -47,10 +47,8 @@ test("a request normalizes the method and refuses bad input", () => {
       () => new Request(url, { signal: {} }),
       // @ts-expect-error: only a response takes a stream body.
       () => new Request(url, { method: "POST", body: new ReadableStream() }),
-      // @ts-expect-error: a request takes an input.
-      () => new Request(),
     ]),
-    new Array<string>(10).fill("TypeError"),
+    new Array<string>(9).fill("TypeError"),
   );
 });
 

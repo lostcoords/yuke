@@ -19,13 +19,6 @@ async function exists(cwd: string, path: string): Promise<boolean> {
   return output.success;
 }
 
-/** The names of the entries of `cwd`, also the hidden ones, as `ls` tells them. */
-async function names(cwd: string): Promise<string[]> {
-  return text(await run(cwd, "ls", "-A"))
-    .split("\n")
-    .filter((name) => name !== "");
-}
-
 /** `bytes` as UTF-8 text. */
 function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -174,13 +167,6 @@ test("an atomic write into a missing folder fails and leaves no temporary file",
   const base = folder();
   equal((await failure(fs.writeTextFile("gone/x.txt", "x", { baseDir: base, atomic: true }))).code, "ENOENT");
   equal(await exists(base, "gone"), false);
-});
-
-test("a failed atomic write removes its temporary file", async () => {
-  const base = folder();
-  await fs.mkdir("taken/inner", { baseDir: base, recursive: true });
-  await failure(fs.writeTextFile("taken", "x", { baseDir: base, atomic: true }));
-  equal(await names(base), ["taken"]);
 });
 
 test("a time before the epoch is a date and not null", async () => {

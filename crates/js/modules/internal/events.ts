@@ -3,7 +3,7 @@
  * tree. `yuke:internal/web` installs them as globals.
  */
 import type { Operation } from "yuke:internal/native";
-import { dictionary, domString, needs, webClass } from "yuke:internal/webidl";
+import { dictionary, domString, webClass } from "yuke:internal/webidl";
 
 // The classes keep the globals of the runtime start, so a plugin that replaces a global does not change them.
 const { DOMException, reportError, setTimeout } = globalThis;
@@ -109,10 +109,9 @@ function optionsOf(options: unknown): Readonly<Record<string, unknown>> {
 }
 
 export class Event {
-  constructor(...args: [type: string, eventInit?: EventInit]) {
-    needs(args, 1, "Event");
-    const type = domString(args[0]);
-    const init = dictionary(args[1], "the event init");
+  constructor(typeValue: string, eventInit?: EventInit) {
+    const type = domString(typeValue);
+    const init = dictionary(eventInit, "the event init");
     events.set(this, {
       type,
       bubbles: Boolean(init.bubbles),
@@ -207,10 +206,9 @@ function isTrusted(this: Event): boolean {
 export class CustomEvent<T = unknown> extends Event {
   readonly #detail: T | null;
 
-  constructor(...args: [type: string, eventInit?: CustomEventInit<T>]) {
-    needs(args, 1, "CustomEvent");
-    super(...args);
-    this.#detail = (dictionary(args[1], "the event init").detail as T | undefined) ?? null;
+  constructor(type: string, eventInit?: CustomEventInit<T>) {
+    super(type, eventInit);
+    this.#detail = (dictionary(eventInit, "the event init").detail as T | undefined) ?? null;
   }
 
   get detail(): T | null {
@@ -224,17 +222,14 @@ export class EventTarget {
   }
 
   addEventListener(
-    ...args: [
-      type: string,
-      callback: EventListenerOrEventListenerObject | null,
-      options?: boolean | AddEventListenerOptions,
-    ]
+    typeValue: string,
+    callbackValue: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
   ): void {
     const listeners = listenersOf(this);
-    needs(args, 2, "addEventListener");
-    const type = domString(args[0]);
-    const callback = callbackOf(args[1]);
-    const fields = optionsOf(args[2]);
+    const type = domString(typeValue);
+    const callback = callbackOf(callbackValue);
+    const fields = optionsOf(options);
     const capture = Boolean(fields.capture);
     const once = Boolean(fields.once);
     const passive = Boolean(fields.passive);
@@ -257,17 +252,14 @@ export class EventTarget {
   }
 
   removeEventListener(
-    ...args: [
-      type: string,
-      callback: EventListenerOrEventListenerObject | null,
-      options?: boolean | EventListenerOptions,
-    ]
+    typeValue: string,
+    callbackValue: EventListenerOrEventListenerObject | null,
+    options?: boolean | EventListenerOptions,
   ): void {
     const listeners = listenersOf(this);
-    needs(args, 2, "removeEventListener");
-    const type = domString(args[0]);
-    const callback = callbackOf(args[1]);
-    const capture = Boolean(optionsOf(args[2]).capture);
+    const type = domString(typeValue);
+    const callback = callbackOf(callbackValue);
+    const capture = Boolean(optionsOf(options).capture);
     if (callback === null) return;
     const listener = listeners.find(
       (listener) => listener.type === type && listener.callback === callback && listener.capture === capture,
@@ -275,10 +267,8 @@ export class EventTarget {
     if (listener !== undefined) removeListener(this, listener);
   }
 
-  dispatchEvent(...args: [event: Event]): boolean {
+  dispatchEvent(event: Event): boolean {
     listenersOf(this);
-    needs(args, 1, "dispatchEvent");
-    const event = args[0];
     const state = eventState(event);
     if (state.dispatching) throw new DOMException("the event is already being dispatched", "InvalidStateError");
     state.trusted = false;
@@ -368,9 +358,8 @@ export class AbortSignal extends EventTarget {
   }
 
   /** A signal that aborts with the reason of the first of `signals` that aborts. */
-  static any(...args: [signals: Iterable<AbortSignal>]): AbortSignal {
-    needs(args, 1, "AbortSignal.any");
-    const value: unknown = args[0];
+  static any(signals: Iterable<AbortSignal>): AbortSignal {
+    const value: unknown = signals;
     if ((typeof value !== "object" && typeof value !== "function") || value === null) {
       throw new TypeError("the signals are not an iterable object");
     }
@@ -406,9 +395,8 @@ export class AbortSignal extends EventTarget {
   }
 
   /** A signal that aborts with a `TimeoutError` after `milliseconds`. */
-  static timeout(...args: [milliseconds: number]): AbortSignal {
-    needs(args, 1, "AbortSignal.timeout");
-    const milliseconds = Math.trunc(+args[0]);
+  static timeout(millisecondsValue: number): AbortSignal {
+    const milliseconds = Math.trunc(+millisecondsValue);
     if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > Number.MAX_SAFE_INTEGER) {
       throw new TypeError("the timeout is not a whole number in 0..2^53-1");
     }

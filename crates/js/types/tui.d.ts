@@ -272,7 +272,7 @@ declare module "yuke:tui" {
 
   /** Anything that draws. An object (`satisfies View`) or a class. */
   export interface View {
-    /** The children and their rects. The core draws each child after its parent, routes its input, and guards it. */
+    /** The children and their rects. The core draws each child after its parent, and it routes the input of each child. */
     readonly layout?: ((size: Size) => readonly Placement[]) | undefined;
     /** Draw the view. `focused` is true when the view or a child has the focus. */
     readonly draw: (canvas: Canvas, focused: boolean) => void;

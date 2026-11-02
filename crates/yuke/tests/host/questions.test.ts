@@ -219,38 +219,3 @@ test("a cancel or an abort answers undefined, and an aborted signal asks nothing
     ["first", "second"],
   );
 });
-
-test("ask refuses a request that breaks a rule, and asks nothing", async () => {
-  const option = (label: string) => ({ label });
-  const requests: Question[][] = [
-    [],
-    [yesNo("go", "Go on?"), yesNo("go", "Again?")],
-    [{ id: "pick", header: "Pick", question: "Pick?", options: [option("a"), option("a")] }],
-    [{ id: "name", header: "Name", question: "Name?", options: [] }],
-    [{ id: "key", header: "Key", question: "Key?", options: [option("a")], secret: true }],
-  ];
-  const asker = asking(async (s) => {
-    const failures: string[] = [];
-    for (const questions of requests) {
-      try {
-        await s.ask({ questions });
-      } catch (error) {
-        failures.push(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-      }
-    }
-    return failures;
-  });
-  await using host = await createHost({ plugins: [{ name: "asker", session: asker }] });
-  const session = await host.openSession();
-
-  const result = await session.call("ask", {});
-
-  equal(JSON.parse(result.text), [
-    "TypeError: ask: the request has no question",
-    'TypeError: ask: the id "go" is twice',
-    'TypeError: ask: the question "pick" has a label twice',
-    'TypeError: ask: the question "name" has no option and no other',
-    'TypeError: ask: the question "key" has options and secret',
-  ]);
-  equal(host.questions, []);
-});

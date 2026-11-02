@@ -170,29 +170,11 @@ export async function apply(ctx: PluginContext): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
-    rows: (pane) =>
-      [...sources].flatMap((entry) => {
-        try {
-          return [entry.source(pane)];
-        } catch (error) {
-          sources.delete(entry);
-          ctx.notify("error", `a row source of the chat failed: ${String(error)}`);
-          return [];
-        }
-      }),
+    rows: (pane) => [...sources].map((entry) => entry.source(pane)),
     moved: (view) => {
-      for (const listener of listeners) {
-        try {
-          listener(view);
-        } catch (error) {
-          listeners.delete(listener);
-          ctx.notify("error", `a listener of the chat failed: ${String(error)}`);
-        }
-      }
+      for (const listener of listeners) listener(view);
     },
   };
-  // The first send of a pane without a session uses the saved pick, so the bar shows it.
-  chat.choice.onChange(() => publish());
   const active = (): PaneActions | undefined => {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);

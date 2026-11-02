@@ -325,8 +325,6 @@ test("the constructors refuse byte streams, bad strategies, and a locked stream"
       () => new ReadableStreamDefaultReader(locked),
       // @ts-expect-error: a controller has no public constructor.
       () => new ReadableStreamDefaultController(),
-      // @ts-expect-error: a reader takes a stream.
-      () => new ReadableStreamDefaultReader(),
     ]),
     [
       "TypeError",
@@ -340,7 +338,6 @@ test("the constructors refuse byte streams, bad strategies, and a locked stream"
       "TypeError",
       "TypeError",
       "SyntaxError",
-      "TypeError",
       "TypeError",
       "TypeError",
       "TypeError",

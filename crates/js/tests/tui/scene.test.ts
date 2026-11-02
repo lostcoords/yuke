@@ -1,10 +1,10 @@
 // The core of the terminal interface on a fake 20×6 driver: placement, clipping, input routing, focus, overlays, panes,
-// the plugin surface, restore, and the fault boundary.
+// the plugin surface and restore.
 
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { assert, equal, test, throws } from "yuke:test";
-import { type Cursor, type CursorShape, type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
+import { type Cursor, type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
 import { atoms, click, fakeTerminal, key, named } from "./terminal.ts";
 
 test("a placed child draws in its rect and is cut to it", () => {
@@ -404,18 +404,19 @@ test("a timer runs once in time order, asks for a frame, and its disposer or the
   equal(ran, ["early", "late"]);
 });
 
-test("one advance runs the due timers in time order, also a timer that a timer sets", () => {
+test("one advance runs due timers in time order with the oldest timer first at the same time", () => {
   const terminal = fakeTerminal();
   const tui = createSurface(new Core(terminal.driver), "timers", new AbortController().signal);
   const ran: string[] = [];
   tui.after(30, () => ran.push("30"));
   tui.after(20, () => ran.push("20"));
+  tui.after(20, () => ran.push("20 again"));
   tui.after(10, () => {
     ran.push("10");
     tui.after(5, () => ran.push("15"));
   });
   terminal.clock.advance(30);
-  equal(ran, ["10", "15", "20", "30"]);
+  equal(ran, ["10", "15", "20", "20 again", "30"]);
 });
 
 test("a throwing timer is reported under its plugin", () => {
@@ -448,75 +449,6 @@ test("a throwing focus listener is reported under its plugin and removed", () =>
   equal(
     core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
     [["watcher", "a focus listener failed: Error: bad focus"]],
-  );
-});
-
-test("a throwing view shows its error once and the rest works", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  let draws = 0;
-  const broken: View = {
-    focusable: true,
-    draw: () => {
-      draws += 1;
-      throw new Error("bad view");
-    },
-    key: () => {
-      throw new Error("bad key");
-    },
-  };
-  const fine: View = {
-    draw: (canvas) => {
-      canvas.text(0, 0, "fine");
-    },
-  };
-  core.scene.setRoot("notes", () => ({
-    layout: () => [
-      { view: broken, rect: { column: 0, row: 0, width: 20, height: 1 } },
-      { view: fine, rect: { column: 0, row: 1, width: 20, height: 1 } },
-    ],
-    draw() {},
-  }));
-  equal(terminal.screen(core).slice(0, 2), ["notes: Error: bad vi", "fine"]);
-  terminal.screen(core);
-  // A failed view gets no more calls: its keys give no second fault.
-  core.scene.focus(broken);
-  core.event(key("x"));
-  core.event(key("y"));
-  const failed = core.scene.overlay("notes", () => {
-    throw new Error("no view");
-  });
-  equal(draws, 1);
-  equal(failed.signal.aborted, true);
-  equal(
-    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
-    [
-      ["notes", "Error: bad view"],
-      ["notes", "a view did not start: Error: no view"],
-    ],
-  );
-});
-
-test("a fault in a pane names the plugin of the pane", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  const inner: View = {
-    draw: () => {
-      throw new Error("bad inner");
-    },
-  };
-  core.panes.split(
-    "notes",
-    () => ({
-      layout: () => [{ view: inner, rect: { column: 0, row: 0, width: 5, height: 1 } }],
-      draw() {},
-    }),
-    "row",
-  );
-  terminal.screen(core);
-  equal(
-    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
-    [["notes", "Error: bad inner"]],
   );
 });
 
@@ -560,14 +492,6 @@ test("the cursor of the focused view reaches the screen inside its clip with its
   at = { column: 9, row: 0 };
   terminal.screen(core);
   equal(terminal.cursors, [{ column: 7, row: 3, shape: "bar" }, { column: 6, row: 3 }, undefined]);
-  // A shape that no terminal knows is a fault of the view.
-  at = { column: 1, row: 0, shape: "beam" as CursorShape };
-  terminal.screen(core);
-  equal(terminal.cursors.at(-1), undefined);
-  equal(
-    core.notices.list().at(-1)?.text.split("\n")[0],
-    "TypeError: a cursor shape is block, underline, or bar, not beam",
-  );
 });
 
 test("the core commands reach the driver", () => {
@@ -812,15 +736,12 @@ test("the panes of a snapshot come back with their views and focus", () => {
   equal(JSON.parse(snapshot), {
     tree: {
       split: "row",
-      ratio: 0.5,
       first: null,
       second: {
         split: "column",
-        ratio: 0.5,
         first: { type: "notes:note", state: { id: 1 } },
         second: {
           split: "row",
-          ratio: 0.5,
           first: { type: "notes:note", state: { id: 2 } },
           second: null,
         },
@@ -857,7 +778,7 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   createSurface(core, "broken", new AbortController().signal).views.register("view", () => {
     throw new Error("old state");
   });
-  const split = (first: unknown, second: unknown) => ({ split: "row", ratio: 0.5, first, second });
+  const split = (first: unknown, second: unknown) => ({ split: "row", first, second });
   const saved = {
     tree: split(split({ type: "gone:view", state: 1 }, { type: "notes:note", state: { id: 3 } }), {
       type: "broken:view",

@@ -226,7 +226,7 @@ export class Core {
     }
   }
 
-  /** The saved panes for a reload: the tree, the split ratios, the focus, and the saved view of each pane. */
+  /** The saved panes for a reload: the tree, the focus, and the saved view of each pane. */
   snapshot(): string {
     return JSON.stringify(this.panes.snapshot((view, owner) => this.#save(view, owner)));
   }
@@ -250,12 +250,12 @@ export class Core {
   }
 
   /**
-   * The saved view of a pane of `owner`, or `null` without a snapshot or after a fault.
+   * The saved view of a pane of `owner`, or `null` without a snapshot.
    * A bare type gets the prefix of `owner`.
    */
   #save(view: View, owner: string): SavedPane {
     if (view.snapshot === undefined) return null;
-    const saved = this.scene.guard(view, owner, undefined, () => view.snapshot?.());
+    const saved = view.snapshot();
     if (saved === undefined) return null;
     return { type: saved.type.includes(":") ? saved.type : `${owner}:${saved.type}`, state: saved.state };
   }

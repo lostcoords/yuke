@@ -228,18 +228,6 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
   equal(host.notices[0]?.message.includes("plugins.test.ts:"), true);
 });
 
-test("a plugin that fails after its apply returned runs its cleanup once", async () => {
-  const cleanups: boolean[] = [];
-  const silent: PluginApply = (ctx) => () => {
-    cleanups.push(ctx.signal.aborted);
-  };
-
-  equal(await failures(createHost({ plugins: [{ name: "silent", apply: silent, provides: ["a"] }] })), [
-    "plugin silent did not load: TypeError: apply did not provide a of provides",
-  ]);
-  equal(cleanups, [true]);
-});
-
 test("a service passes to a later plugin, and a failed provider stops its users before they run", async () => {
   let count = 0;
   let ran = false;
@@ -294,42 +282,6 @@ test("a service passes to a later plugin, and a failed provider stops its users 
     "plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
   ]);
   equal([count, ran], [3, false]);
-});
-
-test("the context refuses undeclared services, and apply must provide each declared one", async () => {
-  const neither = await writePlugin("neither", {}, "export default function apply() {}");
-  const host = createHost({
-    plugins: [
-      { name: "silent", provides: ["test.a.v1"], apply: () => undefined },
-      {
-        name: "reach",
-        apply: (ctx) => {
-          ctx.get("test.z.v1" as never);
-          return undefined;
-        },
-      },
-      {
-        name: "other",
-        provides: ["test.b.v1"],
-        apply: (ctx) => {
-          ctx.provide("test.c.v1" as never, 1 as never);
-          return undefined;
-        },
-      },
-      { name: "value", apply: (() => 5) as never },
-      { folder: neither },
-      { name: "number", session: 5 as never },
-    ],
-  });
-
-  equal(await failures(host), [
-    "plugin silent did not load: TypeError: apply did not provide test.a.v1 of provides",
-    "plugin reach did not load: TypeError: get: plugin reach has no 'test.z.v1' in uses",
-    "plugin other did not load: TypeError: provide: plugin other has no 'test.c.v1' in provides",
-    "plugin value did not load: TypeError: apply must return nothing or a cleanup function",
-    `plugin neither did not load: TypeError: ${neither}/index.ts exports neither apply nor session: a plugin entry exports one or both`,
-    "plugin number did not load: TypeError: the session export is no function",
-  ]);
 });
 
 test("a plugin needs no code", async () => {
@@ -458,8 +410,8 @@ test("options that fail the check fail the load of that plugin before its apply"
   equal(applied, ["good"]);
 });
 
-// The given exports pass the same checks as an entry: the options schema, the frozen options, and the export shape.
-test("given exports load through the checks of an entry", async () => {
+// Given exports use the same option schema and frozen options as an entry.
+test("given exports use the option checks of an entry", async () => {
   let seen: unknown[] = [];
   const host = createHost({
     plugins: [
@@ -472,16 +424,12 @@ test("given exports load through the checks of an entry", async () => {
           return undefined;
         },
       },
-      { name: "empty" },
       { name: "unchecked", options: { depth: 2 }, apply: () => undefined },
-      { name: "broken", apply: 1 as never },
     ],
   });
 
   equal(await failures(host), [
-    "plugin empty did not load: TypeError: the given exports of plugin empty hold neither apply nor session",
     "plugin unchecked did not load: TypeError: the plugin gets options, and it exports no optionsSchema",
-    "plugin broken did not load: TypeError: the apply export is no function",
   ]);
   equal(seen, [2, true, false]);
 });

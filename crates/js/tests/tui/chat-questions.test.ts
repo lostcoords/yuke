@@ -269,7 +269,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
 
 test("each pane of a session shows its question, and the focused pane takes the keys", async () => {
   const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
-  const saved = JSON.stringify({ tree: { split: "row", ratio: 0.5, first: pane, second: pane }, focus: 0 });
+  const saved = JSON.stringify({ tree: { split: "row", first: pane, second: pane }, focus: 0 });
   using frame = createFrame({ width: 61, height: 6 });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);

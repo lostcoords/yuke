@@ -251,6 +251,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
         await chat.choice.save(choice);
+        // The first send uses the saved choice, so the status bar shows it.
+        chat.refresh();
       } catch (error) {
         // The session can start without the saved choice.
         ctx.notify("error", `the model choice did not save: ${String(error)}`);

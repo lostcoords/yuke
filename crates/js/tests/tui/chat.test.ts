@@ -73,7 +73,7 @@ test("the start pane holds the session of the startup, and a split opens a new c
 
 test("two panes on one session hold their own handles, and a reload keeps the session of each", async () => {
   const pane = { type: "chat:pane", state: { session: "s1", draft: EMPTY } };
-  const saved = JSON.stringify({ tree: { split: "row", ratio: 0.5, first: pane, second: pane }, focus: 0 });
+  const saved = JSON.stringify({ tree: { split: "row", first: pane, second: pane }, focus: 0 });
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start(saved);

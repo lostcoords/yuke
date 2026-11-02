@@ -6,19 +6,15 @@ import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
 
-test("an event needs a type and an init that is an object", () => {
+test("an event converts its type and checks its init", () => {
   equal(
     [
-      // @ts-expect-error: the type is missing.
-      () => new Event(),
       // @ts-expect-error: the init is no object.
       () => new Event("x", 1),
       // @ts-expect-error: a symbol has no text.
       () => new Event(Symbol()),
-      // @ts-expect-error: the type is missing.
-      () => new CustomEvent(),
     ].map(thrownName),
-    ["TypeError", "TypeError", "TypeError", "TypeError"],
+    ["TypeError", "TypeError"],
   );
   // @ts-expect-error: the event converts `undefined` to the text "undefined".
   equal(new Event(undefined).type, "undefined");
@@ -308,26 +304,6 @@ test("a method refuses a value of another class", () => {
     ].map(thrownName),
     Array(10).fill("TypeError"),
   );
-});
-
-test("a missing argument throws a type error", () => {
-  const target = new EventTarget();
-  equal(
-    [
-      // @ts-expect-error: the listener is missing.
-      () => target.addEventListener("x"),
-      // @ts-expect-error: the listener is missing.
-      () => target.removeEventListener("x"),
-      // @ts-expect-error: the event is missing.
-      () => target.dispatchEvent(),
-      // @ts-expect-error: the signals are missing.
-      () => AbortSignal.any(),
-      // @ts-expect-error: the delay is missing.
-      () => AbortSignal.timeout(),
-    ].map(thrownName),
-    ["TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
-  );
-  target.addEventListener("x", null);
 });
 
 // Abort signals.

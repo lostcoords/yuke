@@ -10,7 +10,7 @@ import {
   type UrlParts,
   updateUrl,
 } from "yuke:internal/native";
-import { needs, pairIterable, pairsOf, usvString, webClass } from "yuke:internal/webidl";
+import { pairIterable, pairsOf, usvString, webClass } from "yuke:internal/webidl";
 
 type Pair = [name: string, value: string];
 
@@ -41,10 +41,10 @@ function queryState(value: unknown): QueryState {
   return state;
 }
 
-/** The parts of the URL of `args`, a URL and an optional base, or `undefined` when either one is not valid. */
-function parse(args: readonly unknown[]): UrlParts | undefined {
-  const input = usvString(args[0]);
-  return parseUrl(input, args[1] === undefined ? undefined : usvString(args[1]));
+/** The parts of `url` against `base`, or `undefined` when either one is not valid. */
+function parse(url: string | URL, base?: string | URL): UrlParts | undefined {
+  const input = usvString(url);
+  return parseUrl(input, base === undefined ? undefined : usvString(base));
 }
 
 /** A new `URL` with `parts`. It skips the constructor, so the URL is not parsed twice. */
@@ -75,10 +75,9 @@ function updateQuery(state: QueryState): void {
 }
 
 export class URL {
-  constructor(...args: [url: string | URL, base?: string | URL]) {
-    needs(args, 1, "URL");
-    const input = usvString(args[0]);
-    const base = args[1] === undefined ? undefined : usvString(args[1]);
+  constructor(url: string | URL, baseValue?: string | URL) {
+    const input = usvString(url);
+    const base = baseValue === undefined ? undefined : usvString(baseValue);
     const parts = parseUrl(input, base);
     if (parts === undefined) {
       throw new TypeError(
@@ -89,16 +88,14 @@ export class URL {
   }
 
   /** The URL of `url` against `base`, or `null` when either one is not valid. */
-  static parse(...args: [url: string | URL, base?: string | URL]): URL | null {
-    needs(args, 1, "URL.parse");
-    const parts = parse(args);
+  static parse(url: string | URL, base?: string | URL): URL | null {
+    const parts = parse(url, base);
     return parts === undefined ? null : urlOf(parts);
   }
 
   /** Whether `url` against `base` is a valid URL. */
-  static canParse(...args: [url: string | URL, base?: string | URL]): boolean {
-    needs(args, 1, "URL.canParse");
-    return parse(args) !== undefined;
+  static canParse(url: string | URL, base?: string | URL): boolean {
+    return parse(url, base) !== undefined;
   }
 
   get href(): string {
@@ -220,45 +217,40 @@ export class URLSearchParams {
   }
 
   /** Add a pair at the end. */
-  append(...args: [name: string, value: string]): void {
+  append(name: string, value: string): void {
     const state = queryState(this);
-    needs(args, 2, "append");
-    state.list.push([usvString(args[0]), usvString(args[1])]);
+    state.list.push([usvString(name), usvString(value)]);
     updateQuery(state);
   }
 
   /** Remove each pair with `name`, and with `value` when it is given. */
-  delete(...args: [name: string, value?: string]): void {
+  delete(nameValue: string, inputValue?: string): void {
     const state = queryState(this);
-    needs(args, 1, "delete");
-    const name = usvString(args[0]);
-    const value = args[1] === undefined ? undefined : usvString(args[1]);
+    const name = usvString(nameValue);
+    const value = inputValue === undefined ? undefined : usvString(inputValue);
     state.list = state.list.filter((pair) => pair[0] !== name || (value !== undefined && pair[1] !== value));
     updateQuery(state);
   }
 
   /** The value of the first pair with `name`, or `null`. */
-  get(...args: [name: string]): string | null {
+  get(nameValue: string): string | null {
     const state = queryState(this);
-    needs(args, 1, "get");
-    const name = usvString(args[0]);
+    const name = usvString(nameValue);
     return state.list.find((pair) => pair[0] === name)?.[1] ?? null;
   }
 
   /** The values of the pairs with `name`, in order. */
-  getAll(...args: [name: string]): string[] {
+  getAll(nameValue: string): string[] {
     const state = queryState(this);
-    needs(args, 1, "getAll");
-    const name = usvString(args[0]);
+    const name = usvString(nameValue);
     return state.list.filter((pair) => pair[0] === name).map((pair) => pair[1]);
   }
 
   /** Whether a pair has `name`, and `value` when it is given. */
-  has(...args: [name: string, value?: string]): boolean {
+  has(nameValue: string, inputValue?: string): boolean {
     const state = queryState(this);
-    needs(args, 1, "has");
-    const name = usvString(args[0]);
-    const value = args[1] === undefined ? undefined : usvString(args[1]);
+    const name = usvString(nameValue);
+    const value = inputValue === undefined ? undefined : usvString(inputValue);
     return state.list.some((pair) => pair[0] === name && (value === undefined || pair[1] === value));
   }
 
@@ -266,11 +258,10 @@ export class URLSearchParams {
    * Give the first pair with `name` the value `value`, and remove the other pairs with `name`. Without a pair with
    * `name`, add a pair at the end.
    */
-  set(...args: [name: string, value: string]): void {
+  set(nameValue: string, inputValue: string): void {
     const state = queryState(this);
-    needs(args, 2, "set");
-    const name = usvString(args[0]);
-    const value = usvString(args[1]);
+    const name = usvString(nameValue);
+    const value = usvString(inputValue);
     const first = state.list.findIndex((pair) => pair[0] === name);
     if (first < 0) state.list.push([name, value]);
     else {

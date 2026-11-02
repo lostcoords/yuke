@@ -16,14 +16,12 @@ interface Binding {
   readonly strokes: readonly string[];
   readonly command: string;
   readonly atom: string;
-  readonly order: number;
 }
 
 export class Keymap {
   readonly #commands: Commands;
   readonly #changed: () => void;
   readonly #bindings: Binding[] = [];
-  #order = 0;
   /** The strokes of a sequence so far, and the atoms of its last stroke. */
   #pending: readonly string[] = [];
   #atoms: readonly string[] = [];
@@ -42,7 +40,7 @@ export class Keymap {
     const { in: atom = "root" } = options;
     if (typeof command !== "string" || command === "") throw new TypeError("a binding names a command");
     if (typeof atom !== "string" || atom === "") throw new TypeError("a context atom is a string that is not empty");
-    const binding: Binding = { strokes: parseKeys(spec), command, atom, order: this.#order++ };
+    const binding: Binding = { strokes: parseKeys(spec), command, atom };
     this.#bindings.push(binding);
     this.#changed();
     return () => {
@@ -132,7 +130,8 @@ export class Keymap {
           binding.strokes.length === strokes.length &&
           strokes.every((stroke, at) => binding.strokes[at] === stroke),
       )
-      .sort((a, b) => atoms.lastIndexOf(b.atom) - atoms.lastIndexOf(a.atom) || b.order - a.order);
+      .toReversed()
+      .sort((a, b) => atoms.lastIndexOf(b.atom) - atoms.lastIndexOf(a.atom));
     return ranked.some((binding) => this.#commands.run(binding.command));
   }
 }

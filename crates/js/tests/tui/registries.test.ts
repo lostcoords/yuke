@@ -7,7 +7,7 @@ import { Keymap } from "yuke:internal/tui/keymap";
 import { Notices } from "yuke:internal/tui/notices";
 import { Styles } from "yuke:internal/tui/styles";
 import { assert, equal, settled, test, throws } from "yuke:test";
-import { type Command, parseKeys, type StylePatch, strokeOf } from "yuke:tui";
+import { type Command, parseKeys, strokeOf } from "yuke:tui";
 import { key, named } from "./terminal.ts";
 
 /** The wait of a sequence for its next stroke. */
@@ -429,31 +429,6 @@ test("a palette color follows the depth and the background", () => {
   equal(styles.resolve({ bg: "danger" }).bg, 124);
 });
 
-test("a bad style field throws", () => {
-  const styles = new Styles(
-    () => true,
-    () => "dark",
-    () => {},
-  );
-  const bad: StylePatch[] = [
-    // @ts-expect-error: `red` is no color.
-    { fg: "red" },
-    // @ts-expect-error: `toString` is no palette color.
-    { fg: "toString" },
-    { fg: 256 },
-    // @ts-expect-error: a flag is a boolean.
-    { bold: 1 },
-    // @ts-expect-error: `color` is no style field.
-    { color: 1 },
-    { link: "" },
-  ];
-  for (const patch of bad) assert(throws(() => styles.set({ a: patch })) instanceof TypeError, JSON.stringify(patch));
-  assert(throws(() => styles.set({ "": {} })) instanceof TypeError);
-  // @ts-expect-error: a style to resolve has no `null`.
-  assert(throws(() => styles.resolve({ fg: null })) instanceof TypeError);
-  styles.set({ a: { fg: null, bg: "surface", underlineColor: "#ABCDEF" } });
-});
-
 test("notices keep the last hundred and count a repeat", () => {
   const notices = new Notices();
   const seen: [string, number][] = [];
@@ -513,7 +488,7 @@ test("each registration and its disposer ask for a frame", () => {
   equal(asked, 4);
 });
 
-test("one set changes many groups with one frame and one disposer, and a bad group changes nothing", () => {
+test("one set changes many groups with one frame and one disposer", () => {
   let asked = 0;
   const styles = new Styles(
     () => true,
@@ -527,10 +502,6 @@ test("one set changes many groups with one frame and one disposer, and a bad gro
   const framesOfSet = asked;
   undo();
   equal([both, framesOfSet, styles.resolve("a"), styles.resolve("b"), asked], [[{ fg: 1 }, { fg: 2 }], 1, {}, {}, 2]);
-
-  // @ts-expect-error: `color` is no style field.
-  assert(throws(() => styles.set({ c: { fg: 3 }, d: { color: 1 } })) instanceof TypeError);
-  equal([styles.resolve("c"), asked], [{}, 2]);
 });
 
 /** Styles on a dark 24-bit terminal, with the background and the depth that a test can change. */
@@ -642,26 +613,31 @@ test("the change of the look of the active theme is told once, and another theme
   equal(state.changes, 4);
 });
 
-test("a bad theme throws and adds nothing", () => {
+test("style and theme registration copy their fields before the first resolve", () => {
   const { styles } = themed();
-  const bad: unknown[] = [
-    null,
-    { inherits: "" },
-    { dark: null },
-    { dark: { palette: { nope: 1 } } },
-    { dark: { palette: { accent: "danger" } } },
-    { dark: { palette: { accent: "red" } } },
-    { dark: { groups: { "": {} } } },
-    { dark: { groups: { a: { color: 1 } } } },
-    { dakr: {} },
-    { dark: { pallete: {} } },
-  ];
-  for (const theme of bad) {
-    assert(throws(() => styles.addTheme("bad", theme as never)) instanceof TypeError, JSON.stringify(theme));
-  }
-  assert(throws(() => styles.addTheme("", {})) instanceof TypeError);
+  const patch = { fg: 1 };
+  const groups = { title: patch };
+  styles.set(groups);
+  patch.fg = 2;
+  groups.title = { fg: 3 };
+  const palette = { accent: 4 };
+  const themePatch = { bg: 5 };
+  const theme = { dark: { palette, groups: { title: themePatch } } };
+  styles.addTheme("mine", theme);
+  palette.accent = 6;
+  themePatch.bg = 7;
+  theme.dark = { palette: { accent: 8 }, groups: { title: { bg: 9 } } };
+  styles.setTheme("mine");
+
+  equal(styles.resolve("title"), { fg: 1, bg: 5 });
+  equal(styles.resolve({ fg: "accent" }), { fg: 4 });
+  styles.set({ unrelated: { bold: true } });
+  equal(styles.resolve("title"), { fg: 1, bg: 5 });
+});
+
+test("the default theme name is reserved", () => {
+  const { styles } = themed();
   assert(throws(() => styles.addTheme("default", {})) instanceof TypeError);
-  assert(throws(() => styles.setTheme("")) instanceof TypeError);
   equal(styles.themes(), ["default"]);
 });
 

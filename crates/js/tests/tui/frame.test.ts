@@ -117,17 +117,6 @@ test("the palette color bg of a theme fills each cell of the frame, and the defa
   equal([before.every((bg) => bg === undefined), themed], [true, Array.from({ length: 12 }, () => 4)]);
 });
 
-test("the error of a view has a default look that a plugin changes", () => {
-  using frame = createFrame({ width: 10, height: 3 }, () => ({
-    draw: () => {
-      throw new Error("bad");
-    },
-  }));
-  const before = frame.draw().cells[0]?.[0]?.style;
-  frame.surface("theme").tui.styles.set({ "view.error": { fg: 2 } });
-  equal([before, frame.draw().cells[0]?.[0]?.style], [{ fg: "#ff7b72" }, { fg: 2 }]);
-});
-
 test("the pane dividers have a default look that a plugin changes", () => {
   using frame = createFrame({ width: 10, height: 4 });
   const tui = frame.surface("theme").tui;
