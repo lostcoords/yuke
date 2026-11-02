@@ -322,11 +322,13 @@ impl JobTask {
         // A stop that came during the spawn ends the process here, with the grace.
         let deadline = tokio::time::Instant::now() + self.timeout.unwrap_or_default();
         let (status, stopped, timed_out) = tokio::select! {
-            status = running.child.wait() => (status, false, false),
+            // A stop can end the process at once, so both can be ready, and the stop must win.
+            biased;
             () = self.job.stop.cancelled() => (stop_group(running.group, &mut running.child).await, true, false),
             () = tokio::time::sleep_until(deadline), if self.timeout.is_some() => {
                 (stop_group(running.group, &mut running.child).await, false, true)
             }
+            status = running.child.wait() => (status, false, false),
         };
         running.finish_read().await;
         let status = status.ok();
