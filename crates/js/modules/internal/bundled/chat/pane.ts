@@ -26,7 +26,6 @@ import {
   type JsonValue,
   type Mount,
   measure,
-  Picker,
   type Placement,
   type Size,
   TextEditor,
@@ -34,8 +33,6 @@ import {
   type Tui,
   type View,
 } from "yuke:tui";
-
-const PICKER_ROWS = 12;
 
 /** The item at the top of a scrolled transcript, and its row there. */
 interface Viewport {
@@ -209,29 +206,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
   /**
-   * Let the user choose one of `items` in a picker above the composer. Return `undefined` when no item is chosen. The
-   * close of the pane closes the picker.
-   */
-  const choose = <T extends object>(items: readonly T[], label: (item: T) => string): Promise<T | undefined> =>
-    new Promise((resolve) => {
-      let picked: T | undefined;
-      const picker = new Picker<T>({
-        items,
-        key: label,
-        label,
-        choose: (item) => {
-          picked = item;
-          dialog.close();
-        },
-        cancel: () => dialog.close(),
-      });
-      const dialog = tui.dialog({ body: picker, rows: PICKER_ROWS, signal: mount.signal });
-      dialog.signal.addEventListener("abort", () => resolve(picked), { once: true });
-      // An already-aborted pane signal closes the dialog before this listener attaches.
-      if (dialog.signal.aborted) resolve(picked);
-    });
-
-  /**
    * Return the settings of the saved choice, else the settings that the user picks.
    * With `pick`, the picker opens and the saved choice does not count.
    */
@@ -244,9 +218,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     );
     let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
     if (chosen === undefined || reasoning === undefined) {
-      chosen = await choose(models, (entry) => `${entry.provider}/${entry.model.id}`);
+      chosen = await tui.select({
+        items: models,
+        label: (entry) => `${entry.provider}/${entry.model.id}`,
+        signal: mount.signal,
+      });
       if (chosen === undefined) return undefined;
-      reasoning = await choose(chosen.model.reasoning, (choice) => choice.level);
+      reasoning = await tui.select({
+        items: chosen.model.reasoning,
+        label: (choice) => choice.level,
+        signal: mount.signal,
+      });
       if (reasoning === undefined) return undefined;
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {

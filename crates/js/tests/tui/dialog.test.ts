@@ -99,6 +99,50 @@ test("the abort of its signal closes the dialog, and esc closes it too", () => {
   );
 });
 
+test("a select gives the chosen item, and it shows the title", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const items = [{ name: "first" }, { name: "second" }];
+  const answer = frame.surface("test").tui.select({ title: "Pick one", items, label: (item) => item.name });
+  frame.draw();
+  const shown = shows(frame, "Pick one");
+  frame.key("down");
+  frame.key("enter");
+
+  equal(shown, true);
+  equal(await answer, items[1]);
+  frame.draw();
+  equal(shows(frame, "Pick one"), false);
+});
+
+test("a select gives undefined for esc, an abort, and a stop, and a call after the stop throws", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const options = { items: [{ name: "only" }], label: (item: { name: string }) => item.name };
+  const surface = frame.surface("test");
+  const tui = surface.tui;
+
+  const cancelled = tui.select(options);
+  frame.key("esc");
+  equal(await cancelled, undefined);
+
+  const controller = new AbortController();
+  const aborted = tui.select({ ...options, signal: controller.signal });
+  controller.abort();
+  equal(await aborted, undefined);
+  equal(await tui.select({ ...options, signal: controller.signal }), undefined);
+
+  const stopped = tui.select(options);
+  surface.close();
+  equal(await stopped, undefined);
+
+  let thrown = false;
+  try {
+    tui.select(options);
+  } catch {
+    thrown = true;
+  }
+  equal(thrown, true);
+});
+
 test("a key of more than one stroke throws", () => {
   using frame = createFrame({ width: 60, height: 10 });
   let thrown = "";

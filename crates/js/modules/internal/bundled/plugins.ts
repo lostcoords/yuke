@@ -10,7 +10,6 @@ import type { AddPluginParams, ManagedPlugin, PluginChange, PluginTarget } from 
 import {
   type Canvas,
   type KeyEvent,
-  Picker,
   strokeOf,
   type TextDocument,
   TextEditor,
@@ -257,7 +256,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       },
       { key: "a", label: "add", when: idle, run: () => add() },
       { key: "d", label: "remove", when: () => idle() && named() !== undefined, run: () => remove(named() ?? "") },
-      { key: "/", label: "search", when: () => idle() && list.plugins.length > 0, run: () => search() },
+      { key: "/", label: "search", when: () => idle() && list.plugins.length > 0, run: () => void search() },
       { key: "R", label: "reload", when: idle, run: () => tui.commands.run("core:reload") },
     ],
   });
@@ -326,18 +325,14 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       ],
     });
   };
-  const search = (): void => {
-    const picker = new Picker<ManagedPlugin>({
+  const search = async (): Promise<void> => {
+    const plugin = await tui.select({
+      title: "Search the plugins",
       items: list.plugins,
-      key: (plugin) => plugin.item,
-      label: (plugin) => `${plugin.name ?? "?"}  ${plugin.item}`,
-      choose: (plugin) => {
-        list.select(plugin.item);
-        found.close();
-      },
-      cancel: () => found.close(),
+      label: (item) => `${item.name ?? "?"}  ${item.item}`,
+      signal: dialog.signal,
     });
-    const found = tui.dialog({ title: () => "Search the plugins", body: picker, signal: dialog.signal });
+    if (plugin !== undefined) list.select(plugin.item);
   };
 }
 

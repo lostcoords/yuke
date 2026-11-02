@@ -880,6 +880,17 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
+  /** What `tui.select` shows: a picker in a dialog. For more control, use `Picker` and `tui.dialog`. */
+  export interface SelectOptions<T extends object> {
+    readonly items: readonly T[];
+    /** The text of an item. Each item has its own label. */
+    readonly label: (item: T) => string;
+    /** The text of the head row. Without it, the dialog has no head row. */
+    readonly title?: string | undefined;
+    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    readonly signal?: AbortSignal | undefined;
+  }
+
   export interface OverlayOptions {
     /** Default true: a modal takes the focus and all input below it. A float takes only what it handles. */
     readonly modal?: boolean | undefined;
@@ -947,6 +958,11 @@ declare module "yuke:tui" {
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
+    /**
+     * Let the user choose one of `items` in a dialog. Gives the item, or `undefined` for Esc, an abort of `signal`, and
+     * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.
+     */
+    readonly select: <T extends object>(options: SelectOptions<T>) => Promise<T | undefined>;
     readonly commands: {
       readonly add: (command: Command) => () => void;
       /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */

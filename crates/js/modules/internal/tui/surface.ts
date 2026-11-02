@@ -5,6 +5,7 @@
 import type { Core } from "yuke:internal/tui/core";
 import { dialogView } from "yuke:internal/tui/dialog";
 import { bottom } from "yuke:internal/tui/layout";
+import { Picker } from "yuke:internal/tui/picker";
 import type {
   ClipboardImage,
   Command,
@@ -20,6 +21,7 @@ import type {
   Pane,
   Panes,
   RestoreView,
+  SelectOptions,
   Startup,
   StatusEntry,
   StatusItem,
@@ -136,6 +138,53 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
   });
 
+  const dialog = live((options: DialogOptions): Mount => {
+    const rows = options.rows ?? DIALOG_ROWS;
+    // The view forms before the overlay, so a bad key throws to the caller, not as a fault of the overlay.
+    const view = dialogView(options);
+    const mount = mounted(
+      core.scene.overlay(owner, () => view, {
+        place: options.place ?? ((size) => bottom(size, rows)),
+      }),
+    );
+    const signal = options.signal;
+    if (signal?.aborted === true) {
+      mount.close();
+      return mount;
+    }
+    if (signal !== undefined) {
+      const close = (): void => mount.close();
+      signal.addEventListener("abort", close, { once: true });
+      mount.signal.addEventListener("abort", () => signal.removeEventListener("abort", close), { once: true });
+    }
+    return mount;
+  });
+  const select = live(
+    <T extends object>(options: SelectOptions<T>): Promise<T | undefined> =>
+      new Promise((resolve) => {
+        let picked: T | undefined;
+        const picker = new Picker<T>({
+          items: options.items,
+          key: options.label,
+          label: options.label,
+          choose: (item) => {
+            picked = item;
+            mount.close();
+          },
+          cancel: () => mount.close(),
+        });
+        const title = options.title;
+        const mount = dialog({
+          title: title === undefined ? undefined : () => title,
+          body: picker,
+          signal: options.signal,
+        });
+        mount.signal.addEventListener("abort", () => resolve(picked), { once: true });
+        // An aborted `signal` closes the dialog before this listener attaches.
+        if (mount.signal.aborted) resolve(undefined);
+      }),
+  ) as Tui["select"];
+
   return Object.freeze({
     get width(): number {
       scope.check();
@@ -179,27 +228,8 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
-    dialog: live((options: DialogOptions): Mount => {
-      const rows = options.rows ?? DIALOG_ROWS;
-      // The view forms before the overlay, so a bad key throws to the caller, not as a fault of the overlay.
-      const view = dialogView(options);
-      const mount = mounted(
-        core.scene.overlay(owner, () => view, {
-          place: options.place ?? ((size) => bottom(size, rows)),
-        }),
-      );
-      const signal = options.signal;
-      if (signal?.aborted === true) {
-        mount.close();
-        return mount;
-      }
-      if (signal !== undefined) {
-        const close = (): void => mount.close();
-        signal.addEventListener("abort", close, { once: true });
-        mount.signal.addEventListener("abort", () => signal.removeEventListener("abort", close), { once: true });
-      }
-      return mount;
-    }),
+    dialog,
+    select,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {
         if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");
