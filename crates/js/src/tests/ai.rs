@@ -256,7 +256,8 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
     )
     .await
     .unwrap();
-    wait_for_requests(&models, 1).await;
+    crate::settled().await;
+    assert_eq!(models.requests.lock().unwrap().len(), 1);
     let reason = evaluate::<String>(
         &runtime,
         "controller.abort('stopped by the plugin'); return await globalThis.answer;",
@@ -280,16 +281,13 @@ async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     )
     .await
     .unwrap();
-    wait_for_requests(&models, 1).await;
+    crate::settled().await;
+    assert_eq!(models.requests.lock().unwrap().len(), 1);
 
     runtime.shutdown().await.unwrap();
 
-    let wait = async {
-        while !*models.cancelled.lock().unwrap() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), wait).await.unwrap();
+    crate::settled().await;
+    assert!(*models.cancelled.lock().unwrap());
 }
 
 #[tokio::test(flavor = "local")]
@@ -318,16 +316,6 @@ async fn s_model_names_the_model_of_the_session_now() {
 
     assert_eq!(first, r#"{"provider":"test","model":"test-model"}"#);
     assert_eq!(second, [r#"{"provider":"test","model":"other-model"}"#, "true"]);
-}
-
-/// Wait until `models` holds `count` requests. A wait past 5 seconds fails the test.
-async fn wait_for_requests(models: &Recorded, count: usize) {
-    let wait = async {
-        while models.requests.lock().unwrap().len() < count {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(5), wait).await.unwrap();
 }
 
 /// The JavaScript that defines `shape`, an output for an object with a required `summary` and an optional `count` of at
@@ -616,32 +604,42 @@ async fn an_abort_ends_the_wait_for_an_attachment_that_does_not_read() {
     )
     .await;
 
-    // The open of a FIFO without a writer blocks, so the read never ends by itself.
+    evaluate::<()>(
+        &runtime,
+        &format!(
+            "const ai = await import('yuke:ai');
+             globalThis.controller = new AbortController();
+             globalThis.answer = ai
+               .generateText({{
+                 model: {{ provider: 'p', model: 'm' }},
+                 prompt: 'go',
+                 attachments: [{{ mimeType: 'image/png', path: {fifo:?} }}],
+                 abortSignal: controller.signal,
+               }})
+               .catch((error) => error);",
+            fifo = fifo.to_str().unwrap()
+        ),
+    )
+    .await
+    .unwrap();
+    // The writer opens only after the reader starts. Keep it open so the read waits for data.
+    let writer = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::task::spawn_blocking(move || std::fs::OpenOptions::new().write(true).open(fifo)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
     let reason = tokio::time::timeout(
         Duration::from_secs(5),
         evaluate::<String>(
             &runtime,
-            &format!(
-                "const ai = await import('yuke:ai');
-                 const controller = new AbortController();
-                 const answer = ai
-                   .generateText({{
-                     model: {{ provider: 'p', model: 'm' }},
-                     prompt: 'go',
-                     attachments: [{{ mimeType: 'image/png', path: {fifo:?} }}],
-                     abortSignal: controller.signal,
-                   }})
-                   .catch((error) => error);
-                 await new Promise((resolve) => setTimeout(resolve, 50));
-                 controller.abort('stopped by the plugin');
-                 return await answer;",
-                fifo = fifo.to_str().unwrap()
-            ),
+            "controller.abort('stopped by the plugin'); return await answer;",
         ),
     )
     .await;
-    // A writer ends the blocked open, so the thread of the read ends too.
-    drop(std::fs::OpenOptions::new().write(true).open(&fifo).unwrap());
+    drop(writer);
 
     assert_eq!(reason.unwrap().unwrap(), "stopped by the plugin");
     assert!(models.requests.lock().unwrap().is_empty());

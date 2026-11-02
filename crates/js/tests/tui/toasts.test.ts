@@ -2,7 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/toasts";
 import { createFrame, equal, type FrameNotice, type FrameTest, test } from "yuke:test";
-import { rows } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** Load the toasts into `frame`. */
 function loadToasts(frame: FrameTest): void {
@@ -12,7 +12,7 @@ function loadToasts(frame: FrameTest): void {
 
 /** Give the toast part of each row of `frame`. The part starts at `column`, and the test trims it. */
 function stack(frame: FrameTest, column = 25): string[] {
-  return rows(frame)
+  return rows(frame.frame)
     .map((row) => row.slice(column).trim())
     .filter((row) => row !== "");
 }
@@ -122,7 +122,7 @@ test("the warnings and errors before the load show, and the history lists each n
   frame.notice(notice("info", "late", "bye"));
   frame.surface("demo").tui.commands.run("toasts:history");
   frame.draw();
-  const listed = rows(frame).filter((row) => /^(info|error) /.test(row));
+  const listed = rows(frame.frame).filter((row) => /^(info|error) /.test(row));
   equal(
     [shown, listed],
     [

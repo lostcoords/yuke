@@ -150,6 +150,13 @@ declare module "yuke:test" {
   /** Await `promise`, and return its reason. Fail when `promise` fulfills. */
   export function rejects(promise: Promise<unknown>): Promise<unknown>;
 
+  /**
+   * Wait until no work of the runtime can go on: each promise, file operation, and host task. The wait moves the clock
+   * of the timers by 1 ms. It does not wait for a later timer, a child process, a socket peer, or a promise that the
+   * test holds.
+   */
+  export function settled(): Promise<void>;
+
   /** The scratch folder of the test: an empty folder for this test alone. Its path has no symbolic link. */
   export function folder(): string;
 

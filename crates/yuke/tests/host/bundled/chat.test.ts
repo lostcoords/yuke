@@ -3,8 +3,7 @@
 import { writeTextFile } from "yuke:fs";
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
-import { createFrame, createHost, equal, type FrameTest, folder, reply, test } from "yuke:test";
-import { waitFor } from "../wait.ts";
+import { createFrame, createHost, equal, type FrameTest, folder, reply, settled, test } from "yuke:test";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
@@ -41,7 +40,7 @@ async function chatFrame(sessions: Sessions, id: string): Promise<FrameTest> {
 function rows(frame: FrameTest): string[] {
   return frame.frame.cells.map((row) =>
     row
-      .map((cell) => cell.text || " ")
+      .map((cell) => cell.text)
       .join("")
       .trimEnd(),
   );
@@ -66,14 +65,11 @@ test("a pane draws the same transcript live and after a reload", async () => {
   const service = sessions as Sessions;
   using live = await chatFrame(service, session.id);
   await session.send("Greet Ada.");
-  // Each pane opens its session in the background, so its rows come after its own open.
-  const shows = (frame: FrameTest) => (): boolean => {
-    frame.draw();
-    return rows(frame).includes(" Done.");
-  };
-  await waitFor(shows(live));
+  await settled();
+  live.draw();
   using reloaded = await chatFrame(service, session.id);
-  await waitFor(shows(reloaded));
+  await settled();
+  reloaded.draw();
   equal(rows(live), [
     "",
     " Greet Ada.",
@@ -119,10 +115,8 @@ test("the first send of a pane with a saved choice creates its session and gets 
   frame.start();
   frame.paste("hello");
   frame.key("enter");
-  await waitFor(() => {
-    frame.draw();
-    return rows(frame).includes(" Hi there.");
-  });
+  await settled();
+  frame.draw();
   equal(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
   equal(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
 });

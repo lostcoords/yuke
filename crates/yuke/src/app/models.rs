@@ -295,18 +295,19 @@ mod tests {
         .await;
         let cancel = CancellationToken::new();
         let models = PluginModels(Arc::clone(&app.shared));
-        let complete = models.complete(request("MiniMax-M3"), cancel.clone());
-        // The cancel comes after the request starts, so it ends the wait for the model.
-        let canceller = async {
-            while transport.requests().is_empty() {
-                tokio::task::yield_now().await;
+        let answer = {
+            let complete = models.complete(request("MiniMax-M3"), cancel.clone());
+            tokio::pin!(complete);
+            // The cancel comes after the request starts, so it ends the wait for the model.
+            tokio::select! {
+                biased;
+                answer = &mut complete => panic!("the request ended before the cancel: {answer:?}"),
+                () = yuke_js::settled() => {}
             }
+            assert_eq!(transport.requests().len(), 1);
             cancel.cancel();
+            tokio::time::timeout(Duration::from_secs(5), complete).await.unwrap()
         };
-
-        let (answer, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(complete, canceller) })
-            .await
-            .unwrap();
         drop(models);
         app.shutdown().await;
 

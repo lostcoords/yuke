@@ -44,6 +44,8 @@ pub(super) struct TestHost {
     pub(super) media: Mutex<Vec<Vec<u8>>>,
     /// Each start and end of a job, in order.
     pub(super) changed: Mutex<Vec<yuke_protocol::Job>>,
+    pub(super) job_ended: tokio::sync::Notify,
+    pub(super) input_received: tokio::sync::Notify,
     /// Holds each input until a notify, when it is set.
     pub(super) end_gate: Option<Arc<tokio::sync::Notify>>,
     /// Each input that the plugins and the jobs gave the session, in order.
@@ -63,6 +65,8 @@ impl TestHost {
             folder: Mutex::new(folder.to_owned()),
             media: Mutex::default(),
             changed: Mutex::default(),
+            job_ended: tokio::sync::Notify::new(),
+            input_received: tokio::sync::Notify::new(),
             end_gate: None,
             inputs: Mutex::default(),
             model: Mutex::new(yuke_protocol::ModelReference {
@@ -112,7 +116,11 @@ impl SessionHost for TestHost {
     }
 
     fn job_changed(&self, job: yuke_protocol::Job) {
+        let ended = job.state != yuke_protocol::JobState::Running;
         self.changed.lock().unwrap().push(job);
+        if ended {
+            self.job_ended.notify_one();
+        }
     }
 
     async fn accept_input(&self, input: yuke_protocol::Input) {
@@ -120,6 +128,7 @@ impl SessionHost for TestHost {
             gate.notified().await;
         }
         self.inputs.lock().unwrap().push(input);
+        self.input_received.notify_one();
     }
 
     // A question waits for its cancel, as with a client that never answers.
@@ -222,40 +231,22 @@ pub(super) async fn tools_in(
 pub(super) async fn call(
     tool: &ScriptTool,
     arguments: &str,
-) -> (
-    Result<ToolContent, Box<dyn std::error::Error + Send + Sync>>,
-    Vec<String>,
-) {
-    call_with(tool, arguments, CancellationToken::new()).await
-}
-
-pub(super) async fn call_with(
-    tool: &ScriptTool,
-    arguments: &str,
-    token: CancellationToken,
-) -> (
-    Result<ToolContent, Box<dyn std::error::Error + Send + Sync>>,
-    Vec<String>,
-) {
+) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
     let (output, texts) = mpsc::unbounded_channel();
-    let mut shown = Vec::new();
-    let answer = tool.answer(arguments, "call-1", token, output);
-    let forwarded = forward(answer, texts, |text| {
-        shown.push(text.to_owned());
-        Ok::<_, Infallible>(())
-    });
+    let answer = tool.answer(arguments, "call-1", CancellationToken::new(), output);
+    let forwarded = forward(answer, texts, |_text| Ok::<_, Infallible>(()));
     let Ok(answer) = tokio::time::timeout(Duration::from_secs(5), forwarded).await.unwrap();
-    (answer, shown)
+    answer
 }
 
 /// The text of a call that succeeds.
 pub(super) async fn text_of(tool: &ScriptTool, arguments: &str) -> String {
-    call(tool, arguments).await.0.unwrap().text
+    call(tool, arguments).await.unwrap().text
 }
 
 /// The error of a call that fails.
 pub(super) async fn error_of(tool: &ScriptTool, arguments: &str) -> String {
-    yuke_engine::chain_text(call(tool, arguments).await.0.unwrap_err().as_ref())
+    yuke_engine::chain_text(call(tool, arguments).await.unwrap_err().as_ref())
 }
 
 #[tokio::test(flavor = "local")]
@@ -422,7 +413,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
     let host: Arc<dyn SessionHost> = Arc::new(TestHost::new(&folder));
     let tools = Tools::open(&runtime, host).await;
 
-    let text = call(&tools.list[0].1, "{}").await.0.unwrap().text;
+    let text = call(&tools.list[0].1, "{}").await.unwrap().text;
 
     assert_eq!(text, "x");
     assert_eq!(next_fault(&mut faults).await.message, "the listener broke");

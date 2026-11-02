@@ -1,7 +1,7 @@
 // The assertions of the public module `yuke:test`.
 
 import { readDir, writeTextFile } from "yuke:fs";
-import { assert, createHost, equal, folder, rejects, test, throws } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, settled, test, throws } from "yuke:test";
 
 /** The message of the failure of `check`. */
 function failure(check: () => void): string {
@@ -79,4 +79,10 @@ test("a host needs the runner of yuke test", async () => {
   const error = await rejects(createHost({ plugins: [] }));
   assert(error instanceof Error);
   equal(error.message, "no test host: run this file with yuke test");
+});
+
+test("two settled waits at once both end", async () => {
+  let done = 0;
+  await Promise.all([settled().then(() => (done += 1)), settled().then(() => (done += 1))]);
+  equal(done, 2);
 });

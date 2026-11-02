@@ -2,30 +2,19 @@
 // drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
-import { createFrame, equal, test } from "yuke:test";
-import {
-  click,
-  commit,
-  EMPTY,
-  fakeSessions,
-  loadChat,
-  mouse,
-  replies,
-  rows,
-  SETTINGS,
-  settle,
-  transcriptRows,
-} from "./chat.ts";
+import { createFrame, equal, settled, test } from "yuke:test";
+import { click, commit, EMPTY, fakeSessions, loadChat, mouse, replies, SETTINGS, transcriptRows } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 test("a split opens a new empty chat with its own draft", async () => {
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start();
-  equal(rows(frame), ["", "", "─────────────────────", "Message…"]);
+  equal(rows(frame.frame), ["", "", "─────────────────────", "Message…"]);
   frame.paste("hi");
   chat.tui.commands.run("core:split-right");
   frame.paste("yo");
-  equal(rows(frame), ["          │", "          │", "──────────│──────────", "hi        │yo"]);
+  equal(rows(frame.frame), ["          │", "          │", "──────────│──────────", "hi        │yo"]);
   // The transcript and the composer of a pane share a group, and each pane has its own.
   const groups = new Map<unknown, Set<object>>();
   for (const mount of chat.tui.widgets.list())
@@ -49,7 +38,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
   await loadChat(after);
   after.start(snapshot);
   after.paste("b");
-  equal(rows(after).at(-1), "a         │xb");
+  equal(rows(after.frame).at(-1), "a         │xb");
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
@@ -62,7 +51,7 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   frame.mouse(mouse(5, 1, "release"));
   frame.paste("x");
   frame.draw();
-  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame).at(-1)], [["hello"], false, "x"]);
+  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-1)], [["hello"], false, "x"]);
 });
 
 test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
@@ -102,7 +91,7 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   using other = createFrame({ width: 21, height: 4 });
   const failed = await loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
-  await settle();
+  await settled();
   equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
@@ -191,7 +180,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
     const shown = transcriptRows(frame);
-    await settle();
+    await settled();
     frame.draw();
     // A prepend keeps the item at the top and its row.
     equal(transcriptRows(frame), shown);
@@ -199,7 +188,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   // A live event while the view shows the top asks for no page past the first event.
   sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
   frame.draw();
-  await settle();
+  await settled();
   equal(sessions.pages, [
     { before: 51, limit: 100 },
     { before: 1, limit: 100 },
@@ -216,14 +205,14 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   for (let visit = 0; visit < 2; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
-    await settle();
+    await settled();
   }
   sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
   chat.transcript().scroll.scrollTo(0);
   frame.draw();
-  await settle();
+  await settled();
   frame.draw();
-  equal(rows(frame).at(-2), "─ the history did not load: Error: disk");
+  equal(rows(frame.frame).at(-2), "─ the history did not load: Error: disk");
   equal(sessions.pages.length, 1);
 });
 
@@ -235,10 +224,10 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
   frame.draw();
-  equal(rows(frame).at(-2), "─ new output ↓ ─────");
+  equal(rows(frame.frame).at(-2), "─ new output ↓ ─────");
   chat.transcript().scroll.followTail();
   frame.draw();
-  equal(rows(frame).at(-2), "────────────────────");
+  equal(rows(frame.frame).at(-2), "────────────────────");
   sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
   frame.draw();
   equal(transcriptRows(frame).at(-1), " reply 32");
@@ -261,7 +250,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
-  await settle();
+  await settled();
   after.draw();
   equal(transcriptRows(after), shown);
 });
@@ -277,7 +266,7 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   saved.push(commit(11, [{ assistant_text: "reply 11" }]));
   sessions.push(commit(12, [{ assistant_text: "reply 12" }]));
   frame.draw();
-  await settle();
+  await settled();
   frame.draw();
   equal(sessions.pages, [{ before: 12, limit: 1 }]);
   equal(

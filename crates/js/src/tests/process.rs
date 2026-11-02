@@ -1,20 +1,11 @@
 //! The public module `yuke:process`: the end of the runtime. crates/js/tests/process holds the other tests.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::{evaluate, folder, start};
 
-/// `path` as a JavaScript string literal.
-fn js_string(path: &Path) -> String {
-    format!(
-        "'{}'",
-        path.to_str().unwrap().replace('\\', "\\\\").replace('\'', "\\'")
-    )
-}
-
 /// Whether the process `pid` is gone, after at most five seconds of waiting.
-async fn gone(pid: i32) -> bool {
+pub(super) async fn gone(pid: i32) -> bool {
     let pid = rustix::process::Pid::from_raw(pid).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while rustix::process::test_kill_process(pid) != Err(rustix::io::Errno::SRCH) {
@@ -34,7 +25,7 @@ async fn the_end_of_the_runtime_stops_a_running_program() {
         "const {{ Command }} = await import('yuke:process');\n\
          globalThis.running = new Command('sh', {{ args: ['-c', 'echo $$ > pid; exec sleep 30'], cwd: {} }}).output();\n\
          return 'started';",
-        js_string(&folder)
+        serde_json::to_string(folder.to_str().unwrap()).unwrap()
     );
     evaluate::<String>(&runtime, &body).await.unwrap();
     let file = folder.join("pid");

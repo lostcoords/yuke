@@ -3,7 +3,7 @@
 import { ChatCommands, type ChatCommandsOptions } from "yuke:chat";
 import { createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
-import { rows } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** Put a list of `height` rows above a one-row editor in `frame`, with the commands `commands`. */
 function mountList(frame: FrameTest, height: number, commands: ChatCommandsOptions["commands"]) {
@@ -40,7 +40,7 @@ test("the list needs at most six rows, a shorter place scrolls to the selection,
   const needed = list.rows();
   frame.key("down down down down");
   frame.draw();
-  const scrolled = rows(frame).slice(0, 3);
+  const scrolled = rows(frame.frame).slice(0, 3);
   frame.key("h enter");
   equal([needed, scrolled, ran, list.editor.state.text], [6, [" /alpha3", " /alpha4", " /alpha5"], ["alpha1"], ""]);
 });
@@ -57,7 +57,7 @@ test("a core command shows without its prefix, and a run that the registry refus
   });
   frame.key("/ a l");
   frame.draw();
-  const shown = rows(frame)[0];
+  const shown = rows(frame.frame)[0];
   frame.key("enter");
   equal([shown, ran, list.editor.state.text], [" /alpha  First", ["core:alpha"], "/al"]);
 });

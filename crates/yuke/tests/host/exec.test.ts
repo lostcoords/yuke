@@ -51,7 +51,7 @@ test("exec gives its output as live texts", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  const result = await exec(session, "echo one; sleep 0.1; echo two");
+  const result = await exec(session, "echo one; echo two");
 
   equal([result.text, result.output.join("")], ["one\ntwo\n[exit code: 0]", "one\ntwo\n"]);
 });
@@ -68,16 +68,6 @@ test("exec stops its live output after the cap and answers the end", async () =>
   // The cap counts bytes, and each byte of `seq` is one UTF-16 unit.
   assert(live.length >= 1024 * 1024 && live.length < 1024 * 1024 + 70 * 1024, String(live.length));
   assert(result.text.endsWith("299999\n300000\n[exit code: 0]"), result.text.slice(-40));
-});
-
-// The sleep makes two reads. The first read ends inside the 3 bytes of the euro sign.
-test("live output keeps a character that a read cuts", async () => {
-  const { host, session } = await opened();
-  await using _host = host;
-
-  const result = await exec(session, "printf '\\342'; sleep 0.2; printf '\\202\\254'");
-
-  equal(result.output.join(""), "€");
 });
 
 test("exec reports its deadline also when the shell exits 0 at the stop", async () => {

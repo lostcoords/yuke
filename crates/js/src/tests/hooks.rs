@@ -10,7 +10,7 @@ use yuke_ai::{
 };
 use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundStart, ToolDecision, ToolOutcome};
 
-use super::{evaluate, opened, wait_until, windowed};
+use super::{evaluate, opened, windowed};
 use crate::ScriptSession;
 use crate::native::ai::{block_tokens, context_tokens};
 
@@ -151,7 +151,12 @@ async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once()
         .await;
         let token = CancellationToken::new();
         let cancel = async {
-            wait_until(&runtime, "return globalThis.started === true;").await;
+            crate::settled().await;
+            assert!(
+                evaluate::<bool>(&runtime, "return globalThis.started === true;")
+                    .await
+                    .unwrap()
+            );
             token.cancel();
         };
 
@@ -194,13 +199,24 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
         }
     };
     let cancel = async {
-        wait_until(&runtime, "return globalThis.started === true;").await;
+        crate::settled().await;
+        assert!(
+            evaluate::<bool>(&runtime, "return globalThis.started === true;")
+                .await
+                .unwrap()
+        );
         token.cancel();
     };
     let (decision, ()) = tokio::join!(raced, cancel);
 
     assert_eq!(decision, None);
-    wait_until(&runtime, "return globalThis.aborted === 'AbortError';").await;
+    crate::settled().await;
+    assert_eq!(
+        evaluate::<String>(&runtime, "return globalThis.aborted;")
+            .await
+            .unwrap(),
+        "AbortError"
+    );
 }
 
 // A close during a handler ends the turn, so a late answer of the closed session does not count.
@@ -223,7 +239,12 @@ async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
         )
         .await;
         let close = async {
-            wait_until(&runtime, "return typeof globalThis.release === 'function';").await;
+            crate::settled().await;
+            assert!(
+                evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
+                    .await
+                    .unwrap()
+            );
             session.close().await.unwrap();
             evaluate::<()>(&runtime, "globalThis.release();").await.unwrap();
         };

@@ -5,9 +5,7 @@ use std::time::Duration;
 
 use yuke_http::testing::{Server, listen};
 
-use rquickjs::Ctx;
-
-use super::{evaluate, folder, run, start};
+use super::{collect_garbage, evaluate, folder, run, start};
 use crate::Runtime;
 
 /// The JavaScript of a function `failure(promise)` that gives `name:code` of the rejection of `promise`, or
@@ -28,18 +26,7 @@ async fn run_while_servers_end(
         .await
         .unwrap()
         .unwrap();
-    runtime
-        .caller
-        .run(async |ctx: Ctx<'_>, _registry| {
-            ctx.run_gc();
-            Ok(())
-        })
-        .await
-        .unwrap();
-    // The turn runs the finalization callbacks that the collection queued.
-    evaluate::<()>(&runtime, "await new Promise((resolve) => setTimeout(resolve, 0));")
-        .await
-        .unwrap();
+    collect_garbage(&runtime).await;
     for server in servers {
         tokio::time::timeout(Duration::from_secs(5), server)
             .await

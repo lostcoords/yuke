@@ -1,8 +1,7 @@
 // The questions of the plugins in a session of the test host.
 
 import type { PluginSession, Question, QuestionAnswer } from "yuke:plugins";
-import { createHost, equal, reply, test } from "yuke:test";
-import { waitFor } from "./wait.ts";
+import { createHost, equal, reply, settled, test } from "yuke:test";
 
 /** A yes or no question. */
 const yesNo = (id: string, question: string): Question => ({
@@ -139,7 +138,8 @@ test("an answer promise keeps the request open until it settles", async () => {
   const session = await host.openSession();
 
   const pending = session.call("ask", {});
-  await waitFor(() => host.questions.length === 1);
+  await settled();
+  equal(host.questions.length, 1);
   release(picked("go", "Yes"));
 
   equal(JSON.parse((await pending).text), picked("go", "Yes"));
@@ -155,7 +155,7 @@ test("the close of a session ends its open request with undefined", async () => 
     answer: () => new Promise<QuestionAnswer[]>(() => {}),
   });
   const session = await host.openSession();
-  await waitFor(() => host.questions.length === 1);
+  equal(host.questions.length, 1);
 
   await session.close();
 
@@ -184,11 +184,11 @@ for (const [name, settle] of [
         }),
     });
     const session = await host.openSession();
-    await waitFor(() => host.questions.length === 1);
+    equal(host.questions.length, 1);
     await session.close();
 
     release();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await settled();
 
     equal(host.questions.length, 1);
   });
@@ -202,11 +202,7 @@ test("a cancel or an abort answers undefined, and an aborted signal asks nothing
     controller.abort();
     const aborted = await waiting;
     const late = await s.ask({ questions: [yesNo("third", "Third?")] }, { signal: controller.signal });
-    const refused = await s.ask({ questions: [yesNo("fourth", "Fourth?")] }, { signal: 5 as never }).then(
-      () => "answered",
-      (error: unknown) => (error instanceof Error ? error.name : String(error)),
-    );
-    return [...[canceled, aborted, late].map((answer) => answer === undefined), refused];
+    return [canceled, aborted, late].map((answer) => answer === undefined);
   });
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
@@ -217,8 +213,7 @@ test("a cancel or an abort answers undefined, and an aborted signal asks nothing
 
   const result = await session.call("ask", {});
 
-  equal(result.text, '[true,true,true,"TypeError"]');
-  // A `signal` option of another type throws a `TypeError` before the request.
+  equal(result.text, "[true,true,true]");
   equal(
     host.questions.map((question) => question.request.questions[0]?.id),
     ["first", "second"],

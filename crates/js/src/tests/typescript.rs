@@ -82,7 +82,7 @@ fn statuses(outcomes: &[TestOutcome]) -> Vec<(String, String)> {
         .collect()
 }
 
-// The rejection settles after the test ends, so only the fence before the drain gives it to its own test.
+// Settlement delivers the rejection before the runner reads the reports of the next test.
 #[tokio::test(flavor = "local")]
 async fn a_failure_and_a_stray_rejection_fail_only_their_own_tests() {
     let outcomes = ran(

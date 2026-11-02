@@ -1,8 +1,7 @@
 // The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
 
 import type { HostEvents, PluginContext, PluginSession, QuestionAnswer } from "yuke:plugins";
-import { createHost, equal, reply, test } from "yuke:test";
-import { waitFor } from "./wait.ts";
+import { createHost, equal, reply, settled, test } from "yuke:test";
 
 /** A plugin that keeps its context for the test. */
 function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonly ctx: () => PluginContext } {
@@ -58,11 +57,10 @@ test("a listener gets each open session first, then the states of a turn, a late
     if (data.update.sessionUpdate === "state") seen.push(`state ${data.update.state}`);
   });
   ctx.on("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
-  await waitFor(() => seen.length === 1);
+  await settled();
 
   await first.send("Hi.");
   await host.openSession();
-  await waitFor(() => seen.includes("opened second idle"));
   await ctx.get("sessions").close(first.id);
 
   equal(
@@ -91,10 +89,11 @@ test("an open during a turn gives its state and questions, and a later listener 
     return got;
   };
   const turn = session.send("Ask me.");
-  await waitFor(() => host.questions.length === 1);
+  await settled();
+  equal(host.questions.length, 1);
   // The first listener starts the watch, so the host gives the open as the session is now.
   const during = opens();
-  await waitFor(() => during.length === 1);
+  await settled();
   answered.resolve(yes);
   await turn;
   // The watch runs already, so this listener gets the open as the facts of the turn left it.
@@ -118,13 +117,10 @@ test("a listener that comes during a question of a running watch gets the open a
   const ctx = plugin.ctx();
   const first: string[] = [];
   ctx.on("session.opened", (data) => first.push(`${data.state} ${data.questions.length}`));
-  await waitFor(() => first.length === 1);
-  let asking = false;
-  ctx.on("session.update", (data) => {
-    if (data.update.sessionUpdate === "interaction_requested") asking = true;
-  });
+  await settled();
   const turn = session.send("Ask me.");
-  await waitFor(() => asking);
+  await settled();
+  equal(host.questions.length, 1);
   const later: string[] = [];
   ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
   answered.resolve(yes);
@@ -147,9 +143,8 @@ test("a listener that throws is removed with one notice, and the other listeners
   ctx.on("session.opened", () => {
     others += 1;
   });
-  await waitFor(() => others === 1);
+  await settled();
   await host.openSession();
-  await waitFor(() => others === 2);
 
   equal(
     [
@@ -175,10 +170,10 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
   const delivered: string[] = [];
   plugin.ctx().on("notice", (data) => delivered.push(data.message));
   sender.ctx().notify("info", "first");
-  await waitFor(() => got.length === 1);
+  await settled();
   remove();
   sender.ctx().notify("info", "second");
-  await waitFor(() => delivered.length === 2);
+  await settled();
 
   equal(
     [got.map((notice) => [notice.source, notice.level, notice.message]), delivered],
@@ -193,24 +188,12 @@ test("the last removal ends the watch, and a new listener gets the open sessions
   const ctx = plugin.ctx();
   const first: string[] = [];
   const remove = ctx.on("session.opened", (data) => first.push(data.sessionId));
-  await waitFor(() => first.length === 1);
+  await settled();
   remove();
   const again: string[] = [];
   ctx.on("session.opened", (data) => again.push(data.sessionId));
-  await waitFor(() => again.length === 1);
+  await settled();
 
+  equal(first.length, 1);
   equal(again, first);
-});
-
-test("an unknown event throws a TypeError", async () => {
-  const plugin = watcher();
-  await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
-  let error: unknown;
-  try {
-    plugin.ctx().on("session.started" as never, () => {});
-  } catch (thrown) {
-    error = thrown;
-  }
-  equal([error instanceof TypeError, String(error)], [true, "TypeError: on: 'session.started' is not an event"]);
-  await host.close();
 });

@@ -5,13 +5,6 @@ import { folder } from "yuke:internal/test";
 import { Command } from "yuke:process";
 import { assert, equal, rejects, test } from "yuke:test";
 
-/** Make the empty folder `name` in the scratch folder of the file, and give its absolute path. */
-async function place(name: string): Promise<string> {
-  const path = `${folder()}/${name}`;
-  await fs.mkdir(path);
-  return path;
-}
-
 /** Run `program` with `args` in `cwd`, check that it succeeds, and give its stdout. */
 async function run(cwd: string, program: string, ...args: string[]): Promise<Uint8Array> {
   const output = await new Command(program, { args, cwd }).output();
@@ -48,7 +41,7 @@ async function failure(promise: Promise<unknown>): Promise<fs.FileSystemError> {
 // Paths and options.
 
 test("text and bytes round trip through a relative path and a base folder", async () => {
-  const base = await place("round_trip");
+  const base = folder();
   await fs.writeTextFile("note.txt", "héllo \uD800", { baseDir: base });
   equal(await fs.readTextFile(`${base}/note.txt`), "héllo �");
   await fs.writeFile("data.bin", new Uint8Array([0, 1, 2, 3, 4]).subarray(1, 4), { baseDir: base });
@@ -59,7 +52,7 @@ test("text and bytes round trip through a relative path and a base folder", asyn
 });
 
 test("a bad path or option throws a type error", async () => {
-  const base = await place("bad_path");
+  const base = folder();
   const errors = await Promise.all([
     rejects(fs.readTextFile("relative.txt")),
     rejects(fs.readTextFile("relative.txt", { baseDir: "not/absolute" })),
@@ -80,7 +73,7 @@ test("a bad path or option throws a type error", async () => {
 // Failures.
 
 test("a failure is a file system error with a code and the absolute path", async () => {
-  const base = await place("failure");
+  const base = folder();
   await fs.writeFile("binary.dat", new Uint8Array([0x61, 0xff]), { baseDir: base });
   const errors = [
     await failure(fs.readTextFile("gone.txt", { baseDir: base })),
@@ -102,20 +95,20 @@ test("a failure is a file system error with a code and the absolute path", async
 });
 
 test("a failure message names the problem and the path", async () => {
-  const base = await place("failure_message");
+  const base = folder();
   const error = await failure(fs.readTextFile("gone.txt", { baseDir: base }));
   equal(error.message, `the path does not exist: ${base}/gone.txt`);
 });
 
 test("a symbolic link loop rejects with eloop", async () => {
-  const base = await place("link_loop");
+  const base = folder();
   await run(base, "ln", "-s", "second", "first");
   await run(base, "ln", "-s", "first", "second");
   equal((await failure(fs.stat("first", { baseDir: base }))).code, "ELOOP");
 });
 
 test("a read or a write of a fifo rejects at once and does not wait for its other end", async () => {
-  const base = await place("fifo");
+  const base = folder();
   await run(base, "mkfifo", "pipe");
   equal(
     [
@@ -131,14 +124,14 @@ test("a read or a write of a fifo rejects at once and does not wait for its othe
 // Reads and writes.
 
 test("a text read replaces bytes that are not utf8 and a fatal read rejects", async () => {
-  const base = await place("not_utf8");
+  const base = folder();
   await fs.writeFile("mixed.txt", new Uint8Array([0x61, 0xff, 0x62, 0xe2, 0x82]), { baseDir: base });
   equal(await fs.readTextFile("mixed.txt", { baseDir: base }), "a�b�");
   equal((await failure(fs.readTextFile("mixed.txt", { baseDir: base, fatal: true }))).code, "EILSEQ");
 });
 
 test("a write appends creates only a new file or needs an existing one", async () => {
-  const base = await place("write_modes");
+  const base = folder();
   await fs.writeTextFile("log.txt", "one\n", { baseDir: base });
   await run(base, "ln", "-s", `${base}/nowhere`, "dangling");
   await fs.writeTextFile("log.txt", "two\n", { baseDir: base, append: true });
@@ -160,7 +153,7 @@ test("a write appends creates only a new file or needs an existing one", async (
 });
 
 test("an atomic write with append create new or without create is a misuse", async () => {
-  const base = await place("atomic_misuse");
+  const base = folder();
   const options = { baseDir: base, atomic: true };
   equal(
     [
@@ -178,20 +171,20 @@ test("an atomic write with append create new or without create is a misuse", asy
 });
 
 test("an atomic write into a missing folder fails and leaves no temporary file", async () => {
-  const base = await place("atomic_missing_folder");
+  const base = folder();
   equal((await failure(fs.writeTextFile("gone/x.txt", "x", { baseDir: base, atomic: true }))).code, "ENOENT");
   equal(await exists(base, "gone"), false);
 });
 
 test("a failed atomic write removes its temporary file", async () => {
-  const base = await place("atomic_failed");
+  const base = folder();
   await fs.mkdir("taken/inner", { baseDir: base, recursive: true });
   await failure(fs.writeTextFile("taken", "x", { baseDir: base, atomic: true }));
   equal(await names(base), ["taken"]);
 });
 
 test("a time before the epoch is a date and not null", async () => {
-  const base = await place("before_epoch");
+  const base = folder();
   await run(base, "touch", "-t", "196001010000", "old.txt");
   const info = await fs.stat("old.txt", { baseDir: base });
   assert(info.mtime !== null && info.mtime.getUTCFullYear() < 1970, `the time is ${String(info.mtime)}`);
@@ -200,7 +193,7 @@ test("a time before the epoch is a date and not null", async () => {
 // Directories.
 
 test("read dir gives the entries by name and stat and lstat tell a link from its target", async () => {
-  const base = await place("read_dir");
+  const base = folder();
   await fs.mkdir("dir/sub", { baseDir: base, recursive: true });
   await fs.writeTextFile("dir/b.txt", "four", { baseDir: base });
   await fs.writeTextFile("dir/a.txt", "", { baseDir: base });
@@ -223,7 +216,7 @@ test("read dir gives the entries by name and stat and lstat tell a link from its
 });
 
 test("remove needs recursive for a full folder and force accepts a missing path", async () => {
-  const base = await place("remove");
+  const base = folder();
   await fs.mkdir("full/inner", { baseDir: base, recursive: true });
   await fs.mkdir("empty", { baseDir: base });
   await fs.writeTextFile("file.txt", "x", { baseDir: base });
@@ -237,7 +230,7 @@ test("remove needs recursive for a full folder and force accepts a missing path"
 });
 
 test("rename moves a file and replaces one at the destination", async () => {
-  const base = await place("rename");
+  const base = folder();
   await fs.writeTextFile("a.txt", "new", { baseDir: base });
   await fs.writeTextFile("b.txt", "old", { baseDir: base });
   await fs.rename("a.txt", "b.txt", { baseDir: base });
@@ -248,7 +241,7 @@ test("rename moves a file and replaces one at the destination", async () => {
 // Stops.
 
 test("an aborted signal rejects with its reason and changes nothing", async () => {
-  const base = await place("aborted");
+  const base = folder();
   // A plain object reason must not become a `FileSystemError`.
   const reason = { why: "stop" };
   const error = await rejects(fs.writeTextFile("x.txt", "x", { baseDir: base, signal: AbortSignal.abort(reason) }));
@@ -258,7 +251,7 @@ test("an aborted signal rejects with its reason and changes nothing", async () =
 
 // The abort comes in the turn of the call, so the first check stops the read. A Rust test stops a write between chunks.
 test("an abort of a read rejects with the reason and a fake abort event does not", async () => {
-  const base = await place("abort_read");
+  const base = folder();
   await fs.writeTextFile("small.txt", "bytes", { baseDir: base });
   const controller = new AbortController();
   const reading = fs.readFile("small.txt", { baseDir: base, signal: controller.signal });

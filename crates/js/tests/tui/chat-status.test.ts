@@ -1,9 +1,10 @@
 // The status items of the bundled chat: the model, the token share of the last answer, and the jobs of the focused pane.
 
 import { writeTextFile } from "yuke:fs";
-import type { Job, ListCatalogResult, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, folder, test } from "yuke:test";
-import { CATALOG, commit, fakeSessions, loadChat, rows, SETTINGS, settle, waitFor } from "./chat.ts";
+import type { Job, StoredEvent } from "yuke:protocol";
+import { createFrame, equal, folder, settled, test } from "yuke:test";
+import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 const HIGH = {
   ...SETTINGS,
@@ -31,22 +32,20 @@ const JOB: Job = {
   log: "/tmp/j1.log",
 };
 
-/** `CATALOG` with a context window of `window` tokens for `p/m`. */
-function withWindow(window: number): ListCatalogResult {
-  const [provider] = CATALOG.providers;
-  const [model, ...others] = provider?.models ?? [];
-  return {
-    providers: [{ ...provider, models: [{ ...model, contextWindow: window }, ...others] }],
-  } as ListCatalogResult;
-}
-
 test("the focused chat pane shows its model, its context use, and its jobs, and a focus elsewhere hides them", async () => {
   const sessions = fakeSessions(SAVED);
   sessions.state.jobs = [JOB];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, sessions, { list: async () => withWindow(100_000) });
+  const chat = await loadChat(frame, sessions, {
+    list: async () => ({
+      providers: CATALOG.providers.map((provider) => ({
+        ...provider,
+        models: provider.models.map((model) => ({ ...model, contextWindow: 100_000 })),
+      })),
+    }),
+  });
   frame.start();
-  await settle();
+  await settled();
   const items = (): string[][] => chat.tui.status.list().map((item) => [item.key, item.text]);
   const shown = items();
   sessions.push(
@@ -83,7 +82,7 @@ test("without a context window the context use is a token count", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settle();
+  await settled();
   equal(
     chat.tui.status.list().map((item) => [item.key, item.text]),
     [
@@ -94,7 +93,7 @@ test("without a context window the context use is a token count", async () => {
 });
 
 test("an answer without an input count shows no context item", async () => {
-  const [settings, saved] = SAVED;
+  const [settings] = SAVED;
   const unknown = commit(2, [{ assistant_text: "hi" }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
@@ -105,8 +104,11 @@ test("an answer without an input count shows no context item", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
-  await settle();
-  equal([saved !== undefined, chat.tui.status.list().map((item) => item.key)], [true, ["chat:model"]]);
+  await settled();
+  equal(
+    chat.tui.status.list().map((item) => item.key),
+    ["chat:model"],
+  );
 });
 
 test("the first send of a new pane shows the jobs of its session once the handle opens", async () => {
@@ -117,11 +119,12 @@ test("the first send of a new pane shows the jobs of its session once the handle
   sessions.state.jobs = [JOB];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
   const chat = await loadChat(frame, sessions);
-  await settle();
+  await settled();
   frame.start();
   frame.paste("hi");
   frame.key("enter");
-  while (sessions.inputs.length === 0) await settle();
+  await settled();
+  equal(sessions.inputs.length, 1);
   equal(
     chat.tui.status.list().map((item) => item.key),
     ["chat:model", "chat:jobs"],
@@ -142,19 +145,17 @@ test("a pane without a session shows the saved pick, and a new pick replaces it"
   frame.start();
   const first = shownItems(chat);
   frame.key("ctrl+k m");
-  await waitFor(() => {
-    frame.draw();
-    return rows(frame).includes("p/m");
-  });
+  await settled();
+  frame.draw();
+  equal(rows(frame.frame).includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
-  await waitFor(() => {
-    frame.draw();
-    return rows(frame).includes("low");
-  });
+  await settled();
+  frame.draw();
+  equal(rows(frame.frame).includes("low"), true);
   frame.key("down");
   frame.key("enter");
-  await waitFor(() => shownItems(chat)[0]?.[1] === "n low");
+  await settled();
   equal([first, shownItems(chat)], [[["chat:model", "m high"]], [["chat:model", "n low"]]]);
 });
 

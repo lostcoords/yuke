@@ -3,9 +3,8 @@
 use std::fmt;
 
 use rquickjs::{CatchResultExt, CaughtError, Coerced, Constructor, Ctx, Exception, FromJs, Function, Object, Value};
-use std::sync::{Arc, Mutex, PoisonError};
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 /// The failure of a call into the runtime.
 #[derive(Debug)]
@@ -32,8 +31,6 @@ pub enum Report {
     Notice(yuke_protocol::NoticeParams),
     /// A plugin sent an event for the clients.
     Event(yuke_protocol::ExtensionEventParams),
-    /// A test host waits until the consumer got each report before this one. The consumer calls [`Barrier::release`].
-    Barrier(Barrier),
     /// A script wrote an entry with `console`. The host shows it as a notice from the source `console`.
     Console {
         /// `debug` for `console.log` and `console.debug`. `info`, `warn`, and `error` for the methods of those names.
@@ -42,41 +39,6 @@ pub enum Report {
         text: String,
     },
 }
-
-/// The release of a wait for the reports before it. A clone releases the same wait.
-#[derive(Clone)]
-pub struct Barrier(Arc<Mutex<Option<oneshot::Sender<()>>>>);
-
-impl Barrier {
-    /// A barrier, and the wait that its release ends.
-    pub(crate) fn new() -> (Self, oneshot::Receiver<()>) {
-        let (sender, receiver) = oneshot::channel();
-        (Barrier(Arc::new(Mutex::new(Some(sender)))), receiver)
-    }
-
-    /// End the wait. A second release does nothing.
-    pub fn release(&self) {
-        if let Some(sender) = self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
-            && sender.send(()).is_err()
-        {
-            // The waiter has left.
-        }
-    }
-}
-
-impl fmt::Debug for Barrier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Barrier")
-    }
-}
-
-impl PartialEq for Barrier {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for Barrier {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

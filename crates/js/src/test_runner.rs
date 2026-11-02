@@ -141,9 +141,8 @@ pub async fn run_test_file<T: TestRuntime>(
             }) | Err(TestFileError::ImportTimedOut(_))
         );
         // A cleanup that never settles would hold the run, so the end of a test has the time limit too.
-        let deadline = Instant::now() + limit;
-        owner.runtime().set_deadline(Some(deadline));
-        let stopped = tokio::time::timeout_at(deadline.into(), owner.shutdown(timed_out)).await;
+        owner.runtime().set_deadline(Some(Instant::now() + limit));
+        let stopped = tokio::time::timeout(limit, owner.shutdown(timed_out)).await;
         let mut ran = ran?;
         let ended = match stopped {
             Ok(stopped) => {
@@ -306,7 +305,6 @@ pub fn run_test_files<T: TestRuntime>(
                     Report::Notice(notice) => format!("{}: {}", notice.source, notice.message),
                     Report::Fault(error) => error.to_string(),
                     Report::Event(event) => format!("event {}", event.event),
-                    Report::Barrier(_) => continue,
                 };
                 text.push_str("\n  | ");
                 text.push_str(&line.replace('\n', "\n  | "));
@@ -353,9 +351,9 @@ async fn run_test(
     limited(runtime, limit, runtime.import(path))
         .await
         .ok_or(TestFileError::ImportTimedOut(limit))??;
-    fence(runtime, limit)
+    limited(runtime, limit, crate::settled())
         .await
-        .ok_or(TestFileError::ImportTimedOut(limit))??;
+        .ok_or(TestFileError::ImportTimedOut(limit))?;
     if let Some(fault) = drain(reports).into_iter().find_map(|report| match report {
         Report::Fault(error) => Some(error),
         _ => None,
@@ -398,8 +396,8 @@ async fn run_test(
         Some(Ok(Some(error))) => TestStatus::Failed(error),
         Some(Err(error)) => return Err(error.into()),
     };
-    // A timer of the test can still block the thread, so the fence has the time limit too.
-    if !matches!(status, TestStatus::TimedOut) && fence(runtime, limit).await.is_none() {
+    // A timer of the test can still keep the runtime busy, so the settled wait has the time limit too.
+    if !matches!(status, TestStatus::TimedOut) && limited(runtime, limit, crate::settled()).await.is_none() {
         status = TestStatus::TimedOut;
     }
     Ok(Ran {
@@ -415,25 +413,13 @@ async fn registry<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     caught(ctx, promise.into_future().await)
 }
 
-/// Wait up to `limit` for a call that ends two polls of the drive later. After this call the receiver holds the faults
-/// of the earlier calls.
-async fn fence(runtime: &Runtime, limit: Duration) -> Option<Result<(), Error>> {
-    let call = runtime.caller.run(async |_ctx: Ctx<'_>, _registry| {
-        // The drive reports a rejection at the end of the poll after the poll that saw it. On the local runtime,
-        // `yield_now` wakes the call only after the current poll of the drive ends.
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
-        Ok(())
-    });
-    limited(runtime, limit, call).await
-}
-
 /// Run `future` with the time limit `limit`, or give `None` past it. The engine stops a busy loop at the limit, because
 /// no timer of the thread runs during the loop.
 async fn limited<F: Future>(runtime: &Runtime, limit: Duration, future: F) -> Option<F::Output> {
+    // The engine deadline uses wall time. The timeout uses tokio time, which a paused clock moves alone.
     let deadline = Instant::now() + limit;
     runtime.set_deadline(Some(deadline));
-    let output = tokio::time::timeout_at(deadline.into(), future).await.ok();
+    let output = tokio::time::timeout(limit, future).await.ok();
     runtime.set_deadline(None);
     output.filter(|_| Instant::now() < deadline)
 }

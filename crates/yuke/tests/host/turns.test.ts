@@ -2,8 +2,7 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, type TestSession, test } from "yuke:test";
-import { waitFor } from "./wait.ts";
+import { createHost, equal, folder, rejects, reply, settled, type TestSession, test } from "yuke:test";
 
 /** The text of the last answer in the transcript of `session`. */
 function finalText(session: TestSession): string | undefined {
@@ -53,13 +52,15 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
   const stop = new AbortController();
   const sent = rejects(session.send("hi", { signal: stop.signal }));
   // The turn runs before the cancel, so the cancel reaches a turn that waits for the plugins.
-  await waitFor(() => session.transcript.state === "running");
+  await settled();
+  equal(session.transcript.state, "running");
   stop.abort(new Error("stop"));
 
   await sent;
   const cancelled = session.transcript.entries.at(-1);
   const again = session.send("again");
-  await waitFor(() => session.transcript.state === "running");
+  await settled();
+  equal(session.transcript.state, "running");
   await session.close();
   // The close ends the waiting turn, so the second send settles too.
   await Promise.allSettled([again]);
@@ -210,9 +211,12 @@ test("an input.before handler asks the user, and a refusal removes the input", a
 });
 
 test("a plugin creates a session, sends input, and sees the turn of that session", async () => {
+  let drive: () => Promise<void> = async () => {
+    throw new Error("the plugin did not load");
+  };
   const driver: PluginApply = (ctx) => {
     const sessions = ctx.get("sessions");
-    setTimeout(async () => {
+    drive = async () => {
       const id = await sessions.create({
         model: { provider: "minimax", model: "MiniMax-M3" },
         settings: {
@@ -228,10 +232,6 @@ test("a plugin creates a session, sends input, and sees the turn of that session
       const states: string[] = [];
       const texts: string[] = [];
       let used = "";
-      let idle = (): void => {};
-      const ended = new Promise<void>((resolve) => {
-        idle = resolve;
-      });
       const handle = await sessions.open(id, {
         tail: 10,
         event: (event) => {
@@ -245,20 +245,20 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           }
           if (!("state" in update)) return;
           states.push(update.state);
-          if (update.state === "idle") idle();
         },
       });
       await handle.input([{ user_text: "hi" }]);
       await handle.idle();
-      await ended;
       ctx.emit("turn", { states, texts, used, jobs: handle.jobs().length });
-    }, 0);
+    };
     return undefined;
   };
   const replies = [reply.text("hello")];
   await using host = await createHost({ plugins: [{ name: "driver", apply: driver }], replies });
 
-  await waitFor(() => host.events.length === 1);
+  await drive();
+  await settled();
+  equal(host.events.length, 1);
 
   equal(host.events[0]?.data, { states: ["running", "idle"], texts: ["hello"], used: "MiniMax-M3", jobs: 0 });
   equal(host.requests[0]?.messages, [{ role: "user", text: "hi" }]);

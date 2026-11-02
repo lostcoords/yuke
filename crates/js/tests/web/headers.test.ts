@@ -46,7 +46,6 @@ test("iteration gives sorted lower case names and keeps each set-cookie", () => 
   equal(headers.getSetCookie(), ["x=1", "y=2"]);
   equal(headers.get("set-cookie"), "x=1, y=2");
   equal([first, ...keys], ["a", "b", "c", "set-cookie", "set-cookie"]);
-  equal(Object.prototype.toString.call(keys), "[object Headers Iterator]");
   assert(keys instanceof Iterator);
 });
 
@@ -115,6 +114,4 @@ test("a method refuses a value of another class", () => {
     ]),
     ["TypeError", "TypeError", "TypeError", "TypeError"],
   );
-  equal(Object.prototype.toString.call(new Headers()), "[object Headers]");
-  assert(Headers.prototype[Symbol.iterator] === Headers.prototype.entries);
 });

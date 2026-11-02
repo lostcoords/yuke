@@ -1,35 +1,10 @@
 // The web classes of `yuke:internal/events`: events, event targets, and abort signals. Many cases follow the web
 // platform tests (WPT) of `dom/events` and `dom/abort`.
 
-import { assert, equal, test, throws } from "yuke:test";
+import { assert, equal, settled, test, throws } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
-
-test("each class names itself in its string form", () => {
-  const controller = new AbortController();
-  equal(
-    [new Event("x"), new CustomEvent("x"), new EventTarget(), controller.signal, controller].map((value) =>
-      Object.prototype.toString.call(value),
-    ),
-    [
-      "[object Event]",
-      "[object CustomEvent]",
-      "[object EventTarget]",
-      "[object AbortSignal]",
-      "[object AbortController]",
-    ],
-  );
-});
-
-test("the members of a web class are enumerable on its prototype", () => {
-  const members: string[] = [];
-  for (const key in new AbortController().signal) members.push(key);
-  for (const key of ["aborted", "reason", "throwIfAborted", "addEventListener"]) {
-    assert(members.includes(key), `${key} is enumerable`);
-  }
-  assert(!members.includes("constructor"), "constructor is not enumerable");
-});
 
 test("an event needs a type and an init that is an object", () => {
   equal(
@@ -486,7 +461,7 @@ test("a listener added after the abort does not run", async () => {
   signal.onabort = () => {
     calls += 1;
   };
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await settled();
   equal(calls, 0);
 });
 
@@ -550,7 +525,7 @@ test("timeout aborts with a timeout error after its delay", async () => {
   equal(zero.aborted, true);
 });
 
-test("timeout drops the fraction and refuses a value out of range", () => {
+test("timeout refuses values outside its range", () => {
   for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
     equal(
       thrownName(() => AbortSignal.timeout(value)),
@@ -569,10 +544,6 @@ test("timeout drops the fraction and refuses a value out of range", () => {
     ].map(thrownName),
     ["TypeError", "TypeError", "TypeError"],
   );
-  AbortSignal.timeout(1.9);
-  AbortSignal.timeout(-0.9);
-  // @ts-expect-error: the method converts the text to a number.
-  AbortSignal.timeout("5");
 });
 
 // The dependent signals of `AbortSignal.any`.

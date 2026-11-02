@@ -1,7 +1,7 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
 import { createHost, reply } from "yuke:internal/host";
-import { netAccept, netListen, netUnlisten } from "yuke:internal/native";
+import { netAccept, netListen, netUnlisten, testSettled } from "yuke:internal/native";
 import { Connection, failureOf } from "yuke:internal/net";
 import { folder, register } from "yuke:internal/test";
 import { createFrame } from "yuke:internal/tui/frame";
@@ -9,6 +9,10 @@ import type { UnixConnection } from "yuke:net";
 import type { TestServer } from "yuke:test";
 
 export { createFrame, createHost, folder, reply };
+
+export async function settled(): Promise<void> {
+  await testSettled();
+}
 
 export function listen(): TestServer {
   let served: ReturnType<typeof netListen>;
@@ -175,6 +179,7 @@ const declared = {
   equal,
   throws,
   rejects,
+  settled,
   folder,
   listen,
   createHost,

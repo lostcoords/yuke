@@ -6,7 +6,7 @@ import { createHost, equal, reply, test } from "yuke:test";
 /** The texts `notice 0` to `notice 4999`. */
 const texts = Array.from({ length: 5000 }, (_item, index) => `notice ${index}`);
 
-// Many updates fill several deliveries of the feed, so only the flush lets `send` see each one.
+// Many updates require several deliveries of the feed.
 test("send returns after the transcript got each update of the turn", async () => {
   const calls = Array.from({ length: 300 }, (_item, index) => ({ name: "noop", args: { index } }));
   const replies = [reply.toolCalls(calls), reply.text("Done.")];
@@ -33,7 +33,7 @@ test("send returns after the transcript got each update of the turn", async () =
   );
 });
 
-// Many reports keep the report task of the app busy, so only the barrier lets `run` see each one.
+// Many reports keep the report task of the app busy.
 test("run returns after the host recorded each notice of the handlers", async () => {
   const loud: PluginSession = (s) => {
     s.hook("tool.before", () => {

@@ -1,7 +1,7 @@
 // The `sessions` service of a plugin: its handles on the sessions of the host.
 
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test } from "yuke:test";
+import { createHost, equal, rejects, reply, settled, test } from "yuke:test";
 
 test("the close of a session ends each handle on it", async () => {
   let sessions: Sessions | undefined;
@@ -34,10 +34,8 @@ test("a removal of a waiting input gives true and one update, and a second remov
   };
   // The hook holds the input, so it waits and no turn takes it.
   const { promise: held, resolve: release } = Promise.withResolvers<void>();
-  const { promise: waiting, resolve: entered } = Promise.withResolvers<void>();
   const hold: PluginSession = (s) => {
     s.hook("input.before", async () => {
-      entered();
       await held;
       return undefined;
     });
@@ -54,7 +52,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
   });
 
   const input = await handle.input([{ user_text: "hi" }]);
-  await waiting;
+  await settled();
   const first = await handle.removeInput(input);
   const second = await handle.removeInput(input);
   release();

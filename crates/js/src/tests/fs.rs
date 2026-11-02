@@ -13,24 +13,17 @@ async fn run_fs(name: &str, setup: impl FnOnce(&Path), body: &str) -> (String, s
     let folder = folder(name);
     setup(&folder);
     let (runtime, mut reports) = start(&folder).await;
-    let base = js_string(&folder);
+    let base = serde_json::to_string(folder.to_str().unwrap()).unwrap();
     let body = format!("{NAMES}\nconst fs = await import('yuke:fs');\nconst base = {base};\n{body}");
     let text = tokio::time::timeout(Duration::from_secs(10), evaluate::<String>(&runtime, &body))
         .await
         .unwrap()
         .unwrap();
+    crate::settled().await;
     if let Ok(report) = reports.try_recv() {
         panic!("unexpected report: {report:?}");
     }
     (text, folder)
-}
-
-/// `path` as a JavaScript string literal.
-fn js_string(path: &Path) -> String {
-    format!(
-        "'{}'",
-        path.to_str().unwrap().replace('\\', "\\\\").replace('\'', "\\'")
-    )
 }
 
 #[tokio::test(flavor = "local")]

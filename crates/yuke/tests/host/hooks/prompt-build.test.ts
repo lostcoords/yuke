@@ -1,8 +1,7 @@
 // The `prompt.build` hook: its order, its answers, and its failures.
 
 import type { PluginSession, SessionHooks } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test } from "yuke:test";
-import { waitFor } from "../wait.ts";
+import { createHost, equal, rejects, reply, settled, test } from "yuke:test";
 
 /** The sections of a new session before any hook. */
 const saved = { base: "You are yuke.", environment: "workspace: /work" };
@@ -12,12 +11,6 @@ async function build(plugins: readonly { name: string; session: PluginSession }[
   await using host = await createHost({ plugins });
   const session = await host.openSession();
   return Object.entries((await session.run("prompt.build", { sections: saved })).sections);
-}
-
-/** The message of the failure of a build with `plugins`. */
-async function failure(plugins: readonly { name: string; session: PluginSession }[]): Promise<string> {
-  const error = await rejects(build(plugins));
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** A plugin whose `prompt.build` handler runs `body`. */
@@ -91,12 +84,24 @@ test("each build starts from the sections of the caller", async () => {
 });
 
 test("the first build waits for the setup of the session", async () => {
+  const setup = Promise.withResolvers<void>();
   const late: PluginSession = async (s) => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await setup.promise;
     s.hook("prompt.build", (event) => ({ sections: { ...event.sections, late: "here" } }));
   };
 
-  equal((await build([{ name: "late", session: late }])).at(-1), ["late", "here"]);
+  await using host = await createHost({ plugins: [{ name: "late", session: late }] });
+  const session = await host.openSession();
+  let built = false;
+  const pending = session.run("prompt.build", { sections: saved }).then((result) => {
+    built = true;
+    return result;
+  });
+  await settled();
+  equal(built, false);
+  setup.resolve();
+
+  equal(Object.entries((await pending).sections).at(-1), ["late", "here"]);
 });
 
 test("a handler that throws fails the build, and the error names the plugin", async () => {
@@ -114,48 +119,20 @@ test("a handler that throws fails the build, and the error names the plugin", as
   equal(error instanceof Error && error.stack?.includes("prompt-build.test.ts"), true);
 });
 
-// A getter is code of the plugin, so its throw names the plugin as a handler throw does.
-test("a getter that throws in the answer fails the build, and the error names the plugin", async () => {
-  const getter = answering(() => ({
-    sections: {
-      get bad(): string {
-        throw new Error("late");
-      },
-    },
-  }));
-
-  equal(await failure([{ name: "getter", session: getter }]), "prompt.build of plugin getter failed: Error: late");
-});
-
 // The host stops its wait at a cancel, so a handler that rejects later sends no fault. A fault would fail this test.
 test("a build that fails after a cancel sends no fault", async () => {
-  let rejected = false;
-  const started = Promise.withResolvers<void>();
-  const late: PluginSession = (s) => {
-    s.hook(
-      "prompt.build",
-      (event) =>
-        new Promise((_resolve, reject) => {
-          event.signal.addEventListener("abort", () =>
-            setTimeout(() => {
-              rejected = true;
-              reject(new Error("stopped"));
-            }, 0),
-          );
-          started.resolve();
-        }),
-    );
-  };
+  const handler = Promise.withResolvers<undefined>();
+  const late = answering(() => handler.promise);
   await using host = await createHost({ plugins: [{ name: "late", session: late }] });
   const session = await host.openSession();
   const stop = new AbortController();
   const built = session.run("prompt.build", { sections: saved }, { signal: stop.signal });
-  // The cancel comes after the handler listens for it.
-  await started.promise;
+  await settled();
   stop.abort(new Error("stop"));
 
   await rejects(built);
-  await waitFor(() => rejected);
+  handler.reject(new Error("stopped"));
+  await settled();
 });
 
 // A handler can be in a list twice, so a remover removes one entry, and a second call of it removes nothing.

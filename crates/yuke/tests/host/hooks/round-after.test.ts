@@ -2,7 +2,6 @@
 
 import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, rejects, reply, test } from "yuke:test";
-import { waitFor } from "../wait.ts";
 
 // After a round of calls, the turn goes on, so the reason is `null`, and the text is the text before the calls.
 test("a handler gets the text, the reason, and the count of each round of a turn", async () => {
@@ -98,7 +97,10 @@ test("round.after stops the turn, and a continue answer adds its input to the se
   equal(await session.run("round.after", { text: "stop", finishReason: "stop" }), "stop");
   equal(await session.run("round.after", { text: "more", continues: 2 }), "proceed");
   // The input of the continue answer starts a turn in the idle session, and the turn takes it.
-  await waitFor(() => session.transcript.entries.some((entry) => entry.kind === "end"));
+  equal(
+    session.transcript.entries.some((entry) => entry.kind === "end"),
+    true,
+  );
   equal(
     session.transcript.entries.flatMap((entry) => (entry.kind === "input" ? [[entry.inputKind, entry.content]] : [])),
     [["notification", [{ user_text: "go on" }]]],

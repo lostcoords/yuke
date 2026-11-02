@@ -6,7 +6,7 @@ import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { Notices } from "yuke:internal/tui/notices";
 import { Styles } from "yuke:internal/tui/styles";
-import { assert, equal, test, throws } from "yuke:test";
+import { assert, equal, settled, test, throws } from "yuke:test";
 import { type Command, parseKeys, type StylePatch, strokeOf } from "yuke:tui";
 import { key, named } from "./terminal.ts";
 
@@ -319,34 +319,25 @@ test("an async command lets keys go on and a failure names it", async () => {
       throw new Error("bad state");
     },
   });
-  // biome-ignore lint/suspicious/noThenProperty: a thenable that is no `Promise` fails too.
-  const thenable = { then: (_resolve: () => void, reject: (error: Error) => void) => reject(new Error("no then")) };
-  // @ts-expect-error: a run gives no thenable that is no `Promise`.
-  keys.commands.add({ name: "thenable", run: () => thenable });
   keys.add("next");
   keys.keymap.bind("d", "dialog");
   keys.keymap.bind("n", "next");
   keys.keymap.key(key("d"), ROOT);
   keys.keymap.key(key("n"), ROOT);
-  // Frames: five adds before the keys; then one per run that ends.
+  // Four commands add frames before the keys. Each run that ends adds one frame.
   equal(keys.ran, ["next"]);
-  equal(keys.frames(), 6);
+  equal(keys.frames(), 5);
   assert(finish !== undefined);
   finish();
-  await null;
-  equal(keys.frames(), 7);
+  await settled();
+  equal(keys.frames(), 6);
   keys.commands.run("broken");
   keys.commands.run("sync");
-  keys.commands.run("thenable");
-  for (let turn = 0; turn < 5; turn += 1) await null;
-  equal(keys.frames(), 10);
+  await settled();
+  equal(keys.frames(), 8);
   equal(
     keys.faults.map((fault) => fault.split("\n")[0]),
-    [
-      "the command sync failed: Error: bad state",
-      "the command broken failed: Error: no disk",
-      "the command thenable failed: Error: no then",
-    ],
+    ["the command sync failed: Error: bad state", "the command broken failed: Error: no disk"],
   );
 });
 

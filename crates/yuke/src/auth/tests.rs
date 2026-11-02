@@ -439,15 +439,13 @@ async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
         .push(200, r#"{"access_token":"new","refresh_token":"rt2","expires_in":3600}"#);
     let source = source(&folder, gated.clone(), LOCK_LIMIT);
 
-    let cancelled = tokio::time::timeout(Duration::from_millis(100), token_of(&source)).await;
+    let attempt = tokio::spawn(async move { token_of(&source).await });
+    gated.arrived.notified().await;
+    attempt.abort();
+    assert!(attempt.await.unwrap_err().is_cancelled());
     gated.gate.notify_one();
-    let mut waited = Duration::ZERO;
-    while saved(&folder) != Some(("new".to_owned(), "rt2".to_owned())) && waited < Duration::from_secs(5) {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        waited += Duration::from_millis(10);
-    }
+    yuke_js::settled().await;
 
-    assert!(cancelled.is_err(), "{cancelled:?}");
     assert_eq!(saved(&folder), Some(("new".to_owned(), "rt2".to_owned())));
     assert_eq!(gated.script.bodies().len(), 1);
 }

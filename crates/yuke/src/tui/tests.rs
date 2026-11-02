@@ -15,15 +15,19 @@ use crate::testing::{Place, with_key};
 
 /// An output that keeps what the frames write.
 #[derive(Clone, Default)]
-struct Output(Arc<Mutex<Vec<u8>>>);
+struct Output {
+    bytes: Arc<Mutex<Vec<u8>>>,
+    flushed: Arc<tokio::sync::Notify>,
+}
 
 impl Write for Output {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        self.bytes.lock().unwrap().extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        self.flushed.notify_one();
         Ok(())
     }
 }
@@ -32,7 +36,7 @@ impl Output {
     /// The rows of the screen after the frames so far. A frame moves the cursor with `CSI row;column H` between
     /// changed cells; the other escape sequences change no character. Each character fills one cell.
     fn rows(&self) -> Vec<String> {
-        let text = String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned();
+        let text = String::from_utf8_lossy(&self.bytes.lock().unwrap()).into_owned();
         let mut grid = vec![vec![' '; COLUMNS]; ROWS];
         let (mut row, mut column) = (0, 0);
         let mut rest = text.as_str();
@@ -59,24 +63,28 @@ impl Output {
 
     /// Wait until a row holds `text`, as a toast at the right does. A toast wraps a long text.
     async fn contains(&self, text: &str) {
-        let waited = tokio::time::timeout(Duration::from_secs(10), async {
-            while !self.rows().iter().any(|row| row.contains(text)) {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await;
-        assert!(waited.is_ok(), "the screen does not show {text:?}: {:#?}", self.rows());
+        self.until(text, |row| row.contains(text)).await;
     }
 
     /// Wait until a row of the screen starts with `text`.
     async fn shows(&self, text: &str) {
+        self.until(text, |row| row.starts_with(text)).await;
+    }
+
+    /// Wait until a row of the screen satisfies `holds`. Each flush of a frame wakes the wait.
+    async fn until(&self, text: &str, holds: impl Fn(&str) -> bool) {
+        let shown = || self.rows().iter().any(|row| holds(row));
         let waited = tokio::time::timeout(Duration::from_secs(10), async {
-            while !self.rows().iter().any(|row| row.starts_with(text)) {
-                tokio::time::sleep(Duration::from_millis(5)).await;
+            while !shown() {
+                self.flushed.notified().await;
             }
         })
         .await;
-        assert!(waited.is_ok(), "the screen does not show {text:?}: {:#?}", self.rows());
+        assert!(
+            waited.is_ok() && shown(),
+            "the screen does not show {text:?}: {:#?}",
+            self.rows()
+        );
     }
 }
 
@@ -286,26 +294,21 @@ async fn saved_session(place: &Place) -> SessionId {
     id
 }
 
-/// Wait until the session `id` is open in `app`. A session is closed until a holder opens it.
-async fn opened(app: &App, id: SessionId) {
-    let opened = tokio::time::timeout(Duration::from_secs(10), async {
-        while app.sessions().get(id).await.unwrap().activity != SessionActivity::Idle {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await;
-    assert!(opened.is_ok(), "the session {id} did not open");
-}
-
 #[tokio::test(flavor = "local")]
 async fn the_start_pane_opens_the_session_of_the_startup() {
     let place = Place::new("tui", "start_session");
     let id = saved_session(&place).await;
-    let (display, _output) = display();
+    place.plugin(
+        "opened",
+        "export function apply(ctx) { ctx.on('session.opened', (data) => console.info(`opened ${data.sessionId}`)); }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["opened"] }"#).unwrap();
+    let (display, output) = display();
 
     let app = started_on(&place, &display, Some(id)).await;
 
-    opened(&app, id).await;
+    output.contains(&format!("opened {id}")).await;
+    assert_eq!(app.sessions().get(id).await.unwrap().activity, SessionActivity::Idle);
     app.shutdown().await;
 }
 

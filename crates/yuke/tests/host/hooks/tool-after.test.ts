@@ -215,6 +215,7 @@ test("a change of the handlers during a run changes only the next run", async ()
 
 // The engine asks for the calls of a parallel group together, so the runs of two calls overlap.
 test("each of two overlapping calls gets its own answer", async () => {
+  const first = Promise.withResolvers<void>();
   const slow: PluginSession = (s) => {
     s.tools.define({
       name: "echo",
@@ -224,7 +225,8 @@ test("each of two overlapping calls gets its own answer", async () => {
       execute: (args) => args.text,
     });
     s.hook("tool.after", async (event) => {
-      await new Promise((resolve) => setTimeout(resolve, event.result.text === "first" ? 30 : 0));
+      if (event.result.text === "first") await first.promise;
+      else first.resolve();
       return { text: `${event.call.callId}: ${event.result.text}` };
     });
   };

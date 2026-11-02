@@ -1,18 +1,18 @@
 //! The host of `createHost` in `yuke:test`: a capability that the consumer gives to the runtime of a test, and the
-//! natives that reach it. A runtime without it has natives that fail with a clear text.
+//! natives that reach it. Without it, each `testHost` native fails with a clear text. `testSettled` needs no host.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Promise};
+use rquickjs::prelude::Async;
+use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
 use yuke_ai::Blob;
 use yuke_engine::CancellationToken;
 use yuke_protocol::SessionId;
 
 use crate::ScriptSession;
-use crate::error::{Barrier, ErrorClass, Report, throw};
+use crate::error::{ErrorClass, throw};
 use crate::native::Operation;
 use crate::test_drive::{CallRequest, RunRequest, call_tool, run_point};
 use crate::test_runner::TestError;
@@ -66,25 +66,16 @@ pub(crate) fn add<'js>(
     object: &Object<'js>,
     host: Option<&Arc<dyn TestHost>>,
     consumer: &Handle,
-    reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
-    let settle_host = host.is_some();
     object.set(
-        "testHostSettle",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
-            if !settle_host {
-                return Err(throw(&ctx, ErrorClass::Error, NO_HOST));
-            }
-            // The reports go in order, so the consumer releases the barrier after each report before it.
-            let (barrier, released) = Barrier::new();
-            let sent = reports.send(Report::Barrier(barrier));
-            let error_ctx = ctx.clone();
-            Promise::wrap_future(&ctx, async move {
-                let ended = || throw(&error_ctx, ErrorClass::Error, "the reports of the runtime have ended");
-                sent.map_err(|_| ended())?;
-                released.await.map_err(|_| ended())
-            })
-        })?,
+        "testSettled",
+        Function::new(
+            ctx.clone(),
+            Async(|| async {
+                crate::settled().await;
+                rquickjs::Result::Ok(())
+            }),
+        )?,
     )?;
     let record_host = host.cloned();
     object.set(

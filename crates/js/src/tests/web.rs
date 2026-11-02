@@ -1,25 +1,7 @@
 //! The web classes of `yuke:internal/events` where a test needs the garbage collector or the faults of the runtime.
 //! crates/js/tests/web/events.test.ts holds the other tests.
 
-use rquickjs::Ctx;
-
-use super::{evaluate, folder, next_fault, start};
-use crate::Runtime;
-
-/// Free each unreachable value, and run the finalization callbacks.
-async fn collect_garbage(runtime: &Runtime) {
-    runtime
-        .caller
-        .run(async |ctx: Ctx<'_>, _registry| {
-            ctx.run_gc();
-            Ok(())
-        })
-        .await
-        .unwrap();
-    evaluate::<()>(runtime, "await new Promise((resolve) => setTimeout(resolve, 0));")
-        .await
-        .unwrap();
-}
+use super::{collect_garbage, evaluate, folder, next_fault, start};
 
 #[tokio::test(flavor = "local")]
 async fn a_listener_object_without_handle_event_is_a_fault_and_the_next_listener_runs() {

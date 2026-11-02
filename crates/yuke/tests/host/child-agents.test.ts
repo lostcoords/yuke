@@ -3,7 +3,6 @@
 import type { PluginApply, PluginSession, QuestionAnswer, Sessions } from "yuke:plugins";
 import type { SessionSettings } from "yuke:protocol";
 import { createHost, equal, type Reply, reply, test } from "yuke:test";
-import { waitFor } from "./wait.ts";
 
 /** The plugin. Its tool `delegate` runs the one child of a session as the job `explorer`. */
 function agents() {
@@ -95,13 +94,13 @@ test("a child reports to its parent, stays out of the list, and takes a follow-u
   await using _host = host;
 
   await parent.call("delegate", { message: "Read the store." });
-  await waitFor(() => host.requests.length === 2);
+  equal(host.requests.length, 2);
   const first = newest(host);
   const roots = (await list().list()).sessions.map((row) => row.session.sessionId);
   const children = (await list().list({ parent: parent.id })).sessions.map((row) => row.session.sessionId);
-  // The old job leaves the list right after its report, so a start can come a moment too early.
-  while ((await parent.call("delegate", { message: "And the indexes?" })).isError);
-  await waitFor(() => host.requests.length === 4);
+  const followup = await parent.call("delegate", { message: "And the indexes?" });
+  equal(followup.isError, false);
+  equal(host.requests.length, 4);
 
   equal(first, '<system_notification plugin="agents">explorer completed.\nTwo tables.</system_notification>');
   equal(roots, [parent.id]);
@@ -114,7 +113,7 @@ test("a stop cancels the child, and the parent gets no report", async () => {
   await using _host = host;
 
   await parent.call("delegate", { message: "Read the store." });
-  await waitFor(() => host.requests.length === 1);
+  equal(host.requests.length, 1);
   const stopped = await parent.call("stop", { id: "explorer" });
 
   equal(stopped.text, "[explorer stopped.]");
@@ -129,7 +128,7 @@ test("a question of the child reaches the parent, and its answer returns to the 
   await using _host = host;
 
   await parent.call("delegate", { message: "Ask first." });
-  await waitFor(() => host.requests.length === 3);
+  equal(host.requests.length, 3);
 
   equal(
     host.questions.map((question) => question.sessionId),

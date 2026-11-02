@@ -31,6 +31,7 @@ mod processes;
 mod runtime;
 mod session;
 mod sessions;
+mod settled;
 mod strip;
 mod test_drive;
 mod test_host;
@@ -42,7 +43,7 @@ mod tools;
 mod typescript;
 
 pub use display::{Display, Input, Interface, Request, Startup};
-pub use error::{Barrier, Error, Report, ScriptError};
+pub use error::{Error, Report, ScriptError};
 pub use jobs::Jobs;
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
@@ -50,6 +51,7 @@ pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime, THREAD_STACK};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent, ViewSink};
+pub use settled::settled;
 pub use test_host::TestHost;
 pub use test_runner::{
     TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, TestSummary, find_test_files, run_test_file,

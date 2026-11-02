@@ -17,6 +17,7 @@ import type {
 } from "yuke:protocol";
 import { type FrameTest, folder } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
+import { rows } from "./rows.ts";
 
 export const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
@@ -25,7 +26,7 @@ export function mouse(column: number, row: number, action: MouseEvent["action"])
 }
 
 /** One call of `sessions.open`: the session, the tail, the signal of its handle, and its event callback. */
-export interface Opened {
+interface Opened {
   readonly id: string;
   readonly tail: number;
   readonly signal: AbortSignal;
@@ -189,7 +190,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           if (state.refuseAnswer) throw new Error(`no open question ${interactionId}`);
           responses.push([interactionId, response]);
           // As the host does, the first answer closes the question for each handle, later through the event feed.
-          setTimeout(() => deliver(id, { sessionUpdate: "interaction_closed", interactionId }), 0);
+          queueMicrotask(() => deliver(id, { sessionUpdate: "interaction_closed", interactionId }));
         },
       });
     },
@@ -267,29 +268,10 @@ export const CATALOG = {
 
 export const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
 
-/** Wait until `done` holds. The time limit of the test ends a wait that never ends. */
-export async function waitFor(done: () => boolean | Promise<boolean>): Promise<void> {
-  while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 5));
-}
-
-/** Yield to a timer. This does not wait for work on another thread, such as a file operation. */
-export function settle(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-export function rows(frame: FrameTest): string[] {
-  return frame.frame.cells.map((row) =>
-    row
-      .map((cell) => cell.text || " ")
-      .join("")
-      .trimEnd(),
-  );
-}
-
 /** The rows of the transcript of `frame` above its rule, which is the row before the last. */
 export function transcriptRows(frame: FrameTest): string[] {
-  const rule = rows(frame).findLastIndex((row) => row.startsWith("─"));
-  return rows(frame).slice(0, rule);
+  const rule = rows(frame.frame).findLastIndex((row) => row.startsWith("─"));
+  return rows(frame.frame).slice(0, rule);
 }
 
 /** Press and release the left button at `row` and `column` of `frame`. */

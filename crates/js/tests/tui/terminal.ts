@@ -1,14 +1,14 @@
 // A fake terminal for the tests of the terminal interface: a 20×6 driver with a cell grid, and key and mouse events.
 
 import { ManualClock } from "yuke:internal/tui/clock";
-import { Core, type Driver } from "yuke:internal/tui/core";
+import type { Core, Driver } from "yuke:internal/tui/core";
 import type { Cursor, KeyCode, KeyEvent, Modifiers, MouseButton, MouseEvent } from "yuke:tui";
 
 const WIDTH = 20;
 const HEIGHT = 6;
 
 /** A driver that draws into a grid and records what the core asks of the terminal. */
-export interface Terminal {
+interface Terminal {
   readonly driver: Driver;
   /**
    * What the core asks of the terminal. `quit` and `suspend` come by name, a reload with its snapshot, and a copy with
@@ -84,11 +84,6 @@ export function fakeTerminal(): Terminal {
       return grid.map((row) => row.join("").trimEnd());
     },
   };
-}
-
-/** A new core on the driver of `terminal`, without a default pane. */
-export function newCore(terminal: Terminal): Core {
-  return new Core(terminal.driver);
 }
 
 const NONE: Modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };

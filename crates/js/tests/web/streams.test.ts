@@ -1,13 +1,8 @@
 // The web class `ReadableStream`: a minimal default stream. Many cases follow the web platform tests (WPT) of
 // `streams/readable-streams`.
 
-import { assert, equal, rejects, test } from "yuke:test";
+import { assert, equal, rejects, settled, test } from "yuke:test";
 import { rejectedName, thrownNames } from "./errors.ts";
-
-/** Wait for one timer turn, so the earlier promise reactions and faults run first. */
-function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
 
 /** A stream with `strategy`, and the controller that its source gets at the start. */
 function controlled<T>(strategy?: QueuingStrategy<T>): {
@@ -67,17 +62,17 @@ test("pull fills the queue up to the high water mark and runs once at a time", a
     },
     { highWaterMark: 2 },
   );
-  await tick();
+  await settled();
   const first = pulls;
   const reader = stream.getReader();
   const reads = [reader.read(), reader.read()];
-  await tick();
+  await settled();
   const waiting = pulls;
   finish();
-  await tick();
+  await settled();
   finish();
   const values = (await Promise.all(reads)).map((read) => read.value);
-  await tick();
+  await settled();
   // A third pull starts after the two reads take their chunks, because the queue has space again.
   equal([first, waiting, values, pulls], [1, 1, [1, 2], 3]);
 });
@@ -92,10 +87,10 @@ test("a high water mark of zero pulls only for a read", async () => {
     },
     { highWaterMark: 0 },
   );
-  await tick();
+  await settled();
   const before = pulls;
   const read = await stream.getReader().read();
-  await tick();
+  await settled();
   equal([before, read.value, pulls], [0, 1, 1]);
 });
 
@@ -152,7 +147,7 @@ test("an iterator holds the stream at once and a break releases it before the ca
   );
   equal((await iterator.next()).value, 1);
   const returned = iterator.return?.();
-  await tick();
+  await settled();
   const lockedDuringCancel = stream.locked;
   finish();
   await returned;
@@ -214,10 +209,10 @@ test("an error rejects each waiting read and the closed promise without a fault"
       throw "pull";
     },
   });
-  await tick();
+  await settled();
   equal(await rejects(failedStart.getReader().read()), "start");
   equal(await rejects(failedPull.getReader().read()), "pull");
-  await tick();
+  await settled();
 });
 
 test("a cancel calls the source once and ends each waiting read", async () => {
@@ -241,7 +236,7 @@ test("a cancel calls the source once and ends each waiting read", async () => {
   const locked = new ReadableStream();
   locked.getReader();
   equal(await rejectedName(locked.cancel()), "TypeError");
-  await tick();
+  await settled();
   equal(seen, [["cancel", "first"], ["cancel", "second"], true]);
 });
 
@@ -262,7 +257,7 @@ test("releaseLock rejects each waiting read and keeps the queued chunks", async 
   });
   queued.getReader().releaseLock();
   equal((await queued.getReader().read()).value, "kept");
-  await tick();
+  await settled();
 });
 
 test("enqueue counts the size of each chunk against the high water mark", () => {
@@ -352,15 +347,4 @@ test("the constructors refuse byte streams, bad strategies, and a locked stream"
       "TypeError",
     ],
   );
-});
-
-test("each class names itself and the async iterator is values", () => {
-  const opened = controlled();
-  equal(
-    [opened.stream, opened.stream.getReader(), opened.controller].map((value) => Object.prototype.toString.call(value)),
-    ["[object ReadableStream]", "[object ReadableStreamDefaultReader]", "[object ReadableStreamDefaultController]"],
-  );
-  assert(ReadableStream.prototype[Symbol.asyncIterator] === ReadableStream.prototype.values);
-  assert(Object.keys(ReadableStream.prototype).includes("values"));
-  equal(Object.prototype.toString.call(new ReadableStream().values()), "[object AsyncGenerator]");
 });

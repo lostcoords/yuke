@@ -4,8 +4,8 @@
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:plugins";
 import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, test } from "yuke:test";
-import { rows, settle } from "./chat.ts";
+import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
 const NEW = "8d02e77".padEnd(40, "0");
@@ -92,21 +92,19 @@ function load(frame: FrameTest, plugins: PluginManager): string[] {
 /** Run `command`, and give the drawn rows after it settles. */
 async function run(frame: FrameTest, command: string): Promise<string[]> {
   frame.surface("plugins").tui.commands.run(command);
-  await settle();
+  await settled();
   frame.draw();
-  return rows(frame);
+  return rows(frame.frame);
 }
 
 /** Press `keys` in order, and give the drawn rows after they settle. */
-async function press(frame: FrameTest, ...keys: string[]): Promise<string[]> {
+async function press(frame: FrameTest, ...keys: [string, ...string[]]): Promise<string[]> {
   for (const key of keys) {
     frame.key(key);
-    await settle();
+    await settled();
   }
-  // A call without keys still waits, so work that a test released ends first.
-  await settle();
   frame.draw();
-  return rows(frame);
+  return rows(frame.frame);
 }
 
 const shows = (all: readonly string[], text: string) => all.some((line) => line.includes(text));
@@ -172,7 +170,9 @@ test("S syncs and shows the result in the title, and the actions wait while it r
   await run(frame, "plugins:open");
   const running = await press(frame, "S");
   fake.syncs.finish?.();
-  const synced = await press(frame);
+  await settled();
+  frame.draw();
+  const synced = rows(frame.frame);
 
   equal(
     [shows(running, "Plugins · 5 · syncing"), shows(running, "S: sync"), shows(running, "/: search")],

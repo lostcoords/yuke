@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { assert, createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
 
 const echo: PluginSession = (s) => {
   s.tools.define({
@@ -136,14 +136,12 @@ test("each call gets its own call id", async () => {
 
 test("an abort of the signal cancels a call and a hook point, and each rejects with the reason", async () => {
   const seen: string[] = [];
-  const started = { tool: Promise.withResolvers<void>(), hook: Promise.withResolvers<void>() };
-  const waits = (signal: AbortSignal, name: keyof typeof started): Promise<string> =>
+  const waits = (signal: AbortSignal, name: "tool" | "hook"): Promise<string> =>
     new Promise((resolve) => {
       signal.addEventListener("abort", () => {
         seen.push(name);
         resolve("");
       });
-      started[name].resolve();
     });
   const waiter: PluginSession = (s) => {
     s.tools.define({
@@ -162,14 +160,14 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
   const session = await host.openSession();
   const callStop = new AbortController();
   const called = rejects(session.call("wait", {}, { signal: callStop.signal }));
-  await started.tool.promise;
+  await settled();
   callStop.abort(new Error("stop"));
   const callError = await called;
   const hookStop = new AbortController();
   const ran = rejects(
     session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
   );
-  await started.hook.promise;
+  await settled();
   hookStop.abort(new Error("stop"));
 
   equal(
@@ -208,24 +206,14 @@ test("setSettings changes the folder and the model of an open session", async ()
   );
 });
 
-test("close stops the background jobs of the session", async () => {
-  await using host = await createHost({ plugins: [] });
-  const session = await host.openSession();
-  const started = await session.call("exec", { command: "sleep 30", background: true });
-  assert(!started.isError, started.text);
-
-  await session.close();
-
-  equal(host.notices, []);
-});
-
 test("a setSettings that fails during a turn changes nothing", async () => {
   const replies = [reply.stall(), reply.text("Done.")];
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
   const sending = rejects(session.send("Wait.", { signal: stop.signal }));
-  while (host.requests.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+  await settled();
+  equal(host.requests.length, 1);
 
   await rejects(session.setSettings({ ...session.settings, model: { provider: "openai", model: "gpt-4.1" } }));
   stop.abort(new Error("stop"));

@@ -1,7 +1,7 @@
 // The text view of `yuke:tui`: positions on sections, copy, the mouse, hidden sections, Markdown rows, extensions,
 // and its scroll control.
 
-import { createFrame, equal, test, throws } from "yuke:test";
+import { createFrame, equal, settled, test, throws } from "yuke:test";
 import {
   Markdown,
   type MouseEvent,
@@ -12,6 +12,7 @@ import {
   TextView,
   type TextViewChange,
 } from "yuke:tui";
+import { rows } from "./rows.ts";
 
 const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
@@ -30,16 +31,6 @@ function document(key: string, ...items: TextItem[]): TextDocument {
 
 function at(item: string, section: string, offset: number): TextPosition {
   return { item, section, offset };
-}
-
-/** The text of each row of a frame. */
-function screen(cells: readonly (readonly { readonly text: string }[])[]): string[] {
-  return cells.map((row) =>
-    row
-      .map((cell) => cell.text)
-      .join("")
-      .trimEnd(),
-  );
 }
 
 test("a drag copies both end graphemes in either direction", () => {
@@ -96,7 +87,7 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
     },
   });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
-  equal(screen(frame.frame.cells)[0], "• bold item");
+  equal(rows(frame.frame)[0], "• bold item");
   // "b" of "bold" is at source offset 4 and shows at cell 2, after the mark "• ".
   equal(
     [view.rows.point(at("i", "s", 4)), view.rows.at({ column: 2, row: 0 })],
@@ -254,11 +245,10 @@ test("the scroll control follows the tail and asks for older items", async () =>
     },
   });
   using frame = createFrame({ width: 10, height: 2 }, () => view);
-  equal(screen(frame.frame.cells), ["line 3", "line 4"]);
+  equal(rows(frame.frame), ["line 3", "line 4"]);
   view.scroll.scrollTo(0);
   frame.draw();
-  await Promise.resolve();
-  await Promise.resolve();
+  await settled();
   equal(asked, 1);
 });
 

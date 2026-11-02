@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginSession, SessionContext } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 /** A tool `name` with no parameters that answers `answer`. */
@@ -245,6 +245,7 @@ test("a notice of a session names its session", async () => {
 test("a close refuses definitions from the abort on, and awaits every cleanup", async () => {
   let cleaned = 0;
   let refused = "";
+  const cleanup = Promise.withResolvers<void>();
   const broken: PluginSession = () => () => {
     throw new Error("broken cleanup");
   };
@@ -258,7 +259,7 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
     });
     s.tools.define(tool("kept"));
     return async () => {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await cleanup.promise;
       cleaned += 1;
     };
   };
@@ -270,7 +271,14 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
   });
   const session = await host.openSession();
 
-  await session.close();
+  let closed = false;
+  const closing = session.close().then(() => {
+    closed = true;
+  });
+  await settled();
+  equal([closed, cleaned], [false, 0]);
+  cleanup.resolve();
+  await closing;
 
   equal([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
   equal(

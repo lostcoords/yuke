@@ -1,9 +1,10 @@
 // The core contracts of the text widgets on a fake 20×6 driver: mounts, extensions, and the early key phase.
 
+import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { equal, test } from "yuke:test";
 import { TextEditor, type View, type WidgetMount } from "yuke:tui";
-import { atoms, fakeTerminal, key, named, newCore } from "./terminal.ts";
+import { atoms, fakeTerminal, key, named } from "./terminal.ts";
 
 /** A pane that shows `widget` on its first row. */
 function holder(widget: View): View {
@@ -16,7 +17,7 @@ function holder(widget: View): View {
 
 test("a watch gets each mount once and its cleanup when the widget leaves", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const panes = createSurface(core, "chat", new AbortController().signal).panes;
   const editor = new TextEditor();
   const log: string[] = [];
@@ -57,7 +58,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
 
 test("a watch that starts inside an attach sees each mount once", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const first = new TextEditor();
   const second = new TextEditor();
   core.scene.setRoot("chat", () => ({
@@ -85,7 +86,7 @@ test("a watch that starts inside an attach sees each mount once", () => {
 });
 
 test("an early handler takes a continuation before the keymap and enter alone reaches the keymap", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
   tui.panes.split(() => holder(editor));
@@ -129,7 +130,7 @@ test("an early handler takes a continuation before the keymap and enter alone re
 
 test("each extension adds its own part and the stop of one plugin leaves the other", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const editor = new TextEditor();
   core.scene.setRoot("chat", () => holder(editor));
   const typed: string[] = [];
@@ -159,7 +160,7 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
 });
 
 test("a contexts change ends a pending sequence and a throwing extension goes", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
   tui.panes.split(() => holder(editor));
@@ -192,7 +193,7 @@ test("a contexts change ends a pending sequence and a throwing extension goes", 
 
 test("a change of a placed editor by code asks for a frame", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const editor = new TextEditor();
   core.scene.setRoot("chat", () => holder(editor));
   terminal.screen(core);

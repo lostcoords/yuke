@@ -2,9 +2,10 @@
 // answer, and two panes on one session.
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, test } from "yuke:test";
+import { createFrame, equal, settled, test } from "yuke:test";
 import { TextEditor } from "yuke:tui";
-import { EMPTY, fakeSessions, loadChat, mouse, rows, SETTINGS, settle } from "./chat.ts";
+import { EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
@@ -38,11 +39,11 @@ test("a single question takes the place of the composer, enter picks the cursor 
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   frame.paste("draft");
   sessions.push(asked(1, DELETE));
   frame.draw();
-  const shown = rows(frame).slice(-6);
+  const shown = rows(frame.frame).slice(-6);
   // The composer takes no message while the question shows.
   const off = chat.tui.commands
     .list()
@@ -50,10 +51,10 @@ test("a single question takes the place of the composer, enter picks the cursor 
     .map((command) => command.enabled);
   // The second enter comes before the close of the question, and it sends nothing.
   frame.key("down enter enter");
-  await settle();
+  await settled();
   frame.draw();
   equal(
-    [shown, off, sessions.responses, sessions.inputs, rows(frame).at(-1), chat.tui.focused === composerOf(chat)],
+    [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-1), chat.tui.focused === composerOf(chat)],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],
@@ -70,7 +71,7 @@ test("a request of several questions shows one page each, with ticks and typed a
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   const request: InteractionRequest = {
     kind: "questions",
     questions: [
@@ -89,17 +90,17 @@ test("a request of several questions shows one page each, with ticks and typed a
   sessions.push(asked(2, request));
   sessions.push(asked(3, DELETE));
   frame.draw();
-  const first = rows(frame).slice(-6);
+  const first = rows(frame.frame).slice(-6);
   // Enter without a tick or a text keeps the page.
   frame.key("enter space down down");
   frame.paste("with pgvector");
   frame.key("enter");
   frame.paste("sk-1");
   frame.draw();
-  const secret = rows(frame).slice(-6, -3);
+  const secret = rows(frame.frame).slice(-6, -3);
   frame.key("enter");
   frame.draw();
-  const last = [rows(frame).at(-6), rows(frame).at(-1)];
+  const last = [rows(frame.frame).at(-6), rows(frame.frame).at(-1)];
   frame.key("enter");
   equal(
     [first, secret, last, sessions.responses],
@@ -136,7 +137,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   const questions: Question[] = [
     { id: "a", header: "a", question: "a?", options: [{ label: "X" }, { label: "Y" }] },
     { id: "b", header: "b", question: "b?", options: [], other: true },
@@ -144,7 +145,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   sessions.push(asked(12, { kind: "questions", questions }));
   const shown = (): (string | undefined)[] => {
     frame.draw();
-    return [rows(frame).at(-5), rows(frame).at(-1)];
+    return [rows(frame.frame).at(-5), rows(frame.frame).at(-1)];
   };
   frame.key("enter");
   frame.paste("hi");
@@ -183,7 +184,7 @@ test("a press on the field row keeps the page keys with the question", async () 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push(asked(14, one({ options: [{ label: "X" }], other: true })));
   frame.key("down");
   frame.draw();
@@ -199,11 +200,11 @@ test("a tall question keeps its options in view and counts the lines that do not
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
   frame.draw();
-  equal(rows(frame).slice(-7, -1), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
+  equal(rows(frame.frame).slice(-7, -1), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
 });
 
 test("a short pane keeps the first line of a tall question above its options", async () => {
@@ -211,12 +212,12 @@ test("a short pane keeps the first line of a tall question above its options", a
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   const options = ["A", "B", "C", "D"].map((label) => ({ label }));
   sessions.push(asked(15, one({ question: text, options })));
   frame.draw();
-  equal(rows(frame).slice(-4), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
+  equal(rows(frame.frame).slice(-4), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
 });
 
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
@@ -224,15 +225,15 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   frame.paste("draft");
   sessions.push(asked(4, DELETE));
   frame.key("esc");
-  await settle();
+  await settled();
   sessions.push(asked(5, one({ header: "Name", question: "Name?", options: [], other: true })));
   frame.paste("abc");
   frame.key("ctrl+c");
-  await settle();
+  await settled();
   frame.draw();
   equal(
     [sessions.responses, sessions.state.cancels, composerOf(chat).state.text],
@@ -252,16 +253,16 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.state.refuseAnswer = true;
   sessions.push(asked(6, DELETE));
   frame.key("enter");
   frame.draw();
-  const stays = rows(frame).at(-6);
+  const stays = rows(frame.frame).at(-6);
   sessions.push({ sessionUpdate: "interaction_closed", interactionId: 6 });
   frame.draw();
   equal(
-    [chat.notices, stays, rows(frame).at(-1)],
+    [chat.notices, stays, rows(frame.frame).at(-1)],
     [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
 });
@@ -273,10 +274,10 @@ test("each pane of a session shows its question, and the focused pane takes the 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start(saved);
-  await settle();
+  await settled();
   sessions.push(asked(7, DELETE));
   frame.draw();
-  const both = rows(frame).at(-3);
+  const both = rows(frame.frame).at(-3);
   frame.key("enter");
   equal([both, sessions.responses], [` guard · Branch${" ".repeat(15)}│ guard · Branch`, [[7, answered(["Yes"])]]]);
 });
@@ -286,14 +287,14 @@ test("a close of the session by another client drops its question, and the next 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   frame.paste("draft");
   sessions.push(asked(10, DELETE));
   sessions.close("s1");
   frame.draw();
-  const shown = rows(frame).at(-1);
+  const shown = rows(frame.frame).at(-1);
   frame.key("enter");
-  await settle();
+  await settled();
   equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ user_text: "draft" }]]]);
 });
 
@@ -311,7 +312,7 @@ test("a browse of the messages stops while a question shows", async () => {
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   frame.key("up");
   const enabled = () => chat.tui.commands.list().find((command) => command.name === "chat:newer-message")?.enabled;
   const browsing = enabled();

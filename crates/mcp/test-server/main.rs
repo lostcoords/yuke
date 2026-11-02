@@ -9,8 +9,8 @@
 //! - `exit` writes `exit` to stderr and ends the server without an answer.
 //! - `wait` never answers.
 //!
-//! With `MCP_TEST_LOG`, the server adds a line to that file for the version that the client asks for
-//! (`initialize <version>`) and for each cancel (`cancelled <id>`).
+//! With `MCP_TEST_LOG`, the server writes one line to that file for each event: `initialize <version>`, `call <id>`,
+//! or `cancelled <id>`.
 
 use std::io::{BufRead, Write};
 
@@ -30,6 +30,7 @@ fn main() {
         let params = &message["params"];
         let logged = match method {
             "initialize" => log(&format!("initialize {}", params["protocolVersion"])),
+            "tools/call" => log(&format!("call {}", message["id"])),
             "notifications/cancelled" => log(&format!("cancelled {}", params["requestId"])),
             _ => Ok(()),
         };

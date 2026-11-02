@@ -3,11 +3,12 @@
 import { readTextFile, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/themes";
 import { on } from "yuke:internal/facts";
+import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
-import { createFrame, equal, type FrameTest, folder, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, folder, settled, test } from "yuke:test";
 import { Markdown, type Tui } from "yuke:tui";
-import { rows, waitFor } from "./chat.ts";
-import { fakeTerminal, newCore } from "./terminal.ts";
+import { rows } from "./rows.ts";
+import { fakeTerminal } from "./terminal.ts";
 
 /** Load the plugin in `frame` on the folder `dataDir`, and give the theme author surface and the notices. */
 async function load(frame: FrameTest, dataDir: string): Promise<{ tui: Tui; notices: string[] }> {
@@ -27,17 +28,6 @@ function accent(frame: FrameTest, tui: Tui): unknown {
   return frame.draw().cells[0]?.[0]?.style.fg;
 }
 
-/** Wait until the saved file holds `text`. A save writes its file after the choice. */
-async function saves(dataDir: string, text: string): Promise<void> {
-  await waitFor(async () => {
-    try {
-      return (await readTextFile("theme.json", { baseDir: dataDir })) === text;
-    } catch {
-      return false;
-    }
-  });
-}
-
 const NORD = { dark: { palette: { accent: 1 } } } as const;
 const DAWN = { dark: { palette: { accent: 2 } } } as const;
 
@@ -54,7 +44,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
   };
 
   open();
-  const listed = rows(frame).join("\n");
+  const listed = rows(frame.frame).join("\n");
   frame.key("down");
   const preview = tui.styles.theme;
   frame.key("esc");
@@ -68,7 +58,8 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
 
   open();
   frame.key("n o r d enter");
-  await saves(dataDir, '{"name":"nord"}');
+  await settled();
+  equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"nord"}');
   equal(
     [
       ["default", "nord", "dawn"].every((name) => listed.includes(name)),
@@ -94,7 +85,8 @@ test("a saved theme applies at the load, also when its plugin comes later, and d
   frame.surface("themes").tui.commands.run("themes:open");
   frame.draw();
   frame.key("d e f enter");
-  await saves(dataDir, '{"name":"default"}');
+  await settled();
+  equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"default"}');
   equal([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
 });
 
@@ -125,7 +117,7 @@ test("a bad saved file is a notice, and yuke starts on the default theme", async
 });
 
 test("theme.changed tells each new theme and each new background", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const stop = new AbortController();
   const seen: unknown[] = [];
   on("author", stop.signal, "theme.changed", (data) => seen.push([data.name, data.background]));
@@ -142,7 +134,7 @@ test("theme.changed tells each new theme and each new background", () => {
 });
 
 test("the abort of a plugin that owns the active theme and listens gives that plugin no call", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const stop = new AbortController();
   const tui = createSurface(core, "pack", stop.signal);
   const other = new AbortController();

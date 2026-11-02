@@ -9,7 +9,7 @@ use yuke_ai::Block;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, JobState};
 
-use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in, tools_of};
+use super::tools::{TestHost, Tools, error_of, text_of, tools_in, tools_of};
 use super::{folder, options, start};
 use crate::native;
 use crate::processes::{Request, recovered_home};
@@ -40,34 +40,30 @@ fn model_text(input: &Input) -> String {
 /// The longest wait of a test step.
 const WAIT: Duration = Duration::from_secs(5);
 
-/// The model texts of the job ends that `host` has received, after at most five seconds of waiting for `count` of
-/// them.
-async fn ended_texts(host: &TestHost, count: usize) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
-        if texts.len() >= count || Instant::now() > deadline {
-            return texts;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
-
 #[tokio::test(flavor = "local")]
 async fn a_cancel_stops_the_command_and_the_tool_still_answers() {
     let folder = folder("a_cancel_stops_the_command_and_the_tool_still_answers");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let token = CancellationToken::new();
-    let cancel = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        cancel.cancel();
-    });
-
-    let (answer, _texts) = call_with(&tools["exec"], r#"{"command": "sleep 30"}"#, token).await;
+    let (output, mut texts) = tokio::sync::mpsc::unbounded_channel();
+    let answer = tools["exec"].answer(
+        r#"{"command": "echo ready; exec sleep 30"}"#,
+        "call-1",
+        token.clone(),
+        output,
+    );
+    tokio::pin!(answer);
+    let ready = tokio::select! {
+        biased;
+        result = &mut answer => panic!("the command ended before readiness: {result:?}"),
+        text = tokio::time::timeout(WAIT, texts.recv()) => text.unwrap().unwrap(),
+    };
+    assert_eq!(ready, "ready\n");
+    token.cancel();
+    let answer = tokio::time::timeout(WAIT, answer).await.unwrap();
 
     let content = answer.unwrap();
-    assert_eq!(content.text, "[no output]\n[stopped: the tool call was cancelled.]");
+    assert_eq!(content.text, "ready\n[stopped: the tool call was cancelled.]");
     assert!(content.is_error);
 }
 
@@ -76,11 +72,22 @@ async fn a_dropped_exec_call_stops_its_command() {
     let folder = folder("a_dropped_exec_call_stops_its_command");
     let (_runtime, _host, tools) = tools_of(&folder, &["yuke:internal/builtins"]).await;
     let pid_file = folder.join("pid");
-    let command = format!(r#"{{"command": "echo $$ > {}; exec sleep 30"}}"#, pid_file.display());
+    let command = format!(
+        r#"{{"command": "echo $$ > {}; echo ready; exec sleep 30"}}"#,
+        pid_file.display()
+    );
 
-    let dropped = tokio::time::timeout(Duration::from_millis(300), call(&tools["exec"], &command)).await;
-
-    assert!(dropped.is_err());
+    {
+        let (output, mut texts) = tokio::sync::mpsc::unbounded_channel();
+        let answer = tools["exec"].answer(&command, "call-1", CancellationToken::new(), output);
+        tokio::pin!(answer);
+        let ready = tokio::select! {
+            biased;
+            result = &mut answer => panic!("the command ended before readiness: {result:?}"),
+            text = tokio::time::timeout(WAIT, texts.recv()) => text.unwrap().unwrap(),
+        };
+        assert_eq!(ready, "ready\n");
+    }
     let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
     let pid = rustix::process::Pid::from_raw(pid).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -111,8 +118,11 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
             log.display()
         )
     );
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
     assert_eq!(
-        ended_texts(&host, 1).await,
+        host.inputs.lock().unwrap().iter().map(model_text).collect::<Vec<_>>(),
         [format!(
             "<system_notification plugin=\"host:jobs\">{id} exited 4.\nLog: {}\nhello</system_notification>",
             log.display()
@@ -184,7 +194,10 @@ async fn a_background_job_with_a_timeout_ends_and_reports_it() {
     .await;
 
     let id = job_id(&started);
-    let texts = ended_texts(&host, 1).await;
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert!(
         texts[0].contains(&format!("{id} timed out after 200 ms.")),
         "{}",
@@ -220,7 +233,10 @@ async fn a_process_job_outlives_a_reload_of_the_runtime() {
     tokio::time::timeout(WAIT, runtime.shutdown()).await.unwrap().unwrap();
     let (_runtime, _exec) = runtime_with(&folder, &processes, &host).await;
 
-    let texts = ended_texts(&host, 1).await;
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert_eq!(texts.len(), 1, "{texts:?}");
     assert!(
         texts[0].contains(">job-") && texts[0].contains(" exited 0."),
@@ -304,20 +320,19 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     });
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec["exec"], r#"{"command": "echo hello", "background": true}"#).await;
-    // The process has ended when the job leaves the running list. The delivery of its end waits at the gate.
-    let deadline = Instant::now() + WAIT;
-    while !processes.jobs().running(host.session).is_empty() {
-        assert!(Instant::now() < deadline, "the job did not end");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    tokio::time::timeout(WAIT, host.job_ended.notified()).await.unwrap();
+    assert_eq!(processes.jobs().running(host.session), []);
 
     let mut shutdown = std::pin::pin!(processes.shutdown());
-    let waited = tokio::time::timeout(Duration::from_millis(100), &mut shutdown).await;
+    tokio::select! {
+        biased;
+        result = &mut shutdown => panic!("the shutdown ended before delivery: {result:?}"),
+        () = crate::settled() => {}
+    }
     gate.notify_one();
     tokio::time::timeout(WAIT, shutdown).await.unwrap().unwrap();
 
-    assert!(waited.is_err(), "the shutdown did not wait for the end");
-    let texts = ended_texts(&host, 1).await;
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert_eq!(texts.len(), 1);
     assert!(texts[0].ends_with("\nhello</system_notification>"), "{}", texts[0]);
 }
@@ -351,7 +366,8 @@ async fn a_dropped_processes_kills_its_jobs_without_a_report() {
         assert!(Instant::now() < deadline, "the job still runs");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::timeout(WAIT, host.job_ended.notified()).await.unwrap();
+    assert_eq!(host.changed.lock().unwrap().last().unwrap().state, JobState::Stopped);
     assert!(host.inputs.lock().unwrap().is_empty());
 }
 
@@ -437,11 +453,8 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
         }
     };
     let ended = start("exit 3").await;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while host.changed.lock().unwrap().len() < 2 {
-        assert!(Instant::now() < deadline, "the job did not end");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(WAIT, host.job_ended.notified()).await.unwrap();
+    assert_eq!(host.changed.lock().unwrap().len(), 2);
     let stopped = start("exec sleep 30").await;
     let first_closed = start("exec sleep 31").await;
     let second_closed = start("exec sleep 32").await;
@@ -485,6 +498,9 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     expected.sort_by(|left, right| left.id.cmp(&right.id));
     assert_eq!(closed, expected);
     // A stopped job sends no report.
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
     assert_eq!(host.inputs.lock().unwrap().len(), 1);
 }
 
@@ -497,7 +513,10 @@ async fn a_job_that_a_signal_ends_names_the_signal_in_its_report() {
 
     text_of(&exec["exec"], r#"{"command": "kill -TERM $$", "background": true}"#).await;
 
-    let texts = ended_texts(&host, 1).await;
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert!(texts[0].contains(" signal 15."), "{}", texts[0]);
     processes.shutdown().await.unwrap();
 }
@@ -567,7 +586,10 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
         listed.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
         [id.as_str()]
     );
-    let texts = ended_texts(&host, 1).await;
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert!(texts[0].contains(&format!("{id} exited 3.")), "{}", texts[0]);
     assert!(texts[0].contains("before\nafter"), "{}", texts[0]);
     assert_eq!(processes.jobs().running(host.session), []);
@@ -664,7 +686,10 @@ async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
 
     text_of(&exec["exec"], r#"{"command": "seq 1 200000", "background": true}"#).await;
 
-    let texts = ended_texts(&host, 1).await;
+    tokio::time::timeout(WAIT, host.input_received.notified())
+        .await
+        .unwrap();
+    let texts: Vec<String> = host.inputs.lock().unwrap().iter().map(model_text).collect();
     assert!(
         texts[0].ends_with("\n200000\n</system_notification>") || texts[0].ends_with("\n200000</system_notification>"),
         "{}",
@@ -677,10 +702,10 @@ async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
 async fn a_dropped_command_stops_its_process() {
     let folder = folder("a_dropped_command_stops_its_process");
     let processes = Processes::new(folder.join("processes"));
-    let (chunks, _texts) = tokio::sync::mpsc::unbounded_channel();
+    let (chunks, mut texts) = tokio::sync::mpsc::unbounded_channel();
     let running = processes.run(
         Request {
-            command: "sleep 0.3; touch late".to_owned(),
+            command: "echo $$; exec sleep 30".to_owned(),
             folder: folder.clone(),
             timeout: Duration::from_secs(10),
             max_bytes: 1024,
@@ -690,9 +715,15 @@ async fn a_dropped_command_stops_its_process() {
         chunks,
     );
 
-    // The wait starts the command, and the timeout drops the wait before the command ends.
-    assert!(tokio::time::timeout(Duration::from_millis(100), running).await.is_err());
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    let pid: i32 = {
+        tokio::pin!(running);
+        let pid = tokio::select! {
+            biased;
+            result = &mut running => panic!("the command ended before it started: {result:?}"),
+            text = tokio::time::timeout(WAIT, texts.recv()) => text.unwrap().unwrap(),
+        };
+        pid.trim().parse().unwrap()
+    };
 
-    assert!(!folder.join("late").exists());
+    assert!(super::process::gone(pid).await, "the process {pid} still runs");
 }

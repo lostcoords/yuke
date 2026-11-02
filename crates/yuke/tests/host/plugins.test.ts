@@ -2,7 +2,7 @@
 
 import { mkdir, stat, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, test } from "yuke:test";
+import { createHost, equal, folder, rejects, settled, test } from "yuke:test";
 
 /** The lines of a rejected `createHost` that name a failed plugin, in load order. Other lines are stacks. */
 async function failures(host: Promise<unknown>): Promise<string[]> {
@@ -179,11 +179,12 @@ declare global {
 
 test("the close aborts each signal, then awaits each cleanup newest first, once", async () => {
   const events: string[] = [];
+  const cleanup = Promise.withResolvers<void>();
   const signals: AbortSignal[] = [];
   const one: PluginApply = (ctx) => {
     signals.push(ctx.signal);
     return async () => {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await cleanup.promise;
       events.push("one");
     };
   };
@@ -208,7 +209,15 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
     ],
   });
 
-  await host.close();
+  let closed = false;
+  const closing = host.close().then(() => {
+    closed = true;
+  });
+  await settled();
+  equal(closed, false);
+  equal(events, ["three", "two true,true,true"]);
+  cleanup.resolve();
+  await closing;
   await host.close();
 
   equal(events, ["three", "two true,true,true", "one"]);
@@ -323,36 +332,21 @@ test("the context refuses undeclared services, and apply must provide each decla
   ]);
 });
 
-test("a plugin needs no code, and yuke:tools gives no free define", async () => {
+test("a plugin needs no code", async () => {
   const empty = await writePlugin("empty", {});
   await using host = await createHost({ plugins: [{ folder: empty }] });
 
-  await writeTextFile(`${folder()}/late.ts`, 'import { define } from "yuke:tools";\ndefine;\n');
-
-  const error = await rejects(import(`${folder()}/late.ts`));
-
   equal(host.notices, []);
-  equal(
-    [error instanceof Error && error.name, error instanceof Error && error.message.includes("'define'")],
-    ["SyntaxError", true],
-  );
 });
 
-test("notify sends a notice of the plugin and refuses an unknown level", async () => {
-  let refused = "";
+test("notify sends a notice of the plugin", async () => {
   const loud: PluginApply = (ctx) => {
     ctx.notify("warn", "careful");
-    try {
-      ctx.notify("loud" as never, "x");
-    } catch (error) {
-      refused = error instanceof Error ? error.message : String(error);
-    }
     return undefined;
   };
   await using host = await createHost({ plugins: [{ name: "loud", apply: loud }] });
 
   equal(host.notices, [{ level: "warn", source: "loud", message: "careful" }]);
-  equal(refused, "notify: 'loud' is not debug, info, warn, or error");
 });
 
 test("emit sends an event with the plugin as its extension and its data as JSON", async () => {

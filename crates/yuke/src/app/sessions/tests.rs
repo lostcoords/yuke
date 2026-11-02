@@ -220,9 +220,11 @@ async fn a_session_with_a_holder_stays_open_after_its_turn() {
 
     sessions.input(id, said("Hi.")).await.unwrap();
     // The first turn waits for the plugins to load, so the clock pauses after the turn.
-    while transport.requests().is_empty() || sessions.live(id).unwrap().state() == SessionState::Running {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    sessions.idle(id).await.unwrap();
+    assert_eq!(
+        (transport.requests().len(), sessions.live(id).unwrap().state()),
+        (1, SessionState::Idle)
+    );
     tokio::time::pause();
     tokio::time::sleep(GRACE * 4).await;
 
@@ -464,9 +466,11 @@ async fn a_session_with_a_running_job_waits_the_idle_minutes_then_stops_the_job(
     let attachment = sessions.attach(id).unwrap();
     sessions.input(id, said("Start a job.")).await.unwrap();
     // The turn ends before the release, so the task reports once.
-    while transport.requests().len() < 2 || sessions.live(id).unwrap().state() == SessionState::Running {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    sessions.idle(id).await.unwrap();
+    assert_eq!(
+        (transport.requests().len(), sessions.live(id).unwrap().state()),
+        (2, SessionState::Idle)
+    );
     // The shell of the job writes its pid after the turn can end.
     until("the job writes its pid", || pid.exists()).await;
     assert_eq!(sessions.jobs(id).unwrap().len(), 1);
@@ -506,9 +510,11 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
     let attachment = sessions.attach(id).unwrap();
     for (turn, text) in ["One?", "Two?"].into_iter().enumerate() {
         sessions.input(id, said(text)).await.unwrap();
-        while transport.requests().len() <= turn || sessions.live(id).unwrap().state() == SessionState::Running {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        sessions.idle(id).await.unwrap();
+        assert_eq!(
+            (transport.requests().len(), sessions.live(id).unwrap().state()),
+            (turn + 1, SessionState::Idle)
+        );
     }
     let last = sessions.events_before(id, None, 1).await.unwrap()[0].event_number.0;
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -519,9 +525,11 @@ async fn a_view_gets_the_last_events_and_the_next_turn_and_older_events_come_in_
         .await
         .unwrap();
     sessions.input(id, said("Three?")).await.unwrap();
-    while transport.requests().len() < 3 || sessions.live(id).unwrap().state() == SessionState::Running {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    sessions.idle(id).await.unwrap();
+    assert_eq!(
+        (transport.requests().len(), sessions.live(id).unwrap().state()),
+        (3, SessionState::Idle)
+    );
     let older = sessions.events_before(id, Some(EventNumber(last)), 100).await.unwrap();
     drop(view);
 

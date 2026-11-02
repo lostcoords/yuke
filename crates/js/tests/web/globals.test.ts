@@ -1,7 +1,7 @@
 // The globals of `yuke:internal/web` besides the events and the URL classes: `TextEncoder`, `TextDecoder`, and
 // `performance`, with the base64 functions and the microtasks of the engine.
 
-import { assert, equal, test } from "yuke:test";
+import { assert, equal, settled, test } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
 test("text encoder gives utf8 and replaces a lone surrogate", () => {
@@ -133,7 +133,7 @@ test("the engine gives base64 and microtasks", async () => {
   const order: string[] = [];
   queueMicrotask(() => order.push("microtask"));
   order.push("now");
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  await settled();
   equal([btoa("hi"), atob("aGk="), order], ["aGk=", "hi", ["now", "microtask"]]);
 });
 

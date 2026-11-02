@@ -12,7 +12,7 @@ use yuke_protocol::{
     SessionSettings, SessionSnapshot, SessionState, SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
-use super::{evaluate, folder, load_entry, options, wait_until, write};
+use super::{evaluate, folder, load_entry, options, write};
 use crate::{FactSink, Processes, Runtime, Sessions, SessionsError, ViewEvent, ViewSink};
 
 /// A consumer that records each request and keeps the sink of each view.
@@ -22,7 +22,6 @@ struct Scripted {
     calls: Mutex<Vec<String>>,
     /// The holds that ended.
     released: Arc<AtomicUsize>,
-    check_started: tokio::sync::Notify,
     echo_updates: AtomicBool,
 }
 
@@ -196,7 +195,6 @@ impl Sessions for Scripted {
     async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, SessionsError> {
         self.record(format!("plugins check {:?}", params.target));
         let _hold = Hold(Arc::clone(&self.released));
-        self.check_started.notify_one();
         std::future::pending().await
     }
     async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, SessionsError> {
@@ -339,7 +337,8 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     // The feed keeps the order, so the update of the second view comes after the one of the first view.
     scripted.send(0, state(SessionState::Running));
     scripted.send(1, state(SessionState::Running));
-    wait_until(&runtime, "return later.length === 2;").await;
+    crate::settled().await;
+    assert_eq!(evaluate::<usize>(&runtime, "return later.length;").await.unwrap(), 2);
     let input = evaluate::<String>(
         &runtime,
         "try { await handle.input([]); return 'sent'; } catch (error) { return error.message; }",
@@ -506,9 +505,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     .await
     .unwrap();
     // An abort before the first poll creates no hold, so the drop assertion must wait for the task to start.
-    tokio::time::timeout(std::time::Duration::from_secs(5), scripted.check_started.notified())
-        .await
-        .expect("the plugin check did not start");
+    crate::settled().await;
     let aborted = evaluate::<bool>(
         &runtime,
         "controller.abort();
@@ -517,13 +514,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     .await
     .unwrap();
     // The abort of the task drops it at the next poll of the consumer runtime.
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while scripted.released.load(Ordering::SeqCst) == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap();
+    crate::settled().await;
 
     assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);
     assert!(aborted);

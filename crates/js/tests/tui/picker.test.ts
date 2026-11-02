@@ -2,6 +2,7 @@
 
 import { createFrame, equal, test } from "yuke:test";
 import { fuzzyMatch, Picker, type PickerOptions } from "yuke:tui";
+import { rows } from "./rows.ts";
 
 interface Command {
   readonly name: string;
@@ -21,16 +22,6 @@ function picker(
     cancel: () => log.push("cancel"),
     ...options,
   });
-}
-
-/** The text of each row of a frame. */
-function screen(cells: readonly (readonly { readonly text: string }[])[]): string[] {
-  return cells.map((row) =>
-    row
-      .map((cell) => cell.text)
-      .join("")
-      .trimEnd(),
-  );
 }
 
 test("a fuzzy match ignores case, covers whole graphemes, and prefers consecutive letters and word starts", () => {
@@ -79,11 +70,11 @@ test("a caller rank stays in its order, and the default rank puts the best match
     rank: (_query, items) => items.toReversed().map((item) => ({ item })),
   });
   using frame = createFrame({ width: 10, height: 3 }, () => reversed);
-  equal(screen(frame.frame.cells), ["", "gamma", "beta"]);
+  equal(rows(frame.frame), ["", "gamma", "beta"]);
   const fuzzy = picker(["dispose", "split pane", "close"], log);
   using second = createFrame({ width: 12, height: 4 }, () => fuzzy);
   second.key("s p");
-  equal(screen(second.frame.cells).slice(1), ["split pane", "dispose", ""]);
+  equal(rows(second.frame).slice(1), ["split pane", "dispose", ""]);
 });
 
 test("the selection follows its key and goes to the first result when its key leaves", () => {

@@ -271,17 +271,6 @@ async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
     runtime.handle().load_plugin(&plugin).await
 }
 
-/// Wait until the body `condition` returns `true`. A wait past 5 seconds fails the test, so the test does not hang.
-async fn wait_until(runtime: &Runtime, condition: &str) {
-    let wait = async {
-        while !evaluate::<bool>(runtime, condition).await.unwrap() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
-    let waited = tokio::time::timeout(Duration::from_secs(5), wait).await;
-    assert!(waited.is_ok(), "the condition never held: {condition}");
-}
-
 /// Run the body of an async function, and return the value of its promise.
 async fn evaluate<T>(runtime: &Runtime, body: &str) -> Result<T, Error>
 where
@@ -309,10 +298,24 @@ where
         .await
         .unwrap()
         .unwrap();
+    crate::settled().await;
     if let Ok(report) = reports.try_recv() {
         panic!("unexpected report: {report:?}");
     }
     value
+}
+
+/// Free each unreachable value, and run the finalization callbacks.
+async fn collect_garbage(runtime: &Runtime) {
+    runtime
+        .caller
+        .run(async |ctx: Ctx<'_>, _registry| {
+            ctx.run_gc();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    crate::settled().await;
 }
 
 /// The JavaScript of a function `names(calls)`. It gives the name of the error of each call, or `none`.
@@ -524,15 +527,12 @@ async fn a_rejection_that_gets_a_handler_in_its_drive_is_no_fault() {
         &runtime,
         "const rejected = Promise.reject(new Error('handled'));
          await null;
-         rejected.catch(() => {});
-         setTimeout(() => { throw new Error('marker'); }, 1);",
+         rejected.catch(() => {});",
     )
     .await
     .unwrap();
 
-    // The marker fault comes after the drive of the rejection, so a fault of the rejection would come first.
-    assert_eq!(next_fault(&mut faults).await.message, "marker");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::settled().await;
     assert!(faults.try_recv().is_err());
 }
 

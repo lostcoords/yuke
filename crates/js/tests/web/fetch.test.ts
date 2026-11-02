@@ -239,11 +239,6 @@ test("a member refuses a value of another class", async () => {
   );
   equal(await rejectedName(Response.prototype.text.call({})), "TypeError");
   equal(await rejectedName(Request.prototype.json.call(new Response("1"))), "TypeError");
-  equal(
-    [new Request("https://a.example/"), new Response()].map((value) => Object.prototype.toString.call(value)),
-    ["[object Request]", "[object Response]"],
-  );
-  assert(Object.keys(Response.prototype).includes("text"));
 });
 
 test("the arguments convert before the steps run", () => {

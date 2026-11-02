@@ -1,10 +1,11 @@
 // The default pane of the core on a fake 20×6 driver: the start pane, splits, the last close, restore, and the stop
 // of its plugin.
 
+import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { equal, test, throws } from "yuke:test";
 import type { PaneReason, View } from "yuke:tui";
-import { fakeTerminal, newCore } from "./terminal.ts";
+import { fakeTerminal } from "./terminal.ts";
 
 /** A default pane that shows its reason and number, and the reasons of each call so far. */
 function counted(): { readonly create: (mount: unknown, reason: PaneReason) => View; readonly reasons: PaneReason[] } {
@@ -22,7 +23,7 @@ function counted(): { readonly create: (mount: unknown, reason: PaneReason) => V
 test("the start pane comes at the later of the start event and the default pane", () => {
   const terminal = fakeTerminal();
   // A first start: the start event comes before the plugins load. A split before the default pane keeps its focus.
-  const first = newCore(terminal);
+  const first = new Core(terminal.driver);
   first.event({ type: "start" });
   first.commands.run("core:split-right");
   equal(terminal.screen(first)[0], "          │");
@@ -32,7 +33,7 @@ test("the start pane comes at the later of the start event and the default pane"
   first.commands.run("core:close");
   equal(terminal.screen(first)[0], "start 1");
   // A reload without saved panes: the plugins load before the start event.
-  const second = newCore(terminal);
+  const second = new Core(terminal.driver);
   const early = counted();
   createSurface(second, "chat", new AbortController().signal).panes.setDefault(early.create);
   equal(terminal.screen(second)[0], "");
@@ -48,7 +49,7 @@ test("the start pane comes at the later of the start event and the default pane"
 
 test("a split and a close of the last pane make new default panes, and a stopping plugin makes none", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const chat = new AbortController();
   const tui = createSurface(core, "chat", chat.signal);
   const pane = counted();
@@ -72,13 +73,13 @@ test("a split and a close of the last pane make new default panes, and a stoppin
 
 test("a saved empty pane comes back as a default pane, and a default pane that throws leaves an empty pane", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const pane = counted();
   tui.panes.setDefault(pane.create);
   core.event({ type: "start", snapshot: JSON.stringify({ tree: null, focus: 0 }) });
   equal([terminal.screen(core)[0], pane.reasons], ["new 1", ["new"]]);
-  const other = newCore(terminal);
+  const other = new Core(terminal.driver);
   createSurface(other, "broken", new AbortController().signal).panes.setDefault(() => {
     throw new Error("no pane");
   });

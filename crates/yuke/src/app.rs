@@ -1053,18 +1053,12 @@ async fn report(
     copy: Option<mpsc::UnboundedSender<Report>>,
 ) {
     while let Some(report) = reports.recv().await {
-        // The observer got each report before the barrier, so the test host can read what it recorded.
-        if let Report::Barrier(barrier) = &report {
-            barrier.release();
-            continue;
-        }
         if let Some(copy) = &copy
             && copy.send(report.clone()).is_err()
         {
             // The runner of the test has left.
         }
         let notification = match report {
-            Report::Barrier(_) => continue,
             Report::Fault(fault) => ServerNotification::Notice(NoticeParams {
                 session_id: None,
                 level: NoticeLevel::Warn,

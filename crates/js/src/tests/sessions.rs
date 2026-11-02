@@ -1,8 +1,8 @@
 //! These tests cover the session of the plugins: its setup, its tools, its failure, and its close.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -20,24 +20,6 @@ async fn loaded(name: &str, source: &str) -> (PathBuf, Runtime, mpsc::UnboundedR
     (folder, runtime, reports)
 }
 
-fn host(folder: &Path) -> Arc<TestHost> {
-    Arc::new(TestHost::new(folder))
-}
-
-/// The global `name` after it equals `expected`, or after five seconds.
-async fn global_once(runtime: &Runtime, name: &str, expected: i32) -> i32 {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let value = evaluate::<i32>(runtime, &format!("return globalThis.{name};"))
-            .await
-            .unwrap();
-        if value == expected || Instant::now() > deadline {
-            return value;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
 #[tokio::test(flavor = "local")]
 async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running() {
     let (folder, runtime, _reports) = loaded(
@@ -51,15 +33,26 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
         ),
     )
     .await;
-    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
+    let session = runtime
+        .handle()
+        .open_session(Arc::new(TestHost::new(&folder)))
+        .await
+        .unwrap();
 
-    let early = tokio::time::timeout(Duration::from_millis(100), session.tools()).await;
+    {
+        let pending = session.tools();
+        tokio::pin!(pending);
+        tokio::select! {
+            biased;
+            _ = &mut pending => panic!("the tools arrived before release"),
+            () = crate::settled() => {}
+        }
+    }
     evaluate::<bool>(&runtime, "globalThis.release(); return true;")
         .await
         .unwrap();
     let tools = session.tools().await.unwrap();
 
-    assert!(early.is_err(), "the wait ended before the session settled");
     let names: Vec<&str> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
     assert_eq!(names, ["late"]);
 }
@@ -80,7 +73,7 @@ async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
         ),
     )
     .await;
-    let tools = Tools::open(&runtime, host(&folder)).await;
+    let tools = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
 
     evaluate::<()>(&runtime, "globalThis.replace();").await.unwrap();
 
@@ -92,7 +85,11 @@ async fn a_closed_session_has_no_tools() {
     let folder = folder("a_closed_session_has_no_tools");
     let (runtime, _reports) = start(&folder).await;
     runtime.import("yuke:internal/builtins").await.unwrap();
-    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
+    let session = runtime
+        .handle()
+        .open_session(Arc::new(TestHost::new(&folder)))
+        .await
+        .unwrap();
 
     session.close().await.unwrap();
 
@@ -107,11 +104,12 @@ async fn a_drop_closes_the_session_once_and_a_second_close_or_a_drop_after_a_clo
          export function session() { return () => { globalThis.cleaned += 1; }; }",
     )
     .await;
-    let dropped = Tools::open(&runtime, host(&folder)).await;
-    let closed = Tools::open(&runtime, host(&folder)).await;
+    let dropped = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
+    let closed = Tools::open(&runtime, Arc::new(TestHost::new(&folder))).await;
 
     drop(dropped);
-    let after_drop = global_once(&runtime, "cleaned", 1).await;
+    crate::settled().await;
+    let after_drop = evaluate::<i32>(&runtime, "return globalThis.cleaned;").await.unwrap();
     closed.session.close().await.unwrap();
     closed.session.close().await.unwrap();
     drop(closed);
@@ -128,7 +126,7 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
     write(&folder, &[("notes.txt", "alpha\n")]);
     let (runtime, _reports) = start(&folder).await;
     runtime.import("yuke:internal/builtins").await.unwrap();
-    let host = host(&folder);
+    let host = Arc::new(TestHost::new(&folder));
     let first = Tools::open(&runtime, Arc::clone(&host) as Arc<dyn SessionHost>).await;
     let old_read = first["read"].clone();
 
@@ -141,7 +139,7 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
         error_of(&old_read, r#"{"path": "notes.txt"}"#).await,
         "the session is closed"
     );
-    assert!(call(&second["read"], r#"{"path": "notes.txt"}"#).await.0.is_ok());
+    assert!(call(&second["read"], r#"{"path": "notes.txt"}"#).await.is_ok());
     assert_eq!(second.session.tools().await.unwrap().len(), 5);
 }
 
@@ -152,7 +150,11 @@ async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
         "export function session() { return new Promise(() => {}); }",
     )
     .await;
-    let session = runtime.handle().open_session(host(&folder)).await.unwrap();
+    let session = runtime
+        .handle()
+        .open_session(Arc::new(TestHost::new(&folder)))
+        .await
+        .unwrap();
 
     let ended = tokio::time::timeout(Duration::from_secs(5), runtime.shutdown()).await;
 

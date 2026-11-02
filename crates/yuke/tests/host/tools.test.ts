@@ -2,7 +2,7 @@
 
 import { mkdir, readDir, writeFile, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 const empty = { type: "object", properties: {} } as const;
@@ -301,7 +301,6 @@ test("a throw of a tool is an error with its message", async () => {
 
 test("a cancel aborts the signal, and the tool still answers", async () => {
   let reason = "";
-  const started = Promise.withResolvers<void>();
   const { host, session } = await opened(
     tool(
       "wait",
@@ -312,14 +311,13 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
             reason = `${why instanceof DOMException} ${String(why)}`;
             resolve("stopped");
           });
-          started.resolve();
         }),
     ),
   );
   await using _host = host;
   const stop = new AbortController();
   const pending = session.call("wait", {}, { signal: stop.signal }).catch(() => undefined);
-  await started.promise;
+  await settled();
   stop.abort(new Error("stop"));
   await pending;
 
@@ -488,14 +486,12 @@ test("a media path starts in the folder of the start of the call", async () => {
   await writeTextFile(`${folder()}/first/dot.png`, "first");
   await writeTextFile(`${folder()}/second/dot.png`, "second");
   let release = (): void => {};
-  const started = Promise.withResolvers<void>();
   const { host, session } = await opened(
     tool(
       "later",
       () =>
         new Promise((resolve) => {
           release = () => resolve({ text: "x", media: [{ path: "dot.png", mimeType: "image/png" }] });
-          started.resolve();
         }),
     ),
   );
@@ -503,7 +499,7 @@ test("a media path starts in the folder of the start of the call", async () => {
   await session.setSettings({ ...session.settings, cwd: `${folder()}/first` });
 
   const pending = session.call("later", {});
-  await started.promise;
+  await settled();
   await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
   release();
 

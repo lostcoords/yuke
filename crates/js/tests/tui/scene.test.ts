@@ -1,14 +1,15 @@
 // The core of the terminal interface on a fake 20×6 driver: placement, clipping, input routing, focus, overlays, panes,
 // the plugin surface, restore, and the fault boundary.
 
+import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { assert, equal, test, throws } from "yuke:test";
 import { type Cursor, type CursorShape, type MouseEvent, type RestoreView, stack, type View } from "yuke:tui";
-import { atoms, click, fakeTerminal, key, named, newCore } from "./terminal.ts";
+import { atoms, click, fakeTerminal, key, named } from "./terminal.ts";
 
 test("a placed child draws in its rect and is cut to it", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const left: View = {
     draw: (canvas) => {
       canvas.text(0, 0, "abcdefgh");
@@ -69,7 +70,7 @@ test("a stack gives sized children their cells and fill the rest", () => {
 });
 
 test("a key goes to the keymap first then up the focus path", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
   core.commands.add({
     name: "test:bound",
@@ -103,7 +104,7 @@ test("a key goes to the keymap first then up the focus path", () => {
 });
 
 test("escape closes the top modal when nothing takes it", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
   let query = "abc";
   const keeps = core.scene.overlay("test", (mount) => {
@@ -131,7 +132,7 @@ test("escape closes the top modal when nothing takes it", () => {
 });
 
 test("a modal takes all input below it and a float takes only what it handles", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
   core.scene.setRoot("test", () => ({
     focusable: true,
@@ -174,7 +175,7 @@ test("a modal takes all input below it and a float takes only what it handles", 
 });
 
 test("a press focuses and captures and a modal cancels the capture", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: [string, MouseEvent["action"], number, number][] = [];
   const record = (name: string) => (event: MouseEvent) => {
     log.push([name, event.action, event.column, event.row]);
@@ -210,7 +211,7 @@ test("a press focuses and captures and a modal cancels the capture", () => {
 });
 
 test("a press on a view without focusOnPress reaches it and focuses its parent, and tui.focus still focuses it", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const presses: string[] = [];
   const inner: View = {
     focusable: true,
@@ -237,7 +238,7 @@ test("a press on a view without focusOnPress reaches it and focuses its parent, 
 });
 
 test("the view of a pane takes a press without focusOnPress", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const panes = createSurface(core, "test", new AbortController().signal).panes;
   const view = (): View => ({ focusable: true, focusOnPress: false, draw() {} });
   // The split puts the pane right of the empty pane. A press on the empty pane takes the focus away first.
@@ -250,7 +251,7 @@ test("the view of a pane takes a press without focusOnPress", () => {
 
 test("panes split focus and close and the last close gives an empty pane without a default", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const pane = (name: string) => (): View => ({
     draw: (canvas, focused) => {
       canvas.text(0, 0, focused ? name.toUpperCase() : name);
@@ -293,7 +294,7 @@ test("panes split focus and close and the last close gives an empty pane without
 });
 
 test("a pane gets its inner focus back and focus changes reach the path", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
   const composer: View = { focusable: true, draw() {}, focusChanged: (focused) => log.push(`composer ${focused}`) };
   const transcript: View = { focusable: true, draw() {} };
@@ -324,7 +325,7 @@ test("a pane gets its inner focus back and focus changes reach the path", () => 
 });
 
 test("a pane starts at its initial focus and each focus change names the view and the pane", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   /** A chat pane: a transcript above a composer, and the composer takes the first focus. */
   const chat = (name: string) => {
@@ -382,7 +383,7 @@ test("a pane starts at its initial focus and each focus change names the view an
 
 test("a timer runs once in time order, asks for a frame, and its disposer or the stop of its plugin cancels it", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const stop = new AbortController();
   const tui = createSurface(core, "timers", stop.signal);
   const ran: string[] = [];
@@ -405,7 +406,7 @@ test("a timer runs once in time order, asks for a frame, and its disposer or the
 
 test("one advance runs the due timers in time order, also a timer that a timer sets", () => {
   const terminal = fakeTerminal();
-  const tui = createSurface(newCore(terminal), "timers", new AbortController().signal);
+  const tui = createSurface(new Core(terminal.driver), "timers", new AbortController().signal);
   const ran: string[] = [];
   tui.after(30, () => ran.push("30"));
   tui.after(20, () => ran.push("20"));
@@ -419,7 +420,7 @@ test("one advance runs the due timers in time order, also a timer that a timer s
 
 test("a throwing timer is reported under its plugin", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const tui = createSurface(core, "timers", new AbortController().signal);
   tui.after(0, () => {
     throw new Error("bad timer");
@@ -432,7 +433,7 @@ test("a throwing timer is reported under its plugin", () => {
 });
 
 test("a throwing focus listener is reported under its plugin and removed", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "watcher", new AbortController().signal);
   let calls = 0;
   tui.onFocus(() => {
@@ -452,7 +453,7 @@ test("a throwing focus listener is reported under its plugin and removed", () =>
 
 test("a throwing view shows its error once and the rest works", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   let draws = 0;
   const broken: View = {
     focusable: true,
@@ -498,7 +499,7 @@ test("a throwing view shows its error once and the rest works", () => {
 
 test("a fault in a pane names the plugin of the pane", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const inner: View = {
     draw: () => {
       throw new Error("bad inner");
@@ -521,7 +522,7 @@ test("a fault in a pane names the plugin of the pane", () => {
 
 test("a new root closes the old one and its close gives the default root back", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const first = core.scene.setRoot("test", () => ({
     draw: (canvas) => {
       canvas.text(0, 0, "first");
@@ -544,7 +545,7 @@ test("a new root closes the old one and its close gives the default root back", 
 
 test("the cursor of the focused view reaches the screen inside its clip with its shape", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   let at: Cursor = { column: 2, row: 0, shape: "bar" };
   const input: View = { focusable: true, draw() {}, cursor: () => at };
   core.scene.setRoot("test", () => ({
@@ -571,14 +572,14 @@ test("the cursor of the focused view reaches the screen inside its clip with its
 
 test("the core commands reach the driver", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   for (const name of ["quit", "suspend", "reload"]) core.commands.run(`core:${name}`);
   equal(terminal.calls, ["quit", "suspend", ["reload", { tree: null, focus: 0 }]]);
 });
 
 test("a factory that closes its own mount mounts nothing", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const root = core.scene.setRoot("test", (mount) => {
     mount.close();
     return {
@@ -602,7 +603,7 @@ test("a factory that closes its own mount mounts nothing", () => {
 
 test("a focus change beneath a modal moves the active pane", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const panes = createSurface(core, "test", new AbortController().signal).panes;
   const a = panes.split(() => ({ draw() {} }));
   panes.split(() => ({ draw() {} }));
@@ -618,7 +619,7 @@ test("a focus change beneath a modal moves the active pane", () => {
 
 test("a view that leaves the tree gets its focus loss and its capture cancel", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const log: string[] = [];
   let shown = true;
   const child: View = {
@@ -644,7 +645,7 @@ test("a view that leaves the tree gets its focus loss and its capture cancel", (
 });
 
 test("a press that opens a modal captures nothing", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
   const opener: View = {
     focusable: true,
@@ -667,7 +668,7 @@ test("a press that opens a modal captures nothing", () => {
 
 test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const log: string[] = [];
   const tui = createSurface(core, "notes", new AbortController().signal);
   tui.commands.add({
@@ -699,7 +700,7 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
 
 test("the stop of a plugin removes its registrations and mounts and later calls throw", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const heard: unknown[] = [];
   const thrownDuringStop: unknown[] = [];
   const stop = new AbortController();
@@ -751,7 +752,7 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
 });
 
 test("a command of a plugin keeps its this and its fault names the plugin", () => {
-  const core = newCore(fakeTerminal());
+  const core = new Core(fakeTerminal().driver);
   class Counter {
     count = 0;
     readonly name = "count";
@@ -794,7 +795,7 @@ const restoreNote: RestoreView = (state) => note(state as NoteState);
 
 test("the panes of a snapshot come back with their views and focus", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const tui = createSurface(core, "notes", new AbortController().signal);
   tui.views.register("note", restoreNote);
   const one = tui.panes.split(() => note({ id: 1 }));
@@ -804,7 +805,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
   one.focus();
   const before = terminal.screen(core);
   const snapshot = core.snapshot();
-  const restored = newCore(terminal);
+  const restored = new Core(terminal.driver);
   createSurface(restored, "notes", new AbortController().signal).views.register("note", restoreNote);
   restored.restore(snapshot);
   // The empty pane and the view without `snapshot()` save as `null`; the focus is the index of note 1.
@@ -848,7 +849,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
 
 test("a restore drops a pane without its plugin and keeps an empty pane for a failed one", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const notes = new AbortController();
   const tui = createSurface(core, "notes", notes.signal);
   tui.views.register("note", restoreNote);
@@ -882,7 +883,7 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
 
 test("a state that cannot serialize fails the snapshot", () => {
   const terminal = fakeTerminal();
-  const core = newCore(terminal);
+  const core = new Core(terminal.driver);
   const tui = createSurface(core, "notes", new AbortController().signal);
   const state: { id: number; self?: unknown } = { id: 3 };
   state.self = state;

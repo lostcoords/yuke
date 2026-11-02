@@ -2,7 +2,8 @@
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
 import { createFrame, equal, test } from "yuke:test";
-import { click, commit, fakeSessions, loadChat, mouse, rows, SETTINGS, transcriptRows } from "./chat.ts";
+import { click, commit, fakeSessions, loadChat, mouse, SETTINGS, transcriptRows } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** The lines `<word> 1` to `<word> <count>`. */
 function lines(word: string, count: number): string {
@@ -468,7 +469,7 @@ test("a link in a reply copies its target, and a relative target starts in the f
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The Markdown rows show the whole link, and each of its cells carries the target.
-  equal(rows(frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
+  equal(rows(frame.frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
   click(frame, 7, 1);
   click(frame, 3, 2);
   equal(frame.copies, ["/w/src/main.rs#L40-L52", "https://docs.rs"]);

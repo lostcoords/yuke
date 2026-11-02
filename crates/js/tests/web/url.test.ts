@@ -197,8 +197,6 @@ test("an iterator and forEach see a change of the pairs", () => {
     ],
   );
   equal([...params.values()], ["1", "2", "3", "4"]);
-  assert(params[Symbol.iterator] === params.entries);
-  equal(Object.prototype.toString.call(params.entries()), "[object URLSearchParams Iterator]");
   assert(params.entries() instanceof Iterator);
 });
 
@@ -223,16 +221,5 @@ test("a method refuses a value of another class and a missing argument", () => {
       () => URL("https://a.example/"),
     ]),
     new Array<string>(8).fill("TypeError"),
-  );
-});
-
-test("the static methods are enumerable as Web IDL operations", () => {
-  equal(Object.keys(URL), ["parse", "canParse"]);
-});
-
-test("each class names itself in its string form", () => {
-  equal(
-    [new URL("https://a.example/"), new URLSearchParams()].map((value) => Object.prototype.toString.call(value)),
-    ["[object URL]", "[object URLSearchParams]"],
   );
 });

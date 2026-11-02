@@ -214,26 +214,29 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
     let token = CancellationToken::new();
     let cancel = token.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        cancel.cancel();
-    });
+    let received = async {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let lines = std::fs::read_to_string(&log).unwrap();
+            if lines.lines().any(|line| line.starts_with("call ")) {
+                cancel.cancel();
+            }
+            if lines.lines().any(|line| line.starts_with("cancelled ")) {
+                assert!(lines.lines().any(|line| line.starts_with("call ")), "{lines}");
+                break;
+            }
+            assert!(Instant::now() < deadline, "the server got no call or cancel: {lines}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
 
     let mut context = Vec::new();
-    driver
+    let turn = driver
         .turn(&mut context, vec![Block::user_text("go")])
-        .cancellation_token(token)
-        .run()
-        .await
-        .unwrap();
+        .cancellation_token(token);
+    let (result, ()) = tokio::join!(turn.run(), received);
+    result.unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !std::fs::read_to_string(&log).unwrap().contains("cancelled") {
-        assert!(Instant::now() < deadline, "the server got no cancel");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let lines = std::fs::read_to_string(&log).unwrap();
-    assert!(lines.lines().any(|line| line.starts_with("cancelled ")), "{lines}");
     let results: Vec<_> = context
         .iter()
         .filter_map(|block| match block {
@@ -282,7 +285,23 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
         ],
         ..test_server(&[])
     };
-    let (servers, changes) = started(vec![("test".to_owned(), wrapper)], &folder, Arc::default()).await;
+    let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
+    let servers = Servers::start(
+        &[("test".to_owned(), wrapper)],
+        &[],
+        async { false },
+        &|_| None,
+        &folder,
+        Arc::new(Recorded::default()),
+        Arc::new(move |server| changed.send(server).unwrap()),
+    );
+    tokio::time::timeout(Duration::from_secs(10), servers.ready())
+        .await
+        .unwrap();
+    assert_eq!(
+        changes.recv().await,
+        Some(server("test", McpServerState::Connected { tools: 7 }))
+    );
     let toolset = toolset(&servers);
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "mcp__test__exit", "{}")]), text_reply("done")]);
     let model = model_of(native_target());
@@ -300,11 +319,10 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
             error: "the server stopped\nexit".to_owned(),
         },
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while changes.lock().unwrap().last() != Some(&stopped) {
-        assert!(Instant::now() < deadline, "{:?}", changes.lock().unwrap());
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let changed = tokio::time::timeout(Duration::from_secs(5), changes.recv())
+        .await
+        .unwrap();
+    assert_eq!(changed, Some(stopped.clone()));
     assert_eq!(servers.states(), [stopped]);
     assert!(servers.tools().is_empty());
     assert!(

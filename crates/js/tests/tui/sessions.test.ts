@@ -2,8 +2,9 @@
 
 import { apply } from "yuke:internal/bundled/sessions";
 import type { SessionActivity, SessionRow } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, test } from "yuke:test";
-import { fakeSessions, loadChat, replies, rows, settle } from "./chat.ts";
+import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { fakeSessions, loadChat, replies } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** A saved session `id` of the folder `cwd` with the first prompt `preview`, `minutes` old. */
 function row(id: string, cwd: string, preview: string, activity: SessionActivity, minutes: number): SessionRow {
@@ -35,20 +36,20 @@ async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
 /** Run `/sessions:open`, and give the drawn rows after its list loads. */
 async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadChat>>): Promise<string[]> {
   chat.tui.commands.run("sessions:open");
-  await settle();
+  await settled();
   frame.draw();
-  return rows(frame);
+  return rows(frame.frame);
 }
 
 test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settle();
+  await settled();
   const here = await openList(frame, loaded.chat);
   frame.key("tab");
-  await settle();
+  await settled();
   frame.draw();
-  const every = rows(frame);
+  const every = rows(frame.frame);
   const shows = (all: string[], text: string) => all.some((line) => line.includes(text));
   equal(loaded.sessions.lists, [{ cwd: "/w", limit: 100 }, { limit: 100 }]);
   equal(
@@ -74,14 +75,14 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
 test("a query matches the first prompt, and else the model, the folder, or the id", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settle();
+  await settled();
   const shown = (query: string): string[] => {
     frame.paste(query);
     frame.draw();
-    const drawn = rows(frame);
+    const drawn = rows(frame.frame);
     for (const _ of query) frame.key("backspace");
     return ["fix the flaky test", "add the bar", "refactor sqlgen"].filter((text) =>
       drawn.some((line) => line.includes(text)),
@@ -101,14 +102,14 @@ test("a query matches the first prompt, and else the model, the folder, or the i
 test("enter shows the chosen session in the focused chat pane and closes the list", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.paste("bar");
   frame.key("enter");
-  await settle();
+  await settled();
   frame.draw();
   equal(
-    [loaded.chat.opened.map((open) => open.id), rows(frame).some((line) => line.includes("tab: every folder"))],
+    [loaded.chat.opened.map((open) => open.id), rows(frame.frame).some((line) => line.includes("tab: every folder"))],
     [["s1", "s2"], false],
   );
 });
@@ -118,11 +119,11 @@ test("a pick that does not open gives a notice", async () => {
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("missing", "/w", "gone", "closed", 1));
   const loaded = await load(frame, sessions);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.paste("gone");
   frame.key("enter");
-  await settle();
+  await settled();
   equal(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
 });
 
@@ -141,15 +142,15 @@ test("a list of an earlier scope that loads late keeps the list of the later sco
     return page;
   };
   const loaded = await load(frame, sessions);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settle();
+  await settled();
   resolve();
-  await settle();
+  await settled();
   frame.draw();
   equal(
-    rows(frame).some((line) => line.includes("refactor sqlgen")),
+    rows(frame.frame).some((line) => line.includes("refactor sqlgen")),
     true,
   );
 });
@@ -159,13 +160,13 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("s4", "/srv/bar", "deploy notes", "closed", 1));
   const loaded = await load(frame, sessions);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settle();
+  await settled();
   frame.paste("bar");
   frame.draw();
-  const drawn = rows(frame);
+  const drawn = rows(frame.frame);
   const at = (text: string) => drawn.findIndex((line) => line.includes(text));
   equal([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
 });
@@ -184,20 +185,20 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
     return list(params);
   };
   const loaded = await load(frame, sessions);
-  await settle();
+  await settled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settle();
+  await settled();
   reject(new Error("disk"));
-  await settle();
+  await settled();
   frame.draw();
-  equal([rows(frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
+  equal([rows(frame.frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
 });
 
 test("the list of a pane whose session is gone starts with the start folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s9" });
   const loaded = await load(frame);
-  await settle();
+  await settled();
   const drawn = await openList(frame, loaded.chat);
   equal(
     [drawn.some((line) => line.trim() === "/start"), loaded.sessions.lists],

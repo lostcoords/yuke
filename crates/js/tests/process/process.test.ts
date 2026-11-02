@@ -5,13 +5,6 @@ import { folder } from "yuke:internal/test";
 import { Command, env } from "yuke:process";
 import { assert, equal, rejects, test, throws } from "yuke:test";
 
-/** Make the empty folder `name` in the scratch folder of the file, and give its absolute path. */
-async function place(name: string): Promise<string> {
-  const path = `${folder()}/${name}`;
-  await fs.mkdir(path);
-  return path;
-}
-
 /** `bytes` as UTF-8 text. */
 function text(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
@@ -41,7 +34,7 @@ async function gone(cwd: string, file: string): Promise<boolean> {
 }
 
 test("each argument reaches the program as it is and the streams stay apart", async () => {
-  const base = await place("arguments");
+  const base = folder();
   const out = await new Command("sh", {
     args: ["-c", 'printf "%s|" "$1" "$2"; echo err >&2; exit 3', "sh", "a b", "$HOME"],
     cwd: base,
@@ -53,7 +46,7 @@ test("each argument reaches the program as it is and the streams stay apart", as
 });
 
 test("env adds variables clear env leaves only env and a null stream is empty", async () => {
-  const base = await place("environment");
+  const base = folder();
   const added = await new Command("/usr/bin/env", { cwd: base, env: { YUKE_A: "1" } }).output();
   const only = await new Command("/usr/bin/env", { cwd: base, env: { YUKE_A: "1" }, clearEnv: true }).output();
   const dropped = await new Command("/usr/bin/env", { cwd: base, stdout: "null" }).output();
@@ -78,7 +71,7 @@ test("a relative cwd throws a type error before any start", () => {
 });
 
 test("an abort before the start rejects and an abort during the run stops the group", async () => {
-  const base = await place("abort_run");
+  const base = folder();
   const early = new AbortController();
   early.abort(new Error("too early"));
   equal(await rejects(new Command("sh", { cwd: base, signal: early.signal }).output()), new Error("too early"));
@@ -97,7 +90,7 @@ test("an abort before the start rejects and an abort during the run stops the gr
 });
 
 test("an abort after the exit stops a left process that holds the output", async () => {
-  const base = await place("abort_after_exit");
+  const base = folder();
   const controller = new AbortController();
   // The shell exits at once, and its background child keeps stdout open.
   const running = new Command("sh", {
@@ -113,7 +106,7 @@ test("an abort after the exit stops a left process that holds the output", async
 });
 
 test("a program that does not start rejects with its name", async () => {
-  const base = await place("no_start");
+  const base = folder();
   equal(
     await rejects(new Command("/no/such/program", { cwd: base }).output()),
     new Error("/no/such/program did not start: No such file or directory (os error 2)"),
@@ -121,7 +114,7 @@ test("a program that does not start rejects with its name", async () => {
 });
 
 test("env.get gives a variable of the environment of yuke, and undefined for a missing one", async () => {
-  const cwd = await place("env");
+  const cwd = folder();
   // A program gets the environment of yuke, and env prints it as it gets it.
   const shown = await new Command("/usr/bin/env", { cwd }).output();
   const path = text(shown.stdout)

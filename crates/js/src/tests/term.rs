@@ -9,28 +9,48 @@ use tokio::sync::mpsc;
 use yuke_protocol::{NoticeLevel, NoticeParams, SessionId};
 use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size};
 
-use super::{NAMES, evaluate, folder, next_fault, options, start, wait_until};
+use super::{NAMES, evaluate, folder, next_fault, options, start};
 use crate::error::caught;
 use crate::{Display, Input, Interface, Processes, Report, Request, Runtime, Startup};
 
-/// An output that keeps what the frames write.
+/// An output that keeps what the frames write, and wakes a waiter at each flush.
 #[derive(Clone, Default)]
-struct Output(Arc<Mutex<Vec<u8>>>);
+struct Output {
+    bytes: Arc<Mutex<Vec<u8>>>,
+    flushed: Arc<tokio::sync::Notify>,
+}
 
 impl Write for Output {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
+        self.bytes.lock().unwrap().extend_from_slice(bytes);
         Ok(bytes.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        self.flushed.notify_one();
         Ok(())
     }
 }
 
 impl Output {
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        String::from_utf8_lossy(&self.bytes.lock().unwrap()).into_owned()
+    }
+
+    fn clear(&self) {
+        self.bytes.lock().unwrap().clear();
+    }
+
+    /// Wait until the runtime of `runtime` drew `count` frames. A requested frame waits for the frame interval, so the
+    /// wait wakes at each flush of the output.
+    async fn frames(&self, runtime: &Runtime, count: i32) {
+        let drawn = tokio::time::timeout(Duration::from_secs(5), async {
+            while evaluate::<i32>(runtime, "return frames;").await.unwrap() < count {
+                self.flushed.notified().await;
+            }
+        })
+        .await;
+        assert!(drawn.is_ok(), "the runtime did not draw {count} frames");
     }
 }
 
@@ -104,7 +124,8 @@ async fn hidden(name: &str) -> Started {
 async fn started(name: &str) -> Started {
     let (mut runtime, reports, display, output, requests) = hidden(name).await;
     runtime.show(None);
-    wait_until(&runtime, "return frames === 1;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return frames === 1;").await.unwrap());
     (runtime, reports, display, output, requests)
 }
 
@@ -147,14 +168,16 @@ async fn the_start_frame_writes_its_cells_to_the_output() {
 #[tokio::test(flavor = "local")]
 async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
     let (runtime, _reports, _display, output, _requests) = started("a_cursor_shape_reaches_the_terminal").await;
-    output.0.lock().unwrap().clear();
+    output.clear();
     evaluate::<()>(
         &runtime,
         "globalThis.cursor = { column: 2, row: 1, shape: 'bar' }; term.requestFrame();",
     )
     .await
     .unwrap();
-    wait_until(&runtime, "return frames === 2;").await;
+    output.frames(&runtime, 2).await;
+    crate::settled().await;
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
     assert!(
         output.text().contains("\x1b[2;3H\x1b[6 q\x1b[?25h"),
         "{:?}",
@@ -175,7 +198,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     let (mut runtime, _reports, display, output, _requests) =
         hidden("a_runtime_draws_and_takes_input_only_after_the_show").await;
     display.send(key('a'));
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::settled().await;
     assert_eq!(
         evaluate::<String>(&runtime, "return `${seen.length} ${frames}`;")
             .await
@@ -185,7 +208,12 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     assert_eq!(output.text(), "");
 
     runtime.show(Some(r#"{"panes":2}"#.to_owned()));
-    wait_until(&runtime, "return seen.length === 2 && frames === 1;").await;
+    crate::settled().await;
+    assert!(
+        evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 1;")
+            .await
+            .unwrap()
+    );
     let text = evaluate::<String>(
         &runtime,
         "return `${JSON.stringify(seen[0])} ${seen[1].type}:${seen[1].character}`;",
@@ -201,7 +229,8 @@ async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
     let (runtime, _reports, display, _output, _requests) =
         started("a_notice_comes_as_an_event_with_its_level_source_and_text").await;
     display.send(notice(NoticeLevel::Warn, "notes", "the index is stale"));
-    wait_until(&runtime, "return seen.length === 2;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
             .await
@@ -220,7 +249,8 @@ async fn a_notice_of_a_session_keeps_its_session_id() {
         source: "host:session".to_owned(),
         message: "the turn failed".to_owned(),
     }));
-    wait_until(&runtime, "return seen.length === 2;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return seen[1].sessionId;").await.unwrap(),
         session.to_string()
@@ -256,7 +286,8 @@ async fn a_batch_of_inputs_draws_one_frame() {
     for character in ['a', 'b', 'c'] {
         display.send(key(character));
     }
-    wait_until(&runtime, "return seen.length === 4;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 4;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
         "return seen.slice(1).map((event) => `${event.type}:${event.code}:${event.character}:${event.text}:${JSON.stringify(event.modifiers)}`)
@@ -273,12 +304,17 @@ async fn a_batch_of_inputs_draws_one_frame() {
 
 #[tokio::test(flavor = "local")]
 async fn asks_for_frames_give_one_frame() {
-    let (runtime, _reports, _display, _output, _requests) = started("asks_for_frames_give_one_frame").await;
+    let (runtime, _reports, _display, output, _requests) = started("asks_for_frames_give_one_frame").await;
     evaluate::<()>(&runtime, "term.requestFrame(); term.requestFrame(5);")
         .await
         .unwrap();
-    wait_until(&runtime, "return frames === 2;").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    output.frames(&runtime, 2).await;
+    crate::settled().await;
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_millis(50)).await;
+    tokio::time::resume();
+    crate::settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
@@ -292,14 +328,18 @@ async fn the_frame_of_an_input_answers_an_ask_of_its_handler() {
     .await
     .unwrap();
     display.send(key('a'));
-    wait_until(&runtime, "return frames === 2;").await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::settled().await;
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_millis(50)).await;
+    tokio::time::resume();
+    crate::settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
 #[tokio::test(flavor = "local")]
 async fn an_ask_of_the_draw_gives_the_next_frame() {
-    let (runtime, _reports, _display, _output, _requests) = started("an_ask_of_the_draw_gives_the_next_frame").await;
+    let (runtime, _reports, _display, output, _requests) = started("an_ask_of_the_draw_gives_the_next_frame").await;
     evaluate::<()>(
         &runtime,
         "globalThis.drawn = 0;
@@ -309,7 +349,9 @@ async fn an_ask_of_the_draw_gives_the_next_frame() {
     )
     .await
     .unwrap();
-    wait_until(&runtime, "return frames === 4;").await;
+    output.frames(&runtime, 4).await;
+    crate::settled().await;
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 4);
 }
 
 #[tokio::test(flavor = "local")]
@@ -317,7 +359,8 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
     let (runtime, _reports, display, _output, _requests) = started("a_focus_event_says_whether").await;
     display.send(Input::Event(Event::FocusLost));
     display.send(Input::Event(Event::FocusGained));
-    wait_until(&runtime, "return seen.length === 3;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 3;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
         "return seen.slice(1).map((event) => `${event.type}:${event.focused}`).join(' ');",
@@ -337,7 +380,8 @@ async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
         kind: MouseKind::Drag,
         modifiers: Modifiers::CTRL,
     })));
-    wait_until(&runtime, "return seen.length === 2;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
             .await
@@ -362,7 +406,8 @@ async fn a_throwing_handler_reports_and_the_next_event_runs() {
     let fault = next_fault(&mut reports).await;
     assert!(fault.message.contains("a broken handler"), "{fault:?}");
     display.send(key('b'));
-    wait_until(&runtime, "return seen.length === 2;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return seen[1].character;").await.unwrap(),
         "b"
@@ -400,7 +445,8 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     )
     .await
     .unwrap();
-    wait_until(&runtime, "return seen.length === 5;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 5;").await.unwrap());
     let text = evaluate::<String>(&runtime, "return seen.join(' ');").await.unwrap();
     assert_eq!(text, "start@20 mouse@20 mouse@20 resize@30 resize@40");
 }
@@ -411,9 +457,14 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
     evaluate::<()>(&runtime, "globalThis.widths = []; const keep = seen.push.bind(seen); seen.push = (event) => { widths.push(term.width); return keep(event); };")
         .await
         .unwrap();
-    output.0.lock().unwrap().clear();
+    output.clear();
     display.send(Input::Resize(Size { columns: 30, rows: 4 }));
-    wait_until(&runtime, "return seen.length === 2 && frames === 2;").await;
+    crate::settled().await;
+    assert!(
+        evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 2;")
+            .await
+            .unwrap()
+    );
     let text = evaluate::<String>(
         &runtime,
         "return `${seen[1].w}x${seen[1].h} ${widths[0]} ${term.height}`;",
@@ -439,11 +490,12 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
         requests.recv().await,
         Some(Request::Reload(r#"{"panes":2}"#.to_owned()))
     );
-    output.0.lock().unwrap().clear();
+    output.clear();
     display.send(Input::Event(Event::SchemeChanged));
     // The scheme change gives the handler no event, so the key is the next event.
     display.send(key('x'));
-    wait_until(&runtime, "return seen.length === 2;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert!(output.text().starts_with("\x1b]11;?\x1b\\"), "{:?}", output.text());
     assert_eq!(
         evaluate::<String>(&runtime, "return seen[1].type;").await.unwrap(),
@@ -469,7 +521,8 @@ async fn a_background_event_comes_only_when_the_class_changes() {
         display.send(Input::Event(Event::Background(color)));
     }
     display.send(key('x'));
-    wait_until(&runtime, "return seen.length === 3;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return seen.length === 3;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
         "return `${seen[1].background} ${term.background} ${seen[2].type}`;",
@@ -495,14 +548,15 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
     runtime.show(None);
     global_term(&runtime).await;
     evaluate::<()>(&runtime, "term.requestFrame();").await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    crate::settled().await;
     evaluate::<()>(
         &runtime,
         "globalThis.frames = 0; term.run({ event() {}, draw() { frames += 1; } });",
     )
     .await
     .unwrap();
-    wait_until(&runtime, "return frames === 1;").await;
+    crate::settled().await;
+    assert!(evaluate::<bool>(&runtime, "return frames === 1;").await.unwrap());
 }
 
 #[tokio::test(flavor = "local")]

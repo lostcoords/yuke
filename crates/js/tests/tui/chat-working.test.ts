@@ -1,7 +1,8 @@
 // The working row of the bundled chat: a spinner, the phase, the elapsed time, and the cancel key of a running turn.
 
-import { createFrame, equal, test } from "yuke:test";
-import { commit, fakeSessions, loadChat, replies, rows, settle } from "./chat.ts";
+import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 const hints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
 
@@ -10,11 +11,11 @@ test("a running turn shows its phase and time above the rule, and the end of the
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   /** Draw the frame, and give the row above the rule. */
   const row = (): string => {
     frame.draw();
-    const all = rows(frame);
+    const all = rows(frame.frame);
     return all[all.findIndex((text) => text.startsWith("──")) - 1] ?? "";
   };
   const idle = row();
@@ -35,7 +36,7 @@ test("a running turn shows its phase and time above the rule, and the end of the
   const retry = row();
   sessions.push({ sessionUpdate: "state", state: "idle" });
   frame.draw();
-  const ended = rows(frame).some((text) => text.includes("to interrupt"));
+  const ended = rows(frame.frame).some((text) => text.includes("to interrupt"));
   // The retry status stays in the transcript until the next draft, and the next turn shows no old countdown.
   sessions.push({ sessionUpdate: "state", state: "running" });
   const next = row();
@@ -59,11 +60,11 @@ test("the elapsed time of a long turn shows minutes", async () => {
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.advance(185_000);
   equal(
-    rows(frame).some((text) => text.includes("(3m 05s · esc to interrupt)")),
+    rows(frame.frame).some((text) => text.includes("(3m 05s · esc to interrupt)")),
     true,
   );
 });
@@ -73,12 +74,12 @@ test("a draft shows reasoning, a response, or a call that the model still writes
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
   const phase = (): string | undefined => {
     frame.draw();
-    return rows(frame)
+    return rows(frame.frame)
       .find((text) => text.includes("to interrupt"))
       ?.slice(2)
       .split(" (")[0];
@@ -99,13 +100,13 @@ test("a close of the session by another client takes the working row away", asyn
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
-  const running = rows(frame).some((text) => text.includes("to interrupt"));
+  const running = rows(frame.frame).some((text) => text.includes("to interrupt"));
   sessions.close("s1");
   frame.draw();
-  equal([running, rows(frame).some((text) => text.includes("to interrupt"))], [true, false]);
+  equal([running, rows(frame.frame).some((text) => text.includes("to interrupt"))], [true, false]);
 });
 
 test("the working row shows no cancel key while the command list takes esc", async () => {
@@ -113,14 +114,14 @@ test("the working row shows no cancel key while the command list takes esc", asy
   using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.key("/ m o d e l");
   frame.draw();
-  const listed = rows(frame).find((text) => text.includes("Waiting…"));
+  const listed = rows(frame.frame).find((text) => text.includes("Waiting…"));
   frame.key("esc");
   frame.draw();
-  const hidden = rows(frame).find((text) => text.includes("Waiting…"));
+  const hidden = rows(frame.frame).find((text) => text.includes("Waiting…"));
   equal([listed, hidden], ["⠋ Waiting… (0s)", "⠋ Waiting… (0s · esc to interrupt)"]);
 });
 
@@ -130,7 +131,7 @@ async function runningExec(width: number, command: string) {
   const frame = createFrame({ width, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settle();
+  await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(
@@ -144,9 +145,9 @@ async function runningExec(width: number, command: string) {
 }
 
 /** The working row of `frame`. */
-function workingRow(frame: Parameters<typeof rows>[0]): string {
+function workingRow(frame: FrameTest): string {
   frame.draw();
-  return rows(frame).find((text) => text.includes(" (") && /\d+s/.test(text)) ?? "";
+  return rows(frame.frame).find((text) => text.includes(" (") && /\d+s/.test(text)) ?? "";
 }
 
 test("a running exec shows the background hint after a delay, and the key asks to move it", async () => {

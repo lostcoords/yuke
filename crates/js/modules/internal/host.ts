@@ -11,21 +11,14 @@ import {
   testHostCreate,
   testHostRecord,
   testHostRun,
-  testHostSettle,
+  testSettled,
 } from "yuke:internal/native";
 import { give } from "yuke:internal/plugins";
-import { flush, sessionsOf } from "yuke:internal/sessions";
+import { sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
 import { jsonCopy } from "yuke:internal/values";
 import { ExtensionRequestError, type Frozen, type ViewEvent } from "yuke:plugins";
-import type {
-  ExtensionRequestParams,
-  InteractionResponse,
-  QuestionAnswer,
-  SessionId,
-  SessionSettings,
-  SessionUpdate,
-} from "yuke:protocol";
+import type { ExtensionRequestParams, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
 import type {
   CallOutcome,
   CallsOptions,
@@ -44,9 +37,6 @@ import { Transcript } from "yuke:transcript";
 
 /** The model of a session when the test names none. The fake model answers each model of a provider with an API key. */
 const TEST_MODEL = { provider: "minimax", model: "MiniMax-M3" } as const;
-
-/** A test creates one host. */
-let created = false;
 
 export const reply = Object.freeze({
   text: (text: string, options?: ReplyOptions): Reply => ({
@@ -72,12 +62,6 @@ export const reply = Object.freeze({
   failed: (text: string): Reply => ({ kind: "failed", text }),
   stall: (text = ""): Reply => ({ kind: "stall", text }),
 });
-
-/** Wait until the transcripts and the records of the host hold each update and report before this call. */
-async function settle(): Promise<void> {
-  await flush();
-  await testHostSettle();
-}
 
 /**
  * The operation of a plugin request that `respond` answers. It gives a JSON copy of the result, or a failure record as
@@ -107,14 +91,7 @@ function responderOf(respond: NonNullable<HostOptions["respond"]>) {
   };
 }
 
-/** The response that `answer` gives: the answers, or a cancel without them. */
-function responseOf(answers: readonly QuestionAnswer[] | undefined): InteractionResponse {
-  return answers === undefined ? { kind: "canceled" } : { kind: "questions", answers: [...answers] };
-}
-
 export async function createHost(options: HostOptions): Promise<Host> {
-  if (created) throw new Error("a test creates one host");
-  created = true;
   const plugins = options.plugins.map((plugin) => {
     if ("folder" in plugin) {
       return plugin.options === undefined
@@ -136,7 +113,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
   // A plugin can send a request while the host loads it.
   if (options.respond !== undefined) setResponder(responderOf(options.respond));
   await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
-  await settle();
+  await testSettled();
 
   const stop = new AbortController();
   const sessions = sessionsOf("test", stop.signal);
@@ -155,8 +132,14 @@ export async function createHost(options: HostOptions): Promise<Host> {
       // A close ends the question, so a later answer or failure has no question to reach.
       const open = (): boolean => !closed.has(id) && !stop.signal.aborted;
       try {
-        const value = await options.answer?.(question);
-        if (open()) sessionRespond([id, update.interactionId, responseOf(value)]);
+        const answers = await options.answer?.(question);
+        if (open()) {
+          sessionRespond([
+            id,
+            update.interactionId,
+            answers === undefined ? { kind: "canceled" } : { kind: "questions", answers: [...answers] },
+          ]);
+        }
       } catch (error) {
         if (!open()) return;
         // The cancel ends the operation that asked.
@@ -190,7 +173,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         else ask(id, event.update);
       },
     });
-    await settle();
+    await testSettled();
     return Object.freeze({
       id,
       transcript,
@@ -204,7 +187,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         } finally {
           operation?.signal?.removeEventListener("abort", cancel);
         }
-        await settle();
+        await testSettled();
         // A cancel ends the turn early, and `send` rejects as `run` and `call` do.
         operation?.signal?.throwIfAborted();
       },
@@ -214,14 +197,14 @@ export async function createHost(options: HostOptions): Promise<Host> {
         operation?: OperationOptions,
       ): Promise<HookResults[K]> {
         const result = await underSignal(operation?.signal, () => testHostRun([id, point, event]));
-        await settle();
+        await testSettled();
         // The hook point ends early after a cancel, so its decision is no answer.
         operation?.signal?.throwIfAborted();
         return (result ?? undefined) as HookResults[K];
       },
       async call(tool: string, args: unknown, operation?: OperationOptions): Promise<CallOutcome> {
         const result = await underSignal(operation?.signal, () => testHostCall([id, tool, args]));
-        await settle();
+        await testSettled();
         // The tool ends early after a cancel, so its result is no answer.
         operation?.signal?.throwIfAborted();
         return result;
@@ -232,12 +215,12 @@ export async function createHost(options: HostOptions): Promise<Host> {
       async setSettings(settings: SessionSettings): Promise<void> {
         await handle.setSettings(settings);
         current = settings;
-        await settle();
+        await testSettled();
       },
       async close(): Promise<void> {
         closed.add(id);
         await sessions.close(id);
-        await settle();
+        await testSettled();
       },
     } satisfies TestSession);
   };
@@ -247,7 +230,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       stop.abort(new Error("the host closed"));
       setResponder(undefined);
       await testHostClose(null).promise;
-      await settle();
+      await testSettled();
     })();
     return closing;
   };

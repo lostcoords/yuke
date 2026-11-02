@@ -2,7 +2,7 @@
 
 import { createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type KeyEvent, Picker, strokeOf, TextView, type View } from "yuke:tui";
-import { rows } from "./chat.ts";
+import { rows } from "./rows.ts";
 
 /** A text view with the lines `count` lines. */
 function lines(count: number): TextView {
@@ -19,7 +19,7 @@ function body(text: string, taken: string): View {
   };
 }
 
-const shows = (frame: FrameTest, text: string) => rows(frame).some((line) => line.includes(text));
+const shows = (frame: FrameTest, text: string) => rows(frame.frame).some((line) => line.includes(text));
 
 test("a dialog shows its title, its body, and the keys that work now", () => {
   using frame = createFrame({ width: 60, height: 10 });
@@ -36,7 +36,7 @@ test("a dialog shows its title, its body, and the keys that work now", () => {
     ],
   });
   frame.draw();
-  const before = rows(frame);
+  const before = rows(frame.frame);
   frame.key("enter");
   ready = true;
   frame.key("enter");
@@ -135,8 +135,8 @@ test("the title and the keys of a dialog have a default look that a plugin chang
   tui.dialog({ title: () => "Plugins", body: body("the body", "x"), rows: 4 });
   const looks = () => {
     const cells = frame.draw().cells;
-    const title = rows(frame).findIndex((line) => line.includes("Plugins"));
-    const keys = rows(frame).findIndex((line) => line.includes("esc: close"));
+    const title = rows(frame.frame).findIndex((line) => line.includes("Plugins"));
+    const keys = rows(frame.frame).findIndex((line) => line.includes("esc: close"));
     return [cells[title]?.[1]?.style, cells[keys]?.[1]?.style];
   };
   const before = looks();

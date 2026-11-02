@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::tools::{TestHost, Tools};
-use super::{descriptor, evaluate, folder, start, wait_until, write};
+use super::{descriptor, evaluate, folder, start, write};
 use crate::{Origin, Plugin, PluginFailure, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
@@ -109,7 +109,12 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
 
     let slow = [slow];
     let (during, ()) = tokio::join!(runtime.load_plugins(&slow), async {
-        wait_until(&runtime, "return typeof globalThis.finishApply === 'function';").await;
+        crate::settled().await;
+        assert!(
+            evaluate::<bool>(&runtime, "return typeof globalThis.finishApply === 'function';")
+                .await
+                .unwrap()
+        );
         runtime.close_plugins().await.unwrap();
         evaluate::<()>(&runtime, "finishApply();").await.unwrap();
     });
