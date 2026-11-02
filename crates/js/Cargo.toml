@@ -19,8 +19,8 @@ oxc_span = "=0.153.0"
 oxc_transformer = "=0.153.0"
 rquickjs = { version = "0.14.0", default-features = false, features = ["std", "classes", "futures", "loader", "macro"] }
 sha2 = { version = "0.11.0", default-features = false }
-# rustix sends the signals to the process group of a command. It is a safe wrapper of the system call.
-rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
+# rustix sends process group signals and shuts down sockets through safe system calls.
+rustix = { version = "1.1", default-features = false, features = ["std", "net", "process"] }
 serde = "1.0.229"
 serde_json = "1.0.151"
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "process", "rt", "sync", "test-util", "time"] }

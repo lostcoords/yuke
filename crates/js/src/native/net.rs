@@ -1,21 +1,22 @@
 //! The native of `yuke:net`: connections to Unix sockets on tokio.
 //! - `netConnect` connects to a path. `netRead` reads one chunk, and gives `undefined` at the end.
-//! - `netWrite` writes each byte. `netClose` closes the connection.
+//! - `netWrite` writes each byte. `netClose` shuts down both directions of the socket.
 //! - `netListen`, `netAccept`, and `netUnlisten` serve the test server of `yuke:test`.
 //! - A failure rejects with a record `{ code, message }`. A stop or a closed connection rejects with `{ cancelled: true }`.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::future::poll_fn;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Poll, ready};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rquickjs::class::Trace;
 use rquickjs::{Class, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray};
 use rustix::io::Errno;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+use rustix::net::{Shutdown, shutdown};
 use tokio::net::{UnixListener, UnixStream};
 
 use super::{Cancelled, Operation};
@@ -23,29 +24,18 @@ use super::{Cancelled, Operation};
 /// The most bytes of one read.
 const CHUNK: usize = 64 * 1024;
 
-/// A connection. When QuickJS frees the object, the halves drop and close the socket.
+/// A connection with one socket shared by its reads and writes.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "NetConnection")]
 pub(crate) struct Connection {
-    /// `None` while a read holds the half, and after the end or a close.
+    /// `None` after a close. Operations borrow the socket only during a poll.
     #[qjs(skip_trace)]
-    reader: RefCell<Option<OwnedReadHalf>>,
-    /// `None` while a write holds the half, and after a close.
-    #[qjs(skip_trace)]
-    writer: RefCell<Option<OwnedWriteHalf>>,
-    /// A close came, so a read or a write that ends drops its half.
-    #[qjs(skip_trace)]
-    closed: Cell<bool>,
+    stream: Option<UnixStream>,
 }
 
 impl Connection {
     fn of(stream: UnixStream) -> Self {
-        let (reader, writer) = stream.into_split();
-        Self {
-            reader: RefCell::new(Some(reader)),
-            writer: RefCell::new(Some(writer)),
-            closed: Cell::new(false),
-        }
+        Self { stream: Some(stream) }
     }
 }
 
@@ -96,26 +86,26 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
         "netRead",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, connection: Class<'js, Connection>| {
             Operation::start(&ctx, move |ctx, stop| async move {
-                // The read holds the half across the wait, so no borrow of the class lives across it.
-                let taken = connection.borrow().reader.borrow_mut().take();
-                let Some(mut half) = taken else {
-                    return Err(cancelled(&ctx));
-                };
                 let mut buffer = vec![0; CHUNK];
                 let read = tokio::select! {
-                    read = half.read(&mut buffer) => read,
+                    read = poll_fn(|task| {
+                        let state = connection.borrow();
+                        let Some(stream) = &state.stream else {
+                            return Poll::Ready(Err(cancelled(&ctx)));
+                        };
+                        loop {
+                            ready!(stream.poll_read_ready(task)).map_err(|error| failure(&ctx, "read", &error))?;
+                            match stream.try_read(&mut buffer) {
+                                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                                read => return Poll::Ready(read.map_err(|error| failure(&ctx, "read", &error))),
+                            }
+                        }
+                    }) => read,
                     () = stop.cancelled() => return Err(cancelled(&ctx)),
                 };
-                match read {
-                    Ok(0) => Ok(None),
-                    Ok(count) => {
-                        let state = connection.borrow();
-                        if !state.closed.get() {
-                            state.reader.replace(Some(half));
-                        }
-                        Ok(Some(TypedArray::<u8>::new(ctx.clone(), &buffer[..count])?))
-                    }
-                    Err(error) => Err(failure(&ctx, "read", &error)),
+                match read? {
+                    0 => Ok(None),
+                    count => Ok(Some(TypedArray::<u8>::new(ctx.clone(), &buffer[..count])?)),
                 }
             })
         })?,
@@ -127,31 +117,45 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
             |ctx: Ctx<'js>, connection: Class<'js, Connection>, bytes: TypedArray<'js, u8>| {
                 let bytes = crate::bytes::copy(&bytes)?;
                 Operation::start(&ctx, move |ctx, stop| async move {
-                    let taken = connection.borrow().writer.borrow_mut().take();
-                    let Some(mut half) = taken else {
-                        return Err(cancelled(&ctx));
-                    };
-                    let written = tokio::select! {
-                        written = half.write_all(&bytes) => written,
-                        () = stop.cancelled() => return Err(cancelled(&ctx)),
-                    };
-                    written.map_err(|error| failure(&ctx, "write", &error))?;
-                    let state = connection.borrow();
-                    if !state.closed.get() {
-                        state.writer.replace(Some(half));
+                    let mut written = 0;
+                    tokio::select! {
+                        written = poll_fn(|task| {
+                            let state = connection.borrow();
+                            let Some(stream) = &state.stream else {
+                                return Poll::Ready(Err(cancelled(&ctx)));
+                            };
+                            while written < bytes.len() {
+                                ready!(stream.poll_write_ready(task))
+                                    .map_err(|error| failure(&ctx, "write", &error))?;
+                                match stream.try_write(&bytes[written..]) {
+                                    Ok(0) => return Poll::Ready(Err(failure(&ctx, "write", &io::ErrorKind::WriteZero.into()))),
+                                    Ok(count) => written += count,
+                                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                                    Err(error) => return Poll::Ready(Err(failure(&ctx, "write", &error))),
+                                }
+                            }
+                            Poll::Ready(Ok(()))
+                        }) => written,
+                        () = stop.cancelled() => Err(cancelled(&ctx)),
                     }
-                    Ok(())
                 })
             },
         )?,
     )?;
     object.set(
         "netClose",
-        Function::new(ctx.clone(), |connection: Class<'js, Connection>| {
-            let state = connection.borrow();
-            state.closed.set(true);
-            drop(state.reader.borrow_mut().take());
-            drop(state.writer.borrow_mut().take());
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, connection: Class<'js, Connection>| {
+            let mut state = connection.borrow_mut();
+            let Some(stream) = &state.stream else {
+                return Ok(());
+            };
+            match shutdown(stream, Shutdown::Both) {
+                Ok(()) | Err(Errno::NOTCONN) => {}
+                Err(error) => return Err(failure(&ctx, "close", &error.into())),
+            }
+            // On macOS, shutdown alone still lets the peer write until the socket drops.
+            drop(state.stream.take());
+            Ok(())
         })?,
     )?;
     Ok(())
