@@ -2,7 +2,7 @@
 // no listener exists.
 
 import { failureOf } from "yuke:internal/failure";
-import { type Fact, factsFlush, factsListen, factsRelease, factsWatch, notify } from "yuke:internal/native";
+import { type Fact, factsListen, factsRelease, factsWatch, notify } from "yuke:internal/native";
 import { frozen } from "yuke:internal/values";
 import type { HostEvents } from "yuke:plugins";
 import type { InteractionId, SessionId, SessionState } from "yuke:protocol";
@@ -85,11 +85,6 @@ export function announce<K extends Event>(event: K, data: HostEvents[K]): void {
   for (const listener of [...listeners]) {
     if (listener.event === event && listeners.has(listener) && !listener.signal.aborted) call(listener, shown);
   }
-}
-
-/** Wait until the listeners receive each fact queued before this call. */
-export async function flush(): Promise<void> {
-  if (listening) await factsFlush();
 }
 
 /** Remove `listener`. The last removal ends the watch. */

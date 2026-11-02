@@ -9,6 +9,7 @@ use rquickjs::function::Async;
 use rquickjs::{Ctx, Function, Object};
 use yuke_engine::CancellationToken;
 
+use super::delivery::Queue;
 use super::exec::exec;
 use crate::error::{ErrorClass, throw};
 use crate::processes::Processes;
@@ -24,9 +25,11 @@ pub(crate) fn object<'js>(
     host: &Arc<dyn SessionHost>,
     folder: PathBuf,
     stop: &CancellationToken,
+    queue: &Queue<'js>,
 ) -> rquickjs::Result<Object<'js>> {
     let object = Object::new(ctx.clone())?;
 
+    let exec_queue = queue.clone();
     let (exec_processes, exec_stop, exec_host) = (Arc::clone(processes), stop.clone(), Arc::clone(host));
     object.set(
         "exec",
@@ -35,6 +38,7 @@ pub(crate) fn object<'js>(
             Async(
                 move |ctx: Ctx<'js>, command: String, limits: Object<'js>, on_output: Function<'js>| {
                     let processes = Arc::clone(&exec_processes);
+                    let queue = exec_queue.clone();
                     let (folder, stop, owner) = (folder.clone(), exec_stop.clone(), Arc::clone(&exec_host));
                     async move {
                         let timeout_ms: u32 = limits.get("timeoutMs")?;
@@ -47,48 +51,60 @@ pub(crate) fn object<'js>(
                             stop,
                             owner,
                         };
-                        exec(ctx, &processes, request, on_output).await
+                        exec(ctx, processes, request, on_output, queue).await
                     }
                 },
             ),
         )?,
     )?;
 
+    let start_queue = queue.clone();
     let (start_processes, start_host) = (Arc::clone(processes), Arc::clone(host));
     object.set(
         "startJob",
         Function::new(
             ctx.clone(),
-            Async(move |ctx: Ctx<'js>, command: String, timeout_ms: Option<u32>| {
+            move |ctx: Ctx<'js>, command: String, timeout_ms: Option<u32>| {
                 let (processes, host) = (Arc::clone(&start_processes), Arc::clone(&start_host));
-                async move {
-                    let timeout = timeout_ms.map(|ms| Duration::from_millis(ms.into()));
-                    let started = processes.start_job(command, timeout, host).await;
-                    started.map_err(|message| throw(&ctx, ErrorClass::Error, &message))
-                }
-            }),
+                let (promise, _abort) = start_queue.request(
+                    &ctx,
+                    async move {
+                        let timeout = timeout_ms.map(|ms| Duration::from_millis(ms.into()));
+                        processes.start_job(command, timeout, host).await
+                    },
+                    |ctx, result| {
+                        result
+                            .map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string()))?
+                            .map_err(|message| throw(ctx, ErrorClass::Error, &message))
+                    },
+                )?;
+                Ok::<_, rquickjs::Error>(promise)
+            },
         )?,
     )?;
 
     let (stop_processes, stop_host, stop_call) = (Arc::clone(processes), Arc::clone(host), stop.clone());
+    let stop_queue = queue.clone();
     object.set(
         "stopJob",
-        Function::new(
-            ctx.clone(),
-            Async(move |id: String| {
-                let (processes, host, call) = (Arc::clone(&stop_processes), Arc::clone(&stop_host), stop_call.clone());
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: String| {
+            let (processes, host, call) = (Arc::clone(&stop_processes), Arc::clone(&stop_host), stop_call.clone());
+            // The answer goes through the queue, so the `job_changed` event of the stop reaches JavaScript first.
+            let (promise, _abort) = stop_queue.request(
+                &ctx,
                 async move {
                     // A plugin can take long to end its job, and a cancel of the call ends this wait, not the stop. The
                     // stop polls first, so a cancelled call still sends the stop.
-                    let answer = tokio::select! {
+                    tokio::select! {
                         biased;
                         found = processes.jobs().stop(host.session_id(), &id) => if found { "stopped" } else { "unknown" },
                         () = call.cancelled() => "stopping",
-                    };
-                    Ok::<_, rquickjs::Error>(answer)
-                }
-            }),
-        )?,
+                    }
+                },
+                |ctx, result| result.map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string())),
+            )?;
+            Ok::<_, rquickjs::Error>(promise)
+        })?,
     )?;
 
     let (running_processes, running_host) = (Arc::clone(processes), Arc::clone(host));

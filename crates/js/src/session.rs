@@ -25,6 +25,7 @@ use yuke_protocol::{
 use crate::error::{Error, ErrorClass, caught, throw};
 use crate::models::{Models, merge_settings};
 use crate::native::ai::{Round, context_tokens, side_request, tokens};
+use crate::native::delivery::Queue;
 use crate::native::{Cancelled, Operation};
 use crate::plugins::hooks;
 use crate::runtime::{Caller, Handle};
@@ -74,14 +75,15 @@ impl Handle {
             .run(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {
                 let open_session: Function<'_> = caught(&ctx, hooks(&ctx).await?.get("openSession"))?;
                 let open = registry.open();
+                let queue = Queue::of(&ctx);
                 let request = OpenRequest {
                     open,
                     session_id,
                     parent,
                     folder,
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
-                    ask: caught(&ctx, ask_function(&ctx, ask_host))?,
-                    request: caught(&ctx, request_function(&ctx, request_host))?,
+                    ask: caught(&ctx, ask_function(&ctx, ask_host, queue.clone()))?,
+                    request: caught(&ctx, request_function(&ctx, request_host, queue))?,
                     model: caught(
                         &ctx,
                         Function::new(ctx.clone(), move || Json(model_host.model_reference())),
@@ -562,7 +564,7 @@ fn start_job_function<'js>(
 
 /// The native `ask(source, question)` of the session of `host`. It answers an operation whose promise gives the answers,
 /// or `undefined` without an answer. Its cancel ends the request.
-fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
+fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>, queue: Queue<'js>) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>,
@@ -570,11 +572,18 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
               Json(request): Json<InteractionRequest>|
               -> rquickjs::Result<Operation<'js>> {
             let host = Arc::clone(&host);
+            let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
-                match host.ask(&source, request, stop).await {
-                    InteractionResponse::Questions { answers } => Json(answers).into_js(&ctx),
-                    InteractionResponse::Canceled => Ok(Value::new_undefined(ctx.clone())),
-                }
+                let _guard = stop.clone().drop_guard();
+                let (promise, _abort) = queue.request(
+                    &ctx,
+                    async move { host.ask(&source, request, stop).await },
+                    |ctx, result| match result.map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string()))? {
+                        InteractionResponse::Questions { answers } => Json(answers).into_js(ctx),
+                        InteractionResponse::Canceled => Ok(Value::new_undefined(ctx.clone())),
+                    },
+                )?;
+                promise.into_future::<Value>().await
             })
         },
     )
@@ -583,7 +592,11 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Re
 /// The native `request(source, request, data)` of the session of `host`, with `data` as JSON text. It answers an
 /// operation whose promise gives the result of the client. A failure rejects with a [`RequestError`], and a cancel with
 /// `{ cancelled: true }`. A cancel drops the wait, and the drop cancels the request.
-fn request_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs::Result<Function<'js>> {
+fn request_function<'js>(
+    ctx: &Ctx<'js>,
+    host: Arc<dyn SessionHost>,
+    queue: Queue<'js>,
+) -> rquickjs::Result<Function<'js>> {
     Function::new(
         ctx.clone(),
         move |ctx: Ctx<'js>, source: String, request: String, data: String| -> rquickjs::Result<Operation<'js>> {
@@ -595,25 +608,39 @@ fn request_function<'js>(ctx: &Ctx<'js>, host: Arc<dyn SessionHost>) -> rquickjs
                 )
             })?;
             let host = Arc::clone(&host);
+            let queue = queue.clone();
             Operation::start(&ctx, move |ctx, stop| async move {
-                let answer = tokio::select! {
-                    answer = host.request(&source, request, data) => answer,
-                    () = stop.cancelled() => return Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?)),
-                };
-                let failure = match answer {
-                    Ok(value) => return Json(value).into_js(&ctx),
-                    Err(RequestFailure::Refused(error)) => RequestError {
-                        code: Some(error.code),
-                        message: error.message,
-                        data: error.data.map(Json),
+                let _guard = stop.clone().drop_guard();
+                let (promise, _abort) = queue.request(
+                    &ctx,
+                    async move {
+                        tokio::select! {
+                            answer = host.request(&source, request, data) => Some(answer),
+                            () = stop.cancelled() => None,
+                        }
                     },
-                    Err(failure) => RequestError {
-                        code: None,
-                        message: failure.to_string(),
-                        data: None,
+                    |ctx, result| {
+                        let answer = result.map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string()))?;
+                        let Some(answer) = answer else {
+                            return Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?));
+                        };
+                        let failure = match answer {
+                            Ok(value) => return Json(value).into_js(ctx),
+                            Err(RequestFailure::Refused(error)) => RequestError {
+                                code: Some(error.code),
+                                message: error.message,
+                                data: error.data.map(Json),
+                            },
+                            Err(failure) => RequestError {
+                                code: None,
+                                message: failure.to_string(),
+                                data: None,
+                            },
+                        };
+                        Err(ctx.throw(failure.into_js(ctx)?))
                     },
-                };
-                Err(ctx.throw(failure.into_js(&ctx)?))
+                )?;
+                promise.into_future::<Value>().await
             })
         },
     )

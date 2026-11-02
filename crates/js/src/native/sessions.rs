@@ -1,5 +1,7 @@
 //! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`, and
-//! `ctx.get("plugins")`. One feed gives JavaScript the events of the views, and one gives the facts of `ctx.on`.
+//! `ctx.get("plugins")`. The queue delivers host view events and host facts and resolves the asynchronous request
+//! promises. Synchronous natives read the current host state directly. Facts that start in JavaScript go to listeners
+//! at once.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -10,7 +12,6 @@ use std::sync::Arc;
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
-use tokio::sync::{mpsc, oneshot};
 use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_protocol::{
@@ -18,80 +19,12 @@ use yuke_protocol::{
     InteractionResponse, ListSessionsParams, SessionId, SessionSettings, SyncPluginsParams,
 };
 
+use super::delivery::{Delivery, Queue};
 use super::{Cancelled, Operation};
-use crate::error::{Error, ErrorClass, Report, caught, throw};
-use crate::sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent};
+use crate::error::{ErrorClass, throw};
+use crate::sessions::{FactSink, Sessions, SessionsError, ViewEvent};
+
 use crate::tools::Json;
-
-/// The most events of one delivery. The feed yields between deliveries, so keys and frames come between them.
-const BATCH: usize = 256;
-
-/// An event or a barrier in the delivery order of one runtime.
-enum Delivery<E> {
-    Event(u32, E),
-    Flush(oneshot::Sender<()>),
-}
-
-/// The events of one runtime, in order, each with the key of its view or of its watch.
-struct Feed<E>(mpsc::UnboundedSender<Delivery<E>>);
-
-impl<E> Feed<E> {
-    /// Add the listener and the barrier function for one ordered feed.
-    fn add<'js>(
-        ctx: &Ctx<'js>,
-        object: &Object<'js>,
-        listen: &str,
-        flush: &str,
-        faults: mpsc::UnboundedSender<Report>,
-    ) -> rquickjs::Result<Arc<Self>>
-    where
-        E: Serialize + 'static,
-    {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let feed = Arc::new(Self(sender));
-        let received = RefCell::new(Some(receiver));
-        object.set(
-            listen,
-            Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
-                let receiver = received
-                    .borrow_mut()
-                    .take()
-                    .ok_or_else(|| throw(&ctx, ErrorClass::TypeError, "the event feed already has a listener"))?;
-                ctx.spawn(deliver_events(ctx.clone(), deliver, receiver, faults.clone()));
-                rquickjs::Result::Ok(())
-            })?,
-        )?;
-        let flushing = Arc::clone(&feed);
-        object.set(
-            flush,
-            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Promise<'js>> {
-                let flushed = flushing.flush();
-                let error_ctx = ctx.clone();
-                Promise::wrap_future(&ctx, async move {
-                    flushed
-                        .await
-                        .map_err(|_| throw(&error_ctx, ErrorClass::Error, "the event feed has ended"))
-                })
-            })?,
-        )?;
-        Ok(feed)
-    }
-
-    fn push(&self, key: u32, event: E) {
-        if self.0.send(Delivery::Event(key, event)).is_err() {
-            // The runtime stopped, so it takes no more events.
-        }
-    }
-
-    /// Wait for the delivery of each event before this barrier, not for events that come later.
-    fn flush(&self) -> oneshot::Receiver<()> {
-        let (sender, receiver) = oneshot::channel();
-        if self.0.send(Delivery::Flush(sender)).is_err() {
-            // The dropped sender makes the receiver report the stopped feed.
-        }
-        receiver
-    }
-}
 
 /// The JSON of an event for JavaScript: `{ snapshot }`, `{ update }`, or `"closed"`.
 impl Serialize for ViewEvent {
@@ -110,13 +43,13 @@ pub(super) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     sessions: &Arc<dyn Sessions>,
-    faults: mpsc::UnboundedSender<Report>,
+    queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
-    let feed = Feed::<ViewEvent>::add(ctx, object, "sessionsListen", "sessionsFlush", faults.clone())?;
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
     let held: Rc<RefCell<HashMap<u32, Box<dyn Send>>>> = Rc::default();
 
-    add_facts(ctx, object, sessions, faults)?;
+    add_facts(ctx, object, sessions, queue)?;
+    let open_queue = queue.clone();
 
     let (open_sessions, open_held) = (Arc::clone(sessions), Rc::clone(&held));
     object.set(
@@ -125,15 +58,23 @@ pub(super) fn add<'js>(
             ctx.clone(),
             move |ctx: Ctx<'js>, arguments: Json<(u32, SessionId, usize)>| -> rquickjs::Result<Promise<'js>> {
                 let (key, id, tail) = arguments.0;
-                let (sessions, feed, held) = (Arc::clone(&open_sessions), Arc::clone(&feed), Rc::clone(&open_held));
-                let sink = Arc::new(move |event| feed.push(key, event));
-                let task = tokio::task::spawn_local(async move { sessions.open(id, tail, sink).await });
-                let error_ctx = ctx.clone();
-                Promise::wrap_future(&ctx, async move {
-                    let guard = joined(&error_ctx, task.await)?;
-                    held.borrow_mut().insert(key, guard);
-                    rquickjs::Result::Ok(())
-                })
+                let (sessions, held) = (Arc::clone(&open_sessions), Rc::clone(&open_held));
+                let sender = open_queue.sender.clone();
+                let sink = Arc::new(move |event| {
+                    if sender.send(Delivery::View(key, Box::new(event))).is_err() {
+                        // The engine stopped, so it takes no more events.
+                    }
+                });
+                let (promise, _abort) = open_queue.request(
+                    &ctx,
+                    async move { sessions.open(id, tail, sink).await },
+                    move |ctx, result| {
+                        let guard = joined(ctx, result)?;
+                        held.borrow_mut().insert(key, guard);
+                        Ok(())
+                    },
+                )?;
+                Ok(promise)
             },
         )?,
     )?;
@@ -145,7 +86,7 @@ pub(super) fn add<'js>(
         })?,
     )?;
 
-    add_requests(object, sessions)?;
+    add_requests(object, sessions, queue)?;
     add_calls(ctx, object, sessions)
 }
 
@@ -155,16 +96,20 @@ fn add_facts<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
     sessions: &Arc<dyn Sessions>,
-    faults: mpsc::UnboundedSender<Report>,
+    queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
-    let feed = Feed::<Fact>::add(ctx, object, "factsListen", "factsFlush", faults)?;
+    let sender = queue.sender.clone();
     let watch: Rc<RefCell<Option<Box<dyn Send>>>> = Rc::default();
     let (sessions, started) = (Arc::clone(sessions), Rc::clone(&watch));
     object.set(
         "factsWatch",
         Function::new(ctx.clone(), move |key: u32| {
-            let feed = Arc::clone(&feed);
-            let sink: FactSink = Arc::new(move |fact| feed.push(key, fact));
+            let sender = sender.clone();
+            let sink: FactSink = Arc::new(move |fact| {
+                if sender.send(Delivery::Fact(key, fact)).is_err() {
+                    // The engine stopped, so it takes no more facts.
+                }
+            });
             // The old watch ends before the new one starts, so no fact of the old one follows the replay.
             drop(started.borrow_mut().take());
             *started.borrow_mut() = Some(sessions.watch_facts(sink));
@@ -177,10 +122,11 @@ fn add_facts<'js>(
 }
 
 /// Add the asynchronous requests, which run as local tasks.
-fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
-    add_put_blob(object, sessions)?;
+fn add_requests<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
+    add_put_blob(object, sessions, queue)?;
     let request = Requests {
         sessions: Arc::clone(sessions),
+        queue: queue.clone(),
     };
     request.add(
         object,
@@ -259,7 +205,7 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>) -> rquickjs::
 }
 
 /// Add the requests of `ctx.get("plugins")`. A sync, a check, and an add fetch, so each one answers an operation.
-fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
+fn add_plugin_requests<'js>(request: &Requests<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     request.add(object, "pluginsList", |sessions, (): ()| async move {
         sessions.list_plugins().await
     })?;
@@ -341,50 +287,11 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Arc<dyn Sessi
     Ok(())
 }
 
-/// Call `deliver` with each batch of the feed, as `[key, event]` pairs, until the runtime stops. A throw of `deliver` is
-/// a fault, and the next batch still comes.
-async fn deliver_events<'js, E: Serialize>(
-    ctx: Ctx<'js>,
-    deliver: Function<'js>,
-    mut received: mpsc::UnboundedReceiver<Delivery<E>>,
-    faults: mpsc::UnboundedSender<Report>,
-) {
-    while let Some(first) = received.recv().await {
-        let mut batch = Vec::new();
-        let mut flushed = None;
-        for delivery in std::iter::once(first)
-            .chain(std::iter::from_fn(|| received.try_recv().ok()))
-            .take(BATCH)
-        {
-            match delivery {
-                Delivery::Event(key, event) => batch.push((key, event)),
-                Delivery::Flush(sender) => {
-                    flushed = Some(sender);
-                    break;
-                }
-            }
-        }
-        if !batch.is_empty() {
-            let result = deliver.call::<_, ()>((Json(batch),));
-            if let Err(Error::Script(error)) = caught(&ctx, result)
-                && faults.send(Report::Fault(error)).is_err()
-            {
-                // The owner dropped the receiver, so it ignores faults.
-            }
-        }
-        if let Some(flushed) = flushed
-            && flushed.send(()).is_err()
-        {
-            // The caller stopped waiting.
-        }
-        tokio::task::yield_now().await;
-    }
-}
-
 /// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
 /// task runs.
-fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
+fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
     let sessions = Arc::clone(sessions);
+    let queue = queue.clone();
     object.set(
         "sessionPutBlob",
         Function::new(
@@ -392,9 +299,12 @@ fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rqui
             move |ctx: Ctx<'js>, id: Json<SessionId>, bytes: TypedArray<'js, u8>| -> rquickjs::Result<Promise<'js>> {
                 let bytes = crate::bytes::copy(&bytes)?;
                 let sessions = Arc::clone(&sessions);
-                let task = tokio::task::spawn_local(async move { sessions.put_blob(id.0, bytes).await });
-                let error_ctx = ctx.clone();
-                Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
+                let (promise, _abort) = queue.request(
+                    &ctx,
+                    async move { sessions.put_blob(id.0, bytes).await },
+                    |ctx, result| joined(ctx, result).map(Json),
+                )?;
+                Ok(promise)
             },
         )?,
     )
@@ -416,12 +326,13 @@ fn failure(ctx: &Ctx<'_>, error: &SessionsError) -> rquickjs::Error {
 
 /// Adds the asynchronous requests: each one takes its arguments as one JSON value, runs as a local task, and answers a
 /// promise of its JSON.
-struct Requests {
+struct Requests<'js> {
     sessions: Arc<dyn Sessions>,
+    queue: Queue<'js>,
 }
 
-impl Requests {
-    fn add<'js, A, T, F>(
+impl<'js> Requests<'js> {
+    fn add<A, T, F>(
         &self,
         object: &Object<'js>,
         name: &str,
@@ -429,19 +340,21 @@ impl Requests {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + 'static,
+        T: Serialize + Send + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Arc::clone(&self.sessions);
+        let queue = self.queue.clone();
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Promise<'js>> {
-                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
-                    let task = tokio::task::spawn_local(run(Arc::clone(&sessions), arguments.0));
-                    let error_ctx = ctx.clone();
-                    Promise::wrap_future(&ctx, async move { joined(&error_ctx, task.await).map(Json) })
+                    let (promise, _abort) =
+                        queue.request(&ctx, run(Arc::clone(&sessions), arguments.0), |ctx, result| {
+                            joined(ctx, result).map(Json)
+                        })?;
+                    Ok(promise)
                 },
             )?,
         )
@@ -449,7 +362,7 @@ impl Requests {
 
     /// Add a request as [`Requests::add`] does, which answers an operation. Its `cancel` drops the task, so a child
     /// process of the task stops, and the promise rejects with `{ cancelled: true }`.
-    fn add_operation<'js, A, T, F>(
+    fn add_operation<A, T, F>(
         &self,
         object: &Object<'js>,
         name: &str,
@@ -457,27 +370,28 @@ impl Requests {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + 'static,
+        T: Serialize + Send + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Arc::clone(&self.sessions);
+        let queue = self.queue.clone();
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
-                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
-                    let task = tokio::task::spawn_local(run(Arc::clone(&sessions), arguments.0));
-                    Operation::start(&ctx, move |ctx, stop| async move {
-                        let abort = task.abort_handle();
-                        tokio::select! {
-                            done = task => joined(&ctx, done).map(Json),
-                            () = stop.cancelled() => {
-                                abort.abort();
-                                Err(ctx.throw(Cancelled { cancelled: true }.into_js(&ctx)?))
+                    let (promise, abort) = queue.request(
+                        &ctx,
+                        run(Arc::clone(&sessions), arguments.0),
+                        |ctx, result| match result {
+                            Err(error) if error.is_cancelled() => {
+                                Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?))
                             }
-                        }
-                    })
+                            result => joined(ctx, result).map(Json),
+                        },
+                    )?;
+                    let cancel = Function::new(ctx, move || abort.abort())?;
+                    Ok(Operation { promise, cancel })
                 },
             )?,
         )

@@ -5,6 +5,7 @@ pub(crate) mod ai;
 pub(crate) mod call;
 mod clipboard;
 mod console;
+pub(crate) mod delivery;
 mod encoding;
 mod exec;
 pub(crate) mod fs;
@@ -116,7 +117,8 @@ pub(crate) fn install(
     reports: mpsc::UnboundedSender<Report>,
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
-    sessions::add(ctx, &object, &options.sessions, reports.clone())?;
+    let queue = delivery::Queue::new(ctx, &object, reports.clone())?;
+    sessions::add(ctx, &object, &options.sessions, &queue)?;
     term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
@@ -129,7 +131,10 @@ pub(crate) fn install(
     url::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
-    crate::test_host::add(ctx, &object, options.test_host.as_ref())?;
+    crate::test_host::add(ctx, &object, options.test_host.as_ref(), &queue)?;
+    if ctx.store_userdata(queue).is_err() {
+        return Err(throw(ctx, ErrorClass::Error, "the delivery queue cannot be stored"));
+    }
     match ctx.store_userdata(object) {
         Ok(_) => Ok(()),
         Err(_) => Err(throw(ctx, ErrorClass::Error, "the native module cannot be stored")),

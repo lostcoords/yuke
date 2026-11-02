@@ -2,7 +2,6 @@
 // `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
 import { underStop } from "yuke:internal/events";
-import { flush as flushFacts } from "yuke:internal/facts";
 import {
   catalogList,
   type ViewEvent as NativeViewEvent,
@@ -28,7 +27,6 @@ import {
   sessionStopJob,
   sessionsCreate,
   sessionsEvents,
-  sessionsFlush,
   sessionsFork,
   sessionsGet,
   sessionsList,
@@ -44,8 +42,6 @@ const { reportError } = globalThis;
 
 /** Where the events of one view go: its snapshot once, then each update, then the close of its session. */
 interface Route {
-  /** Resolves the open at the snapshot. */
-  opened: (() => void) | undefined;
   readonly event: (event: ViewEvent) => void;
   readonly closed: () => void;
 }
@@ -64,31 +60,12 @@ function deliver(batch: readonly (readonly [number, NativeViewEvent])[]): void {
       route.closed();
       continue;
     }
-    if ("snapshot" in event) {
-      route.opened?.();
-      route.opened = undefined;
-    }
     try {
       route.event(event);
     } catch (error) {
       reportError(error);
     }
   }
-}
-
-/** Wait until the views and fact listeners receive each event queued before this call. */
-export async function flush(): Promise<void> {
-  await Promise.all([listening ? sessionsFlush() : undefined, flushFacts()]);
-}
-
-/** `promise`, or a rejection with the reason of `signal` when it aborts first. */
-function untilAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const abort = (): void => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-  });
 }
 
 /** Open session `id` for the plugin `plugin`, whose signal also ends the handle. */
@@ -116,16 +93,14 @@ async function open(
   };
   const stop = (): void => end(signal.reason);
   signal.addEventListener("abort", stop, { once: true });
-  const opened = Promise.withResolvers<void>();
   // The route comes before the open, so the snapshot finds it.
   routes.set(key, {
-    opened: opened.resolve,
     event: options.event,
     closed: () => end(new Error(`the session ${id} closed`)),
   });
   try {
     await sessionsOpen([key, id, options.tail]);
-    await untilAbort(opened.promise, ended.signal);
+    ended.signal.throwIfAborted();
   } catch (error) {
     end(error);
     // The handle can end before the native open stores its hold.
@@ -161,7 +136,6 @@ async function open(
     async idle() {
       live();
       await sessionIdle(id);
-      await flush();
     },
     async setSettings(settings) {
       live();
@@ -208,8 +182,6 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
     events: (id, page) => sessionsEvents([id, page.before ?? null, page.limit]),
     async close(id) {
       await sessionClose(id);
-      // The close sends each view its end on another channel, so the handles end before the close resolves.
-      await flush();
     },
   } satisfies Sessions);
 }

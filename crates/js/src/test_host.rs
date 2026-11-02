@@ -13,6 +13,7 @@ use yuke_protocol::SessionId;
 use crate::ScriptSession;
 use crate::error::{ErrorClass, throw};
 use crate::native::Operation;
+use crate::native::delivery::Queue;
 use crate::test_drive::{CallRequest, RunRequest, call_tool, run_point};
 use crate::test_runner::TestError;
 use crate::tools::Json;
@@ -60,7 +61,12 @@ pub trait TestHost: Send + Sync {
 }
 
 /// Add the natives of the test host to `object`, the export object of the native module.
-pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, host: Option<&Arc<dyn TestHost>>) -> rquickjs::Result<()> {
+pub(crate) fn add<'js>(
+    ctx: &Ctx<'js>,
+    object: &Object<'js>,
+    host: Option<&Arc<dyn TestHost>>,
+    queue: &Queue<'js>,
+) -> rquickjs::Result<()> {
     object.set(
         "testSettled",
         Function::new(
@@ -88,24 +94,28 @@ pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, host: Option<&Arc<d
         object,
         "testHostCreate",
         host,
+        queue,
         |host, request: Json<serde_json::Value>, _token| async move { host.create(request.0).await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostClose",
         host,
+        queue,
         |host, _request: Json<()>, _token| async move { host.close().await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostRun",
         host,
+        queue,
         |host, request: RunRequest, token| async move { run_point(&*host, request, token).await },
     )?;
     add_operation(
         object,
         "testHostCall",
         host,
+        queue,
         |host, request: CallRequest, token| async move { call_tool(&*host, request, token).await },
     )
 }
@@ -116,25 +126,26 @@ fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
     name: &str,
     host: Option<&Arc<dyn TestHost>>,
+    queue: &Queue<'js>,
     run: impl Fn(Arc<dyn TestHost>, A, CancellationToken) -> F + 'js,
 ) -> rquickjs::Result<()>
 where
     A: FromJs<'js> + 'static,
-    T: IntoJs<'js> + 'static,
+    T: IntoJs<'js> + Send + 'static,
     F: Future<Output = Result<T, TestError>> + 'static,
 {
     let host = host.cloned();
+    let queue = queue.clone();
     object.set(
         name,
         Function::new(
             object.ctx().clone(),
             move |ctx: Ctx<'js>, argument: A| -> rquickjs::Result<Operation<'js>> {
                 let host = host.clone().ok_or_else(|| throw(&ctx, ErrorClass::Error, NO_HOST))?;
-                Operation::start(&ctx, |ctx, token| {
-                    // The host call can enter JavaScript, so a local task keeps it outside the QuickJS poll.
-                    let task = tokio::task::spawn_local(run(host, argument, token));
-                    async move { joined(&ctx, task.await) }
-                })
+                let token = CancellationToken::new();
+                let (promise, _abort) = queue.request(&ctx, run(host, argument, token.clone()), joined)?;
+                let cancel = Function::new(ctx, move || token.cancel())?;
+                Ok(Operation { promise, cancel })
             },
         )?,
     )

@@ -13,16 +13,18 @@ use yuke_protocol::{
 };
 
 use super::{evaluate, folder, load_entry, options, write};
-use crate::{FactSink, Processes, Runtime, Sessions, SessionsError, ViewEvent, ViewSink};
+use crate::{Fact, FactSink, Processes, Runtime, Sessions, SessionsError, ViewEvent, ViewSink};
 
 /// A consumer that records each request and keeps the sink of each view.
 #[derive(Default)]
 struct Scripted {
     sinks: Mutex<Vec<ViewSink>>,
+    facts: Mutex<Option<FactSink>>,
     calls: Mutex<Vec<String>>,
+    folder: PathBuf,
     /// The holds that ended.
     released: Arc<AtomicUsize>,
-    echo_updates: AtomicBool,
+    follow_up_on_cancel: AtomicBool,
 }
 
 /// A hold of [`Scripted`]. Its drop counts.
@@ -47,6 +49,86 @@ impl Scripted {
     fn send(&self, index: usize, update: SessionUpdate) {
         let sink = Arc::clone(&self.sinks.lock().unwrap()[index]);
         sink(ViewEvent::Update(update));
+    }
+}
+
+impl Scripted {
+    fn publish_before_reply(&self, update: SessionUpdate) {
+        let facts = self.facts.lock().unwrap();
+        let sink = facts.as_ref().unwrap();
+        // Several batches must pass before the last host event reaches JavaScript.
+        for _ in 0..1200 {
+            sink(Fact::Update {
+                session_id: session(),
+                update: Box::new(state(SessionState::Running)),
+            });
+        }
+        sink(Fact::Update {
+            session_id: session(),
+            update: Box::new(update),
+        });
+    }
+}
+
+#[async_trait::async_trait]
+impl yuke_engine::MediaStore for Scripted {
+    async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {
+        Ok(yuke_agent::blob_of(&bytes))
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::SessionHost for Scripted {
+    fn session_id(&self) -> SessionId {
+        session()
+    }
+    fn parent(&self) -> Option<SessionId> {
+        None
+    }
+    fn folder(&self) -> PathBuf {
+        self.folder.clone()
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    fn job_changed(&self, job: Job) {
+        if job.state != yuke_protocol::JobState::Ended {
+            self.publish_before_reply(SessionUpdate::Live(LiveUpdate::Job { job }));
+        }
+    }
+    async fn accept_input(&self, _: Input) {}
+    async fn ask(
+        &self,
+        source: &str,
+        request: yuke_protocol::InteractionRequest,
+        _: yuke_engine::CancellationToken,
+    ) -> InteractionResponse {
+        self.facts.lock().unwrap().as_ref().unwrap()(Fact::Update {
+            session_id: session(),
+            update: Box::new(SessionUpdate::Live(LiveUpdate::InteractionRequested {
+                interaction_id: InteractionId(4),
+                source: source.to_owned(),
+                request,
+            })),
+        });
+        self.publish_before_reply(SessionUpdate::Live(LiveUpdate::InteractionClosed {
+            interaction_id: InteractionId(4),
+        }));
+        InteractionResponse::Questions { answers: Vec::new() }
+    }
+    async fn request(
+        &self,
+        _: &str,
+        _: String,
+        _: serde_json::Value,
+    ) -> Result<serde_json::Value, crate::RequestFailure> {
+        Err(crate::RequestFailure::NoClient)
+    }
+    fn model(&self, _: &ModelReference) -> Result<yuke_engine::Model, SessionsError> {
+        Err("unused".into())
+    }
+    fn model_reference(&self) -> ModelReference {
+        settings().model
     }
 }
 
@@ -101,7 +183,8 @@ impl Sessions for Scripted {
         self.sinks.lock().unwrap().push(sink);
         Ok(Box::new(Hold(Arc::clone(&self.released))))
     }
-    fn watch_facts(&self, _: FactSink) -> Box<dyn Send> {
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send> {
+        *self.facts.lock().unwrap() = Some(sink);
         Box::new(())
     }
     async fn events_before(
@@ -132,18 +215,30 @@ impl Sessions for Scripted {
         false
     }
     fn cancel(&self, id: SessionId) {
-        if self.echo_updates.load(Ordering::SeqCst) {
-            self.send(0, state(SessionState::Running));
+        if self.follow_up_on_cancel.swap(false, Ordering::SeqCst) {
+            self.send(
+                0,
+                SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(9) }),
+            );
         } else {
             self.record(format!("cancel {id}"));
         }
     }
     async fn idle(&self, _: SessionId) -> Result<(), SessionsError> {
-        // More updates than one delivery takes, so idle must wait for the feed too.
+        // The reply must follow updates across several delivery batches.
+        let facts = self.facts.lock().unwrap();
         for sink in self.sinks.lock().unwrap().iter() {
             for _ in 0..600 {
-                sink(ViewEvent::Update(state(SessionState::Running)));
-                sink(ViewEvent::Update(state(SessionState::Idle)));
+                for session_state in [SessionState::Running, SessionState::Idle] {
+                    let update = state(session_state);
+                    if let Some(fact) = facts.as_ref() {
+                        fact(Fact::Update {
+                            session_id: session(),
+                            update: Box::new(update.clone()),
+                        });
+                    }
+                    sink(ViewEvent::Update(update));
+                }
             }
         }
         Ok(())
@@ -237,11 +332,13 @@ async fn started(name: &str, scripted: &Arc<Scripted>) -> Runtime {
         &[(
             "index.ts",
             "export function apply(ctx) {
+               globalThis.context = ctx;
                globalThis.sessions = ctx.get('sessions');
                globalThis.catalog = ctx.get('catalog');
                globalThis.plugins = ctx.get('plugins');
                globalThis.seen = [];
-             }",
+             }
+             export function session(s) { globalThis.session = s; }",
         )],
     );
     load_entry(&runtime, &folder.join("index.ts")).await.unwrap();
@@ -287,37 +384,76 @@ async fn idle_delivers_each_update_in_order_after_the_snapshot() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn idle_waits_for_queued_updates_but_not_for_later_updates() {
+async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
     let scripted = Arc::new(Scripted::default());
-    let runtime = started("idle_waits_for_queued_updates_but_not_for_later_updates", &scripted).await;
+    let runtime = started(
+        "idle_preserves_the_order_of_facts_and_view_events_across_batches",
+        &scripted,
+    )
+    .await;
+    let delivered = evaluate::<Vec<String>>(
+        &runtime,
+        &format!(
+            "const delivered = [];
+             context.on('session.update', data => delivered.push(`fact ${{data.update.state}}`));
+             const handle = await sessions.open('{}', {{ tail: 5, event(event) {{
+               if ('update' in event) delivered.push(`view ${{event.update.state}}`);
+             }} }});
+             await handle.idle();
+             return delivered;",
+            session()
+        ),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        delivered,
+        ["fact running", "view running", "fact idle", "view idle"].repeat(600)
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
+    let scripted = Arc::new(Scripted::default());
+    let runtime = started("idle_delivers_prior_events_when_a_listener_calls_the_host", &scripted).await;
     evaluate::<()>(
         &runtime,
         &format!(
-            "globalThis.updates = 0;
+            "globalThis.updates = [];
+             globalThis.delivering = false;
+             globalThis.recursed = false;
+             globalThis.called = false;
              globalThis.handle = await sessions.open('{}', {{ tail: 5, event(event) {{
-               if ('update' in event) {{ updates++; handle.cancel(); }}
+               recursed ||= delivering;
+               delivering = true;
+               if ('update' in event) {{
+                 updates.push(event.update.sessionUpdate === 'state' ? event.update.state : 'follow-up');
+                 if (!called) {{ called = true; handle.cancel(); }}
+               }}
+               delivering = false;
              }} }});",
             session()
         ),
     )
     .await
     .unwrap();
-    // Each delivery adds another update, so waiting for an empty queue would never end.
-    scripted.echo_updates.store(true, Ordering::SeqCst);
-    let completed = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        evaluate::<String>(
-            &runtime,
-            "await handle.idle(); return updates > 0 ? 'idle after updates' : 'idle without updates';",
-        ),
+    scripted.follow_up_on_cancel.store(true, Ordering::SeqCst);
+    let prior = evaluate::<Vec<String>>(
+        &runtime,
+        "await handle.idle(); return updates.filter(state => state !== 'follow-up');",
     )
-    .await;
-    scripted.echo_updates.store(false, Ordering::SeqCst);
+    .await
+    .unwrap();
+    crate::settled().await;
+    let all = evaluate::<Vec<String>>(&runtime, "return updates;").await.unwrap();
+    let recursed = evaluate::<bool>(&runtime, "return recursed;").await.unwrap();
 
-    assert_eq!(
-        completed.expect("idle waited for later updates").unwrap(),
-        "idle after updates"
-    );
+    assert_eq!(prior, ["running", "idle"].repeat(600));
+    let mut expected = ["running", "idle"].repeat(600);
+    expected.push("follow-up");
+    assert_eq!(all, expected);
+    assert!(!recursed);
 }
 
 #[tokio::test(flavor = "local")]
@@ -585,4 +721,127 @@ async fn a_failed_request_rejects_with_the_text_of_its_failure() {
         failures,
         format!(r#"["no session {}","no open question 4"]"#, session())
     );
+}
+
+#[tokio::test(flavor = "local")]
+async fn ask_delivers_host_events_before_its_reply() {
+    let scripted = Arc::new(Scripted::default());
+    let runtime = started("ask_delivers_host_events_before_its_reply", &scripted).await;
+    let session = runtime
+        .handle()
+        .open_session(Arc::clone(&scripted) as Arc<dyn crate::SessionHost>)
+        .await
+        .unwrap();
+    session.tools().await.unwrap();
+
+    let delivered = evaluate::<Vec<String>>(
+        &runtime,
+        "context.on('session.update', data => seen.push(data.update.sessionUpdate));
+         const answer = await session.ask({ questions: [{ id: 'choice', header: 'Choice', question: 'Which?', options: [] }] });
+         seen.push(`reply ${answer.length}`);
+         return seen;",
+    )
+    .await
+    .unwrap();
+
+    let mut expected = vec!["interaction_requested"];
+    expected.resize(1201, "state");
+    expected.extend(["interaction_closed", "reply 0"]);
+    assert_eq!(delivered, expected);
+}
+
+#[tokio::test(flavor = "local")]
+async fn start_job_delivers_host_events_before_its_reply() {
+    let name = "start_job_delivers_host_events_before_its_reply";
+    let scripted = Arc::new(Scripted {
+        folder: folder(name),
+        ..Scripted::default()
+    });
+    let runtime = started(name, &scripted).await;
+    runtime
+        .caller
+        .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
+            let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
+            let call = crate::native::call::object(
+                &ctx,
+                &registry.processes,
+                &host,
+                scripted.folder.clone(),
+                &yuke_engine::CancellationToken::new(),
+                &crate::native::delivery::Queue::of(&ctx),
+            )
+            .unwrap();
+            ctx.globals().set("call", call).unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let delivered = evaluate::<Vec<String>>(
+        &runtime,
+        "context.on('session.update', data => {
+           if (data.update.sessionUpdate !== 'job' || data.update.job.state === 'running') {
+             seen.push(data.update.sessionUpdate);
+           }
+         });
+         await call.startJob('true', undefined);
+         seen.push('reply');
+         return seen;",
+    )
+    .await
+    .unwrap();
+
+    let mut expected = vec!["state"; 1200];
+    expected.extend(["job", "reply"]);
+    assert_eq!(delivered, expected);
+}
+
+#[tokio::test(flavor = "local")]
+async fn stop_job_delivers_host_events_before_its_reply() {
+    let name = "stop_job_delivers_host_events_before_its_reply";
+    let scripted = Arc::new(Scripted {
+        folder: folder(name),
+        ..Scripted::default()
+    });
+    let runtime = started(name, &scripted).await;
+    runtime
+        .caller
+        .run(async move |ctx: rquickjs::Ctx<'_>, registry| {
+            let host = Arc::clone(&scripted) as Arc<dyn crate::SessionHost>;
+            let call = crate::native::call::object(
+                &ctx,
+                &registry.processes,
+                &host,
+                scripted.folder.clone(),
+                &yuke_engine::CancellationToken::new(),
+                &crate::native::delivery::Queue::of(&ctx),
+            )
+            .unwrap();
+            ctx.globals().set("call", call).unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+    let delivered = evaluate::<Vec<String>>(
+        &runtime,
+        "let recording = false;
+         context.on('session.update', data => {
+           if (recording && (data.update.sessionUpdate !== 'job' || data.update.job.state === 'stopped')) {
+             seen.push(data.update.sessionUpdate);
+           }
+         });
+         // The events of the start arrive before its reply, so the record holds only the events of the stop.
+         const started = await call.startJob('exec sleep 30', undefined);
+         recording = true;
+         const answer = await call.stopJob(started.id);
+         seen.push(`reply ${answer}`);
+         return seen;",
+    )
+    .await
+    .unwrap();
+
+    let mut expected = vec!["state"; 1200];
+    expected.extend(["job", "reply stopped"]);
+    assert_eq!(delivered, expected);
 }
