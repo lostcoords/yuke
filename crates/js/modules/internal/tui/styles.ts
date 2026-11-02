@@ -1,6 +1,6 @@
 /**
- * The style groups of the terminal interface. Each `set` adds a layer, and the newest layer wins per field. A color
- * can name the base palette, which follows the color depth and the background of the terminal.
+ * The style groups of the terminal interface. Each `set` adds a layer of groups, and the newest layer wins per field.
+ * A color can name the base palette, which follows the color depth and the background of the terminal.
  */
 import type { TermColor, TermStyle } from "yuke:internal/native";
 import type { Color, PaletteColor, Style, StylePatch } from "yuke:tui";
@@ -80,16 +80,11 @@ const COLORS = ["fg", "bg", "underlineColor"] as const;
 const CELL_FIELD = { fg: "fg", bg: "bg", underlineColor: "ul" } as const;
 const FLAGS = ["bold", "dim", "italic", "reverse", "underline"] as const;
 
-interface Layer {
-  readonly name: string;
-  readonly patch: StylePatch;
-}
-
 export class Styles {
   readonly #truecolor: () => boolean;
   readonly #background: () => "dark" | "light";
   readonly #changed: () => void;
-  readonly #layers: Layer[] = [];
+  readonly #layers: ReadonlyMap<string, StylePatch>[] = [];
   readonly #cache = new Map<string, TermStyle>();
   /** The palette of the cached styles. */
   #palette: Palette | undefined;
@@ -104,10 +99,14 @@ export class Styles {
     this.#changed = changed;
   }
 
-  /** Change the group `name` by `patch`, and return the disposer of the change. A bad field throws a `TypeError`. */
-  set(name: string, patch: StylePatch): () => void {
-    if (typeof name !== "string" || name === "") throw new TypeError("a style group has a name that is not empty");
-    const layer: Layer = { name, patch: checked(patch, true) };
+  /** Change `groups`, and return the disposer of the change. A bad name or field throws and changes nothing. */
+  set(groups: Readonly<Record<string, StylePatch>>): () => void {
+    if (typeof groups !== "object" || groups === null) throw new TypeError("the style groups are an object");
+    const layer = new Map<string, StylePatch>();
+    for (const [name, patch] of Object.entries(groups)) {
+      if (name === "") throw new TypeError("a style group has a name that is not empty");
+      layer.set(name, checked(patch, true));
+    }
     this.#layers.push(layer);
     this.#cache.clear();
     this.#changed();
@@ -142,8 +141,8 @@ export class Styles {
     if (seen.has(name)) return {};
     seen.add(name);
     const fields: Record<string, unknown> = {};
-    for (const { patch } of this.#layers.filter((layer) => layer.name === name)) {
-      for (const [field, value] of Object.entries(patch)) {
+    for (const layer of this.#layers) {
+      for (const [field, value] of Object.entries(layer.get(name) ?? {})) {
         if (value === null) delete fields[field];
         else if (value !== undefined) fields[field] = value;
       }

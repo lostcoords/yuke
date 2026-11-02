@@ -73,7 +73,10 @@ interface Layer {
 }
 
 const NO_MOUNT: Mount = Object.freeze({ close(): void {}, signal: AbortSignal.abort() });
-const ERROR_STYLE = Object.freeze({ fg: "danger" as const });
+const ERROR = "view.error";
+
+/** The default look of the style groups. */
+export const STYLES = { [ERROR]: { fg: "danger" } } as const;
 const SHAPES: readonly unknown[] = ["block", "underline", "bar"] satisfies CursorShape[];
 
 export class Scene {
@@ -335,7 +338,7 @@ export class Scene {
     const shown = this.#failed.get(target.view);
     if (shown !== undefined) {
       canvas.fill(0, 0, canvas.width, canvas.height);
-      canvas.text(0, 0, `${target.owner}: ${shown.split("\n")[0] ?? ""}`, ERROR_STYLE);
+      canvas.text(0, 0, `${target.owner}: ${shown.split("\n")[0] ?? ""}`, ERROR);
     }
     if (shown === undefined) for (const child of target.children) this.#drawTarget(child, focused);
   }

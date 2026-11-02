@@ -161,3 +161,32 @@ test("a new query selects its best result, and new items keep the selection", ()
   list.setItems([{ name: "save" }, { name: "send" }, { name: "search" }, { name: "sessions" }, { name: "set" }]);
   equal([moved, typed, before, list.selected?.name], ["search", "send", "search", "search"]);
 });
+
+test("the rows of a picker have a default look that a plugin changes", () => {
+  const view = picker(["alpha", "beta"], [], { detail: () => "x" });
+  using frame = createFrame({ width: 12, height: 3 }, () => view);
+  frame.key("a");
+  const looks = () => {
+    const cells = frame.draw().cells;
+    return [cells[1]?.[0], cells[1]?.[1], cells[1]?.[7], cells[1]?.[11], cells[2]?.[6]].map((cell) => cell?.style);
+  };
+  const before = looks();
+  frame.surface("theme").tui.styles.set({
+    "picker.match": { fg: 1, bold: null },
+    "picker.detail": { fg: 3, dim: null },
+    "picker.selected": { bg: 2, reverse: null },
+  });
+  equal(
+    [before, looks()],
+    [
+      [
+        { fg: "#a8cfa0", bold: true, reverse: true },
+        { reverse: true },
+        { dim: true, reverse: true },
+        { reverse: true },
+        { dim: true },
+      ],
+      [{ fg: 1, bg: 2 }, { bg: 2 }, { fg: 3, bg: 2 }, { bg: 2 }, { fg: 3 }],
+    ],
+  );
+});

@@ -594,7 +594,7 @@ declare module "yuke:tui" {
   /** A styled piece of a row. A segment with `copy: false`, such as alignment padding, stays out of a copy. */
   export interface Segment {
     readonly text: string;
-    readonly style?: string | Style | undefined;
+    readonly style?: CanvasStyle | undefined;
     /** The source of the segment. A layout segment, such as the indent of a wrapped list item, has none. */
     readonly source?: SourceMapping | undefined;
     /** The target of the link that the segment belongs to. */
@@ -933,7 +933,8 @@ declare module "yuke:tui" {
       readonly keysOf: (name: string) => readonly string[];
     };
     readonly styles: {
-      readonly set: (name: string, patch: StylePatch) => () => void;
+      /** Change style groups, and return the disposer of the change. A later call wins per field. */
+      readonly set: (groups: Readonly<Record<string, StylePatch>>) => () => void;
     };
     /**
      * The notice history of the terminal interface: the last 100 notices with their repeat counts, also the notices from

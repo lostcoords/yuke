@@ -356,3 +356,13 @@ test("the same document or selection gives no change, and compare checks its off
   throws(() => view.compare(at("i", "s", 9), at("i", "s", 0)));
   void frame;
 });
+
+test("the selection has a default look that a plugin changes", () => {
+  const view = new TextView({ document: document("d", item("i", ["s", "hello"])) });
+  using frame = createFrame({ width: 8, height: 1 }, () => view);
+  view.selection = { anchor: at("i", "s", 0), head: at("i", "s", 2) };
+  const before = frame.draw().cells[0]?.[1]?.style;
+  frame.surface("theme").tui.styles.set({ "textView.selection": { fg: 1, reverse: null } });
+  const cells = frame.draw().cells[0];
+  equal([before, cells?.[1]?.style, cells?.[2]?.style], [{ reverse: true }, { fg: 1 }, {}]);
+});

@@ -712,7 +712,7 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
   once();
   tui.commands.add({ name: "open", run() {} });
   tui.keys.bind("ctrl+n", "open");
-  tui.styles.set("notes.title", { bold: true });
+  tui.styles.set({ "notes.title": { bold: true } });
   tui.notices.on((notice) => heard.push(notice));
   tui.views.register("note", () => ({ draw() {} }));
   const pane = tui.panes.split(() => ({

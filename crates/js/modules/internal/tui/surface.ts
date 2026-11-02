@@ -215,7 +215,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       keysOf: live((name: string): readonly string[] => core.keymap.keysOf(lookup(name))),
     }),
     styles: Object.freeze({
-      set: live((name: string, patch: StylePatch): (() => void) => scope.own(core.styles.set(name, patch))),
+      set: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.set(groups))),
     }),
     status: Object.freeze({
       set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),

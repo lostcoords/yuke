@@ -8,8 +8,6 @@ import { type Canvas, type CommandItem, fuzzyMatch, measure, strokeOf, type Text
 /** The most rows of the list. */
 const ROWS = 6;
 
-const SELECTED = Object.freeze({ reverse: true });
-
 /** A draft of one slash word, such as `/mod`. */
 const SLASH_WORD = /^\/\S*$/;
 
@@ -50,7 +48,7 @@ export class ChatCommands {
       const first = Math.max(0, selected - canvas.height + 1);
       const width = Math.max(0, ...matches.map((item) => measure(label(item.name))));
       for (const [at, item] of matches.slice(first, first + canvas.height).entries()) {
-        const style = first + at === selected ? SELECTED : undefined;
+        const style = first + at === selected ? STYLE.commandSelected : undefined;
         const name = label(item.name).padEnd(width);
         const text = `${name}  ${item.description ?? ""}`;
         const cut = clipped(text, canvas.width - 1);

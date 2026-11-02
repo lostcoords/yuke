@@ -155,7 +155,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     },
   });
   if (tui === undefined) return undefined;
-  for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style);
+  tui.styles.set(chatStyles);
   const chat: Chat = {
     ctx,
     tui,

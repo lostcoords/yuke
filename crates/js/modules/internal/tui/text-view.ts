@@ -35,7 +35,10 @@ import type {
   TextViewOptions,
 } from "yuke:tui";
 
-const SELECTION: CanvasStyle = [{ reverse: true }, "textView.selection"];
+const SELECTION = "textView.selection";
+
+/** The default look of the style groups. */
+export const STYLES = { [SELECTION]: { reverse: true } } as const;
 
 /** A row of a text view: the row of a section, with the key of that section. */
 interface ViewRow extends TextRow {

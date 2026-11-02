@@ -35,8 +35,6 @@ import {
   type View,
 } from "yuke:tui";
 
-const RULE = Object.freeze({ dim: true });
-
 const PICKER_ROWS = 12;
 
 /** The item at the top of a scrolled transcript, and its row there. */
@@ -457,7 +455,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         canvas.text(0, listRow - 1, row.spinner, STYLE.hint);
         canvas.text(2, listRow - 1, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
       }
-      canvas.text(0, ruleRow, "─".repeat(canvas.width), RULE);
+      canvas.text(0, ruleRow, "─".repeat(canvas.width), STYLE.rule);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.
       const historyError = chatSession.historyError;
       if (historyError !== undefined) {

@@ -433,3 +433,38 @@ test("a drag above the text selects to its start", () => {
   frame.mouse({ type: "mouse", column: 5, row: 0, button: "left", action: "drag", modifiers });
   equal(editor.selection, { anchor: 4, head: 0 });
 });
+
+test("the selection, a label, and the placeholder have a default look that a plugin changes", () => {
+  const editor = new TextEditor({
+    state: {
+      text: "hi there",
+      selection: { anchor: 0, head: 2 },
+      spans: [{ from: 3, to: 8, kind: "paste", label: "[p]" }],
+    },
+  });
+  const empty = new TextEditor({ placeholder: "type" });
+  using frame = createFrame({ width: 12, height: 3 }, () => root(editor, 10, 1));
+  const tui = frame.surface("theme").tui;
+  const looks = () => {
+    tui.setRoot(() => root(editor, 10, 1));
+    const cells = frame.draw().cells[1];
+    tui.setRoot(() => ({
+      draw() {},
+      layout: () => [{ view: empty, rect: { column: 1, row: 1, width: 10, height: 1 } }],
+    }));
+    return [cells?.[1]?.style, cells?.[4]?.style, frame.draw().cells[1]?.[1]?.style];
+  };
+  const before = looks();
+  tui.styles.set({
+    "editor.selection": { fg: 1, reverse: null },
+    "editor.label": { fg: 2 },
+    "editor.placeholder": { fg: 3, dim: null },
+  });
+  equal(
+    [before, looks()],
+    [
+      [{ reverse: true }, { fg: "#a8cfa0" }, { dim: true }],
+      [{ fg: 1 }, { fg: 2 }, { fg: 3 }],
+    ],
+  );
+});

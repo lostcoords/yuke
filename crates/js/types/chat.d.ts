@@ -205,7 +205,7 @@ declare module "yuke:chat" {
 
   /**
    * The default look of the style groups that `ChatDocument` draws with, such as `chat.user` and `chat.title`. A chat
-   * without the bundled chat sets them: `for (const [name, style] of Object.entries(chatStyles)) tui.styles.set(name, style)`.
+   * without the bundled chat sets them: `tui.styles.set(chatStyles)`.
    */
   export const chatStyles: Readonly<Record<string, StylePatch>>;
 

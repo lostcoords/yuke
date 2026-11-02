@@ -1,6 +1,6 @@
 // `ChatCommands` of `yuke:chat` above a bare editor: the rows, the scroll, the selection, the labels, and the run.
 
-import { ChatCommands, type ChatCommandsOptions } from "yuke:chat";
+import { ChatCommands, type ChatCommandsOptions, chatStyles } from "yuke:chat";
 import { createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
 import { rows } from "./chat.ts";
@@ -60,4 +60,16 @@ test("a core command shows without its prefix, and a run that the registry refus
   const shown = rows(frame)[0];
   frame.key("enter");
   equal([shown, ran, list.editor.state.text], [" /alpha  First", ["core:alpha"], "/al"]);
+});
+
+test("the selected row has a default look that a plugin changes", () => {
+  using frame = createFrame({ width: 30, height: 4 });
+  mountList(frame, 3, { list: () => [{ name: "alpha", enabled: true }], run: () => true });
+  // The bundled chat sets these groups for a chat.
+  const tui = frame.surface("chat").tui;
+  tui.styles.set(chatStyles);
+  frame.key("/ a");
+  const before = frame.draw().cells[0]?.[1]?.style;
+  tui.styles.set({ "chat.commands.selected": { fg: 1, reverse: null } });
+  equal([before, frame.draw().cells[0]?.[1]?.style], [{ reverse: true }, { fg: 1 }]);
 });

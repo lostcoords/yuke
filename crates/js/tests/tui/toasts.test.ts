@@ -131,3 +131,41 @@ test("the warnings and errors before the load show, and the history lists each n
     ],
   );
 });
+
+test("a toast has a default look per level that a plugin changes", () => {
+  using frame = createFrame({ width: 50, height: 12 });
+  loadToasts(frame);
+  frame.notice(notice("error", "lint", "failed"));
+  frame.notice(notice("warn", "lint", "careful"));
+  const looks = () => {
+    const cells = frame.draw().cells;
+    return [cells[1]?.[25], cells[1]?.[27], cells[2]?.[27], cells[1]?.[45], cells[4]?.[27]].map((cell) => cell?.style);
+  };
+  const before = looks();
+  frame.surface("theme").tui.styles.set({
+    "toast.body": { fg: 1, bg: 2 },
+    "toast.error": { fg: 3 },
+    "toast.warn": { fg: 4 },
+    "toast.title": { bold: null, italic: true },
+  });
+  const surface = "#343a46";
+  equal(
+    [before, looks()],
+    [
+      [
+        { fg: "#ff7b72", bg: surface },
+        { fg: "#ff7b72", bg: surface, bold: true },
+        { fg: "#e6edf3", bg: surface },
+        { fg: "#e6edf3", bg: surface },
+        { fg: "#e3b341", bg: surface, bold: true },
+      ],
+      [
+        { fg: 3, bg: 2 },
+        { fg: 3, bg: 2, italic: true },
+        { fg: 1, bg: 2 },
+        { fg: 1, bg: 2 },
+        { fg: 4, bg: 2, italic: true },
+      ],
+    ],
+  );
+});

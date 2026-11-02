@@ -110,3 +110,17 @@ test("each add is its own source, so the same source shows twice and a disposer 
   first();
   equal([both, count()], [2, 1]);
 });
+
+test("the rule above the composer has a default look that a plugin changes", async () => {
+  using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w" });
+  await loadChat(frame, fakeSessions());
+  frame.start();
+  await settle();
+  const look = () => {
+    const cells = frame.draw().cells;
+    return cells[rows(frame).findIndex((line) => line.startsWith("──"))]?.[0]?.style;
+  };
+  const before = look();
+  frame.surface("theme").tui.styles.set({ "chat.rule": { fg: 1, dim: null } });
+  equal([before, look()], [{ dim: true }, { fg: 1 }]);
+});

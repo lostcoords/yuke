@@ -5,7 +5,7 @@
 
 import { bottom } from "yuke:internal/tui/layout";
 import type { PluginContext } from "yuke:plugins";
-import { fit, type Notice, type PaletteColor, Picker, type Size, type Style, type View, wrap } from "yuke:tui";
+import { fit, type Notice, Picker, type Size, type View, wrap } from "yuke:tui";
 
 /** The screen shows at most this many toasts. A new one drops the oldest info toast, else the oldest toast. */
 const MOST = 4;
@@ -18,12 +18,17 @@ const BODY_ROWS = 3;
 /** The history picker takes at most this many rows. */
 const HISTORY_ROWS = 16;
 
-const COLOR: Readonly<Record<Notice["level"], PaletteColor>> = {
-  debug: "surfaceFg",
-  info: "accent",
-  warn: "warn",
-  error: "danger",
-};
+const BODY = "toast.body";
+const TITLE = "toast.title";
+
+/** The look of a toast. Each level that shows a toast has its own group, for the mark and the title. */
+const STYLES = {
+  [BODY]: { fg: "surfaceFg", bg: "surface" },
+  [TITLE]: { bold: true },
+  "toast.info": { link: BODY, fg: "accent" },
+  "toast.warn": { link: BODY, fg: "warn" },
+  "toast.error": { link: BODY, fg: "danger" },
+} as const;
 
 /** A notice on the screen. `count` counts its equal notices, and `cancel` stops its timer. */
 interface Toast {
@@ -35,6 +40,7 @@ interface Toast {
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
+  tui.styles.set(STYLES);
   const toasts: Toast[] = [];
 
   const remove = (toast: Toast | undefined): void => {
@@ -97,12 +103,11 @@ export function apply(ctx: PluginContext): undefined {
     draw: (canvas) => {
       let row = 0;
       for (const toast of toasts) {
-        const color = COLOR[toast.notice.level];
+        const level = `toast.${toast.notice.level}`;
         rowsOf(toast, canvas.width).forEach((text, at) => {
-          canvas.fill(0, row, canvas.width, 1, { bg: "surface" });
-          canvas.text(0, row, "▌", { fg: color, bg: "surface" });
-          const style: Style = at === 0 ? { fg: color, bg: "surface", bold: true } : { fg: "surfaceFg", bg: "surface" };
-          canvas.text(2, row, text, style);
+          canvas.fill(0, row, canvas.width, 1, BODY);
+          canvas.text(0, row, "▌", level);
+          canvas.text(2, row, text, at === 0 ? [level, TITLE] : BODY);
           row += 1;
         });
         row += 1;

@@ -57,7 +57,10 @@ export interface PaneHost {
   readonly requestFrame: () => void;
 }
 
-const DIVIDER = Object.freeze({ dim: true });
+const DIVIDER = "panes.divider";
+
+/** The default look of the style groups. */
+export const STYLES = { [DIVIDER]: { dim: true } } as const;
 
 export class PaneTree {
   readonly #host: PaneHost;

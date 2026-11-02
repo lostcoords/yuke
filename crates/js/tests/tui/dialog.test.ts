@@ -128,3 +128,24 @@ test("a picker body gets the focus of its search field, so typed text filters it
 
   equal([picker.query, picker.selected?.name, shows(frame, "clock")], ["tool", "tools", false]);
 });
+
+test("the title and the keys of a dialog have a default look that a plugin changes", () => {
+  using frame = createFrame({ width: 30, height: 6 });
+  const tui = frame.surface("test").tui;
+  tui.dialog({ title: () => "Plugins", body: body("the body", "x"), rows: 4 });
+  const looks = () => {
+    const cells = frame.draw().cells;
+    const title = rows(frame).findIndex((line) => line.includes("Plugins"));
+    const keys = rows(frame).findIndex((line) => line.includes("esc: close"));
+    return [cells[title]?.[1]?.style, cells[keys]?.[1]?.style];
+  };
+  const before = looks();
+  tui.styles.set({ "dialog.title": { fg: 1, dim: null }, "dialog.keys": { fg: 2, dim: null } });
+  equal(
+    [before, looks()],
+    [
+      [{ dim: true }, { dim: true }],
+      [{ fg: 1 }, { fg: 2 }],
+    ],
+  );
+});

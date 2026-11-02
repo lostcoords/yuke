@@ -19,13 +19,20 @@ import type {
   Placement,
   Segment,
   Size,
-  Style,
   TextRow,
   View,
 } from "yuke:tui";
 
-const MATCH: Style = { fg: "accent", bold: true };
-const DETAIL: Style = { dim: true };
+const MATCH = "picker.match";
+const DETAIL = "picker.detail";
+const SELECTED = "picker.selected";
+
+/** The default look of the style groups. */
+export const STYLES = {
+  [MATCH]: { fg: "accent", bold: true },
+  [DETAIL]: { dim: true },
+  [SELECTED]: { reverse: true },
+} as const;
 
 /** A shown match, its key, and whether it is selected. A new selection gives a new entry, so its rows render again. */
 interface Entry<T> {
@@ -205,10 +212,10 @@ export class Picker<T extends object> {
     const label = this.#options.label(entry.match.item);
     const ranges = entry.match.ranges ?? [];
     const segments: Segment[] = [];
-    const reverse: Style = entry.selected ? { reverse: true } : {};
+    const selected = entry.selected ? [SELECTED] : [];
     const add = (from: number, to: number, matched: boolean): void => {
       if (to <= from) return;
-      segments.push({ text: label.slice(from, to), style: { ...(matched ? MATCH : {}), ...reverse } });
+      segments.push({ text: label.slice(from, to), style: matched ? [MATCH, ...selected] : selected });
     };
     let at = 0;
     for (const range of ranges) {
@@ -218,9 +225,9 @@ export class Picker<T extends object> {
     }
     add(at, label.length, false);
     const detail = this.#options.detail?.(entry.match.item) ?? "";
-    if (detail !== "") segments.push({ text: `  ${detail}`, style: { ...DETAIL, ...reverse } });
+    if (detail !== "") segments.push({ text: `  ${detail}`, style: [DETAIL, ...selected] });
     const cells = segments.reduce((sum, segment) => sum + measure(segment.text), 0);
-    if (entry.selected && cells < width) segments.push({ text: " ".repeat(width - cells), style: { reverse: true } });
+    if (entry.selected && cells < width) segments.push({ text: " ".repeat(width - cells), style: SELECTED });
     return { segments, join: "\n" };
   }
 }

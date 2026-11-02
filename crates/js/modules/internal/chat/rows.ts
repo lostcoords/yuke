@@ -14,13 +14,15 @@ export const STYLE = {
   thought: "chat.thought",
   error: "chat.error",
   hint: "chat.hint",
+  rule: "chat.rule",
+  commandSelected: "chat.commands.selected",
   diffHeader: "chat.diff.header",
   diffHunk: "chat.diff.hunk",
   diffAdd: "chat.diff.add",
   diffDelete: "chat.diff.delete",
 } as const;
 
-/** The default look of each style group. A later `tui.styles.set` of a theme changes it. */
+/** The default look of each style group. A later `tui.styles.set` changes it. */
 export const STYLES = {
   [STYLE.user]: { fg: "surfaceFg", bg: "surface" },
   [STYLE.meta]: { dim: true },
@@ -29,6 +31,8 @@ export const STYLES = {
   [STYLE.thought]: { dim: true, italic: true },
   [STYLE.error]: { fg: "danger" },
   [STYLE.hint]: { fg: "accent" },
+  [STYLE.rule]: { dim: true },
+  [STYLE.commandSelected]: { reverse: true },
   [STYLE.diffHeader]: { bold: true },
   [STYLE.diffHunk]: { fg: "accent", dim: true },
   [STYLE.diffAdd]: { bg: "diffAddBg" },

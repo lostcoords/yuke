@@ -70,7 +70,7 @@ test("a resize changes the frame size and a dispose closes each surface", () => 
 test("a list of styles merges per field and a later style wins", () => {
   using frame = createFrame({ width: 4, height: 1 });
   const surface = frame.surface("demo");
-  surface.tui.styles.set("demo:mark", { fg: 1, bold: true });
+  surface.tui.styles.set({ "demo:mark": { fg: 1, bold: true } });
   surface.tui.setRoot(() => ({
     draw: (canvas) => {
       canvas.text(0, 0, "a", ["demo:mark", { bold: false, bg: 2 }]);
@@ -94,5 +94,40 @@ test("a dispose closes the root, so the mounts of its widgets end", () => {
   equal(
     signals.map((signal) => signal.aborted),
     [true],
+  );
+});
+
+test("the error of a view has a default look that a plugin changes", () => {
+  using frame = createFrame({ width: 10, height: 3 }, () => ({
+    draw: () => {
+      throw new Error("bad");
+    },
+  }));
+  const before = frame.draw().cells[0]?.[0]?.style;
+  frame.surface("theme").tui.styles.set({ "view.error": { fg: 2 } });
+  equal([before, frame.draw().cells[0]?.[0]?.style], [{ fg: "#ff7b72" }, { fg: 2 }]);
+});
+
+test("the pane dividers have a default look that a plugin changes", () => {
+  using frame = createFrame({ width: 10, height: 4 });
+  const tui = frame.surface("theme").tui;
+  tui.panes.split(() => ({ draw() {} }));
+  tui.panes.split(() => ({ draw() {} }), { direction: "column" });
+  const looks = () =>
+    ["│", "─"].map(
+      (line) =>
+        frame
+          .draw()
+          .cells.flat()
+          .find((cell) => cell.text === line)?.style,
+    );
+  const before = looks();
+  tui.styles.set({ "panes.divider": { fg: 1, dim: null } });
+  equal(
+    [before, looks()],
+    [
+      [{ dim: true }, { dim: true }],
+      [{ fg: 1 }, { fg: 1 }],
+    ],
   );
 });

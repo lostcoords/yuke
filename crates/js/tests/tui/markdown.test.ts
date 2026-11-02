@@ -535,7 +535,7 @@ test("a Markdown text draws its look without a plugin", () => {
 
 test("a plugin changes the look of a Markdown text, and its dispose restores the look", () => {
   using frame = createFrame({ width: 40, height: 1 });
-  const undo = frame.surface("theme").tui.styles.set("markdown.strong", { bold: null, fg: 1 });
+  const undo = frame.surface("theme").tui.styles.set({ "markdown.strong": { bold: null, fg: 1 } });
   equal(looks(frame, "**b**"), { b: { fg: 1 } });
   undo();
   equal(looks(frame, "**b**"), { b: { bold: true } });

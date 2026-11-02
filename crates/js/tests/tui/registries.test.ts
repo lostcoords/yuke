@@ -378,8 +378,8 @@ test("the newest style layer wins per field and null deletes", () => {
     () => "dark",
     () => {},
   );
-  styles.set("title", { fg: 3, bold: true });
-  const newer = styles.set("title", { fg: "#102030", bold: null, italic: true });
+  styles.set({ title: { fg: 3, bold: true } });
+  const newer = styles.set({ title: { fg: "#102030", bold: null, italic: true } });
   equal(styles.resolve("title"), { fg: "#102030", italic: true });
   newer();
   newer();
@@ -393,8 +393,8 @@ test("a link fills the missing fields and a cycle stops", () => {
     () => "dark",
     () => {},
   );
-  styles.set("base", { fg: 1, bg: 2, underline: true });
-  styles.set("title", { link: "base", fg: 5 });
+  styles.set({ base: { fg: 1, bg: 2, underline: true } });
+  styles.set({ title: { link: "base", fg: 5 } });
   equal(styles.resolve("title"), { fg: 5, bg: 2, underline: true });
   equal(styles.resolve({ link: "title", bg: "reset" }), { fg: 5, bg: "reset", underline: true });
   // Each order of the first resolves gives the same result in a cycle. The fields of a link come first.
@@ -407,8 +407,8 @@ test("a link fills the missing fields and a cycle stops", () => {
       () => "dark",
       () => {},
     );
-    own.set("a", { link: "b", bold: true });
-    own.set("b", { link: "a", dim: true });
+    own.set({ a: { link: "b", bold: true } });
+    own.set({ b: { link: "a", dim: true } });
     for (const name of order) own.resolve(name);
     equal(Object.entries(own.resolve("a")), [
       ["dim", true],
@@ -429,7 +429,7 @@ test("a palette color follows the depth and the background", () => {
     () => background,
     () => {},
   );
-  styles.set("accent", { fg: "accent", bg: "reset" });
+  styles.set({ accent: { fg: "accent", bg: "reset" } });
   equal(styles.resolve("accent").fg, "#A8CFA0");
   background = "light";
   equal(styles.resolve("accent").fg, "#2D6A4F");
@@ -456,11 +456,11 @@ test("a bad style field throws", () => {
     { color: 1 },
     { link: "" },
   ];
-  for (const patch of bad) assert(throws(() => styles.set("a", patch)) instanceof TypeError, JSON.stringify(patch));
-  assert(throws(() => styles.set("", {})) instanceof TypeError);
+  for (const patch of bad) assert(throws(() => styles.set({ a: patch })) instanceof TypeError, JSON.stringify(patch));
+  assert(throws(() => styles.set({ "": {} })) instanceof TypeError);
   // @ts-expect-error: a style to resolve has no `null`.
   assert(throws(() => styles.resolve({ fg: null })) instanceof TypeError);
-  styles.set("a", { fg: null, bg: "surface", underlineColor: "#ABCDEF" });
+  styles.set({ a: { fg: null, bg: "surface", underlineColor: "#ABCDEF" } });
 });
 
 test("notices keep the last hundred and count a repeat", () => {
@@ -512,7 +512,7 @@ test("each registration and its disposer ask for a frame", () => {
     ask,
   );
   const unbind = keymap.bind("x", "test:x");
-  const unset = styles.set("title", { bold: true });
+  const unset = styles.set({ title: { bold: true } });
   equal(asked, 2);
   unbind();
   unset();
@@ -520,4 +520,24 @@ test("each registration and its disposer ask for a frame", () => {
   unbind();
   unset();
   equal(asked, 4);
+});
+
+test("one set changes many groups with one frame and one disposer, and a bad group changes nothing", () => {
+  let asked = 0;
+  const styles = new Styles(
+    () => true,
+    () => "dark",
+    () => {
+      asked += 1;
+    },
+  );
+  const undo = styles.set({ a: { fg: 1 }, b: { fg: 2 } });
+  const both = [styles.resolve("a"), styles.resolve("b")];
+  const framesOfSet = asked;
+  undo();
+  equal([both, framesOfSet, styles.resolve("a"), styles.resolve("b"), asked], [[{ fg: 1 }, { fg: 2 }], 1, {}, {}, 2]);
+
+  // @ts-expect-error: `color` is no style field.
+  assert(throws(() => styles.set({ c: { fg: 3 }, d: { color: 1 } })) instanceof TypeError);
+  equal([styles.resolve("c"), asked], [{}, 2]);
 });

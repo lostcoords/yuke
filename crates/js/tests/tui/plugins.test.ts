@@ -323,3 +323,41 @@ test("the selection stays visible in a dashboard of one body row", async () => {
   equal(shows(shown, "https://h/weather"), true);
   equal(shows(moved, "clock"), true);
 });
+
+test("the dashboard has a default look that a plugin changes", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  load(frame, manager([]).plugins);
+  await run(frame, "plugins:open");
+  const shown = await press(frame, "j", "j", "enter");
+  const title = shown.findIndex((line) => line.includes("Installed (2)"));
+  const selected = shown.findIndex((line) => line.includes("● clock"));
+  const column = shown[title]?.indexOf("Installed") ?? 0;
+  const mark = shown[selected]?.indexOf("●") ?? 0;
+  const looks = () => {
+    const cells = frame.draw().cells;
+    return [cells[title]?.[column]?.style, cells[selected]?.[mark]?.style, cells[selected + 1]?.[mark + 4]?.style];
+  };
+  const before = looks();
+  frame.surface("theme").tui.styles.set({
+    "plugins.title": { fg: 1, bold: null },
+    "plugins.detail": { fg: 2, dim: null },
+    "plugins.selected": { fg: 3, reverse: null },
+  });
+  equal(
+    [before, looks()],
+    [
+      [{ bold: true }, { reverse: true }, { dim: true }],
+      [{ fg: 1 }, { fg: 3 }, { fg: 2 }],
+    ],
+  );
+});
+
+test("the line of an empty dashboard uses the look of the details", async () => {
+  using frame = createFrame({ width: 100, height: 20 });
+  load(frame, { ...manager([]).plugins, list: async () => ({ plugins: [] }) });
+  frame.surface("theme").tui.styles.set({ "plugins.detail": { fg: 2, dim: null } });
+  const shown = await run(frame, "plugins:open");
+  const row = shown.findIndex((line) => line.includes("config.json has no plugins"));
+  const column = shown[row]?.indexOf("config.json") ?? 0;
+  equal(frame.draw().cells[row]?.[column]?.style, { fg: 2 });
+});

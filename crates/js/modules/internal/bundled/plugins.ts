@@ -19,13 +19,21 @@ import {
   type View,
 } from "yuke:tui";
 
-const DIM = Object.freeze({ dim: true });
-const BOLD = Object.freeze({ bold: true });
-const SELECTED = Object.freeze({ reverse: true });
+const TITLE = "plugins.title";
+const DETAIL = "plugins.detail";
+const SELECTED = "plugins.selected";
+
+/** The look of the list of plugins. */
+const STYLES = {
+  [TITLE]: { bold: true },
+  [DETAIL]: { dim: true },
+  [SELECTED]: { reverse: true },
+} as const;
 
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
+  tui.styles.set(STYLES);
   const plugins = ctx.get("plugins");
   const report = (what: string) => (error: unknown) => ctx.notify("error", `${what}: ${String(error)}`);
   tui.commands.add({
@@ -143,16 +151,16 @@ class PluginList implements View {
   draw(canvas: Canvas): void {
     const rows = this.#rows();
     const selected = this.selected;
-    if (rows.length === 0) canvas.text(1, 0, "config.json has no plugins: a adds one", DIM);
+    if (rows.length === 0) canvas.text(1, 0, "config.json has no plugins: a adds one", DETAIL);
     const at = rows.findIndex((row) => row.kind === "plugin" && row.plugin === selected);
     const below = selected !== undefined && this.#open.has(selected.item) ? 1 : 0;
     // The view starts at the top, and it moves down only as far as the selection and its details need.
     const top = Math.max(0, Math.min(at, at + below - canvas.height + 1, rows.length - canvas.height));
     for (const [index, row] of rows.slice(top, top + canvas.height).entries()) {
       if (row.kind === "title") {
-        canvas.text(1, index, row.text, BOLD);
+        canvas.text(1, index, row.text, TITLE);
       } else if (row.kind === "details") {
-        canvas.text(6, index, detailsOf(row.plugin), DIM);
+        canvas.text(6, index, detailsOf(row.plugin), DETAIL);
       } else {
         const plugin = row.plugin;
         const text = `${markOf(plugin)} ${(plugin.name ?? "?").padEnd(12)} ${plugin.item}  ${stateOf(plugin)}`;

@@ -4,7 +4,11 @@
 import { parseKeys, strokeOf } from "yuke:internal/tui/keys";
 import type { DialogKey, DialogOptions, Size, View } from "yuke:tui";
 
-const DIM = Object.freeze({ dim: true });
+const TITLE = "dialog.title";
+const KEYS = "dialog.keys";
+
+/** The default look of the style groups. */
+export const STYLES = { [TITLE]: { dim: true }, [KEYS]: { dim: true } } as const;
 
 /** The rows that one press of each scroll key moves, as a part of the body height for a page. */
 const STEPS: Readonly<Record<string, (page: number) => number>> = {
@@ -48,9 +52,9 @@ export function dialogView(options: DialogOptions): View {
       return [{ view: body, rect: { column: 0, row: head, width: size.width, height: bodyHeight } }];
     },
     draw: (canvas) => {
-      if (options.title !== undefined) canvas.text(1, 0, options.title(), DIM);
+      if (options.title !== undefined) canvas.text(1, 0, options.title(), TITLE);
       const hints = [...active().map((entry) => `${entry.key.key}: ${entry.key.label}`), "esc: close"];
-      canvas.text(1, canvas.height - 1, hints.join(" · "), DIM);
+      canvas.text(1, canvas.height - 1, hints.join(" · "), KEYS);
     },
     key: (event) => {
       const stroke = strokeOf(event);

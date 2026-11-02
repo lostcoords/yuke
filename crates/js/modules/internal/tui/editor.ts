@@ -29,9 +29,16 @@ import type {
   TextExtension,
 } from "yuke:tui";
 
-const SELECTION: CanvasStyle = [{ reverse: true }, "editor.selection"];
-const LABEL: CanvasStyle = [{ fg: "accent" }, "editor.label"];
-const PLACEHOLDER: CanvasStyle = [{ dim: true }, "editor.placeholder"];
+const SELECTION = "editor.selection";
+const LABEL = "editor.label";
+const PLACEHOLDER = "editor.placeholder";
+
+/** The default look of the style groups. */
+export const STYLES = {
+  [SELECTION]: { reverse: true },
+  [LABEL]: { fg: "accent" },
+  [PLACEHOLDER]: { dim: true },
+} as const;
 const NEWLINE_KEYS = new Set(["shift+enter", "alt+enter", "ctrl+j"]);
 /** The readline forms of Home and End. */
 const LINE_KEYS = new Map([
