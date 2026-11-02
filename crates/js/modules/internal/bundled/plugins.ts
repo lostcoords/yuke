@@ -27,7 +27,7 @@ const SELECTED = "plugins.selected";
 const STYLES = {
   [TITLE]: { bold: true },
   [DETAIL]: { dim: true },
-  [SELECTED]: { reverse: true },
+  [SELECTED]: { fg: "surfaceFg", bg: "accentMuted" },
 } as const;
 
 export function apply(ctx: PluginContext): undefined {
@@ -164,6 +164,7 @@ class PluginList implements View {
       } else {
         const plugin = row.plugin;
         const text = `${markOf(plugin)} ${(plugin.name ?? "?").padEnd(12)} ${plugin.item}  ${stateOf(plugin)}`;
+        if (plugin === selected) canvas.fill(0, index, canvas.width, 1, SELECTED);
         canvas.text(2, index, text.trimEnd(), plugin === selected ? SELECTED : undefined);
       }
     }

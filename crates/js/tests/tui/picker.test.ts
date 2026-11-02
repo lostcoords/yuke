@@ -115,7 +115,7 @@ test("Esc cancels, Up and Down stop at the ends, and an empty result chooses not
   );
 });
 
-test("the selected row shows reversed and its matched letters marked, and a click chooses a row", () => {
+test("the selected row has its look and its matched letters marked, and a click chooses a row", () => {
   const log: string[] = [];
   const view = picker(["alpha", "beta"], log);
   using frame = createFrame({ width: 6, height: 3 }, () => view);
@@ -123,11 +123,15 @@ test("the selected row shows reversed and its matched letters marked, and a clic
   const cells = frame.frame.cells;
   equal(
     [cells[1]?.[0]?.style, cells[1]?.[1]?.style, cells[1]?.[5]?.style],
-    [{ fg: "#a8cfa0", bold: true, reverse: true }, { reverse: true }, { reverse: true }],
+    [
+      { fg: "#a8cfa0", bold: true, bg: "#355c4a" },
+      { fg: "#e6edf3", bg: "#355c4a" },
+      { fg: "#e6edf3", bg: "#355c4a" },
+    ],
   );
   // A move gives the old row its plain style back.
   frame.key("down");
-  equal([frame.frame.cells[1]?.[1]?.style, frame.frame.cells[2]?.[1]?.style], [{}, { reverse: true }]);
+  equal([frame.frame.cells[1]?.[1]?.style, frame.frame.cells[2]?.[1]?.style], [{}, { fg: "#e6edf3", bg: "#355c4a" }]);
   const modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
   frame.mouse({ type: "mouse", column: 1, row: 2, button: "left", action: "press", modifiers });
   equal(log, ["choose beta"]);
@@ -143,7 +147,7 @@ test("a selected row pads by cells, and a picker with its field takes the focus"
   const cells = frame.draw().cells[1];
   equal(
     [cells?.[1]?.style, cells?.[2]?.style, surface.tui.focus(view), surface.tui.focused === view.input],
-    [{ reverse: true }, { reverse: true }, true, true],
+    [{ fg: "#e6edf3", bg: "#355c4a" }, { fg: "#e6edf3", bg: "#355c4a" }, true, true],
   );
 });
 
@@ -174,19 +178,19 @@ test("the rows of a picker have a default look that a plugin changes", () => {
   frame.surface("theme").tui.styles.set({
     "picker.match": { fg: 1, bold: null },
     "picker.detail": { fg: 3, dim: null },
-    "picker.selected": { bg: 2, reverse: null },
+    "picker.selected": { bg: 2, fg: null },
   });
   equal(
     [before, looks()],
     [
       [
-        { fg: "#a8cfa0", bold: true, reverse: true },
-        { reverse: true },
-        { dim: true, reverse: true },
-        { reverse: true },
+        { fg: "#a8cfa0", bold: true, bg: "#355c4a" },
+        { fg: "#e6edf3", bg: "#355c4a" },
+        { fg: "#e6edf3", bg: "#355c4a" },
+        { fg: "#e6edf3", bg: "#355c4a" },
         { dim: true },
       ],
-      [{ fg: 1, bg: 2 }, { bg: 2 }, { fg: 3, bg: 2 }, { bg: 2 }, { fg: 3 }],
+      [{ fg: 1, bg: 2 }, { bg: 2 }, { bg: 2 }, { bg: 2 }, { fg: 3 }],
     ],
   );
 });

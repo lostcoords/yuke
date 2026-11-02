@@ -16,19 +16,18 @@ export function diffRows(path: string, patch: string, width: number): TextRow[] 
   const ranges: Range[] = [{ from: 0, to: path.length, style: STYLE.diffHeader, link: path }];
   let from = path.length + 1;
   for (const line of patch.split("\n")) {
-    const style = lineStyle(line);
-    if (style !== undefined) ranges.push({ from, to: from + line.length, style });
+    ranges.push({ from, to: from + line.length, style: lineStyle(line) });
     from += line.length + 1;
   }
   return rangedRows(diffSource(path, patch), width, ranges);
 }
 
-/** The style of a line of a patch: a file header, a hunk header, an added line, or a removed line. Context has none. */
-function lineStyle(line: string): string | undefined {
+/** The style of a line of a patch: a file header, a hunk header, an added line, a removed line, or context. */
+function lineStyle(line: string): string {
   // The file headers come first, because they start with the marks of the lines.
   if (line.startsWith("+++") || line.startsWith("---")) return STYLE.diffHeader;
   if (line.startsWith("@@")) return STYLE.diffHunk;
   if (line.startsWith("+")) return STYLE.diffAdd;
   if (line.startsWith("-")) return STYLE.diffDelete;
-  return undefined;
+  return STYLE.diffContext;
 }

@@ -31,7 +31,7 @@ const SELECTED = "picker.selected";
 export const STYLES = {
   [MATCH]: { fg: "accent", bold: true },
   [DETAIL]: { dim: true },
-  [SELECTED]: { reverse: true },
+  [SELECTED]: { fg: "surfaceFg", bg: "accentMuted" },
 } as const;
 
 /** A shown match, its key, and whether it is selected. A new selection gives a new entry, so its rows render again. */
@@ -210,7 +210,7 @@ export class Picker<T extends object> {
     this.#options.select?.(this.selected);
   }
 
-  /** The default row shows the label with its matched ranges marked, then the detail. It reverses a selected row. */
+  /** The default row shows the label with its matched ranges marked, then the detail. It marks a selected row. */
   #row(entry: Entry<T>, width: number): TextRow {
     const label = this.#options.label(entry.match.item);
     const ranges = entry.match.ranges ?? [];
@@ -218,7 +218,7 @@ export class Picker<T extends object> {
     const selected = entry.selected ? [SELECTED] : [];
     const add = (from: number, to: number, matched: boolean): void => {
       if (to <= from) return;
-      segments.push({ text: label.slice(from, to), style: matched ? [MATCH, ...selected] : selected });
+      segments.push({ text: label.slice(from, to), style: matched ? [...selected, MATCH] : selected });
     };
     let at = 0;
     for (const range of ranges) {
@@ -228,7 +228,7 @@ export class Picker<T extends object> {
     }
     add(at, label.length, false);
     const detail = this.#options.detail?.(entry.match.item) ?? "";
-    if (detail !== "") segments.push({ text: `  ${detail}`, style: [DETAIL, ...selected] });
+    if (detail !== "") segments.push({ text: `  ${detail}`, style: entry.selected ? SELECTED : DETAIL });
     const cells = segments.reduce((sum, segment) => sum + measure(segment.text), 0);
     if (entry.selected && cells < width) segments.push({ text: " ".repeat(width - cells), style: SELECTED });
     return { segments, join: "\n" };

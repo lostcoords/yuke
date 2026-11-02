@@ -42,6 +42,8 @@ function calls(...called: Call[]): StoredEvent[] {
 const READ: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "none" };
 const EXEC: ToolHints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" };
 const PROBE: ToolHints = { title: "Probe", subject: null, preview: "head" };
+const PROBE_FILE: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
+const OUTPUT = { fg: "#e6edf3", dim: true };
 
 const ok = (content: string): ToolResult => ({ callId: "", content, isError: false });
 
@@ -470,4 +472,125 @@ test("a link in a reply copies its target, and a relative target starts in the f
   click(frame, 7, 1);
   click(frame, 3, 2);
   equal(frame.copies, ["/w/src/main.rs#L40-L52", "https://docs.rs"]);
+});
+
+test("a call that ended well shows a bold name, its subject in accent, dim output, and no band", async () => {
+  using frame = createFrame({ width: 30, height: 24 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls({ name: "read", args: { path: "a.rs" }, hints: PROBE_FILE, result: ok(lines("row", 12)) });
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  const cells = frame.frame.cells;
+  const omitted = transcriptRows(frame).findIndex((row) => row.includes("more rows"));
+  equal(
+    [
+      cells[1]?.[1]?.style,
+      cells[1]?.[6]?.style,
+      cells[2]?.[1]?.style,
+      cells[omitted]?.[3]?.style,
+      cells[1]?.[28]?.style.bg,
+    ],
+    [{ bold: true }, { fg: "#a8cfa0" }, OUTPUT, OUTPUT, undefined],
+  );
+});
+
+test("a failed call has a band behind each of its rows, and its text in the danger color", async () => {
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const result = { callId: "", content: "broken", isError: true };
+  await loadChat(frame, fakeSessions(calls({ name: "read", args: { path: "a.rs" }, hints: READ, result })));
+  frame.start();
+  const cells = frame.frame.cells;
+  const band = "#4a2323";
+  equal(
+    [
+      transcriptRows(frame).slice(1, 3),
+      cells[1]?.[1]?.style,
+      cells[1]?.[6]?.style,
+      cells[1]?.[29]?.style,
+      cells[2]?.[1]?.style,
+      cells[2]?.[0]?.style,
+      cells[2]?.[29]?.style,
+    ],
+    [
+      [" read a.rs · error", " broken"],
+      { bold: true, bg: band },
+      { fg: "#a8cfa0", bg: band },
+      { bg: band },
+      { fg: "#ff7b72", bg: band },
+      { bg: band },
+      { bg: band },
+    ],
+  );
+});
+
+test("a running call has a band until its result comes, and a copy leaves the band out", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [{ tool_call: call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    }),
+  ];
+  const sessions = fakeSessions(saved);
+  await loadChat(frame, sessions);
+  frame.start();
+  const execution = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "tool_started", execution, call });
+  sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });
+  frame.draw();
+  const band = "#3b3520";
+  const running = [1, 2].map((row) => frame.frame.cells[row]?.[29]?.style);
+  const text = frame.frame.cells[2]?.[1]?.style;
+  frame.mouse(mouse(1, 1, "press"));
+  frame.mouse(mouse(29, 2, "drag"));
+  frame.mouse(mouse(29, 2, "release"));
+  const copied = [...frame.copies];
+  const result = { callId: "c0", content: "built", isError: false };
+  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
+  frame.draw();
+  equal(
+    [running, text, copied, frame.frame.cells[1]?.[29]?.style],
+    [[{ bg: band }, { bg: band }], { ...OUTPUT, bg: band }, ["exec make · running\ncompiling"], {}],
+  );
+});
+
+test("a diff shows an added line, a removed line, and its context in their own looks", async () => {
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const display: DisplayBlock[] = [{ kind: "diff", path: "a.rs", patch: "-old\n+new\n same" }];
+  const saved = calls({ name: "edit", args: { path: "a.rs" }, hints: PROBE_FILE, result: ok("done"), display });
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  const shown = transcriptRows(frame);
+  const look = (text: string) => frame.frame.cells[shown.findIndex((row) => row.includes(text))]?.[2]?.style;
+  equal(
+    [look("-old"), look("+new"), look(" same"), look("edit")?.bold],
+    [{ fg: "#ff7b72", bg: "#3a2426" }, { fg: "#f6f8fa", bg: "#20372a" }, OUTPUT, true],
+  );
+});
+
+test("the failure of a turn shows in bold in the danger color", async () => {
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [], { end: { failed: "boom" } }),
+  ];
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  const row = transcriptRows(frame).findIndex((line) => line.includes("failed: boom"));
+  equal(frame.frame.cells[row]?.[1]?.style, { fg: "#ff7b72", bold: true });
+});
+
+test("the arguments of an open call and a media label have the look of the output", async () => {
+  using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const media = [{ mime: "image/png", blob: { digest: "a".repeat(64), len: 2048 } }];
+  const saved = calls(
+    { name: "write", args: { path: "a.rs", content: "x" }, hints: READ, result: ok("") },
+    { name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  click(frame, 2, 1);
+  const shown = transcriptRows(frame);
+  const look = (text: string) => frame.frame.cells[shown.findIndex((row) => row.includes(text))]?.[1]?.style;
+  equal([look("content"), look("image/png")], [OUTPUT, OUTPUT]);
 });

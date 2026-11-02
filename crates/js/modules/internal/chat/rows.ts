@@ -16,27 +16,37 @@ export const STYLE = {
   hint: "chat.hint",
   rule: "chat.rule",
   commandSelected: "chat.commands.selected",
+  toolOutput: "chat.tool.output",
+  toolError: "chat.tool.error",
+  toolPending: "chat.tool.pending",
+  toolFailed: "chat.tool.failed",
   diffHeader: "chat.diff.header",
   diffHunk: "chat.diff.hunk",
   diffAdd: "chat.diff.add",
   diffDelete: "chat.diff.delete",
+  diffContext: "chat.diff.context",
 } as const;
 
 /** The default look of each style group. A later `tui.styles.set` changes it. */
 export const STYLES = {
   [STYLE.user]: { fg: "surfaceFg", bg: "surface" },
   [STYLE.meta]: { dim: true },
-  [STYLE.title]: { fg: "accent", bold: true },
-  [STYLE.subject]: { fg: "strongFg" },
+  [STYLE.title]: { bold: true },
+  [STYLE.subject]: { fg: "accent" },
   [STYLE.thought]: { dim: true, italic: true },
-  [STYLE.error]: { fg: "danger" },
+  [STYLE.error]: { fg: "danger", bold: true },
   [STYLE.hint]: { fg: "accent" },
   [STYLE.rule]: { dim: true },
-  [STYLE.commandSelected]: { reverse: true },
+  [STYLE.commandSelected]: { fg: "surfaceFg", bg: "accentMuted" },
+  [STYLE.toolOutput]: { fg: "surfaceFg", dim: true },
+  [STYLE.toolError]: { fg: "danger" },
+  [STYLE.toolPending]: { bg: "pendingBg" },
+  [STYLE.toolFailed]: { bg: "errorBg" },
   [STYLE.diffHeader]: { bold: true },
   [STYLE.diffHunk]: { fg: "accent", dim: true },
-  [STYLE.diffAdd]: { bg: "diffAddBg" },
-  [STYLE.diffDelete]: { bg: "diffDelBg" },
+  [STYLE.diffAdd]: { fg: "strongFg", bg: "diffAddBg" },
+  [STYLE.diffDelete]: { fg: "danger", bg: "diffDelBg" },
+  [STYLE.diffContext]: { fg: "surfaceFg", dim: true },
 } as const;
 
 /** The cells at the left of each row. They stay out of a copy. */
@@ -112,13 +122,19 @@ export function rangedRows(text: string, width: number, ranges: readonly Range[]
   return rows;
 }
 
-/** The rows of a message of the user: the text on a filled band as wide as the pane. */
-export function filledRows(text: string, width: number): TextRow[] {
-  return styledRows(text, width, STYLE.user).map((row) => {
+/** `rows` on a band of `style` as wide as the pane. The band wins per field over the style of each segment. */
+export function bandedRows(rows: readonly TextRow[], width: number, style: string): TextRow[] {
+  return rows.map((row) => {
     const used = row.segments.reduce((cells, segment) => cells + measure(segment.text), 0);
-    const fill: Segment = { text: " ".repeat(Math.max(0, width - used)), style: STYLE.user, copy: false };
-    return { segments: [{ ...INDENT, style: STYLE.user }, ...row.segments.slice(1), fill], join: row.join };
+    const segments = row.segments.map((segment) => ({ ...segment, style: [segment.style ?? [], style].flat() }));
+    const fill: Segment = { text: " ".repeat(Math.max(0, width - used)), style, copy: false };
+    return { segments: [...segments, fill], join: row.join };
   });
+}
+
+/** The rows of a message of the user: the text on a band. */
+export function filledRows(text: string, width: number): TextRow[] {
+  return bandedRows(styledRows(text, width, STYLE.user), width, STYLE.user);
 }
 
 export function indented(row: TextRow): TextRow {

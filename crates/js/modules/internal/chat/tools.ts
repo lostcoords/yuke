@@ -5,7 +5,7 @@
  */
 
 import { diffRows, diffSource } from "yuke:internal/chat/diff";
-import { clipped, indented, item, plain, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
+import { bandedRows, clipped, indented, item, plain, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
 import type { Entry } from "yuke:transcript";
 import { Markdown, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
@@ -22,7 +22,7 @@ export function toolItem(entry: ToolEntry, open: boolean): TextItem {
   const sections = heading(entry, open);
   if (open) {
     const others = otherArguments(entry);
-    if (others !== "" && others !== "{}") sections.push(plain("arguments", others, STYLE.meta));
+    if (others !== "" && others !== "{}") sections.push(plain("arguments", others, STYLE.toolOutput));
   }
   const body = bodyOf(entry);
   if (body !== undefined) {
@@ -37,7 +37,21 @@ export function toolItem(entry: ToolEntry, open: boolean): TextItem {
       },
     });
   }
-  return item(entry.key, ...sections);
+  const band = bandOf(entry);
+  if (band === undefined) return item(entry.key, ...sections);
+  return item(
+    entry.key,
+    ...sections.map((section) => ({
+      ...section,
+      render: (width: number) => bandedRows(section.render?.(width) ?? [], width, band),
+    })),
+  );
+}
+
+/** The band behind each row of an unfinished call or a failed call. A call that ended well has none. */
+function bandOf(entry: ToolEntry): string | undefined {
+  if (entry.status !== "done") return STYLE.toolPending;
+  return entry.result?.isError === true ? STYLE.toolFailed : undefined;
 }
 
 /**
@@ -135,7 +149,7 @@ interface Body extends Block {
 }
 
 /** A block of plain `text` in `style`. */
-function plainBlock(text: string, style: string | undefined): Block {
+function plainBlock(text: string, style: string): Block {
   return { text, rows: (width) => styledRows(text, width, style) };
 }
 
@@ -144,9 +158,10 @@ function bodyOf(entry: ToolEntry): Body | undefined {
   const result = entry.result;
   const blocks: Block[] = [];
   if (result === undefined) {
-    if (entry.output !== "") blocks.push(plainBlock(entry.output, undefined));
+    if (entry.output !== "") blocks.push(plainBlock(entry.output, STYLE.toolOutput));
   } else if (result.isError || entry.display.length === 0) {
-    if (result.content !== "") blocks.push(plainBlock(result.content, result.isError ? STYLE.error : undefined));
+    if (result.content !== "")
+      blocks.push(plainBlock(result.content, result.isError ? STYLE.toolError : STYLE.toolOutput));
   } else {
     for (const block of entry.display) {
       if (block.kind === "markdown") {
@@ -160,7 +175,7 @@ function bodyOf(entry: ToolEntry): Body | undefined {
     }
   }
   for (const [index, media] of (result?.media ?? []).entries()) {
-    blocks.push(plainBlock(`[${media.mime} #${index + 1} · ${size(media.blob.len)}]`, STYLE.meta));
+    blocks.push(plainBlock(`[${media.mime} #${index + 1} · ${size(media.blob.len)}]`, STYLE.toolOutput));
   }
   if (blocks.length === 0) return undefined;
   // One source for all blocks, with a line end between two, so one preview budget counts all of them.
@@ -195,7 +210,7 @@ function previewRows(rows: TextRow[], preview: "head" | "tail"): TextRow[] {
 
 /** A row that says how many rows a preview leaves out. It stays out of a copy. */
 function omitted(count: number): TextRow {
-  const segment: Segment = { text: `… ${count} more rows`, style: STYLE.meta, copy: false };
+  const segment: Segment = { text: `… ${count} more rows`, style: STYLE.toolOutput, copy: false };
   return { segments: [{ text: " ", copy: false }, segment], join: "\n" };
 }
 

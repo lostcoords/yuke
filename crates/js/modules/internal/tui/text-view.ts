@@ -38,7 +38,7 @@ import type {
 const SELECTION = "textView.selection";
 
 /** The default look of the style groups. */
-export const STYLES = { [SELECTION]: { reverse: true } } as const;
+export const STYLES = { [SELECTION]: { fg: "surfaceFg", bg: "accentMuted" } } as const;
 
 /** A row of a text view: the row of a section, with the key of that section. */
 interface ViewRow extends TextRow {

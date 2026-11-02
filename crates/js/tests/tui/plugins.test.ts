@@ -335,19 +335,24 @@ test("the dashboard has a default look that a plugin changes", async () => {
   const mark = shown[selected]?.indexOf("●") ?? 0;
   const looks = () => {
     const cells = frame.draw().cells;
-    return [cells[title]?.[column]?.style, cells[selected]?.[mark]?.style, cells[selected + 1]?.[mark + 4]?.style];
+    return [
+      cells[title]?.[column]?.style,
+      cells[selected]?.[mark]?.style,
+      cells[selected + 1]?.[mark + 4]?.style,
+      cells[selected]?.[99]?.style,
+    ];
   };
   const before = looks();
   frame.surface("theme").tui.styles.set({
     "plugins.title": { fg: 1, bold: null },
     "plugins.detail": { fg: 2, dim: null },
-    "plugins.selected": { fg: 3, reverse: null },
+    "plugins.selected": { fg: 3, bg: null },
   });
   equal(
     [before, looks()],
     [
-      [{ bold: true }, { reverse: true }, { dim: true }],
-      [{ fg: 1 }, { fg: 3 }, { fg: 2 }],
+      [{ bold: true }, { fg: "#e6edf3", bg: "#355c4a" }, { dim: true }, { fg: "#e6edf3", bg: "#355c4a" }],
+      [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }],
     ],
   );
 });

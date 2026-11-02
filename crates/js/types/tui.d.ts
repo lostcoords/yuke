@@ -750,7 +750,7 @@ declare module "yuke:tui" {
      */
     readonly rank?: ((query: string, items: readonly T[]) => readonly PickerMatch<T>[]) | undefined;
     /**
-     * The rows of a match. The default shows the label with its ranges marked, then the detail. It reverses a selected
+     * The rows of a match. The default shows the label with its ranges marked, then the detail. It marks a selected
      * row.
      */
     readonly render?: ((match: PickerMatch<T>, width: number, selected: boolean) => readonly TextRow[]) | undefined;

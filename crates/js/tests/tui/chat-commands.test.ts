@@ -69,7 +69,17 @@ test("the selected row has a default look that a plugin changes", () => {
   const tui = frame.surface("chat").tui;
   tui.styles.set(chatStyles);
   frame.key("/ a");
-  const before = frame.draw().cells[0]?.[1]?.style;
-  tui.styles.set({ "chat.commands.selected": { fg: 1, reverse: null } });
-  equal([before, frame.draw().cells[0]?.[1]?.style], [{ reverse: true }, { fg: 1 }]);
+  const row = () => frame.draw().cells[0];
+  const before = [row()?.[1]?.style, row()?.[29]?.style];
+  tui.styles.set({ "chat.commands.selected": { fg: 1, bg: null } });
+  equal(
+    [before, row()?.[1]?.style],
+    [
+      [
+        { fg: "#e6edf3", bg: "#355c4a" },
+        { fg: "#e6edf3", bg: "#355c4a" },
+      ],
+      { fg: 1 },
+    ],
+  );
 });
