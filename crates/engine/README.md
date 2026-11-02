@@ -15,4 +15,3 @@ Set `MINIMAX_API_KEY`. These examples send live requests. API charges can apply.
 | --- | --- |
 | [Chat](examples/engine_chat.rs) | `mise exec -- cargo run -p yuke-engine --example engine_chat` |
 | [Tool calls](examples/engine_tools.rs) | `mise exec -- cargo run -p yuke-engine --example engine_tools` |
-| [Approval](examples/approve.rs) | `mise exec -- cargo run -p yuke-engine --example approve` |

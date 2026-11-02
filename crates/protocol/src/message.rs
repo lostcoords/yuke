@@ -720,7 +720,7 @@ pub struct RemoveInputResult {
 pub struct PutBlobParams {
     /// The saved session that keeps the bytes. Only this session reads the blob.
     pub session_id: SessionId,
-    /// The bytes, at most [`yuke_ai::MAX_MEDIA_BYTES`]. JSON holds them as standard base64.
+    /// The bytes. JSON holds them as standard base64.
     #[serde(with = "media_bytes")]
     #[cfg_attr(test, ts(type = "string"))]
     pub data: Vec<u8>,
@@ -748,12 +748,10 @@ pub struct GetBlobResult {
     pub data: Vec<u8>,
 }
 
-/// Write the bytes of a blob to JSON as standard padded base64, and read them back. A read of more than
-/// [`yuke_ai::MAX_MEDIA_BYTES`] fails, because no blob is larger.
+/// Write the bytes of a blob to JSON as standard padded base64, and read them back.
 mod media_bytes {
     use serde::de::Error;
     use serde::{Deserialize, Deserializer, Serializer};
-    use yuke_ai::MAX_MEDIA_BYTES;
 
     pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
         let mut text = Vec::new();
@@ -764,13 +762,7 @@ mod media_bytes {
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         // An owned text, because a JSON text with an escape, or a buffered message, has no borrowed form.
         let text = String::deserialize(deserializer)?;
-        let bytes = yuke_ai::decode_base64(text.as_bytes())
-            .ok_or_else(|| D::Error::custom("the data is not standard base64"))?;
-        if bytes.len() as u64 > MAX_MEDIA_BYTES {
-            let text = format!("the blob is larger than the limit of {MAX_MEDIA_BYTES} bytes");
-            return Err(D::Error::custom(text));
-        }
-        Ok(bytes)
+        yuke_ai::decode_base64(text.as_bytes()).ok_or_else(|| D::Error::custom("the data is not standard base64"))
     }
 }
 

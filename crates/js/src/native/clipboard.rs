@@ -6,7 +6,6 @@ use std::sync::{Mutex, PoisonError};
 use clipboard_rs::common::RustImage;
 use clipboard_rs::{Clipboard, ClipboardContext, ContentFormat};
 use rquickjs::{Ctx, Function, Object, Promise};
-use yuke_ai::MAX_MEDIA_BYTES;
 use yuke_engine::chain_text;
 
 use crate::error::{ErrorClass, throw};
@@ -37,7 +36,7 @@ pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
     )
 }
 
-/// The image of the clipboard as PNG bytes, or `None` without an image. A PNG over the limit of an attachment fails.
+/// The image of the clipboard as PNG bytes, or `None` without an image.
 fn read_image() -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
     let mut clipboard = CLIPBOARD.lock().unwrap_or_else(PoisonError::into_inner);
     let context = match &mut *clipboard {
@@ -48,29 +47,5 @@ fn read_image() -> Result<Option<Vec<u8>>, Box<dyn Error + Send + Sync>> {
         return Ok(None);
     }
     let png = context.get_image()?.to_png()?;
-    within_limit(png.get_bytes()).map(Some)
-}
-
-/// A copy of `png`, or a failure when it is over the limit of an attachment.
-fn within_limit(png: &[u8]) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
-    if png.len() as u64 > MAX_MEDIA_BYTES {
-        return Err(format!("the clipboard image is larger than the limit of {MAX_MEDIA_BYTES} bytes").into());
-    }
-    Ok(png.to_vec())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_clipboard_image_at_the_limit_passes_and_one_byte_more_fails() {
-        let limit = usize::try_from(MAX_MEDIA_BYTES).unwrap();
-        assert_eq!(within_limit(&vec![7; limit]).unwrap().len(), 3_932_160);
-        let over = within_limit(&vec![7; limit + 1]).unwrap_err();
-        assert_eq!(
-            over.to_string(),
-            "the clipboard image is larger than the limit of 3932160 bytes"
-        );
-    }
+    Ok(Some(png.get_bytes().to_vec()))
 }

@@ -568,11 +568,7 @@ impl<'a> Turn<'a> {
                     };
                 }
 
-                Action::Done { tail, result, display } => {
-                    let commit = Commit {
-                        display,
-                        ..Commit::end(tail, result.as_ref())
-                    };
+                Action::Done { commit, result } => {
                     parts.save(&commit).await?;
                     return result.map_err(TurnError::Round);
                 }

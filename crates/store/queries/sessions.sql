@@ -52,9 +52,9 @@ LIMIT :limit;
 --- The saved facts for `session/list` and `session/get`. It returns no row for an unknown session.
 SELECT id, settings, preview, fork_of, parent, created_at, updated_at FROM sessions WHERE id = :id;
 
---! session_prompt (id: [u8; 16]) : (prompt: crate::Json<Vec<yuke_agent::PromptSection>>, parent?: [u8; 16])
---- The sections of the system prompt of the session, and its parent. It returns no row for an unknown session.
-SELECT prompt, parent FROM sessions WHERE id = :id;
+--! session_context (id: [u8; 16]) : (settings: crate::Json<yuke_protocol::SessionSettings>, prompt: crate::Json<Vec<yuke_agent::PromptSection>>, parent?: [u8; 16])
+--- The settings, prompt sections, and parent of the session. It returns no row for an unknown session.
+SELECT settings, prompt, parent FROM sessions WHERE id = :id;
 
 --! session_exists (id: [u8; 16]) : (present: bool)
 --- Whether a session has this id.

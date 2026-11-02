@@ -256,21 +256,6 @@ ORDER BY seq;",
         )
     }
 
-    /// The settings of the newest settings event of the session. It returns no row for an unknown session.
-    pub(crate) fn newest_settings(
-        connection: &Connection,
-        session_id: [u8; 16],
-    ) -> Query<'_, Option<crate::Json<yuke_protocol::SessionSettings>>> {
-        Query::new(
-            connection,
-            r"SELECT settings FROM events
-WHERE session_id = :session_id AND kind = 'settings'
-ORDER BY seq DESC LIMIT 1;",
-            &[(":session_id", &session_id)],
-            |row| row.get("settings"),
-        )
-    }
-
     /// The input tokens of the newest answer of the session. It returns no row without an answer or a replacement. It
     pub(crate) fn newest_input_tokens(connection: &Connection, session_id: [u8; 16]) -> Query<'_, Option<u64>> {
         Query::new(
@@ -444,7 +429,8 @@ pub(crate) mod sessions {
     }
 
     #[derive(Debug, PartialEq)]
-    pub(crate) struct SessionPrompt {
+    pub(crate) struct SessionContext {
+        pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
         pub(crate) prompt: crate::Json<Vec<yuke_agent::PromptSection>>,
         pub(crate) parent: Option<[u8; 16]>,
     }
@@ -612,14 +598,15 @@ LIMIT :limit;",
         )
     }
 
-    /// The sections of the system prompt of the session, and its parent. It returns no row for an unknown session.
-    pub(crate) fn session_prompt(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionPrompt> {
+    /// The settings, prompt sections, and parent of the session. It returns no row for an unknown session.
+    pub(crate) fn session_context(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionContext> {
         Query::new(
             connection,
-            r"SELECT prompt, parent FROM sessions WHERE id = :id;",
+            r"SELECT settings, prompt, parent FROM sessions WHERE id = :id;",
             &[(":id", &id)],
             |row| {
-                Ok(SessionPrompt {
+                Ok(SessionContext {
+                    settings: row.get("settings")?,
                     prompt: row.get("prompt")?,
                     parent: row.get("parent")?,
                 })

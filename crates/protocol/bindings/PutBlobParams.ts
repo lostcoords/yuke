@@ -10,6 +10,6 @@ export type PutBlobParams = {
  */
 sessionId: SessionId, 
 /**
- * The bytes, at most [`yuke_ai::MAX_MEDIA_BYTES`]. JSON holds them as standard base64.
+ * The bytes. JSON holds them as standard base64.
  */
 data: string, };

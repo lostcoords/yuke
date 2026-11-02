@@ -533,13 +533,9 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit_throw_at_once() {
+async fn a_blob_takes_the_bytes_of_its_view_at_the_call() {
     let scripted = Arc::new(Scripted::default());
-    let runtime = started(
-        "a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit_throw_at_once",
-        &scripted,
-    )
-    .await;
+    let runtime = started("a_blob_takes_the_bytes_of_its_view_at_the_call", &scripted).await;
     open(&runtime, "undefined").await;
 
     let answers = evaluate::<String>(
@@ -548,10 +544,7 @@ async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit
          const put = handle.putBlob(buffer.subarray(1, 4));
          buffer[2] = 7;
          const blob = await put;
-         let refused;
-         try { await handle.putBlob(new Uint8Array(3932161)); } catch (error) { refused = error.message; }
-         const limit = await handle.putBlob(new Uint8Array(3932160));
-         return JSON.stringify([blob, refused, limit.len]);",
+         return JSON.stringify(blob);",
     )
     .await
     .unwrap();
@@ -559,14 +552,14 @@ async fn a_blob_takes_the_bytes_of_its_view_at_the_call_and_bytes_over_the_limit
     let id = session();
     assert_eq!(
         answers,
-        r#"[{"digest":"039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81","len":3},"the blob is larger than the limit of 3932160 bytes",3932160]"#
+        r#"{"digest":"039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81","len":3}"#
     );
     let puts: Vec<String> = scripted
         .calls()
         .into_iter()
         .filter(|call| call.starts_with("put blob"))
         .collect();
-    assert_eq!(puts, [format!("put blob {id} 3"), format!("put blob {id} 3932160")]);
+    assert_eq!(puts, [format!("put blob {id} 3")]);
 }
 
 #[tokio::test(flavor = "local")]

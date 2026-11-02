@@ -17,9 +17,6 @@ use crate::transport::{Answer, Exchange, ExchangeRequest, Fault, Header};
 /// The interval of a device login whose start names none. RFC 8628 section 3.2 gives this default.
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
 
-/// No device login polls slower than this, so a larger interval is garbage.
-const MAX_INTERVAL: Duration = Duration::from_hours(1);
-
 /// The lifetime of a grant whose answer names none. A short guess would rotate a long grant for nothing.
 const DEFAULT_LIFETIME: Duration = Duration::from_hours(5);
 
@@ -317,8 +314,7 @@ impl TokenAnswer {
         Ok(Grant {
             access_token,
             refresh_token: nonblank(self.refresh_token),
-            // A lifetime past the clock range ends at the default instead.
-            expires_at: now.checked_add(lifetime).unwrap_or_else(|| now + DEFAULT_LIFETIME),
+            expires_at: now.checked_add(lifetime).ok_or(OAuthError::BadResponse)?,
             account_id: None,
         })
     }
@@ -354,12 +350,9 @@ fn seconds(value: &Value) -> Option<Duration> {
     (seconds > 0).then(|| Duration::from_secs(seconds))
 }
 
-/// The poll interval of a start answer. An absent, zero, or absurd value takes the default.
+/// The poll interval of a start answer. An absent or invalid value takes the default.
 fn interval(value: Option<&Value>) -> Duration {
-    value
-        .and_then(seconds)
-        .filter(|interval| *interval <= MAX_INTERVAL)
-        .unwrap_or(DEFAULT_INTERVAL)
+    value.and_then(seconds).unwrap_or(DEFAULT_INTERVAL)
 }
 
 /// The grant of a success answer `body` at `now`.

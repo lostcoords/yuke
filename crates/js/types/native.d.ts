@@ -501,7 +501,7 @@ declare module "yuke:internal/native" {
   export function sessionIdle(id: SessionId): Promise<null>;
   export function sessionSetSettings(request: readonly [id: SessionId, settings: SessionSettings]): Promise<null>;
   export function sessionRemoveInput(request: readonly [id: SessionId, inputId: InputId]): Promise<boolean>;
-  /** Save `bytes` in the store of session `id`. Bytes over the attachment limit throw before the store gets them. */
+  /** Save `bytes` in the store of session `id`. */
   export function sessionPutBlob(id: SessionId, bytes: Uint8Array): Promise<Blob>;
   export function sessionStopJob(request: readonly [id: SessionId, jobId: string]): Promise<null>;
   export function sessionClose(id: SessionId): Promise<null>;

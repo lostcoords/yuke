@@ -67,12 +67,6 @@ SELECT * FROM (
 )
 ORDER BY seq;
 
---! newest_settings (session_id: [u8; 16]) : (settings?: crate::Json<yuke_protocol::SessionSettings>)
---- The settings of the newest settings event of the session. It returns no row for an unknown session.
-SELECT settings FROM events
-WHERE session_id = :session_id AND kind = 'settings'
-ORDER BY seq DESC LIMIT 1;
-
 --! newest_input_tokens (session_id: [u8; 16]) : (input_tokens?: u64)
 --- The input tokens of the newest answer of the session. It returns no row without an answer or a replacement. It
 -- returns NULL after a newer replacement, because a replacement row has no usage.

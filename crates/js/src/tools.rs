@@ -4,7 +4,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fmt;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::rc::Rc;
@@ -15,7 +14,6 @@ use rquickjs::{Ctx, FromJs, Function, IntoJs, Object, Persistent, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
-use yuke_ai::MAX_MEDIA_BYTES;
 use yuke_engine::{
     CancellationToken, Concurrency, DisplayBlock, MediaStore, Tool, ToolContent, ToolContext, ToolHints,
     check_tool_name,
@@ -442,16 +440,18 @@ pub(crate) async fn store_media(
     Ok(media)
 }
 
-/// The bytes and the media type of each item of `files`, in order. A relative path starts in `folder`. A file that
-/// does not read, or an item over [`MAX_MEDIA_BYTES`], fails with a text.
+/// The bytes and the media type of each item of `files`, in order. A relative path starts in `folder`.
 pub(crate) async fn read_media(files: Vec<MediaFile>, folder: &Path) -> Result<Vec<Attachment>, String> {
     let mut read = Vec::with_capacity(files.len());
     for file in files {
         let bytes = match file.source {
-            Source::Path(path) => read_file(folder.join(&path))
-                .await
-                .map_err(|error| format!("{path}: {error}"))?,
-            Source::Bytes(bytes) if bytes.len() as u64 > MAX_MEDIA_BYTES => return Err(too_large()),
+            Source::Path(path) => tokio::task::spawn_blocking({
+                let path = folder.join(&path);
+                move || std::fs::read(path)
+            })
+            .await
+            .map_err(|error| format!("{path}: {error}"))?
+            .map_err(|error| format!("{path}: {error}"))?,
             Source::Bytes(bytes) => bytes,
         };
         read.push(Attachment {
@@ -462,23 +462,6 @@ pub(crate) async fn read_media(files: Vec<MediaFile>, folder: &Path) -> Result<V
     Ok(read)
 }
 
-/// The bytes of the file at `path`, at most [`MAX_MEDIA_BYTES`]. A blocking thread of tokio reads them, so the task of
-/// the caller does not wait.
-async fn read_file(path: PathBuf) -> std::io::Result<Vec<u8>> {
-    tokio::task::spawn_blocking(move || {
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)?
-            .take(MAX_MEDIA_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_MEDIA_BYTES {
-            return Err(std::io::Error::new(std::io::ErrorKind::FileTooLarge, too_large()));
-        }
-        Ok(bytes)
-    })
-    .await
-    .map_err(std::io::Error::other)?
-}
-
 /// The text of a failed call for the model: the message of a thrown error.
 pub(crate) fn error_text(error: &crate::ScriptError) -> String {
     if error.message.is_empty() {
@@ -486,11 +469,6 @@ pub(crate) fn error_text(error: &crate::ScriptError) -> String {
     } else {
         error.message.clone()
     }
-}
-
-/// The error text of a media item over [`MAX_MEDIA_BYTES`].
-fn too_large() -> String {
-    format!("the media is larger than the limit of {MAX_MEDIA_BYTES} bytes")
 }
 
 /// What the start function of a tool gets for one call.

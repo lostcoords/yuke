@@ -20,7 +20,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::ChildStderr;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use yuke_ai::{Blob, MAX_MEDIA_BYTES, Media, ToolDefinition};
+use yuke_ai::{Blob, Media, ToolDefinition};
 use yuke_engine::{MediaStore, Tool, ToolContent, ToolContext, ToolHints, parse_arguments};
 use yuke_protocol::{McpServer, McpServerSource, McpServerState};
 
@@ -537,9 +537,6 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
 /// Store the base64 image `data`.
 async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
     let bytes = yuke_ai::decode_base64(data.as_bytes()).ok_or("its data is not base64")?;
-    if bytes.len() as u64 > MAX_MEDIA_BYTES {
-        return Err(format!("it is larger than the limit of {MAX_MEDIA_BYTES} bytes").into());
-    }
     media.put_media(bytes).await
 }
 

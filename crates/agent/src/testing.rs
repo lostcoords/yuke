@@ -578,19 +578,8 @@ pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dy
         .unwrap();
 
     let short = store.commit(id, &step(&[]), &[consumed(input, 1)]).await;
-    let overflow = store
-        .commit(
-            id,
-            &step(&[yuke_ai::Block::user_text("one")]),
-            &[consumed(input, usize::MAX), consumed(input, 2)],
-        )
-        .await;
 
     assert!(matches!(short, Err(StoreError::InputBlocksExceedCommit)), "{short:?}");
-    assert!(
-        matches!(overflow, Err(StoreError::InputBlocksExceedCommit)),
-        "{overflow:?}"
-    );
     assert_eq!(
         store
             .load(id, EventPage::After(None))

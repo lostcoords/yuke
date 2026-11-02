@@ -631,7 +631,6 @@ async fn a_bad_attachment_fails_before_a_request() {
                [{{ mimeType: 'image/png' }}],
                'shot.png',
                [{{ mimeType: 'image/png', path: {missing:?} }}],
-               [{{ mimeType: 'image/png', bytes: new Uint8Array({too_large}) }}],
              ];
              const errors = [];
              for (const list of attachments) {{
@@ -640,7 +639,6 @@ async fn a_bad_attachment_fails_before_a_request() {
              }}
              return errors;",
             missing = missing.to_str().unwrap(),
-            too_large = yuke_ai::MAX_MEDIA_BYTES + 1,
         ),
     )
     .await
@@ -656,10 +654,6 @@ async fn a_bad_attachment_fails_before_a_request() {
     );
     assert!(
         errors[3].starts_with(&format!("Error: {}: ", missing.to_str().unwrap())),
-        "{errors:?}"
-    );
-    assert!(
-        errors[4].starts_with("Error: the media is larger than the limit"),
         "{errors:?}"
     );
     assert!(models.requests.lock().unwrap().is_empty());

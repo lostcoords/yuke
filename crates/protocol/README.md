@@ -23,7 +23,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   installs it, locks it, and answers its `name`, `source`, and `commit`. `plugin/remove { name }` removes a plugin from
   `config.json` and `plugins.lock`. Each edit keeps the comments of `config.json`. Git asks for no password. A new
   commit loads at `profile/reload`.
-- `blob/put { sessionId, data }` decodes the base64 `data` and saves at most 3,932,160 bytes in a saved session. It
+- `blob/put { sessionId, data }` decodes the base64 `data` and saves the bytes in a saved session. It
   answers the blob `{ digest, len }` for a media block of an input. `blob/get { sessionId, blob }` answers the bytes
   as base64 `{ data }`, also for a closed session. It reads the blob by its digest, and fails with -32007 when the
   session has no such blob. `session/remove` deletes the blobs.

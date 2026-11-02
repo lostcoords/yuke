@@ -11,7 +11,7 @@ use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
 use serde::{Serialize, Serializer};
 use tokio::sync::{mpsc, oneshot};
-use yuke_ai::{Block, MAX_MEDIA_BYTES};
+use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, EventNumber, Input, InputId, InputKind, InputSource, InteractionId,
@@ -377,7 +377,7 @@ async fn deliver_events<'js, E: Serialize>(
 }
 
 /// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
-/// task runs. Bytes over the limit of an attachment throw before the store sees them.
+/// task runs.
 fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rquickjs::Result<()> {
     let sessions = Arc::clone(sessions);
     object.set(
@@ -386,10 +386,6 @@ fn add_put_blob<'js>(object: &Object<'js>, sessions: &Arc<dyn Sessions>) -> rqui
             object.ctx().clone(),
             move |ctx: Ctx<'js>, id: Json<SessionId>, bytes: TypedArray<'js, u8>| -> rquickjs::Result<Promise<'js>> {
                 let bytes = crate::bytes::copy(&bytes)?;
-                if bytes.len() as u64 > MAX_MEDIA_BYTES {
-                    let text = format!("the blob is larger than the limit of {MAX_MEDIA_BYTES} bytes");
-                    return Err(throw(&ctx, ErrorClass::Error, &text));
-                }
                 let sessions = Arc::clone(&sessions);
                 let task = tokio::task::spawn_local(async move { sessions.put_blob(id.0, bytes).await });
                 let error_ctx = ctx.clone();

@@ -208,8 +208,7 @@ export interface SessionHandle {
   readonly setSettings: (settings: SessionSettings) => Promise<void>;
   /**
    * Save `bytes` in the store of the session, and get the blob that names them, as for the image of an input. The
-   * blob stays until the session is removed. For bytes over the limit of an attachment (3,932,160), the promise
-   * rejects.
+   * blob stays until the session is removed.
    */
   readonly putBlob: (bytes: Uint8Array) => Promise<Blob>;
   /** Remove the pending input `inputId`. `false` when it is not pending: a turn took it, or a removal came first. */

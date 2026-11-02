@@ -1,9 +1,8 @@
-//! The MCP server of the tests: one JSON-RPC message per line on stdin and stdout. It speaks the versions with
-//! `initialize`, and it answers a method that it lacks with Method not found. Its tools:
+//! The MCP server of the tests: one JSON-RPC message per line on stdin and stdout. It speaks version 2025-11-25,
+//! and it answers a method that it lacks with Method not found. Its tools:
 //!
 //! - `echo` answers the text of its `text` argument.
 //! - `picture` answers an image and a text.
-//! - `huge` answers an image one byte over the media limit of yuke.
 //! - `fail` answers an error result.
 //! - `structured` answers only structured content.
 //! - `exit` writes `exit` to stderr and ends the server without an answer.
@@ -41,19 +40,11 @@ fn main() {
             continue;
         };
         let answer = match method {
-            "initialize" => {
-                // A server answers the version of the client when it speaks it, and else its newest version.
-                let asked = params["protocolVersion"].as_str().unwrap_or_default();
-                let version = VERSIONS
-                    .into_iter()
-                    .find(|version| *version == asked)
-                    .unwrap_or(VERSIONS[0]);
-                Ok(json!({
-                    "protocolVersion": version,
-                    "capabilities": { "tools": {} },
-                    "serverInfo": { "name": "test", "version": "1.0.0" },
-                }))
-            }
+            "initialize" => Ok(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "test", "version": "1.0.0" },
+            })),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": tools() })),
             "tools/call" => match call(params) {
@@ -81,9 +72,6 @@ fn log(line: &str) -> std::io::Result<()> {
     writeln!(file, "{line}")
 }
 
-/// The protocol versions with `initialize`, newest first.
-const VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-
 /// The base64 PNG of one pixel.
 const PIXEL: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
@@ -98,7 +86,6 @@ fn tools() -> Value {
     json!([
         echo,
         picture,
-        tool("huge", "Draw a huge picture."),
         tool("fail", "Fail."),
         tool("structured", "Answer a structure."),
         tool("wait", "Wait forever."),
@@ -114,10 +101,6 @@ fn call(params: &Value) -> Option<Value> {
         // The PNG of one pixel.
         "picture" => json!({
             "content": [{ "type": "image", "data": PIXEL, "mimeType": "image/png" }, text("a picture")],
-        }),
-        // The base64 of 3 * 1_310_720 + 1 zero bytes: one byte over the 5 MiB of base64 that yuke takes.
-        "huge" => json!({
-            "content": [{ "type": "image", "data": "A".repeat(4 * 1_310_720) + "AA==", "mimeType": "image/png" }],
         }),
         "fail" => json!({ "content": [text("it broke")], "isError": true }),
         "structured" => json!({ "content": [], "structuredContent": { "answer": 42 } }),

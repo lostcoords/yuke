@@ -67,9 +67,9 @@ declare module "yuke:ai" {
     /** The input of the request: a text as one user block, or blocks, oldest first. A media block fails the request. */
     prompt: string | readonly Block[];
     /**
-     * The media after the prompt, in order, in the shape of the media of a tool result. A `path` is absolute. Each
-     * item holds at most 3.75 MiB, as the media of a tool does. The session keeps nothing of them. An image works with
-     * each provider. Another type depends on the provider: OpenAI needs a file name for a document, so it fails there.
+     * The media after the prompt, in order, in the shape of the media of a tool result. A `path` is absolute.
+     * The session keeps nothing of them. An image works with each provider. Another type depends on the provider:
+     * OpenAI needs a file name for a document, so it fails there.
      */
     attachments?: readonly ToolMedia[] | undefined;
     /** The output limit. */

@@ -116,9 +116,6 @@ pub(crate) fn write_group(
     let end = group_end(target, request.blocks, start);
     let blocks = request.blocks;
     let first = &blocks[start];
-    if !super::writes(target, first) {
-        return Ok(end);
-    }
     match first {
         Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) => {
             jw.begin_object();

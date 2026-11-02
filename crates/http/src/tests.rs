@@ -351,16 +351,28 @@ async fn one_client_sends_concurrently() {
             stream.write_all(response.as_bytes()).await.unwrap();
         });
     }
-    let clients = futures_join(ports.iter().map(|&port| run(&client, post(port), None)));
     // No server answers until all eight requests arrive, so requests in series cannot pass.
-    let outcome = tokio::time::timeout(Duration::from_secs(5), async {
-        let outputs = clients.await;
-        let mut served = Vec::new();
-        while let Some(result) = servers.join_next().await {
-            served.push(result);
-        }
-        (outputs, served)
-    })
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        Box::pin(async {
+            let (first, second, third, fourth, fifth, sixth, seventh, eighth) = tokio::join!(
+                run(&client, post(ports[0]), None),
+                run(&client, post(ports[1]), None),
+                run(&client, post(ports[2]), None),
+                run(&client, post(ports[3]), None),
+                run(&client, post(ports[4]), None),
+                run(&client, post(ports[5]), None),
+                run(&client, post(ports[6]), None),
+                run(&client, post(ports[7]), None),
+            );
+            let outputs = [first, second, third, fourth, fifth, sixth, seventh, eighth];
+            let mut served = Vec::new();
+            while let Some(result) = servers.join_next().await {
+                served.push(result);
+            }
+            (outputs, served)
+        }),
+    )
     .await;
     if outcome.is_err() {
         servers.shutdown().await;
@@ -374,26 +386,6 @@ async fn one_client_sends_concurrently() {
         assert_eq!(out.status, Some(StatusCode::OK));
         assert_eq!(out.bytes, BODY.as_bytes());
     }
-}
-
-/// Poll every future on this task until all finish, so the sends share one thread as yuke's sessions do.
-async fn futures_join<F: Future>(futures: impl Iterator<Item = F>) -> Vec<F::Output> {
-    let mut pending: Vec<Pin<Box<F>>> = futures.map(Box::pin).collect();
-    let mut done: Vec<Option<F::Output>> = pending.iter().map(|_| None).collect();
-    std::future::poll_fn(|cx| {
-        let mut all = true;
-        for (future, slot) in pending.iter_mut().zip(done.iter_mut()) {
-            if slot.is_none() {
-                match future.as_mut().poll(cx) {
-                    Poll::Ready(output) => *slot = Some(output),
-                    Poll::Pending => all = false,
-                }
-            }
-        }
-        if all { Poll::Ready(()) } else { Poll::Pending }
-    })
-    .await;
-    done.into_iter().flatten().collect()
 }
 
 /// Send to `url` with an idle timeout of 5 seconds, and return the error.

@@ -1009,7 +1009,7 @@ declare module "yuke:tui" {
     /**
      * The image of the system clipboard as PNG, or `undefined` when it holds no image, as for text only. It reads a PNG
      * image, and on macOS also a TIFF image. It needs a display. On Linux, a display that does not answer also gives
-     * `undefined`. The promise rejects when the read fails or when the PNG is over 3,932,160 bytes.
+     * `undefined`. The promise rejects when the read fails.
      */
     readonly readImage: () => Promise<ClipboardImage | undefined>;
   }

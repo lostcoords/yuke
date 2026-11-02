@@ -247,7 +247,11 @@ fn a_failed_turn_saves_the_causes_of_its_error() {
         source: Box::new(std::io::Error::other("the disk is gone")),
     }));
 
-    let commit = Commit::end(&[], Err(&error));
+    let mut context = Vec::new();
+    let mut turn_state = TurnState::new(&mut context, None);
+    let Action::Done { commit, .. } = turn_state.fail(error) else {
+        panic!("a failed turn did not end");
+    };
 
     let expected = format!(
         "the blob store failed to read the attachment blob {}: the disk is gone",

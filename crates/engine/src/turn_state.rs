@@ -54,16 +54,13 @@ pub(crate) enum Action<'a> {
     },
 
     /// The turn ended. `Err` holds the failure of a round, and the context keeps the blocks from before the failure.
-    /// The end commit holds `tail` and `result`.
+    /// The commit holds the final blocks and the turn end.
     Done {
-        /// The blocks after the last commit, such as the partial output of a cancel.
-        tail: &'a [Block],
+        /// The final blocks, the turn end, and the display of the tool results.
+        commit: Commit<'a>,
 
         /// How the turn ended.
         result: Result<Outcome, RoundError>,
-
-        /// The display of the tool results in `tail`.
-        display: CommitDisplay,
     },
 }
 
@@ -165,14 +162,6 @@ impl<'a> Commit<'a> {
             answer: self.answer,
             end: self.end,
             display: self.display,
-        }
-    }
-
-    /// The commit that ends a turn with `result` after the `tail` blocks.
-    pub(crate) fn end(tail: &'a [Block], result: Result<&Outcome, &RoundError>) -> Self {
-        Commit {
-            end: Some(TurnEnd::from_result(result)),
-            ..Commit::blocks(tail)
         }
     }
 }
@@ -438,12 +427,15 @@ impl<'c> TurnState<'c> {
     fn done(&mut self, result: Result<Outcome, RoundError>) -> Action<'_> {
         let start = self.take_unsaved();
         Action::Done {
-            tail: &self.context[start..],
-            result,
-            display: CommitDisplay {
-                calls: Vec::new(),
-                results: std::mem::take(&mut self.results),
+            commit: Commit {
+                end: Some(TurnEnd::from_result(result.as_ref())),
+                display: CommitDisplay {
+                    calls: Vec::new(),
+                    results: std::mem::take(&mut self.results),
+                },
+                ..Commit::blocks(&self.context[start..])
             },
+            result,
         }
     }
 

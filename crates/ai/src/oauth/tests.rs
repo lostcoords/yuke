@@ -74,7 +74,7 @@ fn a_start_takes_the_other_spellings_and_fails_without_a_code() {
 }
 
 #[test]
-fn an_interval_takes_the_default_when_it_is_absent_zero_or_absurd() {
+fn an_interval_takes_the_default_when_it_is_absent_or_invalid() {
     let interval_of = |body| start_of(body).unwrap().interval;
 
     assert_eq!(
@@ -87,10 +87,6 @@ fn an_interval_takes_the_default_when_it_is_absent_zero_or_absurd() {
     );
     assert_eq!(
         interval_of(r#"{"device_code":"d","user_code":"u","verification_uri":"v","interval":-3}"#),
-        FIVE_SECONDS
-    );
-    assert_eq!(
-        interval_of(r#"{"device_code":"d","user_code":"u","verification_uri":"v","interval":86400}"#),
         FIVE_SECONDS
     );
 }
@@ -133,7 +129,6 @@ fn an_approved_poll_gives_the_grant_with_its_end() {
         r#"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#,
     )));
     let lifetime_unknown = poll_of(Ok((200, r#"{"access_token":"at"}"#)));
-    let lifetime_absurd = poll_of(Ok((200, r#"{"access_token":"at","expires_in":18446744073709551615}"#)));
 
     assert_eq!(
         approved,
@@ -149,10 +144,6 @@ fn an_approved_poll_gives_the_grant_with_its_end() {
     };
     assert_eq!(unknown.expires_at, now() + FIVE_HOURS);
     assert_eq!(unknown.refresh_token, None);
-    let Ok(Poll::Approved(absurd)) = lifetime_absurd else {
-        panic!("{lifetime_absurd:?}");
-    };
-    assert_eq!(absurd.expires_at, now() + FIVE_HOURS);
 }
 
 #[test]

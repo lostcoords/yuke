@@ -12,11 +12,9 @@ use crate::queries::{events, sessions};
 /// transaction, so each query reads the same state.
 pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<Option<Opened>> {
     let session = *id.as_bytes();
-    // Each session has a settings event, so no row means no session.
-    let Some(settings) = events::newest_settings(connection, session).opt()? else {
+    let Some(row) = sessions::session_context(connection, session).opt()? else {
         return Ok(None);
     };
-    let row = sessions::session_prompt(connection, session).one()?;
     let prompt = row.prompt.0;
     // The context starts at the newest replacement: its head, then the blocks that it keeps.
     let mut context = Vec::new();
@@ -49,7 +47,7 @@ pub(crate) fn load(connection: &Connection, id: SessionId) -> rusqlite::Result<O
     let input_tokens = events::newest_input_tokens(connection, session).opt()?.flatten();
     Ok(Some(Opened {
         id,
-        settings: required(settings, "settings")?.0,
+        settings: row.settings.0,
         prompt,
         parent: row.parent.map(SessionId::from_bytes),
         context,

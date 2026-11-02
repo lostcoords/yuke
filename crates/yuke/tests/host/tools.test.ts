@@ -1,6 +1,6 @@
 // The tools of a plugin: their definitions, the check of their arguments, their results, and their signal.
 
-import { mkdir, readDir, writeFile, writeTextFile } from "yuke:fs";
+import { mkdir, readDir, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
 import type { Tool } from "yuke:tools";
@@ -417,43 +417,6 @@ test("media bytes reach the store as the view held them at the return", async ()
 
   equal([drawn.isError, own.isError], [false, false]);
   equal([plain(drawn.media), plain(own.media)], [[["image/png", [1, 2]]], [["image/png", [1, 2]]]]);
-});
-
-const LIMIT = 3_932_160;
-
-test("media over the limit fails the call", async () => {
-  await writeFile(`${folder()}/fits.png`, new Uint8Array(LIMIT));
-  await writeFile(`${folder()}/large.png`, new Uint8Array(LIMIT + 1));
-  const attach = {
-    name: "attach",
-    description: "d",
-    concurrency: "serial",
-    parameters: { type: "object", properties: { paths: { type: "array", items: { type: "string" } } } },
-    execute: (args: { paths: string[] }) => ({
-      text: "attached",
-      media: args.paths.map((path) => ({ path, mimeType: "image/png" })),
-    }),
-  } as unknown as Tool;
-  const { host, session } = await opened(
-    attach,
-    tool("large", () => ({ text: "large", media: [{ bytes: new Uint8Array(LIMIT + 1), mimeType: "image/png" }] })),
-  );
-  await using _host = host;
-
-  const large = await session.call("attach", { paths: ["fits.png", "large.png"] });
-  const bytes = await session.call("large", {});
-  const fits = await session.call("attach", { paths: ["fits.png"] });
-
-  equal(
-    [large.isError, large.text, bytes.isError, bytes.text],
-    [
-      true,
-      `large.png: the media is larger than the limit of ${LIMIT} bytes`,
-      true,
-      `the media is larger than the limit of ${LIMIT} bytes`,
-    ],
-  );
-  equal([fits.isError, fits.media[0]?.size], [false, LIMIT]);
 });
 
 // The answer commit saves the hints and the folder before the call runs, so the saved transcript shows them too.
