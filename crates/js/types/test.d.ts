@@ -24,6 +24,7 @@
  * ```
  */
 declare module "yuke:test" {
+  import type { UnixConnection } from "yuke:net";
   import type { NoticeLevel, PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
   import type {
     Block,
@@ -151,6 +152,18 @@ declare module "yuke:test" {
 
   /** The scratch folder of the test: an empty folder for this test alone. Its path has no symbolic link. */
   export function folder(): string;
+
+  /** A test server on a Unix socket, for a client of `yuke:net`. `using` closes it. */
+  export interface TestServer extends Disposable {
+    /** The absolute path of the socket: a new file in the folder for temporary files. */
+    readonly path: string;
+    /** The next connection to the server. It has the shape of a connection of `connect`. */
+    accept: () => Promise<UnixConnection>;
+    /** Close the server and remove its socket file. An open accept rejects. A second close does nothing. */
+    close: () => void;
+  }
+  /** Listen at a new socket path. A failure throws a `ConnectionError`. */
+  export function listen(): TestServer;
   // The host of plugins under test: an app with a scripted model, in the runtime of the test.
 
   /**

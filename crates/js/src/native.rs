@@ -10,6 +10,7 @@ mod exec;
 pub(crate) mod fs;
 mod http;
 mod lines;
+mod net;
 mod process;
 mod sessions;
 pub(crate) mod term;
@@ -123,6 +124,7 @@ pub(crate) fn install(
     clipboard::add(ctx, &object)?;
     http::add(ctx, &object, &options.http)?;
     process::add(ctx, &object, &options.processes)?;
+    net::add(ctx, &object)?;
     lines::add(ctx, &object)?;
     encoding::add(ctx, &object)?;
     url::add(ctx, &object)?;

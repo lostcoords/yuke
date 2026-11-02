@@ -1,5 +1,5 @@
 //! The global `fetch` against loopback servers of `yuke_http::testing`: the request on the wire, the response, the
-//! redirects, the failures, and the aborts.
+//! redirects, the failures, and the aborts. The last tests check `yuke:net` against Unix sockets of tokio.
 
 use std::time::Duration;
 
@@ -437,4 +437,57 @@ async fn a_fetch_of_a_request_uses_its_body() {
         (seen.method.as_str(), seen.body.as_slice()),
         ("PUT", b"sent".as_slice())
     );
+}
+
+/// A new path for a socket file in the folder for temporary files. The scratch folder can be too long for a socket.
+fn socket_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("yuke-{name}-{}.sock", std::process::id()))
+}
+
+#[tokio::test]
+async fn a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused() {
+    let path = socket_path("refused");
+    // The socket file stays after the drop of the listener, and nothing listens at it.
+    drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+    let code = run::<String>(
+        "a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused",
+        &format!(
+            "const {{ connect, ConnectionError }} = await import('yuke:net');
+             return await connect({{ transport: 'unix', path: {path:?} }})
+               .then(() => 'fulfilled', (error) => `${{error instanceof ConnectionError}} ${{error.code}}`);"
+        ),
+    )
+    .await;
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(code, "true ECONNREFUSED");
+}
+
+#[tokio::test]
+async fn the_shutdown_of_the_runtime_closes_an_open_connection_during_a_read() {
+    let path = socket_path("shutdown");
+    let listener = tokio::net::UnixListener::bind(&path).unwrap();
+    let folder = folder("the_shutdown_of_the_runtime_closes_an_open_connection_during_a_read");
+    let (runtime, _reports) = start(&folder).await;
+    evaluate::<()>(
+        &runtime,
+        &format!(
+            "const {{ connect }} = await import('yuke:net');
+             globalThis.kept = await connect({{ transport: 'unix', path: {path:?} }});
+             globalThis.read = globalThis.kept.readable.getReader().read();"
+        ),
+    )
+    .await
+    .unwrap();
+    let (mut stream, _address) = listener.accept().await.unwrap();
+    runtime.shutdown().await.unwrap();
+    let mut buffer = [0; 1];
+    let read = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::io::AsyncReadExt::read(&mut stream, &mut buffer),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(read, 0);
 }

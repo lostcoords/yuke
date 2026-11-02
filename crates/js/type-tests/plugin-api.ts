@@ -233,6 +233,27 @@ async function programs(): Promise<void> {
 }
 void programs;
 
+// `yuke:net` connects to a Unix socket, its stream gives bytes, and its failure narrows to a code.
+async function sockets(): Promise<void> {
+  const { connect, ConnectionError } = await import("yuke:net");
+  try {
+    using connection = await connect({ transport: "unix", path: "/tmp/h.sock", signal: ctx.signal });
+    await connection.write(new TextEncoder().encode("ping\n"));
+    for await (const chunk of connection.readable) {
+      const bytes: Uint8Array = chunk;
+      void bytes;
+    }
+  } catch (error) {
+    const code: string | undefined = error instanceof ConnectionError ? error.code : undefined;
+    void code;
+  }
+  // @ts-expect-error: only Unix sockets exist.
+  await connect({ transport: "tcp", path: "/tmp/h.sock" });
+  // @ts-expect-error: a write takes bytes.
+  await (await connect({ transport: "unix", path: "/tmp/h.sock" })).write("ping");
+}
+void sockets;
+
 // `yuke:ai` needs a model, takes a text or blocks, and its answer has the finish reason and the usage.
 async function models(): Promise<void> {
   const { generateText } = await import("yuke:ai");

@@ -202,6 +202,32 @@ declare module "yuke:internal/native" {
   /** Close `body` and its connection. */
   export function httpClose(body: HttpBody): void;
 
+  /** A connection to a Unix socket. When QuickJS frees it, the socket closes. */
+  export interface NetConnection {
+    readonly __netConnection: never;
+  }
+  /** A test server on a Unix socket. When QuickJS frees it, the listener closes. */
+  export interface NetListener {
+    readonly __netListener: never;
+  }
+  /**
+   * Connect to the socket at `path`. A failure rejects with `{ code, message }`, where `code` is a POSIX name or
+   * `undefined`. A stop rejects with `{ cancelled: true }`.
+   */
+  export function netConnect(path: string): Operation<NetConnection>;
+  /** The next chunk from the peer, or `undefined` at the end. It rejects as `netConnect` does, and a closed connection as a stop. */
+  export function netRead(connection: NetConnection): Operation<Uint8Array | undefined>;
+  /** Write each byte of `bytes`. A closed connection rejects as a stop does. */
+  export function netWrite(connection: NetConnection, bytes: Uint8Array): Operation<void>;
+  /** Close `connection`. */
+  export function netClose(connection: NetConnection): void;
+  /** Listen at a new socket file in the folder for temporary files. A failure throws `{ code, message }`. */
+  export function netListen(): { readonly listener: NetListener; readonly path: string };
+  /** The next connection to `listener`. A closed listener rejects as a stop does. */
+  export function netAccept(listener: NetListener): Operation<NetConnection>;
+  /** Close `listener`, and remove its socket file. A second call does nothing. A failure throws `{ code, message }`. */
+  export function netUnlisten(listener: NetListener): void;
+
   /** Send an entry of `console`, a notice from the source `console`. */
   export function writeConsole(level: NoticeLevel, text: string): void;
 

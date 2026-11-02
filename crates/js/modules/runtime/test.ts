@@ -1,10 +1,49 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
 import { createHost, reply } from "yuke:internal/host";
+import { netAccept, netListen, netUnlisten } from "yuke:internal/native";
+import { Connection, failureOf } from "yuke:internal/net";
 import { folder, register } from "yuke:internal/test";
 import { createFrame } from "yuke:internal/tui/frame";
+import type { UnixConnection } from "yuke:net";
+import type { TestServer } from "yuke:test";
 
 export { createFrame, createHost, folder, reply };
+
+export function listen(): TestServer {
+  let served: ReturnType<typeof netListen>;
+  try {
+    served = netListen();
+  } catch (error) {
+    throw failureOf(undefined, error);
+  }
+  const native = served.listener;
+  const stops = new Set<() => void>();
+  const close = (): void => {
+    for (const stop of stops) stop();
+    try {
+      netUnlisten(native);
+    } catch (error) {
+      throw failureOf(undefined, error);
+    }
+  };
+  return {
+    path: served.path,
+    async accept(): Promise<UnixConnection> {
+      const { promise, cancel } = netAccept(native);
+      stops.add(cancel);
+      try {
+        return new Connection(await promise, undefined);
+      } catch (error) {
+        throw failureOf(undefined, error);
+      } finally {
+        stops.delete(cancel);
+      }
+    },
+    close,
+    [Symbol.dispose]: close,
+  };
+}
 
 /** The most characters of a value in a failure. */
 const SHOWN = 200;
@@ -137,6 +176,7 @@ const declared = {
   throws,
   rejects,
   folder,
+  listen,
   createHost,
   reply,
   createFrame,
