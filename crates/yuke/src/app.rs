@@ -2,6 +2,11 @@
 //! and `yuke --rpc` drive their sessions through an [`App`], and the app tells them what happens with the notifications
 //! of the protocol.
 
+#![expect(
+    clippy::arc_with_non_send_sync,
+    reason = "local traits keep Arc ownership until the separate host state cleanup"
+)]
+
 mod catalog;
 mod facts;
 mod live;
@@ -90,7 +95,7 @@ pub(crate) enum Mode {
 
 /// Receives the notifications of the app: the updates of each open session, and the notices. It also sends the
 /// requests of the plugins to the client.
-pub(crate) trait Observer: Send + Sync {
+pub(crate) trait Observer {
     /// Receive one notification. A call must not block, because a turn waits for it.
     fn notify(&self, notification: ServerNotification);
 
@@ -572,7 +577,7 @@ impl App {
         let shared = Arc::clone(&self.shared);
         let task_provider = provider.clone();
         let task_stop = stop.clone();
-        let task = tokio::spawn(async move {
+        let task = tokio::task::spawn_local(async move {
             let (provider, stop) = (task_provider, task_stop);
             let exchange = Arc::clone(&shared.machine.exchange);
             // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
@@ -887,7 +892,7 @@ async fn start_runtime(
     })
     .await?;
     let copy = test.map(|test| test.reports.clone());
-    let reporter = tokio::spawn(report(reports, Arc::clone(&shared.observer), copy));
+    let reporter = tokio::task::spawn_local(report(reports, Arc::clone(&shared.observer), copy));
     if let Err(error) = runtime.import("yuke:internal/builtins").await {
         stop_runtime(shared, runtime, reporter).await;
         return Err(error);
@@ -1104,7 +1109,7 @@ pub(crate) async fn open_store(data: &Path) -> Result<Arc<dyn Store>, String> {
 /// Waits with the tokio timer.
 pub(crate) struct TokioTimer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for TokioTimer {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;

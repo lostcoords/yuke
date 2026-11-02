@@ -40,7 +40,7 @@ impl Drop for Alive {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Models for Recorded {
     async fn complete(
         &self,

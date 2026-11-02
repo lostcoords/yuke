@@ -1,5 +1,10 @@
 //! The MCP servers of one session: their connections, their states, and their tools.
 
+#![expect(
+    clippy::arc_with_non_send_sync,
+    reason = "local traits keep Arc ownership until the separate host state cleanup"
+)]
+
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::process::Stdio;
@@ -37,7 +42,7 @@ const LOG_LINES: usize = 20;
 const LOG_LINE_BYTES: usize = 500;
 
 /// Receives each change of the state of a server. It must not wait, and it must not call the [`Servers`].
-pub type OnChange = Arc<dyn Fn(McpServer) + Send + Sync>;
+pub type OnChange = Arc<dyn Fn(McpServer)>;
 
 /// One server of the session.
 struct Slot {
@@ -110,10 +115,14 @@ impl Servers {
     /// project server can start. `variable` gives the values of the variables of the config. A server without its own
     /// folder runs in `folder`. `media` stores the attachments of the results. `on_change` gets each later state of a
     /// server: the end of its start, the start after the trust, and its stop.
+    ///
+    /// # Panics
+    ///
+    /// Panics outside a tokio local runtime or local task set when a server can start.
     pub fn start(
         user: &[(String, ServerConfig)],
         project: &[(String, ServerConfig)],
-        trust: impl Future<Output = bool> + Send + 'static,
+        trust: impl Future<Output = bool> + 'static,
         variable: &dyn Fn(&str) -> Option<String>,
         folder: &Path,
         media: Arc<dyn MediaStore>,
@@ -161,11 +170,17 @@ impl Servers {
         let mut tasks = lock(&shared.tasks);
         for (index, process) in launches {
             let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
-            tasks.push((Some(index), tokio::spawn(run(index, process, task_shared, count))));
+            tasks.push((
+                Some(index),
+                tokio::task::spawn_local(run(index, process, task_shared, count)),
+            ));
         }
         if !gated.is_empty() {
             let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
-            tasks.push((None, tokio::spawn(start_trusted(gated, trust, task_shared, count))));
+            tasks.push((
+                None,
+                tokio::task::spawn_local(start_trusted(gated, trust, task_shared, count)),
+            ));
         }
         drop(tasks);
         Servers {
@@ -282,7 +297,10 @@ async fn start_trusted(
         }
         shared.update(index, |slot| slot.state = McpServerState::Connecting);
         let (task_shared, count) = (Arc::clone(&shared), Arc::clone(&count));
-        tasks.push((Some(index), tokio::spawn(run(index, process, task_shared, count))));
+        tasks.push((
+            Some(index),
+            tokio::task::spawn_local(run(index, process, task_shared, count)),
+        ));
     }
 }
 
@@ -448,7 +466,7 @@ impl std::fmt::Debug for McpTool {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for McpTool {
     fn hints(&self) -> ToolHints {
         ToolHints {

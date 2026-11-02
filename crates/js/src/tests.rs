@@ -15,6 +15,7 @@ mod tui;
 mod typescript;
 mod web;
 
+use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,7 +62,7 @@ fn windowed(window: Option<u64>) -> yuke_engine::Model {
 /// The models of a test runtime: none.
 struct NoModels;
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl Models for NoModels {
     async fn complete(
         &self,
@@ -88,7 +89,7 @@ fn no_sessions<T>() -> Result<T, crate::SessionsError> {
     Err("no sessions".into())
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl crate::Sessions for NoSessions {
     async fn create(
         &self,
@@ -121,10 +122,10 @@ impl crate::Sessions for NoSessions {
         _: yuke_protocol::SessionId,
         _: usize,
         _: crate::ViewSink,
-    ) -> Result<Box<dyn Send>, crate::SessionsError> {
+    ) -> Result<Box<dyn Any>, crate::SessionsError> {
         no_sessions()
     }
-    fn watch_facts(&self, _: crate::FactSink) -> Box<dyn Send> {
+    fn watch_facts(&self, _: crate::FactSink) -> Box<dyn Any> {
         Box::new(())
     }
     async fn events_before(
@@ -277,7 +278,7 @@ async fn load_entry(runtime: &Runtime, path: &Path) -> Result<(), Error> {
 /// Run the body of an async function, and return the value of its promise.
 async fn evaluate<T>(runtime: &Runtime, body: &str) -> Result<T, Error>
 where
-    T: for<'js> FromJs<'js> + Send + 'static,
+    T: for<'js> FromJs<'js> + 'static,
 {
     let source = format!("(async () => {{ {body} }})()");
     runtime
@@ -293,7 +294,7 @@ where
 /// does not settle in five seconds fails the test, and so does a report, such as a fault, that came before the end.
 async fn run<T>(name: &str, body: &str) -> T
 where
-    T: for<'js> FromJs<'js> + Send + 'static,
+    T: for<'js> FromJs<'js> + 'static,
 {
     let folder = folder(name);
     let (runtime, mut reports) = start(&folder).await;

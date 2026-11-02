@@ -34,7 +34,7 @@ const INTERRUPTED: &str = "[The user interrupted the previous answer.]";
 /// Wait with the Tokio timer.
 struct TokioTimer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for TokioTimer {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;

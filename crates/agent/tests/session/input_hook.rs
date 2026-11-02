@@ -20,7 +20,7 @@ use crate::support::{SendsInput, consumed_inputs, prompt, settings, user_input};
 #[derive(Default)]
 struct ByText(Mutex<Vec<String>>);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl InputHook for ByText {
     async fn before_input(
         &self,
@@ -200,7 +200,7 @@ async fn the_note_of_the_session_passes_without_the_hook() {
 /// Removes the input from the store while it decides, as a client can, and then answers its decision.
 struct RemovedMeanwhile(Arc<MemoryStore>, SessionId, InputDecision);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl InputHook for RemovedMeanwhile {
     async fn before_input(
         &self,

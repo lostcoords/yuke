@@ -220,7 +220,7 @@ impl SessionService {
         let deadline = timer.deadline();
         open.deadline = Some(deadline);
         let service = self.this.clone();
-        tokio::spawn(async move {
+        tokio::task::spawn_local(async move {
             timer.await;
             if let Some(service) = service.upgrade() {
                 service.expire(id, deadline).await;

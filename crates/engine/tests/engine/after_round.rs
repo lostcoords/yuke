@@ -18,7 +18,7 @@ struct Feeding<'a> {
     inputs: Mutex<VecDeque<Vec<Block>>>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Feeding<'_> {
     async fn after_round(
         &self,
@@ -98,7 +98,7 @@ fn input_of_the_user_and_of_the_hook_reach_the_same_request_and_the_hook_is_aske
 /// An inbox that fails each take.
 struct Broken;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Inbox for Broken {
     async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
         Err("the store is gone".into())

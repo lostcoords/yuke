@@ -12,7 +12,7 @@ async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends
     // The client keeps its end of the output and never reads it, so the small pipe fills.
     let (server_output, _unread) = tokio::io::duplex(1 << 10);
     let machine = place.machine(Box::new(with_key), Box::new(ScriptedTransport::default()));
-    let server = tokio::spawn(serve(
+    let server = tokio::task::spawn_local(serve(
         machine,
         Duration::from_millis(100),
         Clients::One(Stream::new(server_input, server_output)),
@@ -203,7 +203,7 @@ async fn a_shutdown_ends_a_stdio_server_while_its_input_stays_open() {
     let (_input, server_input) = tokio::io::duplex(1 << 16);
     let (server_output, _output) = tokio::io::duplex(1 << 16);
     let shutdown = CancellationToken::new();
-    let server = tokio::spawn(serve(
+    let server = tokio::task::spawn_local(serve(
         place.machine(Box::new(with_key), Box::new(ScriptedTransport::default())),
         Duration::from_secs(10),
         Clients::One(Stream::new(server_input, server_output)),

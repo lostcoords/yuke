@@ -23,8 +23,8 @@ const NO_HOST: &str = "no test host: run this file with yuke test";
 
 /// The host of the tests of a runtime: the app around the runtime of one test. The runtime calls each method from a
 /// native of `yuke:test`. Each async method runs as a local task.
-#[async_trait]
-pub trait TestHost: Send + Sync {
+#[async_trait(?Send)]
+pub trait TestHost {
     /// Load the plugins and the model script of a new host. `request` is the JSON of `createHost`: the plugins under
     /// test in their order, and the scripted replies. The JavaScript gave the exports of each given plugin already.
     ///
@@ -131,7 +131,7 @@ fn add_operation<'js, A, T, F>(
 ) -> rquickjs::Result<()>
 where
     A: FromJs<'js> + 'static,
-    T: IntoJs<'js> + Send + 'static,
+    T: IntoJs<'js> + 'static,
     F: Future<Output = Result<T, TestError>> + 'static,
 {
     let host = host.cloned();

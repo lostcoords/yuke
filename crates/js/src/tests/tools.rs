@@ -75,7 +75,7 @@ impl TestHost {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl MediaStore for TestHost {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(error) = &self.failure {
@@ -90,7 +90,7 @@ impl MediaStore for TestHost {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl SessionHost for TestHost {
     fn session_id(&self) -> SessionId {
         self.session

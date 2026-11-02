@@ -3,6 +3,7 @@
 //! promises. Synchronous natives read the current host state directly. Facts that start in JavaScript go to listeners
 //! at once.
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
@@ -46,7 +47,7 @@ pub(super) fn add<'js>(
     queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
-    let held: Rc<RefCell<HashMap<u32, Box<dyn Send>>>> = Rc::default();
+    let held: Rc<RefCell<HashMap<u32, Box<dyn Any>>>> = Rc::default();
 
     add_facts(ctx, object, sessions, queue)?;
     let open_queue = queue.clone();
@@ -99,7 +100,7 @@ fn add_facts<'js>(
     queue: &Queue<'js>,
 ) -> rquickjs::Result<()> {
     let sender = queue.sender.clone();
-    let watch: Rc<RefCell<Option<Box<dyn Send>>>> = Rc::default();
+    let watch: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::default();
     let (sessions, started) = (Arc::clone(sessions), Rc::clone(&watch));
     object.set(
         "factsWatch",
@@ -340,7 +341,7 @@ impl<'js> Requests<'js> {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + Send + 'static,
+        T: Serialize + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Arc::clone(&self.sessions);
@@ -370,7 +371,7 @@ impl<'js> Requests<'js> {
     ) -> rquickjs::Result<()>
     where
         A: DeserializeOwned + 'js,
-        T: Serialize + Send + 'static,
+        T: Serialize + 'static,
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Arc::clone(&self.sessions);

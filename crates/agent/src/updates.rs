@@ -9,12 +9,12 @@ use crate::lock;
 
 /// Receives typed session updates without a wait. RPC and in-process clients use the same facts.
 /// A callback must not block. The caller owns delivery queues and serialization.
-pub trait SessionObserver: Send + Sync {
+pub trait SessionObserver {
     /// Receive a saved event or a live fact of its session.
     fn update(&self, update: SessionUpdate);
 }
 
-impl<F: Fn(SessionUpdate) + Send + Sync> SessionObserver for F {
+impl<F: Fn(SessionUpdate)> SessionObserver for F {
     fn update(&self, update: SessionUpdate) {
         self(update);
     }

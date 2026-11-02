@@ -31,7 +31,7 @@ impl yuke_ai::BlobStore for Recorded {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl MediaStore for Recorded {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
         let blob = Blob {
@@ -122,7 +122,7 @@ fn toolset(servers: &Servers) -> Toolset {
     toolset
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schemas() {
     let folder = folder("a_server_starts");
     let log = folder.join("log");
@@ -163,7 +163,7 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
     servers.close().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_results() {
     let folder = folder("the_model_reads_the_results");
     let media = Arc::new(Recorded::default());
@@ -199,7 +199,7 @@ async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_r
     servers.close().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     let folder = folder("a_cancel_of_a_call");
     let log = folder.join("log");
@@ -245,7 +245,7 @@ async fn a_cancel_of_a_call_sends_the_cancel_to_the_server() {
     servers.close().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn two_servers_with_one_valid_name_both_keep_their_tools() {
     let folder = folder("two_servers_with_one_valid_name");
     let entries = vec![
@@ -266,7 +266,7 @@ async fn two_servers_with_one_valid_name_both_keep_their_tools() {
     servers.close().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and_stops_its_children() {
     let folder = folder("a_server_that_exits");
     // The child keeps the stderr of the server open after the server ends.
@@ -331,7 +331,7 @@ async fn a_server_that_exits_fails_with_its_last_stderr_line_loses_its_tools_and
     servers.close().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_failed_start_shows_the_last_twenty_stderr_lines_and_stops_the_children() {
     let folder = folder("a_failed_start_shows_the_last_lines");
     // 25 lines, a blank one, and a child that keeps the stderr open after the server ends.
@@ -367,7 +367,7 @@ async fn a_failed_start_shows_the_last_twenty_stderr_lines_and_stops_the_childre
     child_stops(&folder).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_close_stops_a_server_that_never_answers_its_start() {
     let folder = folder("a_close_stops_a_server_that_never_answers");
     // `sleep` reads nothing, so the start waits for `initialize` forever.
@@ -430,7 +430,7 @@ async fn child_stops(folder: &Path) {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_close_stops_the_children_of_a_server_that_outlives_its_input() {
     let folder = folder("a_close_stops_the_children");
     let (servers, _) = started(
@@ -448,7 +448,7 @@ async fn a_close_stops_the_children_of_a_server_that_outlives_its_input() {
     child_stops(&folder).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_drop_stops_the_children_of_a_server() {
     let folder = folder("a_drop_stops_the_children");
     let (servers, _) = started(
@@ -463,7 +463,7 @@ async fn a_drop_stops_the_children_of_a_server() {
     child_stops(&folder).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_project_server_replaces_a_user_server_and_starts_only_when_trusted() {
     let folder = folder("a_project_server_replaces_a_user_server");
     let user = vec![
@@ -536,7 +536,7 @@ async fn the_trust_runs_only_when_a_project_server_can_start() {
     assert_eq!(servers.states(), [project_server("off", McpServerState::Disabled)]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn a_close_during_the_trust_starts_no_project_server() {
     let folder = folder("a_close_during_the_trust");
     let (answer, answered) = tokio::sync::oneshot::channel::<bool>();
@@ -562,7 +562,7 @@ async fn a_close_during_the_trust_starts_no_project_server() {
     assert!(servers.tools().is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "local")]
 async fn an_entry_that_cannot_start_fails_and_a_disabled_one_stays_off() {
     let folder = folder("an_entry_that_cannot_start");
     let missing = ServerConfig {

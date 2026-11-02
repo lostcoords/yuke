@@ -69,7 +69,7 @@ struct EchoArguments {
     text: String,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Echo {
     async fn call(
         &self,
@@ -132,7 +132,7 @@ impl std::error::Error for WriteFailed {
 
 struct Fails;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Fails {
     async fn call(
         &self,
@@ -161,7 +161,7 @@ fn a_tool_error_reaches_the_model_with_each_cause() {
 /// A tool that shows two lines of live output, and answers the call id that it saw.
 struct Prints;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Prints {
     async fn call(
         &self,

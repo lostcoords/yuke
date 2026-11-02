@@ -60,7 +60,7 @@ pub(crate) struct SendsInput {
     pub(crate) text: &'static str,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for SendsInput {
     async fn call(
         &self,

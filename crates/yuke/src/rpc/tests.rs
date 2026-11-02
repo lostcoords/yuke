@@ -70,7 +70,7 @@ impl Client {
             exchange: Arc::new(exchange),
             ..place.machine(Box::new(with_key), transport)
         };
-        let server = tokio::spawn(serve(
+        let server = tokio::task::spawn_local(serve(
             machine,
             Duration::from_secs(10),
             Clients::One(Stream::new(server_input, server_output)),
@@ -203,7 +203,7 @@ impl Listening {
         let path = socket_path();
         let socket = Socket::bind(&path).unwrap();
         let shutdown = CancellationToken::new();
-        let server = tokio::spawn(serve(
+        let server = tokio::task::spawn_local(serve(
             place.machine(Box::new(with_key), transport),
             Duration::from_secs(10),
             Clients::Socket(socket),

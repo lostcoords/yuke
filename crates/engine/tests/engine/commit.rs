@@ -211,7 +211,7 @@ fn a_cancel_during_the_stream_commits_the_partial_output_with_the_end() {
 /// A tool that cancels the turn before it returns its result.
 struct CancelTurn(CancellationToken);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for CancelTurn {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         self.0.cancel();
@@ -255,7 +255,7 @@ struct SeesItsCall {
     saw: Arc<Mutex<Option<bool>>>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for SeesItsCall {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         let saved = self.journal.context().contains(&call("c1"));
@@ -350,7 +350,7 @@ struct FailsAfter {
     count: AtomicUsize,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Journal for FailsAfter {
     async fn commit(&self, _: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
         if self.count.fetch_add(1, Ordering::Relaxed) < self.saves {
@@ -397,7 +397,7 @@ struct CancelDuringSave {
     replay: Replay,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Journal for CancelDuringSave {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
         self.cancellation_token.cancel();

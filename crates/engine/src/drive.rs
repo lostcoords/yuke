@@ -88,23 +88,22 @@ pub enum TurnEvent<'a> {
     },
 }
 
-/// Receives the events of a turn, one at a time, and returns without a wait. Two turns can share one observer, so an
-/// observer with state keeps that state behind a lock or an atomic.
-pub trait Observer: Send + Sync {
+/// Receives the events of a turn, one at a time, and returns without a wait.
+pub trait Observer {
     /// Receive one event.
     fn event(&self, event: &TurnEvent<'_>);
 }
 
 // A closure or a function is an observer, so a quick observer needs no struct.
-impl<F: Fn(&TurnEvent<'_>) + Send + Sync> Observer for F {
+impl<F: Fn(&TurnEvent<'_>)> Observer for F {
     fn event(&self, event: &TurnEvent<'_>) {
         self(event);
     }
 }
 
 /// Makes waits. The caller supplies it, so the engine needs no async runtime of its own.
-#[async_trait]
-pub trait Timer: Send + Sync {
+#[async_trait(?Send)]
+pub trait Timer {
     /// Return after `duration`.
     async fn sleep(&self, duration: Duration);
 }
@@ -113,15 +112,15 @@ pub trait Timer: Send + Sync {
 #[derive(Debug)]
 pub struct NoWait;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for NoWait {
     async fn sleep(&self, _: Duration) {}
 }
 
 /// Holds the input that arrives during a turn. The driver takes it after a round only when the turn continues, so
-/// input never changes a request in flight. An inbox is `Sync`, so another task can add input while a turn runs.
-#[async_trait]
-pub trait Inbox: Send + Sync {
+/// input never changes a request in flight.
+#[async_trait(?Send)]
+pub trait Inbox {
     /// Remove and return the input that arrived since the last call, or an empty `Vec` when none arrived. Do not wait
     /// for input.
     ///
@@ -133,8 +132,8 @@ pub trait Inbox: Send + Sync {
 
 /// Saves the commits of each turn. The driver awaits each commit before the turn goes on, and a cancel does not
 /// stop a commit. A caller that saves nothing sets no journal.
-#[async_trait]
-pub trait Journal: Send + Sync {
+#[async_trait(?Send)]
+pub trait Journal {
     /// Save `commit`. The driver sends the commits of a turn in order. The context that a turn starts with
     /// counts as saved.
     ///
@@ -147,7 +146,7 @@ pub trait Journal: Send + Sync {
 /// The inbox of a turn without an inbox. It never holds input.
 struct NoInput;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Inbox for NoInput {
     async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
         Ok(Vec::new())
@@ -168,14 +167,11 @@ pub struct Driver<'a> {
     transport: &'a dyn Transport,
     model: &'a Model,
     timer: &'a dyn Timer,
-    toolset: &'a Toolset,
+    toolset: Option<&'a Toolset>,
     hooks: &'a dyn Hooks,
     retry_policy: retry::Policy,
     response_limits: ResponseLimits,
 }
-
-/// The toolset of a driver without tools.
-static NO_TOOLS: Toolset = Toolset::new();
 
 /// The settings of a turn without settings. Each value stays at its endpoint default.
 static NO_SETTINGS: Settings = Settings::new();
@@ -197,7 +193,7 @@ impl<'a> Driver<'a> {
             transport,
             model,
             timer,
-            toolset: &NO_TOOLS,
+            toolset: None,
             hooks: &NoHooks,
             retry_policy: retry::Policy::default(),
             response_limits: ResponseLimits::default(),
@@ -207,7 +203,10 @@ impl<'a> Driver<'a> {
     /// Offer the tools of `toolset` to the model.
     #[must_use]
     pub fn toolset(self, toolset: &'a Toolset) -> Self {
-        Driver { toolset, ..self }
+        Driver {
+            toolset: Some(toolset),
+            ..self
+        }
     }
 
     /// Ask `hooks` for each decision of a turn, as [`Hooks`] lists them.
@@ -285,7 +284,7 @@ impl<'a> Driver<'a> {
     /// The call that `call` runs, and its result when it runs nothing. The model calls a deferred tool through the
     /// bridge, but the hooks and the observer see the real call.
     fn resolve<'c>(&self, block_index: usize, call: &'c ToolCall) -> Resolved<'c> {
-        let call = if call.name == TOOL_CALL_NAME && self.toolset.has_deferred() {
+        let call = if call.name == TOOL_CALL_NAME && self.toolset.is_some_and(Toolset::has_deferred) {
             match search::unwrap_call(call) {
                 Ok(real) => Cow::Owned(real),
                 Err(refused) => {
@@ -308,7 +307,7 @@ impl<'a> Driver<'a> {
 
     /// Whether `call` runs the built-in search of the deferred tools.
     fn is_search(&self, call: &ToolCall) -> bool {
-        call.name == SEARCH_TOOL_NAME && self.toolset.has_deferred()
+        call.name == SEARCH_TOOL_NAME && self.toolset.is_some_and(Toolset::has_deferred)
     }
 
     /// The concurrency of a resolved call. A call that runs nothing, and the search that only reads the toolset, do
@@ -317,7 +316,9 @@ impl<'a> Driver<'a> {
         if resolved.result.is_some() || self.is_search(&resolved.call) {
             Concurrency::Parallel
         } else {
-            self.toolset.concurrency(&resolved.call.name)
+            self.toolset.map_or(Concurrency::Parallel, |toolset| {
+                toolset.concurrency(&resolved.call.name)
+            })
         }
     }
 
@@ -511,7 +512,8 @@ impl<'a> Turn<'a> {
         } = self;
         let driver = parts.driver;
         let mut turn_state = TurnState::new(context, input_tokens);
-        let declared = Declared::new(driver.toolset);
+        let empty = Toolset::new();
+        let declared = Declared::new(driver.toolset.unwrap_or(&empty));
         // The calls of a round use the kind of search of the target that answered.
         let mut native_search = false;
         // The encoder lives for one turn. Its first request encodes the whole context, and each later request of the
@@ -694,7 +696,8 @@ impl TurnParts<'_> {
 
     /// The hints and the folder of each tool call among `blocks`.
     fn call_display(&self, blocks: &[Block]) -> Vec<CallDisplay> {
-        let toolset = self.driver.toolset;
+        let empty = Toolset::new();
+        let toolset = self.driver.toolset.unwrap_or(&empty);
         blocks
             .iter()
             .enumerate()
@@ -713,7 +716,6 @@ impl TurnParts<'_> {
     /// parallel calls form one group. A serial call forms a group of its own.
     async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<ToolOutcome> {
         let driver = &self.driver;
-        // A closure kept across an await makes the turn future lose `Send`, so the calls resolve first.
         let resolved: Vec<Resolved<'_>> = blocks
             .iter()
             .enumerate()
@@ -790,11 +792,13 @@ impl TurnParts<'_> {
         let outcome = if self.cancellation_token.is_cancelled() {
             not_executed(call, CANCELLED_REASON).into()
         } else {
+            let empty = Toolset::new();
+            let toolset = driver.toolset.unwrap_or(&empty);
             let outcome = if driver.is_search(call) {
-                search::search(driver.toolset, call, native_search).into()
+                search::search(toolset, call, native_search).into()
             } else {
                 let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
-                driver.toolset.call(call, &context).await
+                toolset.call(call, &context).await
             };
             self.after_tool(call, outcome).await
         };

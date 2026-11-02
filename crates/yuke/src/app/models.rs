@@ -18,7 +18,7 @@ use super::{Shared, model_of};
 /// the store keeps nothing of it.
 pub(super) struct PluginModels(pub(super) Arc<Shared>);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Models for PluginModels {
     // The request reads only the media of its attachments, so a media block of the session fails it.
     async fn complete(

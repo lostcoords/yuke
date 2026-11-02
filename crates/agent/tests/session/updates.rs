@@ -216,7 +216,7 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
 
 struct Echo;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Echo {
     fn concurrency(&self) -> Concurrency {
         Concurrency::Parallel

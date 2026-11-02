@@ -803,7 +803,7 @@ async fn a_recovery_under_the_lease_needs_no_open_for_writing() {
 #[derive(Default)]
 struct InputTokens(std::sync::Mutex<Vec<Option<u64>>>);
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl Hooks for InputTokens {
     async fn before_round(
         &self,
@@ -850,7 +850,7 @@ async fn a_turn_starts_from_the_input_tokens_of_the_newest_answer_also_after_an_
 #[derive(Default)]
 struct ReplacesSecondRound(std::sync::Mutex<Vec<Option<u64>>>);
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl Hooks for ReplacesSecondRound {
     async fn before_round(
         &self,

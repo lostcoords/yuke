@@ -346,7 +346,7 @@ impl Server {
         } else if let ClientRequest::StopJob(params) = request.call {
             // A plugin sets no limit on the end of its job, so this wait must leave the connection free to read.
             let (sessions, writer) = (Arc::clone(self.app.sessions()), connection.writer.clone());
-            tokio::spawn(async move {
+            tokio::task::spawn_local(async move {
                 let stopped = sessions.stop_job(params.session_id, &params.job_id).await;
                 let answer = stopped
                     .and_then(|()| result(&EmptyResult {}))

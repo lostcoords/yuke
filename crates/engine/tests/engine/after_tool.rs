@@ -22,7 +22,7 @@ struct ReplaceResult {
     seen: Mutex<Vec<String>>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for ReplaceResult {
     async fn after_tool(&self, call: &ToolCall, outcome: &ToolOutcome) -> Option<ToolOutcome> {
         self.seen.lock().unwrap().push(outcome.result.content.clone());

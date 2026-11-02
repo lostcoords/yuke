@@ -65,8 +65,8 @@ pub struct CompleteAnswer {
 
 /// The models that the plugins call. The consumer gives one value to each runtime. A request runs inside the engine
 /// task, so it must not call back into the JavaScript runtime.
-#[async_trait]
-pub trait Models: Send + Sync {
+#[async_trait(?Send)]
+pub trait Models {
     /// Send `request`, and wait for the first answer. The token `cancel` stops the request.
     ///
     /// # Errors

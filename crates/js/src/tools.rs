@@ -30,7 +30,7 @@ use crate::runtime::Caller;
 /// [`Handle::open_session`](crate::Handle::open_session) of a session, also after a reload or a change of its folder:
 /// a job holds the host that started it, and reports to that host. The host stores the attachments of the session as a [`MediaStore`], for
 /// example an image that a tool read.
-#[async_trait]
+#[async_trait(?Send)]
 pub trait SessionHost: MediaStore {
     /// The id of the session. A tool gets it as `sessionId`.
     fn session_id(&self) -> yuke_protocol::SessionId;
@@ -281,7 +281,7 @@ impl fmt::Debug for ScriptTool {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for ScriptTool {
     fn concurrency(&self) -> Concurrency {
         self.concurrency

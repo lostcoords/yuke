@@ -16,7 +16,7 @@ type Start = (Model, Settings, String, Vec<ToolDefinition>, Vec<Block>);
 #[derive(Default)]
 struct Newest(Mutex<Option<Start>>);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Newest {
     async fn before_round(
         &self,

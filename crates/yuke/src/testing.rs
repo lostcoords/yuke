@@ -160,7 +160,7 @@ impl CountedWaits {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for CountedWaits {
     async fn sleep(&self, _: Duration) {
         self.0.fetch_add(1, Ordering::SeqCst);

@@ -57,7 +57,7 @@ impl Failing {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Failing {
     async fn before_round(&self, _: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
         self.fail_at(RoundHook::Before, RoundPlan::default())

@@ -174,7 +174,7 @@ fn a_plan_model_presents_its_own_credential() {
 /// Sends a round whose credential failed again with a model that has a key.
 struct Refreshed;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Refreshed {
     async fn retry_round(
         &self,

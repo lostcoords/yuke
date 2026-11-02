@@ -3,6 +3,8 @@
 //! [`Hooks`] for decisions. When the caller sets a [`Journal`] on a [`Turn`], the driver gives it each commit. A private
 //! state machine decides each step without I/O. The crate creates no async runtime.
 //!
+//! Turns and their callbacks run on one thread. Their futures need not implement `Send`.
+//!
 //! The engine sets no cap on the size of a tool result. A caller bounds a large result in [`Hooks::after_tool`]. A
 //! result that no caller bounds enters the context whole.
 

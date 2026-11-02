@@ -1,6 +1,7 @@
 //! The sessions, the model catalog, and the plugin manager of the consumer, for `ctx.get("sessions")`,
 //! `ctx.get("catalog")`, and `ctx.get("plugins")` of the plugins. The methods mirror the requests of the protocol.
 
+use std::any::Any;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -30,7 +31,7 @@ pub enum ViewEvent {
 
 /// Takes the events of one view. The consumer calls it under the output lock of the session. A call must not block, call
 /// back into the session, or drop its view.
-pub type ViewSink = Arc<dyn Fn(ViewEvent) + Send + Sync>;
+pub type ViewSink = Arc<dyn Fn(ViewEvent)>;
 
 /// A fact of the consumer for `ctx.on` of the plugins. It reports what happened, and no answer changes it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -67,12 +68,12 @@ pub enum Fact {
 
 /// Takes the facts of one watch. The consumer calls it under the output lock of a session. A call must not block, call
 /// back into the consumer, or drop its watch.
-pub type FactSink = Arc<dyn Fn(Fact) + Send + Sync>;
+pub type FactSink = Arc<dyn Fn(Fact)>;
 
 /// The sessions and the catalog that the plugins use. The consumer gives one value to each runtime. Each async call runs
 /// as a local task of the host runtime. A sync call runs on the engine task, so it must not block.
-#[async_trait]
-pub trait Sessions: Send + Sync {
+#[async_trait(?Send)]
+pub trait Sessions {
     /// Create a session with `settings`, and open it.
     ///
     /// # Errors
@@ -114,11 +115,11 @@ pub trait Sessions: Send + Sync {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Send>, SessionsError>;
+    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Any>, SessionsError>;
 
     /// Watch the facts: `sink` first gets [`Fact::Opened`] for each open session, then each later fact. The watch holds
     /// no session. The drop of the result ends the watch.
-    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send>;
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Any>;
 
     /// At most `limit` saved events of session `id` with a number below `before`, or its last `limit` events.
     ///

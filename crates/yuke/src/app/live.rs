@@ -87,7 +87,7 @@ impl LiveSession {
             servers,
         });
         Ok(LiveSession {
-            task: Mutex::new(Some(tokio::spawn(Arc::clone(&parts).run()))),
+            task: Mutex::new(Some(tokio::task::spawn_local(Arc::clone(&parts).run()))),
             parts,
         })
     }
@@ -1049,14 +1049,14 @@ impl Host {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl MediaStore for Host {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, Box<dyn std::error::Error + Send + Sync>> {
         Ok(self.shared.store.put_blob(self.output.session, bytes).await?)
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl SessionHost for Host {
     fn session_id(&self) -> SessionId {
         self.output.session

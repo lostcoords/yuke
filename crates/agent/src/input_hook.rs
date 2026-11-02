@@ -17,8 +17,8 @@ pub enum InputDecision {
 }
 
 /// The check of each pending input before a turn takes it: at the start of the turn, and after each round.
-#[async_trait]
-pub trait InputHook: Send + Sync {
+#[async_trait(?Send)]
+pub trait InputHook {
     /// The decision for `input`.
     ///
     /// # Errors
@@ -30,7 +30,7 @@ pub trait InputHook: Send + Sync {
 /// The check of a turn without a hook: it keeps each input.
 pub(crate) struct NoInputHook;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl InputHook for NoInputHook {
     async fn before_input(&self, _input: &PendingInput) -> Result<InputDecision, Box<dyn Error + Send + Sync>> {
         Ok(InputDecision::Keep)

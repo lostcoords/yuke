@@ -23,8 +23,8 @@ pub enum Concurrency {
 }
 
 /// A tool that the model can call.
-#[async_trait]
-pub trait Tool: Send + Sync {
+#[async_trait(?Send)]
+pub trait Tool {
     /// How the calls of this tool run beside other calls. Declare `Parallel` only for a tool whose calls do not
     /// depend on each other, for example a tool that only reads.
     fn concurrency(&self) -> Concurrency {
@@ -238,8 +238,8 @@ pub fn tool_name_character(character: char) -> bool {
 }
 
 /// Stores the bytes of a result attachment, such as an image, for the session of a turn.
-#[async_trait]
-pub trait MediaStore: Send + Sync {
+#[async_trait(?Send)]
+pub trait MediaStore {
     /// Store `bytes`, and return their blob.
     ///
     /// # Errors

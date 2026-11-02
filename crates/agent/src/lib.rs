@@ -1,6 +1,8 @@
 //! Durable sessions over `yuke-engine`. A [`Session`] runs turns on its context, and saves each commit of a turn in a
 //! [`Store`] before the turn goes on. [`MemoryStore`] keeps its sessions in memory. The `testing` feature gives the
 //! shared behavior tests of a store.
+//!
+//! Turns and their callbacks run on one thread. Their futures need not implement `Send`.
 
 mod input_hook;
 mod memory;

@@ -30,7 +30,7 @@ fn shown(text: &str) -> DisplayBlock {
 /// A tool with hints that answers "ok" and shows `*shown*`. With a token, it cancels the turn before it returns.
 struct Show(Option<CancellationToken>);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Show {
     fn hints(&self) -> ToolHints {
         hints()
@@ -129,7 +129,7 @@ fn the_answer_saves_the_hints_and_the_folder_of_each_call_and_the_results_save_t
 /// Hooks that replace the display of each result.
 struct Replace;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Replace {
     async fn after_tool(&self, _call: &ToolCall, outcome: &ToolOutcome) -> Option<ToolOutcome> {
         Some(ToolOutcome {

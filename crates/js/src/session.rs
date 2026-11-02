@@ -244,7 +244,7 @@ impl ScriptHooks {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for ScriptHooks {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn StdError + Send + Sync>> {
         // Each round starts here, so its count of retries starts at zero.
@@ -447,7 +447,7 @@ impl ScriptHooks {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl InputHook for ScriptHooks {
     async fn before_input(&self, input: &PendingInput) -> Result<InputDecision, Box<dyn StdError + Send + Sync>> {
         let request = InputBeforeRequest {
@@ -991,8 +991,8 @@ async fn run_hook<R, T>(
     token: CancellationToken,
 ) -> Result<Option<T>, Error>
 where
-    R: for<'js> IntoJs<'js> + Send + 'static,
-    T: for<'js> FromJs<'js> + Send + 'static,
+    R: for<'js> IntoJs<'js> + 'static,
+    T: for<'js> FromJs<'js> + 'static,
 {
     // A driver drops a hook future at a cancel. A posted run goes on after that drop, so the cancel still reaches it.
     let (reply, answer) = oneshot::channel();

@@ -48,7 +48,7 @@ struct Track {
     log: Arc<Log>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Track {
     fn concurrency(&self) -> Concurrency {
         self.concurrency
@@ -107,7 +107,7 @@ struct LogHooks {
     cancel_at: Option<(&'static str, CancellationToken)>,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for LogHooks {
     async fn before_tool(&self, call: &ToolCall) -> ToolDecision {
         self.log.push(format!("before {}", call.call_id));

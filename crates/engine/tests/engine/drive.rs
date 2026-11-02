@@ -504,7 +504,7 @@ fn cancel_during_the_retry_wait_sends_no_other_attempt() {
 /// A tool that cancels the turn during its call, waits once as a process kill does, and returns its own result.
 struct CancelDuringCall(CancellationToken);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for CancelDuringCall {
     async fn call(
         &self,

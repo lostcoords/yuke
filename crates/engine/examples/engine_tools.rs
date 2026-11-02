@@ -20,7 +20,7 @@ struct UppercaseArguments {
     text: String,
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Uppercase {
     // Each call only reads its arguments, so the calls of one answer can run together.
     fn concurrency(&self) -> Concurrency {
@@ -40,7 +40,7 @@ impl Tool for Uppercase {
 /// Wait with the Tokio timer.
 struct TokioTimer;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for TokioTimer {
     async fn sleep(&self, duration: Duration) {
         tokio::time::sleep(duration).await;

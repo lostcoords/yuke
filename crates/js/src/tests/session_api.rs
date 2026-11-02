@@ -1,6 +1,7 @@
 //! The sessions of the plugins, `ctx.get("sessions")`, on a scripted consumer: the snapshot, the updates, the end of a
 //! handle, and the requests.
 
+use std::any::Any;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -70,14 +71,14 @@ impl Scripted {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl yuke_engine::MediaStore for Scripted {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {
         Ok(yuke_agent::blob_of(&bytes))
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl crate::SessionHost for Scripted {
     fn session_id(&self) -> SessionId {
         session()
@@ -151,7 +152,7 @@ fn session() -> SessionId {
     SessionId::from_bytes([7; 16])
 }
 
-#[async_trait::async_trait]
+#[async_trait::async_trait(?Send)]
 impl Sessions for Scripted {
     async fn create(&self, _: SessionSettings, _: Option<SessionId>) -> Result<SessionId, SessionsError> {
         Err("unused".into())
@@ -174,7 +175,7 @@ impl Sessions for Scripted {
         self.record(format!("remove {id}"));
         Ok(())
     }
-    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Send>, SessionsError> {
+    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Any>, SessionsError> {
         self.record(format!("open {id} {tail}"));
         sink(ViewEvent::Snapshot(SessionSnapshot {
             settings: settings(),
@@ -183,7 +184,7 @@ impl Sessions for Scripted {
         self.sinks.lock().unwrap().push(sink);
         Ok(Box::new(Hold(Arc::clone(&self.released))))
     }
-    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send> {
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Any> {
         *self.facts.lock().unwrap() = Some(sink);
         Box::new(())
     }

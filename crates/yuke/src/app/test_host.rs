@@ -279,7 +279,7 @@ fn request_view(sent: &Sent) -> Value {
     json!({ "system": system, "messages": messages, "tools": tools, "body": body })
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl TestHost for AppTestHost {
     async fn create(&self, request: Value) -> Result<(), TestError> {
         if self.created.swap(true, Ordering::SeqCst) {

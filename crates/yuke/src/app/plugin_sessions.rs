@@ -1,6 +1,7 @@
 //! The sessions, the catalog, and the plugin manager of the app for the plugins: `ctx.get("sessions")`,
 //! `ctx.get("catalog")`, and `ctx.get("plugins")`.
 
+use std::any::Any;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -27,7 +28,7 @@ impl PluginSessions {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Sessions for PluginSessions {
     async fn create(&self, settings: SessionSettings, parent: Option<SessionId>) -> Result<SessionId, SessionsError> {
         Ok(self.service()?.create(settings, parent).await?)
@@ -49,7 +50,7 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.remove(id).await?)
     }
 
-    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Send>, SessionsError> {
+    async fn open(&self, id: SessionId, tail: usize, sink: ViewSink) -> Result<Box<dyn Any>, SessionsError> {
         let service = self.service()?;
         // The hold comes before the view, so the session does not count down while the view reads.
         let attachment = if let Ok(attachment) = service.attach(id) {
@@ -62,7 +63,7 @@ impl Sessions for PluginSessions {
         Ok(Box::new((attachment, view)))
     }
 
-    fn watch_facts(&self, sink: FactSink) -> Box<dyn Send> {
+    fn watch_facts(&self, sink: FactSink) -> Box<dyn Any> {
         match self.service() {
             Ok(service) => Box::new(service.watch_facts(sink)),
             // After the shutdown, no session opens, so the watch gets nothing.

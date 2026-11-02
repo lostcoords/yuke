@@ -20,10 +20,10 @@ const BATCH: usize = 256;
 pub(super) enum Delivery {
     View(u32, Box<ViewEvent>),
     Fact(u32, Fact),
-    Reply(u64, Box<dyn Any + Send>),
+    Reply(u64, Box<dyn Any>),
 }
 
-type Reply<'js> = Box<dyn FnOnce(&Ctx<'js>, Box<dyn Any + Send>) -> rquickjs::Result<()> + 'js>;
+type Reply<'js> = Box<dyn FnOnce(&Ctx<'js>, Box<dyn Any>) -> rquickjs::Result<()> + 'js>;
 
 #[derive(Default)]
 struct Routes<'js> {
@@ -100,7 +100,7 @@ impl<'js> Queue<'js> {
         finish: impl FnOnce(&Ctx<'js>, Result<T, JoinError>) -> rquickjs::Result<R> + 'js,
     ) -> rquickjs::Result<(Promise<'js>, AbortHandle)>
     where
-        T: Send + 'static,
+        T: 'static,
         R: IntoJs<'js>,
     {
         let (promise, resolve, reject) = Promise::new(ctx)?;

@@ -86,7 +86,7 @@ impl fmt::Debug for Options {
 }
 
 /// A call for the engine task. It receives the tool registry.
-type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>) + Send>;
+type Call = Box<dyn for<'js> FnOnce(Ctx<'js>, &Rc<Registry>)>;
 
 /// A QuickJS runtime as a local task. Share it through an `Arc`. A drop asks the task to end and does not wait.
 /// [`Runtime::shutdown`] waits.
@@ -284,7 +284,7 @@ impl Caller {
     /// Returns [`Error::Stopped`] when the task has ended.
     pub(crate) fn post<F>(&self, f: F) -> Result<(), Error>
     where
-        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) + Send + 'static,
+        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) + 'static,
     {
         let call: Call = Box::new(move |ctx: Ctx<'_>, registry: &Rc<Registry>| {
             let registry = Rc::clone(registry);
@@ -297,8 +297,8 @@ impl Caller {
     /// its next await. Only an interrupt or a deadline stops a loop without an await.
     pub(crate) async fn run<F, R>(&self, f: F) -> Result<R, Error>
     where
-        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + Send + 'static,
-        R: Send + 'static,
+        F: for<'js> AsyncFnOnce(Ctx<'js>, Rc<Registry>) -> Result<R, Error> + 'static,
+        R: 'static,
     {
         let (mut reply, answer) = oneshot::channel();
         self.post(async move |ctx: Ctx<'_>, registry: Rc<Registry>| {

@@ -28,7 +28,7 @@ impl Recorder {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Recorder {
     async fn call(&self, arguments: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         let mut calls = self.calls.lock().unwrap();
@@ -40,7 +40,7 @@ impl Tool for Recorder {
 /// A tool that answers each call with the same result.
 pub(crate) struct Fixed(pub(crate) Result<ToolContent, String>);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Tool for Fixed {
     async fn call(&self, _: &str, _: &ToolContext<'_>) -> Result<ToolContent, Box<dyn Error + Send + Sync>> {
         self.0.clone().map_err(Into::into)
@@ -61,7 +61,7 @@ impl Batches {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Inbox for Batches {
     async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
         Ok(self.batches.lock().unwrap().pop_front().unwrap_or_default())
@@ -87,7 +87,7 @@ impl Queue {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Inbox for Queue {
     async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
         Ok(std::mem::take(&mut *self.0.lock().unwrap()))
@@ -202,7 +202,7 @@ fn next<T>(script: &Mutex<Option<VecDeque<T>>>, default: impl FnOnce() -> T) -> 
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Hooks for Script {
     async fn before_round(&self, round: &RoundStart<'_>) -> Result<RoundPlan, Box<dyn Error + Send + Sync>> {
         self.stop_at("before_round").await;
@@ -281,7 +281,7 @@ impl Replay {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Journal for Replay {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut context = self.context.lock().unwrap();
@@ -304,7 +304,7 @@ impl Waits {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for Waits {
     async fn sleep(&self, duration: Duration) {
         self.waits.lock().unwrap().push(duration);
@@ -314,7 +314,7 @@ impl Timer for Waits {
 /// A timer that cancels the turn when its wait starts. The wait never ends by itself.
 pub(crate) struct CancelOnSleep(pub(crate) CancellationToken);
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Timer for CancelOnSleep {
     async fn sleep(&self, _: Duration) {
         self.0.cancel();

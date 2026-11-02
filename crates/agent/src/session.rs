@@ -70,8 +70,8 @@ impl fmt::Debug for Session {
     }
 }
 
-/// The journal, the inbox, and the blob store of one turn. The turn owns its input state. A dropped turn drops that
-/// state, and the next turn takes the pending inputs again.
+/// The journal and the inbox of one turn. A dropped turn drops its input state, and the next turn takes the pending
+/// inputs again.
 struct TurnJournal<'a> {
     inputs: TurnInputs<'a>,
     updates: &'a Updates<'a>,
@@ -169,7 +169,7 @@ impl TurnInputs<'_> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Inbox for TurnJournal<'_> {
     async fn take(&self) -> Result<Vec<yuke_ai::Block>, Box<dyn std::error::Error + Send + Sync>> {
         self.inputs.take().await.map_err(|error| match error {
@@ -179,7 +179,7 @@ impl Inbox for TurnJournal<'_> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Journal for TurnJournal<'_> {
     async fn commit(&self, commit: &Commit<'_>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
@@ -197,16 +197,18 @@ impl Journal for TurnJournal<'_> {
     }
 }
 
-impl yuke_ai::BlobStore for TurnJournal<'_> {
+/// The blob reader of one session.
+struct SessionBlobs<'a> {
+    store: &'a dyn Store,
+    id: SessionId,
+}
+
+impl yuke_ai::BlobStore for SessionBlobs<'_> {
     fn read(
         &self,
         digest: &yuke_ai::Digest,
     ) -> Result<Option<std::borrow::Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(self
-            .inputs
-            .store
-            .read_blob(self.inputs.id, digest)?
-            .map(std::borrow::Cow::Owned))
+        Ok(self.store.read_blob(self.id, digest)?.map(std::borrow::Cow::Owned))
     }
 }
 
@@ -498,6 +500,10 @@ impl<'s> SessionTurn<'s> {
             updates: &updates,
             input_tokens: Mutex::new(session.input_tokens),
         };
+        let blobs = SessionBlobs {
+            store: &*session.store,
+            id: session.id,
+        };
         let session_id = session.id.to_string();
         let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
         let turn = driver
@@ -507,7 +513,7 @@ impl<'s> SessionTurn<'s> {
             .session_id(&session_id)
             .journal(&turn_journal)
             .inbox(&turn_journal)
-            .blobs(&turn_journal)
+            .blobs(&blobs)
             .input_tokens(session.input_tokens)
             .cancellation_token(cancellation_token)
             .observer(&updates);
