@@ -1,8 +1,8 @@
 // Markdown to styled rows: the blocks, the inline styles, the wrap, the stream, and the map from a segment to its
 // source.
 
-import { assert, equal, test } from "yuke:test";
-import { Markdown, type MarkdownBlock, type Segment, type TextRow } from "yuke:tui";
+import { assert, createFrame, equal, type FrameTest, test } from "yuke:test";
+import { Markdown, type MarkdownBlock, measure, type Segment, type TextRow } from "yuke:tui";
 
 function rowsOf(source: string, width: number): readonly TextRow[] {
   return new Markdown(source).rows(width);
@@ -484,4 +484,59 @@ test("a gap between two table cells maps to the pipe between them", () => {
     .filter((s) => s.text === " │ ")
     .map((s) => table.slice(s.source?.from, s.source?.to));
   equal(gaps, ["|", "|"]);
+});
+
+/** The drawn style of the first cell of each segment of `source` that shows more than spaces. */
+function looks(frame: FrameTest, source: string): Record<string, unknown> {
+  const rows = new Markdown(source).rows(40);
+  frame.surface("demo").tui.setRoot(() => ({
+    draw: (canvas) => {
+      rows.forEach((row, at) => {
+        let column = 0;
+        for (const segment of row.segments) column = canvas.text(column, at, segment.text, segment.style);
+      });
+    },
+  }));
+  const cells = frame.draw().cells;
+  const found: Record<string, unknown> = {};
+  rows.forEach((row, at) => {
+    let column = 0;
+    for (const segment of row.segments) {
+      if (segment.text.trim() !== "") found[segment.text] = cells[at]?.[column]?.style;
+      column += measure(segment.text);
+    }
+  });
+  return found;
+}
+
+test("a Markdown text draws its look without a plugin", () => {
+  using frame = createFrame({ width: 40, height: 12 });
+  equal(looks(frame, "plain **b** *i* ***both*** `c`"), {
+    plain: {},
+    b: { bold: true },
+    i: { italic: true },
+    both: { bold: true, italic: true },
+    c: { dim: true },
+  });
+  equal(looks(frame, "# head\n\n> said\n\n- item\n\n```\nblock\n```\n\n[go](u)"), {
+    head: { bold: true },
+    "▏ ": { dim: true },
+    said: { dim: true },
+    "• ": { dim: true },
+    item: {},
+    block: { dim: true },
+    "[": { dim: true },
+    go: { underline: true },
+    "](u)": { dim: true },
+  });
+  const borders = looks(frame, "---\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+  equal([borders["─".repeat(40)], borders[" │ "], borders.a], [{ dim: true }, { dim: true }, {}]);
+});
+
+test("a plugin changes the look of a Markdown text, and its dispose restores the look", () => {
+  using frame = createFrame({ width: 40, height: 1 });
+  const undo = frame.surface("theme").tui.styles.set("markdown.strong", { bold: null, fg: 1 });
+  equal(looks(frame, "**b**"), { b: { fg: 1 } });
+  undo();
+  equal(looks(frame, "**b**"), { b: { bold: true } });
 });

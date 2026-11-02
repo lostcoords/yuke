@@ -618,8 +618,8 @@ declare module "yuke:tui" {
 
   /**
    * A Markdown text as styled rows. `setText` and `append` parse again only the last two blocks when the text grows.
-   * The style groups are `markdown.*`. Each source offset indexes `source()`. Calls share cached rows, so do not change
-   * them.
+   * The style groups are `markdown.*`, and `styles.set` changes their look. Each source offset indexes `source()`.
+   * Calls share cached rows, so do not change them.
    */
   export class Markdown {
     constructor(text?: string);
