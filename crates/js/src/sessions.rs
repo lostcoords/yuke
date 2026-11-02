@@ -195,7 +195,7 @@ pub trait Sessions: Send + Sync {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn stop_job(&self, id: SessionId, job_id: String) -> Result<(), SessionsError>;
+    async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), SessionsError>;
 
     /// The MCP servers of the open session `id`.
     ///

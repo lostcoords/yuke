@@ -1,7 +1,5 @@
-//! The child processes of the tools: the commands of `exec` and the jobs. A job is background work of one session: a
-//! shell command that outlives the tool call that starts it. When it ends by itself, its session gets one report. A
-//! stop ends it without a report. The processes run on the tokio runtime of the consumer, so a job outlives a reload
-//! of the JavaScript.
+//! The child processes of the tools: the commands of `exec` and the process jobs. The processes run on the tokio runtime
+//! of the consumer, so a job outlives a reload of the JavaScript.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::OsStr;
@@ -11,19 +9,19 @@ use std::hash::{BuildHasher, RandomState};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::ptr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rquickjs::FromJs;
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::process::{Child, Command};
 use tokio::runtime::Handle;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot};
 use yuke_engine::CancellationToken;
 use yuke_protocol::{Input, JobState};
 
+use crate::jobs::{JobEnd, Jobs, RunningJob};
 use crate::tools::SessionHost;
 
 /// The plugin name of the input that a background job sends when it ends.
@@ -33,10 +31,6 @@ const JOBS_SOURCE: &str = "host:jobs";
 const FIRST_JOB_NUMBER: u32 = 36 * 36 * 36;
 const JOB_NUMBERS: u32 = 36 * 36 * 36 * 36 - FIRST_JOB_NUMBER;
 
-/// The answer to a job start after the shutdown.
-const SHUTTING_DOWN: &str = "the job did not start: yuke is shutting down";
-/// The answer to a job start after the close of its session.
-const SESSION_CLOSED: &str = "the job did not start: its session is closed";
 /// The answer to a job start that a stop ended before the spawn.
 const STOPPED_BEFORE_START: &str = "the job did not start: it was stopped first";
 
@@ -72,10 +66,7 @@ pub struct Processes {
     /// The counter of the job ids. It starts at a random number, so an id in the transcript of an earlier process
     /// rarely names a job of this one.
     last_job: AtomicU32,
-    /// The running jobs. The task of a job removes it at its end.
-    jobs: Arc<Mutex<Jobs>>,
-    /// Whether a job can start. A process that ends with its turn has no one to receive the end of a job.
-    starts_jobs: bool,
+    jobs: Jobs,
 }
 
 impl fmt::Debug for Processes {
@@ -83,82 +74,6 @@ impl fmt::Debug for Processes {
         f.debug_struct("Processes")
             .field("folder", &self.folder)
             .finish_non_exhaustive()
-    }
-}
-
-/// The jobs, and whether the list still takes a job.
-#[derive(Default)]
-struct Jobs {
-    /// Each job from its start to the delivery of its end, so a close and a shutdown wait for the whole job.
-    running: Vec<Job>,
-    /// The consumer shut the processes down, so a job that starts now stops at once.
-    closed: bool,
-    /// The owners that [`Processes::close_owner`] closed, so a job of theirs that starts now stops at once.
-    closed_owners: Vec<Weak<dyn SessionHost>>,
-}
-
-impl Jobs {
-    /// Why a job of `owner` cannot start now, or `None` when it can.
-    fn refusal(&self, owner: &Arc<dyn SessionHost>) -> Option<&'static str> {
-        if self.closed {
-            Some(SHUTTING_DOWN)
-        } else if self
-            .closed_owners
-            .iter()
-            .any(|closed| ptr::addr_eq(closed.as_ptr(), Arc::as_ptr(owner)))
-        {
-            Some(SESSION_CLOSED)
-        } else {
-            None
-        }
-    }
-}
-
-/// A background job.
-struct Job {
-    id: String,
-    command: String,
-    owner: Arc<dyn SessionHost>,
-    log: PathBuf,
-    /// The process group while the process runs. `None` before the spawn and after the end of the process.
-    group: Option<Pid>,
-    stop: CancellationToken,
-    /// A stop of this one job came, so the job sends no end message.
-    silenced: bool,
-    /// The end, after the job has delivered it.
-    end: watch::Receiver<Option<JobEnd>>,
-}
-
-/// How a job ended.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct JobEnd {
-    exit_code: Option<i32>,
-    signal: Option<i32>,
-    /// A stop ended the job.
-    stopped: bool,
-}
-
-impl JobEnd {
-    /// The end in words, for example `exited 0`.
-    fn label(self) -> String {
-        match self {
-            JobEnd { stopped: true, .. } => "stopped".to_owned(),
-            JobEnd {
-                exit_code: Some(code), ..
-            } => format!("exited {code}"),
-            JobEnd {
-                signal: Some(signal), ..
-            } => format!("signal {signal}"),
-            JobEnd { .. } => "failed".to_owned(),
-        }
-    }
-
-    fn state(self) -> JobState {
-        JobState::Ended {
-            exit_code: self.exit_code,
-            signal: self.signal,
-            stopped: self.stopped,
-        }
     }
 }
 
@@ -213,8 +128,7 @@ impl Processes {
             last_job: AtomicU32::new(
                 u32::try_from(RandomState::new().hash_one(0_u8) % u64::from(JOB_NUMBERS)).unwrap_or(0),
             ),
-            jobs: Arc::new(Mutex::new(Jobs::default())),
-            starts_jobs,
+            jobs: Jobs::new(starts_jobs),
         }
     }
 
@@ -225,22 +139,16 @@ impl Processes {
     ///
     /// Returns the error of the removal of the folder. A missing folder is no error.
     pub async fn shutdown(&self) -> io::Result<()> {
-        let ends: Vec<_> = {
-            let mut jobs = lock(&self.jobs);
-            jobs.closed = true;
-            jobs.running
-                .iter()
-                .map(|job| {
-                    job.stop.cancel();
-                    job.end.clone()
-                })
-                .collect()
-        };
-        wait_for_ends(ends).await;
+        self.jobs.shutdown().await;
         match std::fs::remove_dir_all(&self.folder) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             result => result,
         }
+    }
+
+    /// The jobs of each session.
+    pub fn jobs(&self) -> &Jobs {
+        &self.jobs
     }
 
     /// The next number of a full output file.
@@ -292,40 +200,14 @@ impl Processes {
         command: String,
         owner: Arc<dyn SessionHost>,
     ) -> Result<(String, PathBuf), String> {
-        if !self.starts_jobs {
-            return Err(
-                "This run ends with its turn, so it cannot start a background job. Run the command without background."
-                    .to_owned(),
-            );
-        }
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
-        let stop = CancellationToken::new();
-        let (finish, end) = watch::channel(None);
-        {
-            // The job joins the list before its task, so a close or a shutdown finds it in each state.
-            let mut jobs = lock(&self.jobs);
-            if let Some(refusal) = jobs.refusal(&owner) {
-                return Err(refusal.to_owned());
-            }
-            jobs.running.push(Job {
-                id: id.clone(),
-                command: command.clone(),
-                owner: Arc::clone(&owner),
-                log: log.clone(),
-                group: None,
-                stop: stop.clone(),
-                silenced: false,
-                end,
-            });
-        }
         let job = JobTask {
-            id: id.clone(),
+            job: self
+                .jobs
+                .add(owner.as_ref(), id.clone(), command.clone(), log.clone())?,
             command,
             log: log.clone(),
-            jobs: Arc::clone(&self.jobs),
-            stop,
-            finish,
         };
         let (started_sender, started) = oneshot::channel();
         // One task on the runtime of the consumer owns the job from its spawn to the delivery of its end, so a dropped
@@ -336,96 +218,18 @@ impl Processes {
             .map_err(|_| "the job did not start: the runtime of yuke ended".to_owned())??;
         Ok((id, log))
     }
-
-    /// Stop the running job `id` of `owner`, wait for its end, and answer the end in words and the log. Answer `None`
-    /// when `owner` runs no such job. [`SessionHost::job_changed`] gets the end before the answer. A stopped job sends
-    /// no end message.
-    pub async fn stop_job(&self, id: &str, owner: &Arc<dyn SessionHost>) -> Option<(String, PathBuf)> {
-        let (mut end, log) = {
-            let mut jobs = lock(&self.jobs);
-            let job = jobs
-                .running
-                .iter_mut()
-                .find(|job| job.id == id && job.group.is_some() && Arc::ptr_eq(&job.owner, owner))?;
-            job.silenced = true;
-            job.stop.cancel();
-            (job.end.clone(), job.log.clone())
-        };
-        let label = match end.wait_for(Option::is_some).await {
-            Ok(end) => end.unwrap_or_default().label(),
-            Err(_) => JobEnd::default().label(),
-        };
-        Some((label, log))
-    }
-
-    /// Stop each job of `owner`, refuse its later jobs, and wait until each job has ended and delivered its end. A
-    /// stopped job sends no end message, and a job that ended by itself before the stop still delivers its end.
-    pub async fn close_owner(&self, owner: &Arc<dyn SessionHost>) {
-        let ends: Vec<_> = {
-            let mut jobs = lock(&self.jobs);
-            // A dropped owner can start no job, so its entry can go.
-            jobs.closed_owners.retain(|closed| closed.strong_count() > 0);
-            jobs.closed_owners.push(Arc::downgrade(owner));
-            jobs.running
-                .iter()
-                .filter(|job| Arc::ptr_eq(&job.owner, owner))
-                .map(|job| {
-                    job.stop.cancel();
-                    job.end.clone()
-                })
-                .collect()
-        };
-        wait_for_ends(ends).await;
-    }
-
-    /// The jobs of `owner` whose process runs, oldest first.
-    pub fn running_jobs(&self, owner: &Arc<dyn SessionHost>) -> Vec<yuke_protocol::Job> {
-        lock(&self.jobs)
-            .running
-            .iter()
-            .filter(|job| job.group.is_some() && Arc::ptr_eq(&job.owner, owner))
-            .map(|job| yuke_protocol::Job {
-                id: job.id.clone(),
-                command: job.command.clone(),
-                log: job.log.clone(),
-                state: JobState::Running,
-            })
-            .collect()
-    }
-}
-
-impl Drop for Processes {
-    /// Kill each running job, so no job outlives the consumer. [`Processes::shutdown`] stops them with a grace first.
-    /// Each job is silenced before the kill, so a killed job sends no end message, also when its task sees the exit of
-    /// the process before the stop.
-    fn drop(&mut self) {
-        let mut jobs = lock(&self.jobs);
-        jobs.closed = true;
-        for job in &mut jobs.running {
-            job.silenced = true;
-            job.stop.cancel();
-            if let Some(group) = job.group
-                && signal_group(group, Signal::KILL).is_err()
-            {
-                // The system refused the kill, and the consumer has nothing left to tell.
-            }
-        }
-    }
 }
 
 /// The task of one job: it spawns the process, waits for its end, and delivers the end.
 struct JobTask {
-    id: String,
+    job: RunningJob,
     command: String,
     log: PathBuf,
-    jobs: Arc<Mutex<Jobs>>,
-    stop: CancellationToken,
-    finish: watch::Sender<Option<JobEnd>>,
 }
 
 impl JobTask {
     async fn run(self, owner: Arc<dyn SessionHost>, started: oneshot::Sender<Result<(), String>>) {
-        let spawned = if self.stop.is_cancelled() {
+        let spawned = if self.job.stop.is_cancelled() {
             Err(STOPPED_BEFORE_START.to_owned())
         } else {
             let (command, folder, log) = (self.command.clone(), owner.folder(), self.log.clone());
@@ -440,70 +244,37 @@ impl JobTask {
             Ok(spawned) => spawned,
             Err(error) => {
                 answer_start(started, Err(error));
-                return self.end(None);
+                return self.job.end(None);
             }
         };
-        self.set_group(Some(group));
-        owner.job_changed(self.job(JobState::Running));
+        self.job.set_group(Some(group));
+        owner.job_changed(self.protocol_job(JobState::Running));
         answer_start(started, Ok(()));
         // A stop that came during the spawn ends the process here, with the grace.
-        let end = wait_job(child, group, &self.stop).await;
+        let end = wait_job(child, group, &self.job.stop).await;
         // A process that ended by itself sends its end message, also when a close came after the end. A stop of this
         // one job sends none.
-        let silenced = self.set_group(None);
-        owner.job_changed(self.job(end.state()));
+        let silenced = self.job.set_group(None);
+        owner.job_changed(self.protocol_job(end.state()));
         if !end.stopped && !silenced {
-            let text = end_message(&self.id, &end.label(), self.log.clone()).await;
-            let display = format!("{} ended", self.id);
+            let text = end_message(&self.job.id, &end.label(), self.log.clone()).await;
+            let display = format!("{} ended", self.job.id);
             owner
                 .accept_input(Input::notification(JOBS_SOURCE, &display, &text))
                 .await;
         }
-        self.end(Some(end));
+        self.job.end(Some(end));
     }
 
     /// The job in `state`, for its owner.
-    fn job(&self, state: JobState) -> yuke_protocol::Job {
+    fn protocol_job(&self, state: JobState) -> yuke_protocol::Job {
         yuke_protocol::Job {
-            id: self.id.clone(),
+            id: self.job.id.clone(),
             command: self.command.clone(),
             log: self.log.clone(),
             state,
         }
     }
-
-    /// Set the process group of the job, and answer whether a stop of this one job came. A stop takes the same lock, so
-    /// after the end of the process a stop either found the process and silences the end message, or finds no process.
-    fn set_group(&self, group: Option<Pid>) -> bool {
-        let mut jobs = lock(&self.jobs);
-        let job = jobs.running.iter_mut().find(|job| job.id == self.id);
-        job.is_some_and(|job| {
-            job.group = group;
-            job.silenced
-        })
-    }
-
-    /// Remove the job from the list, then tell each waiter, so a waiter finds the list without it.
-    fn end(self, end: Option<JobEnd>) {
-        lock(&self.jobs).running.retain(|job| job.id != self.id);
-        if self.finish.send(Some(end.unwrap_or_default())).is_err() {
-            // No stop waits for the end.
-        }
-    }
-}
-
-/// Wait for the end of each job that `ends` watches.
-async fn wait_for_ends(ends: Vec<watch::Receiver<Option<JobEnd>>>) {
-    for mut end in ends {
-        if end.wait_for(Option::is_some).await.is_err() {
-            // The task of the job has ended, so the job has ended too.
-        }
-    }
-}
-
-/// The running jobs. A panic of another holder leaves a valid list, so a poisoned lock still serves.
-fn lock(jobs: &Mutex<Jobs>) -> std::sync::MutexGuard<'_, Jobs> {
-    jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Answer the call that started a job. A dropped call gets no answer, and the task still owns the job.
@@ -609,7 +380,7 @@ fn group_of(child: &Child) -> io::Result<Pid> {
 }
 
 /// Send `signal` to `group`. A group with no process left counts as done.
-fn signal_group(group: Pid, signal: Signal) -> io::Result<()> {
+pub(crate) fn signal_group(group: Pid, signal: Signal) -> io::Result<()> {
     match kill_process_group(group, signal) {
         Ok(()) => Ok(()),
         Err(error) if error == rustix::io::Errno::SRCH => Ok(()),

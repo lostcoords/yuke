@@ -152,7 +152,7 @@ impl LiveSession {
     /// Open the plugins of the session in the JavaScript runtime `runtime`. The session keeps its host and its jobs.
     pub(super) async fn open_plugins(&self, runtime: &Handle) -> Result<ScriptSession, AppError> {
         runtime
-            .open_session(self.owner())
+            .open_session(Arc::clone(&self.parts.host) as Arc<dyn SessionHost>)
             .await
             .map_err(|error| AppError::Internal(chain_text(&error)))
     }
@@ -247,7 +247,12 @@ impl LiveSession {
 
     /// The running background jobs, oldest first.
     pub(super) fn jobs(&self) -> Vec<Job> {
-        self.parts.host.shared.processes.running_jobs(&self.owner())
+        self.parts
+            .host
+            .shared
+            .processes
+            .jobs()
+            .running(self.parts.host.output.session)
     }
 
     /// Stop the running job `id`, and wait for its end. Answer `false` when no such job runs.
@@ -256,7 +261,8 @@ impl LiveSession {
             .host
             .shared
             .processes
-            .stop_job(id, &self.owner())
+            .jobs()
+            .stop(self.parts.host.output.session, id)
             .await
             .is_some()
     }
@@ -284,14 +290,14 @@ impl LiveSession {
         // The task ends first, so no turn takes the tools of the closed plugins.
         let script = Arc::clone(&lock(&self.parts.script));
         close_plugins(&self.parts.host.shared, &script).await;
-        // The task ends first, so a job that the cancelled turn started also stops.
-        self.parts.host.shared.processes.close_owner(&self.owner()).await;
+        self.parts
+            .host
+            .shared
+            .processes
+            .jobs()
+            .close_session(self.parts.host.output.session)
+            .await;
         self.parts.servers.close().await;
-    }
-
-    /// The owner of the jobs of the session.
-    fn owner(&self) -> Arc<dyn SessionHost> {
-        Arc::clone(&self.parts.host) as Arc<dyn SessionHost>
     }
 }
 
@@ -1036,6 +1042,10 @@ impl SessionHost for Host {
 
     fn folder(&self) -> PathBuf {
         lock(&self.settings).cwd.clone()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.is_cancelled()
     }
 
     fn job_changed(&self, job: Job) {

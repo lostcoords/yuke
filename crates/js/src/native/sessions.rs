@@ -248,7 +248,7 @@ fn add_requests(object: &Object<'_>, sessions: &Arc<dyn Sessions>, consumer: &Ha
     request.add(
         object,
         "sessionStopJob",
-        |sessions, (id, job_id): (SessionId, String)| async move { sessions.stop_job(id, job_id).await },
+        |sessions, (id, job_id): (SessionId, String)| async move { sessions.stop_job(id, &job_id).await },
     )?;
     request.add(
         object,

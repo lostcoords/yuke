@@ -22,6 +22,7 @@ mod baked;
 mod bytes;
 mod display;
 mod error;
+mod jobs;
 mod loader;
 mod models;
 mod native;
@@ -42,6 +43,7 @@ mod typescript;
 
 pub use display::{Display, Input, Interface, Request, Startup};
 pub use error::{Barrier, Error, Report, ScriptError};
+pub use jobs::Jobs;
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
 pub use plugins::{Origin, Plugin, PluginFailure};
 pub use processes::{Processes, shell};

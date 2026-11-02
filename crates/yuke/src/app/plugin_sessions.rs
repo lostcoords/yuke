@@ -118,8 +118,8 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.jobs(id)?)
     }
 
-    async fn stop_job(&self, id: SessionId, job_id: String) -> Result<(), SessionsError> {
-        Ok(self.service()?.stop_job(id, &job_id).await?)
+    async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), SessionsError> {
+        Ok(self.service()?.stop_job(id, job_id).await?)
     }
 
     fn mcp_servers(&self, id: SessionId) -> Result<Vec<McpServer>, SessionsError> {

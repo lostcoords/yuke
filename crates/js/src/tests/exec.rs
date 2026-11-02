@@ -13,7 +13,7 @@ use super::tools::{TestHost, Tools, call, call_with, error_of, text_of, tools_in
 use super::{folder, options, start};
 use crate::native;
 use crate::processes::{Request, recovered_home};
-use crate::{Processes, Runtime, SessionHost};
+use crate::{Processes, Runtime};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
 fn job_id(started: &str) -> String {
@@ -262,30 +262,29 @@ async fn a_job_start_after_the_shutdown_fails_and_leaves_no_job() {
     let error = error_of(&exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
 
     assert!(error.contains("yuke is shutting down"), "{error}");
-    let owner: Arc<dyn SessionHost> = host;
-    assert_eq!(processes.running_jobs(&owner), []);
+    assert_eq!(processes.jobs().running(host.session), []);
     assert!(!folder.join("processes").exists());
 }
 
 #[tokio::test]
-async fn close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs() {
-    let folder = folder("close_owner_stops_only_the_jobs_of_its_owner_and_refuses_its_later_jobs");
+async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
+    let folder = folder("closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs");
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let (first, second) = (Arc::new(TestHost::new(&folder)), Arc::new(TestHost::new(&folder)));
     let (_first_runtime, first_exec) = runtime_with(&folder, &processes, &first).await;
     let (_second_runtime, second_exec) = runtime_with(&folder, &processes, &second).await;
     text_of(&first_exec["exec"], r#"{"command": "sleep 30", "background": true}"#).await;
     let kept = job_id(&text_of(&second_exec["exec"], r#"{"command": "sleep 31", "background": true}"#).await);
-    let (first_owner, second_owner): (Arc<dyn SessionHost>, Arc<dyn SessionHost>) = (first.clone(), second);
 
-    tokio::time::timeout(WAIT, processes.close_owner(&first_owner))
+    first.closed.store(true, std::sync::atomic::Ordering::Relaxed);
+    tokio::time::timeout(WAIT, processes.jobs().close_session(first.session))
         .await
         .unwrap();
     let late = error_of(&first_exec["exec"], r#"{"command": "sleep 32", "background": true}"#).await;
 
     assert!(late.contains("its session is closed"), "{late}");
-    assert_eq!(processes.running_jobs(&first_owner), []);
-    let running = processes.running_jobs(&second_owner);
+    assert_eq!(processes.jobs().running(first.session), []);
+    let running = processes.jobs().running(second.session);
     assert_eq!(
         running
             .iter()
@@ -308,10 +307,9 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     });
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     text_of(&exec["exec"], r#"{"command": "echo hello", "background": true}"#).await;
-    let owner: Arc<dyn SessionHost> = host.clone();
     // The process has ended when the job leaves the running list. The delivery of its end waits at the gate.
     let deadline = Instant::now() + WAIT;
-    while !processes.running_jobs(&owner).is_empty() {
+    while !processes.jobs().running(host.session).is_empty() {
         assert!(Instant::now() < deadline, "the job did not end");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -450,7 +448,6 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let processes = Arc::new(Processes::new(folder.join("processes")));
     let host = Arc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
-    let owner: Arc<dyn SessionHost> = Arc::clone(&host) as Arc<dyn SessionHost>;
     let start = |command: &'static str| {
         let exec = &exec["exec"];
         async move {
@@ -468,9 +465,9 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     let first_closed = start("exec sleep 31").await;
     let second_closed = start("exec sleep 32").await;
 
-    let answered = processes.stop_job(&stopped, &owner).await;
+    let answered = processes.jobs().stop(host.session, &stopped).await;
     let changed_at_answer = host.changed.lock().unwrap().len();
-    processes.close_owner(&owner).await;
+    processes.jobs().close_session(host.session).await;
 
     assert_eq!(answered.map(|(label, _)| label), Some("stopped".to_owned()));
     // The host has the end of the stopped job before the stop answers.

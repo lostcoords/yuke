@@ -161,7 +161,7 @@ impl Sessions for Scripted {
     fn jobs(&self, _: SessionId) -> Result<Vec<Job>, SessionsError> {
         Ok(Vec::new())
     }
-    async fn stop_job(&self, _: SessionId, _: String) -> Result<(), SessionsError> {
+    async fn stop_job(&self, _: SessionId, _: &str) -> Result<(), SessionsError> {
         Ok(())
     }
     fn mcp_servers(&self, _: SessionId) -> Result<Vec<McpServer>, SessionsError> {

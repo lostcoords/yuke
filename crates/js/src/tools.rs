@@ -30,7 +30,7 @@ use crate::runtime::Caller;
 /// What the tools of one session need from the consumer. One process can serve sessions of several workspaces at
 /// once, so each session gives its own host. Give the same host to every
 /// [`Handle::open_session`](crate::Handle::open_session) of a session, also after a reload or a change of its folder:
-/// the jobs of a session belong to its host. The host stores the attachments of the session as a [`MediaStore`], for
+/// a job holds the host that started it, and reports to that host. The host stores the attachments of the session as a [`MediaStore`], for
 /// example an image that a tool read.
 #[async_trait]
 pub trait SessionHost: MediaStore {
@@ -39,6 +39,9 @@ pub trait SessionHost: MediaStore {
 
     /// The workspace folder of the session now. Relative paths and commands of the tools start here.
     fn folder(&self) -> PathBuf;
+
+    /// Whether the session closed. A close must set this before it stops the jobs of the session. A job start then fails.
+    fn is_closed(&self) -> bool;
 
     /// A background job of the session started or ended. The call must not wait.
     fn job_changed(&self, job: yuke_protocol::Job);

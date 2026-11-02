@@ -173,7 +173,7 @@ impl crate::Sessions for NoSessions {
     fn jobs(&self, _: yuke_protocol::SessionId) -> Result<Vec<yuke_protocol::Job>, crate::SessionsError> {
         no_sessions()
     }
-    async fn stop_job(&self, _: yuke_protocol::SessionId, _: String) -> Result<(), crate::SessionsError> {
+    async fn stop_job(&self, _: yuke_protocol::SessionId, _: &str) -> Result<(), crate::SessionsError> {
         no_sessions()
     }
     fn mcp_servers(&self, _: yuke_protocol::SessionId) -> Result<Vec<yuke_protocol::McpServer>, crate::SessionsError> {

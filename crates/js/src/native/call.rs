@@ -80,7 +80,7 @@ pub(crate) fn object<'js>(
             Async(move |id: String| {
                 let (processes, host) = (Arc::clone(&stop_processes), Arc::clone(&stop_host));
                 async move {
-                    let Some((label, log)) = processes.stop_job(&id, &host).await else {
+                    let Some((label, log)) = processes.jobs().stop(host.session_id(), &id).await else {
                         return Ok(None);
                     };
                     Ok::<_, rquickjs::Error>(Some(StoppedJob {
@@ -97,7 +97,8 @@ pub(crate) fn object<'js>(
         "runningJobs",
         Function::new(ctx.clone(), move || {
             running_processes
-                .running_jobs(&running_host)
+                .jobs()
+                .running(running_host.session_id())
                 .into_iter()
                 .map(|job| job.id)
                 .collect::<Vec<_>>()

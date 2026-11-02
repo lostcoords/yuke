@@ -19,6 +19,8 @@ use crate::{RequestFailure, Runtime, ScriptSession, ScriptTool, SessionHost, bak
 #[derive(Debug)]
 pub(super) struct TestHost {
     pub(super) session: SessionId,
+    /// Whether the session closed. A test sets it.
+    pub(super) closed: std::sync::atomic::AtomicBool,
     /// The folder of the session. A test can change it while a call runs.
     pub(super) folder: Mutex<PathBuf>,
     pub(super) media: Mutex<Vec<Vec<u8>>>,
@@ -38,6 +40,7 @@ impl TestHost {
     pub(super) fn new(folder: &Path) -> Self {
         TestHost {
             session: SessionId::generate(),
+            closed: std::sync::atomic::AtomicBool::new(false),
             folder: Mutex::new(folder.to_owned()),
             media: Mutex::default(),
             changed: Mutex::default(),
@@ -75,6 +78,10 @@ impl SessionHost for TestHost {
 
     fn folder(&self) -> PathBuf {
         self.folder.lock().unwrap().clone()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn job_changed(&self, job: yuke_protocol::Job) {
