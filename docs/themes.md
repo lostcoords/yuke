@@ -85,7 +85,7 @@ groups: {
 
 The fields are `fg`, `bg`, `underlineColor`, `bold`, `dim`, `italic`, `reverse`, `underline`, and `link`. A `link` names a second group. That group gives the fields that the first group does not set.
 
-[`default-theme.ts`](../crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
+[`default-theme.ts`](https://github.com/lostcoords/yuke/blob/main/crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
 
 ## Start from a different theme
 
