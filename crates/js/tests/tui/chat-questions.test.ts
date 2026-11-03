@@ -43,7 +43,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   frame.paste("draft");
   sessions.push(asked(1, DELETE));
   frame.draw();
-  const shown = rows(frame.frame).slice(-6);
+  const shown = rows(frame.frame).slice(-7, -1);
   // The composer takes no message while the question shows.
   const off = chat.tui.commands
     .list()
@@ -54,7 +54,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   await settled();
   frame.draw();
   equal(
-    [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-1), chat.tui.focused === composerOf(chat)],
+    [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-2), chat.tui.focused === composerOf(chat)],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
       [false, false, false],
@@ -75,7 +75,7 @@ test("a question from yuke shows its source without host:", async () => {
   sessions.push({ ...asked(1, DELETE), source: "host:mcp" } as SessionUpdate);
   frame.draw();
 
-  equal(rows(frame.frame).at(-6), " mcp · Branch");
+  equal(rows(frame.frame).at(-7), " mcp · Branch");
 });
 
 test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
@@ -102,17 +102,17 @@ test("a request of several questions shows one page each, with ticks and typed a
   sessions.push(asked(2, request));
   sessions.push(asked(3, DELETE));
   frame.draw();
-  const first = rows(frame.frame).slice(-6);
+  const first = rows(frame.frame).slice(-7, -1);
   // Enter without a tick or a text keeps the page.
   frame.key("enter space down down");
   frame.paste("with pgvector");
   frame.key("enter");
   frame.paste("sk-1");
   frame.draw();
-  const secret = rows(frame.frame).slice(-6, -3);
+  const secret = rows(frame.frame).slice(-7, -4);
   frame.key("enter");
   frame.draw();
-  const last = [rows(frame.frame).at(-6), rows(frame.frame).at(-1)];
+  const last = [rows(frame.frame).at(-7), rows(frame.frame).at(-2)];
   frame.key("enter");
   equal(
     [first, secret, last, sessions.responses],
@@ -157,7 +157,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   sessions.push(asked(12, { kind: "questions", questions }));
   const shown = (): (string | undefined)[] => {
     frame.draw();
-    return [rows(frame.frame).at(-5), rows(frame.frame).at(-1)];
+    return [rows(frame.frame).at(-6), rows(frame.frame).at(-2)];
   };
   frame.key("enter");
   frame.paste("hi");
@@ -201,14 +201,14 @@ test("a press on the field row keeps the page keys with the question", async () 
   frame.key("down");
   frame.draw();
   // The field row is the row above the hint.
-  frame.mouse(mouse(3, 12, "press"));
-  frame.mouse(mouse(3, 12, "release"));
+  frame.mouse(mouse(3, 11, "press"));
+  frame.mouse(mouse(3, 11, "release"));
   frame.key("up enter");
   equal(sessions.responses, [[14, answered(["X"])]]);
 });
 
 test("a tall question keeps its options in view and counts the lines that do not show", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 15 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -216,11 +216,11 @@ test("a tall question keeps its options in view and counts the lines that do not
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
   frame.draw();
-  equal(rows(frame.frame).slice(-7, -1), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
+  equal(rows(frame.frame).slice(-8, -2), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
 });
 
 test("a short pane keeps the first line of a tall question above its options", async () => {
-  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
@@ -229,7 +229,7 @@ test("a short pane keeps the first line of a tall question above its options", a
   const options = ["A", "B", "C", "D"].map((label) => ({ label }));
   sessions.push(asked(15, one({ question: text, options })));
   frame.draw();
-  equal(rows(frame.frame).slice(-4), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
+  equal(rows(frame.frame).slice(-5, -1), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
 });
 
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
@@ -270,11 +270,11 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   sessions.push(asked(6, DELETE));
   frame.key("enter");
   frame.draw();
-  const stays = rows(frame.frame).at(-6);
+  const stays = rows(frame.frame).at(-7);
   sessions.push({ sessionUpdate: "interaction_closed", interactionId: 6 });
   frame.draw();
   equal(
-    [chat.notices, stays, rows(frame.frame).at(-1)],
+    [chat.notices, stays, rows(frame.frame).at(-2)],
     [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
 });
@@ -304,7 +304,7 @@ test("a close of the session by another client drops its question, and the next 
   sessions.push(asked(10, DELETE));
   sessions.close("s1");
   frame.draw();
-  const shown = rows(frame.frame).at(-1);
+  const shown = rows(frame.frame).at(-2);
   frame.key("enter");
   await settled();
   equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ user_text: "draft" }]]]);

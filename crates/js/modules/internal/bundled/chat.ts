@@ -8,6 +8,7 @@
 import type {
   ChatPresentation,
   ChatPresentationOptions,
+  ChatReadOnly,
   ComposerRow,
   ComposerRowPlace,
   ComposerRowsContext,
@@ -15,7 +16,7 @@ import type {
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
-import type { ModelInfo } from "yuke:protocol";
+import type { ModelInfo, SessionId } from "yuke:protocol";
 import type { View } from "yuke:tui";
 
 /** The cells of the gauge of the token share of the last answer. */
@@ -60,6 +61,7 @@ const COMMANDS: readonly {
     keys: ["ctrl+c"],
     in: "chat",
     run: (pane) => pane.clear(),
+    enabled: (pane) => !pane.locked(),
   },
   {
     name: "background",
@@ -67,6 +69,7 @@ const COMMANDS: readonly {
     keys: ["ctrl+b"],
     in: "chat",
     run: (pane) => pane.moveToBackground(),
+    enabled: (pane) => !pane.locked(),
   },
   {
     name: "interrupt",
@@ -140,6 +143,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   }>();
   const panes = new WeakMap<View, PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
+  let readOnly: ((session: SessionId) => ChatReadOnly | undefined) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -170,6 +174,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
         if (sources.delete(entry)) tui?.requestFrame();
       };
     },
+    setReadOnly: (source) => {
+      readOnly = source;
+      tui?.requestFrame();
+      return () => {
+        if (readOnly !== source) return;
+        readOnly = undefined;
+        tui?.requestFrame();
+      };
+    },
     present: (factory) => {
       presenter = factory;
       tui?.requestFrame();
@@ -190,6 +203,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
     presenter: () => presenter,
+    readOnly: (session) => readOnly?.(session),
     rows: (place, pane, room) => {
       const rows: ComposerRow[] = [];
       for (const entry of sources) {
@@ -222,7 +236,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
       // Without the catalog, the model item has no level, and the context item is a token count.
       () => undefined,
     );
-  /** Show the model, the token share of the last answer, and the jobs of the focused chat pane, or nothing. */
+  /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;

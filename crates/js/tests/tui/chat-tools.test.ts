@@ -367,7 +367,7 @@ test("a click on the text of an open thought folds it", async () => {
 });
 
 test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 15 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls(
     { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 3)) },
     { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 40)) },
@@ -442,7 +442,7 @@ test("a relative link of a call without a folder starts in the folder of the ses
 });
 
 test("ctrl+o in the composer opens each tool when one is folded, else folds each tool, and it leaves a thought", async () => {
-  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 15 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls(
     { name: "read", args: { path: "a" }, hints: READ, result: ok("A") },
     { name: "read", args: { path: "b" }, hints: READ, result: ok("B") },

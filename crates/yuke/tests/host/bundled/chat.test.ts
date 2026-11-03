@@ -84,9 +84,9 @@ test("a pane draws the same transcript live and after a reload", async () => {
     "",
     "",
     "",
-    "",
     "──────────────────────────────",
     "Message…",
+    "──────────────────────────────",
   ]);
   equal(rows(reloaded), rows(live));
 });

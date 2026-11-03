@@ -271,10 +271,12 @@ export const CATALOG = {
 
 export const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
 
-/** The rows of the transcript of `frame` above its rule, which is the row before the last. */
+/** The rows of the transcript of `frame` above the rule on the composer, which is the last rule but one. */
 export function transcriptRows(frame: FrameTest): string[] {
-  const rule = rows(frame.frame).findLastIndex((row) => row.startsWith("─"));
-  return rows(frame.frame).slice(0, rule);
+  const shown = rows(frame.frame);
+  const close = shown.findLastIndex((row) => row.startsWith("─"));
+  const rule = shown.slice(0, close).findLastIndex((row) => row.startsWith("─"));
+  return shown.slice(0, rule);
 }
 
 /** Press and release the left button at `row` and `column` of `frame`. */

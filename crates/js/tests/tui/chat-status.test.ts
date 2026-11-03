@@ -32,9 +32,13 @@ const JOB: Job = {
   log: "/tmp/j1.log",
 };
 
-test("the focused chat pane shows its model, its context use, and its jobs, and a focus elsewhere hides them", async () => {
+test("the focused chat pane shows its model, its context use, and its process jobs, and a focus elsewhere hides them", async () => {
   const sessions = fakeSessions(SAVED);
-  sessions.state.jobs = [JOB];
+  // A plugin shows its own jobs, so the count holds only the command.
+  sessions.state.jobs = [
+    JOB,
+    { id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" },
+  ];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, sessions, {
     list: async () => ({

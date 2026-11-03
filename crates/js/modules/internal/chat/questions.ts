@@ -151,7 +151,7 @@ function ask(interaction: Interaction, count: () => number, answer: (response: I
   const list = (shown: Page, size: Size): { readonly text: number; readonly row: number; readonly rows: number } => {
     const room = Math.max(0, size.height - 2);
     // With two free rows or more, the question keeps one, so the options never show without their question.
-    const text = Math.min(lines(shown).length, Math.max(Math.min(1, room - 1), room - listRows(shown)));
+    const text = Math.min(lines(shown).length, Math.max(0, Math.min(1, room - 1), room - listRows(shown)));
     const rows = Math.min(listRows(shown), room - text);
     return { text, row: 1 + text, rows };
   };

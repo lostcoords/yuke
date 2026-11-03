@@ -16,7 +16,7 @@ function waiting(id: number, text: string): SessionUpdate {
 }
 
 test("plugin rows show below the transcript and above the waiting messages, cut to the width, in add order", async () => {
-  using frame = createFrame({ width: 24, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 24, height: 11 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   const seen: ComposerRowsContext[] = [];
@@ -44,6 +44,7 @@ test("plugin rows show below the transcript and above the waiting messages, cut 
         " fix the test     ↑ edit",
         "────────────────────────",
         "Message…",
+        "────────────────────────",
       ],
       true,
       ["first source, a longer …", "its second row", " fix the test     ↑ edit"],
@@ -67,7 +68,7 @@ test("plugin rows take at most half the rows above the rule and give way to the 
     frame.draw();
     return rows(frame.frame).filter((text) => /^[abc]\d$/.test(text));
   };
-  // Ten rows above the rule give plugins five. The three rows of the second source do not fit, so the chat hides it
+  // Nine rows above the rule give plugins four. The three rows of the second source do not fit, so the chat hides it
   // and the later sources.
   const half = plugin();
   for (let id = 1; id <= 8; id++) sessions.push(waiting(id, `m${id}`));
@@ -75,7 +76,7 @@ test("plugin rows take at most half the rows above the rule and give way to the 
 });
 
 test("rows below show under the composer, cut to the width, in add order, and the composer moves up", async () => {
-  using frame = createFrame({ width: 24, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 24, height: 11 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   const seen: ComposerRowsContext[] = [];
   chat.chat.addComposerRows("below", (pane) => {
@@ -88,23 +89,23 @@ test("rows below show under the composer, cut to the width, in add order, and th
   await settled();
   frame.draw();
   const shown = rows(frame.frame).slice(4);
-  const bold = frame.frame.cells[7]?.[0]?.style.bold;
+  const bold = frame.frame.cells[8]?.[0]?.style.bold;
   remove();
   frame.draw();
   const rule = "─".repeat(24);
   equal(
     [shown, bold, rows(frame.frame).slice(5), seen.at(-1)],
     [
-      ["above", rule, "Message…", "first source, a longer …", "its second row", "second source"],
+      ["above", rule, "Message…", rule, "first source, a longer …", "its second row", "second source"],
       true,
-      ["above", rule, "Message…", "first source, a longer …", "its second row"],
+      ["above", rule, "Message…", rule, "first source, a longer …", "its second row"],
       { session: "s1", width: 24 },
     ],
   );
 });
 
 test("rows below take at most half the pane, a source shows whole, and the first that does not fit hides the later", async () => {
-  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 24, height: 13 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions());
   const row = (text: string) => ({ text });
   chat.chat.addComposerRows("below", () => ["a1", "a2", "a3", "a4"].map(row));
@@ -177,4 +178,102 @@ test("the rule above the composer has a default look that a plugin changes", asy
   const before = look();
   frame.surface("theme").tui.styles.set({ "chat.rule": { fg: 1, dim: null } });
   equal([before, look()], [{ dim: true }, { fg: 1 }]);
+});
+
+test("a pane without plugin rows shows a rule below the composer, in the look of the rule above it", async () => {
+  using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, fakeSessions());
+  frame.start();
+  await settled();
+  frame.draw();
+  const rule = "─".repeat(24);
+  equal([rows(frame.frame), frame.frame.cells[5]?.[23]?.style], [["", "", "", rule, "Message…", rule], { dim: true }]);
+});
+
+test("plugin rows below sit under the rule below the composer, and the composer moves up by the rule and the rows", async () => {
+  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const chat = await loadChat(frame, fakeSessions());
+  chat.chat.addComposerRows("below", () => [{ text: "first" }, { text: "second" }]);
+  frame.start();
+  await settled();
+  frame.draw();
+  const rule = "─".repeat(24);
+  equal(rows(frame.frame), ["", "", "", rule, "Message…", rule, "first", "second"]);
+});
+
+test("a pane with two free rows has no rule below the composer, and a pane with three free rows has both rules", async () => {
+  using frame = createFrame({ width: 24, height: 2 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, fakeSessions());
+  frame.start();
+  await settled();
+  frame.draw();
+  const two = rows(frame.frame);
+  frame.resize({ width: 24, height: 3 });
+  const rule = "─".repeat(24);
+  equal(
+    [two, rows(frame.frame)],
+    [
+      [rule, "Message…"],
+      [rule, "Message…", rule],
+    ],
+  );
+});
+
+test("a plugin row below takes a free row from the rule below the composer", async () => {
+  using frame = createFrame({ width: 24, height: 3 }, undefined, { cwd: "/w", session: "s1" });
+  const chat = await loadChat(frame, fakeSessions());
+  chat.chat.addComposerRows("below", () => [{ text: "only" }]);
+  frame.start();
+  await settled();
+  frame.draw();
+  const two = rows(frame.frame);
+  frame.resize({ width: 24, height: 4 });
+  const rule = "─".repeat(24);
+  equal(
+    [two, rows(frame.frame)],
+    [
+      [rule, "Message…", "only"],
+      [rule, "Message…", rule, "only"],
+    ],
+  );
+});
+
+test("a tall draft stays above the rule below the composer, with the caret on its last line", async () => {
+  using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, fakeSessions());
+  frame.start();
+  await settled();
+  frame.paste("1\n2\n3\n4\n5\n6\n7\n8\n9");
+  frame.draw();
+  const rule = "─".repeat(24);
+  equal(
+    [rows(frame.frame), frame.frame.cursor],
+    [["", "", "", "", "", rule, "5", "6", "7", "8", "9", rule], { column: 1, row: 10 }],
+  );
+});
+
+test("a tall question stays above the rule below the composer, with the caret on its field", async () => {
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  await loadChat(frame, sessions);
+  frame.start();
+  await settled();
+  const question = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
+  const options = [{ label: "Yes" }];
+  sessions.push({
+    sessionUpdate: "interaction_requested",
+    interactionId: 1,
+    source: "guard",
+    request: { kind: "questions", questions: [{ id: "q", header: "Q", question, options, other: true }] },
+  });
+  frame.key("down");
+  frame.draw();
+  const rule = "─".repeat(40);
+  equal(
+    [rows(frame.frame).slice(5), frame.frame.cursor],
+    [
+      [rule, " guard · Q", " line 1", "  Yes", "❯ Type your own answer…", " ↑↓ choose · enter send · esc cancel", rule],
+      { column: 2, row: 9 },
+    ],
+  );
 });

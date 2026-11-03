@@ -297,7 +297,7 @@ test("the edges of a draft trim, and a paste over 300 characters shows a label a
   equal(composerOf(chat).state.spans, []);
   frame.key("ctrl+c");
   frame.paste("b".repeat(301));
-  equal(rows(frame.frame).at(-1), "[Pasted text · 301 chars]");
+  equal(rows(frame.frame).at(-2), "[Pasted text · 301 chars]");
   frame.key("enter");
   await settled();
   equal(sessions.inputs.at(-1), [{ user_text: "b".repeat(301) }]);
@@ -375,7 +375,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
-  using frame = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const bottom = chat.transcript().scroll.state.top;
@@ -500,7 +500,7 @@ test("a slash word lists the matching commands above the composer, and enter run
   const composer = composerOf(chat);
   frame.key("/ m o d e l");
   frame.draw();
-  const listed = rows(frame.frame).slice(-3, -2);
+  const listed = rows(frame.frame).slice(-4, -3);
   frame.key("enter");
   await settled();
   frame.draw();
@@ -553,7 +553,7 @@ test("a pane with no row above the rule shows no commands, and the list takes no
 });
 
 test("a pane with few rows above the rule shows the first commands", async () => {
-  using frame = createFrame({ width: 60, height: 4 });
+  using frame = createFrame({ width: 60, height: 5 });
   const chat = await loadChat(frame);
   for (const name of ["alpha1", "alpha2", "alpha3"]) chat.tui.commands.add({ name, run: () => {} });
   frame.start();
@@ -627,7 +627,7 @@ test("the commands of the chat are disabled in a pane of another plugin", async 
 });
 
 test("the strip shows the waiting messages of the user oldest first, cut to one row, and no input of a plugin", async () => {
-  using frame = createFrame({ width: 24, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 24, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -642,6 +642,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
     " and the docs th… ↑ edit",
     "────────────────────────",
     "Message…",
+    "────────────────────────",
   ]);
   // The transcript gives the strip its rows.
   equal(chat.transcript().scroll.state.height, 4);
@@ -677,7 +678,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
   await settled();
   frame.draw();
   equal(
-    [sessions.removals, rows(frame.frame).some((row) => row.includes("CI failed")), rows(frame.frame).at(-4)],
+    [sessions.removals, rows(frame.frame).some((row) => row.includes("CI failed")), rows(frame.frame).at(-5)],
     [[9, 5], false, `${" zero".padEnd(23)} ↑ edit`],
   );
   // A caret move ends a recall too.
@@ -756,7 +757,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
 });
 
 test("the strip keeps the newest messages when rows run out, and a failed recall keeps the composer", async () => {
-  using frame = createFrame({ width: 20, height: 4 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 20, height: 5 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();

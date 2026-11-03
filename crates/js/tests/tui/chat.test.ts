@@ -10,11 +10,11 @@ test("a split opens a new empty chat with its own draft", async () => {
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start();
-  equal(rows(frame.frame), ["", "", "─────────────────────", "Message…"]);
+  equal(rows(frame.frame), ["", "─────────────────────", "Message…", "─────────────────────"]);
   frame.paste("hi");
   chat.tui.commands.run("core:split-right");
   frame.paste("yo");
-  equal(rows(frame.frame), ["          │", "          │", "──────────│──────────", "hi        │yo"]);
+  equal(rows(frame.frame), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
   // The transcript and the composer of a pane share a group, and each pane has its own.
   const groups = new Map<unknown, Set<object>>();
   for (const mount of chat.tui.widgets.list())
@@ -38,11 +38,11 @@ test("a reload keeps the draft of each pane and the focus", async () => {
   await loadChat(after);
   after.start(snapshot);
   after.paste("b");
-  equal(rows(after.frame).at(-1), "a         │xb");
+  equal(rows(after.frame).at(-2), "a         │xb");
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
-  using frame = createFrame({ width: 10, height: 4 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 10, height: 5 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
   frame.start();
   // Row 0 is the gap before the reply, and column 0 is its indent.
@@ -51,7 +51,7 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   frame.mouse(mouse(5, 1, "release"));
   frame.paste("x");
   frame.draw();
-  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-1)], [["hello"], false, "x"]);
+  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-2)], [["hello"], false, "x"]);
 });
 
 test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
@@ -134,7 +134,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
       consumed: [],
     },
   ];
-  using frame = createFrame({ width: 30, height: 23 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 30, height: 24 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
@@ -212,7 +212,7 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   frame.draw();
   await settled();
   frame.draw();
-  equal(rows(frame.frame).at(-2), "─ the history did not load: Error: disk");
+  equal(rows(frame.frame).at(-3), "─ the history did not load: Error: disk");
   equal(sessions.pages.length, 1);
 });
 
@@ -224,10 +224,10 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
   frame.draw();
-  equal(rows(frame.frame).at(-2), "─ new output ↓ ─────");
+  equal(rows(frame.frame).at(-3), "─ new output ↓ ─────");
   chat.transcript().scroll.followTail();
   frame.draw();
-  equal(rows(frame.frame).at(-2), "────────────────────");
+  equal(rows(frame.frame).at(-3), "────────────────────");
   sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
   frame.draw();
   equal(transcriptRows(frame).at(-1), " reply 32");

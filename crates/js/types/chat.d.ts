@@ -278,6 +278,14 @@ declare module "yuke:chat" {
     readonly width: number;
   }
 
+  /** What a chat pane shows in place of the composer, for a session that the pane only shows. */
+  export interface ChatReadOnly {
+    /** The row in place of the composer. The chat adds the key that goes back. */
+    readonly text: string;
+    /** The session that the pane shows again at that key. */
+    readonly back: SessionId;
+  }
+
   /**
    * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
    * pane exists.
@@ -314,6 +322,18 @@ declare module "yuke:chat" {
       place: ComposerRowPlace,
       source: (pane: ComposerRowsContext) => readonly ComposerRow[],
     ) => () => void;
+    /**
+     * Make sessions read-only in each chat pane. `source` gets the session of a pane at each layout and each key, so a
+     * source must be cheap and synchronous. For a session with an answer, the pane shows a row in place of the composer.
+     * The pane sends no message, shows no question, and does not cancel the turn. Its transcript still scrolls, and the
+     * key of `chat:interrupt` shows the session `back`. The last call wins. A disposer ends the rule only if its source
+     * is current. A client of `yuke --rpc` can still send input to the session.
+     *
+     * ```ts
+     * chat.setReadOnly((session) => (isChild(session) ? { text: "A child session", back: parentOf(session) } : undefined));
+     * ```
+     */
+    readonly setReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
     /**
      * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
      * presentation, also for one session. The last call wins. A disposer restores the default only if its factory is

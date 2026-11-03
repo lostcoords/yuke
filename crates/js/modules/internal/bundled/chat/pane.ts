@@ -11,6 +11,7 @@ import {
   type ChatPresentation,
   type ChatPresentationOptions,
   ChatQuestions,
+  type ChatReadOnly,
   ChatSession,
   ChatWorking,
   type ComposerRow,
@@ -80,6 +81,8 @@ export interface PaneActions {
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
   /** A question of a plugin shows, so the composer takes no message. */
   readonly asking: () => boolean;
+  /** The session of the pane is read-only. */
+  readonly locked: () => boolean;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
   /** The session of the pane. */
@@ -108,6 +111,8 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
+  /** The answer of the read-only source of the `chat` service for `session`. */
+  readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
   /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The rows for `pane` of the sources at `place`, in add order. The first source past `room` rows ends the list. */
@@ -117,8 +122,8 @@ export interface Chat {
 }
 
 /**
- * A chat pane: the transcript above a rule and the composer. The composer takes at most half the pane height. A pane
- * with a session holds its own handle until the mount closes.
+ * A chat pane: the transcript above a rule, the composer, and a rule below it. The composer takes at most half the pane
+ * height. A pane with a session holds its own handle until the mount closes.
  */
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
@@ -217,7 +222,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const commands = new ChatCommands(composer, {
     commands: tui.commands,
     signal: mount.signal,
-    enabled: () => questions.current === undefined && ruleRow > 0,
+    enabled: () => questions.current === undefined && locked() === undefined && ruleRow > 0,
   });
   const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
@@ -360,8 +365,22 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
   };
 
-  /** The view that takes the typed keys: a question in the place of the composer, else the composer. */
-  const input = (): View => questions.current?.view ?? composer;
+  /** The read-only answer for the session of the pane. */
+  const locked = (): ChatReadOnly | undefined =>
+    chatSession.id === undefined ? undefined : chat.readOnly(chatSession.id);
+
+  /** The row in place of the composer of a read-only session. It takes the focus, and no key edits a draft. */
+  const lockedRow: View = {
+    focusable: true,
+    draw(canvas: Canvas): void {
+      const key = tui.keys.keysOf("chat:interrupt")[0];
+      const text = locked()?.text ?? "";
+      canvas.text(0, 0, clipped(key === undefined ? text : `${text} · ${key} back`, canvas.width), STYLE.meta);
+    },
+  };
+
+  /** The view that takes the typed keys: the row of a read-only session, a question, or the composer. */
+  const input = (): View => (locked() === undefined ? (questions.current?.view ?? composer) : lockedRow);
 
   const questions = new ChatQuestions(chatSession, {
     signal: mount.signal,
@@ -384,6 +403,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let shown: [InputId, Frozen<Input>][] = [];
   let rowsAbove: ComposerRow[] = [];
   let rowsBelow: ComposerRow[] = [];
+  let closeRow = -1;
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
@@ -397,13 +417,16 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = false;
         view.setDocument(document.project(chatSession.transcript));
       }
-      // A question hides the composer, and the composer keeps its draft.
+      // A question and a read-only row hide the composer, and the composer keeps its draft.
       const question = questions.current;
       const context = { session: chatSession.id, width: size.width };
       rowsBelow = chat.rows("below", context, Math.floor(size.height / 2));
-      const usable = size.height - rowsBelow.length;
+      const left = size.height - rowsBelow.length;
+      // A short pane gives up the rule below the composer first: the two rules and the composer need three rows.
+      closeRow = left >= 3 ? left - 1 : -1;
+      const usable = closeRow < 0 ? left : closeRow;
       // The composer keeps one row in a pane of any size, and at most half of a taller pane.
-      const wanted = question?.rows ?? composer.heightFor(size.width);
+      const wanted = locked() === undefined ? (question?.rows ?? composer.heightFor(size.width)) : 1;
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(usable / 2)));
       const composerRow = Math.max(0, usable - composerRows);
       ruleRow = composerRow - 1;
@@ -420,7 +443,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const placements = [
         { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length - rowsAbove.length } },
         {
-          view: question?.view ?? composer,
+          view: input(),
           rect: { column: 0, row: composerRow, width: size.width, height: usable - composerRow },
         },
         { view: commands.view, rect: { column: 0, row: ruleRow - listRows, width: size.width, height: listRows } },
@@ -442,6 +465,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       for (const [at, row] of rowsBelow.entries()) {
         canvas.text(0, canvas.height - rowsBelow.length + at, clipped(row.text, canvas.width), row.style);
       }
+      if (closeRow >= 0) canvas.text(0, closeRow, "─".repeat(canvas.width), STYLE.rule);
       if (ruleRow < 0) return;
       const listRow = ruleRow - listRows;
       const stripRow = listRow - workingRows - shown.length;
@@ -457,12 +481,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
       // While the list shows, Esc hides the list, so the row shows no cancel key.
-      const key = listRows > 0 ? undefined : tui.keys.keysOf("chat:interrupt")[0];
+      const key = listRows > 0 || locked() !== undefined ? undefined : tui.keys.keysOf("chat:interrupt")[0];
       const row =
         workingRows === 1
           ? working.text({
               cancelKey: key,
-              backgroundKey: tui.keys.keysOf("chat:background")[0],
+              backgroundKey: locked() === undefined ? tui.keys.keysOf("chat:background")[0] : undefined,
               width: Math.max(0, canvas.width - 2),
             })
           : undefined;
@@ -494,32 +518,34 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       };
     },
   };
+  const show = async (id: SessionId): Promise<void> => {
+    if (busy || chatComposer.busy) throw new Error("the pane is busy");
+    const before = chatSession.id;
+    busy = true;
+    try {
+      await chatSession.open(id);
+    } finally {
+      busy = false;
+    }
+    // A show of the shown session only opens it again after the end of its handle.
+    if (mount.signal.aborted || id === before) return;
+    // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
+    // draft goes with the pane.
+    if (before === undefined) return;
+    const draft = composer.state;
+    if (draft.text !== "") drafts.set(before, draft);
+    chatComposer.setDraft(drafts.get(id) ?? EMPTY);
+    drafts.delete(id);
+  };
   chat.panes.set(pane, {
     session: () => chatSession.id,
-    show: async (id) => {
-      if (busy || chatComposer.busy) throw new Error("the pane is busy");
-      const before = chatSession.id;
-      busy = true;
-      try {
-        await chatSession.open(id);
-      } finally {
-        busy = false;
-      }
-      // A show of the shown session only opens it again after the end of its handle.
-      if (mount.signal.aborted || id === before) return;
-      // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
-      // draft goes with the pane.
-      if (before === undefined) return;
-      const draft = composer.state;
-      if (draft.text !== "") drafts.set(before, draft);
-      chatComposer.setDraft(drafts.get(id) ?? EMPTY);
-      drafts.delete(id);
-    },
+    show,
     status: () => ({
       bound: chatSession.id !== undefined,
       settings: chatSession.transcript.settings,
       usage: chatSession.transcript.usage,
-      jobs: chatSession.handle?.jobs().length ?? 0,
+      // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands.
+      jobs: chatSession.handle?.jobs().filter((job) => job.kind === "process").length ?? 0,
     }),
     toggleTools: () => {
       document.toggleTools(chatSession.transcript);
@@ -539,8 +565,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     moveToBackground: () => chatSession.handle?.background(),
     interrupt: () => {
+      const back = locked()?.back;
       if (view.selection !== undefined) view.selection = undefined;
-      else chatSession.handle?.cancel();
+      else if (back === undefined) chatSession.handle?.cancel();
+      else {
+        show(back).catch((error: unknown) => {
+          if (!mount.signal.aborted) ctx.notify("error", `the session ${back} did not open: ${String(error)}`);
+        });
+      }
     },
     scroll: (to) => {
       const step = Math.max(1, view.scroll.state.height - 1);
@@ -549,7 +581,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else if (to === "top") view.scroll.scrollTo(0);
       else view.scroll.followTail();
     },
-    asking: () => questions.current !== undefined,
+    asking: () => questions.current !== undefined || locked() !== undefined,
+    locked: () => locked() !== undefined,
     cancelQuestion: () => questions.cancel(),
   });
   return pane;
