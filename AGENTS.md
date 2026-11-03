@@ -29,6 +29,8 @@ The last line builds each crate with its own features only, so a feature that an
 
 Ask the user before you add a dependency.
 
+Write commit messages in imperative English.
+
 ## Code
 
 - A comment says why, in one or two lines. Docs say what an item does, not how it came to be.
