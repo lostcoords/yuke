@@ -24,7 +24,7 @@ function held() {
 
 const REPORT: JobReport = { status: "completed", text: "The store has two tables." };
 const SENT =
-  '<system_notification plugin="agents">explorer completed.\nThe store has two tables.</system_notification>';
+  '<system_notification plugin="agents">explorer one: completed.\nThe store has two tables.</system_notification>';
 
 /** A host with one plugin, an open session, and a handle on it. The tool `work` runs `tools.work` in a job of its call. */
 async function opened(replies: readonly string[] = []) {
@@ -49,7 +49,7 @@ async function opened(replies: readonly string[] = []) {
             async execute(_args, call) {
               const job = { id: "explorer", label: "one", background: tool.background };
               const outcome = await call.jobs.run(job, tool.work);
-              return outcome.kind === "background" ? `[${outcome.id} moved.]` : (outcome.report?.text ?? "no report");
+              return outcome.kind === "background" ? `${outcome.id} moved.` : (outcome.report?.text ?? "no report");
             },
           });
           return undefined;
@@ -74,12 +74,12 @@ test("a job lists with the jobs of the session, and its report starts a turn", a
   await using _host = host;
   const work = held();
 
-  await s.jobs.run({ id: "explorer", label: "explore the store" }, work.work);
+  await s.jobs.run({ id: "explorer", label: "one" }, work.work);
   const listed = handle.jobs();
   work.finish(REPORT);
   await settled();
 
-  equal(listed, [{ id: "explorer", label: "explore the store", state: "running", kind: "plugin", plugin: "agents" }]);
+  equal(listed, [{ id: "explorer", label: "one", state: "running", kind: "plugin", plugin: "agents" }]);
   equal(handle.jobs(), []);
   equal(work.signal.aborted, false);
   equal(host.requests[0]?.messages.at(-1)?.text, SENT);
@@ -119,7 +119,7 @@ test("the stop tool aborts the signal, waits for the end, and drops the report",
   equal([work.signal.aborted, answered], [true, false]);
   work.finish(REPORT);
 
-  equal(await pending, "[explorer stopped.]");
+  equal(await pending, "explorer stopped.");
   // The stop answered after the end, so the list no longer holds the job.
   equal(handle.jobs(), []);
   await settled();
@@ -259,6 +259,20 @@ test("a job start rejects while its session closes", async () => {
   assert(refusal.includes("its session is closed"), refusal);
 });
 
+test("a label of many lines shows its first line in the list and in the report", async () => {
+  const { host, s, handle } = await opened(["Thanks."]);
+  await using _host = host;
+  const work = held();
+
+  await s.jobs.run({ id: "explorer", label: "one\ntwo" }, work.work);
+  const listed = handle.jobs().map((job) => job.label);
+  work.finish(REPORT);
+  await settled();
+
+  equal(listed, ["one..."]);
+  equal(host.requests[0]?.messages.at(-1)?.text, SENT.replace("one:", "one...:"));
+});
+
 test("work without a report sends no input, and its signal stays quiet at the close of the session", async () => {
   const { host, session, s } = await opened();
   await using _host = host;
@@ -284,7 +298,7 @@ test("work that throws without a call reports the failure", async () => {
   await settled();
 
   equal(handle.jobs(), []);
-  assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer failed.") === true, "no report");
+  assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer one: failed.") === true, "no report");
   assert(host.requests[0]?.messages.at(-1)?.text.includes("the store is gone") === true, "no failure text");
 });
 
@@ -358,7 +372,7 @@ test("a move answers the call, keeps the signal quiet at its end, and the report
   work.finish(REPORT);
   await settled();
 
-  equal(result.text, "[explorer moved.]");
+  equal(result.text, "explorer moved.");
   equal([listed, aborted, movable], [["explorer"], false, false]);
   equal(handle.jobs(), []);
   equal(host.requests[0]?.messages.at(-1)?.text, SENT);
@@ -377,7 +391,7 @@ test("a throw of the work after a move reports the failure", async () => {
   work.fail(new Error("the store is gone"));
   await settled();
 
-  assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer failed.") === true, "no report");
+  assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer one: failed.") === true, "no report");
 });
 
 test("a stop after a move aborts the signal and drops the report", async () => {
@@ -395,7 +409,7 @@ test("a stop after a move aborts the signal and drops the report", async () => {
   const aborted = work.signal.aborted;
   work.finish(REPORT);
 
-  equal(await pending, "[explorer stopped.]");
+  equal(await pending, "explorer stopped.");
   equal(aborted, true);
   await settled();
   equal(host.requests.length, 0);
@@ -429,7 +443,7 @@ test("the option background runs the work without the call", async () => {
   work.finish(REPORT);
   await settled();
 
-  equal(result.text, "[explorer moved.]");
+  equal(result.text, "explorer moved.");
   equal(listed, ["explorer"]);
   equal(host.requests[0]?.messages.at(-1)?.text, SENT);
 });

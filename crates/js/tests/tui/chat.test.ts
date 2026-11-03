@@ -278,3 +278,29 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   );
   equal(chat.transcript().document.items[0] === first, true);
 });
+
+test("a notification from yuke shows its source without host:, and a plugin keeps its whole name", async () => {
+  const notification = (seq: number, id: number, name: string, text: string): StoredEvent => ({
+    seq,
+    sessionUpdate: "commit",
+    commit: { replaced: null, blocks: [{ user_text: text }], answer: null, end: null },
+    consumed: [{ id, source: { kind: "plugin", name }, kind: "notification", blockCount: 1 }],
+  });
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    notification(2, 1, "host:jobs", "job-1 make · exited 0"),
+    notification(3, 2, "myhost:ci", "build done"),
+  ];
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  frame.draw();
+
+  equal(transcriptRows(frame).slice(1, 6), [
+    " notification · jobs",
+    " job-1 make · exited 0",
+    "",
+    " notification · myhost:ci",
+    " build done",
+  ]);
+});

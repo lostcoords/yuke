@@ -46,7 +46,7 @@ test("a warning and an error stay, and debug shows no toast", () => {
   frame.notice(notice("warn", "lint", "3 errors"));
   frame.notice(notice("error", "host:session", "the turn failed"));
   frame.advance(60_000);
-  equal(stack(frame), ["▌ lint", "▌ 3 errors", "▌ host:session", "▌ the turn failed"]);
+  equal(stack(frame), ["▌ lint", "▌ 3 errors", "▌ session", "▌ the turn failed"]);
 });
 
 test("an equal notice raises the count of its toast and starts its wait again, also with others between", () => {
@@ -109,6 +109,19 @@ test("a click dismisses its toast and ctrl+l dismisses all", () => {
   const clicked = stack(frame);
   frame.key("ctrl+l");
   equal([right, clicked, stack(frame)], [4, ["▌ first", "▌ a"], []]);
+});
+
+test("the history shows a source from yuke without host:", () => {
+  using frame = createFrame({ width: 50, height: 10 });
+  loadToasts(frame);
+  frame.notice(notice("error", "host:session", "the turn failed"));
+  frame.surface("demo").tui.commands.run("toasts:history");
+  frame.draw();
+
+  equal(
+    rows(frame.frame).filter((row) => row.startsWith("error ")),
+    ["error session: the turn failed"],
+  );
 });
 
 test("the warnings and errors before the load show, and the history lists each notice, the newest first", () => {

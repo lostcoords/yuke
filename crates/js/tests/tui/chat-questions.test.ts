@@ -66,6 +66,18 @@ test("a single question takes the place of the composer, enter picks the cursor 
   );
 });
 
+test("a question from yuke shows its source without host:", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions();
+  await loadChat(frame, sessions);
+  frame.start();
+  await settled();
+  sessions.push({ ...asked(1, DELETE), source: "host:mcp" } as SessionUpdate);
+  frame.draw();
+
+  equal(rows(frame.frame).at(-6), " mcp · Branch");
+});
+
 test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
   using frame = createFrame({ width: 64, height: 20 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();

@@ -25,7 +25,7 @@ use tokio::task::JoinHandle;
 use yuke_engine::CancellationToken;
 use yuke_protocol::{JobKind, JobState};
 
-use crate::jobs::{Jobs, RunningJob, report_input};
+use crate::jobs::{Jobs, RunningJob, report_input, short_label};
 use crate::tools::SessionHost;
 
 /// The plugin name of the input that a background job sends when it ends.
@@ -174,7 +174,7 @@ impl Processes {
         self.last_number.set(number);
         let log = self.folder.join(format!("exec-{number}.log"));
         let id = self.next_job_id();
-        let label = short_command(&command);
+        let label = short_label(&command);
         let job = self.jobs.add_process(
             owner.as_ref(),
             id.clone(),
@@ -230,7 +230,7 @@ impl Processes {
     ) -> Result<StartedJob, String> {
         let id = self.next_job_id();
         let log = self.folder.join(format!("{id}.log"));
-        let label = short_command(&command);
+        let label = short_label(&command);
         let job = self.jobs.add_process(
             owner.as_ref(),
             id.clone(),
@@ -242,7 +242,7 @@ impl Processes {
         let (answer, answered) = oneshot::channel();
         let task = CommandTask {
             job,
-            label: label.clone(),
+            label,
             command,
             log: log.clone(),
             folder: owner.folder(),
@@ -252,7 +252,6 @@ impl Processes {
         answered.await.map_err(|_| ENDED.to_owned())??;
         Ok(StartedJob {
             id,
-            label,
             log: log.to_string_lossy().into_owned(),
         })
     }
@@ -391,7 +390,7 @@ impl CommandTask {
                 (None, None, None) => "failed".to_owned(),
             };
             let text = end_text(self.log.clone()).await;
-            let input = report_input(JOBS_SOURCE, &self.job.id, &end, &text);
+            let input = report_input(JOBS_SOURCE, &self.job.id, &self.label, &end, &text);
             self.owner.accept_input(input).await;
         }
     }
@@ -418,23 +417,11 @@ fn reply(answer: oneshot::Sender<Result<Answer, String>>, value: Result<Answer, 
     }
 }
 
-/// What a job start gives: the id of the job, its label, and its log file.
+/// What a job start gives: the id of the job and its log file.
 #[derive(IntoJs)]
 pub(crate) struct StartedJob {
     id: String,
-    label: String,
     log: String,
-}
-
-/// The first line of `command`, at most 60 characters.
-fn short_command(command: &str) -> String {
-    let text = command.trim();
-    let (line, more) = text.split_once('\n').map_or((text, false), |(line, _)| (line, true));
-    if more || line.chars().count() > 60 {
-        format!("{}...", line.chars().take(57).collect::<String>())
-    } else {
-        line.to_owned()
-    }
 }
 
 /// `number` in base 36, with the digits `0-9` and `a-z`.

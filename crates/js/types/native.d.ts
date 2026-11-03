@@ -61,10 +61,9 @@ declare module "yuke:internal/native" {
     readonly display: readonly DisplayBlock[];
   }
 
-  /** A started job: its id, its label, and its log file. */
+  /** A started job: its id and its log file. */
   export interface StartedJob {
     readonly id: string;
-    readonly label: string;
     readonly log: string;
   }
 

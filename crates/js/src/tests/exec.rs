@@ -17,7 +17,7 @@ use crate::{Processes, Runtime};
 
 /// The id of the job that the start text `started` names, for example `job-a1b2`.
 fn job_id(started: &str) -> String {
-    let id = started.trim_start_matches('[').split(' ').next().unwrap_or_default();
+    let id = started.split(' ').next().unwrap_or_default();
     let digits = id.strip_prefix("job-").unwrap_or_default();
     assert!(
         digits.len() == 4
@@ -113,8 +113,8 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     assert_eq!(
         text,
         format!(
-            "[{id} started: echo hello; exit 4. Log: {}. Its end arrives as a message, so never sleep or poll. Use \
-             stop with {id} to end it.]",
+            "{id} runs in the background.\nLog: {}\nIts end arrives as a message, so never sleep or poll. Use stop \
+             with {id} to end it.",
             log.display()
         )
     );
@@ -124,13 +124,13 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     assert_eq!(
         host.inputs.borrow_mut().iter().map(model_text).collect::<Vec<_>>(),
         [format!(
-            "<system_notification plugin=\"host:jobs\">{id} exited 4.\nLog: {}\nhello</system_notification>",
+            "<system_notification plugin=\"host:jobs\">{id} echo hello; exit 4: exited 4.\nLog: {}\nhello</system_notification>",
             log.display()
         )]
     );
     assert_eq!(
         host.inputs.borrow_mut()[0].content(),
-        [Block::user_text(format!("{id} exited 4"))]
+        [Block::user_text(format!("{id} echo hello; exit 4 · exited 4"))]
     );
     // An ended job leaves the list: its report has told the model already.
     assert_eq!(
@@ -198,7 +198,7 @@ async fn a_background_job_with_a_timeout_ends_and_reports_it() {
         .unwrap();
     let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
     assert!(
-        texts[0].contains(&format!("{id} timed out after 200 ms.")),
+        texts[0].contains(&format!(">{id} ")) && texts[0].contains(": timed out after 200 ms."),
         "{}",
         texts[0]
     );
@@ -527,12 +527,12 @@ async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters(
     let host = Rc::new(TestHost::new(&folder));
     let (_runtime, exec) = runtime_with(&folder, &processes, &host).await;
     let label = |command: String| {
-        let exec = &exec["exec"];
+        let (exec, processes, host) = (&exec["exec"], &processes, &host);
         async move {
             let arguments = serde_json::json!({ "command": command, "background": true }).to_string();
-            let started = text_of(exec, &arguments).await;
-            let label = started.split_once(" started: ").unwrap().1;
-            label.split_once(". Log: ").unwrap().0.to_owned()
+            let id = job_id(&text_of(exec, &arguments).await);
+            let jobs = processes.jobs().running(host.session);
+            jobs.into_iter().find(|job| job.id == id).unwrap().label
         }
     };
     let comment = |length: usize| format!("exit 0 # {}", "é".repeat(length - 9));
@@ -583,7 +583,7 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
 
     let id = text.split(" as ").nth(1).unwrap().split('.').next().unwrap().to_owned();
     assert!(
-        text.starts_with("[The user moved the command to the background as job-"),
+        text.starts_with("The user moved the command to the background as job-"),
         "{text}"
     );
     let listed = processes.jobs().running(host.session);
@@ -595,7 +595,8 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
         .await
         .unwrap();
     let texts: Vec<String> = host.inputs.borrow_mut().iter().map(model_text).collect();
-    assert!(texts[0].contains(&format!("{id} exited 3.")), "{}", texts[0]);
+    let end = format!("{id} echo before; touch ready; sleep 0.3; echo after; exit 3: exited 3.");
+    assert!(texts[0].contains(&end), "{}", texts[0]);
     assert!(texts[0].contains("before\nafter"), "{}", texts[0]);
     assert_eq!(processes.jobs().running(host.session), []);
     processes.shutdown().await.unwrap();

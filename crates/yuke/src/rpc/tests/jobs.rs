@@ -62,11 +62,11 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
         (&json!("ended"), &json!(3), &json!("process"))
     );
     let shown = job_input["content"][0]["user_text"].as_str().unwrap();
-    assert!(shown.starts_with("job-") && shown.ends_with(" exited 3"), "{shown}");
-    let job = shown.trim_end_matches(" exited 3");
+    assert!(shown.starts_with("job-") && shown.ends_with(" · exited 3"), "{shown}");
+    let job = shown.trim_end_matches(" · exited 3");
     let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
     assert!(
-        model_text.starts_with(&format!(r#"<system_notification plugin="host:jobs">{job} exited 3."#)),
+        model_text.starts_with(&format!(r#"<system_notification plugin="host:jobs">{job}: exited 3."#)),
         "{model_text}"
     );
     assert!(model_text.ends_with("</system_notification>"), "{model_text}");

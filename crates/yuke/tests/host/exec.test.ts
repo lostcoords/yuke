@@ -2,7 +2,8 @@
 // background jobs, and the processes.
 
 import { readTextFile } from "yuke:fs";
-import { assert, createHost, equal, folder, type TestSession, test } from "yuke:test";
+import type { Sessions } from "yuke:plugins";
+import { assert, createHost, equal, folder, settled, type TestSession, test } from "yuke:test";
 
 /** The answer of `exec` for `command`, with the arguments `extra`. */
 function exec(session: TestSession, command: string, extra: object = {}) {
@@ -45,6 +46,64 @@ test("exec names the signal that ended the shell, and says when it has no output
     [killed.text, killed.isError, quiet.text, quiet.isError],
     ["[no output]\n[signal: 9]", true, "[no output]\n[exit code: 0]", false],
   );
+});
+
+test("a background exec and its stop show the user a short row and tell the model the log and the next step", async () => {
+  const { host, session } = await opened();
+  await using _host = host;
+
+  const started = await exec(session, "sleep 30", { background: true });
+  const id = started.text.split(" ")[0] as string;
+  const lines = started.text.split("\n");
+  const stopped = await session.call("stop", { id });
+
+  equal(
+    [lines[0], lines[1]?.startsWith("Log: "), lines[1]?.endsWith(`${id}.log`), lines[2]],
+    [
+      `${id} runs in the background.`,
+      true,
+      true,
+      `Its end arrives as a message, so never sleep or poll. Use stop with ${id} to end it.`,
+    ],
+  );
+  equal(started.display, [{ kind: "markdown", text: `Running in the background as ${id}` }]);
+  equal([stopped.text, stopped.display], [`${id} stopped.`, [{ kind: "markdown", text: "Stopped" }]]);
+});
+
+test("a moved exec shows the user a short row and tells the model the log and the next step", async () => {
+  let sessions: Sessions | undefined;
+  const host = await createHost({
+    plugins: [
+      {
+        name: "mover",
+        apply(ctx) {
+          sessions = ctx.get("sessions");
+          return undefined;
+        },
+      },
+    ],
+  });
+  await using _host = host;
+  const session = await host.openSession();
+  const handle = await (sessions as Sessions).open(session.id, { tail: 0, event() {} });
+  const running = exec(session, "sleep 30");
+  while (!handle.hasMovable()) await settled();
+  handle.background();
+  const moved = await running;
+  const id = moved.text.split(" as ")[1]?.split(".")[0] as string;
+  const lines = moved.text.split("\n");
+
+  equal(
+    [lines[0], lines[1]?.startsWith("Log: "), lines[2]],
+    [
+      `The user moved the command to the background as ${id}.`,
+      true,
+      `Its end arrives as a message, so never sleep or poll. Use stop with ${id} to end it.`,
+    ],
+  );
+  equal(moved.display, [{ kind: "markdown", text: `Moved to the background as ${id}` }]);
+  equal(moved.isError, false);
+  await session.call("stop", { id });
 });
 
 test("exec gives its output as live texts", async () => {

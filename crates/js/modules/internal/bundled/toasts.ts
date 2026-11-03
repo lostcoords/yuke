@@ -3,6 +3,7 @@
  * an error stays until a dismissal, and debug shows no toast.
  */
 
+import { sourceName } from "yuke:internal/source-name";
 import { bottom } from "yuke:internal/tui/layout";
 import type { PluginContext } from "yuke:plugins";
 import { fit, type Notice, Picker, type Size, type View, wrap } from "yuke:tui";
@@ -71,7 +72,7 @@ export function apply(ctx: PluginContext): undefined {
   /** Give the title and the body rows of `toast`. A row has a bar, a space, the text, and one cell of padding. */
   const rowsOf = (toast: Toast, width: number): string[] => {
     const room = Math.max(1, width - 3);
-    const title = `${toast.notice.source}${toast.count > 1 ? ` ×${toast.count}` : ""}`;
+    const title = `${sourceName(toast.notice.source)}${toast.count > 1 ? ` ×${toast.count}` : ""}`;
     const text = toast.notice.text;
     const spans = wrap(text, room, BODY_ROWS + 1);
     const body: string[] = [];
@@ -146,7 +147,7 @@ export function apply(ctx: PluginContext): undefined {
             items: notices,
             key: (notice) => String(notices.indexOf(notice)),
             label: (notice) =>
-              `${notice.level} ${notice.source}${notice.count > 1 ? ` ×${notice.count}` : ""}: ${notice.text.split("\n")[0]}`,
+              `${notice.level} ${sourceName(notice.source)}${notice.count > 1 ? ` ×${notice.count}` : ""}: ${notice.text.split("\n")[0]}`,
             detail: (notice) => notice.sessionId ?? "",
             choose: () => mount.close(),
             cancel: () => mount.close(),

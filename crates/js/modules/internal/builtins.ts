@@ -199,6 +199,11 @@ function linesOf(text: string): string[] {
   return lines;
 }
 
+/** Tell the model the log file `log` of the running job `id`, its end, and its stop. */
+function jobNote(id: string, log: string): string {
+  return `Log: ${log}\nIts end arrives as a message, so never sleep or poll. Use stop with ${id} to end it.`;
+}
+
 defineTool({
   name: "exec",
   description:
@@ -227,10 +232,10 @@ defineTool({
     if (command.trim().length === 0) throw new Error("Set command to a nonempty string.");
     if (args.background === true) {
       const job = await callOf(context).startJob(command, args.timeout_ms);
-      return (
-        `[${job.id} started: ${job.label}. Log: ${job.log}. Its end arrives as a message, so never ` +
-        `sleep or poll. Use stop with ${job.id} to end it.]`
-      );
+      return {
+        text: `${job.id} runs in the background.\n${jobNote(job.id, job.log)}`,
+        display: [{ kind: "markdown", text: `Running in the background as ${job.id}` }],
+      };
     }
 
     const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT;
@@ -260,10 +265,8 @@ defineTool({
         return { text: `${text}[exit code: ${end.code}]`, isError: end.code !== 0 };
       case "moved":
         return {
-          text:
-            `[The user moved the command to the background as ${end.id}. Log: ${end.log}. Its end arrives as a ` +
-            `message, so never sleep or poll. Use stop with ${end.id} to end it.]`,
-          isError: false,
+          text: `The user moved the command to the background as ${end.id}.\n${jobNote(end.id, end.log)}`,
+          display: [{ kind: "markdown", text: `Moved to the background as ${end.id}` }],
         };
     }
   },
@@ -292,6 +295,9 @@ defineTool({
         `The id ${id} does not exist. ${ids.length === 0 ? "Nothing runs." : `The ids are: ${ids.join(", ")}.`}`,
       );
     }
-    return `[${id} ${answer}.]`;
+    return {
+      text: `${id} ${answer}.`,
+      display: [{ kind: "markdown", text: answer === "stopped" ? "Stopped" : "Stopping" }],
+    };
   },
 });

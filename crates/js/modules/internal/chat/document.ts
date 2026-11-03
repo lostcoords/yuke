@@ -7,6 +7,7 @@
 import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
 import { toolItem } from "yuke:internal/chat/tools";
+import { sourceName } from "yuke:internal/source-name";
 import type { Entry, Status, Transcript } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
 
@@ -98,7 +99,7 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined): Te
       if (entry.source.kind === "user" && entry.inputKind === "message") {
         return item(entry.key, { key: "text", kind: "text", text, render: (width) => filledRows(text, width) });
       }
-      const sender = entry.source.kind === "plugin" ? entry.source.name : "you";
+      const sender = entry.source.kind === "plugin" ? sourceName(entry.source.name) : "you";
       const title = entry.inputKind === "notification" ? `notification · ${sender}` : `message · ${sender}`;
       return item(entry.key, label(title, STYLE.meta), plain("text", text, undefined));
     }

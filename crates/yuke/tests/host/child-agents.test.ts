@@ -50,7 +50,7 @@ function agents() {
         required: ["message", "background"],
       },
       execute: async (args, context) => {
-        const job = { id: "explorer", label: args.message, background: args.background };
+        const job = { id: "explorer", label: "explore the store", background: args.background };
         const outcome = await context.jobs.run(job, async (signal) => {
           const list = sessions as Sessions;
           state.child ??= await list.create(s.settings, { parent: s.sessionId });
@@ -81,7 +81,7 @@ function agents() {
           const text = blocks.flatMap((block) => ("assistant_text" in block ? [block.assistant_text] : [])).join("");
           return { status: "completed", text };
         });
-        return outcome.kind === "background" ? `[${outcome.id} runs in the background.]` : (outcome.report?.text ?? "");
+        return outcome.kind === "background" ? `${outcome.id} runs in the background.` : (outcome.report?.text ?? "");
       },
     });
   };
@@ -121,10 +121,16 @@ test("a child reports to its parent, stays out of the list, and takes a follow-u
   equal(followup.isError, false);
   equal(host.requests.length, 4);
 
-  equal(first, '<system_notification plugin="agents">explorer completed.\nTwo tables.</system_notification>');
+  equal(
+    first,
+    '<system_notification plugin="agents">explorer explore the store: completed.\nTwo tables.</system_notification>',
+  );
   equal(roots, [parent.id]);
   equal(children, [state.child]);
-  equal(newest(host), '<system_notification plugin="agents">explorer completed.\nThree indexes.</system_notification>');
+  equal(
+    newest(host),
+    '<system_notification plugin="agents">explorer explore the store: completed.\nThree indexes.</system_notification>',
+  );
 });
 
 test("a stop cancels the child, and the parent gets no report", async () => {
@@ -135,7 +141,7 @@ test("a stop cancels the child, and the parent gets no report", async () => {
   equal(host.requests.length, 1);
   const stopped = await parent.call("stop", { id: "explorer" });
 
-  equal(stopped.text, "[explorer stopped.]");
+  equal(stopped.text, "explorer stopped.");
   equal(host.requests.length, 1);
 });
 
@@ -153,7 +159,10 @@ test("a question of the child reaches the parent, and its answer returns to the 
     host.questions.map((question) => question.sessionId),
     [parent.id],
   );
-  equal(newest(host), '<system_notification plugin="agents">explorer completed.\nIt said yes.</system_notification>');
+  equal(
+    newest(host),
+    '<system_notification plugin="agents">explorer explore the store: completed.\nIt said yes.</system_notification>',
+  );
 });
 
 test("a foreground child answers as the tool result, shows no job, and sends no report", async () => {
@@ -188,8 +197,11 @@ test("ctrl+b moves a foreground child: the call answers, the child goes on, and 
   await settled();
 
   equal(movable, true);
-  equal(result.text, "[explorer runs in the background.]");
+  equal(result.text, "explorer runs in the background.");
   equal(jobs, [["explorer", "running"]]);
   equal(handle.jobs(), []);
-  equal(newest(host), '<system_notification plugin="agents">explorer completed.\nTwo tables.</system_notification>');
+  equal(
+    newest(host),
+    '<system_notification plugin="agents">explorer explore the store: completed.\nTwo tables.</system_notification>',
+  );
 });

@@ -759,7 +759,7 @@ export interface AskRequest {
 export interface JobOptions {
   /** The id of the job, unique among the running jobs of the session. It can stay the same across restarts of the work. */
   readonly id: string;
-  /** A short text for display. */
+  /** A short text for display. yuke keeps the first line, at most 60 characters. */
   readonly label: string;
   /** For `context.jobs.run`: run without the call from the start. */
   readonly background?: boolean | undefined;
@@ -767,9 +767,9 @@ export interface JobOptions {
 
 /** The report of a job. */
 export interface JobReport {
-  /** The end in words, for example `completed`. The user reads `{id} {status}`. */
+  /** The end in words, for example `completed`. A notification shows the user `{id} {label} · {status}`. */
   readonly status: string;
-  /** The text that the model reads after the id and the status. */
+  /** The text for the model. A notification puts the id, the label, and the status before it. */
   readonly text: string;
 }
 

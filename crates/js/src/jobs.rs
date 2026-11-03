@@ -135,9 +135,10 @@ impl Jobs {
         owner: Rc<dyn SessionHost>,
         plugin: String,
         id: String,
-        label: String,
+        label: &str,
         in_call: bool,
     ) -> Result<PluginJob, String> {
+        let label = short_label(label);
         let work = Work::Plugin {
             plugin: plugin.clone(),
             running: true,
@@ -414,7 +415,7 @@ impl PluginJob {
         self.owner.job_changed(self.protocol_job(state));
         if let Some((status, text)) = report.filter(|_| !stopped) {
             tokio::task::spawn_local(async move {
-                let input = report_input(&self.plugin, &self.job.id, &status, &text);
+                let input = report_input(&self.plugin, &self.job.id, &self.label, &status, &text);
                 self.owner.accept_input(input).await;
             });
         }
@@ -433,7 +434,22 @@ impl PluginJob {
     }
 }
 
-/// The report of the job `id` from `source`, the same frame for each job. The user reads `{id} {status}`.
-pub(crate) fn report_input(source: &str, id: &str, status: &str, text: &str) -> Input {
-    Input::notification(source, &format!("{id} {status}"), &format!("{id} {status}.\n{text}"))
+/// The first line of `text`, at most 60 characters, so that a report and a list show one row for a job.
+pub(crate) fn short_label(text: &str) -> String {
+    let text = text.trim();
+    let (line, more) = text.split_once('\n').map_or((text, false), |(line, _)| (line, true));
+    if more || line.chars().count() > 60 {
+        format!("{}...", line.chars().take(57).collect::<String>())
+    } else {
+        line.to_owned()
+    }
+}
+
+/// Make the report of the job `id` from `source`. Each job uses this frame. The user reads `{id} {label} · {status}`.
+pub(crate) fn report_input(source: &str, id: &str, label: &str, status: &str, text: &str) -> Input {
+    Input::notification(
+        source,
+        &format!("{id} {label} · {status}"),
+        &format!("{id} {label}: {status}.\n{text}"),
+    )
 }

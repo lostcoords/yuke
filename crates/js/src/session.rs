@@ -506,7 +506,7 @@ fn start_job_function<'js>(
               -> rquickjs::Result<Object<'js>> {
             let job = processes
                 .jobs()
-                .start_plugin(Rc::clone(&host), plugin, id, label, in_call)
+                .start_plugin(Rc::clone(&host), plugin, id, &label, in_call)
                 .map_err(|message| throw(&ctx, ErrorClass::Error, &message))?;
             let (stopped, stop) = (job.stop(), job.stop());
             let (moved, in_call_now) = (job.moved(), job.moved());

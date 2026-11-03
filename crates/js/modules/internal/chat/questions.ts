@@ -7,6 +7,7 @@
 import type { ChatQuestionsOptions, ChatSession } from "yuke:chat";
 import { callEach } from "yuke:internal/chat/listeners";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { sourceName } from "yuke:internal/source-name";
 import type { Frozen } from "yuke:plugins";
 import type { InteractionId, InteractionResponse, Question, QuestionAnswer } from "yuke:protocol";
 import type { Interaction } from "yuke:transcript";
@@ -192,7 +193,7 @@ function ask(interaction: Interaction, count: () => number, answer: (response: I
     draw(canvas: Canvas): void {
       const shown = page();
       const open = count();
-      let column = canvas.text(1, 0, `${interaction.source} · `, STYLE.meta);
+      let column = canvas.text(1, 0, `${sourceName(interaction.source)} · `, STYLE.meta);
       column = canvas.text(column, 0, shown.question.header, STYLE.title);
       if (pages.length > 1) column = canvas.text(column, 0, ` · ${current + 1}/${pages.length}`, STYLE.meta);
       if (open > 1) canvas.text(column, 0, ` · 1 of ${open}`, STYLE.meta);
