@@ -132,7 +132,10 @@ declare module "yuke:tui" {
   export interface MouseEvent extends Point {
     readonly type: "mouse";
     readonly button: MouseButton;
-    /** `cancel` ends a capture without a release, as when a modal opens during a drag. */
+    /**
+     * `cancel` ends a capture without a release, as when a modal opens during a drag. `motion` has the button `none` and
+     * causes no frame by itself. A handler that changes the look asks for a frame, as `setDecorations` does.
+     */
     readonly action: "press" | "release" | "motion" | "drag" | "cancel";
     readonly modifiers: Modifiers;
   }

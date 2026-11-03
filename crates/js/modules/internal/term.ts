@@ -1,7 +1,8 @@
 /**
  * The terminal of the terminal interface: the frame loop and the cell grid. `term.run` gives the loop an event
  * handler and a draw function. The loop gives each event to the handler, then draws one frame: it blanks the grid,
- * calls `draw`, and writes the changed cells. An event batch draws at once; `requestFrame` asks for a later frame.
+ * calls `draw`, and writes the changed cells. An event batch draws at once; `requestFrame` asks for a later frame. A
+ * batch of only mouse motion with no button causes no frame by itself.
  * Offsets in text are UTF-16 units, as in JavaScript strings.
  */
 import {

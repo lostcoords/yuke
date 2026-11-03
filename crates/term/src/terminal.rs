@@ -15,10 +15,10 @@ use crate::parser::{Answer, Parsed, Parser};
 use crate::reader::{Reader, read_input, wait};
 use crate::screen::Size;
 
-/// The alternate screen, bracketed paste, button and motion mouse reports in SGR form, focus reports, color scheme
-/// reports, and kitty keys with the disambiguate and alternate-key flags. A terminal ignores each mode that it does
-/// not know.
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[?2031h\x1b[>5u";
+/// The alternate screen, bracketed paste, mouse reports in SGR form, focus reports, color scheme reports, and kitty
+/// keys with the disambiguate and alternate-key flags. A terminal ignores each mode that it does not know. A later mouse
+/// mode replaces an earlier one, so `1003` gives all motion, and a terminal without it, such as Termux, keeps `1002`.
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1003;1004;1006h\x1b[?2031h\x1b[>5u";
 
 /// The OSC 11 query of the background color. The answer is an [`Event::Background`].
 pub const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
@@ -189,7 +189,7 @@ impl Terminal {
             // No value resets modifyOtherKeys to the initial value of the terminal.
             leave.extend_from_slice(b"\x1b[>4m");
         }
-        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l");
+        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1003;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l");
         let written = self.write_all(&leave);
         // The settings come back also after a failed write, so the shell does not stay raw.
         let restored = set(&self.file, &self.saved);

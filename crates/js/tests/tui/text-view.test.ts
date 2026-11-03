@@ -197,6 +197,35 @@ test("a watch gets the view, and an extension draws its decoration and its curso
   );
 });
 
+test("a plugin sees a motion with no button and marks the row under the mouse, and the view keeps its selection", () => {
+  const view = new TextView({ document: document("d", item("i", ["s", "abcdef"])) });
+  using frame = createFrame({ width: 10, height: 1 }, () => view);
+  frame.surface("hover").tui.widgets.watch((mount) => {
+    if (mount.widget.kind !== "textView") return undefined;
+    const widget = mount.widget;
+    const extension = widget.extend(mount.signal);
+    extension.onMouse((event) => {
+      const head = event.action === "motion" ? widget.hitTest(event) : undefined;
+      if (head !== undefined) {
+        const anchor = { ...head, offset: 0 };
+        extension.setDecorations([{ range: { anchor, head }, style: { bg: 2 } }]);
+      }
+      return false;
+    });
+    return () => extension.dispose();
+  });
+  frame.mouse(mouse(3, 0, "press"));
+  frame.mouse(mouse(5, 0, "drag"));
+  frame.mouse(mouse(5, 0, "release"));
+  const selection = view.selection;
+  frame.mouse({ ...mouse(2, 0, "motion"), button: "none" });
+  const drawn = frame.draw();
+  equal(
+    [[0, 1, 2].map((column) => drawn.cells[0]?.[column]?.style), view.selection, selection === undefined],
+    [[{ bg: 2 }, { bg: 2 }, {}], selection, false],
+  );
+});
+
 test("a new document key clears the caret, a failed render keeps the document, and each change counts", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "abc"])) });
   using frame = createFrame({ width: 10, height: 2 }, () => view);

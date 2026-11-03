@@ -372,6 +372,39 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_motion_with_no_button_reaches_the_handler_and_draws_only_when_it_asks() {
+    let (runtime, _reports, display, output, _requests) = started("a_motion_with_no_button").await;
+    let motion = || {
+        Input::Event(Event::Mouse(Mouse {
+            column: 3,
+            row: 1,
+            button: Button::None,
+            kind: MouseKind::Motion,
+            modifiers: Modifiers::NONE,
+        }))
+    };
+    display.send(motion());
+    crate::settled().await;
+    assert_eq!(evaluate::<i32>(&runtime, "return seen.length;").await.unwrap(), 2);
+    assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 1);
+
+    evaluate::<()>(
+        &runtime,
+        "const keep = seen.push.bind(seen);
+         seen.push = (event) => { term.requestFrame(); return keep(event); };",
+    )
+    .await
+    .unwrap();
+    display.send(motion());
+    output.frames(&runtime, 2).await;
+
+    evaluate::<()>(&runtime, "delete seen.push;").await.unwrap();
+    display.send(motion());
+    display.send(key('a'));
+    output.frames(&runtime, 3).await;
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
     let (runtime, _reports, display, _output, _requests) = started("a_mouse_event_gives_column_row").await;
     display.send(Input::Event(Event::Mouse(Mouse {

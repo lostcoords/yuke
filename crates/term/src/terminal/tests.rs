@@ -77,7 +77,7 @@ fn raw_mode_and_the_screen_modes_last_until_the_drop() {
 
     let opening = thread::spawn(move || Terminal::from_file(device).unwrap());
     let output = read_until(&mut controller, b"\x1b[c");
-    let expected = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1004;1006h\x1b[?2031h\x1b[>5u\x1b]11;?\x1b\\\x1b[?u\x1b[c";
+    let expected = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1003;1004;1006h\x1b[?2031h\x1b[>5u\x1b]11;?\x1b\\\x1b[?u\x1b[c";
     assert_eq!(output, expected);
     controller.write_all(b"\x1b[?5u\x1b[?62c").unwrap();
     let terminal = opening.join().unwrap();
@@ -88,7 +88,7 @@ fn raw_mode_and_the_screen_modes_last_until_the_drop() {
     // Kitty keys need no modifyOtherKeys, so the drop does not reset it.
     assert_eq!(
         read_until(&mut controller, b"\x1b[?1049l"),
-        b"\x1b[<u\x1b[?2031l\x1b[?1002;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l"
+        b"\x1b[<u\x1b[?2031l\x1b[?1002;1003;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l"
     );
 }
 

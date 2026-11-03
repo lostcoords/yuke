@@ -355,7 +355,10 @@ pub(crate) async fn drive(
             dispatch(&ctx, &event, start, &faults);
         }
         let inputs = display.take_inputs();
-        redraw |= !inputs.is_empty();
+        // Mouse motion comes often. A handler that changes the look asks for its frame.
+        redraw |= inputs
+            .iter()
+            .any(|input| !matches!(input, Input::Event(Event::Mouse(mouse)) if mouse.kind == MouseKind::Motion));
         // Each input changes the display state when its event comes, so a handler reads the state of its own event.
         for input in inputs {
             if let Some(value) = event_object(&ctx, &display, input) {
