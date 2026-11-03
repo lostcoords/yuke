@@ -50,8 +50,15 @@ export function dialogView(options: DialogOptions): View {
     },
     draw: (canvas) => {
       if (options.title !== undefined) canvas.text(1, 0, options.title(), TITLE);
-      const hints = [...active().map((entry) => `${entry.key.key}: ${entry.key.label}`), "esc: close"];
-      canvas.text(1, canvas.height - 1, hints.join(" · "), KEYS);
+      const shown = active();
+      const hints: { keys: string; label: string }[] = [];
+      for (const entry of shown) {
+        const last = hints.at(-1);
+        if (last?.label === entry.key.label) last.keys += `/${entry.key.key}`;
+        else hints.push({ keys: entry.key.key, label: entry.key.label });
+      }
+      if (!shown.some((entry) => entry.stroke === "esc")) hints.push({ keys: "esc", label: "close" });
+      canvas.text(1, canvas.height - 1, hints.map((hint) => `${hint.keys}: ${hint.label}`).join(" · "), KEYS);
     },
     key: (event) => {
       const stroke = strokeOf(event);

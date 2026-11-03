@@ -15,9 +15,10 @@ import type {
 } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
+import { clipped } from "yuke:internal/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo, SessionId } from "yuke:protocol";
-import type { View } from "yuke:tui";
+import type { Mount, View } from "yuke:tui";
 
 /** The cells of the gauge of the token share of the last answer. */
 const GAUGE = 6;
@@ -142,6 +143,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     readonly source: (pane: ComposerRowsContext) => readonly ComposerRow[];
   }>();
   const panes = new WeakMap<View, PaneActions>();
+  const open = new Set<PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   let readOnly: ((session: SessionId) => ChatReadOnly | undefined) | undefined;
   ctx.provide("chat", {
@@ -202,6 +204,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
+    open,
     presenter: () => presenter,
     readOnly: (session) => readOnly?.(session),
     rows: (place, pane, room) => {
@@ -237,6 +240,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
       () => undefined,
     );
   /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
+  /** The open question before a quit. */
+  let asked: Mount | undefined;
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
@@ -278,6 +283,40 @@ export async function apply(ctx: PluginContext): Promise<void> {
     else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
   tui.onFocus(() => publish());
+  tui.guardQuit((quit) => {
+    // Two panes on one session count once.
+    const work = new Map(
+      [...open].flatMap((pane) => {
+        const entry = pane.work();
+        return entry === undefined ? [] : [[entry.session, entry] as const];
+      }),
+    );
+    const turns = [...work.values()].filter((entry) => entry.turn).length;
+    const jobs = [...work.values()].reduce((count, entry) => count + entry.jobs, 0);
+    if (asked !== undefined || turns + jobs === 0) {
+      quit();
+      return;
+    }
+    const counts = [
+      ...(turns === 0 ? [] : [`${turns} ${turns === 1 ? "turn" : "turns"}`]),
+      ...(jobs === 0 ? [] : [`${jobs} ${jobs === 1 ? "job" : "jobs"}`]),
+    ];
+    const text = `${counts.join(" and ")} ${turns + jobs === 1 ? "is" : "are"} running.`;
+    const stay = (): void => asked?.close();
+    asked = tui.dialog({
+      title: () => "Stop everything and quit?",
+      body: { draw: (canvas) => canvas.text(1, 0, clipped(text, Math.max(0, canvas.width - 1))) },
+      keys: [
+        { key: "enter", label: "stop and quit", run: quit },
+        { key: "ctrl+q", label: "stop and quit", run: quit },
+        { key: "esc", label: "stay", run: stay },
+      ],
+      rows: 3,
+    });
+    asked.signal.addEventListener("abort", () => {
+      asked = undefined;
+    });
+  });
   tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
     chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),

@@ -83,6 +83,8 @@ export interface PaneActions {
   readonly asking: () => boolean;
   /** The session of the pane is read-only. */
   readonly locked: () => boolean;
+  /** The work of the session of the pane that a quit stops. A read-only session counts in its parent. */
+  readonly work: () => { readonly session: SessionId; readonly turn: boolean; readonly jobs: number } | undefined;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
   /** The session of the pane. */
@@ -113,6 +115,8 @@ export interface Chat {
   readonly choice: SavedChoice;
   /** The answer of the read-only source of the `chat` service for `session`. */
   readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
+  /** The panes that are open. */
+  readonly open: Set<PaneActions>;
   /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The rows for `pane` of the sources at `place`, in add order. The first source past `room` rows ends the list. */
@@ -537,7 +541,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     chatComposer.setDraft(drafts.get(id) ?? EMPTY);
     drafts.delete(id);
   };
-  chat.panes.set(pane, {
+  const actions: PaneActions = {
     session: () => chatSession.id,
     show,
     status: () => ({
@@ -583,7 +587,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     asking: () => questions.current !== undefined || locked() !== undefined,
     locked: () => locked() !== undefined,
+    work: () =>
+      chatSession.id === undefined || locked() !== undefined
+        ? undefined
+        : { session: chatSession.id, turn: working.active, jobs: chatSession.handle?.jobs().length ?? 0 },
     cancelQuestion: () => questions.cancel(),
-  });
+  };
+  chat.panes.set(pane, actions);
+  chat.open.add(actions);
+  mount.signal.addEventListener("abort", () => chat.open.delete(actions), { once: true });
   return pane;
 }

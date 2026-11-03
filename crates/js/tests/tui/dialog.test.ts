@@ -143,6 +143,47 @@ test("a select gives undefined for esc, an abort, and a stop, and a call after t
   equal(thrown, true);
 });
 
+test("two keys in a row with one label share one footer entry, and a key on esc replaces the close", () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const runs: string[] = [];
+  frame.surface("test").tui.dialog({
+    body: body("the body", ""),
+    rows: 4,
+    keys: [
+      { key: "enter", label: "go", run: () => runs.push("enter") },
+      { key: "ctrl+t", label: "go", run: () => runs.push("ctrl+t") },
+      { key: "esc", label: "stay", run: () => runs.push("esc") },
+    ],
+  });
+  frame.draw();
+
+  equal(shows(frame, "enter/ctrl+t: go · esc: stay"), true);
+  equal(shows(frame, "esc: close"), false);
+  frame.key("esc");
+  frame.key("ctrl+t");
+  frame.draw();
+  equal([runs, shows(frame, "the body")], [["esc", "ctrl+t"], true]);
+});
+
+test("a guard decides on a quit, and its disposer ends it", () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const tui = frame.surface("test").tui;
+  tui.keys.bind("ctrl+q", "core:quit");
+  let held: (() => void) | undefined;
+  const end = tui.guardQuit((quit) => {
+    held = quit;
+  });
+
+  frame.key("ctrl+q");
+  const asked = frame.quits;
+  held?.();
+  const after = frame.quits;
+  end();
+  frame.key("ctrl+q");
+
+  equal([asked, after, frame.quits], [0, 1, 2]);
+});
+
 test("a key of more than one stroke throws", () => {
   using frame = createFrame({ width: 60, height: 10 });
   let thrown = "";

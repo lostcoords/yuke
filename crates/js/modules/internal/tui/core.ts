@@ -271,12 +271,19 @@ export class Core {
     }
   }
 
+  /** The function that decides on a quit. Without one, a quit goes on at once. */
+  quitGuard: ((quit: () => void) => void) | undefined;
+
   #addCommands(): void {
     const driver = this.driver;
     const add = (name: string, description: string, run: () => void): void => {
       this.commands.add({ name: `${CORE}:${name}`, description, run });
     };
-    add("quit", "Quit yuke", () => driver.quit());
+    add("quit", "Quit yuke", () => {
+      const quit = (): void => driver.quit();
+      if (this.quitGuard === undefined) quit();
+      else this.quitGuard(quit);
+    });
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
     add("reload", "Reload the plugins", () => driver.reload(this.snapshot()));
     add("split-right", "Split the pane to the right", () => this.panes.splitDefault("row"));

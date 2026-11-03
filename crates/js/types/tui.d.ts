@@ -850,7 +850,7 @@ declare module "yuke:tui" {
     readonly focusNext: () => void;
   }
 
-  /** A key of a dialog, with its label in the footer. */
+  /** A key of a dialog, with its label in the footer. Two keys in a row with one label share one entry. */
   export interface DialogKey {
     /** One stroke, as `parseKeys` reads it, such as `enter` or `u`. A spec of more strokes throws. */
     readonly key: string;
@@ -866,7 +866,8 @@ declare module "yuke:tui" {
    * A dialog: a modal overlay with an optional head row, a body, and a footer of the keys that work now. A keymap
    * binding of a key wins over a dialog key. Then the body gets each key, and the dialog gets what the body leaves. Up,
    * down, page up, and page down scroll a body with `scroll.scrollBy` or `scrollBy`, such as a text view or a scroll
-   * list. An Esc that the body leaves closes the dialog; a picker body takes Esc and closes it in its `cancel`.
+   * list. An Esc that the body leaves closes the dialog; a picker body takes Esc and closes it in its `cancel`. A dialog
+   * key on `esc` replaces that close.
    */
   export interface DialogOptions {
     /** Gives the text of the head row at each draw. Without it, the dialog has no head row. */
@@ -961,6 +962,11 @@ declare module "yuke:tui" {
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
+    /**
+     * Decide on each quit: `guard` gets the function that quits, and it can call that function later or never. The last
+     * call wins. The returned function ends the guard, if it is current. A kill of the process does not ask.
+     */
+    readonly guardQuit: (guard: (quit: () => void) => void) => () => void;
     /**
      * Let the user choose one of `items` in a dialog. Gives the item, or `undefined` for Esc, an abort of `signal`, and
      * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.

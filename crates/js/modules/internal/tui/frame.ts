@@ -18,6 +18,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
   let height = size.height;
   const screen = new TestScreen(width, height);
   const copies: string[] = [];
+  let quits = 0;
   let clipboard: ClipboardImage | undefined;
   const surfaces = new Set<TestSurface>();
   const clock = new ManualClock();
@@ -39,7 +40,9 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
       copies.push(text);
     },
     readImage: async () => clipboard,
-    quit: () => {},
+    quit: () => {
+      quits += 1;
+    },
     suspend: () => {},
     reload: () => {},
     startup: () => startup,
@@ -55,6 +58,9 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
   };
   draw();
   return Object.freeze({
+    get quits(): number {
+      return quits;
+    },
     get frame(): Frame {
       return frame;
     },
