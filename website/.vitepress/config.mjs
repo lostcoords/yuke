@@ -35,7 +35,7 @@ export default defineConfig({
   // The brand is yuke black first; the switch still offers warm white.
   appearance: 'dark',
   title: 'yuke',
-  description: 'A native terminal coding agent with JavaScript and TypeScript plugins.',
+  description: 'A fast, lightweight, TypeScript-scriptable coding agent.',
   sitemap: { hostname: site },
   head: [
     ['link', { rel: 'icon', href: `${base}logo.svg` }],
@@ -57,7 +57,7 @@ export default defineConfig({
       ['meta', { property: 'og:image', content: image }],
       ['meta', { property: 'og:image:width', content: '1200' }],
       ['meta', { property: 'og:image:height', content: '630' }],
-      ['meta', { property: 'og:image:alt', content: 'yuke: A coding agent you can reshape' }],
+      ['meta', { property: 'og:image:alt', content: 'yuke: Unleash your harness' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:image', content: image }],
     ];

@@ -5,11 +5,11 @@ import { withBase } from 'vitepress';
 <template>
   <section class="capabilities yuke-section" aria-labelledby="capabilities-title">
     <div class="content">
-      <h2 id="capabilities-title">Your model. Your tools. Your workflow.</h2>
+      <h2 id="capabilities-title">Features</h2>
       <ul>
-        <li>Change commands, keys, and views with <a :href="withBase('/docs/first-plugin')">plugins</a>.</li>
-        <li>Add model tools and control the run with <a :href="withBase('/docs/tools')">tools</a> and <a :href="withBase('/docs/engine')">hooks</a>.</li>
-        <li>Use a cloud provider or a local model server. <a :href="withBase('/docs/providers')">Connect a model →</a></li>
+        <li>Run a native binary through the terminal UI or <a :href="withBase('/docs/profile#modes')">RPC</a>.</li>
+        <li>Write <a :href="withBase('/docs/first-plugin')">TypeScript plugins</a> to add tools, hooks, and views.</li>
+        <li>Use your API keys or a ChatGPT or Grok subscription. <a :href="withBase('/docs/providers')">Connect a model →</a></li>
       </ul>
     </div>
   </section>
