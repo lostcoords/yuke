@@ -1,10 +1,10 @@
 ---
-description: Install yuke, connect a model, and start the terminal UI in your project.
+description: Install yuke, connect a model, and run your first task.
 ---
 
-# Get started
+# Quick start
 
-yuke runs in your terminal on macOS and Linux. One binary holds the agent and the terminal UI.
+yuke runs in your terminal on macOS and Linux. One binary holds the agent and the terminal UI. You need no plugin to run a task.
 
 ## Install yuke
 
@@ -14,40 +14,103 @@ curl -fsSL https://yuke.sh/install.sh | bash
 
 The installer writes `~/.local/bin/yuke` and its library to `~/.local/lib/yuke`. It keeps your configuration. If `~/.local/bin` is not on your `PATH`, the installer tells you to add it.
 
-To install the latest build of `main` instead of the latest release, set the channel:
+The default channel installs the latest stable release. To select the nightly release instead:
 
 ```sh
 curl -fsSL https://yuke.sh/install.sh | YUKE_CHANNEL=nightly bash
 ```
 
+Check the installed version and commands:
+
+```sh
+yuke --version
+yuke --help
+```
+
+These pages describe the current Rust and QuickJS implementation. An older release can have different commands and profile files. Check the help of your installed binary before you use a command from these pages.
+
 ## Connect a model
 
-Give yuke an API key in an environment variable, such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`:
+Set the API key of your provider in the shell that starts yuke:
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Or log in with an account. The provider ID is the first part of a model name:
+For OpenAI, use `OPENAI_API_KEY`. See [Providers](providers.md) for the other variables and local servers. `yuke login` does not ask for API keys.
+
+For an account login, run one of these commands instead:
 
 ```sh
 yuke login openai-codex   # a ChatGPT account
-yuke login xai-grok       # a Grok account
+yuke login xai-grok      # a Grok account
 ```
 
-yuke saves the login in `auth.json`, and `yuke logout <provider>` removes it. To use a local model server, add it to `providers.json`. See [Providers](providers.md).
+Open the URL that yuke prints. Confirm the code on that page. Wait for yuke to report a successful login. yuke stores the login in `auth.json` in the [data directory](profile.md#files). `yuke logout <provider>` removes the stored credential. It does not unset an environment variable or revoke a token at the provider.
 
-## Start yuke
+## Run your first task
+
+Start in a project that you trust:
 
 ```sh
 cd your-project
 yuke
 ```
 
-yuke opens the terminal UI in the current directory. It reads `AGENTS.md` and your skills as instructions for the model.
+Type a small task, such as:
+
+```text
+Read this project and explain how to run its tests. Do not change files.
+```
+
+Press **Enter**. If the pane has no saved model choice, yuke asks for a model and a reasoning level. Select a model from your connected provider. Select `default` to let the model endpoint choose its reasoning behavior.
+
+Read the answer and the tool results. Send a follow-up message to continue the task. **Esc** clears a selection or stops the active turn. **Ctrl+Q** exits yuke.
+
+yuke reads `AGENTS.md` and lists the available skills in the model instructions. Its tools run with your user rights. A task can read or change files and run commands. A request such as “Do not change files” is an instruction to the model, not a sandbox.
+
+## Continue a conversation
+
+From the same project directory, continue the conversation with the newest saved event:
+
+```sh
+yuke -c
+```
+
+To select a saved conversation by its ID:
+
+```sh
+yuke --resume ID
+```
+
+## Run one task without the UI
+
+A new headless session needs both a model and a reasoning choice. For example, with `ANTHROPIC_API_KEY` set:
+
+```sh
+yuke -p 'Explain how to run the tests. Do not change files.' \
+  --model anthropic/claude-sonnet-4-6 --reasoning default
+```
+
+yuke prints the final answer and exits. Add `--json` to get one JSON object with `sessionId`, `end`, and `text`. To send a follow-up to the newest conversation in this directory:
+
+```sh
+yuke -c -p 'Which test should I run first?'
+```
+
+A continued session keeps its model and reasoning choice unless you replace them. If you pass `--model` on a continued session, also pass `--reasoning`.
+
+## If the task does not start
+
+- If the shell cannot find `yuke`, add `~/.local/bin` to `PATH`.
+- If yuke reports no API key, set the provider variable in the shell that starts yuke.
+- If an account login is missing or expired, run `yuke login <provider>` again.
+- If a profile file fails to load, fix the file that the error names. Unknown configuration fields are errors.
+- If a command is absent, check `yuke --help` and the installed version.
 
 ## Next steps
 
-- Add a command, a key, or a model tool: [your first plugin](first-plugin.md).
-- Learn what a profile holds: [Profile](profile.md).
-- Choose the right extension point: [Customize yuke](customize.md).
+- Configure your profile: [Profile](profile.md).
+- Add a local server or change a provider route: [Providers](providers.md).
+- Learn the terminal controls: [Terminal UI](ui.md).
+- Add a plugin after your first task works: [Your first plugin](first-plugin.md).

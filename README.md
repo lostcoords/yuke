@@ -1,6 +1,6 @@
 # yuke
 
-Unleash your harness.
+A native terminal coding agent with JavaScript and TypeScript plugins.
 
 ## Development
 

@@ -1,8 +1,10 @@
+---
+description: Choose a plugin, tool, hook, service, or terminal extension for a task.
+---
+
 # Customize yuke
 
-yuke reads one profile at startup and on `/reload`: `config.json` and the plugin folders it lists. A plugin can add commands, keys, status items, model tools, event listeners, and engine hooks.
-
-Start with [your first plugin](first-plugin.md). It adds one command and shows the manifest, type check, load, and reload cycle.
+A profile selects plugins and their options. Plugins add shared services, session behavior, and terminal UI. Start with [Your first plugin](first-plugin.md) for the manifest and entry module.
 
 ## Choose a mechanism
 
@@ -10,55 +12,38 @@ Use the smallest mechanism that fits the task:
 
 | Task | Mechanism | Guide |
 |---|---|---|
-| Give the model reusable instructions | A skill in `skills/`, or workspace instructions in `AGENTS.md` | [Skills](engine.md#prompt) |
-| Add an operation the model can call | `ctx.tools.define` | [Tools](tools.md) |
-| Block, approve, or replace an engine action | `ctx.hook` | [Engine hooks](engine.md#engine-hooks) |
-| Observe a change without blocking it | `ctx.on` | [Events](plugins.md#events) |
-| Add a command, key, status item, style, or dialog | The `tui` capability | [UI](ui.md) |
-| Update a clock or animation while idle | `tui.tickable` | [Frame-loop clocks](ui.md#frame-loop-clocks) |
-| Browse and open saved sessions | `client.sessionList` and `showSession` | [Session browsing](plugins.md#browse-and-open-sessions) |
-| Change transcript rows or tool headings | `chat.render` | [Transcript](ui.md#transcript) |
-| Share a service between plugins | `uses`, `provides`, `ctx.get`, `ctx.provide` | [Capabilities](plugins.md#capabilities) |
-| Change a public method for a plugin's lifetime | `ctx.advise` | [Advice](plugins.md#advice) |
-| Replace a bundled surface | `disable` and a compatible replacement | [Bundled plugins](plugins.md#bundled-plugins) |
-| Connect an external tool server | MCP configuration | [MCP servers](engine.md#mcp-servers) |
+| Give the model reusable instructions | A skill or `AGENTS.md` | [Prompt](engine.md#prompt) |
+| Add an operation the model can call | `s.tools.define` in `session` | [Tools](tools.md) |
+| Approve or change engine behavior | `s.hook` in `session` | [Engine hooks](engine.md#engine-hooks) |
+| Observe a host fact without blocking it | `ctx.on` in `apply` | [Events](plugins.md#events) |
+| Add commands, keys, status items, or views | `ctx.get("tui")` in `apply` | [UI](ui.md) |
+| Browse or control sessions | `ctx.get("sessions")` | [Session handles](plugins.md#browse-and-open-sessions) |
+| Change chat presentation or open a chat pane | The `chat` service | [UI](ui.md) |
+| Share a typed value between plugins | `uses`, `provides`, `ctx.get`, and `ctx.provide` | [Services](plugins.md#services) |
+| Replace bundled behavior | Disable a bundled plugin and add a replacement | [Bundled plugins](plugins.md#bundled-plugins) |
+| Connect a local external tool server | Stdio MCP | [MCP servers](engine.md#mcp-servers) |
+| Make a model request outside a conversation | `generateText` from `yuke:ai` | [Model requests](engine.md#tool-free-model-requests) |
 
-Tools, hooks, and engine events work without the TUI. Commands and views need the [TUI composition](profile.md#modes). Event dispatch does not await async listeners. Use a hook when async work must block an engine action.
+Named `apply(ctx)` runs once per runtime. Named `session(s)` runs once per open session. Both can return cleanup. Put model tools and engine hooks in `session`; they then work without the TUI. `ctx.get("tui")` returns `undefined` in headless modes.
 
-## Documentation order
+The host awaits engine hooks, but not fact listeners. Use a hook when async work must block an action. Use a listener when you only need to observe it.
 
-1. **Markdown guides** explain concepts and common recipes.
-2. **`yuke.d.ts`** is the authoritative reference for exact public names, types, signatures, null values, and errors.
-3. **`examples/`** contains complete patterns that CI type-checks against the declarations.
-4. **Source inspection** is a last resort for undocumented behavior and implementation details.
+## Public APIs
 
-An installed release puts these guides in `~/.local/lib/yuke/docs/`. The installer links `yuke.d.ts` into the [profile](profile.md). See [Types](types.md#find-a-declaration) for focused `grep` commands. Do not infer a public API from an implementation name that is absent from `yuke.d.ts`.
+The public modules separate each concern:
 
-| Page | Read it to |
-|---|---|
-| [Profile](profile.md) | write `config.json` and a plugin folder, learn the startup modes, and verify a change |
-| [Providers](providers.md) | configure credentials, providers, and local model servers |
-| [Plugins](plugins.md) | write a plugin and customize events, chat, or bundled plugins |
-| [UI](ui.md) | add commands, keys, status items, styles, and dialogs |
-| [Tools](tools.md) | define a model tool and return its result |
-| [Engine](engine.md) | add hooks, subagents, and MCP servers |
-| [Types](types.md) | find declarations and type custom events or capabilities |
+- `yuke:plugins`: contexts, services, session handles, host facts, and hooks.
+- `yuke:tools`: schemas, inferred arguments, tool definitions, and results.
+- `yuke:protocol`: session settings, blocks, saved events, and update types.
+- `yuke:ai`: standalone model requests.
+- `yuke:fs`, `yuke:process`, and `yuke:net`: host I/O.
+- `yuke:tui`, `yuke:chat`, and `yuke:transcript`: terminal views and conversation presentation.
+- `yuke:test`: isolated hosts and runtime tests.
+
+Use [Types](types.md) for declaration setup and exact signatures. Use [Plugins](plugins.md) for lifetimes and services. Use [Profile](profile.md) and [Providers](providers.md) for configuration. Do not import `yuke:internal/*`.
 
 ## Examples by task
 
-Each file is a plugin entry. Its header gives the manifest and any replacement settings. Save it as the entry of a listed plugin folder. Use the installed release's declarations for a profile check.
+[Your first plugin](first-plugin.md), [Tools](tools.md), and [Engine](engine.md) show small entry modules. [UI](ui.md) covers terminal patterns. Keep a plugin's engine behavior separate from its optional UI.
 
-| Example | Task | `uses` | Modes and behavior |
-|---|---|---|---|
-| [hello.js](examples/hello.js) | One command; the first-plugin tutorial | `tui` | TUI and check; additive |
-| [plugin.js](examples/plugin.js) | Tool, hook, event, command, key, and status | `tui` | Tool, hook, and event in all modes; UI in TUI and check |
-| [lifecycle.js](examples/lifecycle.js) | Timer cleanup, owned child, canceled I/O | `tui` | TUI and check; additive; starts a POSIX child |
-| [picker.js](examples/picker.js) | Validated picker and a line-input command | `tui` | TUI and check; additive |
-| [chat-api.js](examples/chat-api.js) | Current-session state and a focused-draft command | `tui` | TUI and check; additive |
-| [stopwatch.js](examples/stopwatch.js) | Cached status and frame-loop start/stop | `tui` | TUI and check; additive; uses wall time |
-| [session-picker.js](examples/session-picker.js) | Paginated session list and safe pane switch | `tui` | TUI and check; additive; needs bundled `sessions` or a compatible replacement |
-| [sidebar.js](examples/sidebar.js) | Layout advice for a chat sidebar | none | Draws with the bundled chat in the TUI; check loads the advice |
-| [roomy-chat.js](examples/roomy-chat.js) | Replace the `chat` capability | `tui` | TUI and check; provides `chat`; disable bundled `chat` |
-| [tree-transcript.js](examples/tree-transcript.js) | Stacked renderer and a details window | `tui`, `chat` | TUI and check; additive renderer |
-
-`yuke check` loads TUI plugins without a terminal. It does not prove that input, layout, or drawing is correct. Use a live TUI to check those behaviors. Use the [isolated check](profile.md#isolated-check) before loading unverified code into your normal profile.
+A type check verifies names and value shapes. A runtime test verifies behavior. Test terminal input and drawing in a live TUI as well.

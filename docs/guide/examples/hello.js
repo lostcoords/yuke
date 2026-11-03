@@ -1,15 +1,15 @@
-// Save this entry as plugins/hello/index.js, and list ./plugins/hello in config.json.
-// plugin.json: {"name": "hello", "extensions": {"sh.yuke": {"entry": "./index.js", "uses": ["tui"]}}}
-// The command runs in the TUI. `yuke check` loads it without a terminal.
+// Add one command. This plugin needs no service in `uses`.
 
-/** Add a hello command when TUI is available. A failed registration throws. @param {import("yuke").Context} ctx */
-export default function (ctx) {
+/** @param {import("yuke:plugins").PluginContext} ctx */
+export function apply(ctx) {
   const tui = ctx.get("tui");
-  if (!tui) return;
-  tui.command.add("hi", {
-    desc: "Say hi",
-    slash: true,
-    run: () => { ctx.interaction.notify("hi from hello"); },
+  if (!tui) return undefined;
+
+  tui.commands.add({
+    name: "hi",
+    description: "Say hi",
+    run: () => ctx.notify("info", "hi from hello"),
   });
-  ctx.print("hello loaded");
+  tui.keys.bind("ctrl+g", "hi");
+  return undefined;
 }

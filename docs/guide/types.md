@@ -1,87 +1,121 @@
+---
+description: Use the installed public modules and declarations to type-check yuke plugins.
+---
+
 # Public types
 
-`yuke.d.ts` declares the public API of the installed release. It is authoritative for exact names, signatures, unions, null values, and documented errors. Markdown explains how to combine those APIs. The examples show complete patterns.
+Use the public library files of the installed yuke release as the API reference. They define exact signatures, unions, optional values, and errors. Match the source release to `yuke --version` when you inspect implementation code.
 
-## Public boundary
+Yuke plugins run in QuickJS. They do not run in Node.js or a browser. An API in a Node or browser declaration is not evidence that yuke supports it.
 
-Import only the names exported by the public `yuke` and `yuke:*` module blocks. The `$...` namespaces hold supporting types; they are not importable modules. The declaration generator omits underscore-prefixed implementation members from the plugin view. Do not call those members through `any` or advice. A runtime object can still hold them, but they are not extension points.
+## Public modules
 
-Use `chat.render` and `chat.refresh` instead of private transcript readers or builders. Use the owned `tui` registration methods instead of changing their internal lists. The generator changes the declaration view only; it does not change runtime objects.
+Import each API from its public module:
+
+| Module | Main exports |
+|---|---|
+| `yuke:plugins` | `PluginContext`, `SessionContext`, `PluginApply`, `PluginSession`, `Services`, session handles, and hook types. |
+| `yuke:tools` | `Tool`, `ToolContext`, `ObjectSchema`, and `Infer`. |
+| `yuke:tui` | `Tui`, `View`, `TextEditor`, `TextView`, `Markdown`, `Picker`, and layout helpers. |
+| `yuke:chat` | Chat blocks, `ChatService`, and `ChatPresentation`. |
+| `yuke:transcript` | `Transcript` and its entry types. |
+| `yuke:protocol` | Session, model, input, event, and other protocol records. |
+| `yuke:fs` | File operations. |
+| `yuke:process` | Process operations. |
+| `yuke:net` | Network connections. |
+| `yuke:ai` | Provider APIs. |
+| `yuke:test` | Test assertions and host, model, and frame test helpers. |
+
+There is no root `yuke` module. Do not import `yuke:internal/*`. Internal modules are not plugin extension points. The installed public library excludes them.
+
+## Installed layout
+
+The package holds the public library under `lib/yuke`:
+
+```text
+lib/yuke/
+├── modules/
+│   ├── plugins.ts
+│   ├── tools.ts
+│   └── ...
+├── types/
+│   ├── globals.d.ts
+│   ├── tui.d.ts
+│   ├── chat.d.ts
+│   └── ...
+├── protocol/bindings/
+└── tsconfig.json
+```
+
+Some modules define their types directly in `modules/*.ts`. Host-backed modules use declarations in `types/*.d.ts`. The configuration includes the public declarations and maps `yuke:*` imports to the modules.
+
+The installer creates a profile `tsconfig.json` that extends the installed library configuration. Keep its absolute `extends` path. Run `tsc -p` with that profile configuration. See [Your first plugin](first-plugin.md#4-check-the-types) to include JavaScript examples.
+
+Use a TypeScript compiler that supports the `target`, libraries, and options in the installed configuration.
 
 ## Find a declaration
 
-Run these commands in the profile directory:
+Search these files under the installed `lib/yuke` directory:
+
+| Need | File and name |
+|---|---|
+| Plugin entry and cleanup | `modules/plugins.ts`: `PluginApply`, `PluginSession`, `Cleanup`. |
+| Shared context | `modules/plugins.ts`: `PluginContext`. |
+| Per-session tools and hooks | `modules/plugins.ts`: `SessionContext`, `SessionHooks`. |
+| Host events | `modules/plugins.ts`: `HostEvents`. |
+| Session access | `modules/plugins.ts`: `Sessions`, `SessionHandle`, `ViewEvent`. |
+| Tool schemas and results | `modules/tools.ts`: `ObjectSchema`, `Infer`, `ToolResult`. |
+| Commands, keys, status, mounts | `types/tui.d.ts`: `Tui`. |
+| Views and text widgets | `types/tui.d.ts`: `View`, `TextEditor`, `TextView`. |
+| Chat service and presentation | `types/chat.d.ts`: `ChatService`, `ChatPresentation`. |
+| Transcript data | `types/transcript.d.ts`: `Transcript`, `Entry`. |
+| Protocol records | `protocol/bindings/*.ts`. |
+| Runtime globals | `types/globals.d.ts`. |
+| Tests | `types/test.d.ts`. |
+
+For example, run these commands from `lib/yuke`:
 
 ```sh
-grep -n -A 40 -B 5 'interface EventsBase' yuke.d.ts
-grep -n -A 40 -B 5 'HookPayloads' yuke.d.ts
-grep -n -A 40 -B 5 'HookReplacements' yuke.d.ts
-grep -n -A 40 -B 5 'class ChatView' yuke.d.ts
-grep -n -A 40 -B 5 'class Session' yuke.d.ts
-grep -n -A 40 -B 5 'class Transcript' yuke.d.ts
-grep -n -A 40 -B 5 'class TextInput' yuke.d.ts
-grep -n -A 40 -B 5 'declare namespace $session' yuke.d.ts
-grep -n -A 40 -B 5 'declare namespace $client' yuke.d.ts
+grep -n -A 45 'interface PluginContext' modules/plugins.ts
+grep -n -A 45 'interface SessionContext' modules/plugins.ts
+grep -n -A 45 'interface Tui' types/tui.d.ts
+grep -n -A 45 'interface ChatService' types/chat.d.ts
 ```
 
-The `declare module "yuke..."` blocks at the top map each import to its definition. For example, `export import currentPane = $session.currentPane` points to `declare namespace $session`.
+If a name is absent from the public files, do not call it through a cast or `any`.
 
-| Need | Search |
-|---|---|
-| event names and arguments | `interface EventsBase` |
-| hook payloads and replacements | `HookPayloads`, `HookReplacements` |
-| plugin lifecycle and cleanup | `class Context`, `Release` |
-| cancellation | `CancellationSignal` |
-| current session pane | `declare namespace $session` |
-| focused view | `class RootView` (`active`) |
-| simple prompts | `InteractionSurface`, `InteractionOptions` |
-| custom pickers and windows | `PickOptions`, `PromptOptions`, `WindowOptions` |
-| transcript renderers | `interface Render`, `PartEnv` |
-| engine queries | `declare namespace $client` |
-| model tools | `interface ToolDefinition` |
-| commands, keys, and status | `class Surface`, `CommandSpec`, `KeyBinding` |
-| frame-loop clocks and animations | `Tickable`, `tickable` |
-| subagent limits | `AgentLimits` |
+## Type a plugin entry
 
-If a name is absent, do not use it as a public API. Inspect the source only for an undocumented behavior or an implementation detail. Match the source tree to `yuke --version` when source inspection is necessary.
+In TypeScript, import context types with `import type`:
 
-## Editor
+<<< @/snippets/types/entry.ts
 
-`jsconfig.json` extends `yuke.jsconfig.json`, so the editor checks profile JavaScript with the strict options of this release. A callback written inline gets its parameter types from the call. A callback declared elsewhere needs JSDoc:
+The entry functions return `undefined` or cleanup, directly or through a promise. An explicit `undefined` return also makes the function assignable to `PluginApply` or `PluginSession`.
 
-```js
-/** @type {import("yuke:chat").Render} */
-const render = {
-  tools: { web_search: (args) => ({ verb: "search", subject: String(args.query), input: "" }) },
-};
-```
+For JavaScript, use JSDoc:
 
-Other useful annotations include `import("yuke").ToolDefinition` and `@param`. Put a JSDoc comment above a property, not on the opening `{` line. The global `Wire` namespace contains engine wire types such as `Wire.Session`.
+<<< @/snippets/types/entry.js
 
-## Custom events
+An inline callback gets its parameter types from the API call. Add a type annotation when a separate declaration needs one. Protocol records come from imports, not a global `Wire` namespace.
 
-Add a `.d.ts` file in the profile:
+## Type plugin options
 
-```ts
-declare module "yuke" {
-  interface Events {
-    "my-plugin:ping"(count: number): void;
-  }
-}
-export {};
-```
+Export an `optionsSchema` from the entry. Use `Infer<typeof optionsSchema>` as the context's option type. `ObjectSchema` and `Infer` come from `yuke:tools`.
 
-Then `ctx.on("my-plugin:ping", ...)` and `events.emit("my-plugin:ping", ...)` check their arguments. A namespaced event without a declaration accepts any arguments.
+Use `as const satisfies ObjectSchema` for a separate TypeScript schema. It keeps literal property and required-field names for inference. See [Plugins](plugins.md) for options and [Tools](tools.md) for tool schemas.
 
-## Custom capabilities
+## Declare a service
 
-```ts
-declare module "yuke" {
-  interface Capabilities {
-    counter: { count(): number };
-  }
-}
-export {};
-```
+A shared service adds its name to `Services` in `yuke:plugins`. For example, place this in a `.d.ts` file that each consumer includes:
 
-Then `ctx.provide("counter", value)` checks the value, and `ctx.get("counter")` answers `{ count(): number } | null`. An undeclared custom capability has type `unknown`.
+<<< @/snippets/types/service.d.ts
+
+The provider declares the name in its manifest `provides`. A consumer declares it in `uses`. The loader then starts the provider first. `ctx.provide("example.counter.v1", value)` and `ctx.get("example.counter.v1")` check the declared shape. An undeclared service name fails the type check.
+
+The built-in services `tui`, `sessions`, `catalog`, and `plugins` need no `uses` entry. `tui` can be `undefined`. The `chat` service comes from the bundled chat plugin and needs `uses`.
+
+## Events and client messages
+
+`ctx.on` listens to the facts in `HostEvents`, such as `session.opened` and `theme.changed`. It is not a custom event bus.
+
+`ctx.emit` and `session.emit` send extension events to the active RPC client. `session.request` sends an extension request and waits for the client response. They do not call `ctx.on` listeners. Keep custom in-process notifications inside a declared service.

@@ -23,8 +23,8 @@ const redirect = (target) => `<!doctype html>
 export default defineConfig({
   // The pages are the Markdown in docs/; this folder holds only the theme and the static files.
   srcDir: '../docs',
-  // The guides live in docs/guide/ and are served under /docs/.
-  rewrites: Object.fromEntries(slugs.map((slug) => [`guide/${slug}.md`, `docs/${slug}.md`])),
+  // Serve every guide under /docs/ without moving the theme guide from main.
+  rewrites: Object.fromEntries(slugs.map((slug) => [slug === 'themes' ? 'themes.md' : `guide/${slug}.md`, `docs/${slug}.md`])),
   // Vite resolves a page's imports from docs/, which has no node_modules, so Vue comes from here.
   vite: { publicDir, resolve: { alias: { vue: join(project, 'node_modules/vue') } } },
   base,
@@ -35,7 +35,7 @@ export default defineConfig({
   // The brand is yuke black first; the switch still offers warm white.
   appearance: 'dark',
   title: 'yuke',
-  description: 'A local, hackable harness for LLM agents.',
+  description: 'A native terminal coding agent with JavaScript and TypeScript plugins.',
   sitemap: { hostname: site },
   head: [
     ['link', { rel: 'icon', href: `${base}logo.svg` }],
@@ -57,7 +57,7 @@ export default defineConfig({
       ['meta', { property: 'og:image', content: image }],
       ['meta', { property: 'og:image:width', content: '1200' }],
       ['meta', { property: 'og:image:height', content: '630' }],
-      ['meta', { property: 'og:image:alt', content: 'yuke: Unleash your harness' }],
+      ['meta', { property: 'og:image:alt', content: 'yuke: A coding agent you can reshape' }],
       ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
       ['meta', { name: 'twitter:image', content: image }],
     ];
@@ -86,9 +86,7 @@ export default defineConfig({
     logo: { light: '/logo-light.svg', dark: '/logo-dark.svg', alt: 'yuke' },
     siteTitle: 'yuke',
     nav: [
-      { text: 'Docs', link: '/docs/', activeMatch: '^/docs/(?!benchmarks)' },
-      { text: 'Benchmarks', link: '/docs/benchmarks' },
-      { text: 'Install', link: '/docs/get-started' },
+      { text: 'Docs', link: '/docs/', activeMatch: '^/docs/' },
     ],
     sidebar: {
       '/docs/': groups.map(({ text, pages }) => ({

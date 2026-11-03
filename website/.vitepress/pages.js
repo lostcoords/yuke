@@ -1,13 +1,18 @@
-// The documentation pages, in sidebar order. Each source is docs/guide/<slug>.md, and each
-// page is served at /docs/<slug>.
+// Guides use docs/guide/<slug>.md. The theme guide stays at docs/themes.md with the source on main.
 export const groups = [
-  { text: 'Start here', pages: [['get-started', 'Get started'], ['first-plugin', 'Your first plugin']] },
+  { text: 'Start here', pages: [['get-started', 'Quick start'], ['first-plugin', 'Your first plugin']] },
   {
-    text: 'Customize',
+    text: 'Configure',
     pages: [
-      ['customize', 'Customize yuke'],
       ['profile', 'Profile'],
       ['providers', 'Providers'],
+      ['themes', 'Themes'],
+    ],
+  },
+  {
+    text: 'Extend',
+    pages: [
+      ['customize', 'Customize yuke'],
       ['plugins', 'Plugins'],
       ['ui', 'UI'],
       ['tools', 'Tools'],
@@ -15,16 +20,14 @@ export const groups = [
       ['types', 'Types'],
     ],
   },
-  { text: 'Reference', pages: [['benchmarks', 'Benchmarks']] },
 ];
 
 export const slugs = ['index', ...groups.flatMap(({ pages }) => pages.map(([slug]) => slug))];
 
-// Pages that yuke-cloud served at yuke.sh before this site. Each old path redirects to the
-// page that replaced it, so old links and the web client keep working.
+// Old public links still lead to the relevant guide.
 export const moved = {
   'docs/configuration': '/docs/profile',
-  'docs/configuration/modules': '/docs/profile#modules',
+  'docs/configuration/modules': '/docs/profile',
   'docs/configuration/plugins': '/docs/plugins',
   'docs/protocol': '/docs/',
 };

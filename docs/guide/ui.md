@@ -1,212 +1,145 @@
-# TUI: commands, keys, status bar, styles, dialogs
+---
+description: Add commands, keys, views, status items, dialogs, and chat presentation with the public terminal API.
+---
 
-List `tui` in the `uses` of the plugin, and read it with `const tui = ctx.get("tui")`. It is `null` in `yuke -p` and `yuke --rpc`, so return early on `null`. `tui` is `Surface` in `yuke.d.ts`. What a plugin registers through it leaves when the plugin unloads.
+# Terminal UI
 
-## Resume a conversation
+Use `ctx.get("tui")` in the named `apply` export of a plugin. It returns a `Tui` from `yuke:tui`, or `undefined` outside the terminal interface. Check that value before terminal work. The built-in `tui` service needs no `uses` entry.
 
-```sh
-yuke resume <id>
-```
-
-The ID has 32 lowercase hexadecimal characters. Yuke rejects a malformed ID with status 2.
-An unknown session produces status 1. The initial lookup runs before terminal setup.
-The command also checks the session after plugins load.
-Resume requires a current session pane after plugins load.
-
-Resume opens the saved transcript in one current session pane. It keeps the saved model and reasoning level.
-It creates no session and submits no new input. Existing queued work can restart through normal workspace recovery.
-
-The process keeps its launch directory. The selected conversation keeps its saved workspace.
-Workspace recovery uses the launch directory, even when the selected conversation belongs to another workspace.
-Use the original directory when you also want recovery for that workspace.
-
-After normal TUI exit, yuke prints the command if it can read the current saved session ID.
-This session can differ from the launch session. A failed read logs the cause and produces no command.
-A draft with no saved session produces no command.
-The command needs the same store. Use the same profile to keep your plugin configuration.
-The command does not encode the launch directory or XDG environment.
-
-Resume does not restore pane layout, unsent composer content, active tools, or shell processes.
+Imports from `yuke:tui` start no terminal work. A plugin can import its classes and helpers in each mode.
 
 ## Commands
 
-`tui.command.add(name, spec)`
+Call `tui.commands.add(command)` with these fields:
 
-- A bare name gets the plugin prefix: `"hello"` in plugin `example` is `example:hello`. A name with `:` stays as written.
-- `spec` is `CommandSpec`: `run`, `when?` (a function), `desc?`, `slash?`, `args?`, `aboveModal?`.
-- `desc` lists the command in the ctrl+p palette.
-- `slash: true` adds `/<name after the last ":">`. `slash: "word"` adds `/word`. A slash command needs `desc`.
-- `args: true` gives the rest of the slash line to `run`.
-- A second registration of the same command name throws and names the first owner. Use a unique name. When `when` answers false, the command does not run. When `when` answers `[true, ...args]`, `run` gets those arguments.
+| Field | Meaning |
+|---|---|
+| `name` | The command name. A bare name gets the plugin prefix. |
+| `description` | One line for command lists. |
+| `run(args)` | The action. It can return a promise. `args` has type `unknown`. |
+| `enabled()` | An optional test. A disabled command passes its key on. |
 
-The `workspace` profile plugin registers `workspace:cd` as `/cd` and `workspace:pwd` as `/pwd`. It uses a native workspace transition, not a shell `cd`. See [Continue in another workspace](profile.md#continue-in-another-workspace) for history and refusal rules.
+A plugin can register only its own command names. For example, plugin `hello` can register `hi` or `hello:hi`. It cannot register `chat:send`. A duplicate name throws.
+
+`tui.commands.run(name, args?)` returns `false` when a command is absent or disabled. Otherwise, it returns `true`. The keymap does not wait for an async action. Handle any state that must stop a second action with `enabled`.
+
+The bundled chat lists enabled commands when the composer contains one slash word. A plugin command keeps its prefix, such as `/hello:hi`. It needs no `slash` field. This list does not parse command arguments.
+
+See [`hello.js`](examples/hello.js) for a command and a key binding.
 
 ## Keys
 
-`tui.keymap.add(bindings, context?, { pending? })`
+Call `tui.keys.bind(spec, command, options?)`. A binding names a command, not an input callback. A bare command name gets the plugin prefix.
 
-- `bindings` maps a key to a command name, a function `(ev) => boolean | void`, or a list of them. A function that returns `false` passes the key on.
-- Key syntax:
-  - Modifiers join with `+`: `ctrl+g`, `alt+x`, `shift+tab`.
-  - A space separates the keys of a sequence: `"g g"`, `"ctrl+k v"`.
-  - Named keys are lowercase: `tab`, `esc`, `enter`, `up`, `page_up`.
-  - One character is case-sensitive: `G` is not `g`.
-- `pending: "chord"` (the default) waits `config.keymap.chordMs` for the next key. `"operator"` waits without a time limit.
-- The binding whose context matches the deepest view wins. Between equal matches, the newest binding wins.
+- Join modifiers with `+`: `ctrl+g`, `alt+x`, `shift+tab`.
+- Separate strokes with spaces: `ctrl+k x`.
+- Use lowercase names for named keys: `esc`, `enter`, `up`, `page_up`.
+- A character is case-sensitive: `G` differs from `g`.
 
-### Contexts
+`options.in` names one context atom, such as `composer`, `transcript`, or `chat`. It is not a Boolean expression. The default atom is `root`. The deepest active atom wins. Between equal matches, the newest binding wins. A pending sequence waits one second for its next stroke.
 
-A context is an expression over atoms: `chat`, `composer`, `transcript`, and `overlay`. Test your own flag with `==` or `!=`: a bare flag name never matches. Operators: `!`, `&&`, `||`, `==`, `!=`, `()`.
+`tui.keys.pending()` returns the pending strokes. `tui.keys.keysOf(name)` returns the bindings of a command.
 
-```js
-tui.keymap.add({ "ctrl+t": "example:toggle" }, "chat && !overlay");
-tui.context.add({ example_mode: () => (on ? "on" : "off") }); // then: "example_mode == on"
-```
+For custom input behavior, use a view's `key` handler or a text widget extension. A text extension can handle a key before the keymap or before the widget's default behavior.
 
-### Key order
+## Status items
 
-1. A command with `aboveModal`.
-2. An open dialog. A modal dialog takes every key.
-3. The keymap, when a sequence is pending or `tui.route` sends the context to the keymap.
-4. The focused view, and then the keymap if the view does not use the key.
+Call `tui.status.set(key, entry)` to add or replace an item. An entry has `text`, `side` (`"left"` or `"right"`), and `order`. It can also have `priority` and `style`. A lower `order` comes first on that side.
 
-A key that the composer types (a plain letter) reaches the keymap only through `tui.route.add("keymap", context)`.
+The status bar draws stored data. It does not call a plugin renderer on each frame. Update the item when its text changes. Call `tui.status.delete(key)` to remove it. A bare key gets the plugin prefix. The plugin stop removes its items.
 
-### Default keys
+`tui.status.list()` reads all items. `tui.status.onChange(listener)` watches later changes. The bundled `bar` plugin draws them.
 
-Do not bind these unless the user asks you to replace one.
+## Time and redraw
 
-| Key | Command |
+Use these methods for a clock or a delayed change:
+
+| Method | Use |
 |---|---|
-| `ctrl+p` | `ui:palette` (all described commands) |
-| `ctrl+n` | `chat:new` |
-| `ctrl+f` | `ui:sessions` |
-| `ctrl+c` | `session:interrupt`; `modal:cancel` in a dialog |
-| `ctrl+l` | `notify:dismiss` |
-| `ctrl+v` | `chat:paste-image` |
-| `ctrl+o` | `chat:expand-all` |
-| `ctrl+q`, `ctrl+z` | `quit`, `suspend` |
-| `ctrl+k` then `h j k l w v s c` or an arrow | window focus, split, and close |
-| `j` `k`, arrows, `ctrl+d` `ctrl+u`, page keys, `home` `end`, `g g`, `G` | scroll; the composer takes plain letters first |
+| `tui.now()` | Read the clock in milliseconds. Subtract two readings for a duration. |
+| `tui.after(delay, callback)` | Call once after a delay. The returned remover cancels it. |
+| `tui.requestFrame(delay?)` | Request a frame after a state change outside input handling. |
 
-## Status bar
+An `after` callback causes a frame. The plugin stop cancels its pending callbacks. For repeated work, schedule the next callback only while that work remains active. Compute elapsed time from the clock, not from the number of callbacks.
 
-`tui.status.add({ side?, order?, render })`. `render` returns a string. `undefined` or `""` hides the item, and a throw hides it and reports a fault. It runs on each frame, so keep it cheap. Items on one side join with ` · `.
+[`stopwatch.js`](examples/stopwatch.js) starts, stops, and resets a status clock. It schedules no callbacks while stopped.
 
-## Frame-loop clocks
+## Styles and themes
 
-Use `tui.tickable({ needsTick, tick })` for a clock or animation without a view. Its disposer, or plugin unload, removes it. `needsTick` returns a period such as `{ periodMs: 1000 }`, or `null` when no updates are needed. Reuse the period object. Returning `null` removes this member's wakeup request; other members can still request ticks.
+`tui.styles.set(groups)` changes style groups. A later call wins per field. A `null` field removes that field. A style can use palette names such as `accent` and `danger`.
 
-`tick` updates cached state. A tick requests paint, not layout. Call `tui.root.invalidate()` if that update changes geometry. Tick delivery is not an exact timer: another member can request a faster period, and a pulse can arrive early. Compute elapsed time from the clock, not the number of calls.
+Themes have names. Register one with `tui.styles.addTheme(name, theme)`. Registration does not activate it. Call `tui.styles.setTheme(name)` to activate it. `tui.styles.themes()` lists the names. `tui.styles.theme` reads the active name.
 
-[`examples/stopwatch.js`](examples/stopwatch.js) starts, resets, and freezes a clock. Its status renderer returns a cached string. It requests no ticks before start or after stop. It uses `Date.now()`, so a system-clock change affects elapsed time. The public API has no monotonic clock. Do not use this example to measure provider speed.
+A theme can define `dark` and `light` looks, palette colors, 256-color alternatives, and style groups. The active theme wins over `styles.set` changes. `tui.background` reads `"dark"` or `"light"`. `tui.truecolor` reports 24-bit color support.
 
-## Styles
+Use `ctx.on("theme.changed", listener)` for later theme or terminal-background changes. The listener gets `{ name, background }`. Read the initial state directly; the event does not replay it.
 
-`tui.style` holds the highlight groups and the palette. Each change repaints, and its disposer (or the plugin unload) removes it.
+See [Themes](/docs/themes) for complete theme examples.
 
-- `set({ Name: { fg: "danger" } })` changes fields of any group. `null` removes a field. A later `set` wins.
-- `set({ MyGroup: { fg, bg, ul, bold, dim, italic, reverse, underline, link } }, { default: true })` sets the default of a group that your plugin owns. It sits below the theme and every other `set`, so it never undoes a change of the user. A second default for one name, such as `YukeStatus`, throws.
-- `setPalette({ accent: "#88c0d0" })` changes palette colors. A color can also be a literal: `"#88c0d0"`, a 256-color index such as `151`, or a name such as `"green"`.
-- The default palette names `fg`, `bg`, `surfaceFg`, `strongFg`, `accent`, `accentMuted`, `surface`, `warn`, `danger`, `pendingBg`, `errorBg`, `diffAddBg`, and `diffDelBg`. It follows the terminal background and the color depth, and the theme and each `setPalette` sit above it.
-- `theme({ groups, palette })` makes one theme active, above the defaults and below every other `set`. A new call replaces it, so a theme switcher calls it again at runtime. The disposer of a replaced theme does nothing.
-- A `link` takes the fields of the linked group, and the group's own fields win.
-- `UIComposer` styles the composer surface. `UIComposerPrompt` styles the prompt while the composer reads the keyboard, and `UIComposerPromptInactive` styles it at other times. Both link to `UIComposer`. `UIComposerPlaceholder` also links to the surface and styles the placeholder, which an empty composer shows only without focus. `UIPrompt` remains the picker and dialog prompt.
+## Selectors and dialogs
 
-### Terminal background
+`tui.select({ items, label, title?, signal? })` opens a searchable selector. Each item is an object. It resolves to the chosen item, or `undefined` on cancellation. The plugin stop also ends the wait.
 
-`tui.background` is `"dark"` or `"light"`, from the terminal background color. It is set before any plugin applies, and stays `"dark"` if the terminal does not answer.
+[`picker.js`](examples/picker.js) lets the user choose a review focus. It stores the result in a status item. [`session-picker.js`](examples/session-picker.js) lists one page of saved sessions and opens the selected session through the `chat` service.
 
-```js
-const pick = () => tui.style.theme(tui.background === "light" ? light : dark); // { palette, groups }
-pick();
-ctx.on("background.changed", pick);
-```
+For a custom selector, import `Picker` from `yuke:tui`. A picker is a view. It opens no overlay itself. Place it with `tui.dialog({ body, ... })` or `tui.overlay(factory, options?)`. Its `choose` and `cancel` callbacks must close the mount when appropriate.
 
-`background.changed` fires when the class changes: a late answer, a resume, or a light/dark switch in a terminal that reports it.
+`tui.dialog` and `tui.overlay` return a `Mount`. Call `mount.close()` to close it. `mount.signal` aborts when it closes. Use that signal for work that belongs to the open dialog.
 
-### Color depth
+## Views, panes, and mounts
 
-`tui.colors` is `"truecolor"` when yuke draws 24-bit colors, or `"256"` when it uses the 256-color palette. The `tui.colors` setting of [`config.json`](profile.md) picks it: `"auto"` follows `COLORTERM`.
+A `View` draws through a `Canvas`. It can also define layout, input handlers, focus behavior, and a snapshot. Coordinates count terminal cells from zero. Text offsets count UTF-16 units.
 
-yuke sends a hex color as it is, and a terminal without 24-bit color shows it wrong. So a theme with hex colors also gives 256-color indices, and picks again when the background changes:
+- `tui.panes.split(factory, { direction })` creates a pane. `direction` is `"row"` or `"column"`.
+- `tui.panes.active` reads the active pane beneath a modal.
+- `tui.focused` reads the deepest focused view.
+- `tui.focus(view)` requests focus for a placed view.
+- `tui.setRoot(factory)` replaces the root layout. Closing its mount restores the pane tree alone.
+- `tui.views.register(type, restore)` registers a saved view type for reload.
 
-```js
-const pick = () => tui.style.theme(themes[tui.colors][tui.background]); // themes.truecolor.dark, themes["256"].light, ...
-pick();
-ctx.on("background.changed", pick);
-```
+A factory receives a `Mount`. Its signal ends work when that view closes. Register a view type and supply `view.snapshot()` when a custom pane needs reload restoration.
 
-## Dialogs and pickers
+Import `stack` from `yuke:tui` for a row or column layout. Each child has a fixed cell size, `"fill"`, or a size callback. [`sidebar.js`](examples/sidebar.js) places a small help column beside `tui.panes.view`. It hides that column in a narrow terminal. It does not replace the chat pane implementation.
 
-```js
-import { ui } from "yuke:ui";
+## Text widgets
 
-const { win } = ui.pick({ items: ["a", "b"] }); // search `PickOptions` for the options
-tui.overlay(win); // nothing shows until overlay
-```
+`TextEditor` edits a draft. `TextView` displays a document of keyed items and sections. `Markdown` projects Markdown text into styled rows. All three come from `yuke:tui`.
 
-[`examples/picker.js`](examples/picker.js) shows a picker with acceptance, cancellation, validation, and a plugin-owned overlay. It also shows a one-line input command. Both commands require the TUI.
+Use `tui.widgets.watch(attach)` to extend current and later text widgets. Filter by widget class and role. The callback gets the widget, its pane, and a mount signal. `widget.extend(signal)` adds owned appearance, contexts, decorations, and input handlers without replacing another plugin's callbacks.
 
-- For a one-line question, use `ctx.interaction.confirm`, `select`, or `input`. They return a promise, which resolves to `undefined` when the user cancels.
-- For a short message, use `ctx.interaction.notify(message, level?)`. It shows a toast.
-- To change the focused draft, check `tui.root.active` against `ChatView` (`yuke:chat`) and use its `composer.input`. `insert(text)` types at the caret without replacing image spans. `setText(text)` replaces the draft. See [Chat and editing APIs](plugins.md#chat-and-editing-apis).
-- `tui.split("row" | "col", view)` adds a pane. `tui.root` is the window tree.
-- `layout` (`yuke:ui`) solves a row or a column of `fixed`, `fit`, and `grow` cells into rects. [`examples/sidebar.js`](examples/sidebar.js) keeps a right column in each chat pane with it.
-- `List` is a scrollable list inside your own view; `Window` frames a view, and `borders` names its glyph sets.
-- `attachPath(composer, text, from)` (`yuke:chat`) attaches the image file that a pasted path names.
+[`roomy-chat.js`](examples/roomy-chat.js) changes only the prompt of composer editors. Its extension leaves when the widget unmounts or the watch ends.
 
-Use `ctx.interaction.input` for a simple line editor. Use `Prompt` or `TextInput` when you need custom view behavior. Do not replace an existing `onChange` callback without preserving its redraw work.
+## Chat services and blocks
 
-A left mouse drag selects the visible text in a picker body, query line, or item list. The selection includes each complete grapheme that the drag touches. A release copies the text when `tui.mouse.copyOnSelect` is `true`. A click still selects an item without copying text. Keys, wheel input, and a change to the content rectangle clear the text selection. The `TxSelect` highlight group colors the selection.
+The bundled `chat` plugin provides the `chat` service. Declare `"uses": ["chat"]` in the manifest entry before calling `ctx.get("chat")`. Check `tui` first when the feature needs a terminal.
 
-A picker validates before acceptance. A `false` result keeps the window open and skips `onAccept`. By default, acceptance closes the window before `onAccept`, and Esc closes it before `onCancel`. A plugin unload removes the overlay; it does not call `onCancel`. Closing the picker releases the overlay registration. Call the disposer from `tui.overlay` when you need to close it early.
+| Chat service method | Use |
+|---|---|
+| `show(id)` | Open a session in a chat pane. |
+| `session(view)` | Read the session of a chat pane view. |
+| `onChange(listener)` | Watch changes to the session of chat panes. |
+| `addComposerRows(place, source)` | Add rows above or below composers. |
+| `setReadOnly(source)` | Show selected sessions without a composer. |
+| `present(factory)` | Replace transcript presentation. |
 
-## Focus and redraw
+A composer row source runs at layout. Keep it cheap and synchronous. Call `tui.requestFrame()` after its data changes. [`chat-api.js`](examples/chat-api.js) adds a session label below each composer.
 
-`tui.root.active` is the focused view. Use it for an input handler. `currentPane()` is the session pane that most recently had focus; see [Chat and editing APIs](plugins.md#chat-and-editing-apis).
+A read-only source returns `{ text, back }` for a selected session, or `undefined` for an editable session. The pane shows that text instead of the composer. This rule changes the terminal pane only; an RPC client can still send input.
 
-- `tui.root.invalidate()` requests layout and paint. Use it after a change to view geometry.
-- `tui.root.invalidatePaint()` requests paint without layout. Use it after a change that does not change geometry.
+For a new chat frontend, use the public blocks from `yuke:chat`: `ChatSession`, `ChatComposer`, `ChatQuestions`, `ChatCommands`, `ChatWorking`, and `ChatDocument`. `ChatSession` owns the shown session handle, transcript, and history pages. It does not create a terminal pane. Combine only the blocks that the frontend needs.
 
-## Composer snapshots and selections
+## Transcript presentation
 
-`Composer.replaceSnapshot(snapshot, caret?)` replaces the draft. It does not prepend it as `restore` does. The composer copies the span records and clips the caret to the new text bounds. Its one change event reads the restored spans. A callback or allocation failure throws.
+`Transcript` from `yuke:transcript` folds session events into typed entries. `ChatDocument` from `yuke:chat` projects those entries into a `TextDocument`. The default document supports Markdown, tool calls, reasoning, errors, and folds.
 
-`Composer.drawSelection(from, to, group, lines?)` paints a half-open text range after `draw`. It paints the complete label of a touched collapsed span. `lines` also paints empty selected rows. The composer owns and reuses the geometry until the text, range, width, or scroll changes. An empty range selects no span. Allocation failure throws.
+`chat.present(factory)` installs a `ChatPresentation` for each chat pane. The factory gets a document key, saved folds, an abort signal, and a `changed()` callback. The last factory wins. Its remover restores the default only if that factory remains current.
 
-## Transcript
+A presentation must implement `folds`, `toggle`, `toggleTools`, and `project`. Keep item keys across updates. Keep each unchanged item object so text views can reuse its rows. Call `options.changed()` after a presentation state change that needs a new projection.
 
-The `transcript` plugin draws every chat transcript. A renderer changes it through `chat.render`. List `chat` in `uses`, and read it with `ctx.get("chat")`. Renderers stack: a hook that answers `undefined` passes to the renderer below, and `tools` and `sources` merge by name. The disposer, or the plugin unload, removes the renderer.
+[`tree-transcript.js`](examples/tree-transcript.js) wraps `ChatDocument`. It adds plain tree marks to labels and keeps the default fold behavior. It does not group tool calls or add a details window.
 
-```js
-ctx.get("chat")?.render({ tools: { web_search: (args) => ({ verb: "search", subject: String(args.query), input: "" }) } });
-```
+## Cleanup
 
-- `tools` sets one complete tool heading: `verb`, `subject`, and `input`. `input` holds the raw source of `subject`. A nonempty `input` with each line feed replaced by a space must equal `subject`. Normalization drops an `input` that does not match. Use an empty `input` when there is no hidden input. The default look sets headings for `read`, `write`, `edit`, `exec`, and `stop`.
-- `sources` sets the label of an input from an engine source, such as a child report.
-- `part(part, env, transcript)` answers `{ rows, source }` for one tool or reasoning part. The callback borrows `transcript` for owner identity. `showEmptyReasoning: true` admits live reasoning with no text or duration for an observed clock. Empty historical reasoning stays hidden. It does not expose hidden reasoning text. The core builds text parts as markdown, indented by `indent`. `gap` blank rows separate two parts.
-- `message`, `error`, `fold`, `activate`, `sameVisible`, `groupKey`, and `groupHeader` change the rest. Search `interface Render` in `yuke.d.ts`.
-- A row sets `header` on the row that a click folds, and `stop` on each row where a part motion of a keyboard-cursor plugin lands. A segment `src`/`srcEnd` indexes `source`, so a copy takes the source text. Answer the same `source` folded and open: a fold changes the rows alone, so the cursor and a selection keep their text across ctrl+o.
-- The default renderer folds each reasoning part with text to one header row, also while it streams. The header reads like a tool heading: `thinking <title>` while the block streams with no duration yet, and `thought <title> · 12s` after it stops. A provider that hides its reasoning sends no text. That thought shows nothing while it streams, and after it stops it shows one `thought · 12s` row that does not fold. The engine sends `title`, the title of the latest summary section, only for a provider that writes one, such as OpenAI Responses. It sends `duration_ms` at the block stop.
-- ctrl+o (`chat:expand-all`) opens or folds every part that folds. A click on a block toggles it, and a part that the user opens stays open. A rebuild, such as ctrl+o or a resize, keeps the text under `transcript.caret` on its screen row. A keyboard-cursor plugin sets the caret while the transcript has focus. Without a caret, the top row stays, or the pane follows the tail. The default exec renderer shows the original command below its header when the header clipped it or flattened a line feed.
-- A row `bg` group is the base style of the complete row. Its background wins over ordinary text backgrounds. An overlay with an explicit background, such as `TxSelect`, wins over the row. A selection keeps every content field that it does not set. A tool block uses `TxToolPendingBg`, `TxToolSuccessBg`, or `TxToolErrorBg`, and a user message uses `TxUser`. A pending tool block has the `pendingBg` color. A failed or canceled tool block has the `errorBg` color. A completed tool block has no background. `TxUser` puts the `surface` color behind a user message. Its text starts at the same column as every other row.
+TUI registrations and mounts belong to the plugin. Its stop removes them. Most registration methods also return a remover for early removal. A second removal does nothing.
 
-Tool and thought durations use short h/m/s labels, such as `8s`, `2m8s`, and `1h2m8s`. A duration below one second reads `<1s`. The engine ends the reasoning activity when it finalizes the reasoning part, even if the model continues with tool arguments.
-
-A transcript reader can append local tool-shaped decoration parts with IDs below `-1`. The reader owns them and intercepts their part and text reads. They do not change the last native reasoning part, count as grouped engine actions, or enter the joined native source. `-1` remains the whole-message fold identity. Local decorations never enter engine history.
-
-`Transcript.anchorAt(position)` captures a caller-owned bookmark without changing the selection. It returns null for a position without source or a part or group header. The bookmark keeps an immutable source prefix or a header identity.
-
-`Transcript.resolveAnchor(bookmark)` returns a new position, or null when the target has gone, has changed before its offset, or has hidden source. It requires the exact source offset. It does not move a hidden bookmark to later text. Part and group headers survive rewraps and folds while their targets exist.
-
-`Transcript.renderRevisionOf(id)` returns a numeric revision for the rendered message in this transcript. A cached read keeps it. A rebuild changes it, including a resize, fold, or visible update. Zero means no rendered message. Compare it after asynchronous work to reject stale results. These operations expose no render cache. Allocation failure throws.
-
-[`examples/tree-transcript.js`](examples/tree-transcript.js) stacks a whole look: tool calls grouped under "N actions" in a tree, a three-row preview, and a details window.
-
-
-## Directory completion
-
-A profile plugin can use `fs.readDir(path, options?)` from `"yuke"` to read directory entries. Each returned entry owns its name and reports `isDirectory`. A link to a directory also reports `true`. The promise rejects on I/O, invalid UTF-8, more than 10,000 entries, or more than 1 MiB of name bytes. `options.workspaceRoot` selects the workspace for a relative path. Without it, the host uses its workspace.
-
-Directory completion belongs to the profile. Yuke does not export a bundled `pathCompletion` plugin. Keep its menu lifetime explicit. Check plugin lifetime and request generation before applying a directory read.
+Return cleanup from `apply` or `session` for other work. Pass `ctx.signal`, the session signal, or a mount signal to async operations according to their lifetime. See [Plugins](plugins.md) for the full lifecycle.
