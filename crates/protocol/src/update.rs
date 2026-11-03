@@ -179,6 +179,9 @@ pub enum LiveUpdate {
         result: yuke_ai::ToolResult,
         /// What a frontend shows in place of the result text. The model never sees it.
         display: Vec<yuke_engine::DisplayBlock>,
+        /// The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
     },
     /// An attempt failed. The same request follows after a wait.
     RetryScheduled {

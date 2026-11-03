@@ -59,6 +59,10 @@ declare module "yuke:transcript" {
    * its tool before the call starts. `folder` is the folder where the call ran, the start of a relative path of the
    * call. `display` is what to show in place of the result text, and it is empty for a result without one. The model
    * sees neither.
+   *
+   * `startedAt` is the timestamp of this client, as from `Date.now()`, when it received the `tool_started` of a `running`
+   * call. It is `undefined` in each other status. `durationMs` is the duration of a `done` call, without the hooks. It is `undefined`
+   * when the call did not run.
    */
   export type ToolEntry = Frozen<{
     kind: "tool";
@@ -68,6 +72,8 @@ declare module "yuke:transcript" {
     status: "streaming" | "waiting" | "running" | "done";
     hints: ToolHints;
     folder: string | undefined;
+    startedAt: number | undefined;
+    durationMs: number | undefined;
     output: string;
     result: ToolResult | undefined;
     display: DisplayBlock[];

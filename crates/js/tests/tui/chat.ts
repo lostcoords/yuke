@@ -271,6 +271,19 @@ export const CATALOG = {
 
 export const EMPTY = { text: "", selection: { anchor: 0, head: 0 }, spans: [] };
 
+/** A fixed `Date.now` until the end of the scope. A test moves it with `now`, so a slow machine changes no duration. */
+export function fixedClock(): { now: number } & Disposable {
+  const real = Date.now;
+  const clock = {
+    now: 1_000_000,
+    [Symbol.dispose]: () => {
+      Date.now = real;
+    },
+  };
+  Date.now = () => clock.now;
+  return clock;
+}
+
 /** The rows of the transcript of `frame` above the rule on the composer, which is the last rule but one. */
 export function transcriptRows(frame: FrameTest): string[] {
   const shown = rows(frame.frame);

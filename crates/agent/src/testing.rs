@@ -158,6 +158,7 @@ pub fn display() -> CommitDisplay {
                 path: "a.rs".to_owned(),
                 patch: "@@ -1 +1 @@\n-a\n+b\n".to_owned(),
             }],
+            duration_ms: Some(40),
         }],
     }
 }

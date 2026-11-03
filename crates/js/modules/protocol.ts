@@ -176,7 +176,7 @@ export type CommitDisplay = {
  */
 calls: Array<CallDisplay>, 
 /**
- * The display of each tool result that has one, in block order.
+ * The display of each tool result that has blocks or a duration, in block order.
  */
 results: Array<ResultDisplay>, };
 
@@ -565,7 +565,11 @@ result: ToolResult,
 /**
  * What a frontend shows in place of the result text. The model never sees it.
  */
-display: Array<DisplayBlock>, } | { "sessionUpdate": "retry_scheduled", 
+display: Array<DisplayBlock>, 
+/**
+ * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+ */
+durationMs?: number | null, } | { "sessionUpdate": "retry_scheduled", 
 /**
  * The wait in milliseconds.
  */
@@ -1130,7 +1134,11 @@ blockIndex: number,
 /**
  * What a frontend shows in place of the result text.
  */
-blocks: Array<DisplayBlock>, };
+blocks: Array<DisplayBlock>, 
+/**
+ * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+ */
+durationMs?: number | null, };
 
 /**
  * Whether a session is open in the server, and whether a turn runs in it.

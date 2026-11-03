@@ -101,8 +101,11 @@ const turn: SessionUpdate[] = [
   { sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
   { sessionUpdate: "tool_started", execution: position(3, 2), call },
   { sessionUpdate: "tool_output", execution: position(3, 2), text: "running 1 test\n" },
-  { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: shown },
-  commit(4, { blocks: [{ tool_result: result }], display: { calls: [], results: [{ blockIndex: 0, blocks: shown }] } }),
+  { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: shown, durationMs: 40_000 },
+  commit(4, {
+    blocks: [{ tool_result: result }],
+    display: { calls: [], results: [{ blockIndex: 0, blocks: shown, durationMs: 40_000 }] },
+  }),
   { sessionUpdate: "draft_started", draftId: "d2" },
   model("d2", { kind: "block_started", block: 0, blockKind: "text" }),
   model("d2", { kind: "text_delta", block: 0, text: "Fixed." }),
@@ -158,6 +161,8 @@ const turnEntries: Entry[] = [
     status: "done",
     hints,
     folder: "/w",
+    startedAt: undefined,
+    durationMs: 40_000,
     output: "",
     result,
     display: shown,
@@ -186,6 +191,8 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
       // The host has not handled the call yet, so it has the default hints.
       hints: { title: null, subject: null, preview: "head" },
       folder: undefined,
+      startedAt: undefined,
+      durationMs: undefined,
       output: "",
       result: undefined,
       display: [],
@@ -326,6 +333,55 @@ test("an unconfirmed turn drops its draft and the live state of its tools", () =
   ]);
   equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
   equal([tool(transcript, 3).status, tool(transcript, 3).output], ["waiting", ""]);
+});
+
+test("a running tool has its start timestamp, and a finished tool has its duration", () => {
+  const before = Date.now();
+  const transcript = fed(opened(), turn.slice(0, 20));
+  const running = tool(transcript, 3);
+  assert(running.startedAt !== undefined && running.startedAt >= before, `${running.startedAt}`);
+  fed(transcript, [
+    { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: [], durationMs: 40_000 },
+  ]);
+  equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, 40_000]);
+});
+
+test("a saved duration without display blocks gives a tool with its duration and no display", () => {
+  const timed = commit(4, {
+    blocks: [{ tool_result: result }],
+    display: { calls: [], results: [{ blockIndex: 0, blocks: [], durationMs: 40_000 }] },
+  });
+  const transcript = opened([...saved.slice(0, 3), timed]);
+  const entry = tool(transcript, 3);
+  equal([entry.durationMs, entry.startedAt, entry.display], [40_000, undefined, []]);
+});
+
+test("a saved result without a duration has no duration", () => {
+  const unmeasured = commit(4, { blocks: [{ tool_result: result }] });
+  equal(tool(opened([...saved.slice(0, 3), unmeasured]), 3).durationMs, undefined);
+});
+
+test("a gap fill keeps the start timestamp of a running tool", () => {
+  const transcript = opened(saved.slice(0, 1));
+  fed(transcript, saved.slice(2, 3));
+  // The output makes the tool differ from its saved form, so only the rule for a waiting tool keeps it.
+  fed(transcript, [
+    { sessionUpdate: "tool_started", execution: position(3, 2), call },
+    { sessionUpdate: "tool_output", execution: position(3, 2), text: "running" },
+  ]);
+  const started = tool(transcript, 2).startedAt;
+  assert(started !== undefined, "the tool has no start timestamp");
+  transcript.insert(saved.slice(1, 2));
+  equal(tool(transcript, 3).startedAt, started);
+});
+
+test("an unconfirmed turn drops the start timestamps and the durations of its tools", () => {
+  const transcript = fed(opened(), [
+    ...turn.slice(0, 20),
+    { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: [], durationMs: 40_000 },
+    { sessionUpdate: "turn_unconfirmed" },
+  ]);
+  equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
 });
 
 test("the inputs, questions, status, and settings follow their updates", () => {

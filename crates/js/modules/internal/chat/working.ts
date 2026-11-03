@@ -31,7 +31,7 @@ function phase(transcript: Transcript, now: number, retryAt: number | undefined)
 }
 
 /** The elapsed time `ms` as `42s` or `3m 05s`. */
-function elapsed(ms: number): string {
+export function elapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;

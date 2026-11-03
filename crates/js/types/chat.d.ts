@@ -215,7 +215,8 @@ declare module "yuke:chat" {
 
   /**
    * The default look of a conversation, as a text document for a `TextView`: user messages, Markdown answers, thoughts
-   * and tool calls that fold, diffs, and the failure of a running turn. Thoughts and tools start folded.
+   * and tool calls that fold, diffs, and the failure of a running turn. Thoughts and tools start folded. The head line
+   * of a running tool shows its duration at the last `project` call.
    *
    * ```ts
    * const document = new ChatDocument(`session:${id}`);
@@ -247,7 +248,10 @@ declare module "yuke:chat" {
     readonly toggle: (transcript: Transcript, key: string) => boolean;
     /** Open or fold all tools. */
     readonly toggleTools: (transcript: Transcript) => void;
-    /** The document of `transcript`. Keep each item key across updates. Keep the object of each unchanged item. */
+    /**
+     * The document of `transcript`. Keep each item key across updates. Keep the object of each unchanged item.
+     * The pane also calls this function once a second while a tool runs, so a duration can advance.
+     */
     readonly project: (transcript: Transcript) => TextDocument;
   }
 

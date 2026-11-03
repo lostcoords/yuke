@@ -131,7 +131,11 @@ result: ToolResult,
 /**
  * What a frontend shows in place of the result text. The model never sees it.
  */
-display: Array<DisplayBlock>, } | { "sessionUpdate": "retry_scheduled", 
+display: Array<DisplayBlock>, 
+/**
+ * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+ */
+durationMs?: number | null, } | { "sessionUpdate": "retry_scheduled", 
 /**
  * The wait in milliseconds.
  */

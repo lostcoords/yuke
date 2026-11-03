@@ -6,6 +6,7 @@
 
 import { diffRows, diffSource } from "yuke:internal/chat/diff";
 import { bandedRows, clipped, indented, item, plain, STYLE, shifted, styledRows } from "yuke:internal/chat/rows";
+import { elapsed } from "yuke:internal/chat/working";
 import type { Entry } from "yuke:transcript";
 import { Markdown, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
@@ -17,9 +18,21 @@ const HEAD = 10;
 /** The rows of a folded call with the preview `tail`. */
 const TAIL = 5;
 
-/** The item of `entry`. An open call shows arguments that are not empty, and its whole body. */
-export function toolItem(entry: ToolEntry, open: boolean): TextItem {
-  const sections = heading(entry, open);
+/**
+ * The duration that the head line of `entry` shows at the time `now`. A duration below one second shows nothing, and
+ * so does a clock that moved back.
+ */
+export function shownDuration(entry: ToolEntry, now: number): string | undefined {
+  const ms = entry.startedAt === undefined ? entry.durationMs : now - entry.startedAt;
+  return ms === undefined || ms < 1000 ? undefined : elapsed(ms);
+}
+
+/**
+ * The item of `entry`, with the result of `shownDuration`. An open call shows arguments that are not empty, and its
+ * whole body.
+ */
+export function toolItem(entry: ToolEntry, open: boolean, duration: string | undefined): TextItem {
+  const sections = heading(entry, open, duration);
   if (open) {
     const others = otherArguments(entry);
     if (others !== "" && others !== "{}") sections.push(plain("arguments", others, STYLE.toolOutput));
@@ -55,14 +68,14 @@ function bandOf(entry: ToolEntry): string | undefined {
 }
 
 /**
- * The head line: the title of the hints or the name, the subject argument, and a state other than success. The state
- * stays, and the rest takes the room that it leaves. An open call shows a subject that the row clips or flattens below
- * the row.
+ * The head line: the title of the hints or the name, the subject argument, a state other than success, and the
+ * duration. A running clock takes the place of the state. The end stays, and the rest takes the room that it leaves.
+ * An open call shows a subject that the row clips or flattens below the row.
  */
-function heading(entry: ToolEntry, open: boolean): TextSection[] {
+function heading(entry: ToolEntry, open: boolean, duration: string | undefined): TextSection[] {
   const name = entry.hints.title ?? (entry.name === "" ? "tool" : entry.name);
-  const state = stateOf(entry);
-  const end = state === undefined ? "" : ` · ${state}`;
+  const state = entry.status === "running" && duration !== undefined ? undefined : stateOf(entry);
+  const end = [state, duration].map((part) => (part === undefined ? "" : ` · ${part}`)).join("");
   const value = subjectOf(entry);
   const source = value === undefined ? name : `${name} ${value}`;
   // Each line end unit becomes one space, so the shown text keeps the offsets of its source.

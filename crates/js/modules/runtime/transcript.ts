@@ -25,7 +25,15 @@ const NO_HINTS: Frozen<ToolHints> = Object.freeze({ title: null, subject: null, 
 const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
 
 /** The fields of a tool entry before the host handles the call. */
-const UNHANDLED = { hints: NO_HINTS, folder: undefined, output: "", result: undefined, display: NO_DISPLAY } as const;
+const UNHANDLED = {
+  hints: NO_HINTS,
+  folder: undefined,
+  startedAt: undefined,
+  durationMs: undefined,
+  output: "",
+  result: undefined,
+  display: NO_DISPLAY,
+} as const;
 
 /** The tool that `call` runs: the bridge call `tool_call` runs the deferred tool that its arguments name. */
 function called(call: Frozen<ToolCall>): { name: string; arguments: string } {
@@ -177,7 +185,15 @@ export class Transcript {
         for (const key of this.#calls) {
           const entry = this.#at(key);
           if (entry?.kind === "tool")
-            this.#set({ ...entry, status: "waiting", output: "", result: undefined, display: NO_DISPLAY });
+            this.#set({
+              ...entry,
+              status: "waiting",
+              startedAt: undefined,
+              durationMs: undefined,
+              output: "",
+              result: undefined,
+              display: NO_DISPLAY,
+            });
         }
         break;
       case "draft_started":
@@ -220,11 +236,12 @@ export class Transcript {
       case "tool_finished": {
         const entry = this.#at(`${update.execution.eventNumber}:${update.execution.blockIndex}`);
         if (entry?.kind !== "tool" || entry.status === "done") break;
-        if (update.sessionUpdate === "tool_started") this.#set({ ...entry, status: "running" });
+        if (update.sessionUpdate === "tool_started") this.#set({ ...entry, status: "running", startedAt: Date.now() });
         else if (update.sessionUpdate === "tool_output") this.#set({ ...entry, output: entry.output + update.text });
         else {
           const display = update.display.length === 0 ? NO_DISPLAY : update.display;
-          this.#set({ ...entry, status: "done", result: update.result, display });
+          const durationMs = update.durationMs ?? undefined;
+          this.#set({ ...entry, status: "done", startedAt: undefined, durationMs, result: update.result, display });
         }
         break;
       }
@@ -278,9 +295,12 @@ export class Transcript {
       } else if ("tool_result" in block) {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.
         const entry = this.#at(this.#calls.shift());
-        const display = commit.display?.results.find((result) => result.blockIndex === index)?.blocks ?? NO_DISPLAY;
+        const shown = commit.display?.results.find((result) => result.blockIndex === index);
+        const display = shown?.blocks ?? NO_DISPLAY;
         if (entry?.kind === "tool") {
-          this.#set({ ...entry, status: "done", output: "", result: block.tool_result, display });
+          const durationMs = shown?.durationMs ?? undefined;
+          const result = block.tool_result;
+          this.#set({ ...entry, status: "done", startedAt: undefined, durationMs, output: "", result, display });
         }
       }
     }
@@ -310,10 +330,10 @@ export class Transcript {
   #kept(entry: Entry): Entry {
     const previous = this.#previous?.get(entry.key);
     if (previous === undefined || entry.kind !== "tool" || entry.status === "waiting") return previous ?? entry;
+    // One saved event gives a result object, its display, and its duration, so the result stands for all three.
     const same =
       previous.kind === "tool" &&
       previous.result === entry.result &&
-      previous.display === entry.display &&
       previous.hints === entry.hints &&
       previous.output === "";
     return same ? previous : entry;

@@ -358,6 +358,8 @@ async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open
         panic!("{:?}", repair.event);
     };
     assert_eq!(commit.end, Some(TurnEnd::Failed(TURN_STOPPED.to_owned())));
+    // The duration of a call that the stop cut is unknown, so its result has no duration.
+    assert!(commit.display.is_empty(), "{:?}", commit.display);
     assert_eq!(consumed, []);
     let second = &transport.requests()[1];
     assert_in_order(second, &["one", "two"]);

@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -214,6 +215,23 @@ impl From<ToolResult> for ToolOutcome {
     }
 }
 
+/// The outcome of a call and the duration of its handler. A hook can replace the outcome, and the duration stays.
+pub(crate) struct Finished {
+    /// What the model receives and what a frontend shows.
+    pub(crate) outcome: ToolOutcome,
+    /// The duration of the handler. A call without a handler run has `None`.
+    pub(crate) duration: Option<Duration>,
+}
+
+impl From<ToolResult> for Finished {
+    fn from(result: ToolResult) -> Self {
+        Finished {
+            outcome: result.into(),
+            duration: None,
+        }
+    }
+}
+
 impl From<String> for ToolContent {
     fn from(text: String) -> Self {
         ToolContent {
@@ -385,13 +403,16 @@ impl Toolset {
         }
     }
 
-    /// Run `call`, and return its outcome. The tool sees `context`.
-    pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> ToolOutcome {
+    /// Run `call`, and return its outcome and the duration of its handler. The tool sees `context`.
+    pub(crate) async fn call(&self, call: &ToolCall, context: &ToolContext<'_>) -> Finished {
         let Some(index) = self.definitions.iter().position(|tool| tool.name == call.name) else {
             return ToolResult::error(&call.call_id, format!("Unknown tool: {}", call.name)).into();
         };
 
-        match self.handlers[index].call(&call.arguments, context).await {
+        let started = Instant::now();
+        let result = self.handlers[index].call(&call.arguments, context).await;
+        let duration = Some(started.elapsed());
+        let outcome = match result {
             Ok(content) => ToolOutcome {
                 result: ToolResult {
                     is_error: content.is_error,
@@ -401,6 +422,7 @@ impl Toolset {
                 display: content.display,
             },
             Err(error) => ToolResult::error(&call.call_id, crate::chain_text(error.as_ref())).into(),
-        }
+        };
+        Finished { outcome, duration }
     }
 }

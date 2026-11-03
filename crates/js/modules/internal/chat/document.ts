@@ -1,12 +1,12 @@
 /**
  * `ChatDocument` of `yuke:chat`: one item for each entry of a transcript, with its folds, and one item after them for a
- * failure of the running turn. An item stays the same object while its entry and its fold stay, so the view keeps its
- * rows.
+ * failure of the running turn. An item stays the same object while its entry, its fold, and its shown duration stay, so
+ * the view keeps its rows.
  */
 
 import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
-import { toolItem } from "yuke:internal/chat/tools";
+import { shownDuration, toolItem } from "yuke:internal/chat/tools";
 import { sourceName } from "yuke:internal/source-name";
 import type { Entry, Status, Transcript } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
@@ -17,6 +17,8 @@ const STATUS = "status";
 interface Cached {
   readonly entry: Entry;
   readonly open: boolean;
+  /** The duration that the head line of a tool shows. */
+  readonly duration: string | undefined;
   readonly item: TextItem;
   /** The parser of a text entry. A text that grows parses only its last two blocks again. */
   readonly markdown: Markdown | undefined;
@@ -61,13 +63,15 @@ export class ChatDocument implements ChatPresentation {
   project(transcript: Transcript): TextDocument {
     const cache = new Map<string, Cached>();
     const items: TextItem[] = [];
+    const now = Date.now();
     for (const entry of transcript.entries) {
       const open = this.#open(entry);
+      const duration = entry.kind === "tool" ? shownDuration(entry, now) : undefined;
       let cached = this.#cache.get(entry.key);
-      if (cached?.entry !== entry || cached.open !== open) {
+      if (cached?.entry !== entry || cached.open !== open || cached.duration !== duration) {
         const markdown = entry.kind === "text" ? (cached?.markdown ?? new Markdown()) : undefined;
         if (entry.kind === "text" && cached?.entry !== entry) markdown?.setText(entry.text);
-        cached = { entry, open, item: itemOf(entry, open, markdown), markdown };
+        cached = { entry, open, duration, item: itemOf(entry, open, markdown, duration), markdown };
       }
       cache.set(entry.key, cached);
       items.push(cached.item);
@@ -92,7 +96,7 @@ export class ChatDocument implements ChatPresentation {
 }
 
 /** The item of `entry`. A text entry needs `markdown`, which holds its text. */
-function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined): TextItem {
+function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, duration: string | undefined): TextItem {
   switch (entry.kind) {
     case "input": {
       const text = inputText(entry.content);
@@ -120,7 +124,7 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined): Te
       return item(entry.key, title, open ? body : { ...body, render: () => [] });
     }
     case "tool":
-      return toolItem(entry, open);
+      return toolItem(entry, open, duration);
     case "compaction":
       return item(entry.key, label("context replaced", STYLE.meta));
     case "end": {

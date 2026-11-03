@@ -1,11 +1,11 @@
 // The look of the transcript from a plugin: `chat.present`, with one row that groups all tools.
 
 import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
-import type { StoredEvent } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import type { StoredEvent, ToolCall } from "yuke:protocol";
+import { assert, createFrame, equal, settled, test } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument, View } from "yuke:tui";
-import { click, commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
+import { click, commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 
 const GROUP = "group";
 
@@ -62,6 +62,13 @@ function reads(...paths: string[]): StoredEvent[] {
   return saved;
 }
 
+/** The first tool call of the commit `event`. */
+function toolCall(event: Extract<StoredEvent, { sessionUpdate: "commit" }>): ToolCall {
+  const block = event.commit.blocks.find((candidate) => "tool_call" in candidate);
+  assert(block !== undefined && "tool_call" in block, "the commit has no tool call");
+  return block.tool_call;
+}
+
 /** The rows of the transcript of `frame` that have text. */
 function shown(frame: Parameters<typeof transcriptRows>[0]): string[] {
   return transcriptRows(frame).filter((row) => row !== "");
@@ -101,6 +108,56 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
     [before, present, shown(frame)],
     [[" read a", " text", " read b"], ["● tools: 2"], [" read a", " text", " read b"]],
   );
+});
+
+test("a turn calls the presentation again each second only while a tool runs", async () => {
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = reads("a");
+  const called = saved[1];
+  assert(called?.sessionUpdate === "commit");
+  const sessions = fakeSessions(saved.slice(0, 2));
+  const chat = await loadChat(frame, sessions);
+  let projections = 0;
+  chat.chat.present((options) => {
+    const inner = new ChatDocument(options.key);
+    return {
+      folds: [],
+      toggle: (transcript, key) => inner.toggle(transcript, key),
+      toggleTools: (transcript) => inner.toggleTools(transcript),
+      project: (transcript) => {
+        projections += 1;
+        return inner.project(transcript);
+      },
+    };
+  });
+  frame.start();
+  await settled();
+  using clock = fixedClock();
+  sessions.push({ sessionUpdate: "state", state: "running" });
+  frame.draw();
+  /** The projections of one more second of the turn. */
+  const nextSecond = (): number => {
+    const before = projections;
+    clock.now += 1000;
+    frame.advance(100);
+    frame.draw();
+    return projections - before;
+  };
+  // The first tick of the turn has its own second, so the count starts after it.
+  nextSecond();
+  const idle = nextSecond();
+  sessions.push({
+    sessionUpdate: "tool_started",
+    execution: { eventNumber: called.seq, blockIndex: 0 },
+    call: toolCall(called),
+  });
+  frame.draw();
+  const running = nextSecond();
+  // More ticks in the same second call the presentation no more.
+  const before = projections;
+  frame.advance(400);
+  frame.draw();
+  equal([idle, running, projections - before], [0, 1, 0]);
 });
 
 test("a disposer of an old factory leaves the look of a later factory", async () => {

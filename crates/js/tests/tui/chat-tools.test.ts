@@ -1,8 +1,8 @@
 // The tool calls of the bundled chat: the head line, the previews, the body, the diffs, the folds, and the links.
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
-import { createFrame, equal, test } from "yuke:test";
-import { click, commit, fakeSessions, loadChat, mouse, SETTINGS, transcriptRows } from "./chat.ts";
+import { createFrame, equal, settled, test } from "yuke:test";
+import { click, commit, fakeSessions, fixedClock, loadChat, mouse, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 /** The lines `<word> 1` to `<word> <count>`. */
@@ -19,6 +19,7 @@ interface Call {
   readonly display?: DisplayBlock[];
   /** The folder of the call. The default is /tools. */
   readonly folder?: string | null;
+  readonly durationMs?: number;
 }
 
 /** A session with each call of `calls` in its own event, and its result in the next event. */
@@ -34,7 +35,10 @@ function calls(...called: Call[]): StoredEvent[] {
     };
     saved.push(commit(saved.length + 1, [block], { display: hints }));
     const result: Block = { tool_result: { ...call.result, callId } };
-    const shown = call.display === undefined ? [] : [{ blockIndex: 0, blocks: call.display }];
+    const shown =
+      call.display === undefined && call.durationMs === undefined
+        ? []
+        : [{ blockIndex: 0, blocks: call.display ?? [], durationMs: call.durationMs ?? null }];
     saved.push(commit(saved.length + 1, [result], { display: { calls: [], results: shown } }));
   }
   return saved;
@@ -220,6 +224,7 @@ test("the live output of a call gives way to its result at once", async () => {
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
+  using _clock = fixedClock();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "tool_started", execution, call });
   sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });
@@ -229,6 +234,57 @@ test("the live output of a call gives way to its result at once", async () => {
   sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
   frame.draw();
   equal(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
+});
+
+test("a finished call shows its duration, and a call below one second or without a duration shows none", async () => {
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const failed = { ...ok(""), isError: true };
+  const saved = calls(
+    { name: "exec", args: { command: "a" }, hints: READ, result: ok(""), durationMs: 185_000 },
+    { name: "exec", args: { command: "b" }, hints: READ, result: ok(""), durationMs: 999 },
+    { name: "exec", args: { command: "c" }, hints: READ, result: ok("") },
+    { name: "exec", args: { command: "d" }, hints: READ, result: failed, durationMs: 1000 },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  equal(
+    transcriptRows(frame).filter((row) => row.startsWith(" exec")),
+    [" exec · 3m 05s", " exec", " exec", " exec · error · 1s"],
+  );
+});
+
+test("a silent running call counts up on its own, and its end shows the measured duration", async () => {
+  using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [{ tool_call: call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    }),
+  ];
+  const sessions = fakeSessions(saved);
+  await loadChat(frame, sessions);
+  frame.start();
+  await settled();
+  using clock = fixedClock();
+  const execution = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ sessionUpdate: "tool_started", execution, call });
+  frame.draw();
+  equal(transcriptRows(frame)[1], " exec make · running");
+  clock.now += 12_000;
+  frame.advance(100);
+  frame.draw();
+  equal(transcriptRows(frame)[1], " exec make · 12s");
+  // A clock that moves back shows no negative duration.
+  clock.now -= 60_000;
+  frame.advance(100);
+  frame.draw();
+  equal(transcriptRows(frame)[1], " exec make · running");
+  const result = { callId: "c0", content: "", isError: false };
+  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [], durationMs: 40_000 });
+  frame.draw();
+  equal(transcriptRows(frame)[1], " exec make · 40s");
 });
 
 test("a copy of live output gives its lines", async () => {
@@ -535,6 +591,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
+  using _clock = fixedClock();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "tool_started", execution, call });
   sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });

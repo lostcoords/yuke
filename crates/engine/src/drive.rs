@@ -22,7 +22,7 @@ use yuke_ai::{
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
 use crate::model::{Model, RoundError};
 use crate::search::{self, Declared};
-use crate::tool::{Concurrency, DisplayBlock, TOOL_CALL_NAME, ToolContext, ToolOutcome, Toolset};
+use crate::tool::{Concurrency, DisplayBlock, Finished, TOOL_CALL_NAME, ToolContext, ToolOutcome, Toolset};
 use crate::turn_state::{
     Action, CANCELLED_REASON, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, TurnState, not_executed,
 };
@@ -72,6 +72,8 @@ pub enum TurnEvent<'a> {
         result: &'a ToolResult,
         /// What a frontend shows in place of the result text.
         display: &'a [DisplayBlock],
+        /// The duration of the tool, without the hooks. A call that did not run has `None`.
+        duration: Option<Duration>,
     },
 
     /// A round failed after its retries. The model events of the round came before it, and the context keeps none of
@@ -714,7 +716,7 @@ impl TurnParts<'_> {
 
     /// Run the calls in `blocks`, the blocks of an answer commit, and return their outcomes in call order. Consecutive
     /// parallel calls form one group. A serial call forms a group of its own.
-    async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<ToolOutcome> {
+    async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<Finished> {
         let driver = &self.driver;
         let resolved: Vec<Resolved<'_>> = blocks
             .iter()
@@ -741,7 +743,7 @@ impl TurnParts<'_> {
 
     /// Run the calls of one group, and return their outcomes in call order. The driver asks [`Hooks::before_tool`] for
     /// each call in call order first. Then the approved calls run together.
-    async fn call_group(&self, mut group: Vec<Resolved<'_>>, native_search: bool) -> Vec<ToolOutcome> {
+    async fn call_group(&self, mut group: Vec<Resolved<'_>>, native_search: bool) -> Vec<Finished> {
         // After this loop, a call without a result is a call that the hooks let run.
         for Resolved {
             block_index,
@@ -765,6 +767,7 @@ impl TurnParts<'_> {
                     block_index: *block_index,
                     result,
                     display: &[],
+                    duration: None,
                 });
             }
         }
@@ -786,28 +789,32 @@ impl TurnParts<'_> {
 
     /// Run an approved `call`, then ask [`Hooks::after_tool`], and return its outcome. A cancel before the start runs
     /// nothing.
-    async fn run_call(&self, block_index: usize, call: &ToolCall, native_search: bool) -> ToolOutcome {
+    async fn run_call(&self, block_index: usize, call: &ToolCall, native_search: bool) -> Finished {
         let driver = &self.driver;
         // A cancel during the hooks of the group comes before this call starts, so the call does not start.
-        let outcome = if self.cancellation_token.is_cancelled() {
+        let finished = if self.cancellation_token.is_cancelled() {
             not_executed(call, CANCELLED_REASON).into()
         } else {
             let empty = Toolset::new();
             let toolset = driver.toolset.unwrap_or(&empty);
-            let outcome = if driver.is_search(call) {
+            let Finished { outcome, duration } = if driver.is_search(call) {
                 search::search(toolset, call, native_search).into()
             } else {
                 let context = ToolContext::new(block_index, call, &self.cancellation_token, self.observer);
                 toolset.call(call, &context).await
             };
-            self.after_tool(call, outcome).await
+            Finished {
+                outcome: self.after_tool(call, outcome).await,
+                duration,
+            }
         };
         self.observer.event(&TurnEvent::ToolFinished {
             block_index,
-            result: &outcome.result,
-            display: &outcome.display,
+            result: &finished.outcome.result,
+            display: &finished.outcome.display,
+            duration: finished.duration,
         });
-        outcome
+        finished
     }
 
     /// Ask [`Hooks::after_tool`] for a replacement of `outcome`. A cancel keeps `outcome`.

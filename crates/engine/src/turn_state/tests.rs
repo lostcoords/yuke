@@ -5,7 +5,7 @@ use yuke_testing::origin;
 
 use super::{Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, TurnState};
 use crate::model::RoundError;
-use crate::tool::{DisplayBlock, Preview, Subject, SubjectKind, ToolHints, ToolOutcome};
+use crate::tool::{DisplayBlock, Finished, Preview, Subject, SubjectKind, ToolHints};
 
 /// Each block of `context` as one line.
 fn lines(context: &[Block]) -> Vec<String> {
@@ -99,7 +99,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         ToolResult::success("c1", "file text"),
         ToolResult::success("c2", "written"),
     ];
-    let action = turn_state.tools_finished(results.into_iter().map(ToolOutcome::from).collect());
+    let action = turn_state.tools_finished(results.into_iter().map(Finished::from).collect());
     assert!(matches!(
         action,
         Action::AfterRound {
@@ -337,11 +337,12 @@ fn a_commit_reads_back_from_its_json() {
                                 patch: "@@ -1 +1 @@\n-a\n+b\n".to_owned(),
                             },
                         ],
+                        duration_ms: Some(40),
                     }],
                 },
                 ..Commit::blocks(&[][..])
             },
-            r#"{"replaced":null,"blocks":[],"answer":null,"end":null,"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}]}]}}"#,
+            r#"{"replaced":null,"blocks":[],"answer":null,"end":null,"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
         ),
     ];
     for (commit, json) in cases {

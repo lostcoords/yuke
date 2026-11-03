@@ -251,6 +251,34 @@ fn tools() -> yuke_engine::Toolset {
 }
 
 #[tokio::test]
+async fn a_finished_tool_reports_its_duration() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
+    let model = model();
+    let tools = tools();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
+    let capture = Capture::default();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
+        .observer(&capture)
+        .run()
+        .await
+        .unwrap();
+    let durations: Vec<_> = capture
+        .live()
+        .into_iter()
+        .filter_map(|update| match update {
+            LiveUpdate::ToolFinished { duration_ms, .. } => Some(duration_ms),
+            _ => None,
+        })
+        .collect();
+    assert!(matches!(durations[..], [Some(_)]), "{durations:?}");
+}
+
+#[tokio::test]
 async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "send", "{}")]),

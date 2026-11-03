@@ -173,10 +173,12 @@ impl Observer for Updates<'_> {
                 block_index,
                 result,
                 display,
+                duration,
             } => self.live(LiveUpdate::ToolFinished {
                 execution: self.execution(*block_index),
                 result: (*result).clone(),
                 display: display.to_vec(),
+                duration_ms: duration.map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
             }),
             TurnEvent::RetryScheduled { after, error } => self.live(LiveUpdate::RetryScheduled {
                 after_ms: u64::try_from(after.as_millis()).unwrap_or(u64::MAX),

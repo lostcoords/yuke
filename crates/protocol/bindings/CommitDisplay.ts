@@ -11,6 +11,6 @@ export type CommitDisplay = {
  */
 calls: Array<CallDisplay>, 
 /**
- * The display of each tool result that has one, in block order.
+ * The display of each tool result that has blocks or a duration, in block order.
  */
 results: Array<ResultDisplay>, };

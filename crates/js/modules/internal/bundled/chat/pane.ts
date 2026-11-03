@@ -161,8 +161,18 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
   let stopTick: (() => void) | undefined;
+  // The wall-clock second of the last check for a running tool.
+  let checkedSecond = 0;
   /** Draw the working row again at the next frame of its spinner, while the turn runs. */
   const tick = (): void => {
+    // The head line of a running tool shows whole seconds, so the next layout projects once a second.
+    const second = Math.floor(Date.now() / 1000);
+    if (second !== checkedSecond) {
+      checkedSecond = second;
+      if (chatSession.transcript.entries.some((entry) => entry.kind === "tool" && entry.startedAt !== undefined)) {
+        dirty = true;
+      }
+    }
     stopTick = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
   };
   working.onChange(() => {

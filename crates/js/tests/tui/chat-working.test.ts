@@ -1,7 +1,7 @@
 // The working row of the bundled chat: a spinner, the phase, the elapsed time, and the cancel key of a running turn.
 
 import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
-import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
+import { commit, fakeSessions, fixedClock, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 const hints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
@@ -12,6 +12,7 @@ test("a running turn shows its phase and time above the rule, and the end of the
   await loadChat(frame, sessions);
   frame.start();
   await settled();
+  using _clock = fixedClock();
   /** Draw the frame, and give the row above the rule. */
   const row = (): string => {
     frame.draw();

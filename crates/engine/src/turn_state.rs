@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, ToolCall, ToolResult, Usage};
 
 use crate::model::RoundError;
-use crate::tool::{DisplayBlock, ToolHints, ToolOutcome};
+use crate::tool::{DisplayBlock, Finished, ToolHints, ToolOutcome};
 
 /// The decisions of one turn on the caller's context.
 #[derive(Debug)]
@@ -95,7 +95,7 @@ pub struct Commit<'a> {
 pub struct CommitDisplay {
     /// The hints of each tool call that the driver handled, in block order.
     pub calls: Vec<CallDisplay>,
-    /// The display of each tool result that has one, in block order.
+    /// The display of each tool result that has blocks or a duration, in block order.
     pub results: Vec<ResultDisplay>,
 }
 
@@ -128,6 +128,9 @@ pub struct ResultDisplay {
     pub block_index: usize,
     /// What a frontend shows in place of the result text.
     pub blocks: Vec<DisplayBlock>,
+    /// The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 impl<'a> Commit<'a> {
@@ -328,7 +331,7 @@ impl<'c> TurnState<'c> {
     }
 
     /// Take the outcomes of the calls that [`Action::CallTools`] asked for, in call order.
-    pub(crate) fn tools_finished(&mut self, outcomes: Vec<ToolOutcome>) -> Action<'_> {
+    pub(crate) fn tools_finished(&mut self, outcomes: Vec<Finished>) -> Action<'_> {
         self.add_outcomes(outcomes);
         self.after_round(None)
     }
@@ -378,18 +381,23 @@ impl<'c> TurnState<'c> {
 
     /// End the turn as [`Outcome::Cancelled`] after [`Action::CallTools`], with the `outcomes` of every call, in call
     /// order. A call that did not run has its error result among them.
-    pub(crate) fn tools_cancelled(&mut self, outcomes: Vec<ToolOutcome>) -> Action<'_> {
+    pub(crate) fn tools_cancelled(&mut self, outcomes: Vec<Finished>) -> Action<'_> {
         self.add_outcomes(outcomes);
         self.cancel()
     }
 
     /// Add the result of each outcome to the context, and keep its display for the next commit.
-    fn add_outcomes(&mut self, outcomes: Vec<ToolOutcome>) {
-        for ToolOutcome { result, display } in outcomes {
-            if !display.is_empty() {
+    fn add_outcomes(&mut self, outcomes: Vec<Finished>) {
+        for Finished {
+            outcome: ToolOutcome { result, display },
+            duration,
+        } in outcomes
+        {
+            if !display.is_empty() || duration.is_some() {
                 self.results.push(ResultDisplay {
                     block_index: self.context.len() - self.saved,
                     blocks: display,
+                    duration_ms: duration.map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
                 });
             }
             self.context.push(Block::ToolResult(result));

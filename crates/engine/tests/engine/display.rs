@@ -1,11 +1,13 @@
 use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::ToolCall;
 use yuke_ai::scripted::{ScriptedTransport, cut_reply, text_reply, tool_reply};
 use yuke_engine::{
     CallDisplay, CancellationToken, CommitDisplay, DisplayBlock, Driver, Hooks, NoWait, Observer, Preview,
-    ResultDisplay, Subject, SubjectKind, Tool, ToolContent, ToolContext, ToolHints, ToolOutcome, Toolset, TurnEvent,
+    ResultDisplay, Subject, SubjectKind, Tool, ToolContent, ToolContext, ToolDecision, ToolHints, ToolOutcome, Toolset,
+    TurnEvent,
 };
 use yuke_testing::{definition, model};
 
@@ -25,6 +27,20 @@ fn hints() -> ToolHints {
 
 fn shown(text: &str) -> DisplayBlock {
     DisplayBlock::Markdown { text: text.to_owned() }
+}
+
+/// `results` without their durations, because a measured duration changes between runs. Each result must have one.
+fn without_durations(results: &[ResultDisplay]) -> Vec<ResultDisplay> {
+    results
+        .iter()
+        .map(|result| {
+            assert!(result.duration_ms.is_some(), "{result:?}");
+            ResultDisplay {
+                duration_ms: None,
+                ..result.clone()
+            }
+        })
+        .collect()
 }
 
 /// A tool with hints that answers "ok" and shows `*shown*`. With a token, it cancels the turn before it returns.
@@ -109,15 +125,14 @@ fn the_answer_saves_the_hints_and_the_folder_of_each_call_and_the_results_save_t
             results: Vec::new(),
         }
     );
+    assert_eq!(saved[1].display.calls, []);
     assert_eq!(
-        saved[1].display,
-        CommitDisplay {
-            calls: Vec::new(),
-            results: vec![ResultDisplay {
-                block_index: 0,
-                blocks: vec![shown("*shown*")],
-            }],
-        }
+        without_durations(&saved[1].display.results),
+        [ResultDisplay {
+            block_index: 0,
+            blocks: vec![shown("*shown*")],
+            duration_ms: None,
+        }]
     );
     assert!(saved[2..].iter().all(|commit| commit.display.is_empty()));
     assert_eq!(
@@ -152,10 +167,11 @@ fn a_replacement_of_after_tool_replaces_the_display() {
     block_on(driver.turn(&mut Vec::new(), Vec::new()).journal(&journal).run()).unwrap();
 
     assert_eq!(
-        journal.saved()[1].display.results,
+        without_durations(&journal.saved()[1].display.results),
         [ResultDisplay {
             block_index: 0,
             blocks: vec![shown("*redacted*")],
+            duration_ms: None,
         }]
     );
 }
@@ -182,10 +198,11 @@ fn a_turn_cancelled_during_a_call_keeps_the_display_in_its_end_commit() {
     let end = journal.saved().pop().unwrap();
     assert!(end.end.is_some());
     assert_eq!(
-        end.display.results,
+        without_durations(&end.display.results),
         [ResultDisplay {
             block_index: 0,
             blocks: vec![shown("*shown*")],
+            duration_ms: None,
         }]
     );
 }
@@ -214,4 +231,130 @@ fn a_call_that_never_runs_still_saves_its_hints() {
             folder: Some("/repo".to_owned()),
         }]
     );
+}
+
+/// The shortest duration in milliseconds of the tool `Slow`.
+const SLOW_MS: u64 = 20;
+
+/// A tool without a display that runs for `SLOW_MS`.
+struct Slow;
+
+#[async_trait(?Send)]
+impl Tool for Slow {
+    async fn call(
+        &self,
+        _arguments: &str,
+        _context: &ToolContext<'_>,
+    ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
+        std::thread::sleep(Duration::from_millis(SLOW_MS));
+        Ok(ToolContent::from("ok"))
+    }
+}
+
+/// An observer that keeps the duration of each finish.
+#[derive(Default)]
+struct Durations(Mutex<Vec<Option<Duration>>>);
+
+impl Observer for Durations {
+    fn event(&self, event: &TurnEvent<'_>) {
+        if let TurnEvent::ToolFinished { duration, .. } = event {
+            self.0.lock().unwrap().push(*duration);
+        }
+    }
+}
+
+// A result without display blocks also needs its row, because the row holds the duration.
+#[test]
+fn a_call_that_ran_reports_and_saves_its_duration() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "slow", "{}")]), text_reply("done")]);
+    let model = model();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("slow"), Slow).unwrap();
+    let journal = Replay::default();
+    let durations = Durations::default();
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
+
+    block_on(
+        driver
+            .turn(&mut Vec::new(), Vec::new())
+            .journal(&journal)
+            .observer(&durations)
+            .run(),
+    )
+    .unwrap();
+
+    let [Some(reported)] = durations.0.lock().unwrap()[..] else {
+        panic!("{:?}", durations.0);
+    };
+    assert!(reported >= Duration::from_millis(SLOW_MS), "{reported:?}");
+    let results = &journal.saved()[1].display.results;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].blocks, [] as [DisplayBlock; 0]);
+    assert!(results[0].duration_ms >= Some(SLOW_MS), "{results:?}");
+}
+
+/// Hooks that decide about each call before it starts.
+enum Before {
+    Allow,
+    Block,
+    Cancel(CancellationToken),
+}
+
+#[async_trait(?Send)]
+impl Hooks for Before {
+    async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
+        match self {
+            Before::Allow => ToolDecision::Run,
+            Before::Block => ToolDecision::Block("no".to_owned()),
+            Before::Cancel(token) => {
+                token.cancel();
+                ToolDecision::Run
+            }
+        }
+    }
+}
+
+/// Run one call of `name` with `hooks` and `token`, and assert that the call has no duration.
+fn assert_no_duration(name: &str, hooks: &Before, token: CancellationToken) {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", name, "{}")]), text_reply("done")]);
+    let model = model();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("slow"), Slow).unwrap();
+    let journal = Replay::default();
+    let durations = Durations::default();
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(hooks);
+
+    block_on(
+        driver
+            .turn(&mut Vec::new(), Vec::new())
+            .journal(&journal)
+            .observer(&durations)
+            .cancellation_token(token)
+            .run(),
+    )
+    .unwrap();
+
+    assert_eq!(*durations.0.lock().unwrap(), [None]);
+    let results: Vec<_> = journal
+        .saved()
+        .into_iter()
+        .flat_map(|commit| commit.display.results)
+        .collect();
+    assert_eq!(results, []);
+}
+
+#[test]
+fn a_blocked_call_has_no_duration() {
+    assert_no_duration("slow", &Before::Block, CancellationToken::new());
+}
+
+#[test]
+fn a_call_cancelled_before_it_starts_has_no_duration() {
+    let token = CancellationToken::new();
+    assert_no_duration("slow", &Before::Cancel(token.clone()), token);
+}
+
+#[test]
+fn a_call_of_an_unknown_tool_has_no_duration() {
+    assert_no_duration("missing", &Before::Allow, CancellationToken::new());
 }
