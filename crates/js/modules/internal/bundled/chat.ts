@@ -5,7 +5,13 @@
  * shows a session in a pane for other plugins.
  */
 
-import type { ChatPresentation, ChatPresentationOptions, ChatRow, ChatRowsContext } from "yuke:chat";
+import type {
+  ChatPresentation,
+  ChatPresentationOptions,
+  ComposerRow,
+  ComposerRowPlace,
+  ComposerRowsContext,
+} from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
@@ -127,8 +133,11 @@ const COMMANDS: readonly {
 export async function apply(ctx: PluginContext): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
-  // One entry per call of `addRows`, so the same source can show twice and each disposer removes its own.
-  const sources = new Set<{ readonly source: (pane: ChatRowsContext) => readonly ChatRow[] }>();
+  // One entry per call of `addComposerRows`, so the same source can show twice and each disposer removes its own.
+  const sources = new Set<{
+    readonly place: ComposerRowPlace;
+    readonly source: (pane: ComposerRowsContext) => readonly ComposerRow[];
+  }>();
   const panes = new WeakMap<View, PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   ctx.provide("chat", {
@@ -153,8 +162,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    addRows: (source) => {
-      const entry = { source };
+    addComposerRows: (place, source) => {
+      const entry = { place, source };
       sources.add(entry);
       tui?.requestFrame();
       return () => {
@@ -181,7 +190,16 @@ export async function apply(ctx: PluginContext): Promise<void> {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
     presenter: () => presenter,
-    rows: (pane) => [...sources].map((entry) => entry.source(pane)),
+    rows: (place, pane, room) => {
+      const rows: ComposerRow[] = [];
+      for (const entry of sources) {
+        if (entry.place !== place) continue;
+        const added = entry.source(pane);
+        if (rows.length + added.length > room) break;
+        rows.push(...added);
+      }
+      return rows;
+    },
     moved: (view) => {
       for (const listener of listeners) listener(view);
     },

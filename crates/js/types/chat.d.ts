@@ -262,22 +262,25 @@ declare module "yuke:chat" {
     readonly changed: () => void;
   }
 
-  /**
-   * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
-   * pane exists.
-   */
-  /** One row above the composer of a chat pane. The chat cuts a longer text to the pane width and ends it with `…`. */
-  export interface ChatRow {
+  /** One row of a plugin in a chat pane. The chat cuts a longer text to the pane width and ends it with `…`. */
+  export interface ComposerRow {
     readonly text: string;
     readonly style?: CanvasStyle | undefined;
   }
 
+  /** The side of the composer where a row source shows its rows. */
+  export type ComposerRowPlace = "above" | "below";
+
   /** The chat pane that a row source gives rows for. */
-  export interface ChatRowsContext {
+  export interface ComposerRowsContext {
     readonly session: SessionId | undefined;
     readonly width: number;
   }
 
+  /**
+   * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
+   * pane exists.
+   */
   export interface ChatService {
     /**
      * Show the session `id` in the focused chat pane, or in a new chat pane when the focused pane is no chat pane. The
@@ -289,19 +292,27 @@ declare module "yuke:chat" {
     /** Call `listener` after each change of the session of a chat pane. */
     readonly onChange: (listener: (view: View) => void) => () => void;
     /**
-     * Add rows above the composer of each chat pane. The rows sit below the transcript and above the rows of the chat:
-     * the waiting messages, the working row, and the command list. Each layout of a pane calls `source`, so a source
-     * must be cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
+     * Add rows on one side of the composer of each chat pane. The pane calls the sources at each layout, so keep each
+     * source cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
      *
-     * Plugin rows get the rows that the chat leaves, at most half the rows above the rule. The chat shows all rows of a
-     * source, or none. The sources show in add order, and the first source that does not fit hides the later sources.
-     * Each call adds one source, and its disposer removes only that source.
+     * - `above`: The rows show below the transcript and above the waiting messages, the working row, and the command
+     *   list. The chat gives them the free rows, at most half the rows above the rule.
+     * - `below`: The rows show on the last rows of the pane, and the composer moves up. The chat gives them at most half
+     *   the pane height.
+     *
+     * The chat shows all rows of a source, or none. In each place, the chat shows the sources in add order. The first
+     * source that does not fit hides the later sources, and the chat does not call these sources.
+     *
+     * Each call adds one source. The returned function removes that source only.
      *
      * ```ts
-     * chat.addRows((pane) => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : []));
+     * chat.addComposerRows("below", (pane) => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : []));
      * ```
      */
-    readonly addRows: (source: (pane: ChatRowsContext) => readonly ChatRow[]) => () => void;
+    readonly addComposerRows: (
+      place: ComposerRowPlace,
+      source: (pane: ComposerRowsContext) => readonly ComposerRow[],
+    ) => () => void;
     /**
      * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
      * presentation, also for one session. The last call wins. A disposer restores the default only if its factory is
