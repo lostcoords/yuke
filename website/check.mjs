@@ -1,6 +1,6 @@
 // Build the site, then check what a visitor and a link preview rely on: every internal link
 // and anchor resolves, each page has one heading and its own metadata, the installer and the
-// examples match their sources, and the old yuke.sh paths still lead somewhere.
+// examples type-check and match their sources, and old public paths still lead somewhere.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -10,6 +10,7 @@ import { site } from './.vitepress/theme/project.js';
 
 const root = resolve(import.meta.dirname, '..');
 const output = join(root, 'target/site');
+execFileSync('mise', ['exec', '--', 'tsc', '-p', join(root, 'docs/tsconfig.json')], { stdio: 'inherit' });
 execFileSync(join(import.meta.dirname, 'node_modules/.bin/vitepress'), ['build'], {
   cwd: import.meta.dirname,
   stdio: 'inherit',
