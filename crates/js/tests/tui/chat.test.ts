@@ -288,7 +288,7 @@ test("a notification from yuke shows its source without host:, and a plugin keep
   });
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    notification(2, 1, "host:jobs", "job-1 make · exited 0"),
+    notification(2, 1, "host:jobs", "make · exited 0"),
     notification(3, 2, "myhost:ci", "build done"),
   ];
   using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
@@ -298,7 +298,7 @@ test("a notification from yuke shows its source without host:, and a plugin keep
 
   equal(transcriptRows(frame).slice(1, 6), [
     " notification · jobs",
-    " job-1 make · exited 0",
+    " make · exited 0",
     "",
     " notification · myhost:ci",
     " build done",

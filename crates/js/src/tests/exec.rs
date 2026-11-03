@@ -130,7 +130,7 @@ async fn a_background_job_starts_and_its_end_reaches_the_session() {
     );
     assert_eq!(
         host.inputs.borrow_mut()[0].content(),
-        [Block::user_text(format!("{id} echo hello; exit 4 · exited 4"))]
+        [Block::user_text("echo hello; exit 4 · exited 4")]
     );
     // An ended job leaves the list: its report has told the model already.
     assert_eq!(

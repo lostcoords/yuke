@@ -445,11 +445,11 @@ pub(crate) fn short_label(text: &str) -> String {
     }
 }
 
-/// Make the report of the job `id` from `source`. Each job uses this frame. The user reads `{id} {label} · {status}`.
+/// Make the report of the job `id` from `source`. Each job uses this frame. The user reads `{label} · {status}`.
 pub(crate) fn report_input(source: &str, id: &str, label: &str, status: &str, text: &str) -> Input {
     Input::notification(
         source,
-        &format!("{id} {label} · {status}"),
+        &format!("{label} · {status}"),
         &format!("{id} {label}: {status}.\n{text}"),
     )
 }

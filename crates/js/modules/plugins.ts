@@ -767,7 +767,7 @@ export interface JobOptions {
 
 /** The report of a job. */
 export interface JobReport {
-  /** The end in words, for example `completed`. A notification shows the user `{id} {label} · {status}`. */
+  /** The end in words, for example `completed`. A notification shows the user `{label} · {status}`. */
   readonly status: string;
   /** The text for the model. A notification puts the id, the label, and the status before it. */
   readonly text: string;

@@ -1,8 +1,10 @@
 // The bundled plugin `chat` on the sessions of a test host: the transcript of a pane, live and after a reload.
 
+import type { ChatService } from "yuke:chat";
 import { writeTextFile } from "yuke:fs";
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
+import type { SessionSettings } from "yuke:protocol";
 import { createFrame, createHost, equal, type FrameTest, folder, reply, settled, test } from "yuke:test";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
@@ -119,4 +121,66 @@ test("the first send of a pane with a saved choice creates its session and gets 
   frame.draw();
   equal(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
   equal(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
+});
+
+test("chat.show opens a session with a parent: the pane shows its transcript, and a message goes to it", async () => {
+  let sessions: Sessions | undefined;
+  let settings: SessionSettings | undefined;
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "keeper",
+        apply: (ctx) => {
+          sessions = ctx.get("sessions");
+          return undefined;
+        },
+        session: (s) => {
+          settings = s.settings;
+        },
+      },
+    ],
+    replies: [reply.text("Two tables."), reply.text("Three indexes.")],
+  });
+  const parent = await host.openSession();
+  const list = sessions as unknown as Sessions;
+  const child = await list.create(settings as unknown as SessionSettings, { parent: parent.id });
+  const held = await list.open(child, { tail: 0, event() {} });
+  await held.input([{ user_text: "Read the store." }]);
+  await held.idle();
+
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });
+  const surface = frame.surface("chat");
+  const services: Record<string, unknown> = {
+    tui: surface.tui,
+    sessions: list,
+    catalog: { list: async () => ({ providers: [] }) },
+  };
+  let shown: ChatService | undefined;
+  await chat({
+    get: (name: string) => services[name],
+    provide: (_name: string, service: ChatService) => {
+      shown = service;
+    },
+    options: {},
+    signal: surface.signal,
+    dataDir: folder(),
+    notify() {},
+  } as never);
+  frame.start();
+  await settled();
+  await (shown as unknown as ChatService).show(child);
+  await settled();
+  frame.draw();
+  const text = rows(frame).join("\n");
+
+  frame.paste("And the indexes?");
+  frame.key("enter");
+  await settled();
+  await held.idle();
+  await settled();
+  frame.draw();
+
+  equal(text.includes("Two tables."), true);
+  equal(rows(frame).join("\n").includes("Three indexes."), true);
+  equal(host.requests.at(-1)?.messages.at(-1)?.text, "And the indexes?");
 });
