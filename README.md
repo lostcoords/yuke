@@ -1,6 +1,6 @@
 # yuke
 
-A native terminal coding agent with JavaScript and TypeScript plugins.
+A fast, lightweight, TypeScript-scriptable coding agent.
 
 ## Development
 
