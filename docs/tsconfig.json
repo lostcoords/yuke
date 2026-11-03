@@ -1,0 +1,18 @@
+{
+  "extends": "../crates/js/tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "paths": {
+      "yuke:*": ["../crates/js/modules/*.ts"]
+    }
+  },
+  "include": [
+    "guide/examples/**/*.js",
+    "guide/examples/**/*.ts",
+    "snippets/**/*.ts",
+    "snippets/**/*.js",
+    "tests/**/*.ts",
+    "../crates/js/types/**/*.d.ts"
+  ]
+}

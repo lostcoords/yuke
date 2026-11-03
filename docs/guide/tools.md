@@ -1,63 +1,95 @@
+---
+description: Define session tools with checked arguments, model results, cancellation, and background jobs.
+---
+
 # Tools
 
-A model tool is a function that the model calls. Define it with `ctx.tools.define(definition)` before a `ctx.get("tui")` early return, so it exists in every mode.
+A model tool is an operation that the model can call. Register it with `s.tools.define` in the named `session` export. Each session gets its own registrations, in the TUI and in headless modes.
 
 ## Definition
 
-`definition` is `ToolDefinition`: `name`, `description`, `parameters`, `execute(args, signal, toolCtx)`, and optional `defer`.
+This entry module defines `count_words` in each session:
 
-- `name` is 1 to 64 characters of a-z, A-Z, 0-9, `_`, or `-`.
-- `description` tells the model when to call the tool. Use the imperative mood. State each limit the model must know.
-- `parameters` is a JSON Schema object. It needs `type: "object"` and `properties`. Set `additionalProperties: false`.
-- `defer: true` waits for a `tool_search` tool to load the tool. Without a search tool, the engine loads it at once.
-- A tool cannot take the name of a built-in tool: `read`, `write`, `edit`, `exec`, or `stop`. `define` throws, and the plugin fails.
+<<< @/guide/examples/plugin.js
 
-## Inspect registrations
+`Tool<S>` from `yuke:tools` defines the contract:
 
-`ctx.tools.inspect()` copies current registration metadata into owned objects. It runs no hooks or handlers. Each row gives the name, exact UTF-8 definition sizes, estimated framing bytes and tokens, the deferred flag, the owning `pluginIndex`, and the workspace scope.
+| Field | Meaning |
+|---|---|
+| `name` | 1 to 64 letters, digits, `_`, or `-` |
+| `description` | When the model must use the tool and what it does |
+| `parameters` | An `ObjectSchema` for the arguments |
+| `concurrency` | Required: `serial` or `parallel` |
+| `deferLoading` | Optional: keep the tool out of requests until tool search finds it |
+| `hints` | Optional: display title, subject, and output preview |
+| `execute(args, context)` | Return a result or a promise for a result |
 
-`pluginIndex` is `null` for a core registration. `workspace` is `null` for a registration that is not limited to one workspace. Activation rules, workspace scope, and request hooks can exclude a registration from a request. Deferred registrations need not appear in a request. Inspection is not a record of a past request or a provider token count. See `ToolInspection` in the declarations.
+A serial call runs alone among the calls of one model answer. Parallel calls can run together. This setting does not serialize work across sessions.
+
+A duplicate or reserved name throws. Built-in tools hold the names `read`, `write`, `edit`, `exec`, and `stop`. The engine also reserves its tool-search names. A failed session setup removes the tools and hooks that the plugin registered in that session.
+
+`define` returns a remover. Removal frees the name and excludes the tool from the next turn. Session close removes the registration automatically. A tool-list change can invalidate the provider's prompt cache.
 
 ## Arguments
 
-`args` is any JSON that the model wrote. Check each field before use. Throw an error for a missing or wrong field. Do not use a default in its place.
+The host validates model arguments before `execute`. It infers the argument types from an inline schema. A schema constant can use `as const satisfies ObjectSchema` to preserve its field types.
+
+The supported schema types are `string`, `boolean`, `integer`, `number`, `array`, and `object`. Numeric schemas accept `minimum` and `maximum`. String and numeric schemas accept `enum`. Arrays need `items`; objects need `properties` and can list `required` fields.
+
+Objects reject fields outside `properties`, with or without `additionalProperties: false`. An optional field with `null` counts as absent. An unsupported schema keyword fails the definition. See `Schema`, `ObjectSchema`, and `Infer` in `yuke:tools` for the exact types.
+
+Validate semantic limits that the schema does not express. Do not repeat the host's type checks inside `execute`.
 
 ## Result
 
-`execute` returns a promise. The promise resolves to one of these values:
+Return a string, or a `ToolResult` object:
 
-| Value | Result |
+<<< @/snippets/tools/result.ts
+
+| Field | Meaning |
 |---|---|
-| a string | The model reads the string. |
-| a `ToolOutcome` | The model reads `output`, `media`, and `tools_added`. The UI also shows `diff`. |
+| `text` | Required text for the model |
+| `isError` | Optional error flag; defaults to `false` |
+| `media` | Optional media items for the model |
+| `display` | Optional display blocks for the user, in place of the text |
 
-`ToolOutcome` is `{ output, is_error?, diff?, media?, tools_added? }`. `diff` is a list of `{ path, hunks }` with unified diff lines. An unknown key makes the call an error. An error result shows `output` only. A `tool.after` hook replaces the result with a `ToolOutcome`. Its payload also holds `name` and `arguments` as context. The replacement must not hold them.
+A media item has `mimeType` and either `path` or `bytes: Uint8Array`. A relative path starts in the folder of the call. The host copies returned bytes. An error result retains its media.
 
-The engine rejects every other value, including `undefined` and `null`. A tool with nothing to report returns a short string that says so. Return JSON data as a string: `JSON.stringify(data)`.
+Display blocks can show results such as diffs without adding that display to the model's context. Keep the display consistent with the result text. See `DisplayBlock` in `yuke:tools` for its variants.
 
-## Size
+Unknown result fields fail the call. `undefined` and `null` are not results. Return structured data as text with `JSON.stringify(data)`.
 
-The engine cuts an `output` longer than 50 KiB. It keeps at most 25 KiB from each end, on whole lines when possible. A one-line marker between them names a file that holds the whole text, or says that yuke kept no copy. The file lives until yuke exits. A plugin tool does not need its own cap. The built-in `exec` keeps at most 48 KiB of output before this cut, so its own status line fits.
+There is no automatic output cap for plugin tools. Return bounded text that the model needs. The built-in `read` and `exec` tools apply their own output limits.
 
 ## Errors
 
-Throw an `Error` when the call fails. The model reads its `message` and nothing else. On OpenAI routes, the model reads `Error: <message>`, because those APIs have no error flag.
+Throw an `Error` when the call fails. The model receives an error result with its message. Write a message that tells the model what to do next.
 
-- Write a message that tells the model what to do next.
-- Return `{ output, is_error: true }` when the output of a failed call is evidence, such as the log of a failed build.
+Return `{ text, isError: true }` when the failed output is useful evidence, such as a compiler log. A [tool.after hook](engine.md#engine-hooks) can change the result before the model reads it.
 
-## Context
+## Context and cancellation
 
-- `toolCtx.output(text)` streams live output to the user. The model does not read it.
-- `toolCtx.workspaceRoot` is the session root.
-- `toolCtx.sessionId`, `toolCtx.messageId`, and `toolCtx.partId` name the transcript part that holds the call.
+`ToolContext` supplies:
+
+| Member | Use |
+|---|---|
+| `sessionId` | Identify the session. |
+| `callId` | Identify the call within the session. |
+| `folder` | Read the session folder at the start of the call. |
+| `signal` | Stop work when the call ends or the turn cancels it. |
+| `output(text)` | Stream text to the user, not the model. |
+| `jobs.run(options, work)` | Run work that can move to a background job. |
+
+Pass `context.signal` to cancellable I/O. After cancellation, the host still waits for `execute` to settle. Stop the work when the signal aborts.
+
+For processes, use `Command` from `yuke:process`. Its constructor takes an explicit `cwd` and an optional `signal`. Its `output()` method waits for completion.
 
 ## Background jobs
 
-`exec` with `background: true` starts a job and returns at once. When the job ends by itself, its session gets one message: `[job-k3x9 exited 1. This message is not from the user.]`, then the log path and the last 20 lines. The status is `exited N`, `signal N`, or `failed` (yuke could not wait for the process). No hook rewrites it. A queue clear does not drop it. `stop` with the job ID ends it, waits for the end, and returns `[job-k3x9 stopped.] Log: <path>`. A requested stop sends no end message.
+Use `context.jobs.run({ id, label, background? }, work)` for work inside a tool. The call waits unless `background` is `true` or the user moves the work to the background. The answer is `{ kind: "completed", report }` or `{ kind: "background", id }`.
 
-## Cancellation
+Use the signal passed to `work`, not `context.signal`. The call ends when work moves to the background, but the job must continue. Work can return `{ status, text }` to report its end, or `undefined` for no report.
 
-The host aborts `signal` when the call stops. Pass `signal` to `fetch` and `exec`. `spawn` takes no signal, so kill its child when the signal aborts.
+Use `s.jobs.run({ id, label }, work)` to start a session job without a tool call. Job IDs must be unique among the running jobs of that session. Background starts reject in `yuke -p`.
 
-[`examples/plugin.js`](examples/plugin.js) defines a complete model tool.
+The built-in `stop` tool and a session handle's `stopJob(id)` stop a job and await its work. A requested stop sends no completion report. Session close and reload also stop plugin jobs and await their work.

@@ -1,40 +1,70 @@
+---
+description: Connect cloud providers and local model servers with API keys or account logins.
+---
+
 # Providers
 
-`providers.json` in the [profile](profile.md) holds credentials, changes a built-in provider, or adds a provider, such as a local server. yuke reads it at startup and on `/reload-providers`. A missing file is fine.
+`providers.json` in the [profile](profile.md) changes built-in providers or adds providers, such as local servers. yuke reads it at startup and on profile reload. A missing file uses the built-in catalog.
+
+Provider routes and credentials use separate files. `providers.json` holds routes, model facts, and API-key variable names. `auth.json` in the data directory holds stored credentials. Login and logout do not rewrite `providers.json`.
 
 ## Credentials
 
-A built-in provider reads its key from a variable for each run. An empty variable counts as unset.
+For an API-key provider, set its variable in the shell that starts yuke. An empty or non-UTF-8 variable counts as unset. A variable takes priority over a stored API key.
 
-`anthropic` `ANTHROPIC_API_KEY` · `openai` `OPENAI_API_KEY` · `openrouter` `OPENROUTER_API_KEY` · `deepseek` `DEEPSEEK_API_KEY` · `groq` `GROQ_API_KEY` · `xai` `XAI_API_KEY` · `mistral` `MISTRAL_API_KEY` · `togetherai` `TOGETHER_API_KEY` · `cerebras` `CEREBRAS_API_KEY` · `fireworks-ai` `FIREWORKS_API_KEY` · `minimax` `MINIMAX_API_KEY` · `opencode`, `opencode-go` `OPENCODE_API_KEY`
-
-`openai-codex` and `xai-grok` use an account login. A built-in provider with no entry in the file shows only when its variable holds a value or when it has an account login.
-
-| Command | Does |
+| Provider | Variable |
 |---|---|
-| `yuke login` | Lists each provider and its state. |
-| `yuke login <provider>` | Starts the account login, or asks for a key. Writes the result to `providers.json`. |
-| `yuke logout <provider>` | Removes the credential that the file holds. It cannot unset a variable. |
-| `/login`, `/logout` | The same in the TUI. |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `openai` | `OPENAI_API_KEY` |
+| `openrouter` | `OPENROUTER_API_KEY` |
+| `deepseek` | `DEEPSEEK_API_KEY` |
+| `groq` | `GROQ_API_KEY` |
+| `xai` | `XAI_API_KEY` |
+| `mistral` | `MISTRAL_API_KEY` |
+| `togetherai` | `TOGETHER_API_KEY` |
+| `cerebras` | `CEREBRAS_API_KEY` |
+| `fireworks-ai` | `FIREWORKS_API_KEY` |
+| `minimax` | `MINIMAX_API_KEY` |
+| `opencode`, `opencode-go` | `OPENCODE_API_KEY` |
 
-| State | Fix |
+`openai-codex` and `xai-grok` use an account login:
+
+```sh
+yuke login openai-codex
+yuke login xai-grok
+```
+
+Run the command for the provider that you want. Open the URL that it prints. Confirm the device code. yuke waits for approval and stores the login in `auth.json`.
+
+`yuke login` requires a provider ID. It does not list providers or ask for API keys. For an API-key provider, it reports the variable to set. An RPC client can store an API key through `auth/set_api_key`.
+
+`yuke logout <provider>` removes that provider's stored credential from `auth.json`. It does not unset a variable or revoke a token at the provider. A running server can keep a token supplied through `credential/update`. The RPC method `auth/logout` also clears that server's pushed token. See the [protocol reference](https://github.com/lostcoords/yuke/blob/main/crates/protocol/README.md).
+
+The catalog reports these states:
+
+| State | Meaning |
 |---|---|
-| `needs key` | Set the variable, or run `yuke login <provider>`. |
-| `needs login` | Run `yuke login <provider>`. |
-| `needs route` | A route field or the login flow is missing. Fix the entry. |
+| `ready` | The provider needs no credential, or a credential is present. yuke does not test the credential. |
+| `needs_api_key` | The provider variable is unset or unusable, and no API key is stored. |
+| `needs_login` | No stored login or pushed access token is present. |
+
+The default catalog lists ready providers. An RPC client can request all providers with `catalog/list` and `all: true`.
 
 ## The file
+
+This example adds a gateway with two protocols:
 
 ```json
 {
   "providers": [{
     "id": "gateway",
+    "name": "Team gateway",
     "base_url": "https://gateway.example/v1",
+    "api_key_env": "GATEWAY_API_KEY",
     "endpoints": [
-      { "protocol": "anthropic_messages", "credential_header": "x_api_key", "cache": "breakpoint" },
+      { "protocol": "anthropic_messages", "credential_header": "x_api_key", "cache_breakpoint": true },
       { "protocol": "openai_chat", "credential_header": "authorization_bearer" }
     ],
-    "auth": { "api_key": { "source": { "env": "GATEWAY_API_KEY" } } },
     "models": [
       { "id": "big", "upstream_id": "vendor/big", "protocol": "anthropic_messages", "limits": { "context_window": 200000, "max_output_tokens": 32000 } },
       { "id": "small", "upstream_id": "vendor/small", "protocol": "openai_chat", "reasoning_levels": [null, "high"] }
@@ -43,80 +73,111 @@ A built-in provider reads its key from a variable for each run. An empty variabl
 }
 ```
 
-The selector is `provider/model`, for example `gateway/big`. A local server has no `auth` and no `credential_header`.
+Set `GATEWAY_API_KEY` before you start yuke. Replace the example host and upstream model IDs with values that your gateway serves. The selector is `provider/model`, such as `gateway/big`.
 
-- The mode must be `0600`, and the file must not be a symlink. Otherwise yuke does not start.
-- The schema is strict. An unknown field or a bad value stops startup, and the error names it, for example `UnknownField`. A failed `/reload-providers` keeps the current providers.
-- `yuke login` and `yuke logout` write the whole file again.
+The file accepts JSON with `//` and `/* */` comments. The schema is strict. Unknown fields, duplicate IDs, and bad routes stop startup. A written `null` is not an omitted provider field. Errors name the file and the bad field.
 
-| Provider field | Meaning |
+Use `/reload` to reload the profile after an edit. A failed reload keeps the previous providers and plugins.
+
+Restrict access to this file if custom headers contain sensitive values. Keep secrets out of URLs and version control.
+
+### Provider fields
+
+| Field | Meaning |
 |---|---|
-| `id` | Required. No `/` and no whitespace. |
-| `base_url` | `http` or `https`, with a host. No user, query, or fragment. |
-| `endpoints` | The paths the host serves. |
-| `auth` | The credential. |
-| `api_key` | A literal key: the short form of `auth`. Do not use it with `auth`. |
-| `headers` | `[{ "name", "value" }]`. A request fails when a header uses the credential or session header name. |
-| `session_header` | `none`, `session_id`, or `x_opencode_session`. |
-| `models` | The models. |
+| `id` | Required. A nonempty ID with no `/`, whitespace, or control character. |
+| `name` | Display name. A new provider defaults to its ID. |
+| `base_url` | An `http` or `https` URL with a host and no user, query, or fragment. Required for a new provider. |
+| `api_key_env` | The environment variable for an API key. A built-in provider keeps its variable when omitted. A new provider needs no credential when omitted. OAuth providers cannot set this field. |
+| `endpoints` | Protocol endpoints. Required for a new provider. Each protocol appears at most once. |
+| `headers` | Extra headers as `[{ "name": "x-team", "value": "core" }]`. Header names and values must be valid. A header must not replace a credential or session header that yuke writes. |
+| `session_header` | `none` (default for a new provider), `session_id`, or `x_opencode_session`. |
+| `models` | Model entries. Required for a new provider. |
 
-| `auth` | Meaning |
-|---|---|
-| absent | A built-in provider reads its variable. Another provider sends no credential. |
-| `{ "api_key": { "source": { "env": "NAME" } } }` | The key comes from `NAME`. |
-| `{ "api_key": { "source": { "literal": "..." } } }` | The key is in the file. |
-| `{ "api_key": {} }` | The provider needs a key and has none: `needs key`. |
-| `{ "oauth": ... }` | An account login. Only `yuke login` writes it. |
+Use `api_key_env` for an API-key route. For an account login, use a built-in OAuth provider.
 
-| Endpoint field | Meaning |
+### Endpoint fields
+
+| Field | Meaning |
 |---|---|
-| `protocol` | Required, once per list: `anthropic_messages` (`/messages`), `openai_chat` (`/chat/completions`), or `openai_responses` (`/responses`). |
-| `credential_header` | `x_api_key`, `authorization_bearer`, or `api_key`. Required with an API key. Omit it with an account login. |
-| `cache` | `none` (default), `automatic`, or `breakpoint`. `breakpoint` marks the prompt cache in the protocol's own shape. `openai_chat` has none. |
+| `protocol` | Required: `anthropic_messages` (`/messages`), `openai_chat` (`/chat/completions`), or `openai_responses` (`/responses`). yuke appends the protocol path to the base URL. |
+| `credential_header` | `x_api_key`, `authorization_bearer`, or `api_key`. Required when the provider sends a credential, including an account login. Omit it for a provider that needs no credential. |
+| `cache_breakpoint` | Boolean, default `false`. Mark an explicit prompt-cache breakpoint. `openai_chat` does not support this field set to `true`. |
 | `responses_dialect` | `standard` (default) or `codex`. Only on `openai_responses`. |
 | `chat_dialect` | `standard` (default) or `mistral`. Only on `openai_chat`. |
 
-| Model field | Meaning |
+### Model fields
+
+| Field | Meaning |
 |---|---|
-| `id`, `upstream_id` | Required. The selector name, and the name the host receives. |
-| `protocol` | The endpoint. Required when the provider has more than one endpoint. |
-| `limits` | `context_window`, `max_output_tokens`. Omitted means unknown. |
-| `cost` | A list of price bands, in USD per million tokens. See below. Omitted means unknown, not zero. |
-| `reasoning_levels` | Some of `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. `null` turns reasoning off. |
-| `flags` | See below. |
+| `id` | Required. The model part of the selector. It can contain `/`, but not whitespace or control characters. |
+| `upstream_id` | The model name that the host receives. Defaults to `id`. |
+| `name` | Display name. Defaults to `id`. |
+| `protocol` | Required when the provider has more than one endpoint. Otherwise, defaults to the only endpoint's protocol. |
+| `limits` | `context_window` and `max_output_tokens`. Omitted values are unknown. |
+| `cost` | Price bands in USD per million tokens. Omitted prices are unknown, not zero. See [Cost](#cost). |
+| `reasoning_levels` | Named levels from `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. `null` lists an off choice. The default reasoning choice sends no control. |
+| `flags` | Protocol behavior and capability facts. See below. |
 
-| Flag | Default | Values |
-|---|---|---|
-| `supports_tools` | `true` | |
-| `supports_vision` | `false` | |
-| `supports_tool_search` | unknown | Needs `supports_tools`. Not on `openai_chat`. |
-| `thinking_format` | `none` | `openai`, `openrouter`, `deepseek`, `zai`, `qwen`, `together`, `ant_ling` |
-| `reasoning_replay` | `none` | `reasoning`, `reasoning_content`, `reasoning_details` |
-| `anthropic_thinking` | absent | `toggle`, `adaptive`, `budget`. Only on `anthropic_messages`. See below. |
-| `reasoning_budget_min`, `reasoning_budget_max` | absent | The bounds of the `budget` shape. Only with `anthropic_thinking: "budget"`. |
-| `max_tokens_field` | `max_tokens` | `max_completion_tokens` |
+### Model flags
 
-`anthropic_thinking` sets the request that a named reasoning level sends on `anthropic_messages`:
-
-| Value | Request |
+| Flag | Meaning |
 |---|---|
-| absent | `output_config.effort` set to the level. |
-| `toggle` | `thinking: {type: "adaptive"}`. The level sends nothing more. For a compatible host such as MiniMax. |
-| `adaptive` | `thinking: {type: "adaptive", display: "summarized"}` and `output_config.effort` set to the level. For Claude Opus 4.6 and later, Sonnet 4.6 and later, Fable, and Mythos. |
-| `budget` | `thinking: {type: "enabled", budget_tokens}`, inside the bounds. |
+| `supports_tool_search` | Boolean. Whether the model supports deferred tool search. The protocol and route must also support it. |
+| `can_disable_reasoning` | Boolean. `false` rejects an explicit off choice. |
+| `supports_cache_breakpoint` | Boolean. Whether the model accepts an explicit cache marker. |
+| `thinking_format` | Chat Completions format: `none`, `openai`, `openrouter`, `deepseek`, `zai`, `qwen`, `together`, or `ant_ling`. Default: `none`. |
+| `reasoning_replay` | Chat Completions replay: `none`, `reasoning`, `reasoning_content`, or `reasoning_details`. Default: `none`. |
+| `max_tokens_field` | Chat Completions output limit field: `max_tokens` (default) or `max_completion_tokens`. |
+| `anthropic_thinking` | Messages thinking shape: `toggle`, `adaptive`, or `budget`. |
+| `reasoning_budget_min`, `reasoning_budget_max` | Optional bounds for `anthropic_thinking: "budget"`. |
 
-`off` sends `thinking: {type: "disabled"}`, and an empty level sends no reasoning control.
+Omitted capability facts are unknown.
 
-`cost` is a list of price bands. A vendor can bill a long prompt at a higher price. Each band holds the prices from one prompt size up. Each band has these fields:
+For `anthropic_messages`, a named reasoning level uses this shape:
+
+| `anthropic_thinking` | Request |
+|---|---|
+| absent | Set `output_config.effort` to the level. |
+| `toggle` | Send `thinking: { "type": "adaptive" }`, without an effort or display field. |
+| `adaptive` | Send `thinking: { "type": "adaptive", "display": "summarized" }` and set `output_config.effort`. |
+| `budget` | Send `thinking: { "type": "enabled", "budget_tokens": ... }` within the configured bounds. |
+
+An allowed off choice sends `thinking: { "type": "disabled" }`. The default choice sends no reasoning control.
+
+## Local server
+
+A local server that needs no credential omits both `api_key_env` and `credential_header`:
+
+```json
+{
+  "providers": [{
+    "id": "local",
+    "base_url": "http://127.0.0.1:8080/v1",
+    "endpoints": [{ "protocol": "openai_chat" }],
+    "models": [{ "id": "my-model" }]
+  }]
+}
+```
+
+Replace the port and model ID with those of your server. Then run a task:
+
+```sh
+yuke -p 'Say hello.' --model local/my-model --reasoning default
+```
+
+## Cost
+
+`cost` is a list of price bands. The first band starts at `0`; you can omit `min_prompt_tokens` there. Each later band starts at a higher prompt size. Prices must not be negative.
 
 | Band field | Meaning |
 |---|---|
-| `min_prompt_tokens` | The smallest prompt that the band prices. The first band starts at `0`, and you can omit it there. Each next band starts higher. |
-| `input`, `output` | The price of an uncached input token and of an output token. |
-| `reasoning` | The price of a reasoning token. When the vendor bills a reasoning token as an output token, write the `output` price. |
-| `cache_read`, `cache_write` | The price of a cached input token, and of an input token that the request writes to the cache. |
+| `min_prompt_tokens` | The smallest prompt size that uses the band. |
+| `input`, `output` | Prices for uncached input tokens and output tokens. |
+| `reasoning` | Price for reasoning tokens. Use the output price when the vendor bills reasoning at that rate. |
+| `cache_read`, `cache_write` | Prices for cached input tokens and tokens written to the prompt cache. |
 
-The prompt size counts every input token of a request, the cached tokens too. The last band that the prompt reaches prices the whole request. A price that you omit is unknown, and yuke then shows the cost of that request as unknown. For example, this model doubles its input price above 272,000 tokens:
+The prompt size includes cached input tokens. The last band that the prompt reaches prices the whole request. A missing price stays unknown. For example:
 
 ```json
 "cost": [
@@ -127,21 +188,18 @@ The prompt size counts every input token of a request, the cached tokens too. Th
 
 ## Change a built-in provider
 
-An entry with a built-in `id` changes that provider. A field you write replaces the built-in value, and a field you omit keeps it. `endpoints` replaces the whole list. A model with a built-in `id` replaces that model, and a new `id` adds a model. For example, `{ "id": "openai", "base_url": "http://127.0.0.1:8080/v1" }` sends the requests of every `openai` model through a proxy.
+An entry with a built-in `id` changes that provider. A written field replaces the built-in value. An omitted field keeps it. `endpoints` replaces the whole endpoint list. Each model entry replaces the whole model with that ID, or adds a new model. Models not listed stay unchanged.
 
+For example, this entry sends all OpenAI model requests through a proxy while it keeps the built-in models and credential settings:
+
+```json
+{
+  "providers": [{ "id": "openai", "base_url": "http://127.0.0.1:8080/v1" }]
+}
+```
 
 ## Failure diagnostics
 
-Yuke writes failure diagnostics to `$XDG_STATE_HOME/$YUKE_APPNAME/yuke.log`. The default path is `~/.local/state/yuke/yuke.log`.
+CLI startup errors go to stderr. Runtime notices reach the terminal UI or the RPC client. A headless task reports a failed turn through its exit status and, with `--json`, its `end` value.
 
-The log has JSON records after these markers:
-
-- `PROVIDER_HTTP_FAILURE` names a failed connection, request-body write, or response-header read. It records the client error and the mapped error.
-- `PROVIDER_STREAM_FAILURE` names a failed response-body read or response stream. It records the raw cause when available, the mapped cause, HTTP status, request ID, and whether the stream delivered output.
-- `PROVIDER_ATTEMPT_FAILURE` identifies the session, run, and attempt. It records the failure cause, HTTP status, request ID, delivery state, output state, and retry delay. A null delay means that Yuke does not retry that attempt.
-
-A body read can report `ContentLengthTruncated`, `HttpChunkTruncated`, or `ConnectionResetByPeer`. A stream without its completion marker reports `IncompleteStream`. A TLS handshake can report `TlsInitializationFailed`. These names identify the failed operation, not who caused it.
-
-`raw_cause_available` tells whether the body adapter retained a lower-level cause. Custom adapters can omit that information. A failure without a response has no HTTP status or provider request ID. An HTTP 200 record does not mean that the response stream completed.
-
-Diagnostics escape request IDs as JSON. They keep at most 128 bytes and mark a longer ID with `request_id_truncated`. They do not include URLs, headers, credentials, prompts, or response bodies. The records appear only after failures. Successful requests emit none of these records. Retry and cancellation rules stay unchanged.
+Capture the error from your command or client. Check the provider's service status and the route configuration before you retry. Do not publish credentials or private task content in a diagnostic report.

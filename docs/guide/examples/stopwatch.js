@@ -1,45 +1,47 @@
-// Save this entry as index.js in a plugin folder, and list the folder in config.json.
-// plugin.json: {"name": "stopwatch", "extensions": {"sh.yuke": {"entry": "./index.js", "uses": ["tui"]}}}
-// This clock uses wall time, not provider speed or a monotonic time source.
+// Time an interval in the status bar. This plugin needs no service in `uses`.
 
-/** Add a frame-loop clock in the TUI. Null TUI skips registration. A failed registration throws. @param {import("yuke").Context} ctx */
-export default function (ctx) {
+/** @param {import("yuke:plugins").PluginContext} ctx */
+export function apply(ctx) {
   const tui = ctx.get("tui");
-  if (!tui) return;
+  if (!tui) return undefined;
 
+  let started = 0;
+  let elapsed = 0;
   let running = false;
-  let startedAt = 0;
-  let seconds = 0;
-  let label = "0s";
-  const period = { periodMs: 1000 };
+  /** @type {() => void} */
+  let cancel = () => {};
+
   const update = () => {
-    if (!running) return;
-    const next = Math.floor(Math.max(0, Date.now() - startedAt) / 1000);
-    if (next === seconds) return;
-    seconds = next;
-    label = next + "s";
+    const duration = elapsed + (running ? tui.now() - started : 0);
+    tui.status.set("time", {
+      text: `${Math.floor(duration / 1000)}s`,
+      side: "right",
+      order: 20,
+    });
+    if (running) cancel = tui.after(1000, update);
   };
 
-  tui.command.add("clock-start", {
-    desc: "Start or reset the clock",
-    slash: true,
+  tui.commands.add({
+    name: "toggle",
+    description: "Start or stop the stopwatch",
     run: () => {
-      startedAt = Date.now();
-      seconds = 0;
-      label = "0s";
-      running = true;
-      tui.root.invalidatePaint();
-    },
-  });
-  tui.command.add("clock-stop", {
-    desc: "Freeze the clock",
-    slash: true,
-    run: () => {
+      cancel();
+      if (running) elapsed += tui.now() - started;
+      else started = tui.now();
+      running = !running;
       update();
-      running = false;
-      tui.root.invalidatePaint();
     },
   });
-  tui.status.add({ side: "right", render: () => label });
-  tui.tickable({ needsTick: () => running ? period : null, tick: update });
+  tui.commands.add({
+    name: "reset",
+    description: "Reset the stopwatch",
+    run: () => {
+      cancel();
+      elapsed = 0;
+      started = tui.now();
+      update();
+    },
+  });
+  update();
+  return undefined;
 }

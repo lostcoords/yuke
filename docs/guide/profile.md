@@ -1,212 +1,170 @@
+---
+description: Configure yuke profiles, plugin sources, startup modes, and editor types.
+---
+
 # Profile
 
-The profile is the directory `$XDG_CONFIG_HOME/$YUKE_APPNAME`. The default is `~/.config/yuke`. `YUKE_APPNAME` must be a plain directory name. A second name keeps a second profile beside the first.
+The profile is the directory `$XDG_CONFIG_HOME/$YUKE_APPNAME`. The default is `~/.config/yuke`. `YUKE_APPNAME` must be one plain directory name. A second name selects a separate profile.
+
+An empty or relative XDG root counts as unset. yuke then uses the default directory under your home.
 
 ## Files
 
-| Path | Owner | Rule |
-|---|---|---|
-| `config.json` | you | The settings and the plugin list. yuke reads it at startup and on `/reload`. A missing file is fine. |
-| plugin folders | you | Each folder that `config.json` lists holds a `plugin.json`. Code is optional. |
-| `jsconfig.json`, your own `*.d.ts` | you | Editor options and your types. See [Types](types.md). |
-| `yuke.d.ts`, `yuke-modules.d.ts`, `yuke.jsconfig.json` | installer | Links into `~/.local/lib/yuke`. Read them. The next install replaces them. |
-| `providers.json` | you | Provider credentials and routes. Keep it out of logs and out of git. See [Providers](providers.md). |
+| Location | Contents |
+|---|---|
+| `$XDG_CONFIG_HOME/$YUKE_APPNAME` | `config.json`, `providers.json`, `plugins.lock`, your local plugins, and editor configuration. Default: `~/.config/yuke`. |
+| `$XDG_DATA_HOME/$YUKE_APPNAME` | The session store, `auth.json`, installed Git plugins, and plugin data. Default: `~/.local/share/yuke`. |
+| `$XDG_CACHE_HOME/$YUKE_APPNAME` | Files that yuke can create again, such as compiled TypeScript. Default: `~/.cache/yuke`. |
 
-yuke keeps its data in `$XDG_DATA_HOME/$YUKE_APPNAME` (default `~/.local/share/yuke`). Do not edit it.
+Keep credentials out of version control. `auth.json` holds account logins and stored API keys. `providers.json` configures routes and API-key variable names; its custom headers can also contain sensitive values. See [Providers](providers.md).
+
+Keep `config.json`, local plugin source, and `plugins.lock` with your dotfiles if you want to reproduce a profile. Let yuke manage its data and cache files.
 
 ## config.json
 
-`config.json` is JSON with `//` and `/* */` comments. yuke reads the keys below and ignores any other key. A JSON error names its line, and yuke starts with the defaults for that file.
+`config.json` accepts JSON with `//` and `/* */` comments. A missing file uses the defaults. The schema is strict. An unknown field, a bad value, or a JSON error stops startup. An error names the file and the problem. A failed reload keeps the previous profile.
+
+This configuration uses only bundled plugins:
 
 ```jsonc
 {
-  // The terminal UI. `yuke -p` and `yuke --rpc` ignore it.
-  "tui": {
-    "colors": "auto",
-    "mouse": { "scrollLines": 3, "copyOnSelect": true },
-    "keymap": { "chordMs": 1000 }
-  },
-  "systemPrompt": null,
-  // Folders: a relative path resolves against this file, and an absolute path works as it is.
-  "plugins": ["./plugins/hello"],
-  // Bundled plugins that do not load.
-  "disable": []
+  "plugins": [],
+  "disable": [],
+  "bundled": {},
+  // Close an unheld session with running jobs after 30 minutes.
+  "sessionIdleMinutes": 30
 }
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `tui.colors` | `"auto"` | The palette depth: `"auto"` follows `COLORTERM`, `"truecolor"` forces 24-bit colors, `"256"` forces the 256-color palette. |
-| `tui.mouse.scrollLines` | `3` | Lines per wheel step. |
-| `tui.mouse.copyOnSelect` | `true` | Copy a mouse selection. |
-| `tui.keymap.chordMs` | `1000` | Milliseconds to wait for the next chord key. |
-| `systemPrompt` | `null` | Replace the base prompt. `${workspace}`, `${session_id}`, and `${agent_name}` expand. |
-| `plugins` | `[]` | Local plugin folders or public GitHub sources. A source, folder, manifest, or entry that fails reports an error. The other plugins load. See [GitHub sources](#github-sources). |
-| `mcpServers` | `{}` | MCP servers by name. A workspace `.mcp.json` server with the same name replaces one. See [MCP servers](engine.md#mcp-servers). |
-| `disable` | `[]` | Names of [bundled plugins](plugins.md#bundled-plugins) that do not load. A profile plugin can then provide their capability. Another name does nothing. |
+| `plugins` | `[]` | Local plugin folders or Git source objects. The list can pass an `options` object to each plugin. |
+| `disable` | `[]` | Bundled plugin names that do not load. An unknown name is an error. |
+| `bundled` | `{}` | Options for bundled plugins, by plugin name. An unknown plugin name is an error. Each plugin checks its options. |
+| `sessionIdleMinutes` | `30` | Minutes before an open session with running jobs and no holder closes and stops its jobs. An active turn or a holder prevents this idle close. |
 
-## GitHub sources
+See [Terminal UI](ui.md) for UI settings and [Engine](engine.md) for prompt hooks and MCP configuration.
 
-A `plugins` entry can be a local folder string or a GitHub source object. Keep both kinds in the same list:
+### Local plugin options
+
+A relative plugin path starts in the profile directory. An absolute path also works. A string entry gives the plugin no options. An object can give it options:
 
 ```json
 {
   "plugins": [
     "./plugins/hello",
+    { "path": "./plugins/project", "options": { "label": "work" } }
+  ]
+}
+```
+
+The folders must exist. Each plugin defines its own option schema; `label` in this example is an option for a plugin that accepts it.
+
+## Git sources
+
+A Git source specifies a repository URL:
+
+```json
+{
+  "plugins": [
     {
-      "github": "lostcoords/yuke-plugins",
+      "git": "https://github.com/OWNER/REPOSITORY.git",
       "ref": "main",
-      "path": "plugins/vim-mode"
+      "folder": "plugins/example",
+      "options": {}
     }
   ]
 }
 ```
 
-- `github` is `OWNER/REPO` or `https://github.com/OWNER/REPO`. This first implementation supports public repositories only.
-- `ref` is a branch, tag, or commit. Its default is `HEAD`, the repository's default branch. A full 40-character commit skips the ref lookup.
-- `path` is a plugin folder inside the repository. Its default is `.`. It cannot leave the repository.
+Replace the URL and folder with a plugin that you trust. `ref` selects a branch, tag, or commit. Without `ref`, the source follows the default branch. `folder` selects a folder inside the repository; its default is the repository root. It cannot be absolute or contain `..`.
 
-Yuke downloads a missing source before it starts the JavaScript host. It resolves a branch or tag to a commit, downloads that commit, and checks the selected manifest. It stores a complete snapshot under `<profile>/.plugin-cache/` and records the source and full commit in `source.json`. It does not rewrite `config.json` or run a separate installer. Local folder entries work as before.
+Run `yuke plugin sync` after you add a Git source. The manager needs Git. It records a commit in `plugins.lock` and installs that commit. Startup and reload use the installed commit without network access.
 
-Later starts and `/reload` reuse the complete cached snapshot without network access. A branch does not update silently. To select another version, change `ref` to a new commit or tag. To fetch a branch again, remove that source's cache folder while Yuke is stopped. Add `.plugin-cache/` to the ignore file if you keep your profile in version control.
+| Command | Behavior |
+|---|---|
+| `yuke plugin list` | Show the configured plugins, locked commits, and install states without network access. |
+| `yuke plugin sync` | Install locked commits and lock each new Git source at its selected ref. |
+| `yuke plugin sync --locked` | Install locked commits. Fail if the lock does not match the configuration. Keep the lock unchanged. |
+| `yuke plugin update NAME...` | Update selected Git plugins by their manifest names. |
+| `yuke plugin update --all` | Update all Git plugins. |
 
-The download uses Yuke's HTTP client. It needs no Git, GitHub CLI, or package manager. Each request has a 30-second deadline. Downloads have a 16 MiB limit. Unpacked archives have a 64 MiB limit and at most 10,000 entries. Yuke rejects archive links, special files, duplicate files, multiple roots, and paths that leave the snapshot. It does not fetch Git submodules or install dependencies.
+An update shows the commit changes and asks for confirmation before it writes `plugins.lock`. Add `--yes` to update without that question. Run `/reload` in open sessions after a sync or update to load the installed version.
 
-A failed source reports a profile problem and does not publish a new snapshot. The other plugins still load. A complete snapshot publishes atomically; concurrent starts do not replace each other's files. Removing a source from `plugins` stops loading it, but its cache stays on disk.
-
-A GitHub plugin has the same user rights as a local plugin. Listing it in the config authorizes Yuke to download and execute its entry at startup or reload. Inspect the source and pin a commit when you need a fixed review target. Use the [isolated check](#isolated-check) before changing your normal profile. Do not list a local and a GitHub copy of the same plugin name.
+A plugin runs with your user rights. Inspect its source before you install it.
 
 ## A plugin
 
-A plugin is a folder with a `plugin.json` ([Agent Plugins](https://github.com/agentplugins/agent-plugins-spec) 1.1.0). An entry module is optional. yuke reads its part under `extensions["sh.yuke"]`:
-
-```json
-{
-  "name": "hello",
-  "extensions": { "sh.yuke": { "entry": "./index.js", "uses": ["tui"] } }
-}
-```
-
-[Your first plugin](first-plugin.md) shows the complete entry and loading workflow. [`examples/hello.js`](examples/hello.js) is its checked entry.
-
-- `name` names the plugin. It prefixes the commands of the plugin. yuke reads `name` and `extensions["sh.yuke"]`, and it ignores the other fields.
-- `entry` is the path of the entry module, relative to the folder. Its default export is `apply(ctx)`. It can be async, and startup waits for it.
-- `uses` and `provides` list the capabilities that `ctx.get` reads and `ctx.provide` registers. See [Plugins](plugins.md#capabilities).
-- `ctx.root` is the plugin folder, for the files of the plugin.
-- `activation: { "workspaceContains": ".xyastack" }` limits the plugin to the sessions of a workspace that holds that file. The path is relative to the workspace root. A directory does not match. The tools, the engine hooks, the skills, and the MCP servers of the plugin reach only those sessions. Its commands, keys, and views stay in every frontend. Without `activation`, every session gets the plugin. yuke checks each rule the first time it uses a workspace, and the answer holds until a restart or a `/reload`.
-- `mcp.json` lists the MCP servers of the plugin in an `mcpServers` object ([MCP servers](engine.md#sources-and-trust)).
-- `skills/` holds the skills of the plugin, one folder with a `SKILL.md` for each skill. A skill keeps its plain name. The first skill with a name wins: the workspace `.agents/skills`, then `~/.agents/skills`, then the plugins in `config.json` order. yuke skips a later skill with the same name and posts a notice. The skills load even when the entry module fails.
-
-[`examples/plugin.js`](examples/plugin.js) adds a command, a key, a status item, a model tool, an event listener, and a hook.
+A local plugin folder holds `plugin.json`. The manifest names the plugin and can declare an entry under `extensions["sh.yuke"]`. The entry can be TypeScript or JavaScript. See [Your first plugin](first-plugin.md) for a complete example and [Plugins](plugins.md) for services and lifecycle rules.
 
 ## Modules
 
-| Import | Holds |
-|---|---|
-| `yuke` | `config`, `events`, `fs`, `env`, `fetch`, `exec`, `spawn`, `lines`, `net`, `jobs`, `client`, `children`, `utf8`, `diff`, and the plugin types |
-| `yuke:ui` | views and widgets, `ui.pick`, `keys` |
-| `yuke:chat` | `ChatView`, `ChatSurface`, `Transcript`, and helpers for a renderer: `toolHead`, `wrapRows`, `diffRows`, `openDetails`; `attachPath`, `attachClipboard` |
-| `yuke:session` | `Session`, `sessions`, `currentSession()`, `currentPane()`, `currentEntry()`, `showSession` |
-| `yuke:plugins` | `shell`, the bundled window layout, for a replacement |
+The installed library supplies public `yuke:*` modules and their types. Plugin and tool helpers come from `yuke:plugins` and `yuke:tools`. Files, processes, networking, and other host APIs have separate modules. See [Public types](types.md) for the module list and exact declarations.
 
-An import of `yuke:internal/*` throws. A relative import works. Yuke does not resolve npm dependencies, so an npm import fails.
-
-yuke runs ES2025 JavaScript (QuickJS-ng), with no Node or browser API: use the `yuke` modules for files, processes, and the network. A plugin runs with your user rights, so it can read and write any file and run any command.
+yuke uses QuickJS-ng. It does not supply Node or browser APIs. Use the public host modules instead.
 
 ## Modes
 
-| Mode | Bundled TUI plugins and `tui` | Input and drawing | Profile tools, hooks, and engine events |
-|---|---|---|---|
-| `yuke` | Yes | Live terminal | Yes |
-| `yuke resume <id>` | Yes | Live terminal on a saved conversation | Yes |
-| `yuke check` | Yes | No terminal; load check only | Yes |
-| `yuke -p` | No | Headless prompt | Yes |
-| `yuke --rpc` | No | JSONL client | Yes |
+| Command | Behavior |
+|---|---|
+| `yuke` | Open the terminal UI with a new conversation. |
+| `yuke --resume ID` | Open a saved conversation in the terminal UI. |
+| `yuke -c` | Open the conversation in the current directory with the newest saved event. |
+| `yuke -p 'PROMPT' --model PROVIDER/MODEL --reasoning default` | Run one task without the UI. |
+| `yuke --rpc` | Serve the JSONL protocol on stdin and stdout. |
+| `yuke test [PATHS...]` | Run `*.test.ts` files with the test host and a fake model. |
 
-Read `ctx.get("tui")`, and return early when it is `null`. Register model tools and engine hooks before that return, so all modes get them. A TUI registration that passes `yuke check` still needs a live input and drawing check.
+Plugins can load in terminal, headless, and protocol modes. Only terminal mode supplies the TUI service. A plugin must handle its absence in other modes. See [Plugins](plugins.md).
 
 ## Check a change
 
-Use the full workflow:
+Run the editor check against the profile configuration:
 
 ```sh
-tsc -p <profile>/jsconfig.json
-yuke check
-# Save a copy of the typed draft.
-# Run /reload in yuke after the active run ends.
+tsc -p ~/.config/yuke/tsconfig.json
 ```
 
-- `tsc` checks the profile against the declarations of the installed release.
-- `yuke check` loads the TUI composition without a terminal. It provides `tui`, so TUI code runs, and it prints debug lines, warnings, and errors to stderr. It counts only warnings and errors. It exits with status 1 on an error.
-- `yuke check` runs plugins and opens the session store. It is not read-only.
-- yuke reads `config.json` and the plugins at startup and on `/reload`. `/reload` stops every plugin and starts them again from the files on disk. Then it rescans `AGENTS.md` and the skills of each open chat.
-- `/reload` keeps the panes, the split sizes, the focus, and the chat of each pane. A `shell` replacement starts with one new chat. A background job continues. Its end reaches the new plugins through `job.changed`. A typed draft is lost.
-- `/reload` refuses while a run or a tool call is active. A notice says so.
-- When the plugins of `config.json` stop the boot, `/reload` starts the core plugins without them. The notifications show the fault. Fix `config.json`, then run `/reload` again.
+Use your actual profile path if it differs. For behavior tests, run `yuke test` on test files that use `yuke:test`. A test uses an isolated app and a fake model. It does not need provider credentials. See [Public types](types.md) for the test API.
 
-### Continue in another workspace
+A type check does not verify terminal input or drawing. Start a separate terminal session to check those behaviors.
 
-The `workspace` profile plugin owns `/cd` and `/pwd`. Copy `plugins/workspace` into the profile and list `"./plugins/workspace"` in `config.json`. It needs a build that exports `workspace` from `"yuke"`. Neither command loads without this plugin.
-
-`/cd <path>` continues the current conversation in a new workspace. `/pwd` shows the current workspace without changing the conversation or its draft. `/cd` without a path also shows the current workspace.
-
-The path can be absolute, relative to the current workspace, be `~`, or start with `~/`. The entire argument is one path, including spaces. Matching outer double quotes, single quotes, or backticks delimit the path. Yuke removes those delimiters without shell or variable expansion.
-
-For an open chat, Yuke forks the committed history under a new session ID. The source chat stays unchanged. The fork keeps model settings, compaction, and attachment references. It does not copy child chats or background jobs.
-
-Yuke reloads the profile and plugins with the destination as the default workspace. The destination supplies `AGENTS.md`, skills, plugin activation, and workspace MCP configuration. MCP trust still requires approval. File helpers, path completion, and new chats use the destination.
-
-The command requires one pane and the bundled `shell`. It refuses while chat creation, a run, a tool call, or a continuation is active. It also refuses a queued input, pending compaction, a running background job, or an unsaved draft. A missing or inaccessible directory leaves the current chat and workspace unchanged. Selecting the current workspace does not fork or reload it.
-
-A draft changes workspace without creating a chat. Plugin-owned state and timers reset on reload. If a profile plugin stops the new boot, the core fallback opens the destination fork. Input stays in the composer until the restored history opens. The fallback does not load profile commands. Fix the profile and reload to restore `/cd` and `/pwd`.
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end before you reload. A reload replaces the JavaScript runtime. Module state resets. Process jobs continue, but plugin-owned jobs stop. A failed reload keeps the previous plugins and providers. See [Terminal UI](ui.md) for the reload controls and pane state.
 
 ### Isolated check
 
-This POSIX-shell recipe checks the installed [hello example](examples/hello.js) in a disposable profile and workspace. It needs TypeScript (`tsc`) and the installed files in `~/.local/lib/yuke`. It does not copy provider credentials. The yuke process gets a temporary home, config, data, and state directory and a clean environment.
+Use a temporary home, workspace, and XDG directories before you load unverified code. For example, start an empty terminal session without provider credentials:
 
 ```sh
 (
   set -eu
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
-  lib="$HOME/.local/lib/yuke"
   bin="$HOME/.local/bin/yuke"
-  profile="$scratch/config/yuke-doc-check"
-  mkdir -p "$profile/plugins/hello" "$scratch/home" "$scratch/workspace"
-  ln -s "$lib/jsconfig.json" "$profile/yuke.jsconfig.json"
-  ln -s "$lib/types/yuke.d.ts" "$profile/yuke.d.ts"
-  ln -s "$lib/types/yuke-modules.d.ts" "$profile/yuke-modules.d.ts"
-  printf '%s\n' '{ "extends": "./yuke.jsconfig.json" }' > "$profile/jsconfig.json"
-  printf '%s\n' '{ "plugins": ["./plugins/hello"] }' > "$profile/config.json"
-  printf '%s\n' '{ "name": "hello", "extensions": { "sh.yuke": { "entry": "./index.js", "uses": ["tui"] } } }' > "$profile/plugins/hello/plugin.json"
-  cp "$lib/docs/examples/hello.js" "$profile/plugins/hello/index.js"
-  tsc -p "$profile/jsconfig.json"
+  mkdir -p "$scratch/home" "$scratch/workspace"
   cd "$scratch/workspace"
   env -i HOME="$scratch/home" PATH="$PATH" \
     XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
-    XDG_STATE_HOME="$scratch/state" YUKE_APPNAME=yuke-doc-check \
-    "$bin" check
+    XDG_CACHE_HOME="$scratch/cache" YUKE_APPNAME=yuke-doc-check \
+    "$bin"
 )
 ```
 
-Expect `hello · debug: hello loaded` and `0 error(s), 0 warning(s)`. The subshell removes the temporary files when it ends. Your normal profile, provider file, log, and session store stay outside the check.
+Press **Ctrl+Q** to exit. The subshell then removes the temporary files, including any session data. This empty profile checks startup only. To test a plugin, prepare its profile files in the temporary config directory before you start yuke. Do not copy credentials there.
 
-For another plugin, copy its folder into the temporary profile instead of the hello entry. Change the manifest and `plugins` list to match. Keep relative assets inside that folder. Do not copy credentials. Check that plugin against the same declarations.
-
-This is isolation, not a sandbox. A plugin still runs with your user rights. It can access an absolute path or run a command. This check does not verify compatibility with your normal plugin list. Inspect the code before loading it there.
-
-Use a separate disposable TUI session to check input, drawing, and unload behavior. Do not use the shell recipe for a live session: its cleanup removes the temporary files as soon as the check ends. Follow the [first-plugin tutorial](first-plugin.md#5-load-and-run-the-command) for live reload and keep the draft-loss warning above.
+This is isolation, not a sandbox. A plugin can still access an absolute path or run a command with your user rights.
 
 ## Debug a plugin
 
-`print(...values)` and `console.log` post a `debug` line; `console.info`, `console.warn`, and `console.error` post at their own level. `ctx.print` names your plugin as the source. A string prints as it is, an error as its message, and any other value as JSON.
+Console output becomes a `notice` notification from the source `console`. Plugin notices and script faults also reach the active frontend. Inspect terminal notices or the `notice` messages of an RPC client. CLI startup errors go to stderr.
 
-- `yuke check` prints each line as `source · level: message`.
-- In the TUI, a warning, an error, or a plugin fault shows as a toast; a debug line never does. `notify:history` (`/messages`) lists the newest 100.
-- Every mode appends each line, and yuke's own log, to `yuke.log` in the state directory (`$XDG_STATE_HOME/yuke`, by default `~/.local/state/yuke`). Each line starts with the process id. The file never rotates. A panic prints to stderr.
+Capture stderr or protocol notifications when you need a record of a failure. Do not publish credentials or private task content in a diagnostic report.
 
-## Install links
+## Editor configuration
 
-Each install replaces `yuke.d.ts`, `yuke-modules.d.ts`, and `yuke.jsconfig.json` in the profile that `YUKE_APPNAME` names at install time, even a file of yours with the same name. It writes `jsconfig.json` only when none exists. It also links the `yuke` agent skill into `~/.agents/skills/yuke`, for every coding agent that reads that directory; your own entry at that path stays, and the installer prints a warning.
+The installer creates `<profile>/tsconfig.json` only when that path is absent. It extends the absolute path `~/.local/lib/yuke/tsconfig.json`, includes `./**/*.ts`, and excludes `./node_modules`. The actual file contains the full library path, not `~`.
 
-The links hold a path on this machine. A profile in git ignores them: add `yuke.d.ts`, `yuke-modules.d.ts`, and `yuke.jsconfig.json` to its `.gitignore`.
+The library contains `modules/plugins.ts`, `modules/tools.ts`, and `modules/protocol.ts`. The `types/` directory contains `globals.d.ts`, `ai.d.ts`, `chat.d.ts`, `fs.d.ts`, `net.d.ts`, `process.d.ts`, `test.d.ts`, `transcript.d.ts`, and `tui.d.ts`. These files declare the host modules and globals.
+
+The library configuration includes that public source, those declarations, and the protocol bindings. It maps `yuke:*` to the public module source and `yuke:protocol/*` to the protocol bindings. It excludes private modules and `native.d.ts`.
+
+An existing editor configuration stays unchanged on upgrade. Keep its library path and options current. See [Public types](types.md). The generated profile configuration has a machine-specific absolute path. Update it when you move the profile to another machine.
