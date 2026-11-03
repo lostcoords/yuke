@@ -7,21 +7,26 @@ const { frontmatter } = useData();
 
 <template>
   <section class="hero yuke-section">
-    <h1 class="yuke-heading">A coding agent<br>you can <span>reshape.</span></h1>
+    <img class="mascot" :src="withBase('/mascot/coffee.png')" alt="" width="123" height="126" />
+    <h1 class="yuke-heading">Unleash your <span>harness.</span></h1>
     <p class="lead">{{ frontmatter.tagline }}</p>
     <InstallCommand class="install" />
-    <p class="platforms">Pre-release · macOS and Linux · No Node or Python runtime required</p>
     <p class="links">
       <a :href="withBase('/docs/get-started')">Quick start <span aria-hidden="true">→</span></a>
-      <a :href="withBase('/install.sh')">View install script <span aria-hidden="true">↗</span></a>
+      <a :href="withBase('/docs/plugins')">Plugins <span aria-hidden="true">→</span></a>
     </p>
   </section>
 </template>
 
 <style scoped>
 .hero {
-  padding-top: 104px;
+  padding-top: 64px;
   text-align: center;
+}
+
+.mascot {
+  display: block;
+  margin: 0 auto 24px;
 }
 
 h1 {
@@ -48,14 +53,6 @@ h1 span {
   text-align: left;
 }
 
-.platforms {
-  margin: 14px auto 0;
-  max-width: 520px;
-  color: var(--vp-c-text-2);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .links {
   display: flex;
   flex-wrap: wrap;
@@ -78,7 +75,7 @@ h1 span {
 
 @media (max-width: 639px) {
   .hero {
-    padding-top: 64px;
+    padding-top: 40px;
   }
 }
 </style>
