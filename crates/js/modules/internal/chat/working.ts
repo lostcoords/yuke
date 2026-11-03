@@ -6,7 +6,6 @@
 import type { ChatSession, ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { callEach } from "yuke:internal/chat/listeners";
 import { clipped } from "yuke:internal/chat/rows";
-import { subjectOf } from "yuke:internal/chat/tools";
 import type { Status, Transcript } from "yuke:transcript";
 import { measure } from "yuke:tui";
 
@@ -26,15 +25,9 @@ function phase(transcript: Transcript, now: number, retryAt: number | undefined)
     return `Retrying in ${Math.max(0, Math.ceil((retryAt - now) / 1000))}s…`;
   }
   const last = transcript.entries.at(-1);
-  // A call that ended waits for the next answer of the model.
-  if (last?.kind === "tool" && last.status !== "done") {
-    // A call that the model still writes has no name yet.
-    const label = subjectOf(last) ?? last.hints.title ?? (last.name === "" ? "a tool call" : last.name);
-    return last.status === "streaming" ? `Preparing ${label}…` : `Running ${label}…`;
-  }
   if (last?.kind === "reasoning" && last.draft) return "Reasoning…";
   if (last?.kind === "text" && last.draft) return "Responding…";
-  return "Waiting…";
+  return "Working…";
 }
 
 /** The elapsed time `ms` as `42s` or `3m 05s`. */

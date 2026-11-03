@@ -280,17 +280,17 @@ test("questions that start after a question opened show it at once", async () =>
   equal(questions.current !== undefined, true);
 });
 
-test("the working time starts again for another running session, and the end of the handle stops it", async () => {
+test("the timer counts from observation, resets for another session, and stops when the handle ends", async () => {
   // Each open gives a snapshot of a running turn.
   const sessions = fakeSessions([...replies(2), { sessionUpdate: "state", state: "running" } as never]);
   const owner = new AbortController();
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
-  let now = 0;
+  let now = 10_000;
   const working = new ChatWorking(chat, { signal: owner.signal, now: () => now });
   const changes: boolean[] = [];
   working.onChange(() => changes.push(working.active));
-  now = 61_000;
+  now = 71_000;
   const first = working.text({ cancelKey: "esc" })?.text;
   await chat.open("s2");
   const second = working.text()?.text;
@@ -299,6 +299,6 @@ test("the working time starts again for another running session, and the end of 
   sessions.close("s2");
   equal(
     [first, second, working.text(), changes],
-    ["Waiting… (1m 01s · esc to interrupt)", "Waiting… (0s)", undefined, [false, true, false]],
+    ["Working… (1m 01s · esc to interrupt)", "Working… (0s)", undefined, [false, true, false]],
   );
 });

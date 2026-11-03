@@ -23,14 +23,24 @@ test("a running turn shows its phase and time above the rule, and the end of the
   const start = row();
   frame.advance(1080);
   const later = row();
+  const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
   sessions.push(
-    commit(3, [{ tool_call: { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' } }], {
+    commit(3, [{ tool_call: call }], {
       display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] },
     }),
   );
   const tool = row();
+  const pendingCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
+  sessions.push({ sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 0 }, call });
+  const running = row();
+  const runningCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   sessions.push(commit(4, [{ tool_result: { callId: "c1", content: "ok", isError: false } }]));
   const done = row();
+  const completedCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
+  equal(
+    [pendingCommand, runningCommand, completedCommand],
+    [" exec cargo test · waiting", " exec cargo test · running", " exec cargo test"],
+  );
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 5000, error: "overloaded" });
   frame.advance(2000);
   const retry = row();
@@ -41,16 +51,17 @@ test("a running turn shows its phase and time above the rule, and the end of the
   sessions.push({ sessionUpdate: "state", state: "running" });
   const next = row();
   equal(
-    [idle.includes("to interrupt"), start, later, tool, done, retry, ended, next],
+    [idle.includes("to interrupt"), start, later, tool, running, done, retry, ended, next],
     [
       false,
-      "⠋ Waiting… (0s · esc to interrupt)",
-      "⠸ Waiting… (1s · esc to interrupt)",
-      "⠸ Running cargo test… (1s · esc to interrupt)",
-      "⠸ Waiting… (1s · esc to interrupt)",
+      "⠋ Working… (0s · esc to interrupt)",
+      "⠸ Working… (1s · esc to interrupt)",
+      "⠸ Working… (1s · esc to interrupt)",
+      "⠸ Working… (1s · esc to interrupt)",
+      "⠸ Working… (1s · esc to interrupt)",
       "⠇ Retrying in 3s… (3s · esc to interrupt)",
       false,
-      "⠋ Waiting… (0s · esc to interrupt)",
+      "⠋ Working… (0s · esc to interrupt)",
     ],
   );
 });
@@ -69,7 +80,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
   );
 });
 
-test("a draft shows reasoning, a response, or a call that the model still writes", async () => {
+test("reasoning and response drafts have phase labels, and tool input has a generic label", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
@@ -92,7 +103,7 @@ test("a draft shows reasoning, a response, or a call that the model still writes
   model({ kind: "text_delta", block: 1, text: "Sure" });
   const responding = phase();
   model({ kind: "block_started", block: 2, blockKind: "tool_call" });
-  equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Preparing a tool call…"]);
+  equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
 });
 
 test("a close of the session by another client takes the working row away", async () => {
@@ -118,11 +129,11 @@ test("the working row shows no cancel key while the command list takes esc", asy
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.key("/ m o d e l");
   frame.draw();
-  const listed = rows(frame.frame).find((text) => text.includes("Waiting…"));
+  const listed = rows(frame.frame).find((text) => text.includes("Working…"));
   frame.key("esc");
   frame.draw();
-  const hidden = rows(frame.frame).find((text) => text.includes("Waiting…"));
-  equal([listed, hidden], ["⠋ Waiting… (0s)", "⠋ Waiting… (0s · esc to interrupt)"]);
+  const hidden = rows(frame.frame).find((text) => text.includes("Working…"));
+  equal([listed, hidden], ["⠋ Working… (0s)", "⠋ Working… (0s · esc to interrupt)"]);
 });
 
 /** A frame of `width` with a chat whose exec of `command` runs. */
@@ -133,7 +144,7 @@ async function runningExec(width: number, command: string) {
   frame.start();
   await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  const call = { callId: "c1", name: "spawn_subagent", arguments: JSON.stringify({ command }) };
+  const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(
     commit(3, [{ tool_call: call }], { display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] } }),
   );
@@ -166,29 +177,29 @@ test("movable work shows the background hint after a delay, and the key asks to 
   equal(sessions.state.backgrounds, 1);
 });
 
-test("a long command is clipped, and each hint stays whole", async () => {
-  const { frame } = await runningExec(90, `cargo test ${"--flag ".repeat(30)}`);
+test("a long command stays in the transcript and leaves room for the interrupt and background hints", async () => {
+  const { frame } = await runningExec(65, `cargo test ${"--flag ".repeat(30)}`);
   using _frame = frame;
 
   frame.advance(2000);
-  const row = workingRow(frame);
 
-  equal(row.includes("… (2s · esc to interrupt · ctrl+b to background)"), true, row);
-  equal(row.trimEnd().endsWith(")"), true, row);
+  equal(workingRow(frame), "⠴ Working… (2s · esc to interrupt · ctrl+b to background)");
+  equal(
+    rows(frame.frame)
+      .find((text) => text.includes("exec cargo test"))
+      ?.startsWith(" exec cargo test --flag"),
+    true,
+  );
 });
 
 test("a narrow row drops the background hint, then the interrupt hint", async () => {
-  const wide = await runningExec(54, `cargo test ${"--flag ".repeat(30)}`);
+  const wide = await runningExec(42, "cargo test");
   using _wide = wide.frame;
-  const narrow = await runningExec(30, `cargo test ${"--flag ".repeat(30)}`);
+  const narrow = await runningExec(30, "cargo test");
   using _narrow = narrow.frame;
 
   wide.frame.advance(2000);
   narrow.frame.advance(2000);
-  const wideRow = workingRow(wide.frame);
-  const narrowRow = workingRow(narrow.frame);
 
-  equal(wideRow.includes("· esc to interrupt)"), true, wideRow);
-  equal(wideRow.includes("to background"), false, wideRow);
-  equal(narrowRow.trimEnd().endsWith("(2s)"), true, narrowRow);
+  equal([workingRow(wide.frame), workingRow(narrow.frame)], ["⠴ Working… (2s · esc to interrupt)", "⠴ Working… (2s)"]);
 });

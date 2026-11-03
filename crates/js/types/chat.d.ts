@@ -190,9 +190,10 @@ declare module "yuke:chat" {
   }
 
   /**
-   * The working row of a running turn: a spinner, the phase, the elapsed time, and a retry countdown. The time counts
-   * from the first running state with a live handle. Another session or the end of the handle stops the count. The chat
-   * draws the text again each `frameMs` while `active`.
+   * The activity row of an active turn shows a spinner, a phase label, elapsed time, and a retry countdown.
+   * The default label is `Working…`, including during tool calls, without tool names or arguments.
+   * The time counts from the first active state that this instance observes with a live handle, not from tool start.
+   * Another session or the end of the handle stops the count. The chat draws the text again each `frameMs` while `active`.
    *
    * ```ts
    * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
