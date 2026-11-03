@@ -1,4 +1,3 @@
-// One place for the public addresses.
+// Public addresses used by the site.
 export const site = 'https://yuke.sh';
 export const repository = 'https://github.com/lostcoords/yuke';
-export const plugins = 'https://github.com/lostcoords/yuke-plugins';
