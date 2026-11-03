@@ -4,6 +4,7 @@
  * rows.
  */
 
+import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
 import { toolItem } from "yuke:internal/chat/tools";
 import type { Entry, Status, Transcript } from "yuke:transcript";
@@ -20,7 +21,7 @@ interface Cached {
   readonly markdown: Markdown | undefined;
 }
 
-export class ChatDocument {
+export class ChatDocument implements ChatPresentation {
   /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
   #cache = new Map<string, Cached>();

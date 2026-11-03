@@ -5,7 +5,7 @@
  * shows a session in a pane for other plugins.
  */
 
-import type { ChatRow, ChatRowsContext } from "yuke:chat";
+import type { ChatPresentation, ChatPresentationOptions, ChatRow, ChatRowsContext } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
 import type { PluginContext } from "yuke:plugins";
@@ -130,6 +130,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   // One entry per call of `addRows`, so the same source can show twice and each disposer removes its own.
   const sources = new Set<{ readonly source: (pane: ChatRowsContext) => readonly ChatRow[] }>();
   const panes = new WeakMap<View, PaneActions>();
+  let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -160,6 +161,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
         if (sources.delete(entry)) tui?.requestFrame();
       };
     },
+    present: (factory) => {
+      presenter = factory;
+      tui?.requestFrame();
+      return () => {
+        if (presenter !== factory) return;
+        presenter = undefined;
+        tui?.requestFrame();
+      };
+    },
   });
   if (tui === undefined) return undefined;
   const chat: Chat = {
@@ -170,6 +180,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
+    presenter: () => presenter,
     rows: (pane) => [...sources].map((entry) => entry.source(pane)),
     moved: (view) => {
       for (const listener of listeners) listener(view);

@@ -8,6 +8,8 @@ import {
   ChatCommands,
   ChatComposer,
   ChatDocument,
+  type ChatPresentation,
+  type ChatPresentationOptions,
   ChatQuestions,
   type ChatRow,
   type ChatRowsContext,
@@ -105,6 +107,8 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
+  /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
+  readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The rows of each row source of the `chat` service for `pane`, in add order. */
   readonly rows: (pane: ChatRowsContext) => (readonly ChatRow[])[];
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
@@ -122,9 +126,23 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // The draft of each session that this pane left by `show`, for the return to it.
   const drafts = new Map<SessionId, EditorState>();
   let bound = chatSession.id;
-  let document = new ChatDocument(`session:${bound ?? "new"}`, state.folds);
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
+  const changed = (): void => {
+    dirty = true;
+    tui.requestFrame();
+    chat.refresh();
+  };
+  let presenter = chat.presenter();
+  let scope = new AbortController();
+  /** Abort the signal of the old presentation, and create a presentation with the document `key`. */
+  const create = (key: string, folds: ChatPresentationOptions["folds"]): ChatPresentation => {
+    scope.abort();
+    scope = new AbortController();
+    const signal = AbortSignal.any([mount.signal, scope.signal]);
+    return presenter?.({ key, folds, signal, changed }) ?? new ChatDocument(key, folds);
+  };
+  let document = create(`session:${bound ?? "new"}`, state.folds);
   // The saved place waits until its item loads.
   let restore = state.viewport;
   // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
@@ -142,17 +160,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     tick();
   });
 
-  const changed = (): void => {
-    dirty = true;
-    tui.requestFrame();
-    chat.refresh();
-  };
-
   // The pane follows each change of its session: the folds, the place, and the next layout.
   chatSession.onChange(() => {
     if (chatSession.id !== bound) {
       // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
-      document = new ChatDocument(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
+      document = create(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
       if (bound !== undefined) {
         restore = undefined;
         view.scroll.followTail();
@@ -175,9 +187,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         if (position.section === "gap" || !document.toggle(transcript, position.item)) return;
         // The view stays where it is, also at the tail, and it scrolls the least to show the head line of the item.
         const top = view.scroll.state.top;
-        view.setDocument(document.project(transcript));
+        const projected = document.project(transcript);
+        view.setDocument(projected);
         view.scroll.scrollTo(top);
-        view.ensureVisible({ item: position.item, section: "title", offset: 0 });
+        const sections = projected.items.find((item) => item.key === position.item)?.sections;
+        const head = sections?.find((section) => section.kind === "label");
+        if (head !== undefined) view.ensureVisible({ item: position.item, section: head.key, offset: 0 });
         changed();
         return;
       }
@@ -370,6 +385,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
+      // A plugin can load after the start pane mounts.
+      if (presenter !== chat.presenter()) {
+        presenter = chat.presenter();
+        document = create(`session:${bound ?? "new"}`, document.folds);
+        dirty = true;
+      }
       if (dirty) {
         dirty = false;
         view.setDocument(document.project(chatSession.transcript));

@@ -235,6 +235,33 @@ declare module "yuke:chat" {
     project(transcript: Transcript): TextDocument;
   }
 
+  /** The presentation of a transcript in one chat pane. `ChatDocument` is the default presentation. */
+  export interface ChatPresentation {
+    /** The fold choices that the pane saves. `true` is open. */
+    readonly folds: readonly (readonly [string, boolean])[];
+    /**
+     * Open or fold the item `key`, which can be a group of this presentation. Give `false` when that item has no fold.
+     * After `true`, the pane shows the first `label` section of the item, if the item has one.
+     */
+    readonly toggle: (transcript: Transcript, key: string) => boolean;
+    /** Open or fold all tools. */
+    readonly toggleTools: (transcript: Transcript) => void;
+    /** The document of `transcript`. Keep each item key across updates. Keep the object of each unchanged item. */
+    readonly project: (transcript: Transcript) => TextDocument;
+  }
+
+  /** What a chat pane gives the factory of `present`. */
+  export interface ChatPresentationOptions {
+    /** The key of the document. */
+    readonly key: string;
+    /** The saved fold choices. */
+    readonly folds: Iterable<readonly [string, boolean]> | undefined;
+    /** This signal aborts when the pane shows another session, replaces the presentation, or closes. */
+    readonly signal: AbortSignal;
+    /** Ask the pane to project the transcript again, after the state of the presentation changes. */
+    readonly changed: () => void;
+  }
+
   /**
    * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
    * pane exists.
@@ -275,5 +302,15 @@ declare module "yuke:chat" {
      * ```
      */
     readonly addRows: (source: (pane: ChatRowsContext) => readonly ChatRow[]) => () => void;
+    /**
+     * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
+     * presentation, also for one session. The last call wins. A disposer restores the default only if its factory is
+     * current.
+     *
+     * ```ts
+     * chat.present((options) => new GroupedTools(options.key, options.folds));
+     * ```
+     */
+    readonly present: (factory: (options: ChatPresentationOptions) => ChatPresentation) => () => void;
   }
 }
