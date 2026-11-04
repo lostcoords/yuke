@@ -147,7 +147,7 @@ export class Core {
   }
 
   /** Give each later change of `tui.focused` to `listener` of the plugin `owner`. A throw reports and removes it. */
-  onFocus(owner: string, listener: (change: FocusChange) => void): () => void {
+  onFocusChange(owner: string, listener: (change: FocusChange) => void): () => void {
     const entry = { owner, listener };
     this.#focusListeners.add(entry);
     return () => {

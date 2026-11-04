@@ -385,9 +385,9 @@ test("a link fills the missing fields and a cycle stops", () => {
     () => {},
   );
   styles.set({ base: { fg: 1, bg: 2, underline: true } });
-  styles.set({ title: { link: "base", fg: 5 } });
+  styles.set({ title: { inherits: "base", fg: 5 } });
   equal(styles.resolve("title"), { fg: 5, bg: 2, underline: true });
-  equal(styles.resolve({ link: "title", bg: "reset" }), { fg: 5, bg: "reset", underline: true });
+  equal(styles.resolve({ inherits: "title", bg: "reset" }), { fg: 5, bg: "reset", underline: true });
   // Each order of the first resolves gives the same result in a cycle. The fields of a link come first.
   for (const order of [
     ["a", "b"],
@@ -398,8 +398,8 @@ test("a link fills the missing fields and a cycle stops", () => {
       () => "dark",
       () => {},
     );
-    own.set({ a: { link: "b", bold: true } });
-    own.set({ b: { link: "a", dim: true } });
+    own.set({ a: { inherits: "b", bold: true } });
+    own.set({ b: { inherits: "a", dim: true } });
     for (const name of order) own.resolve(name);
     equal(Object.entries(own.resolve("a")), [
       ["dim", true],
@@ -541,7 +541,11 @@ test("a theme changes nothing until it is active, and its groups win over each s
 
 test("a group that a theme does not name follows the palette of the theme, also through a link", () => {
   const { styles } = themed();
-  styles.set({ "b.title": { fg: "accent", bold: true }, "b.link": { link: "b.title" }, "b.fixed": { fg: "#ff0000" } });
+  styles.set({
+    "b.title": { fg: "accent", bold: true },
+    "b.link": { inherits: "b.title" },
+    "b.fixed": { fg: "#ff0000" },
+  });
   styles.addTheme("nord", { dark: { palette: { accent: "#88c0d0" } } });
   styles.setTheme("nord");
   equal(

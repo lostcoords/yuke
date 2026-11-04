@@ -144,7 +144,7 @@ export interface Sessions {
   readonly remove: (id: SessionId) => Promise<void>;
   /**
    * Open session `id`, also a closed one, and hold it: it does not close by itself until the handle ends.
-   * `options.event` gets a snapshot of the session first, then each later update, in order. The open resolves after
+   * `options.onEvent` gets a snapshot of the session first, then each later update, in order. The open resolves after
    * the snapshot.
    */
   readonly open: (id: SessionId, options: OpenOptions) => Promise<SessionHandle>;
@@ -157,17 +157,17 @@ export interface Sessions {
    * Close session `id` at once for each holder, end each handle on it, and stop its jobs. A cleanup of the session must
    * not await the close of its own session.
    */
-  readonly close: (id: SessionId) => Promise<void>;
+  readonly closeForAll: (id: SessionId) => Promise<void>;
 }
 
 /** How `Sessions.open` watches a session. */
 export interface OpenOptions {
   /** The number of the last saved events in the snapshot. */
   readonly tail: number;
-  /** Ends the handle: `event` gets no more calls, and the hold ends. The session stays open for its other holders. */
+  /** Ends the handle: `onEvent` gets no more calls, and the hold ends. The session stays open for its other holders. */
   readonly signal?: AbortSignal;
   /** Gets the snapshot, then each later update, in order. A throw is a fault of the plugin, and the next event still comes. */
-  readonly event: (event: ViewEvent) => void;
+  readonly onEvent: (event: ViewEvent) => void;
 }
 
 /** One event of an open session: its snapshot first, then each later update. */
@@ -196,21 +196,21 @@ export interface SessionHandle {
    * Send `content` as a message of the user. The model reads `modelContent` in place of `content` when it is set. A
    * turn starts when the session is idle.
    */
-  readonly input: (content: readonly Block[], modelContent?: readonly Block[]) => Promise<InputId>;
+  readonly sendMessage: (content: readonly Block[], modelContent?: readonly Block[]) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
-  readonly sendNotification: (display: string, text: string) => Promise<InputId>;
+  readonly notifyModel: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
   readonly cancel: () => void;
   /** Move each tool call that waits for a job, such as a running command, to the background. The turn goes on. */
-  readonly background: () => void;
-  /** Whether `background` moves a job now. */
-  readonly hasMovable: () => boolean;
+  readonly moveJobsToBackground: () => void;
+  /** Whether `moveJobsToBackground` moves a job now. */
+  readonly canMoveJobsToBackground: () => boolean;
   /**
    * Wait until the session runs no turn and has handled each input that it accepted before the call, or until its close.
    * A failed turn counts as handled, and its input waits for the next input.
    * Each view and host-event listener in this runtime receives the queued events before the promise resolves.
    */
-  readonly idle: () => Promise<void>;
+  readonly waitForIdle: () => Promise<void>;
   /** Save `settings`. It fails while a turn runs or input waits. */
   readonly setSettings: (settings: SessionSettings) => Promise<void>;
   /**
@@ -218,7 +218,7 @@ export interface SessionHandle {
    * blob stays until the session is removed.
    */
   readonly putBlob: (bytes: Uint8Array) => Promise<Blob>;
-  /** Remove the pending input `inputId`. `false` when it is not pending: a turn took it, or a removal came first. */
+  /** Remove the pending input `inputId` from the queue of the session. `false` when it is not pending: a turn took it, or a removal came first. */
   readonly removeInput: (inputId: InputId) => Promise<boolean>;
   /** Answer the open question `interactionId`. */
   readonly respond: (interactionId: InteractionId, response: InteractionResponse) => void;
@@ -309,9 +309,9 @@ export interface PluginContext<O = Record<string, never>> {
    */
   readonly get: <K extends keyof Services & string>(name: K) => ServiceOf<K>;
   /** Send a notice with this plugin as its source. */
-  readonly notify: (level: NoticeLevel, message: string) => void;
-  /** Send an event of the whole process. See {@link Emit}. */
-  readonly emit: Emit;
+  readonly notify: (level: NoticeLevel, text: string) => void;
+  /** Send an event of the whole process to the client. See {@link SendClientEvent}. */
+  readonly sendClientEvent: SendClientEvent;
   /**
    * Call `listener` with each fact of the kind `event` in the whole process, and give the remover. A fact reports what
    * happened. The host does not wait for the listener, and the return of the listener does nothing.
@@ -360,7 +360,7 @@ export interface HostEvents {
  *   `data` when its shape changes.
  * - The event is transient. A client that connects later does not get it. With no client, the host drops it.
  */
-export type Emit = (event: string, data?: unknown) => void;
+export type SendClientEvent = (event: string, data?: unknown) => void;
 
 /** What a `prompt.build` handler gets. */
 export interface PromptBuildEvent {
@@ -844,14 +844,14 @@ export interface SessionContext<O = Record<string, never>> {
    */
   readonly hook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
   /** Send a notice of this session with this plugin as its source. */
-  readonly notify: (level: NoticeLevel, message: string) => void;
-  /** Send an event of this session. See {@link Emit}. */
-  readonly emit: Emit;
+  readonly notify: (level: NoticeLevel, text: string) => void;
+  /** Send an event of this session to the client. See {@link SendClientEvent}. */
+  readonly sendClientEvent: SendClientEvent;
   /**
    * Send the request `request` with `data` to the active client of `yuke --rpc`, and wait for the answer.
    * - The extension of the request is the name of this plugin. A client answers an extension that it does not know
    *   with the code -32601.
-   * - `data` follows `JSON.stringify`, as for `emit`. The promise gives the result of the client.
+   * - `data` follows `JSON.stringify`, as for `sendClientEvent`. The promise gives the result of the client.
    * - An error answer of the client rejects with an `ExtensionRequestError`.
    * - With no client, as in `yuke -p` and in the interface, the request rejects with an `Error` at once. A disconnect of
    *   the client rejects with an `Error` too.

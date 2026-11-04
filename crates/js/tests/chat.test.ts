@@ -69,13 +69,13 @@ test("a page that fails after the open of another session leaves the history of 
   };
   const chat = new ChatSession(store as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
-  const page = chat.older();
+  const page = chat.loadOlderHistory();
   await chat.open("s2");
   const before = chat.transcript.entries.length;
   reject(new Error("disk"));
   await page;
   held = false;
-  await chat.older();
+  await chat.loadOlderHistory();
   equal([chat.historyError, chat.transcript.entries.length > before], [undefined, true]);
 });
 
@@ -217,10 +217,10 @@ test("older recalls the newest waiting message, and gives taken when a turn took
     });
   waiting(5, "older");
   waiting(6, "newest");
-  const recalled = await composer.older();
+  const recalled = await composer.olderMessage();
   const text = editor.state.text;
   sessions.state.removed = false;
-  const taken = await composer.older();
+  const taken = await composer.olderMessage();
   equal([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
 });
 
@@ -230,7 +230,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   const failures: string[] = [];
-  const questions = new ChatQuestions(chat, { signal: owner.signal, failed: (error) => failures.push(String(error)) });
+  const questions = new ChatQuestions(chat, { signal: owner.signal, onError: (error) => failures.push(String(error)) });
   let changes = 0;
   questions.onChange(() => {
     changes += 1;
@@ -276,7 +276,7 @@ test("questions that start after a question opened show it at once", async () =>
       questions: [{ id: "go", header: "Go", question: "Go?", options: [{ label: "Yes" }, { label: "No" }] }],
     },
   });
-  const questions = new ChatQuestions(chat, { signal: owner.signal, failed: () => {} });
+  const questions = new ChatQuestions(chat, { signal: owner.signal, onError: () => {} });
   equal(questions.current !== undefined, true);
 });
 

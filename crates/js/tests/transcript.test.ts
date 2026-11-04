@@ -417,13 +417,13 @@ test("an unconfirmed turn drops the start timestamps and the durations of its to
   equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
 });
 
-test("the inputs, questions, status, and settings follow their updates", () => {
+test("the inputs, questions, failure, and settings follow their updates", () => {
   const transcript = opened();
   const facts = () => [
     transcript.state,
     [...transcript.pending.keys()],
     [...transcript.questions.keys()],
-    transcript.status,
+    transcript.failure,
     transcript.settings?.model.model,
   ];
   fed(transcript, turn.slice(0, 3));

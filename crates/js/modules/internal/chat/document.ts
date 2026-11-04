@@ -8,7 +8,7 @@ import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
 import { shownDuration, toolItem } from "yuke:internal/chat/tools";
 import { sourceName } from "yuke:internal/source-name";
-import type { Entry, ReasoningEntry, Status, Transcript } from "yuke:transcript";
+import type { Entry, ReasoningEntry, Transcript, TurnFailure } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
 
 /** The key of the item of a failure of the running turn. It comes after the entries. */
@@ -28,7 +28,7 @@ export class ChatDocument implements ChatPresentation {
   /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
   #cache = new Map<string, Cached>();
-  #status: { readonly status: Status; readonly item: TextItem } | undefined;
+  #status: { readonly status: TurnFailure; readonly item: TextItem } | undefined;
   #document: TextDocument;
 
   /** The document `key` with the fold choices `folds`. */
@@ -76,7 +76,7 @@ export class ChatDocument implements ChatPresentation {
       cache.set(entry.key, cached);
       items.push(cached.item);
     }
-    const status = transcript.status;
+    const status = transcript.failure;
     if (status !== undefined) {
       if (this.#status?.status !== status) this.#status = { status, item: statusItem(status) };
       items.push(this.#status.item);
@@ -146,7 +146,7 @@ function hasText(entry: ReasoningEntry): boolean {
 }
 
 /** The item of a failure of the running turn. */
-function statusItem(status: Status): TextItem {
+function statusItem(status: TurnFailure): TextItem {
   const text =
     status.kind === "retry_scheduled"
       ? `retry in ${Math.ceil(status.afterMs / 1000)} s: ${status.error}`

@@ -31,7 +31,7 @@ test("the notices and the events of a plugin are in the records after the operat
   const loud: PluginSession = (s) => {
     s.hook("tool.before", () => {
       s.notify("warn", "careful");
-      s.emit("seen", { n: 1 });
+      s.sendClientEvent("seen", { n: 1 });
       return undefined;
     });
   };

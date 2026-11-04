@@ -85,10 +85,10 @@ test("a moved exec shows the user a short row and tells the model the log and th
   });
   await using _host = host;
   const session = await host.openSession();
-  const handle = await (sessions as Sessions).open(session.id, { tail: 0, event() {} });
+  const handle = await (sessions as Sessions).open(session.id, { tail: 0, onEvent() {} });
   const running = exec(session, "sleep 30");
-  while (!handle.hasMovable()) await settled();
-  handle.background();
+  while (!handle.canMoveJobsToBackground()) await settled();
+  handle.moveJobsToBackground();
   const moved = await running;
   const id = moved.text.split(" as ")[1]?.split(".")[0] as string;
   const lines = moved.text.split("\n");

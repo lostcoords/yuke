@@ -61,7 +61,7 @@ test("a listener gets each open session first, then the states of a turn, a late
 
   await first.send("Hi.");
   await host.openSession();
-  await ctx.get("sessions").close(first.id);
+  await ctx.get("sessions").closeForAll(first.id);
 
   equal(
     [seen, frozen, early],

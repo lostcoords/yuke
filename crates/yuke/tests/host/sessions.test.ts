@@ -12,15 +12,15 @@ test("the close of a session ends each handle on it", async () => {
   await using host = await createHost({ plugins: [{ name: "holder", apply: holder }] });
   const session = await host.openSession();
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
-  const first = await sessions.open(session.id, { tail: 5, event: () => undefined });
-  const second = await sessions.open(session.id, { tail: 5, event: () => undefined });
+  const first = await sessions.open(session.id, { tail: 5, onEvent: () => undefined });
+  const second = await sessions.open(session.id, { tail: 5, onEvent: () => undefined });
 
-  await sessions.close(session.id);
+  await sessions.closeForAll(session.id);
 
   equal([first.signal.aborted, second.signal.aborted], [true, true]);
   const reason = first.signal.reason;
   equal(reason instanceof Error ? reason.message : reason, `the session ${session.id} closed`);
-  const refused = await rejects(second.input([{ user_text: "late" }]));
+  const refused = await rejects(second.sendMessage([{ user_text: "late" }]));
   equal(refused instanceof Error ? refused.message : refused, `the handle of the session ${session.id} has ended`);
   const blob = await rejects(second.putBlob(new Uint8Array([1])));
   equal(blob instanceof Error ? blob.message : blob, `the handle of the session ${session.id} has ended`);
@@ -46,17 +46,17 @@ test("a removal of a waiting input gives true and one update, and a second remov
   const removed: number[] = [];
   const handle = await sessions.open(session.id, {
     tail: 0,
-    event: (event) => {
+    onEvent: (event) => {
       if ("update" in event && event.update.sessionUpdate === "input_removed") removed.push(event.update.inputId);
     },
   });
 
-  const input = await handle.input([{ user_text: "hi" }]);
+  const input = await handle.sendMessage([{ user_text: "hi" }]);
   await settled();
   const first = await handle.removeInput(input);
   const second = await handle.removeInput(input);
   release();
-  await handle.idle();
+  await handle.waitForIdle();
 
   equal([first, second, removed, host.requests.length], [true, false, [input], 0]);
 });
@@ -70,11 +70,11 @@ test("a blob that a plugin saves reaches the model as the image of an input", as
   await using host = await createHost({ plugins: [{ name: "holder", apply: holder }], replies: [reply.text("seen")] });
   const session = await host.openSession();
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
-  const handle = await sessions.open(session.id, { tail: 0, event: () => undefined });
+  const handle = await sessions.open(session.id, { tail: 0, onEvent: () => undefined });
 
   const blob = await handle.putBlob(new Uint8Array([1, 2, 3]));
-  await handle.input([{ user_text: "see" }, { media: { blob, mime: "image/png" } }]);
-  await handle.idle();
+  await handle.sendMessage([{ user_text: "see" }, { media: { blob, mime: "image/png" } }]);
+  await handle.waitForIdle();
 
   // "AQID" is the base64 of the bytes 1, 2, 3.
   equal([blob.len, JSON.stringify(host.requests[0]?.body).includes("AQID")], [3, true]);
@@ -99,7 +99,7 @@ test("a child session names its parent, stays out of the default list, and leave
   const roots = await sessions.list();
   const children = await sessions.list({ parent: session.id });
   await session.close();
-  await sessions.close(child);
+  await sessions.closeForAll(child);
   await sessions.remove(session.id);
   const failure = await rejects(sessions.get(child));
 
@@ -131,9 +131,9 @@ test("a child that opens again names its saved parent", async () => {
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
 
   const child = await sessions.create(session.settings, { parent: session.id });
-  await sessions.close(child);
+  await sessions.closeForAll(child);
   contexts.length = 0;
-  await sessions.open(child, { tail: 0, event: () => undefined });
+  await sessions.open(child, { tail: 0, onEvent: () => undefined });
 
   equal(
     contexts.map((context) => context.parent),

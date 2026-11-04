@@ -35,6 +35,11 @@ Write commit messages in imperative English.
 
 - A comment says why, in one or two lines. Docs say what an item does, not how it came to be.
 - Use full words in names.
+  A registration gives a remover: `add*` adds an independent one, and `set*` replaces the one before it.
+  A callback option `on*` is one that the core calls. A callback option `request*` is one that a plugin calls.
+  A method that waits for a state starts with a verb: `waitFor*`. A bare adjective is a state.
+  A name says who gets the effect when two targets are possible: `notifyModel`, `closeForAll`.
+  One word has one meaning across modules. A `message` is what a user sends in a chat. A `notice` is what a user reads.
   Follow Rust conventions.
   Use short generic parameters (`T`, `F`).
   Use standard trait parameter names (`f: &mut Formatter`).

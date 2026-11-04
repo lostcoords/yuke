@@ -15,9 +15,9 @@ const QUESTION: InteractionRequest = {
 /** A frame that draws its rows as text: `t` on the top row, `b` on the bottom row, and `|` beside the input. */
 const marks = {
   draw: (canvas: Canvas, pane: ComposerFrameContext) => {
-    const end = pane.input.row + pane.input.height;
-    for (let row = 0; row < pane.input.row; row += 1) canvas.text(0, row, "t");
-    for (let row = pane.input.row; row < end; row += 1) canvas.text(0, row, "|");
+    const end = pane.inputRect.row + pane.inputRect.height;
+    for (let row = 0; row < pane.inputRect.row; row += 1) canvas.text(0, row, "t");
+    for (let row = pane.inputRect.row; row < end; row += 1) canvas.text(0, row, "|");
     for (let row = end; row < canvas.height; row += 1) canvas.text(0, row, "b");
   },
 };
@@ -63,7 +63,7 @@ test("a short pane gives up the rows below the input first, then the rows above 
   chat.chat.setComposerFrame({
     inset: () => ({ top: 1, bottom: 1 }),
     draw: (canvas, pane) => {
-      inputRow = pane.input.row;
+      inputRow = pane.inputRect.row;
       marks.draw(canvas, pane);
     },
   });
@@ -108,7 +108,7 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   chat.chat.setComposerFrame({
     inset: (pane) => (pane.kind === "composer" ? { left: 1 } : {}),
     draw: (_canvas, pane) => {
-      seen.push(`${pane.kind} ${pane.focused} ${pane.running} ${pane.input.column} ${pane.session}`);
+      seen.push(`${pane.kind} ${pane.focused} ${pane.running} ${pane.inputRect.column} ${pane.session}`);
     },
   });
   frame.start();
@@ -166,7 +166,7 @@ test("a disposer of the chat service runs after the chat plugin stops", async ()
   const chat = await loadChat(frame);
   const disposers = [
     chat.chat.setComposerFrame({ inset: () => ({}), draw() {} }),
-    chat.chat.present((options) => new ChatDocument(options.key, options.folds)),
+    chat.chat.setPresentation((options) => new ChatDocument(options.key, options.folds)),
     chat.chat.addReadOnly(() => undefined),
     chat.chat.addComposerView("below", () => composerRows(() => [])),
   ];

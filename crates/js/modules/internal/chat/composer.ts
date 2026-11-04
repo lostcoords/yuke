@@ -81,9 +81,9 @@ export class ChatComposer {
   #sending = false;
   // The key of the shown message of a browse. A browse starts in an empty editor, so its end empties it again.
   #browse: string | undefined;
-  // The last recalled waiting input. The next older() recalls an older one, until an edit, a caret move, or setDraft.
+  // The last recalled waiting input. The next olderMessage() recalls an older one, until an edit, a caret move, or setDraft.
   #recalled: InputId | undefined;
-  // A recall waits for its removal. Until the removal ends, older() does nothing.
+  // A recall waits for its removal. Until the removal ends, olderMessage() does nothing.
   #recalling = false;
   // The attaches whose store has not ended. A send waits for them, so the image goes with its draft.
   #attaching = 0;
@@ -117,7 +117,7 @@ export class ChatComposer {
     return this.#browse !== undefined;
   }
 
-  get canOlder(): boolean {
+  get canOlderMessage(): boolean {
     const text = this.#editor.state.text;
     return this.#recalling || this.#browse !== undefined || text === "" || this.#recallable() !== undefined;
   }
@@ -140,7 +140,7 @@ export class ChatComposer {
       const blocks = blocksOf(draft);
       if (blocks.length === 0) return;
       this.setDraft(EMPTY);
-      await target.input(blocks);
+      await target.sendMessage(blocks);
     } catch (error) {
       if (draft !== undefined) this.setDraft(joined(draft, this.#editor.state));
       throw error;
@@ -149,7 +149,7 @@ export class ChatComposer {
     }
   }
 
-  async older(): Promise<"taken" | undefined> {
+  async olderMessage(): Promise<"taken" | undefined> {
     if (this.#recalling) return undefined;
     const next = this.#recallable();
     if (next !== undefined) return this.#recall(next[0], next[1]);
@@ -157,7 +157,7 @@ export class ChatComposer {
     return undefined;
   }
 
-  newer(): void {
+  newerMessage(): void {
     this.#browseBy(1);
   }
 
@@ -187,7 +187,7 @@ export class ChatComposer {
   }
 
   /**
-   * The message that older() recalls. An empty editor recalls the newest one. After a recall, the next older one, also
+   * The message that olderMessage() recalls. An empty editor recalls the newest one. After a recall, the next older one, also
    * after a recall that came too late.
    */
   #recallable(): [InputId, Frozen<Input>] | undefined {
@@ -225,7 +225,7 @@ export class ChatComposer {
     const next = list[at + step];
     if (next === undefined) {
       if (step === 1 && this.#browse !== undefined) this.setDraft(EMPTY);
-      else if (step === -1) void this.#chat.older();
+      else if (step === -1) void this.#chat.loadOlderHistory();
       return;
     }
     this.#editor.reset(draftOf(next.content));

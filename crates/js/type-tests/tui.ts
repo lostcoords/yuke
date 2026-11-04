@@ -39,7 +39,7 @@ assert<Equal<typeof itemRows, { readonly start: number; readonly rows: readonly 
 assert<Equal<KeyEvent, Extract<TermEvent, { type: "key" }>>>();
 
 // A patch takes `null` to delete a field; a style does not.
-const patch: StylePatch = { fg: null, bold: true, link: "title" };
+const patch: StylePatch = { fg: null, bold: true, inherits: "title" };
 // @ts-expect-error A style has no `null` field.
 const style: Style = { fg: null };
 // @ts-expect-error A color names the base palette or is an index, `#rrggbb`, or `reset`.

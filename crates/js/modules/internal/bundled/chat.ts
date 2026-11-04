@@ -45,15 +45,15 @@ const COMMANDS: readonly {
     description: "Edit a waiting message of yours, or show an older message of yours",
     keys: ["up"],
     in: "composer",
-    run: (pane) => pane.older(),
-    enabled: (pane) => !pane.asking() && pane.canOlder(),
+    run: (pane) => pane.olderMessage(),
+    enabled: (pane) => !pane.asking() && pane.canOlderMessage(),
   },
   {
     name: "newer-message",
     description: "Show a newer message of yours",
     keys: ["down"],
     in: "composer",
-    run: (pane) => pane.newer(),
+    run: (pane) => pane.newerMessage(),
     enabled: (pane) => !pane.asking() && pane.browsing(),
   },
   {
@@ -69,7 +69,7 @@ const COMMANDS: readonly {
     description: "Move the waiting tool calls to the background",
     keys: ["ctrl+b"],
     in: "chat",
-    run: (pane) => pane.moveToBackground(),
+    run: (pane) => pane.moveJobsToBackground(),
     enabled: (pane) => !pane.locked(),
   },
   {
@@ -208,7 +208,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
         repaint();
       };
     },
-    present: (factory) => {
+    setPresentation: (factory) => {
       presenter = factory;
       repaint();
       return () => {
@@ -313,7 +313,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     if (status.jobs === 0) tui.status.delete("jobs");
     else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
-  tui.onFocus(() => publish());
+  tui.onFocusChange(() => publish());
   tui.guardQuit((quit) => {
     // Two panes on one session count once.
     const work = new Map(

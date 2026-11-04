@@ -94,7 +94,7 @@ async function open(
   signal.addEventListener("abort", stop, { once: true });
   // The route comes before the open, so the snapshot finds it.
   routes.set(key, {
-    event: options.event,
+    event: options.onEvent,
     closed: () => end(new Error(`the session ${id} closed`)),
   });
   try {
@@ -112,11 +112,11 @@ async function open(
   return Object.freeze({
     id,
     signal: ended.signal,
-    async input(content, modelContent) {
+    async sendMessage(content, modelContent) {
       live();
       return sessionInput([id, content, modelContent ?? null]);
     },
-    async sendNotification(display, text) {
+    async notifyModel(display, text) {
       live();
       return sessionNotify([id, plugin, display, text]);
     },
@@ -124,15 +124,15 @@ async function open(
       live();
       sessionCancel(id);
     },
-    background() {
+    moveJobsToBackground() {
       live();
       sessionBackground(id);
     },
-    hasMovable() {
+    canMoveJobsToBackground() {
       live();
       return sessionHasMovable(id);
     },
-    async idle() {
+    async waitForIdle() {
       live();
       await sessionIdle(id);
     },
@@ -182,7 +182,7 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
     },
     open: (id, options) => open(plugin, signal, id, options),
     events: (id, page) => sessionsEvents([id, page.before ?? null, page.limit]),
-    async close(id) {
+    async closeForAll(id) {
       await sessionClose(id);
     },
   } satisfies Sessions);

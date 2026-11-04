@@ -59,7 +59,7 @@ function agents() {
           const handle = await list.open(child, {
             tail: 0,
             signal: ended.signal,
-            event: (event) => {
+            onEvent: (event) => {
               if ("snapshot" in event || event.update.sessionUpdate !== "interaction_requested") return;
               const update = event.update;
               void s
@@ -73,8 +73,8 @@ function agents() {
             },
           });
           signal.addEventListener("abort", () => handle.cancel());
-          await handle.input([{ user_text: args.message }]);
-          await handle.idle();
+          await handle.sendMessage([{ user_text: args.message }]);
+          await handle.waitForIdle();
           const events = await list.events(child, { limit: 2 });
           ended.abort();
           const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
@@ -168,7 +168,7 @@ test("a question of the child reaches the parent, and its answer returns to the 
 test("a foreground child answers as the tool result, shows no job, and sends no report", async () => {
   const { host, parent, list } = await opened([reply.text("Two tables.")]);
   await using _host = host;
-  const handle = await list().open(parent.id, { tail: 0, event() {} });
+  const handle = await list().open(parent.id, { tail: 0, onEvent() {} });
 
   const result = await parent.call("spawn_subagent", { message: "Read the store.", background: false });
 
@@ -184,12 +184,12 @@ test("ctrl+b moves a foreground child: the call answers, the child goes on, and 
     reply.text("Thanks."),
   ]);
   await using _host = host;
-  const handle = await list().open(parent.id, { tail: 0, event() {} });
+  const handle = await list().open(parent.id, { tail: 0, onEvent() {} });
   const running = parent.call("spawn_subagent", { message: "Read the store.", background: false });
   await settled();
-  const movable = handle.hasMovable();
+  const movable = handle.canMoveJobsToBackground();
 
-  handle.background();
+  handle.moveJobsToBackground();
   const result = await running;
   await settled();
   const jobs = handle.jobs().map((job) => [job.id, job.state]);

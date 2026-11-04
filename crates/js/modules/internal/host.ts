@@ -167,7 +167,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
     const handle = await sessions.open(id, {
       tail: 1000,
       signal: stop.signal,
-      event(event: ViewEvent) {
+      onEvent(event: ViewEvent) {
         transcript.apply(event);
         if ("snapshot" in event) for (const update of event.snapshot.updates) ask(id, update);
         else ask(id, event.update);
@@ -182,8 +182,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
         const cancel = (): void => handle.cancel();
         operation?.signal?.addEventListener("abort", cancel, { once: true });
         try {
-          await handle.input([{ user_text: text }]);
-          await handle.idle();
+          await handle.sendMessage([{ user_text: text }]);
+          await handle.waitForIdle();
         } finally {
           operation?.signal?.removeEventListener("abort", cancel);
         }
@@ -219,7 +219,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       },
       async close(): Promise<void> {
         closed.add(id);
-        await sessions.close(id);
+        await sessions.closeForAll(id);
         await testSettled();
       },
     } satisfies TestSession);

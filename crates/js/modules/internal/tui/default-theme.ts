@@ -54,9 +54,9 @@ const GROUPS: Readonly<Record<string, Style>> = {
   bar: { dim: true },
   "toast.body": { fg: "surfaceFg", bg: "surface" },
   "toast.title": { bold: true },
-  "toast.info": { link: "toast.body", fg: "accent" },
-  "toast.warn": { link: "toast.body", fg: "warn" },
-  "toast.error": { link: "toast.body", fg: "danger" },
+  "toast.info": { inherits: "toast.body", fg: "accent" },
+  "toast.warn": { inherits: "toast.body", fg: "warn" },
+  "toast.error": { inherits: "toast.body", fg: "danger" },
   "plugins.title": { bold: true },
   "plugins.detail": { dim: true },
 };

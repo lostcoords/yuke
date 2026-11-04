@@ -282,7 +282,7 @@ test("the scroll control follows the tail and asks for older items", async () =>
   const view = new TextView({
     document: document("d", ...items),
     followTail: true,
-    requestOlder: () => {
+    onTopReached: () => {
       asked += 1;
     },
   });

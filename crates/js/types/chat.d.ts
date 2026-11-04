@@ -45,7 +45,7 @@ declare module "yuke:chat" {
     /** The transcript of the shown session. Each open gives a new one. */
     get transcript(): Transcript;
     /** The transcript holds the first saved event. */
-    get complete(): boolean;
+    get historyComplete(): boolean;
     /** The failure of a page of history. No other page loads after it, until the next open. */
     get historyError(): unknown;
     /**
@@ -61,7 +61,7 @@ declare module "yuke:chat" {
      */
     ensure(settings: () => Promise<SessionSettings | undefined>): Promise<SessionHandle | undefined>;
     /** Load one page of history: the missing events of a gap first, else the page before the first held event. */
-    older(): Promise<void>;
+    loadOlderHistory(): Promise<void>;
     /**
      * Call `listener` after each change: an open, an event, the end of the handle, or a page.
      */
@@ -83,7 +83,7 @@ declare module "yuke:chat" {
    *
    * ```ts
    * const composer = new ChatComposer(chat, editor, { handle: () => chat.ensure(pick), signal: mount.signal });
-   * // enter: composer.send()   up: composer.older()   down: composer.newer()
+   * // enter: composer.send()   up: composer.olderMessage()   down: composer.newerMessage()
    * ```
    */
   export class ChatComposer {
@@ -92,9 +92,9 @@ declare module "yuke:chat" {
     get busy(): boolean;
     /** The editor shows an older message of the user. */
     get browsing(): boolean;
-    /** `older()` has something to do: a recall, a browse, or an empty editor. */
-    get canOlder(): boolean;
-    /** The waiting messages of the user, oldest first. An input of a plugin is not one of them. */
+    /** `olderMessage()` has something to do: a recall, a browse, or an empty editor. */
+    get canOlderMessage(): boolean;
+    /** The waiting messages of the user in the queue of the session, oldest first. An input of a plugin is not one of them. */
     get waiting(): [InputId, Frozen<Input>][];
     /**
      * Send the draft. The draft of the send is the one after `handle()`, and the editor then empties. A refused input
@@ -107,9 +107,9 @@ declare module "yuke:chat" {
      * recall, an empty editor or a shown message gets an older message of the user. `"taken"` when a turn took the
      * message first.
      */
-    older(): Promise<"taken" | undefined>;
+    olderMessage(): Promise<"taken" | undefined>;
     /** Show a newer message of the user, or the empty editor after the newest one. */
-    newer(): void;
+    newerMessage(): void;
     /**
      * Store `image` in the session of `handle()`, then put it at the caret of that time as `[image N]`. A send gives it
      * as a media block. `undefined` from `handle()` puts nothing, and a failed store rejects.
@@ -123,7 +123,7 @@ declare module "yuke:chat" {
     /** Its abort ends the watch of the chat session. */
     readonly signal: AbortSignal;
     /** Gets the failure of an answer, as after an answer of another client. The question then takes an answer again. */
-    readonly failed: (error: unknown) => void;
+    readonly onError: (error: unknown) => void;
   }
 
   /** The view of a request, which takes the keys, and the most rows that it needs. */
@@ -140,7 +140,7 @@ declare module "yuke:chat" {
    * ended handle shows after the next open.
    *
    * ```ts
-   * const questions = new ChatQuestions(chat, { signal: mount.signal, failed: (error) => ctx.notify("error", String(error)) });
+   * const questions = new ChatQuestions(chat, { signal: mount.signal, onError: (error) => ctx.notify("error", String(error)) });
    * place(questions.current); // a request that is open already
    * questions.onChange(() => place(questions.current));
    * ```
@@ -271,16 +271,16 @@ declare module "yuke:chat" {
     readonly project: (transcript: Transcript) => TextDocument;
   }
 
-  /** What a chat pane gives the factory of `present`. */
+  /** What a chat pane gives the factory of `setPresentation`. */
   export interface ChatPresentationOptions {
     /** The key of the document. */
     readonly key: string;
     /** The saved fold choices. */
-    readonly folds: Iterable<readonly [string, boolean]> | undefined;
+    readonly folds: readonly (readonly [string, boolean])[] | undefined;
     /** This signal aborts when the pane shows another session, replaces the presentation, or closes. */
     readonly signal: AbortSignal;
     /** Ask the pane to project the transcript again, after the state of the presentation changes. */
-    readonly changed: () => void;
+    readonly requestUpdate: () => void;
   }
 
   /** One row of `composerRows`. The chat cuts a longer text to the width and ends it with `…`. */
@@ -333,7 +333,7 @@ declare module "yuke:chat" {
     /** The input view or a view inside it has the focus. */
     readonly focused: boolean;
     /** The rect of the input view on the canvas. */
-    readonly input: Rect;
+    readonly inputRect: Rect;
   }
 
   /**
@@ -429,9 +429,9 @@ declare module "yuke:chat" {
      * current.
      *
      * ```ts
-     * chat.present((options) => new GroupedTools(options.key, options.folds));
+     * chat.setPresentation((options) => new GroupedTools(options.key, options.folds));
      * ```
      */
-    readonly present: (factory: (options: ChatPresentationOptions) => ChatPresentation) => () => void;
+    readonly setPresentation: (factory: (options: ChatPresentationOptions) => ChatPresentation) => () => void;
   }
 }

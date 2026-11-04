@@ -15,7 +15,7 @@ import type {
   ToolHints,
   Usage,
 } from "yuke:protocol";
-import type { Entry, Interaction, Status } from "yuke:transcript";
+import type { Entry, Interaction, TurnFailure } from "yuke:transcript";
 
 type Saved = Frozen<StoredEvent>;
 
@@ -57,7 +57,7 @@ export class Transcript {
   readonly questions = new Map<InteractionId, Interaction>();
   #state: SessionState = "idle";
   #settings: Frozen<SessionSettings> | undefined;
-  #status: Status | undefined;
+  #status: TurnFailure | undefined;
   #usage: Frozen<Usage> | undefined;
   #gap: EventsPage | undefined;
   /** The saved events, by number. */
@@ -81,7 +81,7 @@ export class Transcript {
     return this.#settings;
   }
 
-  get status(): Status | undefined {
+  get failure(): TurnFailure | undefined {
     return this.#status;
   }
 

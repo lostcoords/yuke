@@ -201,9 +201,10 @@ export class Styles {
     return this.#cell(fields as Style, look, seen);
   }
 
-  /** The cell style of `style`: its link first, then its own fields, with each color from the palette. */
+  /** The cell style of `style`: its inherited group first, then its own fields, with each color from the palette. */
   #cell(style: Style, look: Look, seen: Set<string>): TermStyle {
-    const cell: Record<string, unknown> = style.link === undefined ? {} : { ...this.#named(style.link, look, seen) };
+    const cell: Record<string, unknown> =
+      style.inherits === undefined ? {} : { ...this.#named(style.inherits, look, seen) };
     for (const field of COLORS) {
       const color = style[field];
       if (color === undefined) continue;

@@ -184,15 +184,17 @@ ctx.provide("test.notes.v1", null);
 assert<Equal<ReturnType<typeof ctx.get<"sessions">>, Sessions>>();
 assert<Equal<ReturnType<typeof ctx.get<"catalog">>, Catalog>>();
 export async function drive(sessions: Sessions): Promise<void> {
-  const handle = await sessions.open("id", { tail: 50, event: (event) => void event });
-  await handle.input([{ user_text: "hi" }]);
+  const handle = await sessions.open("id", { tail: 50, onEvent: (event) => void event });
+  await handle.sendMessage([{ user_text: "hi" }]);
   // @ts-expect-error: an input holds blocks, not a text.
-  await handle.input("hi");
+  await handle.sendMessage("hi");
   // @ts-expect-error: the snapshot needs a tail.
-  await sessions.open("id", { event: () => undefined });
-  // @ts-expect-error: a handle ends by its signal. Only `sessions.close` closes the session for each holder.
+  await sessions.open("id", { onEvent: () => undefined });
+  // @ts-expect-error: the callback is `onEvent`.
+  await sessions.open("id", { tail: 0, event: () => undefined });
+  // @ts-expect-error: a handle ends by its signal. Only `sessions.closeForAll` closes the session for each holder.
   await handle.close();
-  await sessions.close(handle.id);
+  await sessions.closeForAll(handle.id);
 }
 
 // `yuke:fs` takes a base folder and a signal, and its failure has a code.

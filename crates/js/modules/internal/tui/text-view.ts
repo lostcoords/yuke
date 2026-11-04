@@ -104,7 +104,7 @@ export class TextView {
       key: (item) => item.key,
       render: (item, width) => renderItem(item, width),
       followTail: options.followTail === true,
-      ...(options.requestOlder === undefined ? {} : { requestOlder: options.requestOlder }),
+      ...(options.onTopReached === undefined ? {} : { onTopReached: options.onTopReached }),
     });
     this.#order = checkDocument(options.document);
     this.#document = options.document;

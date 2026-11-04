@@ -47,8 +47,8 @@ const RULES: ComposerFrame = {
   inset: () => ({ top: 1, bottom: 1 }),
   draw: (canvas, pane) => {
     const rule = "─".repeat(canvas.width);
-    const below = pane.input.row + pane.input.height;
-    if (pane.input.row > 0) canvas.text(0, 0, rule, STYLE.rule);
+    const below = pane.inputRect.row + pane.inputRect.height;
+    if (pane.inputRect.row > 0) canvas.text(0, 0, rule, STYLE.rule);
     if (below < canvas.height) canvas.text(0, below, rule, STYLE.rule);
   },
 };
@@ -82,17 +82,17 @@ export interface PaneActions {
    * Recall the newest waiting message of the user into an empty composer, and each next older one above the recalled
    * text. When no message waits, show an older message of the user.
    */
-  readonly older: () => Promise<void>;
-  readonly canOlder: () => boolean;
+  readonly olderMessage: () => Promise<void>;
+  readonly canOlderMessage: () => boolean;
   /** Show a newer message of the user, or the empty composer after the newest one. */
-  readonly newer: () => void;
+  readonly newerMessage: () => void;
   readonly browsing: () => boolean;
   /** Clear the draft. An empty draft cancels the running turn. */
   readonly clear: () => void;
   /** Drop the selection of the transcript, else cancel the running turn. */
   readonly interrupt: () => void;
   /** Move the waiting tool calls of the session to the background. */
-  readonly moveToBackground: () => void;
+  readonly moveJobsToBackground: () => void;
   readonly scroll: (to: "pageUp" | "pageDown" | "top" | "bottom") => void;
   /** A question of a plugin shows, so the composer takes no message. */
   readonly asking: () => boolean;
@@ -180,7 +180,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     scope.abort();
     scope = new AbortController();
     const signal = AbortSignal.any([mount.signal, scope.signal]);
-    return presenter?.({ key, folds, signal, changed }) ?? new ChatDocument(key, folds);
+    return presenter?.({ key, folds, signal, requestUpdate: changed }) ?? new ChatDocument(key, folds);
   };
   let document = create(`session:${bound ?? "new"}`, state.folds);
   // The saved place waits until its item loads.
@@ -254,7 +254,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       tui.copy(target);
       ctx.notify("info", `copied ${target}`);
     },
-    requestOlder: () => chatSession.older(),
+    onTopReached: () => chatSession.loadOlderHistory(),
   });
   const composer = new TextEditor({
     role: "composer",
@@ -381,9 +381,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
 
   /** Recall a waiting message or show an older message. A failed recall or a message that a turn took gives a notice. */
-  const older = async (): Promise<void> => {
+  const olderMessage = async (): Promise<void> => {
     try {
-      const result = await chatComposer.older();
+      const result = await chatComposer.olderMessage();
       if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "the message reached the turn already");
     } catch (error) {
       if (!mount.signal.aborted) ctx.notify("error", `the message did not come back: ${String(error)}`);
@@ -428,7 +428,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   const questions = new ChatQuestions(chatSession, {
     signal: mount.signal,
-    failed: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
+    onError: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
 
   /** Whether the pane can open its rename dialog without taking a competing pane action. */
@@ -602,7 +602,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     layout: () => [{ view: input(), rect: inputRect }],
     draw(canvas: Canvas, focused: boolean): void {
-      frame.draw(canvas, { ...frameContext, focused, input: inputRect });
+      frame.draw(canvas, { ...frameContext, focused, inputRect: inputRect });
     },
   };
   const pane: View = {
@@ -676,8 +676,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
           // A row past the end of a changed item gives its first row.
           if (!view.scroll.scrollToItem(key, restore.row)) view.scroll.scrollToItem(key);
           restore = undefined;
-        } else if (chatSession.complete || chatSession.historyError !== undefined) restore = undefined;
-        else void chatSession.older();
+        } else if (chatSession.historyComplete || chatSession.historyError !== undefined) restore = undefined;
+        else void chatSession.loadOlderHistory();
       }
       return placements;
     },
@@ -768,14 +768,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     pasteImage,
     browsing: () => chatComposer.browsing,
     // A waiting recall keeps ↑, so the key does not move the caret meanwhile.
-    canOlder: () => chatComposer.canOlder,
-    older,
-    newer: () => chatComposer.newer(),
+    canOlderMessage: () => chatComposer.canOlderMessage,
+    olderMessage,
+    newerMessage: () => chatComposer.newerMessage(),
     clear: () => {
       if (composer.state.text === "") chatSession.handle?.cancel();
       else chatComposer.setDraft(EMPTY);
     },
-    moveToBackground: () => chatSession.handle?.background(),
+    moveJobsToBackground: () => chatSession.handle?.moveJobsToBackground(),
     interrupt: () => {
       const back = locked()?.back;
       if (view.selection !== undefined) view.selection = undefined;

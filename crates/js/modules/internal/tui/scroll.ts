@@ -32,7 +32,7 @@ interface Anchor {
 export class ScrollList<T extends object> {
   readonly #key: (item: T) => string;
   readonly #render: (item: T, width: number) => readonly TextRow[];
-  readonly #requestOlder: (() => void | Promise<void>) | undefined;
+  readonly #onTopReached: (() => void | Promise<void>) | undefined;
   readonly #heights = new WeakMap<T, { readonly width: number; readonly height: number }>();
   /** The oldest render comes first. */
   readonly #rendered = new Map<T, Rendered>();
@@ -48,7 +48,7 @@ export class ScrollList<T extends object> {
   #following: boolean;
   #changedBelow = false;
   #host: WidgetHost | undefined;
-  /** A top visit or an item update at the top allows one call of `requestOlder`. */
+  /** A top visit or an item update at the top allows one call of `onTopReached`. */
   #olderAllowed = false;
   #olderPending = false;
 
@@ -57,12 +57,12 @@ export class ScrollList<T extends object> {
     if (typeof options.key !== "function" || typeof options.render !== "function") {
       throw new TypeError("a scroll list takes a key function and a render function");
     }
-    if (options.requestOlder !== undefined && typeof options.requestOlder !== "function") {
-      throw new TypeError("requestOlder is a function");
+    if (options.onTopReached !== undefined && typeof options.onTopReached !== "function") {
+      throw new TypeError("onTopReached is a function");
     }
     this.#key = options.key;
     this.#render = options.render;
-    this.#requestOlder = options.requestOlder;
+    this.#onTopReached = options.onTopReached;
     this.#following = options.followTail === true;
     registerHost(this, (host) => {
       this.#host = host;
@@ -340,9 +340,9 @@ export class ScrollList<T extends object> {
     this.#changed();
   }
 
-  /** Call `requestOlder` once when the view shows the top, unless a call still runs. */
+  /** Call `onTopReached` once when the view shows the top, unless a call still runs. */
   #askOlder(): void {
-    const request = this.#requestOlder;
+    const request = this.#onTopReached;
     if (request === undefined || !this.#olderAllowed || this.#olderPending) return;
     if (this.#top !== 0 || this.#size.height <= 0 || this.#host === undefined) return;
     this.#olderAllowed = false;

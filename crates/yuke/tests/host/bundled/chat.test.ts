@@ -153,9 +153,9 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   const parent = await host.openSession();
   const list = sessions as unknown as Sessions;
   const child = await list.create(settings as unknown as SessionSettings, { parent: parent.id });
-  const held = await list.open(child, { tail: 0, event() {} });
-  await held.input([{ user_text: "Read the store." }]);
-  await held.idle();
+  const held = await list.open(child, { tail: 0, onEvent() {} });
+  await held.sendMessage([{ user_text: "Read the store." }]);
+  await held.waitForIdle();
 
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });
   const surface = frame.surface("chat");
@@ -186,7 +186,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   frame.paste("And the indexes?");
   frame.key("enter");
   await settled();
-  await held.idle();
+  await held.waitForIdle();
   await settled();
   frame.draw();
 

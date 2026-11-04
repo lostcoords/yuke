@@ -357,7 +357,7 @@ async fn open(runtime: &Runtime, signal: &str) -> String {
     evaluate::<String>(
         runtime,
         &format!(
-            "globalThis.handle = await sessions.open('{}', {{ tail: 5, signal: {signal}, event: (e) => seen.push(e) }});
+            "globalThis.handle = await sessions.open('{}', {{ tail: 5, signal: {signal}, onEvent: (e) => seen.push(e) }});
              return JSON.stringify(seen[0].snapshot);",
             session()
         ),
@@ -374,7 +374,7 @@ async fn idle_delivers_each_update_in_order_after_the_snapshot() {
     let snapshot = open(&runtime, "undefined").await;
     let updates = evaluate::<Vec<String>>(
         &runtime,
-        "await handle.idle(); return seen.slice(1).map(event => event.update.state);",
+        "await handle.waitForIdle(); return seen.slice(1).map(event => event.update.state);",
     )
     .await
     .unwrap();
@@ -403,10 +403,10 @@ async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
         &format!(
             "const delivered = [];
              context.on('session.update', data => delivered.push(`fact ${{data.update.state}}`));
-             const handle = await sessions.open('{}', {{ tail: 5, event(event) {{
+             const handle = await sessions.open('{}', {{ tail: 5, onEvent(event) {{
                if ('update' in event) delivered.push(`view ${{event.update.state}}`);
              }} }});
-             await handle.idle();
+             await handle.waitForIdle();
              return delivered;",
             session()
         ),
@@ -431,7 +431,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
              globalThis.delivering = false;
              globalThis.recursed = false;
              globalThis.called = false;
-             globalThis.handle = await sessions.open('{}', {{ tail: 5, event(event) {{
+             globalThis.handle = await sessions.open('{}', {{ tail: 5, onEvent(event) {{
                recursed ||= delivering;
                delivering = true;
                if ('update' in event) {{
@@ -448,7 +448,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
     scripted.follow_up_on_cancel.set(true);
     let prior = evaluate::<Vec<String>>(
         &runtime,
-        "await handle.idle(); return updates.filter(state => state !== 'follow-up');",
+        "await handle.waitForIdle(); return updates.filter(state => state !== 'follow-up');",
     )
     .await
     .unwrap();
@@ -473,7 +473,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
         &runtime,
         &format!(
             "globalThis.later = [];
-             await sessions.open('{}', {{ tail: 5, event: (e) => later.push(e) }});
+             await sessions.open('{}', {{ tail: 5, onEvent: (e) => later.push(e) }});
              pane.abort();",
             session()
         ),
@@ -487,7 +487,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     assert_eq!(evaluate::<usize>(&runtime, "return later.length;").await.unwrap(), 2);
     let input = evaluate::<String>(
         &runtime,
-        "try { await handle.input([]); return 'sent'; } catch (error) { return error.message; }",
+        "try { await handle.sendMessage([]); return 'sent'; } catch (error) { return error.message; }",
     )
     .await
     .unwrap();
@@ -508,7 +508,7 @@ async fn an_abort_during_the_open_rejects_it_and_ends_its_hold() {
         &runtime,
         &format!(
             "const pane = new AbortController();
-             const opening = sessions.open('{}', {{ tail: 5, signal: pane.signal, event: () => undefined }});
+             const opening = sessions.open('{}', {{ tail: 5, signal: pane.signal, onEvent: () => undefined }});
              pane.abort(new Error('the pane closed'));
              try {{ await opening; return 'opened'; }} catch (error) {{ return error.message; }}",
             session()
@@ -546,8 +546,8 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
 
     let ended = evaluate::<Vec<bool>>(
         &runtime,
-        "globalThis.other = await sessions.open(handle.id, { tail: 5, event: () => undefined });
-         await sessions.close(handle.id);
+        "globalThis.other = await sessions.open(handle.id, { tail: 5, onEvent: () => undefined });
+         await sessions.closeForAll(handle.id);
          return [handle.signal.aborted, other.signal.aborted];",
     )
     .await
@@ -558,7 +558,7 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
         .unwrap();
     let input = evaluate::<String>(
         &runtime,
-        "try { await other.input([]); return 'sent'; } catch (error) { return error.message; }",
+        "try { await other.sendMessage([]); return 'sent'; } catch (error) { return error.message; }",
     )
     .await
     .unwrap();
@@ -582,18 +582,18 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &runtime,
         &format!(
             "const id = '{}';
-             const input = await handle.input([{{ user_text: 'hi' }}]);
+             const input = await handle.sendMessage([{{ user_text: 'hi' }}]);
              const removed = await handle.removeInput(input);
-             await handle.input([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
-             await handle.sendNotification('shown', 'told');
+             await handle.sendMessage([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
+             await handle.notifyModel('shown', 'told');
              handle.cancel();
-             handle.background();
+             handle.moveJobsToBackground();
              await sessions.rename(id, '  renamed   session ');
              await sessions.fork(id);
              await sessions.events(id, {{ limit: 3 }});
              await sessions.list();
              await catalog.list();
-             await sessions.close(id);
+             await sessions.closeForAll(id);
              return JSON.stringify([input, removed]);",
             session()
         ),

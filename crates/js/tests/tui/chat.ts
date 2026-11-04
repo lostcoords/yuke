@@ -30,7 +30,7 @@ interface Opened {
   readonly id: string;
   readonly tail: number;
   readonly signal: AbortSignal;
-  readonly event: (event: ViewEvent) => void;
+  readonly onEvent: (event: ViewEvent) => void;
 }
 
 export const SETTINGS: SessionSettings = {
@@ -119,7 +119,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   };
   /** Give each live handle of session `id` the live update `update`. */
   const deliver = (id: string, update: SessionUpdate): void => {
-    for (const [entry, end] of ends) if (entry.id === id && !end.signal.aborted) entry.event({ update });
+    for (const [entry, end] of ends) if (entry.id === id && !end.signal.aborted) entry.onEvent({ update });
   };
   return {
     opened,
@@ -160,7 +160,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
       return "s-new";
     },
     open(id: string, open: Opened): Promise<Partial<SessionHandle>> {
-      const entry = { id, tail: open.tail, signal: open.signal, event: open.event };
+      const entry = { id, tail: open.tail, signal: open.signal, onEvent: open.onEvent };
       opened.push(entry);
       const end = new AbortController();
       ends.set(entry, end);
@@ -170,18 +170,18 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         state.openFails -= 1;
         return Promise.reject(new Error("busy"));
       }
-      open.event({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
+      open.onEvent({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
       return Promise.resolve({
         signal: end.signal,
-        async input(content: readonly Block[]) {
+        async sendMessage(content: readonly Block[]) {
           inputs.push(content);
           await state.accept;
           return inputs.length;
         },
-        background() {
+        moveJobsToBackground() {
           state.backgrounds += 1;
         },
-        hasMovable: () => state.movable,
+        canMoveJobsToBackground: () => state.movable,
         cancel() {
           state.cancels += 1;
         },

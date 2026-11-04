@@ -6,7 +6,7 @@
  *
  * ```ts
  * const transcript = new Transcript();
- * const handle = await sessions.open(id, { tail: 200, event: (event) => transcript.apply(event) });
+ * const handle = await sessions.open(id, { tail: 200, onEvent: (event) => transcript.apply(event) });
  * ```
  */
 declare module "yuke:transcript" {
@@ -97,7 +97,7 @@ declare module "yuke:transcript" {
   export type Interaction = Frozen<{ source: string; request: InteractionRequest }>;
 
   /** A failure of the running turn that is not its end. */
-  export type Status = Frozen<
+  export type TurnFailure = Frozen<
     { kind: "retry_scheduled"; afterMs: number; error: string } | { kind: "round_failed"; error: string }
   >;
 
@@ -110,14 +110,14 @@ declare module "yuke:transcript" {
     constructor();
     /** The entries, oldest first. The array stays the same. A changed entry gets a new object in its place. */
     readonly entries: readonly Entry[];
-    /** The inputs that wait for a turn, by id. */
+    /** The inputs that wait for a turn, by id: the queue of the session. */
     readonly pending: ReadonlyMap<InputId, Frozen<Input>>;
     /** The open questions, by id. */
     readonly questions: ReadonlyMap<InteractionId, Interaction>;
     get state(): SessionState;
     get settings(): Frozen<SessionSettings> | undefined;
     /** The last failure of the running turn, until its next draft or its end. */
-    get status(): Status | undefined;
+    get failure(): TurnFailure | undefined;
     /**
      * The token counts of the last saved answer of the model. A replacement of the context, such as a compaction,
      * clears them until the next answer. An older page that loads later does not change them.

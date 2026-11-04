@@ -301,10 +301,10 @@ test("notify sends a notice of the plugin", async () => {
   equal(host.notices, [{ level: "warn", source: "loud", message: "careful" }]);
 });
 
-test("emit sends an event with the plugin as its extension and its data as JSON", async () => {
+test("sendClientEvent sends an event with the plugin as its extension and its data as JSON", async () => {
   const todo: PluginApply = (ctx) => {
-    ctx.emit("changed", { version: 1, items: ["milk"] });
-    ctx.emit("cleared");
+    ctx.sendClientEvent("changed", { version: 1, items: ["milk"] });
+    ctx.sendClientEvent("cleared");
     return undefined;
   };
   await using host = await createHost({ plugins: [{ name: "todo", apply: todo }] });

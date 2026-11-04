@@ -754,7 +754,7 @@ function start(
     notify(level: NoticeLevel, message: string): void {
       notify(plugin, level, String(message), sessionId);
     },
-    emit(event: string, data?: unknown): void {
+    sendClientEvent(event: string, data?: unknown): void {
       emit(plugin, String(event), JSON.stringify(data) ?? "null", sessionId);
     },
     async request(request: string, data?: unknown, options?: RequestOptions): Promise<unknown> {

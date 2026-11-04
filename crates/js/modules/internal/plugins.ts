@@ -137,7 +137,7 @@ export async function load(spec: PluginSpec): Promise<void> {
       notify(level: NoticeLevel, message: string): void {
         notify(spec.name, level, String(message), undefined);
       },
-      emit(event: string, data?: unknown): void {
+      sendClientEvent(event: string, data?: unknown): void {
         emit(spec.name, String(event), JSON.stringify(data) ?? "null", undefined);
       },
       on<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {

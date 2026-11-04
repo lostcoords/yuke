@@ -16,7 +16,7 @@ interface Item {
 /** A list of `items` that counts its renders in `renders`. */
 function list(
   items: readonly Item[],
-  options: { followTail?: boolean; requestOlder?: () => void | Promise<void> } = {},
+  options: { followTail?: boolean; onTopReached?: () => void | Promise<void> } = {},
 ) {
   const renders: string[] = [];
   const scroll = new ScrollList<Item>({
@@ -207,7 +207,7 @@ test("older pages come once for each top visit and never overlap", async () => {
       finish = resolve;
     });
   };
-  const { scroll } = list([{ key: "a", text: "a0a1a2a3" }], { requestOlder: older });
+  const { scroll } = list([{ key: "a", text: "a0a1a2a3" }], { onTopReached: older });
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   // The first frame alone starts the first load.
   await settled();

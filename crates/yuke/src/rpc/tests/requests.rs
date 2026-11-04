@@ -130,7 +130,7 @@ async fn a_closed_session_cancels_its_pending_requests() {
     place.plugin(
         "watcher",
         "export function session(s) {
-           s.request('watch', null).catch((error) => s.emit('ended', error.name));
+           s.request('watch', null).catch((error) => s.sendClientEvent('ended', error.name));
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["watcher"] }"#).unwrap();

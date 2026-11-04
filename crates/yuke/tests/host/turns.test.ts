@@ -28,7 +28,7 @@ test("a create, a reopen, and a fork each run the session of a plugin once, and 
     ],
   });
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
-  const watch = { tail: 1, event: () => undefined };
+  const watch = { tail: 1, onEvent: () => undefined };
 
   const session = await host.openSession();
   await sessions.open(session.id, watch);
@@ -165,7 +165,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
   let saved = "";
   await sessions?.open(session.id, {
     tail: 20,
-    event: (event) => {
+    onEvent: (event) => {
       if ("snapshot" in event) saved = JSON.stringify(event.snapshot);
     },
   });
@@ -234,7 +234,7 @@ test("a plugin creates a session, sends input, and sees the turn of that session
       let used = "";
       const handle = await sessions.open(id, {
         tail: 10,
-        event: (event) => {
+        onEvent: (event) => {
           if ("snapshot" in event) {
             used = event.snapshot.settings.model.model;
             return;
@@ -247,9 +247,9 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           states.push(update.state);
         },
       });
-      await handle.input([{ user_text: "hi" }]);
-      await handle.idle();
-      ctx.emit("turn", { states, texts, used, jobs: handle.jobs().length });
+      await handle.sendMessage([{ user_text: "hi" }]);
+      await handle.waitForIdle();
+      ctx.sendClientEvent("turn", { states, texts, used, jobs: handle.jobs().length });
     };
     return undefined;
   };

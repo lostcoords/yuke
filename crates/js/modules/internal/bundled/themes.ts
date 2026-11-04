@@ -33,7 +33,7 @@ function open(ctx: PluginContext, tui: Tui): void {
     items,
     key: (item) => item.name,
     label: (item) => item.name,
-    select: (item) => {
+    onSelectionChange: (item) => {
       if (item !== undefined) tui.styles.setTheme(item.name);
     },
     choose: (item) => {

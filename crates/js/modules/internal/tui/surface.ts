@@ -219,7 +219,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       return core.scene.focused;
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
-    onFocus: live((listener: (change: FocusChange) => void): (() => void) => scope.own(core.onFocus(owner, listener))),
+    onFocusChange: live((listener: (change: FocusChange) => void): (() => void) =>
+      scope.own(core.onFocusChange(owner, listener)),
+    ),
     now: live((): number => core.driver.now()),
     after: live((delay: number, callback: () => void): (() => void) => {
       // A fired timer leaves the scope, so a callback that calls `after` again leaves no old disposer.

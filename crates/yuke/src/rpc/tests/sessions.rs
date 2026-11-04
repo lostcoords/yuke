@@ -741,8 +741,8 @@ async fn process_and_session_events_of_a_plugin_reach_the_client_under_its_name(
     );
     place.plugin(
         "todo",
-        "export function apply(ctx) { ctx.emit('ready', { version: 1 }); }
-         export function session(s) { s.emit('changed', ['milk']); }",
+        "export function apply(ctx) { ctx.sendClientEvent('ready', { version: 1 }); }
+         export function session(s) { s.sendClientEvent('changed', ['milk']); }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["todo"] }"#).unwrap();
     let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));

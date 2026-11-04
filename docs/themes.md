@@ -83,7 +83,7 @@ groups: {
 }
 ```
 
-The fields are `fg`, `bg`, `underlineColor`, `bold`, `dim`, `italic`, `reverse`, `underline`, and `link`. A `link` names a second group. That group gives the fields that the first group does not set.
+The fields are `fg`, `bg`, `underlineColor`, `bold`, `dim`, `italic`, `reverse`, `underline`, and `inherits`. `inherits` names a second group. That group gives the fields that the first group does not set.
 
 [`default-theme.ts`](../crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
 
@@ -102,11 +102,11 @@ If two plugins add a theme with the same name, yuke uses the newest theme. You c
 
 ## Plugins and themes
 
-Use `styles.set` to set the style of the groups of your plugin. Use palette names or a `link`. Your plugin then follows each theme:
+Use `styles.set` to set the style of the groups of your plugin. Use palette names or `inherits`. Your plugin then follows each theme:
 
 ```ts
 ctx.get("tui")?.styles.set({
-  "notes.title": { link: "chat.title" },
+  "notes.title": { inherits: "chat.title" },
   "notes.count": { fg: "accent" },
 });
 ```

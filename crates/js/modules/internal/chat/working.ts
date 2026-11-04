@@ -6,7 +6,7 @@
 import type { ChatSession, ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
 import { callEach } from "yuke:internal/chat/listeners";
 import { clipped } from "yuke:internal/chat/rows";
-import type { Status, Transcript } from "yuke:transcript";
+import type { Transcript, TurnFailure } from "yuke:transcript";
 import { measure } from "yuke:tui";
 
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
@@ -21,7 +21,7 @@ const SMALLEST_PHASE = 16;
 
 /** The phase of the running turn of `transcript`. A retry gives its countdown to `retryAt`, at the time `now`. */
 function phase(transcript: Transcript, now: number, retryAt: number | undefined): string {
-  if (transcript.status?.kind === "retry_scheduled" && retryAt !== undefined) {
+  if (transcript.failure?.kind === "retry_scheduled" && retryAt !== undefined) {
     return `Retrying in ${Math.max(0, Math.ceil((retryAt - now) / 1000))}s…`;
   }
   const last = transcript.entries.at(-1);
@@ -45,7 +45,7 @@ export class ChatWorking {
   #start: number | undefined;
   #retryAt: number | undefined;
   // The status of the transcript at the last change, so a new retry starts its countdown once.
-  #status: Status | undefined;
+  #status: TurnFailure | undefined;
   // The first sight of work that a background request moves, on the clock `now`, for the delay of the hint.
   #movableSince: number | undefined;
 
@@ -70,7 +70,7 @@ export class ChatWorking {
     if (start === undefined) return undefined;
     const now = this.#now();
     const spinner = SPINNER[Math.floor((now - start) / FRAME_MS) % SPINNER.length] ?? "";
-    const movable = this.#chat.handle?.hasMovable() === true;
+    const movable = this.#chat.handle?.canMoveJobsToBackground() === true;
     if (!movable) this.#movableSince = undefined;
     else this.#movableSince ??= now;
     const hints: string[] = [];
@@ -109,7 +109,7 @@ export class ChatWorking {
       // The retry status of the transcript can outlive its turn, so the next turn shows no old countdown.
       this.#retryAt = undefined;
     }
-    const status = transcript.status;
+    const status = transcript.failure;
     if (status !== this.#status && status?.kind === "retry_scheduled") this.#retryAt = this.#now() + status.afterMs;
     this.#status = status;
     if (this.active === active) return;

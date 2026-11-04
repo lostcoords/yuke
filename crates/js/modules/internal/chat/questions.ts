@@ -262,7 +262,7 @@ export class ChatQuestions {
     return () => this.#listeners.delete(listener);
   }
 
-  /** Answer the shown request once. A failed answer, as after an answer of another client, goes to `failed`. */
+  /** Answer the shown request once. A failed answer, as after an answer of another client, goes to `onError`. */
   #answer(response: InteractionResponse): void {
     const current = this.#current;
     const handle = this.#chat.handle;
@@ -272,7 +272,7 @@ export class ChatQuestions {
       handle.respond(current.id, response);
     } catch (error) {
       current.answered = false;
-      this.#options.failed(error);
+      this.#options.onError(error);
     }
   }
 

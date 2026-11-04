@@ -60,7 +60,7 @@ async function opened(replies: readonly string[] = []) {
   });
   const session = await host.openSession();
   if (context === undefined || plugin === undefined) throw new Error("the plugin did not start");
-  const handle: SessionHandle = await plugin.get("sessions").open(session.id, { tail: 0, event() {} });
+  const handle: SessionHandle = await plugin.get("sessions").open(session.id, { tail: 0, onEvent() {} });
   return { host, session, s: context, handle, tool };
 }
 
@@ -204,7 +204,7 @@ test("two sessions can run one id, and the end of one job leaves the other", asy
   });
   await host.openSession();
   const second = await host.openSession();
-  const handle = await plugin?.get("sessions").open(second.id, { tail: 0, event() {} });
+  const handle = await plugin?.get("sessions").open(second.id, { tail: 0, onEvent() {} });
   const [one, two] = contexts;
   if (one === undefined || two === undefined || handle === undefined) throw new Error("the sessions did not start");
   const stays = held();
@@ -311,14 +311,14 @@ test("a job in a call stays hidden, and its report answers the call and not the 
   const call = session.call("work", {});
   await settled();
   const listed = handle.jobs();
-  const movable = handle.hasMovable();
+  const movable = handle.canMoveJobsToBackground();
   work.finish(REPORT);
   const result = await call;
   await settled();
 
   equal([listed, movable], [[], true]);
   equal(result.text, REPORT.text);
-  equal(handle.hasMovable(), false);
+  equal(handle.canMoveJobsToBackground(), false);
   equal(host.requests.length, 0);
 });
 
@@ -363,12 +363,12 @@ test("a move answers the call, keeps the signal quiet at its end, and the report
   const call = session.call("work", {});
   await settled();
 
-  handle.background();
+  handle.moveJobsToBackground();
   const result = await call;
   await settled();
   const listed = handle.jobs().map((job) => job.id);
   const aborted = work.signal.aborted;
-  const movable = handle.hasMovable();
+  const movable = handle.canMoveJobsToBackground();
   work.finish(REPORT);
   await settled();
 
@@ -386,7 +386,7 @@ test("a throw of the work after a move reports the failure", async () => {
   const call = session.call("work", {});
   await settled();
 
-  handle.background();
+  handle.moveJobsToBackground();
   await call;
   work.fail(new Error("the store is gone"));
   await settled();
@@ -401,7 +401,7 @@ test("a stop after a move aborts the signal and drops the report", async () => {
   tool.work = work.work;
   const call = session.call("work", {});
   await settled();
-  handle.background();
+  handle.moveJobsToBackground();
   await call;
 
   const pending = stop(session, "explorer");

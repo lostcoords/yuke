@@ -49,7 +49,7 @@ export class Picker<T extends object> {
     for (const name of ["key", "label", "choose", "cancel"] as const) {
       if (typeof options[name] !== "function") throw new TypeError(`a picker takes a ${name} function`);
     }
-    for (const name of ["detail", "rank", "render", "select"] as const) {
+    for (const name of ["detail", "rank", "render", "onSelectionChange"] as const) {
       if (options[name] !== undefined && typeof options[name] !== "function") {
         throw new TypeError(`the picker option ${name} is a function`);
       }
@@ -186,7 +186,7 @@ export class Picker<T extends object> {
     this.#entries = matches.map((match, at) => ({ match, key: keys[at] as string, selected: keys[at] === selected }));
     this.#list.setItems(this.#entries);
     this.#reveal = true;
-    if (moved) this.#options.select?.(this.selected);
+    if (moved) this.#options.onSelectionChange?.(this.selected);
   }
 
   /** Select `key`: the old and the new selected entries become new objects, so only their rows render again. */
@@ -200,7 +200,7 @@ export class Picker<T extends object> {
     this.#list.setItems(this.#entries);
     this.#reveal = true;
     this.#list.ensureVisible(key);
-    this.#options.select?.(this.selected);
+    this.#options.onSelectionChange?.(this.selected);
   }
 
   /** The default row shows the label with its matched ranges marked, then the detail. It marks a selected row. */

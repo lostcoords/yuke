@@ -19,7 +19,7 @@ const requester: PluginSession = (s) => {
         return `title: ${found.title}`;
       } catch (error) {
         if (error instanceof ExtensionRequestError) return `refused ${error.code} ${error.message} ${error.data}`;
-        s.emit("failed", String(error));
+        s.sendClientEvent("failed", String(error));
         throw error;
       }
     },

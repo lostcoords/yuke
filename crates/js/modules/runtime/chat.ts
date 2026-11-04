@@ -67,7 +67,7 @@ export class ChatSession {
     return this.#transcript;
   }
 
-  get complete(): boolean {
+  get historyComplete(): boolean {
     return this.#complete;
   }
 
@@ -102,7 +102,7 @@ export class ChatSession {
         handle = await this.#sessions.open(id, {
           tail: TAIL,
           signal: release.signal,
-          event: (event) => {
+          onEvent: (event) => {
             if (!current) {
               current = true;
               const old = this.#release;
@@ -117,7 +117,7 @@ export class ChatSession {
             }
             transcript.apply(event);
             this.#changed();
-            if (transcript.gap !== undefined) void this.older();
+            if (transcript.gap !== undefined) void this.loadOlderHistory();
           },
         });
       } catch (error) {
@@ -173,7 +173,7 @@ export class ChatSession {
     return next;
   }
 
-  async older(): Promise<void> {
+  async loadOlderHistory(): Promise<void> {
     const id = this.#id;
     // Before a snapshot, the transcript has no first event and no gap, so no page loads.
     if (id === undefined || this.#loading || this.#historyError !== undefined) return;

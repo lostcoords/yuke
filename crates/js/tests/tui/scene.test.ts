@@ -344,7 +344,7 @@ test("a pane starts at its initial focus and each focus change names the view an
   };
   const names = new Map<View | undefined, string>();
   const changes: string[] = [];
-  tui.onFocus((change) => {
+  tui.onFocusChange((change) => {
     const pane = change.pane === undefined ? "no pane" : change.pane === a ? "pane a" : "pane b";
     changes.push(`${names.get(change.previous) ?? "none"} -> ${names.get(change.current) ?? "?"} in ${pane}`);
   });
@@ -437,7 +437,7 @@ test("a throwing focus listener is reported under its plugin and removed", () =>
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "watcher", new AbortController().signal);
   let calls = 0;
-  tui.onFocus(() => {
+  tui.onFocusChange(() => {
     calls += 1;
     throw new Error("bad focus");
   });

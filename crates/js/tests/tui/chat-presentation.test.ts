@@ -1,4 +1,4 @@
-// The look of the transcript from a plugin: `chat.present`, with one row that groups all tools.
+// The look of the transcript from a plugin: `chat.setPresentation`, with one row that groups all tools.
 
 import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
 import type { StoredEvent, ToolCall } from "yuke:protocol";
@@ -77,7 +77,7 @@ function shown(frame: Parameters<typeof transcriptRows>[0]): string[] {
 test("a plugin shows three tools as one row, and a click opens and folds that row", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a", "b", "c")));
-  chat.chat.present((options) => new Grouped(options));
+  chat.chat.setPresentation((options) => new Grouped(options));
   frame.start();
   await settled();
   frame.draw();
@@ -99,7 +99,7 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
   frame.draw();
   click(frame, 1, transcriptRows(frame).indexOf(" read a"));
   const before = shown(frame);
-  const remove = chat.chat.present((options) => new Grouped(options));
+  const remove = chat.chat.setPresentation((options) => new Grouped(options));
   frame.draw();
   const present = shown(frame);
   remove();
@@ -118,7 +118,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   const sessions = fakeSessions(saved.slice(0, 2));
   const chat = await loadChat(frame, sessions);
   let projections = 0;
-  chat.chat.present((options) => {
+  chat.chat.setPresentation((options) => {
     const inner = new ChatDocument(options.key);
     return {
       folds: [],
@@ -163,8 +163,8 @@ test("a turn calls the presentation again each second only while a tool runs", a
 test("a disposer of an old factory leaves the look of a later factory", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
-  const removeOld = chat.chat.present(() => new ChatDocument("old"));
-  chat.chat.present((options) => new Grouped(options));
+  const removeOld = chat.chat.setPresentation(() => new ChatDocument("old"));
+  chat.chat.setPresentation((options) => new Grouped(options));
   removeOld();
   frame.start();
   await settled();
@@ -172,14 +172,14 @@ test("a disposer of an old factory leaves the look of a later factory", async ()
   equal(shown(frame), ["● tools: 1"]);
 });
 
-test("changed shows new state of a presentation with no session event, and a frame alone does not", async () => {
+test("requestUpdate shows new state of a presentation with no session event, and a frame alone does not", async () => {
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a")));
   let grouped: Grouped | undefined;
   let changed = (): void => {};
-  chat.chat.present((options) => {
+  chat.chat.setPresentation((options) => {
     grouped = new Grouped(options);
-    changed = options.changed;
+    changed = options.requestUpdate;
     return grouped;
   });
   frame.start();
@@ -202,13 +202,13 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
     options.push(given);
     return new Grouped(given);
   };
-  chat.chat.present(factory);
+  chat.chat.setPresentation(factory);
   frame.start();
   await settled();
   const pane = chat.tui.panes.active?.view as View;
   await chat.chat.show("s2");
   const afterShow = [options[0]?.signal.aborted, options[1]?.signal.aborted];
-  chat.chat.present((given) => factory(given));
+  chat.chat.setPresentation((given) => factory(given));
   frame.draw();
   const afterFactory = [options[1]?.signal.aborted, options[2]?.signal.aborted];
   chat.tui.commands.run("core:split-right");
@@ -231,7 +231,7 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
 test("a group key in the folds survives a snapshot and a restore", async () => {
   using before = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const first = await loadChat(before, fakeSessions(reads("a")));
-  first.chat.present((options) => new Grouped(options));
+  first.chat.setPresentation((options) => new Grouped(options));
   before.start();
   await settled();
   before.draw();
@@ -239,7 +239,7 @@ test("a group key in the folds survives a snapshot and a restore", async () => {
   const snapshot = before.snapshot();
   using after = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w" });
   const second = await loadChat(after, fakeSessions(reads("a")));
-  second.chat.present((options) => new Grouped(options));
+  second.chat.setPresentation((options) => new Grouped(options));
   after.start(snapshot);
   await settled();
   after.draw();

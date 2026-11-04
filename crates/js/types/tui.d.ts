@@ -159,7 +159,7 @@ declare module "yuke:tui" {
   /** A color: a palette index from 0 to 255, `#` and six hex digits, `reset`, or a name of the base palette. */
   export type Color = number | `#${string}` | "reset" | PaletteColor;
 
-  /** A style: the colors and the attributes of a cell. `link` names a style group whose fields fill the missing ones. */
+  /** A style: the colors and the attributes of a cell. `inherits` names a style group whose fields fill the missing ones. */
   export interface Style {
     readonly fg?: Color | undefined;
     readonly bg?: Color | undefined;
@@ -170,7 +170,7 @@ declare module "yuke:tui" {
     readonly italic?: boolean | undefined;
     readonly reverse?: boolean | undefined;
     readonly underline?: boolean | undefined;
-    readonly link?: string | undefined;
+    readonly inherits?: string | undefined;
   }
 
   /** A change of a style group: a field changes, `null` deletes it, and a missing field stays. */
@@ -575,7 +575,7 @@ declare module "yuke:tui" {
     /** Act on a click without a drag, and on `activate`. `link` is the target of the segment at the position. */
     readonly activate?: ((position: TextPosition, link: string | undefined) => void) | undefined;
     readonly followTail?: boolean | undefined;
-    readonly requestOlder?: (() => void | Promise<void>) | undefined;
+    readonly onTopReached?: (() => void | Promise<void>) | undefined;
   }
 
   /**
@@ -717,7 +717,7 @@ declare module "yuke:tui" {
      * Load older items when the view shows the top. The list calls it once for each visit of the top or update of the
      * items there, and not again while a call runs. Return a promise to hold the next call until the load ends.
      */
-    readonly requestOlder?: (() => void | Promise<void>) | undefined;
+    readonly onTopReached?: (() => void | Promise<void>) | undefined;
   }
 
   /**
@@ -800,7 +800,7 @@ declare module "yuke:tui" {
     /** Esc cancels. The owner closes the picker. */
     readonly cancel: () => void;
     /** Called after each change of the selection, also the first one. A query without a result gives `undefined`. */
-    readonly select?: ((item: T | undefined) => void) | undefined;
+    readonly onSelectionChange?: ((item: T | undefined) => void) | undefined;
   }
 
   /**
@@ -981,7 +981,7 @@ declare module "yuke:tui" {
     readonly focused: View | undefined;
     readonly focus: (view: View) => boolean;
     /** Give each later change of `focused` to `listener`. */
-    readonly onFocus: (listener: (change: FocusChange) => void) => () => void;
+    readonly onFocusChange: (listener: (change: FocusChange) => void) => () => void;
     /**
      * Call `callback` once after `delay` milliseconds, and draw a frame after it. The disposer cancels the call, and the
      * stop of the plugin cancels it too. A frame test moves this time with `advance`.
