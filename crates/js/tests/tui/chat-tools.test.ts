@@ -153,6 +153,32 @@ test("a click on a clipped path copies the whole path", async () => {
   equal(chat.notices, [`info copied /tools/${path}`]);
 });
 
+test("each visible character of a clipped tool subject keeps its source caret across a fold and reflow", async () => {
+  using frame = createFrame({ width: 20, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const path = "crates/js/modules/main.ts";
+  const chat = await loadChat(
+    frame,
+    fakeSessions(calls({ name: "read", args: { path }, hints: READ, result: ok("") })),
+  );
+  frame.start();
+  const transcript = chat.transcript();
+  equal(transcriptRows(frame)[1], " read crates/js/mo…");
+  for (let column = 6; column <= 18; column += 1) {
+    const mapped = transcript.rows.at({ column, row: 1 });
+    equal(mapped?.offset, column - 1);
+    equal(mapped === undefined ? undefined : transcript.rows.point(mapped), { column, row: 1 });
+  }
+  const position = transcript.rows.at({ column: 9, row: 1 });
+  equal(position?.offset, 8);
+  equal(position === undefined ? undefined : transcript.rows.point(position), { column: 9, row: 1 });
+  if (position === undefined) throw new Error("the visible subject has no source position");
+  transcript.caret = position;
+  transcript.activate({ ...position, offset: 0 });
+  frame.resize({ width: 40, height: 10 });
+  equal(transcript.caret, position);
+  equal(transcript.rows.point(position), { column: 9, row: 1 });
+});
+
 test("a subject with a line end that fits in one row still opens below the head line", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "a\nb" }, hints: EXEC, result: ok("") });

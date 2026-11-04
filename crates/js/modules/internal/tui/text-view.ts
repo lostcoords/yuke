@@ -486,9 +486,11 @@ export class TextView {
           const place = (offset: number): Place => ({ row: item.start + index, offset });
           if (position.offset >= source.from && position.offset <= source.to) {
             if (source.kind === "text") places.push(place(at + position.offset - source.from));
-            else if (position.offset === source.from) places.push(place(at));
+            else if (source.kind === "elision" && position.offset <= source.from + segment.text.length - 1) {
+              places.push(place(at + position.offset - source.from));
+            } else if (position.offset === source.from) places.push(place(at));
             else if (position.offset === source.to) places.push(place(end));
-            else places.push(place(bias === "before" ? at : end));
+            else places.push(place(bias === "before" ? (source.kind === "elision" ? end - 1 : at) : end));
           } else if (source.to < position.offset) before = place(end);
           else if (after === undefined && source.from > position.offset) after = place(at);
         }
@@ -515,6 +517,11 @@ export class TextView {
       const inside = offset < end || (offset === end && index === view.segments.length - 1);
       if (source !== undefined && offset >= at && inside) {
         if (source.kind === "text") return position(source.from + offset - at);
+        if (source.kind === "elision") {
+          const prefix = end - 1;
+          if (offset <= prefix) return position(source.from + offset - at);
+          return position(source.to);
+        }
         if (offset === at) return position(source.from);
         if (offset === end) return position(source.to);
         return position(bias === "before" ? source.from : source.to);
