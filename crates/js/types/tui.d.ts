@@ -279,6 +279,11 @@ declare module "yuke:tui" {
     readonly layout?: ((size: Size) => readonly Placement[]) | undefined;
     /** Draw the view. `focused` is true when the view or a child has the focus. */
     readonly draw: (canvas: Canvas, focused: boolean) => void;
+    /**
+     * Fill the rect of the view before its draw. This style is the base of each style of the view and its children,
+     * and a later style wins per field.
+     */
+    readonly style?: CanvasStyle | undefined;
     /** True when a click or `tui.focus` can give the view the focus. The view of a pane can take it without this. */
     readonly focusable?: boolean | undefined;
     /**

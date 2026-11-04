@@ -14,21 +14,21 @@ export interface Screen {
   readonly resolve: (style: CanvasStyle | undefined) => TermStyle;
 }
 
-/** The canvas of the screen rect `rect`, cut to `clip`, both in absolute cells. */
-export function createCanvas(screen: Screen, rect: Rect, clip: Rect): Canvas {
+/** The canvas of the screen rect `rect`, cut to `clip`, both in absolute cells. `base` comes before each style. */
+export function createCanvas(screen: Screen, rect: Rect, clip: Rect, base?: CanvasStyle): Canvas {
   return Object.freeze({
     width: rect.width,
     height: rect.height,
     text(column: number, row: number, text: string, style?: CanvasStyle): number {
       const value = String(text).toWellFormed();
       const end = column + termMeasure(value);
-      writeText(screen, clip, rect.column + column, rect.row + row, value, screen.resolve(style));
+      writeText(screen, clip, rect.column + column, rect.row + row, value, screen.resolve(layered(base, style)));
       return end;
     },
     fill(column: number, row: number, width: number, height: number, style?: CanvasStyle): void {
       const cut = intersect(clip, { column: rect.column + column, row: rect.row + row, width, height });
       if (cut.width > 0 && cut.height > 0) {
-        screen.fill(cut.column, cut.row, cut.width, cut.height, screen.resolve(style));
+        screen.fill(cut.column, cut.row, cut.width, cut.height, screen.resolve(layered(base, style)));
       }
     },
     region(column: number, row: number, width: number, height: number): Canvas {
@@ -38,9 +38,15 @@ export function createCanvas(screen: Screen, rect: Rect, clip: Rect): Canvas {
         width: Math.max(0, width),
         height: Math.max(0, height),
       };
-      return createCanvas(screen, part, intersect(clip, part));
+      return createCanvas(screen, part, intersect(clip, part), base);
     },
   });
+}
+
+/** `over` on top of `under`: a later style wins per field. */
+export function layered(under: CanvasStyle | undefined, over: CanvasStyle | undefined): CanvasStyle | undefined {
+  if (under === undefined || over === undefined) return over ?? under;
+  return [under, over].flat() as CanvasStyle;
 }
 
 /** The part of `a` inside `b`; an empty part has a width or a height of 0. */

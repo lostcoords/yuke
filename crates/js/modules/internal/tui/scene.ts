@@ -1,11 +1,12 @@
 /**
- * The scene holds the root view, the overlays, the placed views, the focus path, and the mouse capture. It routes the
+ * The scene holds the roots, the overlays, the placed views, the focus path, and the mouse capture. It routes the
  * input and draws.
  */
-import { createCanvas, intersect, type Screen } from "yuke:internal/tui/canvas";
+import { createCanvas, intersect, layered, type Screen } from "yuke:internal/tui/canvas";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import { isHosted, type PlacedView, supportOf } from "yuke:internal/tui/widgets";
 import type {
+  CanvasStyle,
   Cursor,
   FocusChange,
   KeyEvent,
@@ -330,10 +331,13 @@ export class Scene {
     return target;
   }
 
-  #drawTarget(target: Target, focused: Set<View>): void {
-    const canvas = createCanvas(this.#host.screen, target.rect, target.clip);
+  #drawTarget(target: Target, focused: Set<View>, inherited?: CanvasStyle): void {
+    const own = target.view.style;
+    const base = layered(inherited, own);
+    const canvas = createCanvas(this.#host.screen, target.rect, target.clip, base);
+    if (own !== undefined) canvas.fill(0, 0, target.rect.width, target.rect.height);
     target.view.draw(canvas, focused.has(target.view));
-    for (const child of target.children) this.#drawTarget(child, focused);
+    for (const child of target.children) this.#drawTarget(child, focused, base);
   }
 
   /** Give `value` to the handler of each view on the focus path of `layer`, from the deepest view up. */

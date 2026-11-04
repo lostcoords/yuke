@@ -67,6 +67,58 @@ test("a resize changes the frame size and a dispose closes each surface", () => 
   equal(surface.signal.aborted, true);
 });
 
+test("a view style fills its rect and is the base of each style of the view and its children", () => {
+  const editor = new TextEditor({ state: { text: "e", selection: { anchor: 1, head: 1 }, spans: [] } });
+  const text: View = {
+    draw: (canvas) => {
+      canvas.text(0, 0, "a");
+      canvas.region(1, 0, 1, 1).text(0, 0, "b", { fg: 1 });
+      canvas.text(2, 0, "c", { bg: 3 });
+    },
+  };
+  const inner: View = {
+    style: "demo:inner",
+    draw: (canvas) => {
+      canvas.text(0, 0, "d");
+    },
+  };
+  const outside: View = {
+    draw: (canvas) => {
+      canvas.text(0, 0, "f");
+    },
+  };
+  using frame = createFrame({ width: 4, height: 4 }, () => ({
+    draw() {},
+    layout: () => [
+      {
+        view: {
+          style: { bg: 2 },
+          draw() {},
+          layout: () => [
+            { view: text, rect: { column: 0, row: 0, width: 4, height: 1 } },
+            { view: inner, rect: { column: 0, row: 1, width: 4, height: 1 } },
+            { view: editor, rect: { column: 0, row: 2, width: 2, height: 1 } },
+          ],
+        },
+        rect: { column: 0, row: 0, width: 4, height: 3 },
+      },
+      { view: outside, rect: { column: 0, row: 3, width: 4, height: 1 } },
+    ],
+  }));
+  frame.surface("demo").tui.styles.set({ "demo:inner": { fg: 4 } });
+  const cells = frame.draw().cells;
+  equal(cells[0]?.[0]?.style, { bg: 2 });
+  equal(cells[0]?.[1]?.style, { fg: 1, bg: 2 });
+  equal(cells[0]?.[2]?.style, { bg: 3 });
+  // The fill of the view stays where no child draws.
+  equal(cells[0]?.[3], { text: " ", width: 1, style: { bg: 2 } });
+  equal(cells[1]?.[0]?.style, { fg: 4, bg: 2 });
+  equal(cells[1]?.[3]?.style, { fg: 4, bg: 2 });
+  equal(cells[2]?.[0], { text: "e", width: 1, style: { bg: 2 } });
+  equal(cells[2]?.[3]?.style, { bg: 2 });
+  equal(cells[3]?.[0], { text: "f", width: 1, style: {} });
+});
+
 test("a list of styles merges per field and a later style wins", () => {
   using frame = createFrame({ width: 4, height: 1 });
   const surface = frame.surface("demo");
