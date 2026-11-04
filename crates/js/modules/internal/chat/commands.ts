@@ -21,6 +21,11 @@ const ROWS = 6;
 /** A draft of one slash word, such as `/mod`, and the text after it. */
 const SLASH_DRAFT = /^(\/\S*)(\s[\s\S]*)?$/;
 
+/** Enter on the slash word `word` runs `item`: text after the word needs a command that takes text. */
+function runsCommand(item: CommandItem, word: string, hasText: boolean): boolean {
+  return item.enabled && `/${item.slash}` === word && (!hasText || item.argumentHint !== undefined);
+}
+
 /** The left column of the list: the slash word and the hint of its text. */
 function heading(item: CommandItem): string {
   return item.argumentHint === undefined ? `/${item.slash}` : `/${item.slash} ${item.argumentHint}`;
@@ -81,8 +86,7 @@ export class ChatCommands {
     const word = draft[1] as string;
     const items = this.#options.commands.list().filter((item) => item.enabled && item.slash !== undefined);
     // Text after the word needs a command with a hint. Otherwise the draft stays a message.
-    if (draft[2] !== undefined)
-      return items.filter((item) => item.argumentHint !== undefined && `/${item.slash}` === word);
+    if (draft[2] !== undefined) return items.filter((item) => runsCommand(item, word, true));
     const ranked = items.flatMap((item) => {
       const match = fuzzyMatch(word, `/${item.slash}`);
       return match === undefined ? [] : [{ item, score: match.score }];
@@ -97,12 +101,7 @@ export class ChatCommands {
     const word = draft?.[1];
     const known =
       word !== undefined &&
-      this.#options.commands
-        .list()
-        .some(
-          (item) =>
-            item.enabled && `/${item.slash}` === word && (draft?.[2] === undefined || item.argumentHint !== undefined),
-        );
+      this.#options.commands.list().some((item) => runsCommand(item, word, draft?.[2] !== undefined));
     extension.setDecorations(known ? [{ range: { anchor: 0, head: word.length }, style: STYLE.command }] : []);
   }
 
@@ -118,8 +117,7 @@ export class ChatCommands {
       this.#hidden = this.#editor.state.text;
       return true;
     }
-    const command = matches[Math.min(this.#selected, matches.length - 1)];
-    if (command === undefined) return false;
+    const command = matches[Math.min(this.#selected, matches.length - 1)] as CommandItem;
     if (stroke === "tab") {
       // Text after the word stays, so Tab only completes a draft of one word.
       if (SLASH_DRAFT.exec(this.#editor.state.text)?.[2] !== undefined) return true;

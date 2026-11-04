@@ -47,7 +47,7 @@ export type TermEvent =
     };
 
 /** What `term.run` takes. */
-export interface Handler {
+interface Handler {
   event: (event: TermEvent) => void;
   draw: () => void;
 }

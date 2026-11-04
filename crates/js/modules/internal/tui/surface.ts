@@ -43,7 +43,6 @@ class Scope {
   readonly #signal: AbortSignal;
   readonly #report: (text: string) => void;
   readonly #cleanups = new Set<() => void>();
-  #stopped = false;
 
   constructor(owner: string, signal: AbortSignal, report: (text: string) => void) {
     this.#owner = owner;
@@ -55,7 +54,7 @@ class Scope {
 
   /** Throw after the stop of the plugin, also in an abort listener that runs before the one of the scope. */
   check(): void {
-    if (this.#stopped || this.#signal.aborted) {
+    if (this.#signal.aborted) {
       throw new TypeError(`plugin ${this.#owner} stopped: its tui takes no more calls`);
     }
   }
@@ -78,8 +77,6 @@ class Scope {
   }
 
   #stop(): void {
-    if (this.#stopped) return;
-    this.#stopped = true;
     for (const cleanup of [...this.#cleanups].toReversed()) {
       try {
         cleanup();

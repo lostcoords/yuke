@@ -3,7 +3,7 @@
 import { FileSystemError, readTextFile, writeTextFile } from "yuke:fs";
 import type { ModelReference, ReasoningLevel } from "yuke:protocol";
 
-export interface Choice {
+interface Choice {
   readonly model: ModelReference;
   readonly reasoning: ReasoningLevel;
 }

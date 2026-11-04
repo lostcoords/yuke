@@ -134,8 +134,8 @@ export class Picker<T extends object> {
     return [{ view: this.input, rect: { column: 0, row: 0, width: size.width, height: 1 } }];
   }
 
-  draw(canvas: Canvas, focused: boolean): void {
-    this.#list.draw(canvas.region(0, 1, canvas.width, Math.max(0, canvas.height - 1)), focused);
+  draw(canvas: Canvas): void {
+    this.#list.draw(canvas.region(0, 1, canvas.width, Math.max(0, canvas.height - 1)));
   }
 
   /** Up, Down, Enter, and Esc. Enter stays here also when nothing is selected. */

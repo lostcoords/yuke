@@ -216,15 +216,12 @@ export class TextView {
 
   /** The order of two checked positions. */
   #compare(first: TextPosition, second: TextPosition): number {
-    const a = this.#order.get(first.item);
-    const b = this.#order.get(second.item);
-    if (a === undefined || b === undefined) throw new RangeError("a position names an item that the document lacks");
+    // Each caller validates its positions first.
+    const a = this.#order.get(first.item) as ItemOrder;
+    const b = this.#order.get(second.item) as ItemOrder;
     if (a.at !== b.at) return a.at - b.at;
-    const sectionA = a.sections.get(first.section);
-    const sectionB = a.sections.get(second.section);
-    if (sectionA === undefined || sectionB === undefined) {
-      throw new RangeError("a position names a section that its item lacks");
-    }
+    const sectionA = a.sections.get(first.section) as number;
+    const sectionB = a.sections.get(second.section) as number;
     return sectionA !== sectionB ? sectionA - sectionB : first.offset - second.offset;
   }
 
@@ -291,7 +288,7 @@ export class TextView {
     return [];
   }
 
-  draw(canvas: Canvas, _focused: boolean): void {
+  draw(canvas: Canvas): void {
     const top = this.#list.state.top;
     const ranges = this.#ranges();
     for (let line = 0; line < canvas.height; line += 1) {
@@ -676,7 +673,12 @@ function samePosition(first: TextPosition | undefined, second: TextPosition | un
 }
 
 /** The place of each item and of each section in its item, by key. */
-type Order = Map<string, { readonly at: number; readonly sections: Map<string, number> }>;
+interface ItemOrder {
+  readonly at: number;
+  readonly sections: Map<string, number>;
+}
+
+type Order = Map<string, ItemOrder>;
 
 /** Check `document`, and return its order. A document that is not valid throws a `TypeError`. */
 function checkDocument(document: TextDocument): Order {

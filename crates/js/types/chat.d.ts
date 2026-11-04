@@ -135,7 +135,7 @@ declare module "yuke:chat" {
   /**
    * The first open request of a plugin in a chat session, as a view with one page per question. Up and Down move,
    * Space ticks, Enter answers and goes to the next page, and the last Enter sends. Left or Shift+Tab goes back. A
-   * question without options is a field that masks a secret. A caller places the view, as the chat does in the place of
+   * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key to `cancel`. A caller places the view, as the chat does in the place of
    * the composer. A view answers once, and a refused answer can come again. The others wait in order. A request of an
    * ended handle shows after the next open.
    *
@@ -209,10 +209,18 @@ declare module "yuke:chat" {
    * The activity row of an active turn shows a spinner, a phase label, elapsed time, and a retry countdown.
    * The default label is `Working…`, including during tool calls, without tool names or arguments.
    * The time counts from the first active state that this instance observes with a live handle, not from tool start.
-   * Another session or the end of the handle stops the count. The chat draws the text again each `frameMs` while `active`.
+   * Another session or the end of the handle stops the count. This block asks for no frame: while `active`, the owner draws
+   * again each `frameMs`.
    *
    * ```ts
    * const working = new ChatWorking(chat, { signal: mount.signal, now: () => tui.now() });
+   * let stop: (() => void) | undefined;
+   * const tick = () => {
+   *   stop?.();
+   *   stop = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
+   * };
+   * working.onChange(tick);
+   * tick();
    * const row = working.text({ cancelKey: "esc" }); // in draw
    * if (row !== undefined) canvas.text(0, 0, `${row.spinner} ${row.text}`);
    * ```
@@ -232,7 +240,8 @@ declare module "yuke:chat" {
   /**
    * The default look of a conversation, as a text document for a `TextView`: user messages, Markdown answers, thoughts
    * and tool calls that fold, diffs, and the failure of a running turn. Thoughts and tools start folded. The head line
-   * of a running tool shows its duration at the last `project` call.
+   * of a running tool shows its duration at the last `project` call. One document serves one session: fold choices go by
+   * entry key, so make a new document when the session changes.
    *
    * ```ts
    * const document = new ChatDocument(`session:${id}`);

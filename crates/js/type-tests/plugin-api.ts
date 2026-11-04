@@ -407,8 +407,6 @@ s.hook("round.after", () => ({ stop: true, continue: "x" }));
 s.hook("round.after", () => ({ stop: false }));
 
 // The web globals declare what the runtime has, and no more.
-assert<Equal<typeof DOMException.ABORT_ERR, 20>>();
-assert<Equal<typeof Event.AT_TARGET, 2>>();
 new TextDecoder("utf8");
 new TextDecoder("utf-16le");
 

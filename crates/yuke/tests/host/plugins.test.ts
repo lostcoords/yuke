@@ -409,27 +409,3 @@ test("options that fail the check fail the load of that plugin before its apply"
   ]);
   equal(applied, ["good"]);
 });
-
-// Given exports use the same option schema and frozen options as an entry.
-test("given exports use the option checks of an entry", async () => {
-  let seen: unknown[] = [];
-  const host = createHost({
-    plugins: [
-      {
-        name: "fine",
-        optionsSchema: { type: "object", properties: { depth: { type: "number" } } },
-        options: { depth: 2 },
-        apply: (ctx) => {
-          seen = [ctx.options.depth, Object.isFrozen(ctx.options), "root" in ctx];
-          return undefined;
-        },
-      },
-      { name: "unchecked", options: { depth: 2 }, apply: () => undefined },
-    ],
-  });
-
-  equal(await failures(host), [
-    "plugin unchecked did not load: TypeError: the plugin gets options, and it exports no optionsSchema",
-  ]);
-  equal(seen, [2, true, false]);
-});

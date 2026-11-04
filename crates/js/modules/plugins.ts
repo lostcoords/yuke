@@ -835,7 +835,7 @@ export interface SessionContext<O = Record<string, never>> {
      * - A close of the session and a reload abort the signal too, and they wait for `work` to end.
      * - During a reload the old job still runs while the new `session` starts, so start the same id later.
      */
-    readonly run: (job: JobOptions, work: JobWork) => Promise<void>;
+    readonly run: (job: Omit<JobOptions, "background">, work: JobWork) => Promise<void>;
   };
   /**
    * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order

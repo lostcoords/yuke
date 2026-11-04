@@ -66,21 +66,13 @@ impl<'js> Queue<'js> {
             let routes = Rc::downgrade(&routes);
             object.set(
                 name,
-                Function::new(ctx.clone(), move |ctx: Ctx<'js>, deliver: Function<'js>| {
+                Function::new(ctx.clone(), move |deliver: Function<'js>| {
                     let routes = routes
                         .upgrade()
                         .unwrap_or_else(|| unreachable!("the dispatcher lives while natives run"));
                     let mut routes = routes.borrow_mut();
                     let route = if views { &mut routes.views } else { &mut routes.facts };
-                    if route.is_some() {
-                        return Err(throw(
-                            &ctx,
-                            ErrorClass::TypeError,
-                            "the event route already has a listener",
-                        ));
-                    }
                     *route = Some(deliver);
-                    Ok(())
                 })?,
             )?;
         }

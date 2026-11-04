@@ -37,39 +37,6 @@ test("a turn sends the message to the fake model and shows its answer", async ()
   equal(host.requests[0]?.messages.at(-1)?.text, "Hi.");
 });
 
-test("a tool of a plugin runs in a turn, and the model gets its result", async () => {
-  const replies = [reply.toolCall("greet", { who: "Ada" }), reply.text("Done.")];
-  await using host = await createHost({ plugins: [{ name: "greeter", session: greeter }], replies });
-  const session = await host.openSession();
-
-  await session.send("Greet Ada.");
-
-  const call = tool(session.transcript.entries, 1);
-  equal([call.name, call.status, call.result?.content, call.result?.isError], ["greet", "done", "hello Ada", false]);
-  equal(host.requests[0]?.tools.includes("greet"), true);
-  equal(host.requests.length, 2);
-});
-
-test("a tool.before handler blocks a call in a turn", async () => {
-  const replies = [reply.toolCall("greet", { who: "Ada" }), reply.text("Blocked.")];
-  const guard: PluginSession = (s) => {
-    s.hook("tool.before", (event) => (event.call.name === "greet" ? { block: "no greetings" } : undefined));
-  };
-  await using host = await createHost({
-    plugins: [
-      { name: "greeter", session: greeter },
-      { name: "guard", session: guard },
-    ],
-    replies,
-  });
-  const session = await host.openSession();
-
-  await session.send("Greet Ada.");
-
-  const call = tool(session.transcript.entries, 1);
-  equal([call.result?.isError, call.result?.content.includes("no greetings")], [true, true]);
-});
-
 test("an overloaded answer gets a retry without a wait", async () => {
   const replies = [reply.overloaded(), reply.text("Hello.")];
   await using host = await createHost({ plugins: [], replies });
@@ -166,7 +133,9 @@ for (const model of [
       session.transcript.entries.map((entry) => entry.kind),
       ["input", "tool", "text", "end"],
     );
-    equal(tool(session.transcript.entries, 1).result?.content, "hello Ada");
+    const call = tool(session.transcript.entries, 1);
+    equal([call.name, call.status, call.result?.content, call.result?.isError], ["greet", "done", "hello Ada", false]);
+    equal(host.requests.length, 2);
     const [first, second] = host.requests;
     assert(first !== undefined && second !== undefined, "the model got no two requests");
     equal(first.messages, [{ role: "user", text: "Greet Ada." }]);

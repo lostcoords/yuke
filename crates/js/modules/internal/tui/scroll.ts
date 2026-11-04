@@ -203,7 +203,7 @@ export class ScrollList<T extends object> {
     return [];
   }
 
-  draw(canvas: Canvas, _focused: boolean): void {
+  draw(canvas: Canvas): void {
     let at = this.#entryAt(this.#top);
     if (at < 0) return;
     let row = this.#top - (this.#prefix[at] as number);

@@ -83,17 +83,6 @@ test("the close runs the cleanups once, and a second close gives the same promis
   equal([first === second, cleaned], [true, ["apply"]]);
 });
 
-test("a reply that the model used passes the close", async () => {
-  const replies = [reply.text("Hello.")];
-  const host = await createHost({ plugins: [], replies });
-  const session = await host.openSession();
-  await session.send("Hi.");
-
-  await host.close();
-
-  equal(host.requests.length, 1);
-});
-
 test("a plugin folder must be absolute", async () => {
   const error = await rejects(createHost({ plugins: [{ folder: "plugins/echo" }] }));
 

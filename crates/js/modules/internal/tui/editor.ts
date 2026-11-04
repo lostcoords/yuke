@@ -265,7 +265,7 @@ export class TextEditor {
     return [];
   }
 
-  draw(canvas: Canvas, _focused: boolean): void {
+  draw(canvas: Canvas): void {
     const appearance = this.#support.appearance(this.#appearance);
     const promptWidth = this.#promptWidth(canvas.width);
     const layout = this.#current();

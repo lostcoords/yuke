@@ -735,7 +735,7 @@ function start(
       },
     }),
     jobs: Object.freeze({
-      async run(job: JobOptions, work: JobWork): Promise<void> {
+      async run(job: Omit<JobOptions, "background">, work: JobWork): Promise<void> {
         await runJob(job, work, undefined);
       },
     }),

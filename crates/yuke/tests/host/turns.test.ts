@@ -134,6 +134,10 @@ test("a plugin blocks one of two tool calls in an answer, and the other tool cal
     [results.includes("the notes"), results.includes("secret.txt is private"), results.includes("the secret")],
     [true, true, false],
   );
+  const blocked = session.transcript.entries.find(
+    (entry) => entry.kind === "tool" && entry.result?.content.includes("secret.txt is private") === true,
+  );
+  equal(blocked?.kind === "tool" && blocked.result?.isError, true);
   const end = session.transcript.entries.at(-1);
   equal(end?.kind === "end" && end.end, { outcome: { completed: { finishReason: "stop" } } });
 });
