@@ -91,8 +91,7 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
     text: source + end,
     render: (width) => {
       const shown = shownAt(width);
-      // A clipped text does not match its source unit by unit, so it stands for the whole range.
-      const kind = shown === head ? "text" : "replacement";
+      const kind = shown === head ? "text" : "elision";
       const from = name.length + 1;
       const segments: Segment[] = [];
       if (shown.length > from) {
