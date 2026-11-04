@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use yuke_ai::scripted::ScriptedTransport;
-use yuke_js::{Display, Interface, Startup};
-use yuke_protocol::{ModelReference, SessionActivity, SessionId, SessionSettings};
-use yuke_term::Size;
+use yuke_js::{Display, Input, Interface, Startup};
+use yuke_protocol::{ModelReference, SessionActivity, SessionId, SessionSettings, SessionTitle};
+use yuke_term::{Code, Event, Key, Size};
 
 use super::{Notices, reload};
 use crate::app::{App, Mode};
@@ -90,7 +90,7 @@ impl Output {
 }
 
 const COLUMNS: usize = 200;
-const ROWS: usize = 4;
+const ROWS: usize = 12;
 
 /// A wide display, so a notice fits on its row.
 fn display() -> (Arc<Display>, Output) {
@@ -343,4 +343,50 @@ async fn a_reload_while_the_first_plugins_load_gives_a_notice() {
         .map(|notice| notice.message)
         .collect();
     assert_eq!(messages, ["the reload failed: yuke is still loading the plugins"]);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_restart() {
+    let place = Place::new("tui", "rename_session_title");
+    let id = saved_session(&place).await;
+    let (display, output) = display();
+    let app = started_on(&place, &display, Some(id)).await;
+    app.sessions()
+        .rename(id, SessionTitle::new("Before rename").unwrap())
+        .await
+        .unwrap();
+    output.shows("Message").await;
+
+    display.send(Input::Event(Event::Paste("/rename".to_owned())));
+    display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    output.contains("Before rename").await;
+    display.send(Input::Event(Event::Key(Key::new(Code::Home))));
+    for _ in 0..13 {
+        display.send(Input::Event(Event::Key(Key::new(Code::Delete))));
+    }
+    display.send(Input::Event(Event::Paste("Saved from TUI".to_owned())));
+    display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if app.sessions().get(id).await.unwrap().session.title.as_deref() == Some("Saved from TUI") {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    app.shutdown().await;
+
+    let (restarted_display, restarted_output) = self::display();
+    let restarted = started_on(&place, &restarted_display, Some(id)).await;
+    restarted_output.shows("Message").await;
+    restarted_display.send(Input::Event(Event::Paste("/sessions:open".to_owned())));
+    restarted_display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    restarted_output.contains("Saved from TUI").await;
+    assert_eq!(
+        restarted.sessions().get(id).await.unwrap().session.title.as_deref(),
+        Some("Saved from TUI")
+    );
+    restarted.shutdown().await;
 }

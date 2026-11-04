@@ -6,11 +6,11 @@ import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
-/** A saved session `id` of the folder `cwd` with the first prompt `preview`, `minutes` old. */
-function row(id: string, cwd: string, preview: string, activity: SessionActivity, minutes: number): SessionRow {
+/** A saved session `id` of the folder `cwd` with the title `title`, `minutes` old. */
+function row(id: string, cwd: string, title: string | null, activity: SessionActivity, minutes: number): SessionRow {
   const updatedAt = Date.now() - minutes * 60_000;
   return {
-    session: { sessionId: id, model: { provider: "p", model: "m" }, cwd, preview, createdAt: updatedAt, updatedAt },
+    session: { sessionId: id, model: { provider: "p", model: "m" }, cwd, title, createdAt: updatedAt, updatedAt },
     activity,
   };
 }

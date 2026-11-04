@@ -34,6 +34,7 @@ import {
   sessionsOpen,
   sessionsRelease,
   sessionsRemove,
+  sessionsRename,
 } from "yuke:internal/native";
 import type { Catalog, OpenOptions, PluginManager, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
 import type { SessionId } from "yuke:protocol";
@@ -173,6 +174,9 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
     fork: (id, through) => sessionsFork([id, through ?? null]),
     list: (params) => sessionsList(params ?? {}),
     get: (id) => sessionsGet(id),
+    async rename(id, title) {
+      await sessionsRename([id, title]);
+    },
     async remove(id) {
       await sessionsRemove(id);
     },

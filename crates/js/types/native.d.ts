@@ -30,6 +30,7 @@ declare module "yuke:internal/native" {
     SessionSettings,
     SessionSnapshot,
     SessionState,
+    SessionTitle,
     SessionUpdate,
     StoredEvent,
     SyncPluginsParams,
@@ -482,6 +483,7 @@ declare module "yuke:internal/native" {
   export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;
   export function sessionsGet(id: SessionId): Promise<SessionRow>;
   export function sessionsRemove(id: SessionId): Promise<null>;
+  export function sessionsRename(request: readonly [id: SessionId, title: SessionTitle]): Promise<null>;
   export function sessionsEvents(
     request: readonly [id: SessionId, before: EventNumber | null, limit: number],
   ): Promise<StoredEvent[]>;

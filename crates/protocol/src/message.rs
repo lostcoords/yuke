@@ -10,10 +10,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    EventNumber, InputId, InstanceId, InteractionRespondParams, SessionId, SessionSettings, SessionUpdateParams,
+    EventNumber, InputId, InstanceId, InteractionRespondParams, SessionId, SessionSettings, SessionTitle,
+    SessionUpdateParams,
 };
 
-/// The protocol version that this crate speaks. A breaking change of the messages takes the next number.
+/// The protocol version that this crate speaks.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// The `jsonrpc` member of each message. It is `"2.0"`, and a read of another text fails.
@@ -83,6 +84,9 @@ pub enum ClientRequest {
     /// the settings of a turn do not change. Result: [`EmptyResult`].
     #[serde(rename = "session/set_settings")]
     SetSettings(SetSettingsParams),
+    /// Rename a saved session. Result: [`EmptyResult`].
+    #[serde(rename = "session/rename")]
+    RenameSession(RenameSessionParams),
     /// Remove a pending input of a session. A turn saves its input before the model reads it, so the model never reads
     /// a removed input. Result: [`RemoveInputResult`].
     #[serde(rename = "session/remove_input")]
@@ -182,7 +186,7 @@ pub enum ClientRequest {
 
 impl ClientRequest {
     /// The method of each request. A server tells an unknown method from bad params with it.
-    pub const METHODS: [&str; 30] = [
+    pub const METHODS: [&str; 31] = [
         "initialize",
         "session/new",
         "session/fork",
@@ -190,6 +194,7 @@ impl ClientRequest {
         "session/close",
         "session/input",
         "session/set_settings",
+        "session/rename",
         "session/remove_input",
         "session/list",
         "session/get",
@@ -692,6 +697,17 @@ pub struct SetSettingsParams {
     /// The new model, request settings, and working folder.
     #[serde(flatten)]
     pub settings: SessionSettings,
+}
+
+/// The params of `session/rename`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSessionParams {
+    /// The saved session.
+    pub session_id: SessionId,
+    /// The new title, with normalized whitespace and 1 to 200 Unicode scalar values.
+    pub title: SessionTitle,
 }
 
 /// The params of `session/remove_input`.

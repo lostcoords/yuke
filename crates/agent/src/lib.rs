@@ -21,7 +21,7 @@ pub use prompt::{PromptSection, prompt_text};
 pub use session::{Session, SessionError, SessionTurn};
 pub use store::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
-    check_consumed_blocks, preview_of,
+    check_consumed_blocks, title_of,
 };
 pub use updates::SessionObserver;
 

@@ -34,16 +34,18 @@ pub use message::{
     ExtensionRequestParams, ForkSessionParams, GetBlobParams, GetBlobResult, GetSessionParams, Implementation,
     InitializeParams, InitializeResult, InputParams, InputResult, Job, JobKind, JobState, JsonRpc, ListJobsResult,
     ListSessionsParams, ListSessionsResult, LoadSessionParams, NewSessionParams, NoticeLevel, NoticeParams,
-    Notification, PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams, Request,
-    RequestId, Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionParams,
-    SessionResult, SetSettingsParams, StopJobParams, UpdateCredentialParams,
+    Notification, PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams,
+    RenameSessionParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification,
+    ServerRequest, SessionParams, SessionResult, SetSettingsParams, StopJobParams, UpdateCredentialParams,
 };
 pub use plugin::{
     AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,
     ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
     RemovePluginParams, SyncPluginsParams, SyncPluginsResult, SyncedPlugin,
 };
-pub use session::{ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary};
+pub use session::{
+    InvalidSessionTitle, ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary, SessionTitle,
+};
 pub use update::{
     BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionSnapshot, SessionState, SessionUpdate,
     SessionUpdateParams,

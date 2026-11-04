@@ -79,6 +79,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   // The saved sessions of `list` and `get`, newest first, and the params of each list.
   const rows: SessionRow[] = [];
   const lists: ListSessionsParams[] = [];
+  const renames: [string, string][] = [];
   // The end of each handle, by its open. A close by another client ends the handles of its session.
   const ends = new Map<Opened, AbortController>();
   /**
@@ -95,6 +96,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     movable: boolean;
     openFails: number;
     refuseSettings: boolean;
+    renameFails: boolean;
     removal: Promise<void> | undefined;
     removed: boolean;
     refuseAnswer: boolean;
@@ -108,6 +110,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     movable: false,
     openFails: 0,
     refuseSettings: false,
+    renameFails: false,
     removal: undefined,
     removed: true,
     refuseAnswer: false,
@@ -130,6 +133,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     state,
     rows,
     lists,
+    renames,
     /** The rows of the folder `params.cwd`, or of each folder. A list gives at most `params.limit` rows, else 50. */
     async list(params: ListSessionsParams = {}): Promise<{ sessions: SessionRow[] }> {
       lists.push(params);
@@ -141,6 +145,15 @@ export function fakeSessions(saved: StoredEvent[] = []) {
       const row = rows.find((candidate) => candidate.session.sessionId === id);
       if (row === undefined) throw new Error(`no session ${id}`);
       return row;
+    },
+    async rename(id: string, title: string): Promise<void> {
+      if (state.renameFails) throw new Error("rename failed");
+      const index = rows.findIndex((candidate) => candidate.session.sessionId === id);
+      if (index < 0) throw new Error(`no session ${id}`);
+      const row = rows[index];
+      if (row === undefined) throw new Error(`no session ${id}`);
+      rows[index] = { ...row, session: { ...row.session, title } };
+      renames.push([id, title]);
     },
     async create(settings: SessionSettings): Promise<string> {
       created.push(settings);

@@ -11,7 +11,7 @@ use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
     ListSessionsResult, McpServer, NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState,
-    SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    SessionTitle, SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -161,6 +161,14 @@ pub trait Sessions {
     ///
     /// Returns why the request failed.
     async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), SessionsError>;
+
+    /// Rename an open or closed session without changing its history or activity times.
+    /// [`SessionTitle`] contains normalized whitespace and 1 to 200 Unicode scalar values.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn rename(&self, id: SessionId, title: SessionTitle) -> Result<(), SessionsError>;
 
     /// Save `bytes` in the store of the open session `id`, and return the blob that names them.
     ///

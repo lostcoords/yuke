@@ -95,6 +95,39 @@ async fn saved(sessions: &SessionService) -> usize {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_rename_keeps_a_running_turn_and_also_works_after_the_session_closes() {
+    let place = Place::new("sessions", "a_rename_keeps_a_running_turn");
+    let app = started_with(&place, Box::new(Stalled)).await;
+    let sessions = app.sessions();
+    let id = sessions.create(settings(&place), None).await.unwrap();
+    let attachment = sessions.attach(id).unwrap();
+    sessions.input(id, said("Investigate login.")).await.unwrap();
+    until("the turn did not start", || {
+        sessions.live(id).unwrap().state() == SessionState::Running
+    })
+    .await;
+
+    sessions
+        .rename(id, SessionTitle::new("Login fix").unwrap())
+        .await
+        .unwrap();
+
+    let running = sessions.get(id).await.unwrap();
+    assert_eq!(running.session.title.as_deref(), Some("Login fix"));
+    assert_eq!(running.activity, SessionActivity::Running);
+    sessions.close(id).await.unwrap();
+    sessions
+        .rename(id, SessionTitle::new("Saved login fix").unwrap())
+        .await
+        .unwrap();
+    let closed = sessions.get(id).await.unwrap();
+    assert_eq!(closed.session.title.as_deref(), Some("Saved login fix"));
+    assert_eq!(closed.activity, SessionActivity::Closed);
+    drop(attachment);
+    app.shutdown().await;
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_reserved_session_refuses_other_calls_until_the_reservation_drops() {
     let place = Place::new(
         "sessions",

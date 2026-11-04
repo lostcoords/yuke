@@ -9,8 +9,8 @@ use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, StoredEvent, SyncPluginsParams,
-    SyncPluginsResult,
+    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, SessionTitle, StoredEvent,
+    SyncPluginsParams, SyncPluginsResult,
 };
 
 use super::sessions::SessionService;
@@ -106,6 +106,10 @@ impl Sessions for PluginSessions {
 
     async fn set_settings(&self, id: SessionId, settings: SessionSettings) -> Result<(), SessionsError> {
         Ok(self.service()?.set_settings(id, settings).await?)
+    }
+
+    async fn rename(&self, id: SessionId, title: SessionTitle) -> Result<(), SessionsError> {
+        Ok(self.service()?.rename(id, title).await?)
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {

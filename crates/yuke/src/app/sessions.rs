@@ -14,7 +14,7 @@ use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListSessionsParams, ListSessionsResult,
     NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow, SessionSettings,
-    SessionState, SessionSummary, StoredEvent,
+    SessionState, SessionSummary, SessionTitle, StoredEvent,
 };
 
 use super::facts::Watch;
@@ -433,6 +433,17 @@ impl SessionService {
     pub(crate) async fn get(&self, id: SessionId) -> Result<SessionRow, AppError> {
         let session = self.shared.store.session_summary(id).await?;
         Ok(self.row(session))
+    }
+
+    /// Rename session `id` without changing its turn, events, or activity times. The session can be closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Store`] for an unknown session or when the save fails, [`AppError::Reloading`], and
+    /// [`AppError::Stopped`].
+    pub(crate) async fn rename(&self, id: SessionId, title: SessionTitle) -> Result<(), AppError> {
+        admit(self.registry.borrow().phase)?;
+        Ok(self.shared.store.rename_session(id, &title).await?)
     }
 
     /// Delete the saved session `id` and its descendants, with their events, pending inputs, and blobs. Its forks stay. A

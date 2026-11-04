@@ -409,7 +409,7 @@ pub(crate) mod sessions {
     pub(crate) struct ListSessions {
         pub(crate) id: [u8; 16],
         pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
-        pub(crate) preview: Option<String>,
+        pub(crate) title: Option<String>,
         pub(crate) fork_of: Option<[u8; 16]>,
         pub(crate) parent: Option<[u8; 16]>,
         pub(crate) created_at: u64,
@@ -421,7 +421,7 @@ pub(crate) mod sessions {
     pub(crate) struct SessionSummary {
         pub(crate) id: [u8; 16],
         pub(crate) settings: crate::Json<yuke_protocol::SessionSettings>,
-        pub(crate) preview: Option<String>,
+        pub(crate) title: Option<String>,
         pub(crate) fork_of: Option<[u8; 16]>,
         pub(crate) parent: Option<[u8; 16]>,
         pub(crate) created_at: u64,
@@ -461,14 +461,15 @@ pub(crate) mod sessions {
         pub(crate) source: [u8; 16],
         pub(crate) id: [u8; 16],
         pub(crate) cut: u64,
+        pub(crate) title: Option<String>,
     }
 
-    /// Add session `id` as a fork of session `source`: its prompt, its preview, and its newest settings at event
+    /// Add session `id` as a fork of session `source`: its prompt, the title `title`, and its newest settings at event
     /// `cut`. It adds no row for an unknown source.
     pub(crate) fn copy_session(connection: &Connection, params: &CopySessionParams) -> Result<usize> {
         execute(
             connection,
-            r"INSERT INTO sessions(id, prompt, settings, preview, fork_of)
+            r"INSERT INTO sessions(id, prompt, settings, title, fork_of)
 SELECT
     :id, prompt,
     coalesce(
@@ -476,9 +477,14 @@ SELECT
          ORDER BY seq DESC LIMIT 1),
         settings
     ),
-    preview, id
+    :title, id
 FROM sessions WHERE id = :source;",
-            &[(":source", &params.source), (":id", &params.id), (":cut", &params.cut)],
+            &[
+                (":source", &params.source),
+                (":id", &params.id),
+                (":cut", &params.cut),
+                (":title", &params.title),
+            ],
         )
     }
 
@@ -523,17 +529,32 @@ WHERE id = :id;",
     }
 
     #[derive(Debug)]
-    pub(crate) struct SetPreviewParams<'a> {
+    pub(crate) struct InitializeTitleParams<'a> {
         pub(crate) id: [u8; 16],
-        pub(crate) preview: &'a str,
+        pub(crate) title: &'a str,
     }
 
-    /// Give the session the preview `preview` when it has none.
-    pub(crate) fn set_preview(connection: &Connection, params: &SetPreviewParams<'_>) -> Result<usize> {
+    /// Give the session the title `title` when it has none.
+    pub(crate) fn initialize_title(connection: &Connection, params: &InitializeTitleParams<'_>) -> Result<usize> {
         execute(
             connection,
-            r"UPDATE sessions SET preview = :preview WHERE id = :id AND preview IS NULL;",
-            &[(":id", &params.id), (":preview", &params.preview)],
+            r"UPDATE sessions SET title = :title WHERE id = :id AND title IS NULL;",
+            &[(":id", &params.id), (":title", &params.title)],
+        )
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct RenameSessionParams<'a> {
+        pub(crate) id: [u8; 16],
+        pub(crate) title: &'a str,
+    }
+
+    /// Rename the session without changing its events or activity times.
+    pub(crate) fn rename_session(connection: &Connection, params: &RenameSessionParams<'_>) -> Result<usize> {
+        execute(
+            connection,
+            r"UPDATE sessions SET title = :title WHERE id = :id;",
+            &[(":id", &params.id), (":title", &params.title)],
         )
     }
 
@@ -553,7 +574,7 @@ WHERE id = :id;",
     ) -> Query<'a, ListSessions> {
         Query::new(
             connection,
-            r"SELECT id, settings, preview, fork_of, parent, created_at, updated_at, newest_event FROM sessions
+            r"SELECT id, settings, title, fork_of, parent, created_at, updated_at, newest_event FROM sessions
 WHERE parent IS :parent AND (:cwd IS NULL OR cwd = :cwd) AND newest_event < :before
 ORDER BY newest_event DESC
 LIMIT :limit;",
@@ -567,7 +588,7 @@ LIMIT :limit;",
                 Ok(ListSessions {
                     id: row.get("id")?,
                     settings: row.get("settings")?,
-                    preview: row.get("preview")?,
+                    title: row.get("title")?,
                     fork_of: row.get("fork_of")?,
                     parent: row.get("parent")?,
                     created_at: row.get("created_at")?,
@@ -582,13 +603,13 @@ LIMIT :limit;",
     pub(crate) fn session_summary(connection: &Connection, id: [u8; 16]) -> Query<'_, SessionSummary> {
         Query::new(
             connection,
-            r"SELECT id, settings, preview, fork_of, parent, created_at, updated_at FROM sessions WHERE id = :id;",
+            r"SELECT id, settings, title, fork_of, parent, created_at, updated_at FROM sessions WHERE id = :id;",
             &[(":id", &id)],
             |row| {
                 Ok(SessionSummary {
                     id: row.get("id")?,
                     settings: row.get("settings")?,
-                    preview: row.get("preview")?,
+                    title: row.get("title")?,
                     fork_of: row.get("fork_of")?,
                     parent: row.get("parent")?,
                     created_at: row.get("created_at")?,

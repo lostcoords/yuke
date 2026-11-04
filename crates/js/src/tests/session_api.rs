@@ -11,7 +11,8 @@ use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult,
     ListSessionsParams, ListSessionsResult, LiveUpdate, McpServer, ModelReference, SessionId, SessionRow,
-    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate, StoredEvent, SyncPluginsParams,
+    SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -246,6 +247,10 @@ impl Sessions for Scripted {
         Ok(())
     }
     async fn set_settings(&self, _: SessionId, _: SessionSettings) -> Result<(), SessionsError> {
+        Ok(())
+    }
+    async fn rename(&self, id: SessionId, title: SessionTitle) -> Result<(), SessionsError> {
+        self.record(format!("rename {id} {title}"));
         Ok(())
     }
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, SessionsError> {
@@ -583,6 +588,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              await handle.sendNotification('shown', 'told');
              handle.cancel();
              handle.background();
+             await sessions.rename(id, '  renamed   session ');
              await sessions.fork(id);
              await sessions.events(id, {{ limit: 3 }});
              await sessions.list();
@@ -612,6 +618,7 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             ),
             format!("cancel {id}"),
             format!("background {id}"),
+            format!("rename {id} renamed session"),
             format!("fork {id} None"),
             format!("events {id} None 3"),
             "list None".to_owned(),

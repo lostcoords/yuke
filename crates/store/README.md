@@ -8,11 +8,14 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 - One file holds all sessions. The connection uses WAL. A returned commit survives a crash, but on macOS not always a
   power loss (plain `fsync`).
 - One connection runs each read and write in call order on its own thread.
-- The `sessions` table holds one row for each session: a copy of its newest settings, its preview, its fork source,
+- The `sessions` table holds one row for each session: a copy of its newest settings, its title, its fork source,
   its parent, its times, and the id of its newest event, which orders `list_sessions`.
 - The `events` table holds the engine commits and the settings of each session, numbered 1, 2, 3, and so on. The
   first event of a session holds its settings, and the newest settings event holds the current settings.
 - The `pending_inputs` table holds the inputs that no commit consumed.
+- The first message with text supplies a title only if the session has none.
+  The title has one line and at most 200 Unicode scalar values. `rename_session` replaces it.
+  A rename changes no event, activity time, or list position. Later messages do not replace the title.
 - Each commit and each settings change take the next event number in the same transaction, so the numbers have no gap.
 - Blocks and settings are JSON. The answer facts and the turn end are columns.
 - `open` loads the context from the newest replacement: its head, the blocks that it keeps, and the commits after it.
@@ -33,6 +36,17 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 - `delete_session` deletes the rows. Then it removes the folder of the session.
 - `SqliteStore::open` removes each folder that has no session row and no held lock, for example after a crash during
   a delete.
+
+## Session titles
+
+A new session has no title until a text message or an explicit rename supplies one.
+A fork of a titled session starts with `Fork — ` before the source title, limited to 200 Unicode scalar values.
+A fork of an unnamed session takes its own first text message as its title.
+Titles are display metadata, not model context.
+An explicit rename normalizes whitespace and rejects empty titles or titles above 200 Unicode scalar values.
+
+The title schema replaces the pre-release preview schema. Old databases are not supported. Select a fresh state
+folder for this version. The store rejects an incompatible database without deleting or converting its sessions.
 
 ## Fork
 

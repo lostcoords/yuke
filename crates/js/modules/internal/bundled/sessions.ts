@@ -35,10 +35,9 @@ function age(at: number, now: number): string {
   return `${Math.floor(minutes / (24 * 60))}d`;
 }
 
-/** The label of `row`: its activity mark and its first prompt on one line. */
+/** The label of `row`: its activity mark and its title. */
 function labelOf(row: SessionRow): string {
-  const preview = row.session.preview?.replaceAll(/\s+/g, " ") ?? "(no message)";
-  return `${MARK[row.activity]} ${preview}`;
+  return `${MARK[row.activity]} ${row.session.title ?? "(untitled)"}`;
 }
 
 /**

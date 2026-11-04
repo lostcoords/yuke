@@ -10,7 +10,7 @@ use tokio_rusqlite::rusqlite;
 use yuke_agent::testing::{consumed, end, prompt, settings, step, user_input};
 use yuke_agent::{Access, EventPage, Store, StoreError};
 use yuke_engine::{Answer, Commit};
-use yuke_protocol::EventNumber;
+use yuke_protocol::{EventNumber, SessionTitle};
 use yuke_store::SqliteStore;
 
 /// A new empty folder for the test `name`.
@@ -36,12 +36,20 @@ async fn a_session_survives_a_close_and_an_open_of_the_file() {
         .await
         .unwrap();
     let input = first.accept_input(id, user_input("b")).await.unwrap();
+    first
+        .rename_session(id, &SessionTitle::new("Saved title").unwrap())
+        .await
+        .unwrap();
     drop(opened);
     drop(first);
 
     let second = SqliteStore::open(&folder).await.unwrap();
     let opened = second.open(id, Access::Write).await.unwrap();
 
+    assert_eq!(
+        second.session_summary(id).await.unwrap().title.as_deref(),
+        Some("Saved title")
+    );
     assert_eq!(opened.settings, settings("two"));
     assert_eq!(opened.prompt, prompt());
     assert_eq!(opened.context, [yuke_ai::Block::user_text("a")]);

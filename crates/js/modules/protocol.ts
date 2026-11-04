@@ -1217,10 +1217,9 @@ model: ModelReference,
  */
 cwd: string, 
 /**
- * The trimmed user text of the first message input with text, at most 200 characters. None before such an
- * input.
+ * The display title from a message, an explicit rename, or a fork of a titled session.
  */
-preview?: string | null, 
+title?: SessionTitle | null, 
 /**
  * The creation time, in milliseconds since the Unix epoch.
  */
@@ -1237,6 +1236,11 @@ forkOf?: SessionId | null,
  * The parent session. A removal of the parent removes this session.
  */
 parent?: SessionId | null, };
+
+/**
+ * A non-empty session title with normalized whitespace and at most 200 Unicode scalar values.
+ */
+export type SessionTitle = string;
 
 /**
  * A saved event or a temporary fact of a turn.

@@ -11,7 +11,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `session/list`, `session/get`, `session/remove`, `auth/login`,
+  `session/remove_input`, `session/set_settings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`,
   `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
   `plugin/apply`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
@@ -30,7 +30,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `session/new` can name a `parent`, and each row of the session then holds that `parent`. A `session/list` without `parent`
   shows only the sessions without a parent. A `session/list` with `parent` shows the children of that session. A
   `session/remove` removes the children and their children too, and it fails while one of these sessions is open. A fork has
-  no parent.
+  no parent. A fork starts with the title `Fork — <source title>` when the source has a title, bounded to 200 Unicode
+  scalar values. A fork without a source title has no title until its first message.
 - `session/list` gives the saved sessions in pages, newest event first, of every folder or of one `cwd`. A page has
   50 rows, or `limit` from 1 to 100. Its `nextCursor` continues the same list. The pages are no snapshot: a session
   that moves to the front between two pages comes only in a new list. `session/get` gives the row of one session.
@@ -55,8 +56,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   input kinds, and the reasoning choices with the reasoning settings that a session sends for each. A provider is
   ready when its API key variable holds UTF-8 text that is not empty, when it has a stored key, a login, or a pushed
   token, or when it needs no key. The server does not test the credential. A client asks again after `profile/reload`.
-- A row holds the saved facts (model, folder, preview, times, fork source, parent) and the activity now: `closed`, `idle`, or
-  `running`. The preview is the trimmed user text of the first message input with text, at most 200 characters.
+- A row holds the saved facts (model, folder, title, times, fork source, parent) and the activity now: `closed`, `idle`, or
+  `running`. A text message or an explicit rename supplies the title. Initial message text normalizes whitespace and truncates
+  the title to 200 Unicode scalar values. `session/rename { sessionId, title }` changes the title of an open or closed session
+  and answers `{}` without a session update.
 - `profile/reload` loads the plugins of `config.json` and the providers of `providers.json` again. The open sessions
   stay open. Their process jobs go on, and their plugin jobs stop. It fails while a turn runs, and a failure keeps the old plugins and providers. The
   next request of an open session can miss the prompt cache when the reload changes its tools.

@@ -130,6 +130,10 @@ impl Store for FailingStore {
         Ok(event_number)
     }
 
+    async fn rename_session(&self, id: SessionId, title: &yuke_protocol::SessionTitle) -> Result<(), StoreError> {
+        self.store.rename_session(id, title).await
+    }
+
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         self.store.accept_input(id, input).await
     }

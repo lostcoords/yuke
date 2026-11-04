@@ -34,6 +34,9 @@ pub(crate) fn prepare(connection: &mut Connection) -> Result<(), Box<dyn std::er
                 )
                 .into());
             }
+            transaction
+                .prepare("SELECT title FROM sessions LIMIT 0")
+                .map_err(|_| "the database uses an incompatible session schema; use a fresh state directory")?;
             return Ok(());
         };
         transaction.execute_batch(migration)?;
@@ -66,6 +69,29 @@ mod tests {
             )
         );
         assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn an_old_session_schema_does_not_open() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE sessions (id BLOB, preview TEXT); PRAGMA user_version = 1;")
+            .unwrap();
+
+        let error = prepare(&mut connection).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "the database uses an incompatible session schema; use a fresh state directory"
+        );
+        let columns: Vec<String> = connection
+            .prepare("PRAGMA table_info(sessions)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(columns, ["id", "preview"]);
     }
 
     #[test]

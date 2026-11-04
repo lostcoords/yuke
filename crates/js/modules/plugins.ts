@@ -135,6 +135,11 @@ export interface Sessions {
   readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
   /** The row of the saved session `id`, with its activity now. */
   readonly get: (id: SessionId) => Promise<SessionRow>;
+  /**
+   * Rename an open or closed session without changing its history or activity times.
+   * The call normalizes whitespace and rejects empty titles or titles above 200 Unicode scalar values.
+   */
+  readonly rename: (id: SessionId, title: string) => Promise<void>;
   /** Delete the saved session `id` and its descendants. The call fails while one of these sessions is open. */
   readonly remove: (id: SessionId) => Promise<void>;
   /**

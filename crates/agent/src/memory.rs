@@ -11,12 +11,12 @@ use yuke_engine::{Commit, Outcome, TurnEnd};
 use crate::{PromptSection, lock};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, SessionSummary,
-    StoredEvent,
+    SessionTitle, StoredEvent,
 };
 
 use crate::store::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
-    check_consumed_blocks, preview_of,
+    check_consumed_blocks, title_of,
 };
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
@@ -57,8 +57,8 @@ struct Saved {
     blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
     /// The order number of the newest event write of the session.
     newest_write: u64,
-    /// The trimmed user text of the first message input with text.
-    preview: Option<String>,
+    /// The display title of the session.
+    title: Option<SessionTitle>,
     /// The source of a fork.
     fork_of: Option<SessionId>,
     /// The parent session.
@@ -95,7 +95,7 @@ impl Saved {
             session_id: id,
             model: settings.model.clone(),
             cwd: settings.cwd.clone(),
-            preview: self.preview.clone(),
+            title: self.title.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             fork_of: self.fork_of,
@@ -223,7 +223,7 @@ impl Store for MemoryStore {
             pending: Vec::new(),
             blobs: HashMap::new(),
             newest_write: 0,
-            preview: None,
+            title: None,
             fork_of: None,
             parent,
             created_at: now,
@@ -247,7 +247,10 @@ impl Store for MemoryStore {
             pending: Vec::new(),
             blobs: saved.blobs.clone(),
             newest_write: write,
-            preview: saved.preview.clone(),
+            title: saved
+                .title
+                .as_ref()
+                .and_then(|title| SessionTitle::from_text(&format!("Fork — {title}"))),
             fork_of: Some(source),
             parent: None,
             created_at: now,
@@ -265,12 +268,19 @@ impl Store for MemoryStore {
         Ok(saved.push_event(SessionEvent::Settings(settings.clone()), write))
     }
 
+    async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
+        let mut state = lock(&self.state);
+        let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
+        saved.title = Some(title.clone());
+        Ok(())
+    }
+
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         let mut state = lock(&self.state);
         let input_id = InputId(state.newest_input + 1);
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        if saved.preview.is_none() {
-            saved.preview = preview_of(&input);
+        if saved.title.is_none() {
+            saved.title = title_of(&input);
         }
         saved.pending.push(PendingInput { id: input_id, input });
         state.newest_input = input_id.0;

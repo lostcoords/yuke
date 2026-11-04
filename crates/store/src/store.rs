@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use yuke_agent::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
-    check_consumed_blocks, preview_of,
+    check_consumed_blocks, title_of,
 };
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, SessionSummary,
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, SessionSummary, SessionTitle,
 };
 use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
@@ -240,12 +240,28 @@ impl Store for SqliteStore {
         .await
     }
 
+    async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
+        let session = *id.as_bytes();
+        let title = title.to_string();
+        self.call(move |connection| {
+            let params = sessions::RenameSessionParams {
+                id: session,
+                title: &title,
+            };
+            if sessions::rename_session(connection, &params).map_err(failed)? == 0 {
+                return Err(StoreError::NotFound);
+            }
+            Ok(())
+        })
+        .await
+    }
+
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         let params = pending_inputs::InsertPendingInputParams {
             session_id: *id.as_bytes(),
             input: serde_json::to_string(&input).map_err(failed)?,
         };
-        let preview = preview_of(&input);
+        let title = title_of(&input);
 
         self.call(move |connection| {
             let transaction = connection
@@ -255,12 +271,12 @@ impl Store for SqliteStore {
                 .opt()
                 .map_err(failed)?
                 .ok_or(StoreError::NotFound)?;
-            if let Some(preview) = &preview {
-                let preview = sessions::SetPreviewParams {
+            if let Some(title) = &title {
+                let title = sessions::InitializeTitleParams {
                     id: params.session_id,
-                    preview,
+                    title: title.as_str(),
                 };
-                sessions::set_preview(&transaction, &preview).map_err(failed)?;
+                sessions::initialize_title(&transaction, &title).map_err(failed)?;
             }
             transaction.commit().map_err(failed)?;
             Ok(InputId(id))
@@ -322,7 +338,7 @@ impl Store for SqliteStore {
                     limit: rows,
                 };
                 let found = sessions::list_sessions(connection, &params).all().map_err(failed)?;
-                Ok(found
+                found
                     .into_iter()
                     .map(|row| {
                         let SessionSettings { model, cwd, .. } = row.settings.0;
@@ -330,15 +346,20 @@ impl Store for SqliteStore {
                             session_id: SessionId::from_bytes(row.id),
                             model,
                             cwd,
-                            preview: row.preview,
+                            title: row
+                                .title
+                                .as_deref()
+                                .map(SessionTitle::new)
+                                .transpose()
+                                .map_err(failed)?,
                             created_at: row.created_at,
                             updated_at: row.updated_at,
                             fork_of: row.fork_of.map(SessionId::from_bytes),
                             parent: row.parent.map(SessionId::from_bytes),
                         };
-                        (summary, row.newest_event)
+                        Ok((summary, row.newest_event))
                     })
-                    .collect::<Vec<(SessionSummary, i64)>>())
+                    .collect::<Result<Vec<(SessionSummary, i64)>, StoreError>>()
             })
             .await?;
 
@@ -367,7 +388,12 @@ impl Store for SqliteStore {
             session_id: SessionId::from_bytes(row.id),
             model,
             cwd,
-            preview: row.preview,
+            title: row
+                .title
+                .as_deref()
+                .map(SessionTitle::new)
+                .transpose()
+                .map_err(failed)?,
             created_at: row.created_at,
             updated_at: row.updated_at,
             fork_of: row.fork_of.map(SessionId::from_bytes),
@@ -635,11 +661,18 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
     // Another writer can delete the source between the read of the cut and this write.
-    ensure_session(&transaction, rows.source)?;
+    let title = sessions::session_summary(&transaction, rows.source)
+        .opt()
+        .map_err(failed)?
+        .ok_or(StoreError::NotFound)?
+        .title
+        .and_then(|title| SessionTitle::from_text(&format!("Fork — {title}")))
+        .map(|title| title.to_string());
     let session = sessions::CopySessionParams {
         source: rows.source,
         id: rows.session_id,
         cut: rows.cut,
+        title,
     };
     sessions::copy_session(&transaction, &session).map_err(failed)?;
     events::copy_events(&transaction, rows).map_err(failed)?;

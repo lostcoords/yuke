@@ -88,6 +88,14 @@ const COMMANDS: readonly {
     enabled: (pane) => !pane.asking(),
   },
   {
+    name: "rename",
+    description: "Rename the session",
+    keys: [],
+    in: "chat",
+    run: (pane) => pane.rename(),
+    enabled: (pane) => pane.canRename(),
+  },
+  {
     name: "paste-image",
     description: "Put the image of the clipboard in the message",
     keys: ["ctrl+v"],

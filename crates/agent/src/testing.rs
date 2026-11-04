@@ -16,7 +16,7 @@ use yuke_engine::{
 
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
-    SessionId, SessionSettings, StoredEvent,
+    SessionId, SessionSettings, SessionTitle, StoredEvent,
 };
 
 use crate::PromptSection;
@@ -84,7 +84,12 @@ macro_rules! store_tests {
             a_child_stays_out_of_the_default_list_and_its_parent_lists_it,
             a_child_keeps_its_parent_at_an_open_and_its_fork_has_none,
             a_fork_is_the_newest_session_and_names_its_source,
-            the_first_message_with_text_gives_the_preview,
+            the_first_message_with_text_gives_the_title,
+            a_title_collapses_whitespace_from_each_text_block,
+            a_rename_before_the_first_message_keeps_the_chosen_title,
+            a_rename_changes_no_conversation_event_or_activity_time,
+            a_fork_title_is_bounded_and_independent_of_its_source,
+            a_fork_without_a_title_takes_its_first_text_message,
             a_summary_gives_the_saved_times_and_an_unknown_session_gets_not_found,
         );
     };
@@ -1745,7 +1750,7 @@ pub async fn a_folder_that_is_not_utf8_lists_no_session(store: &dyn Store) {
     assert_eq!(page.next, None);
 }
 
-/// A fork is the newest session. It names its source, keeps the preview of the source, and has the settings of its cut.
+/// A fork is the newest session. It names its source, prefixes the title of the source, and has the settings of its cut.
 pub async fn a_fork_is_the_newest_session_and_names_its_source(store: &dyn Store) {
     let source = store
         .create_session(&settings_in("/work"), &prompt(), None)
@@ -1765,14 +1770,13 @@ pub async fn a_fork_is_the_newest_session_and_names_its_source(store: &dyn Store
     let summary = store.session_summary(fork).await.unwrap();
     assert_eq!(listed(&store.list_sessions(None, None, None, 1).await.unwrap()), [fork]);
     assert_eq!(summary.fork_of, Some(source));
-    assert_eq!(summary.preview.as_deref(), Some("first task"));
+    assert_eq!(summary.title.as_deref(), Some("Fork — first task"));
     assert_eq!(summary.cwd, Path::new("/work"));
     assert_eq!(store.session_summary(source).await.unwrap().fork_of, None);
 }
 
-/// The first message input with text gives the preview: its text without the outer whitespace, cut to 200
-/// characters. A notification, a later message, and an input with no text change nothing.
-pub async fn the_first_message_with_text_gives_the_preview(store: &dyn Store) {
+/// The first message input with text gives a bounded title. A notification and a later message change nothing.
+pub async fn the_first_message_with_text_gives_the_title(store: &dyn Store) {
     let id = store
         .create_session(&settings("one"), &prompt(), None)
         .await
@@ -1785,7 +1789,15 @@ pub async fn the_first_message_with_text_gives_the_preview(store: &dyn Store) {
     )
     .unwrap();
     store.accept_input(id, notification).await.unwrap();
-    assert_eq!(store.session_summary(id).await.unwrap().preview, None);
+    let blob = store.put_blob(id, vec![1, 2, 3]).await.unwrap();
+    let image = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![yuke_ai::Block::Media(yuke_ai::Media::new(blob, "image/png"))],
+    )
+    .unwrap();
+    store.accept_input(id, image).await.unwrap();
+    assert_eq!(store.session_summary(id).await.unwrap().title, None);
 
     store
         .accept_input(id, user_input(&format!("  {}  ", "é".repeat(300))))
@@ -1793,7 +1805,159 @@ pub async fn the_first_message_with_text_gives_the_preview(store: &dyn Store) {
         .unwrap();
     store.accept_input(id, user_input("later")).await.unwrap();
 
-    assert_eq!(store.session_summary(id).await.unwrap().preview, Some("é".repeat(200)));
+    assert_eq!(
+        store.session_summary(id).await.unwrap().title.as_deref(),
+        Some("é".repeat(200)).as_deref()
+    );
+}
+
+/// Each text block contributes to the initial title, with each whitespace run reduced to one space.
+pub async fn a_title_collapses_whitespace_from_each_text_block(store: &dyn Store) {
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    let input = Input::new(
+        InputSource::User,
+        InputKind::Message,
+        vec![
+            yuke_ai::Block::user_text("  Fix\n the\tlogin  "),
+            yuke_ai::Block::user_text("  tests\u{2003}now  "),
+        ],
+    )
+    .unwrap();
+
+    store.accept_input(id, input).await.unwrap();
+
+    assert_eq!(
+        store.session_summary(id).await.unwrap().title.as_deref(),
+        Some("Fix the login tests now")
+    );
+}
+
+/// An explicit title before any input survives the first message.
+pub async fn a_rename_before_the_first_message_keeps_the_chosen_title(store: &dyn Store) {
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    store
+        .rename_session(id, &SessionTitle::new("  Login\nfix  ").unwrap())
+        .await
+        .unwrap();
+
+    store
+        .accept_input(id, user_input("Investigate the token refresh error."))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.session_summary(id).await.unwrap().title.as_deref(),
+        Some("Login fix")
+    );
+}
+
+/// A rename changes only the title, also while a writer holds the session. Unknown sessions reject the write.
+pub async fn a_rename_changes_no_conversation_event_or_activity_time(store: &dyn Store) {
+    let session = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = session.id;
+    store.accept_input(id, user_input("First task")).await.unwrap();
+    store
+        .commit(id, &step(&[yuke_ai::Block::assistant_text("Working")]), &[])
+        .await
+        .unwrap();
+    let before = store.load(id, EventPage::After(None)).await.unwrap();
+    let summary = store.session_summary(id).await.unwrap();
+    let other = store.create_session(&settings("two"), &prompt(), None).await.unwrap();
+
+    store
+        .rename_session(id, &SessionTitle::new("Token refresh").unwrap())
+        .await
+        .unwrap();
+
+    let renamed = store.session_summary(id).await.unwrap();
+    assert_eq!(renamed.title.as_deref(), Some("Token refresh"));
+    assert_eq!(renamed.created_at, summary.created_at);
+    assert_eq!(renamed.updated_at, summary.updated_at);
+    assert_eq!(renamed.model, summary.model);
+    assert_eq!(renamed.cwd, summary.cwd);
+    let after = store.load(id, EventPage::After(None)).await.unwrap();
+    assert_eq!(after.events, before.events);
+    assert_eq!(after.pending, before.pending);
+    assert_eq!(
+        listed(&store.list_sessions(None, None, None, 10).await.unwrap()),
+        [other.id, id]
+    );
+    assert!(matches!(
+        store
+            .rename_session(SessionId::generate(), &SessionTitle::new("Missing").unwrap())
+            .await,
+        Err(StoreError::NotFound)
+    ));
+}
+
+/// Forks prefix and bound their display titles. A rename of either session changes only that session.
+pub async fn a_fork_title_is_bounded_and_independent_of_its_source(store: &dyn Store) {
+    let source = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    store
+        .rename_session(source, &SessionTitle::new(&"é".repeat(200)).unwrap())
+        .await
+        .unwrap();
+
+    let fork = store.fork_session(source, None).await.unwrap().id;
+
+    assert_eq!(
+        store.session_summary(fork).await.unwrap().title.as_deref(),
+        Some(format!("Fork — {}", "é".repeat(193))).as_deref()
+    );
+    store
+        .rename_session(source, &SessionTitle::new("Source").unwrap())
+        .await
+        .unwrap();
+    store
+        .rename_session(fork, &SessionTitle::new("Alternative").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_summary(source).await.unwrap().title.as_deref(),
+        Some("Source")
+    );
+    assert_eq!(
+        store.session_summary(fork).await.unwrap().title.as_deref(),
+        Some("Alternative")
+    );
+}
+
+/// A fork with no title takes its own first text message, independently of its source.
+pub async fn a_fork_without_a_title_takes_its_first_text_message(store: &dyn Store) {
+    let source = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    let fork = store.fork_session(source, None).await.unwrap().id;
+    assert_eq!(store.session_summary(fork).await.unwrap().title, None);
+
+    store.accept_input(fork, user_input("A fork task")).await.unwrap();
+    store
+        .accept_input(source, user_input("The original task"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.session_summary(fork).await.unwrap().title.as_deref(),
+        Some("A fork task")
+    );
+    assert_eq!(
+        store.session_summary(source).await.unwrap().title.as_deref(),
+        Some("The original task")
+    );
 }
 
 /// A summary gives the saved times: the creation time, and the time of the newest event, which a commit moves on. An

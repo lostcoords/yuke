@@ -83,6 +83,10 @@ export interface PaneActions {
   readonly asking: () => boolean;
   /** The session of the pane is read-only. */
   readonly locked: () => boolean;
+  /** Whether the session can open the rename dialog. */
+  readonly canRename: () => boolean;
+  /** Rename the session in a dialog. */
+  readonly rename: () => Promise<void>;
   /** The work of the session of the pane that a quit stops. A read-only session counts in its parent. */
   readonly work: () => { readonly session: SessionId; readonly turn: boolean; readonly jobs: number } | undefined;
   /** Answer the shown question with a cancel. */
@@ -400,6 +404,89 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     signal: mount.signal,
     failed: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
+
+  /** Whether the pane can open its rename dialog without taking a competing pane action. */
+  const canRename = (): boolean =>
+    chatSession.id !== undefined &&
+    questions.current === undefined &&
+    locked() === undefined &&
+    !busy &&
+    !chatComposer.busy;
+
+  /** Rename the session in a single-line dialog. The pane stays busy until the dialog closes. */
+  const rename = async (): Promise<void> => {
+    if (!canRename()) return;
+    const id = chatSession.id;
+    if (id === undefined) return;
+    busy = true;
+    try {
+      const row = await ctx.get("sessions").get(id);
+      if (mount.signal.aborted || chatSession.id !== id) {
+        busy = false;
+        return;
+      }
+      let errorText: string | undefined;
+      let pending = false;
+      let dialog: Mount | undefined;
+      const title = row.session.title ?? "";
+      const editor = new TextEditor({
+        multiline: false,
+        state: {
+          text: title,
+          selection: { anchor: title.length, head: title.length },
+          spans: [],
+        },
+        submit: (state) => {
+          if (pending || dialog?.signal.aborted === true) return;
+          pending = true;
+          void Promise.resolve()
+            .then(() => ctx.get("sessions").rename(id, state.text))
+            .then(
+              () => dialog?.close(),
+              (reason: unknown) => {
+                if (dialog === undefined || dialog.signal.aborted) return;
+                errorText = String(reason);
+                pending = false;
+                tui.requestFrame();
+              },
+            );
+        },
+      });
+      const body: View = {
+        focusable: true,
+        initialFocus: editor,
+        layout: (size) => [
+          {
+            view: editor,
+            rect: {
+              column: 0,
+              row: 0,
+              width: size.width,
+              height: Math.max(1, size.height - (errorText === undefined ? 0 : 1)),
+            },
+          },
+        ],
+        draw: (canvas) => {
+          if (errorText !== undefined) canvas.text(0, canvas.height - 1, clipped(errorText, canvas.width), STYLE.error);
+        },
+      };
+      dialog = tui.dialog({ title: () => "Rename session", body, signal: mount.signal });
+      dialog.signal.addEventListener(
+        "abort",
+        () => {
+          busy = false;
+          dialog = undefined;
+          if (!ctx.signal.aborted) tui.requestFrame();
+        },
+        { once: true },
+      );
+      if (dialog.signal.aborted) busy = false;
+    } catch (error) {
+      busy = false;
+      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not load: ${String(error)}`);
+    }
+  };
+
   // The open comes after the views, because its snapshot can show a question. A failure gives one notice, and the next
   // send opens the session again.
   const saved = chatSession.id;
@@ -597,6 +684,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     },
     asking: () => questions.current !== undefined || locked() !== undefined,
     locked: () => locked() !== undefined,
+    canRename,
+    rename,
     work: () =>
       chatSession.id === undefined || locked() !== undefined
         ? undefined

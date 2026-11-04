@@ -13,7 +13,7 @@ use yuke_protocol::{
     ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobKind, JobState,
     ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
     NoticeParams, Notification, Request, Response, ServerNotification, ServerRequest, SessionEvent, SessionId,
-    SessionSettings, SessionUpdate, SessionUpdateParams, StoredEvent,
+    SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -161,6 +161,26 @@ fn each_request_reads_and_writes_its_json() {
                 settings: settings(),
             }),
         },
+    );
+}
+
+#[test]
+fn a_rename_request_reads_and_writes_its_json() {
+    let title = SessionTitle::new("  renamed   session ").unwrap();
+    assert_json(
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "session/rename",
+            "params": { "sessionId": SESSION, "title": "renamed session" }
+        }),
+        &request(
+            10,
+            ClientRequest::RenameSession(yuke_protocol::RenameSessionParams {
+                session_id: session(),
+                title,
+            }),
+        ),
     );
 }
 

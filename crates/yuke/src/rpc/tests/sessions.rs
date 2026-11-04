@@ -596,9 +596,50 @@ async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
     ]);
     assert_eq!(activities(&listed), expected);
     assert_eq!(row["activity"], "closed");
-    assert_eq!(row["session"]["preview"], "waiting");
+    assert_eq!(row["session"]["title"], "waiting");
     assert_eq!(row["session"]["cwd"], json!(place.work));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_session_can_be_renamed_before_its_first_message_and_after_close() {
+    let place = Place::new(
+        "rpc",
+        "a_session_can_be_renamed_before_its_first_message_and_after_close",
+    );
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
+
+    let renamed = client
+        .call(
+            "session/rename",
+            json!({ "sessionId": session, "title": "  first   title " }),
+        )
+        .await;
+    let row = client
+        .call("session/get", json!({ "sessionId": session }))
+        .await
+        .unwrap();
+    client
+        .call("session/close", json!({ "sessionId": session }))
+        .await
+        .unwrap();
+    client
+        .call(
+            "session/rename",
+            json!({ "sessionId": session, "title": "closed title" }),
+        )
+        .await
+        .unwrap();
+    let closed_row = client
+        .call("session/get", json!({ "sessionId": session }))
+        .await
+        .unwrap();
+    client.end().await;
+
+    assert_eq!(renamed.unwrap(), json!({}));
+    assert_eq!(row["session"]["title"], "first title");
+    assert_eq!(closed_row["session"]["title"], "closed title");
 }
 
 #[tokio::test(flavor = "local")]

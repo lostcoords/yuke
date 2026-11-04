@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use yuke_engine::{Commit, TurnEnd};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, InputKind, PendingInput, SessionId, SessionSettings, SessionSummary,
-    StoredEvent,
+    SessionTitle, StoredEvent,
 };
 
 use crate::PromptSection;
@@ -55,8 +55,15 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError>;
 
-    /// Save `input` as a pending input of session `id`. The input stays pending until a commit consumes it. The first
-    /// message input with text gives the session its [`preview_of`].
+    /// Rename session `id` without changing its events, settings, or activity times.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::NotFound`] for an unknown session, and [`StoreError::Failed`] when the save fails.
+    async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError>;
+
+    /// Save `input` as a pending input of session `id` until a commit consumes it.
+    /// If the session has no title, its first message with text supplies [`title_of`].
     ///
     /// # Errors
     ///
@@ -173,12 +180,8 @@ pub struct SessionPage {
     pub next: Option<ListPosition>,
 }
 
-/// The maximum number of characters in a preview.
-const PREVIEW_CHARACTERS: usize = 200;
-
-/// The preview of the message `input`: its user text without the outer whitespace, cut to 200 characters. `None` for a
-/// notification or an input with no text.
-pub fn preview_of(input: &Input) -> Option<String> {
+/// The initial title from the user text of a message. Notifications and textless inputs give no title.
+pub fn title_of(input: &Input) -> Option<SessionTitle> {
     if input.kind() != InputKind::Message {
         return None;
     }
@@ -190,9 +193,7 @@ pub fn preview_of(input: &Input) -> Option<String> {
             _ => None,
         })
         .collect();
-    let text = text.join("\n");
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.chars().take(PREVIEW_CHARACTERS).collect())
+    SessionTitle::from_text(&text.join("\n"))
 }
 
 /// The blob of `bytes`: their SHA-256 and their length. Each store finds a blob by this digest.

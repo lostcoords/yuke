@@ -7,7 +7,7 @@ CREATE TABLE sessions (
     settings TEXT NOT NULL,                -- a copy of the JSON SessionSettings of the newest settings event.
                                            -- The list reads this copy.
     cwd TEXT GENERATED ALWAYS AS (json_extract(settings, '$.cwd')) VIRTUAL,
-    preview TEXT,                          -- the trimmed user text of the first message input with text
+    title TEXT,                            -- the renameable display title; starts from the first message with text
     fork_of BLOB,                          -- the source of a fork. No reference: the source can go.
     parent BLOB,                           -- the parent session. No reference: the app removes children first.
     created_at INTEGER NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),

@@ -112,6 +112,14 @@ impl crate::Sessions for NoSessions {
     ) -> Result<yuke_protocol::ListSessionsResult, crate::SessionsError> {
         no_sessions()
     }
+    async fn rename(
+        &self,
+        _id: yuke_protocol::SessionId,
+        _title: yuke_protocol::SessionTitle,
+    ) -> Result<(), crate::SessionsError> {
+        Err("no sessions".into())
+    }
+
     async fn get(&self, _: yuke_protocol::SessionId) -> Result<yuke_protocol::SessionRow, crate::SessionsError> {
         no_sessions()
     }

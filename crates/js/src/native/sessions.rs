@@ -16,7 +16,7 @@ use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, EventNumber, Input, InputId, InputKind, InputSource, InteractionId,
-    InteractionResponse, ListSessionsParams, SessionId, SessionSettings, SyncPluginsParams,
+    InteractionResponse, ListSessionsParams, SessionId, SessionSettings, SessionTitle, SyncPluginsParams,
 };
 
 use super::delivery::{Delivery, Queue};
@@ -184,6 +184,11 @@ fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &
         object,
         "sessionSetSettings",
         |sessions, (id, settings): (SessionId, SessionSettings)| async move { sessions.set_settings(id, settings).await },
+    )?;
+    request.add(
+        object,
+        "sessionsRename",
+        |sessions, (id, title): (SessionId, SessionTitle)| async move { sessions.rename(id, title).await },
     )?;
     request.add(
         object,
