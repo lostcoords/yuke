@@ -1,7 +1,8 @@
 //! A session that runs turns on its context and saves each commit of a turn in a store.
 
+use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
@@ -13,7 +14,7 @@ use yuke_protocol::{
 use crate::input_hook::{InputDecision, InputHook, NoInputHook};
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
 use crate::updates::{SessionObserver, Updates};
-use crate::{PromptSection, lock, prompt_text};
+use crate::{PromptSection, prompt_text};
 
 /// The result of a call that was open when its turn stopped. The model reads it.
 const OUTCOME_UNKNOWN: &str = "The turn stopped before it saved the result of this call. The call can have run.";
@@ -77,7 +78,7 @@ struct TurnJournal<'a> {
     updates: &'a Updates<'a>,
     /// The input tokens of the newest saved answer: from before the turn, then from each answer that the turn saves. A
     /// saved replacement clears them.
-    input_tokens: Mutex<Option<u64>>,
+    input_tokens: Cell<Option<u64>>,
 }
 
 /// The input state of one turn.
@@ -88,7 +89,7 @@ struct TurnInputs<'a> {
     /// It gets the removal of each input that the hook removes.
     observer: Option<&'a dyn SessionObserver>,
     /// The records of the inputs that the turn took and that no saved commit consumed. They are still pending.
-    taken: Mutex<Vec<ConsumedInput>>,
+    taken: RefCell<Vec<ConsumedInput>>,
 }
 
 /// Why a turn could not take its input.
@@ -119,7 +120,7 @@ impl TurnInputs<'_> {
         let pending = self.store.pending(self.id).await?;
         let mut blocks = Vec::new();
         for mut input in pending {
-            if lock(&self.taken).iter().any(|known| known.id == input.id) {
+            if self.taken.borrow().iter().any(|known| known.id == input.id) {
                 continue;
             }
             let ours = matches!(input.input.source(), InputSource::Plugin { name } if name == SESSION_SOURCE);
@@ -162,7 +163,7 @@ impl TurnInputs<'_> {
                 }
             }
             let (consumed, model_blocks) = input.into_consumed();
-            lock(&self.taken).push(consumed);
+            self.taken.borrow_mut().push(consumed);
             blocks.extend(model_blocks);
         }
         Ok(blocks)
@@ -185,12 +186,12 @@ impl Journal for TurnJournal<'_> {
         // The first commit after a take starts with the taken model blocks, so it consumes their inputs. The records
         // leave `taken` before the save. After a failed save, the next turn takes the pending inputs again.
         let TurnInputs { store, id, taken, .. } = &self.inputs;
-        let consumed = std::mem::take(&mut *lock(taken));
+        let consumed = taken.take();
         let event_number = store.commit(*id, commit, &consumed).await?;
         if let Some(answer) = &commit.answer {
-            *lock(&self.input_tokens) = answer.usage.input;
+            self.input_tokens.set(answer.usage.input);
         } else if commit.replaced.is_some() {
-            *lock(&self.input_tokens) = None;
+            self.input_tokens.set(None);
         }
         self.updates.committed(event_number, commit, consumed);
         Ok(())
@@ -477,7 +478,7 @@ impl<'s> SessionTurn<'s> {
             id: session.id,
             hook: input_hook,
             observer,
-            taken: Mutex::default(),
+            taken: RefCell::default(),
         };
         let mut input = inputs.take().await?;
         if input.is_empty() {
@@ -485,7 +486,9 @@ impl<'s> SessionTurn<'s> {
         }
         // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
         // before its first commit leaves its note pending.
-        let noted = lock(&inputs.taken)
+        let noted = inputs
+            .taken
+            .borrow()
             .iter()
             .any(|taken| matches!(&taken.source, InputSource::Plugin { name } if name == SESSION_SOURCE));
         if !noted && let Some(note) = interruption_note(&session.newest_turn) {
@@ -498,7 +501,7 @@ impl<'s> SessionTurn<'s> {
         let turn_journal = TurnJournal {
             inputs,
             updates: &updates,
-            input_tokens: Mutex::new(session.input_tokens),
+            input_tokens: Cell::new(session.input_tokens),
         };
         let blobs = SessionBlobs {
             store: &*session.store,
@@ -519,7 +522,7 @@ impl<'s> SessionTurn<'s> {
             .observer(&updates);
         let ran = turn.run().await;
         // A saved answer counts even when a later commit of the turn fails.
-        session.input_tokens = *lock(&turn_journal.input_tokens);
+        session.input_tokens = turn_journal.input_tokens.get();
         let ran = match ran {
             Ok(outcome) => Ok(outcome),
             Err(TurnError::Round(error)) => Err(error),

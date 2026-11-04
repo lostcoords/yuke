@@ -16,8 +16,8 @@ use yuke_term::Terminal;
 use crate::app::{App, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
 use crate::print::{SessionChoice, newest_session};
 
-/// Gives each notice to the display. The interface shows no session update yet. Its plugins share data through services,
-/// so it ignores extension events.
+/// Gives each notice to the display. The chat reads session updates through the session service, and plugins share data
+/// through services, so this observer drops the other notifications.
 struct Notices(Arc<Display>);
 
 impl Observer for Notices {

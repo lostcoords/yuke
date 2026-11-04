@@ -260,20 +260,6 @@ if ("result" in response) {
         for name, text in files.items():
             self.assertEqual((self.home / name).read_text(), text)
 
-    def test_upgrade_removes_only_the_obsolete_installer_owned_skill_link(self):
-        skill = self.home / ".agents/skills/yuke"
-        skill.parent.mkdir(parents=True)
-        skill.symlink_to(self.library / "skills/yuke")
-        self.install()
-        self.assertFalse(skill.is_symlink())
-        custom = self.home / "my-skill"
-        custom.mkdir()
-        (custom / "SKILL.md").write_text("user-owned skill\n")
-        skill.symlink_to(custom)
-        self.install()
-        self.assertEqual(skill.resolve(), custom.resolve())
-        self.assertEqual((skill / "SKILL.md").read_text(), "user-owned skill\n")
-
     def test_same_version_reinstallation_repairs_missing_library_files(self):
         self.install()
         original = (self.library / "modules/plugins.ts").read_bytes()

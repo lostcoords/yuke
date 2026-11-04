@@ -1,11 +1,9 @@
 //! The session boundary between engine facts and saved event positions.
 
-use std::sync::Mutex;
+use std::cell::RefCell;
 
 use yuke_engine::{Commit, Observer, TurnEvent, chain_text};
 use yuke_protocol::{BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, SessionUpdate, StoredEvent};
-
-use crate::lock;
 
 /// Receives typed session updates without a wait. RPC and in-process clients use the same facts.
 /// A callback must not block. The caller owns delivery queues and serialization.
@@ -22,7 +20,7 @@ impl<F: Fn(SessionUpdate)> SessionObserver for F {
 
 pub(crate) struct Updates<'a> {
     observer: Option<&'a dyn SessionObserver>,
-    state: Mutex<State>,
+    state: RefCell<State>,
 }
 
 #[derive(Default)]
@@ -41,7 +39,7 @@ impl<'a> Updates<'a> {
     pub(crate) fn new(observer: Option<&'a dyn SessionObserver>) -> Self {
         Self {
             observer,
-            state: Mutex::default(),
+            state: RefCell::default(),
         }
     }
 
@@ -56,7 +54,7 @@ impl<'a> Updates<'a> {
     }
 
     fn discard(&self, reason: DraftDiscardReason) {
-        let draft = lock(&self.state).draft.take();
+        let draft = self.state.borrow_mut().draft.take();
         if let Some(draft) = draft {
             self.live(LiveUpdate::DraftDiscarded {
                 draft_id: draft.id,
@@ -76,7 +74,7 @@ impl<'a> Updates<'a> {
             return;
         }
         let draft = {
-            let mut state = lock(&self.state);
+            let mut state = self.state.borrow_mut();
             state.ended = commit.end.is_some();
             if commit
                 .blocks
@@ -110,7 +108,7 @@ impl<'a> Updates<'a> {
     )]
     fn execution(&self, block_index: usize) -> BlockPosition {
         BlockPosition {
-            event_number: lock(&self.state).execution_event.expect("a tool has a saved call"),
+            event_number: self.state.borrow().execution_event.expect("a tool has a saved call"),
             block_index,
         }
     }
@@ -128,7 +126,7 @@ impl Observer for Updates<'_> {
         match event {
             TurnEvent::ResponseStarted => {
                 let draft_id = DraftId::generate();
-                lock(&self.state).draft = Some(Draft {
+                self.state.borrow_mut().draft = Some(Draft {
                     id: draft_id,
                     blocks: Vec::new(),
                 });
@@ -136,13 +134,13 @@ impl Observer for Updates<'_> {
             }
             TurnEvent::ResponseFailed(_) => self.discard(DraftDiscardReason::Failed),
             TurnEvent::ResponseCancelled { blocks } => {
-                let mut state = lock(&self.state);
+                let mut state = self.state.borrow_mut();
                 let draft = state.draft.as_mut().expect("a response has a draft");
                 draft.blocks = blocks.iter().map(|block| block.block).collect();
             }
             TurnEvent::Model(event) => {
                 let draft_id = {
-                    let mut state = lock(&self.state);
+                    let mut state = self.state.borrow_mut();
                     let draft = state.draft.as_mut().expect("a response has a draft");
                     match event {
                         yuke_ai::Event::BlockStopped(stopped) => draft.blocks.push(stopped.block),
@@ -196,7 +194,7 @@ impl Drop for Updates<'_> {
     fn drop(&mut self) {
         // A dropped future or an uncertain write leaves no confirmed replacement for its draft.
         self.discard(DraftDiscardReason::Unconfirmed);
-        if !lock(&self.state).ended {
+        if !self.state.borrow().ended {
             self.live(LiveUpdate::TurnUnconfirmed);
         }
     }

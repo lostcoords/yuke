@@ -718,15 +718,14 @@ impl TurnParts<'_> {
     /// parallel calls form one group. A serial call forms a group of its own.
     async fn call_tools(&self, blocks: &[Block], native_search: bool) -> Vec<Finished> {
         let driver = &self.driver;
-        let resolved: Vec<Resolved<'_>> = blocks
+        let mut resolved = blocks
             .iter()
             .enumerate()
             .filter_map(|(block_index, block)| match block {
                 Block::ToolCall(call) => Some(driver.resolve(block_index, call)),
                 _ => None,
             })
-            .collect();
-        let mut resolved = resolved.into_iter().peekable();
+            .peekable();
         let mut results = Vec::new();
         while let Some(first) = resolved.next() {
             let parallel = driver.concurrency(&first) == Concurrency::Parallel;

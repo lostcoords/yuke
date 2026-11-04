@@ -2,8 +2,9 @@
 //! [`SEARCH_TOOL_NAME`]. On a target with a native search, the result loads the tools that it found. On a bridge
 //! target, the result shows their input schemas, and the model calls one through [`TOOL_CALL_NAME`].
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 use yuke_ai::{SEARCH_TOOL_NAME, ToolCall, ToolDefinition, ToolResult};
 
@@ -215,16 +216,16 @@ static BRIDGE_CALL: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition {
 /// deferred tool and add the two bridge tools, so a search never changes them.
 pub(crate) struct Declared<'a> {
     toolset: &'a Toolset,
-    native: OnceLock<Vec<ToolDefinition>>,
-    bridge: OnceLock<Vec<ToolDefinition>>,
+    native: OnceCell<Vec<ToolDefinition>>,
+    bridge: OnceCell<Vec<ToolDefinition>>,
 }
 
 impl<'a> Declared<'a> {
     pub(crate) fn new(toolset: &'a Toolset) -> Self {
         Declared {
             toolset,
-            native: OnceLock::new(),
-            bridge: OnceLock::new(),
+            native: OnceCell::new(),
+            bridge: OnceCell::new(),
         }
     }
 

@@ -105,16 +105,6 @@ JSON
   fi
 }
 
-remove_obsolete_skill_link() {
-  local skill="${HOME}/.agents/skills/yuke"
-  # The shared skill directory can contain user files. Remove only the old installer's exact link.
-  if [ -L "${skill}" ] && [ "$(readlink "${skill}")" = "${lib_dir}/skills/yuke" ]; then
-    if ! rm "${skill}"; then
-      printf 'warning: could not remove the obsolete skill link at %s.\n' "${skill}" >&2
-    fi
-  fi
-}
-
 install_yuke() {
   [ "$#" -le 1 ] || fail 'usage: install.sh [archive.tar.gz]'
   case "${HOME:-}" in /*) ;; *) fail 'HOME must be an absolute directory.' ;; esac
@@ -194,7 +184,6 @@ install_yuke() {
   committed=true
 
   configure_editor
-  remove_obsolete_skill_link
   printf 'Installed %s/yuke (%s)\n' "${bin_dir}" "${version}"
   case ":${PATH}:" in
     *":${bin_dir}:"*) ;;

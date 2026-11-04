@@ -1,6 +1,6 @@
 //! The plugins of yuke and of the profile: the bundled plugins, then the `plugins` list of `config.json` and the Agent
 //! Plugins `plugin.json` of each folder. The checks run before any plugin code. A bad list stops `yuke -p` and a reload.
-//! The terminal interface and the server start with the bundled plugins alone.
+//! With a bad list, the terminal interface and the server start with the bundled plugins alone.
 
 mod git;
 mod lock;
