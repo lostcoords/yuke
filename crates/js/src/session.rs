@@ -1,5 +1,5 @@
-//! These types open, use, and close one session of the plugins. Its tools are the tools of yuke and the tools that the
-//! `session` exports define. Its hooks are the hooks that the `session` exports add.
+//! These types open, use, and close one session of the plugins.
+//! Its tools reflect plugin definitions and name removals. Its hooks come from the `session` exports.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -100,9 +100,9 @@ impl Handle {
 }
 
 impl ScriptSession {
-    /// Wait until `session(s)` of each plugin settles, then return the tools of the session, each with its definition:
-    /// the tools of yuke and the tools that the plugins defined. A closed session has no tools. A drop of the wait leaves
-    /// the plugins running.
+    /// Wait for each plugin's session setup, then return the effective tool definitions and their handles.
+    /// The last definition or name removal wins. Each handle retains its original registration.
+    /// A closed session has no tools. A drop of the wait leaves the plugins active.
     ///
     /// # Errors
     ///

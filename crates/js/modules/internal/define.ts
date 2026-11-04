@@ -1,7 +1,7 @@
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
-import { type Answer, register } from "yuke:internal/native";
+import { type Answer, type Registration, register, type ToolOwner } from "yuke:internal/native";
 import { displayOf, fieldsOf, hintsOf, mediaOf } from "yuke:internal/values";
 import type { Infer, ObjectSchema, Tool, ToolContext, ToolHints, ToolMedia } from "yuke:tools";
 
@@ -11,14 +11,14 @@ const NO_JOBS: ToolContext["jobs"] = {
 };
 
 /**
- * Define `tool` for the open session `open`, or for every session without `open`, and return its id. A name that the
- * session already has throws a `TypeError`. A plugin defines its tools with `s.tools.define` of its `session`.
+ * Register `tool` for its owner, or for every session without an owner.
+ * Return its id and the plugin whose definition it replaces.
  */
 export function defineTool<const S extends ObjectSchema>(
   tool: Tool<S>,
-  open?: number,
+  owner?: ToolOwner,
   jobsOf: (signal: AbortSignal) => ToolContext["jobs"] = () => NO_JOBS,
-): number {
+): Registration {
   const execute = tool.execute;
   if (typeof execute !== "function") throw new TypeError("execute is not a function");
   // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
@@ -33,7 +33,7 @@ export function defineTool<const S extends ObjectSchema>(
     concurrency: tool.concurrency,
     deferLoading: tool.deferLoading === true,
     hints,
-    open,
+    owner,
   };
   return register(description, (request) =>
     hostOperation(async (signal, abort) => {

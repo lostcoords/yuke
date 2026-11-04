@@ -3,7 +3,7 @@
 import { defineTool } from "yuke:internal/define";
 import { hostOperation, hostSignal, signalOf, underSignal, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
-import { emit, notify, type Operation, type RoundNatives, unregister } from "yuke:internal/native";
+import { emit, notify, type Operation, type RoundNatives, removeTool, unregister } from "yuke:internal/native";
 import { type Options, sessionExports } from "yuke:internal/plugins";
 import { frozen, jsonCopy } from "yuke:internal/values";
 import type {
@@ -47,8 +47,8 @@ interface Scope {
   /** Set before the abort, so neither an abort listener nor a cleanup can define a tool or add a hook. */
   closed: boolean;
   readonly abort: (reason: string) => void;
-  /** The ids of the tools that the scope defined. */
-  readonly tools: number[];
+  /** The ids of this scope's definitions and name removals. */
+  readonly toolChanges: number[];
   /** The hook handlers of the scope. */
   readonly hooks: HookLists;
   /** The running jobs that the scope started. */
@@ -636,7 +636,7 @@ function start(
     plugin,
     closed: false,
     abort,
-    tools: [],
+    toolChanges: [],
     jobs: new Set(),
     hooks: {
       "input.before": [],
@@ -715,12 +715,23 @@ function start(
     tools: Object.freeze({
       define<const S extends ObjectSchema>(tool: Tool<S>): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
-        const id = defineTool(tool, open, (call) => ({
+        const registration = defineTool(tool, { open, plugin }, (call) => ({
           run: (job, work) => runJob(job, work, job.background === true ? undefined : call),
         }));
-        scope.tools.push(id);
-        // Each id is new, so a second removal finds nothing, and the removal at a failure skips a removed id.
-        return () => unregister([id]);
+        scope.toolChanges.push(registration.id);
+        if (registration.replaced !== undefined) {
+          notify(
+            plugin,
+            "info",
+            `Tool "${tool.name}" from "${registration.replaced}" was replaced by "${plugin}".`,
+            sessionId,
+          );
+        }
+        return () => unregister([registration.id]);
+      },
+      remove(name: string): void {
+        if (scope.closed) throw new TypeError(`plugin ${plugin} removes a tool after the end of its session`);
+        scope.toolChanges.push(removeTool({ open, plugin }, name));
       },
     }),
     jobs: Object.freeze({
@@ -777,7 +788,7 @@ function start(
       // The close owns the scope, so a failure after the close needs no rollback.
       if (scope.closed) return undefined;
       scope.closed = true;
-      unregister(scope.tools);
+      unregister(scope.toolChanges);
       abort(`session of plugin ${plugin} failed`);
       report(`the session setup failed, and its tools and hooks are gone: ${failureOf(error)}`);
       return undefined;

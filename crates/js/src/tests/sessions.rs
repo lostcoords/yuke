@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::plugins::tool;
-use super::tools::{TestHost, Tools, call, error_of};
+use super::tools::{TestHost, Tools, call, error_of, text_of};
 use super::{evaluate, folder, load_entry, start, write};
 use crate::{Error, Report, Runtime, SessionHost};
 
@@ -78,6 +78,40 @@ async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
     evaluate::<()>(&runtime, "globalThis.replace();").await.unwrap();
 
     assert_eq!(error_of(&tools["gone"], "{}").await, "the tool is no longer defined");
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_replacement_changes_new_snapshots_but_keeps_existing_handles() {
+    let (folder, runtime, _reports) = loaded(
+        "a_replacement_changes_new_snapshots_but_keeps_existing_handles",
+        "export function session(s) {
+           s.tools.define({ name: 'held', description: 'original', concurrency: 'serial',
+             parameters: { type: 'object', properties: {} }, execute: () => 'old' });
+           globalThis.replace = () => s.tools.define({
+             name: 'held', description: 'replacement', concurrency: 'parallel',
+             hints: { preview: 'tail' }, deferLoading: true,
+             parameters: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] },
+             execute: (args) => `new ${args.value}` });
+         }",
+    )
+    .await;
+    let tools = Tools::open(&runtime, Rc::new(TestHost::new(&folder))).await;
+
+    evaluate::<()>(&runtime, "globalThis.replace();").await.unwrap();
+    let current = tools.session.tools().await.unwrap();
+
+    assert_eq!(text_of(&tools["held"], "{}").await, "old");
+    assert_eq!(current.len(), 1);
+    let (definition, tool) = &current[0];
+    assert_eq!(text_of(tool, r#"{"value":7}"#).await, "new 7");
+    assert_eq!(definition.description, "replacement");
+    assert!(definition.defer_loading);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&definition.input_schema).unwrap(),
+        serde_json::json!({"type": "object", "properties": {"value": {"type": "number"}}, "required": ["value"]})
+    );
+    assert_eq!(tool.concurrency, yuke_engine::Concurrency::Parallel);
+    assert_eq!(tool.hints.preview, yuke_engine::Preview::Tail);
 }
 
 #[tokio::test(flavor = "local")]

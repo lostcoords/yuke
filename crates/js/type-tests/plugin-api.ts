@@ -438,3 +438,10 @@ export const sessionWithOptions: PluginSession<Options> = (session) => {
 };
 // @ts-expect-error: a plugin without options has no option field.
 export const noOption: string = ctx.options.folder;
+
+// Each definition has its own disposer. A name removal needs no return value.
+assert<Equal<ReturnType<SessionContext["tools"]["define"]>, () => void>>();
+assert<Equal<ReturnType<SessionContext["tools"]["remove"]>, void>>();
+s.tools.remove("read");
+// @ts-expect-error A tool name is a string.
+s.tools.remove(1);

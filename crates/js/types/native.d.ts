@@ -105,10 +105,19 @@ declare module "yuke:internal/native" {
     readonly runningJobs: () => string[];
   }
 
-  /**
-   * Add a tool to the registry of the runtime, for the open session `open`, or for every session without `open`, and
-   * return its id. A name that the session already has, or a session that is closed, throws a `TypeError`.
-   */
+  /** The plugin and open session of a tool change. */
+  export interface ToolOwner {
+    readonly open: number;
+    readonly plugin: string;
+  }
+
+  /** The id of a tool change and the plugin whose definition it replaces. */
+  export interface Registration {
+    readonly id: number;
+    readonly replaced: string | undefined;
+  }
+
+  /** Register a tool for its owner, or for every session without an owner. The last definition or name removal wins. */
   export function register(
     tool: {
       readonly name: string;
@@ -118,12 +127,15 @@ declare module "yuke:internal/native" {
       readonly concurrency: "serial" | "parallel";
       readonly deferLoading: boolean;
       readonly hints: ToolHints;
-      readonly open: number | undefined;
+      readonly owner: ToolOwner | undefined;
     },
     start: (request: CallRequest) => Operation<Answer>,
-  ): number;
+  ): Registration;
 
-  /** Remove the tools of `ids`. */
+  /** Remove a name from the owner's session and return the change id. A later definition restores the name. */
+  export function removeTool(owner: ToolOwner, name: string): number;
+
+  /** Remove the tool changes of `ids`. */
   export function unregister(ids: readonly number[]): void;
 
   /** The UTF-8 bytes of `text`, a well-formed string. */

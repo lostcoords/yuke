@@ -1,19 +1,18 @@
-//! The tool functions of the native module. `register` and `unregister` change the registry of the tools. `notify`
-//! sends a notice of a plugin, and `emit` sends an event of a plugin.
+//! The native tool functions register definitions and name removals. They also send plugin notices and events.
 
 use std::rc::Rc;
 
 use rquickjs::convert::Coerced;
-use rquickjs::{Ctx, Function, Object};
+use rquickjs::{Ctx, Function, Object, Persistent};
 use yuke_engine::Concurrency;
 
 use tokio::sync::mpsc;
 use yuke_protocol::{ExtensionEventParams, NoticeParams, SessionId};
 
 use crate::error::{ErrorClass, Report, throw};
-use crate::tools::{Json, Registry};
+use crate::tools::{Json, Registration, Registry, ToolChange, ToolOwner};
 
-/// Add `register`, `unregister`, `notify`, and `emit` to `object`, the export object of the native module.
+/// Add the native tool functions to the export object.
 pub(super) fn add<'js>(
     ctx: &Ctx<'js>,
     object: &Object<'js>,
@@ -25,13 +24,26 @@ pub(super) fn add<'js>(
         "unregister",
         Function::new(ctx.clone(), move |ids: Vec<u64>| removing.remove(&ids))?,
     )?;
+    let removing = Rc::clone(registry);
+    object.set(
+        "removeTool",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, owner: ToolOwner, name: String| -> rquickjs::Result<u64> {
+                removing
+                    .add(Some(owner), ToolChange::Remove { name })
+                    .map(|registration| registration.id)
+                    .map_err(|message| throw(&ctx, ErrorClass::TypeError, &message))
+            },
+        )?,
+    )?;
     add_reports(ctx, object, reports)?;
     let registry = Rc::clone(registry);
     object.set(
         "register",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>, tool: Object<'js>, start: Function<'js>| -> rquickjs::Result<u64> {
+            move |ctx: Ctx<'js>, tool: Object<'js>, start: Function<'js>| -> rquickjs::Result<Registration> {
                 let Coerced(concurrency) = tool.get::<_, Coerced<String>>("concurrency")?;
                 let concurrency = match concurrency.as_str() {
                     "serial" => Concurrency::Serial,
@@ -52,7 +64,15 @@ pub(super) fn add<'js>(
                 };
                 let Json(hints) = tool.get("hints")?;
                 registry
-                    .add(&ctx, definition, concurrency, hints, start, tool.get("open")?)
+                    .add(
+                        tool.get("owner")?,
+                        ToolChange::Define {
+                            definition,
+                            concurrency,
+                            hints,
+                            start: Persistent::save(&ctx, start),
+                        },
+                    )
                     .map_err(|message| throw(&ctx, ErrorClass::TypeError, &message))
             },
         )?,

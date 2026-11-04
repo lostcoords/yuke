@@ -806,14 +806,24 @@ export interface SessionContext<O = Record<string, never>> {
   readonly options: Frozen<O>;
   /** The host aborts this signal when the session closes or `session` of this plugin fails. The plugin then stops. */
   readonly signal: AbortSignal;
-  /** The tools of the plugin in this session. They stay until their removal or the close of the session. */
+  /**
+   * This plugin's tool definitions and name removals in this session. The last successful call for a name wins.
+   * Calls after an `await` follow call order, not plugin configuration order. A failed setup withdraws its changes.
+   */
   readonly tools: {
     /**
-     * Define `tool` for this session. `execute` gets the arguments with the types of `parameters`.
-     * - The returned function removes the tool: the next turn does not have it, and a call of it fails.
-     * - A change of the tools makes the next turn miss the prompt cache of the provider.
+     * Define or replace `tool` for this session. `execute` gets the arguments with the types of `parameters`.
+     * - The returned function removes only this definition and reveals the previous definition or name removal.
+     * - A replacement of another plugin's tool sends an info notice. A built-in or same-plugin replacement sends none.
+     * - The next turn uses the new tool list. A change can invalidate the provider's prompt cache.
      */
     readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
+    /**
+     * Remove `name` from this session's tool list. A later definition restores it. An unknown name does not fail.
+     * - The removal ends when this plugin's session scope ends. It does not affect other sessions.
+     * - An invalid or reserved name throws a `TypeError`.
+     */
+    readonly remove: (name: string) => void;
   };
   /** The background jobs of the plugin in this session. */
   readonly jobs: {

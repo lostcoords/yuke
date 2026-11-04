@@ -1,8 +1,8 @@
 // The session of a plugin: its setup, its tools, its failure, and its close.
 
-import { mkdir } from "yuke:fs";
+import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginSession, SessionContext } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, settled, test, throws } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 /** A tool `name` with no parameters that answers `answer`. */
@@ -48,11 +48,11 @@ test("every session setup starts before any of them settles", async () => {
     await new Promise<void>((resolve) => {
       release = resolve;
     });
-    s.tools.define(tool("first"));
+    s.tools.define(tool("shared", "waiting"));
   };
   const releasing: PluginSession = (s) => {
     release();
-    s.tools.define(tool("second"));
+    s.tools.define(tool("shared", "releasing"));
   };
   const replies = [reply.text("Done.")];
   await using host = await createHost({
@@ -66,48 +66,270 @@ test("every session setup starts before any of them settles", async () => {
 
   await session.send("Hi.");
 
-  // The tools come in the order of their definitions, so the second plugin defines first.
   equal(
-    host.requests[0]?.tools.filter((name) => name === "first" || name === "second"),
-    ["second", "first"],
+    [host.requests[0]?.tools.filter((name) => name === "shared"), (await session.call("shared", {})).text],
+    [["shared"], "waiting"],
+  );
+  equal(
+    host.notices.map((notice) => [notice.source, notice.message]),
+    [["waiting", 'Tool "shared" from "releasing" was replaced by "waiting".']],
   );
 });
 
-test("a name that an earlier plugin holds fails only the later plugin", async () => {
+test("a later plugin replaces a tool and names both owners in an info notice", async () => {
   await using host = await createHost({
     plugins: [
-      { name: "first", session: (s) => void s.tools.define(tool("shared")) },
+      { name: "first", session: (s) => void s.tools.define(tool("screenshot", "first image")) },
       {
         name: "second",
         session: (s) => {
-          s.tools.define(tool("own"));
-          s.tools.define(tool("shared"));
+          s.tools.define(tool("own", "kept"));
+          s.tools.define(tool("screenshot", "second image"));
+        },
+      },
+    ],
+    replies: [reply.text("Done.")],
+  });
+  const session = await host.openSession();
+
+  await session.send("Hi.");
+
+  equal(
+    [
+      (await session.call("screenshot", {})).text,
+      (await session.call("own", {})).text,
+      host.requests[0]?.tools.filter((name) => name === "screenshot"),
+    ],
+    ["second image", "kept", ["screenshot"]],
+  );
+  equal(host.notices, [
+    {
+      sessionId: session.id,
+      source: "second",
+      level: "info",
+      message: 'Tool "screenshot" from "first" was replaced by "second".',
+    },
+  ]);
+});
+
+test("a plugin replaces built-ins and its own definitions without a notice", async () => {
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "reader",
+        session: (s) => {
+          s.tools.define(tool("read", "first"));
+          s.tools.define(tool("read", "second"));
+        },
+      },
+    ],
+    replies: [reply.text("Done.")],
+  });
+  const session = await host.openSession();
+
+  await session.send("Hi.");
+
+  equal(
+    [(await session.call("read", {})).text, host.requests[0]?.tools.filter((name) => name === "read"), host.notices],
+    ["second", ["read"], []],
+  );
+});
+
+test("name removal omits built-ins and plugin tools from the model request", async () => {
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "screenshots",
+        session: (s) => {
+          s.tools.define(tool("screenshot", "image"));
+          s.tools.define(tool("kept", "still here"));
+        },
+      },
+      {
+        name: "selection",
+        session: (s) => {
+          for (const name of ["write", "edit", "screenshot", "unknown"]) s.tools.remove(name);
+        },
+      },
+    ],
+    replies: [reply.text("Done.")],
+  });
+  const session = await host.openSession();
+
+  await session.send("Hi.");
+
+  equal(
+    [host.requests[0]?.tools, (await session.call("kept", {})).text, host.notices],
+    [["read", "exec", "stop", "kept"], "still here", []],
+  );
+  equal(
+    [await refusal(session.call("write", {})), await refusal(session.call("screenshot", {}))],
+    ["the session has no tool write", "the session has no tool screenshot"],
+  );
+});
+
+test("a later definition restores a removed name and its disposer reveals the removal", async () => {
+  let removeDefinition = (): void => {};
+  let defineAgain = (): void => {};
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "reader",
+        session: (s) => {
+          s.tools.remove("read");
+          removeDefinition = s.tools.define(tool("read", "replacement"));
+          defineAgain = () => void s.tools.define(tool("read", "restored"));
+        },
+      },
+    ],
+    replies: [reply.text("Before."), reply.text("Removed."), reply.text("Restored.")],
+  });
+  const session = await host.openSession();
+
+  await session.send("First.");
+  equal((await session.call("read", {})).text, "replacement");
+  removeDefinition();
+  await session.send("Second.");
+  equal(await refusal(session.call("read", {})), "the session has no tool read");
+  defineAgain();
+  await session.send("Third.");
+
+  equal(
+    [
+      host.requests.map((request) => request.tools.filter((name) => name === "read")),
+      (await session.call("read", {})).text,
+    ],
+    [[["read"], [], ["read"]], "restored"],
+  );
+});
+
+test("disposers restore earlier definitions and never remove a newer registration", async () => {
+  await writeTextFile(`${folder()}/note.txt`, "default");
+  let removeFirst = (): void => {};
+  let removeSecond = (): void => {};
+  let defineSecond = (): void => {};
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "first",
+        session: (s) => {
+          removeFirst = s.tools.define(tool("read", "first"));
+        },
+      },
+      {
+        name: "second",
+        session: (s) => {
+          defineSecond = () => {
+            removeSecond = s.tools.define(tool("read", "second"));
+          };
+          defineSecond();
         },
       },
     ],
   });
   const session = await host.openSession();
 
-  equal((await session.call("shared", {})).text, "x");
-  equal(await refusal(session.call("own", {})), "the session has no tool own");
-  // The first line holds the error. The next lines hold the frames of the plugin.
-  equal(
-    host.notices.map((notice) => [notice.source, notice.message.split("\n")[0]]),
-    [["second", `${SETUP_FAILED}TypeError: the session already has a tool with the name 'shared'`]],
-  );
+  equal((await session.call("read", {})).text, "second");
+  removeSecond();
+  equal((await session.call("read", {})).text, "first");
+  defineSecond();
+  removeFirst();
+  removeFirst();
+  equal((await session.call("read", {})).text, "second");
+  removeSecond();
+
+  equal((await session.call("read", { path: "note.txt" })).text, "1: default");
 });
 
-test("a tool of yuke holds its name, so a plugin tool of that name fails its session", async () => {
+test("failed setup withdraws its overrides and name removals", async () => {
   await using host = await createHost({
-    plugins: [{ name: "reader", session: (s) => void s.tools.define(tool("read")) }],
+    plugins: [
+      { name: "first", session: (s) => void s.tools.define(tool("read", "first")) },
+      {
+        name: "broken",
+        session: async (s) => {
+          s.tools.remove("read");
+          s.tools.remove("write");
+          s.tools.define(tool("read", "broken"));
+          await null;
+          throw new Error("broken");
+        },
+      },
+    ],
   });
   const session = await host.openSession();
 
-  equal((await session.call("read", { path: "." })).text.startsWith("the path is a directory"), true);
   equal(
-    host.notices.map((notice) => notice.message.split("\n")[0]),
-    [`${SETUP_FAILED}TypeError: the session already has a tool with the name 'read'`],
+    [(await session.call("read", {})).text, (await session.call("write", { path: "note.txt", content: "note" })).text],
+    ["first", "The tool wrote 4 bytes."],
   );
+  equal(
+    host.notices.map((notice) => [notice.source, notice.level, notice.message.split("\n")[0]]),
+    [["broken", "error", `${SETUP_FAILED}Error: broken`]],
+  );
+});
+
+test("overrides and name removals stay within their session", async () => {
+  await writeTextFile(`${folder()}/note.txt`, "default");
+  let count = 0;
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "reader",
+        session: (s) => {
+          count += 1;
+          if (count === 1) {
+            s.tools.define(tool("read", "first session"));
+            s.tools.remove("write");
+          }
+        },
+      },
+    ],
+  });
+  const first = await host.openSession();
+  const second = await host.openSession();
+
+  equal(
+    [(await first.call("read", {})).text, (await second.call("read", { path: "note.txt" })).text],
+    ["first session", "1: default"],
+  );
+  equal(await refusal(first.call("write", {})), "the session has no tool write");
+  await first.close();
+  equal((await second.call("write", { path: "other.txt", content: "second" })).text, "The tool wrote 6 bytes.");
+});
+
+test("an invalid replacement or removal leaves the current tool unchanged", async () => {
+  const errors: unknown[] = [];
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "reader",
+        session: (s) => {
+          s.tools.define(tool("read", "kept"));
+          errors.push(throws(() => s.tools.define({ ...tool("read", "broken"), concurrency: "wrong" } as never)));
+          errors.push(throws(() => s.tools.remove("bad name")));
+          errors.push(throws(() => s.tools.remove("tool_call")));
+        },
+      },
+    ],
+  });
+  const session = await host.openSession();
+
+  equal(
+    [
+      (await session.call("read", {})).text,
+      errors.map((error) => (error instanceof Error ? error.message : String(error))),
+    ],
+    [
+      "kept",
+      [
+        "the concurrency 'wrong' is not 'serial' or 'parallel'",
+        'the tool name "bad name" does not match ^[a-zA-Z0-9_-]{1,64}$',
+        'the engine reserves the tool name "tool_call"',
+      ],
+    ],
+  );
+  equal(host.notices, []);
 });
 
 test("the folder of a session stays while a call reads the folder of its start", async () => {
@@ -126,13 +348,19 @@ test("the folder of a session stays while a call reads the folder of its start",
   equal((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });
 
-test("define fails during the cleanup and after the close", async () => {
+test("tool definitions and name removals fail during cleanup and after close", async () => {
   let kept: SessionContext | undefined;
   const refusals: string[] = [];
   const define = (): void => {
     try {
       kept?.tools.define(tool("late"));
       refusals.push("defined");
+    } catch (error) {
+      refusals.push(error instanceof Error ? error.message : String(error));
+    }
+    try {
+      kept?.tools.remove("read");
+      refusals.push("removed");
     } catch (error) {
       refusals.push(error instanceof Error ? error.message : String(error));
     }
@@ -147,8 +375,9 @@ test("define fails during the cleanup and after the close", async () => {
   await session.close();
   define();
 
-  const refused = "plugin keeper defines a tool after the end of its session";
-  equal(refusals, [refused, refused]);
+  const defineRefused = "plugin keeper defines a tool after the end of its session";
+  const removeRefused = "plugin keeper removes a tool after the end of its session";
+  equal(refusals, [defineRefused, removeRefused, defineRefused, removeRefused]);
 });
 
 test("a tool that the session defines after its setup reaches the next calls", async () => {
@@ -164,26 +393,6 @@ test("a tool that the session defines after its setup reaches the next calls", a
   defineLater();
 
   equal([before, (await session.call("later", {})).text], ["the session has no tool later", "late"]);
-});
-
-// A second call of a remover removes nothing, so the tool of the same name defined after it stays.
-test("a remover frees the name of its tool, and a second call of it removes nothing", async () => {
-  let swap = (): void => {};
-  const tools: PluginSession = (s) => {
-    const remove = s.tools.define(tool("gone"));
-    s.tools.define(tool("kept"));
-    swap = () => {
-      remove();
-      s.tools.define(tool("gone", "again"));
-      remove();
-    };
-  };
-  await using host = await createHost({ plugins: [{ name: "tools", session: tools }] });
-  const session = await host.openSession();
-
-  swap();
-
-  equal([(await session.call("gone", {})).text, (await session.call("kept", {})).text], ["again", "x"]);
 });
 
 test("a failed session drops only its tools, aborts its signal, and sends one notice", async () => {

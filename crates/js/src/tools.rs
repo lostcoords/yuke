@@ -122,16 +122,53 @@ pub(crate) struct Registry {
     last_open: Cell<u64>,
 }
 
-/// One defined tool.
+/// The plugin and open session of a tool change. A built-in has no owner.
+#[derive(Debug, FromJs)]
+pub(crate) struct ToolOwner {
+    pub(crate) open: u64,
+    pub(crate) plugin: String,
+}
+
+/// A definition or name removal in registration order.
 struct Registered {
     id: u64,
-    /// The open session of the tool, or `None` for a tool of every session.
-    open: Option<u64>,
-    definition: yuke_ai::ToolDefinition,
-    concurrency: Concurrency,
-    hints: ToolHints,
-    /// The JavaScript function that starts a call.
-    start: Persistent<Function<'static>>,
+    owner: Option<ToolOwner>,
+    change: ToolChange,
+}
+
+impl Registered {
+    fn visible_in(&self, open: u64) -> bool {
+        self.owner.as_ref().is_none_or(|owner| owner.open == open)
+    }
+}
+
+/// One tool definition or name removal.
+pub(crate) enum ToolChange {
+    Define {
+        definition: yuke_ai::ToolDefinition,
+        concurrency: Concurrency,
+        hints: ToolHints,
+        start: Persistent<Function<'static>>,
+    },
+    Remove {
+        name: String,
+    },
+}
+
+impl ToolChange {
+    fn name(&self) -> &str {
+        match self {
+            Self::Define { definition, .. } => &definition.name,
+            Self::Remove { name } => name,
+        }
+    }
+}
+
+/// The id of a tool change and the plugin whose definition it replaces.
+#[derive(IntoJs)]
+pub(crate) struct Registration {
+    pub(crate) id: u64,
+    replaced: Option<String>,
 }
 
 impl Registry {
@@ -144,46 +181,37 @@ impl Registry {
             last_open: Cell::default(),
         }
     }
-    /// Add a tool to the open session `open`, or to every session when `open` is `None`, and return its id. A reserved
-    /// name, a name that the session already has, or a closed session fails with the text of the failure.
-    pub(crate) fn add<'js>(
-        &self,
-        ctx: &Ctx<'js>,
-        definition: yuke_ai::ToolDefinition,
-        concurrency: Concurrency,
-        hints: ToolHints,
-        start: Function<'js>,
-        open: Option<u64>,
-    ) -> Result<u64, String> {
-        check_tool_name(&definition.name).map_err(|error| error.to_string())?;
-        if open.is_some_and(|open| !self.opens.borrow().contains(&open)) {
+    /// Add a tool change. An invalid name, a reserved name, or a closed session fails with its error text.
+    pub(crate) fn add(&self, owner: Option<ToolOwner>, change: ToolChange) -> Result<Registration, String> {
+        check_tool_name(change.name()).map_err(|error| error.to_string())?;
+        if owner
+            .as_ref()
+            .is_some_and(|owner| !self.opens.borrow().contains(&owner.open))
+        {
             return Err("the session is closed".to_owned());
         }
         let mut tools = self.tools.borrow_mut();
-        // A tool of every session meets the tools of each session.
-        let clash = tools.iter().any(|tool| {
-            tool.definition.name == definition.name && (tool.open.is_none() || open.is_none() || tool.open == open)
-        });
-        if clash {
-            return Err(format!(
-                "the session already has a tool with the name '{}'",
-                definition.name
-            ));
-        }
+        let replaced = if matches!(change, ToolChange::Define { .. }) {
+            owner.as_ref().and_then(|owner| {
+                tools
+                    .iter()
+                    .rev()
+                    .find(|tool| tool.visible_in(owner.open) && tool.change.name() == change.name())
+                    .filter(|tool| matches!(tool.change, ToolChange::Define { .. }))
+                    .and_then(|tool| tool.owner.as_ref())
+                    .filter(|previous| previous.plugin != owner.plugin)
+                    .map(|previous| previous.plugin.clone())
+            })
+        } else {
+            None
+        };
         let id = self.last_id.get() + 1;
         self.last_id.set(id);
-        tools.push(Registered {
-            id,
-            open,
-            definition,
-            concurrency,
-            hints,
-            start: Persistent::save(ctx, start),
-        });
-        Ok(id)
+        tools.push(Registered { id, owner, change });
+        Ok(Registration { id, replaced })
     }
 
-    /// Remove the tools of `ids`.
+    /// Remove the tool changes of `ids`.
     pub(crate) fn remove(&self, ids: &[u64]) {
         self.tools.borrow_mut().retain(|tool| !ids.contains(&tool.id));
     }
@@ -200,25 +228,39 @@ impl Registry {
     /// Close the open session `open`, and remove its tools.
     pub(crate) fn close(&self, open: u64) {
         self.opens.borrow_mut().remove(&open);
-        self.tools.borrow_mut().retain(|tool| tool.open != Some(open));
+        self.tools
+            .borrow_mut()
+            .retain(|tool| tool.owner.as_ref().is_none_or(|owner| owner.open != open));
     }
 
-    /// Each tool of the open session `open`, in the order of their definition. A closed session has no tools.
+    /// The effective tools of the open session `open`, in registration order. A closed session has no tools.
     pub(crate) fn entries(&self, open: u64) -> Vec<Entry> {
         if !self.opens.borrow().contains(&open) {
             return Vec::new();
         }
-        self.tools
-            .borrow()
+        let tools = self.tools.borrow();
+        let mut names = HashSet::new();
+        let mut entries: Vec<_> = tools
             .iter()
-            .filter(|tool| tool.open.is_none_or(|own| own == open))
-            .map(|tool| Entry {
-                id: tool.id,
-                definition: tool.definition.clone(),
-                concurrency: tool.concurrency,
-                hints: tool.hints.clone(),
+            .rev()
+            .filter(|tool| tool.visible_in(open) && names.insert(tool.change.name()))
+            .filter_map(|tool| match &tool.change {
+                ToolChange::Define {
+                    definition,
+                    concurrency,
+                    hints,
+                    ..
+                } => Some(Entry {
+                    id: tool.id,
+                    definition: definition.clone(),
+                    concurrency: *concurrency,
+                    hints: hints.clone(),
+                }),
+                ToolChange::Remove { .. } => None,
             })
-            .collect()
+            .collect();
+        entries.reverse();
+        entries
     }
 
     /// The start function of the tool `id` of the open session `open`. The borrow ends before the caller runs
@@ -239,7 +281,10 @@ impl Registry {
             .borrow()
             .iter()
             .find(|tool| tool.id == id)
-            .map(|tool| tool.start.clone())
+            .and_then(|tool| match &tool.change {
+                ToolChange::Define { start, .. } => Some(start.clone()),
+                ToolChange::Remove { .. } => None,
+            })
             .ok_or_else(|| failure("the tool is no longer defined"))?;
         caught(ctx, start.restore(ctx))
     }
