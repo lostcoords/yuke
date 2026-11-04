@@ -196,7 +196,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   equal(chat.transcript().document.items[0]?.key, "2:0");
 });
 
-test("a failed page shows its error in the rule and loads no more pages", async () => {
+test("a failed page shows its error below the transcript and loads no more pages", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(250));
   sessions.state.failing = true;
@@ -212,7 +212,7 @@ test("a failed page shows its error in the rule and loads no more pages", async 
   frame.draw();
   await settled();
   frame.draw();
-  equal(rows(frame.frame).at(-3), "─ the history did not load: Error: disk");
+  equal(rows(frame.frame).at(-4), " the history did not load: Error: disk");
   equal(sessions.pages.length, 1);
 });
 
@@ -224,10 +224,10 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
   frame.draw();
-  equal(rows(frame.frame).at(-3), "─ new output ↓ ─────");
+  equal(rows(frame.frame).at(-4), " new output ↓");
   chat.transcript().scroll.followTail();
   frame.draw();
-  equal(rows(frame.frame).at(-3), "────────────────────");
+  equal(rows(frame.frame).at(-4), "");
   sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
   frame.draw();
   equal(transcriptRows(frame).slice(-2), [" reply 32", ""]);

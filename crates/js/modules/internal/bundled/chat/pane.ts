@@ -14,6 +14,8 @@ import {
   type ChatReadOnly,
   ChatSession,
   ChatWorking,
+  type ComposerContext,
+  type ComposerFrame,
   type ComposerRow,
   type ComposerRowPlace,
   type ComposerRowsContext,
@@ -31,12 +33,24 @@ import {
   type Mount,
   measure,
   type Placement,
+  type Rect,
   type Size,
   TextEditor,
   TextView,
   type Tui,
   type View,
 } from "yuke:tui";
+
+/** The frame when no plugin sets a frame: one rule above the input, and one rule below it. */
+const RULES: ComposerFrame = {
+  inset: () => ({ top: 1, bottom: 1 }),
+  draw: (canvas, pane) => {
+    const rule = "─".repeat(canvas.width);
+    const below = pane.input.row + pane.input.height;
+    if (pane.input.row > 0) canvas.text(0, 0, rule, STYLE.rule);
+    if (below < canvas.height) canvas.text(0, below, rule, STYLE.rule);
+  },
+};
 
 /** The item at the top of a scrolled transcript, and its row there. */
 interface Viewport {
@@ -125,13 +139,15 @@ export interface Chat {
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The rows for `pane` of the sources at `place`, in add order. The first source past `room` rows ends the list. */
   readonly rows: (place: ComposerRowPlace, pane: ComposerRowsContext, room: number) => ComposerRow[];
+  /** The frame of the `chat` service around the input. Without one, a pane draws two rules. */
+  readonly frame: () => ComposerFrame | undefined;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
 }
 
 /**
- * A chat pane: the transcript above a rule, the composer, and a rule below it. The composer takes at most half the pane
- * height. A pane with a session holds its own handle until the mount closes.
+ * A chat pane: the transcript above the composer, in a frame that is two rules by default. The composer takes at most
+ * half the pane height. A pane with a session holds its own handle until the mount closes.
  */
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
@@ -236,11 +252,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     placeholder: "Message…",
     state: state.draft,
   });
-  // A question takes the place of the list, and a pane without a row above the rule shows no list.
+  // A question takes the place of the list, and a pane without a row above the frame shows no list.
   const commands = new ChatCommands(composer, {
     commands: tui.commands,
     signal: mount.signal,
-    enabled: () => questions.current === undefined && locked() === undefined && ruleRow > 0,
+    enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
   });
   const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
@@ -496,15 +512,27 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     });
   }
 
-  // The layout keeps the row of the rule and the shown waiting messages for the draw. Without a free row, the pane
-  // draws no rule.
-  let ruleRow = -1;
+  // The layout keeps the place of the frame and the shown waiting messages for the draw.
+  let frame = RULES;
+  let frameContext: ComposerContext = { session: undefined, width: 0, kind: "composer", running: false };
+  let frameRow = 0;
+  let inputRect: Rect = { column: 0, row: 0, width: 0, height: 0 };
+  let noticeRow = -1;
   let listRows = 0;
   let workingRows = 0;
   let shown: [InputId, Frozen<Input>][] = [];
   let rowsAbove: ComposerRow[] = [];
   let rowsBelow: ComposerRow[] = [];
-  let closeRow = -1;
+  /** The frame around the input: its view places the input, so a click and the cursor stay local to the input. */
+  const frameView: View = {
+    get style() {
+      return frame.style;
+    },
+    layout: () => [{ view: input(), rect: inputRect }],
+    draw(canvas: Canvas, focused: boolean): void {
+      frame.draw(canvas, { ...frameContext, focused, input: inputRect });
+    },
+  };
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
@@ -523,25 +551,35 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const context = { session: chatSession.id, width: size.width };
       rowsBelow = chat.rows("below", context, Math.floor(size.height / 2));
       const left = size.height - rowsBelow.length;
-      // A short pane gives up the rule below the composer first: the two rules and the composer need three rows.
-      closeRow = left >= 3 ? left - 1 : -1;
-      const usable = closeRow < 0 ? left : closeRow;
+      frame = chat.frame() ?? RULES;
+      const kind = locked() !== undefined ? "readOnly" : question !== undefined ? "question" : "composer";
+      frameContext = { ...context, kind, running: working.active };
+      const inset = frame.inset(frameContext);
+      const top = inset.top ?? 0;
+      const insetLeft = inset.left ?? 0;
+      const inputWidth = Math.max(0, size.width - insetLeft - (inset.right ?? 0));
+      // A short pane gives up the rows below the input first, then the rows above it.
+      const bottom = left >= top + 1 + (inset.bottom ?? 0) ? (inset.bottom ?? 0) : 0;
+      const usable = left - bottom;
       // The composer keeps one row in a pane of any size, and at most half of a taller pane.
-      const wanted = locked() === undefined ? (question?.rows ?? composer.heightFor(size.width)) : 1;
+      const wanted = kind === "readOnly" ? 1 : (question?.rows ?? composer.heightFor(inputWidth));
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(usable / 2)));
       const composerRow = Math.max(0, usable - composerRows);
-      ruleRow = composerRow - 1;
-      // The command list sits on the rule. While a turn runs, the working row sits above the list.
-      listRows = Math.min(commands.rows, Math.max(0, ruleRow));
-      const free = ruleRow - listRows;
+      const topRows = Math.min(top, composerRow);
+      frameRow = composerRow - topRows;
+      const frameRows = topRows + usable - composerRow + bottom;
+      inputRect = { column: insetLeft, row: topRows, width: inputWidth, height: usable - composerRow };
+      // The command list sits on the frame. While a turn runs, the working row sits above the list.
+      listRows = Math.min(commands.rows, frameRow);
+      const free = frameRow - listRows;
       const workingRow = working.active && free > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
       // newest messages.
       const list = chatComposer.waiting;
       const above = Math.max(0, free - workingRow);
       shown = list.slice(Math.max(0, list.length - above));
-      // Plugin rows get the rows that the strip leaves, at most half the rows above the rule.
-      rowsAbove = chat.rows("above", context, Math.min(above - shown.length, Math.floor(Math.max(0, ruleRow) / 2)));
+      // Plugin rows get the rows that the strip leaves, at most half the rows above the frame.
+      rowsAbove = chat.rows("above", context, Math.min(above - shown.length, Math.floor(frameRow / 2)));
       // One empty row goes below the transcript, and a running turn adds one below the working row. The transcript gets
       // the other rows. A pane adds an empty row only when the transcript keeps a row, so a short pane drops it first.
       let transcriptRows = above - shown.length - rowsAbove.length;
@@ -550,13 +588,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const workingGap = workingRow === 1 && transcriptRows > 1 ? 1 : 0;
       transcriptRows -= workingGap;
       workingRows = workingRow + workingGap;
+      noticeRow = gap === 1 ? transcriptRows : -1;
       const placements = [
         { view, rect: { column: 0, row: 0, width: size.width, height: transcriptRows } },
-        {
-          view: input(),
-          rect: { column: 0, row: composerRow, width: size.width, height: usable - composerRow },
-        },
-        { view: commands.view, rect: { column: 0, row: ruleRow - listRows, width: size.width, height: listRows } },
+        { view: frameView, rect: { column: 0, row: frameRow, width: size.width, height: frameRows } },
+        { view: commands.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
@@ -575,9 +611,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       for (const [at, row] of rowsBelow.entries()) {
         canvas.text(0, canvas.height - rowsBelow.length + at, clipped(row.text, canvas.width), row.style);
       }
-      if (closeRow >= 0) canvas.text(0, closeRow, "─".repeat(canvas.width), STYLE.rule);
-      if (ruleRow < 0) return;
-      const listRow = ruleRow - listRows;
+      const listRow = frameRow - listRows;
       const stripRow = listRow - workingRows - shown.length;
       for (const [at, row] of rowsAbove.entries()) {
         canvas.text(0, stripRow - rowsAbove.length + at, clipped(row.text, canvas.width), row.style);
@@ -604,12 +638,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         canvas.text(0, listRow - workingRows, row.spinner, STYLE.hint);
         canvas.text(2, listRow - workingRows, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
       }
-      canvas.text(0, ruleRow, "─".repeat(canvas.width), STYLE.rule);
-      // The rule shows a failed history load, so the text stays in sight at any scroll place.
+      // The empty row below the transcript shows a failed history load, so the text stays in sight at any scroll place.
+      if (noticeRow < 0) return;
       const historyError = chatSession.historyError;
       if (historyError !== undefined) {
-        canvas.text(1, ruleRow, ` the history did not load: ${String(historyError)} `, STYLE.error);
-      } else if (view.scroll.state.changedBelow) canvas.text(1, ruleRow, " new output ↓ ", STYLE.hint);
+        canvas.text(1, noticeRow, `the history did not load: ${String(historyError)}`, STYLE.error);
+      } else if (view.scroll.state.changedBelow) canvas.text(1, noticeRow, "new output ↓", STYLE.hint);
     },
     get initialFocus(): View {
       return input();

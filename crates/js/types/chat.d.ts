@@ -13,7 +13,7 @@ declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
   import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { CanvasStyle, CommandItem, EditorState, TextDocument, TextEditor, View } from "yuke:tui";
+  import type { Canvas, CanvasStyle, CommandItem, EditorState, Rect, TextDocument, TextEditor, View } from "yuke:tui";
 
   export interface ChatSessionOptions {
     /** Its abort ends the handle. */
@@ -282,6 +282,54 @@ declare module "yuke:chat" {
     readonly width: number;
   }
 
+  /** The whole cells around the input of a chat pane. A missing side has no cells. */
+  export interface Insets {
+    readonly top?: number | undefined;
+    readonly right?: number | undefined;
+    readonly bottom?: number | undefined;
+    readonly left?: number | undefined;
+  }
+
+  /** The chat pane that a frame gets at each layout. */
+  export interface ComposerContext extends ComposerRowsContext {
+    /** The view in the input area: the composer, a question, or the row of a read-only session. */
+    readonly kind: "composer" | "question" | "readOnly";
+    /** A turn of the session runs. */
+    readonly running: boolean;
+  }
+
+  /** The chat pane that a frame gets at each draw. */
+  export interface ComposerFrameContext extends ComposerContext {
+    /** The input view or a view inside it has the focus. */
+    readonly focused: boolean;
+    /** The rect of the input view on the canvas. */
+    readonly input: Rect;
+  }
+
+  /**
+   * The look of the area around the input of a chat pane. The default frame is one rule above the input and one below.
+   *
+   * ```ts
+   * chat.setComposerFrame({
+   *   inset: () => ({ left: 1 }),
+   *   draw: (canvas, pane) => {
+   *     for (let row = 0; row < canvas.height; row += 1) canvas.text(0, row, "┃", { fg: pane.focused ? "accent" : "fg" });
+   *   },
+   * });
+   * ```
+   */
+  export interface ComposerFrame {
+    /**
+     * The cells around the input. The pane calls this function at each layout, so keep it cheap. In a short pane, the
+     * rows below the input go first, then the rows above it.
+     */
+    readonly inset: (pane: ComposerContext) => Insets;
+    /** The `View.style` of the frame: it fills the input and the insets, and it is the base of the input styles. */
+    readonly style?: CanvasStyle | undefined;
+    /** Draw before the input. The canvas covers the input and its insets. */
+    readonly draw: (canvas: Canvas, pane: ComposerFrameContext) => void;
+  }
+
   /** What a chat pane shows in place of the composer, for a session that the pane only shows. */
   export interface ChatReadOnly {
     /** The row in place of the composer. The chat adds the key that goes back. */
@@ -309,7 +357,7 @@ declare module "yuke:chat" {
      * source cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
      *
      * - `above`: The rows show below the transcript and above the waiting messages, the working row, and the command
-     *   list. The chat gives them the free rows, at most half the rows above the rule.
+     *   list. The chat gives them the free rows, at most half the rows above the frame of the input.
      * - `below`: The rows show on the last rows of the pane, and the composer moves up. The chat gives them at most half
      *   the pane height.
      *
@@ -338,6 +386,11 @@ declare module "yuke:chat" {
      * ```
      */
     readonly setReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
+    /**
+     * Replace the frame around the input of each chat pane. The last call wins. A disposer restores the default only if
+     * its frame is current.
+     */
+    readonly setComposerFrame: (frame: ComposerFrame) => () => void;
     /**
      * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
      * presentation, also for one session. The last call wins. A disposer restores the default only if its factory is

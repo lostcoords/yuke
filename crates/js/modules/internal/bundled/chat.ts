@@ -9,6 +9,7 @@ import type {
   ChatPresentation,
   ChatPresentationOptions,
   ChatReadOnly,
+  ComposerFrame,
   ComposerRow,
   ComposerRowPlace,
   ComposerRowsContext,
@@ -154,6 +155,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   const open = new Set<PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   let readOnly: ((session: SessionId) => ChatReadOnly | undefined) | undefined;
+  let frame: ComposerFrame | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -193,6 +195,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
         tui?.requestFrame();
       };
     },
+    setComposerFrame: (next) => {
+      frame = next;
+      tui?.requestFrame();
+      return () => {
+        if (frame !== next) return;
+        frame = undefined;
+        tui?.requestFrame();
+      };
+    },
     present: (factory) => {
       presenter = factory;
       tui?.requestFrame();
@@ -214,6 +225,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     }),
     open,
     presenter: () => presenter,
+    frame: () => frame,
     readOnly: (session) => readOnly?.(session),
     rows: (place, pane, room) => {
       const rows: ComposerRow[] = [];
