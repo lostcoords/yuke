@@ -233,7 +233,7 @@ test("a change of a placed list by code asks for a frame", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const { scroll } = list([{ key: "a", text: "a0a1a2a3" }]);
-  core.scene.setRoot("chat", () => scroll);
+  core.scene.wrapRoot("chat", () => scroll);
   terminal.screen(core);
   const asked = terminal.requests();
   scroll.scrollBy(1);

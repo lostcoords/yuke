@@ -16,6 +16,7 @@ import type {
   Pane,
   Point,
   Rect,
+  RootFactory,
   Size,
   View,
   ViewFactory,
@@ -59,21 +60,25 @@ interface Target {
 
 interface Layer {
   readonly view: View;
-  readonly mount: Mount;
-  readonly modal: boolean;
-  readonly place: ((size: Size) => Rect) | undefined;
   /** The focused view of an overlay. The root layer keeps its focus in the scene, across a change of the root. */
   focus: View | undefined;
   tree: Target | undefined;
 }
 
-const NO_MOUNT: Mount = Object.freeze({ close(): void {}, signal: AbortSignal.abort() });
+interface Overlay extends Layer {
+  readonly mount: Mount;
+  readonly modal: boolean;
+  readonly place: ((size: Size) => Rect) | undefined;
+}
+
+/** The layer of each hosted view of a root. All roots count as one, so a wrap or a close keeps a widget mount. */
+const ROOTS = {};
 
 export class Scene {
   readonly #host: SceneHost;
-  readonly #defaultRoot: Layer;
-  #root: Layer;
-  readonly #overlays: Layer[] = [];
+  /** The roots from the bottom up. The root of the core stays first. Each other root places the root below it. */
+  readonly #roots: Layer[];
+  readonly #overlays: Overlay[] = [];
   #rootFocus: View | undefined;
   /** The last focused view inside each view of the focus path, so a refocus of a pane finds its composer again. */
   readonly #lastInside = new WeakMap<View, View>();
@@ -83,33 +88,39 @@ export class Scene {
   /** The views of the root focus path at the last layout, also under a modal. */
   #rootPath: readonly View[] = [];
 
-  /** `root` is the default root view, owned by the core: the root again after the close of each other root. */
+  /** `root` is the view of the core. It stays below each other root. */
   constructor(host: SceneHost, root: View) {
     this.#host = host;
-    this.#defaultRoot = {
-      view: root,
-      mount: NO_MOUNT,
-      modal: false,
-      place: undefined,
-      focus: undefined,
-      tree: undefined,
-    };
-    this.#root = this.#defaultRoot;
+    this.#roots = [{ view: root, focus: undefined, tree: undefined }];
   }
 
-  /** Make the root view with `create`. The close of the mount gives the default root back; a newer root closes it. */
-  setRoot(owner: string, create: ViewFactory): Mount {
+  get #root(): Layer {
+    return this.#roots.at(-1) as Layer;
+  }
+
+  /** Make a root with `create` around the current root. The close of the mount removes only this root. */
+  wrapRoot(owner: string, create: RootFactory): Mount {
+    if (typeof create !== "function") throw new TypeError("a root takes a function that makes its view");
     let layer: Layer | undefined;
     const mount = createMount(() => {
-      if (layer !== undefined && this.#root === layer) this.#root = this.#defaultRoot;
+      if (layer !== undefined) this.#roots.splice(this.#roots.indexOf(layer), 1);
       this.#host.requestFrame();
     });
-    const view = startView(owner, create, mount, this.#host.report);
+    // A root in the middle can close, so `inner` finds the root below at each layout.
+    const inner: View = {
+      layout: (size) => {
+        const below = layer === undefined ? undefined : this.#roots[this.#roots.indexOf(layer) - 1];
+        if (below === undefined) return [];
+        return [{ view: below.view, rect: { column: 0, row: 0, width: size.width, height: size.height } }];
+      },
+      draw(): void {},
+    };
+    const view = startView(owner, (own) => create(own, inner), mount, this.#host.report);
     if (view === undefined) return mount;
-    layer = { view, mount, modal: false, place: undefined, focus: undefined, tree: undefined };
-    const old = this.#root;
-    this.#root = layer;
-    old.mount.close();
+    layer = { view, focus: undefined, tree: undefined };
+    // Only the top root keeps a tree, so a lower root keeps no views of an old layout.
+    this.#root.tree = undefined;
+    this.#roots.push(layer);
     this.#host.requestFrame();
     return mount;
   }
@@ -118,7 +129,7 @@ export class Scene {
   overlay(owner: string, create: ViewFactory, options: OverlayOptions = {}): Mount {
     const { modal = true, place } = options;
     if (place !== undefined && typeof place !== "function") throw new TypeError("place is a function of the size");
-    let layer: Layer | undefined;
+    let layer: Overlay | undefined;
     const mount = createMount(() => {
       const at = layer === undefined ? -1 : this.#overlays.indexOf(layer);
       if (at >= 0) this.#overlays.splice(at, 1);
@@ -143,11 +154,12 @@ export class Scene {
       layer.tree = this.#place(layer.view, undefined, rect, rect, undefined, new Set());
     }
     const hosted: PlacedView[] = [];
-    const collect = (target: Target, layer: Layer): void => {
+    const collect = (target: Target, layer: object): void => {
       if (isHosted(target.view)) hosted.push({ view: target.view, pane: target.pane, layer });
       for (const child of target.children) collect(child, layer);
     };
-    for (const layer of [this.#root, ...this.#overlays]) if (layer.tree !== undefined) collect(layer.tree, layer);
+    if (this.#root.tree !== undefined) collect(this.#root.tree, ROOTS);
+    for (const layer of this.#overlays) if (layer.tree !== undefined) collect(layer.tree, layer);
     this.#host.placed(hosted);
     // A captured view that left the tree gets its `cancel` now: no release can reach it.
     if (this.#capture !== undefined && this.#find(this.#capture.view) === undefined) this.cancelCapture();
@@ -282,7 +294,7 @@ export class Scene {
     return atoms;
   }
 
-  #placeOverlay(layer: Layer, size: Size, screen: Rect): Rect {
+  #placeOverlay(layer: Overlay, size: Size, screen: Rect): Rect {
     const rect = layer.place?.(size) ?? screen;
     return isRect(rect) ? intersect(screen, rect) : screen;
   }
@@ -366,7 +378,7 @@ export class Scene {
   }
 
   #setFocus(layer: Layer, view: View): void {
-    if (layer === this.#root || layer === this.#defaultRoot) this.#rootFocus = view;
+    if (layer === this.#root) this.#rootFocus = view;
     else layer.focus = view;
     this.#syncFocus();
     this.#host.requestFrame();

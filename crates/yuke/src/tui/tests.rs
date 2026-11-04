@@ -140,7 +140,7 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
 /// draw no notice until the toasts come.
 const BOARD: &str = "export function apply(ctx) {
   const tui = ctx.get('tui');
-  tui.setRoot(() => ({
+  tui.wrapRoot(() => ({
     layout: (size) => [{ view: tui.panes.view, rect: { column: 0, row: 1, width: size.width, height: size.height - 1 } }],
     draw: (canvas) => {
       const notice = tui.notices.list().at(-1);
@@ -316,7 +316,7 @@ async fn the_start_pane_opens_the_session_of_the_startup() {
 /// A test plugin whose root view draws `tui.startup` as JSON.
 const STARTUP: &str = "export function apply(ctx) {
   const tui = ctx.get('tui');
-  tui.setRoot(() => ({ draw: (canvas) => { canvas.text(0, 0, JSON.stringify(tui.startup)); } }));
+  tui.wrapRoot(() => ({ draw: (canvas) => { canvas.text(0, 0, JSON.stringify(tui.startup)); } }));
 }";
 
 #[tokio::test(flavor = "local")]

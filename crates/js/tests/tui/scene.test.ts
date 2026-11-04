@@ -26,7 +26,7 @@ test("a placed child draws in its rect and is cut to it", () => {
       canvas.text(-1, 2, "中Z");
     },
   };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [
       { view: left, rect: { column: 0, row: 0, width: 4, height: 2 } },
       { view: right, rect: { column: 5, row: 0, width: 4, height: 3 } },
@@ -88,7 +88,7 @@ test("a key goes to the keymap first then up the focus path", () => {
       return event.character === "c";
     },
   };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [{ view: child, rect: { column: 0, row: 0, width: 5, height: 1 } }],
     draw() {},
     key: (event) => {
@@ -134,7 +134,7 @@ test("escape closes the top modal when nothing takes it", () => {
 test("a modal takes all input below it and a float takes only what it handles", () => {
   const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     focusable: true,
     draw() {},
     key: () => {
@@ -183,7 +183,7 @@ test("a press focuses and captures and a modal cancels the capture", () => {
   };
   const a: View = { focusable: true, draw() {}, mouse: record("a") };
   const b: View = { focusable: true, draw() {}, mouse: record("b") };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [
       { view: a, rect: { column: 0, row: 0, width: 5, height: 2 } },
       { view: b, rect: { column: 10, row: 0, width: 5, height: 2 } },
@@ -227,7 +227,7 @@ test("a press on a view without focusOnPress reaches it and focuses its parent, 
     draw() {},
     layout: () => [{ view: inner, rect: { column: 0, row: 0, width: 5, height: 2 } }],
   };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [{ view: outer, rect: { column: 0, row: 0, width: 10, height: 4 } }],
     draw() {},
   }));
@@ -452,27 +452,97 @@ test("a throwing focus listener is reported under its plugin and removed", () =>
   );
 });
 
-test("a new root closes the old one and its close gives the default root back", () => {
+/** A view that writes `text` on its first row. */
+function label(text: string): View {
+  return {
+    draw: (canvas) => {
+      canvas.text(0, 0, text);
+    },
+  };
+}
+
+test("each root wraps the root below, and a close removes only that root", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
-  const first = core.scene.setRoot("test", () => ({
-    draw: (canvas) => {
-      canvas.text(0, 0, "first");
+  const bar = core.scene.wrapRoot("bar", (_mount, inner) =>
+    stack("column", [
+      { view: inner, size: "fill" },
+      { view: label("bar"), size: 1 },
+    ]),
+  );
+  const side = core.scene.wrapRoot("side", (_mount, inner) =>
+    stack("row", [
+      { view: inner, size: "fill" },
+      { view: label("side"), size: 4 },
+    ]),
+  );
+  const top = core.scene.wrapRoot("top", (_mount, inner) =>
+    stack("column", [
+      { view: label("top"), size: 1 },
+      { view: inner, size: "fill" },
+    ]),
+  );
+  equal(bar.signal.aborted, false);
+  let screen = terminal.screen(core);
+  equal(screen[0], "top");
+  equal(screen[1]?.slice(16), "side");
+  equal(screen[5], "bar");
+  // The top root stays, and it places the bar now.
+  side.close();
+  screen = terminal.screen(core);
+  equal([screen[0], screen[1], screen[5]], ["top", "", "bar"]);
+  top.close();
+  screen = terminal.screen(core);
+  equal([screen[0], screen[5]], ["", "bar"]);
+  bar.close();
+  equal(terminal.screen(core)[5], "");
+});
+
+test("a root that does not place `inner` covers the root below until the close", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  const below = core.scene.wrapRoot("below", () => label("below"));
+  const cover = core.scene.wrapRoot("cover", () => label("cover"));
+  equal(terminal.screen(core)[0], "cover");
+  cover.close();
+  equal(terminal.screen(core)[0], "below");
+  equal(below.signal.aborted, false);
+});
+
+test("a view beside the panes gets the mouse and leaves the focus on the active pane", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  const tui = createSurface(core, "test", new AbortController().signal);
+  const pressed: string[] = [];
+  const side: View = {
+    ...label("side"),
+    mouse: (event) => {
+      pressed.push(event.action);
+      return true;
     },
-  }));
-  const second = core.scene.setRoot("test", () => ({
-    draw: (canvas) => {
-      canvas.text(0, 0, "second");
-    },
-  }));
-  equal(first.signal.aborted, true);
-  equal(terminal.screen(core)[0], "second");
-  // The close of an old root changes nothing; the close of the current root shows the pane tree again.
-  first.close();
-  equal(terminal.screen(core)[0], "second");
-  second.close();
-  equal(terminal.screen(core)[0], "");
-  equal(second.signal.aborted, true);
+  };
+  const left = tui.panes.split(() => label("left"));
+  const right = tui.panes.split(() => label("right"));
+  const root = tui.wrapRoot((_mount, inner) =>
+    stack("row", [
+      { view: inner, size: "fill" },
+      { view: side, size: 4 },
+    ]),
+  );
+  terminal.screen(core);
+  equal(tui.panes.active, right);
+  // The view gets the press. The active pane keeps the focus.
+  core.event(click(18, 0));
+  equal(pressed.includes("press"), true);
+  equal(tui.panes.active, right);
+  equal(tui.focused, right.view);
+  // No pane is to the right. The focus stays.
+  equal(tui.panes.focus("right"), false);
+  equal(tui.panes.focus("left"), true);
+  equal(tui.panes.active, left);
+  root.close();
+  terminal.screen(core);
+  equal(tui.panes.active, left);
 });
 
 test("the cursor of the focused view reaches the screen inside its clip with its shape", () => {
@@ -480,7 +550,7 @@ test("the cursor of the focused view reaches the screen inside its clip with its
   const core = new Core(terminal.driver);
   let at: Cursor = { column: 2, row: 0, shape: "bar" };
   const input: View = { focusable: true, draw() {}, cursor: () => at };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [{ view: input, rect: { column: 5, row: 3, width: 4, height: 1 } }],
     draw() {},
   }));
@@ -504,7 +574,7 @@ test("the core commands reach the driver", () => {
 test("a factory that closes its own mount mounts nothing", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
-  const root = core.scene.setRoot("test", (mount) => {
+  const root = core.scene.wrapRoot("test", (mount) => {
     mount.close();
     return {
       draw: (canvas) => {
@@ -555,7 +625,7 @@ test("a view that leaves the tree gets its focus loss and its capture cancel", (
       return true;
     },
   };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => (shown ? [{ view: child, rect: { column: 0, row: 0, width: 5, height: 1 } }] : []),
     draw() {},
   }));
@@ -580,7 +650,7 @@ test("a press that opens a modal captures nothing", () => {
       return true;
     },
   };
-  core.scene.setRoot("test", () => ({
+  core.scene.wrapRoot("test", () => ({
     layout: () => [{ view: opener, rect: { column: 0, row: 0, width: 5, height: 1 } }],
     draw() {},
   }));
@@ -649,7 +719,7 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
     modal: false,
     place: () => ({ column: 0, row: 5, width: 1, height: 1 }),
   });
-  const root = tui.setRoot(() => ({
+  const root = tui.wrapRoot(() => ({
     draw: (canvas) => {
       canvas.text(0, 0, "root");
     },

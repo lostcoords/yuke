@@ -446,9 +446,9 @@ test("the selection, a label, and the placeholder have a default look that a plu
   using frame = createFrame({ width: 12, height: 3 }, () => root(editor, 10, 1));
   const tui = frame.surface("theme").tui;
   const looks = () => {
-    tui.setRoot(() => root(editor, 10, 1));
+    tui.wrapRoot(() => root(editor, 10, 1));
     const cells = frame.draw().cells[1];
-    tui.setRoot(() => ({
+    tui.wrapRoot(() => ({
       draw() {},
       layout: () => [{ view: empty, rect: { column: 1, row: 1, width: 10, height: 1 } }],
     }));

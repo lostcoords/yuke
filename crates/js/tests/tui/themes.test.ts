@@ -24,7 +24,7 @@ async function load(frame: FrameTest, dataDir: string): Promise<{ tui: Tui; noti
 
 /** The color of a text in `accent` on `frame`. */
 function accent(frame: FrameTest, tui: Tui): unknown {
-  tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", { fg: "accent" }) }));
+  tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", { fg: "accent" }) }));
   return frame.draw().cells[0]?.[0]?.style.fg;
 }
 
@@ -158,7 +158,7 @@ test("the palette color fg of a theme reaches the plain text of a Markdown text"
   using frame = createFrame({ width: 20, height: 2 });
   const tui = frame.surface("author").tui;
   const rows = new Markdown("plain **bold**").rows(20);
-  tui.setRoot(() => ({
+  tui.wrapRoot(() => ({
     draw: (canvas) => {
       let column = 0;
       for (const segment of rows[0]?.segments ?? []) column = canvas.text(column, 0, segment.text, segment.style);
@@ -182,7 +182,7 @@ test("a plugin supports a theme for now, and the theme wins once it names the gr
   };
   on("b", stop.signal, "theme.changed", look);
   const color = (): unknown => {
-    tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", "b.title") }));
+    tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", "b.title") }));
     return frame.draw().cells[0]?.[0]?.style;
   };
   const before = color();

@@ -66,7 +66,7 @@ const handler = (event: KeyEvent): boolean => event.modifiers.ctrl && event.char
 
 // The surface gives the panes and a root mount from a factory.
 declare const tui: Tui;
-const root = tui.setRoot((mount) => ({ draw: () => mount.signal.aborted }));
+const root = tui.wrapRoot((mount) => ({ draw: () => mount.signal.aborted }));
 // `get("tui")` can be `undefined` outside the terminal interface, so a plugin must check it.
 declare const ctx: PluginContext;
 const got = ctx.get("tui");

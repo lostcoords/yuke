@@ -9,7 +9,7 @@ import { rows } from "./rows.ts";
 function mountList(frame: FrameTest, height: number, commands: ChatCommandsOptions["commands"]) {
   const editor = new TextEditor({ multiline: false });
   let list: ChatCommands | undefined;
-  frame.surface("demo").tui.setRoot((mount) => {
+  frame.surface("demo").tui.wrapRoot((mount) => {
     list = new ChatCommands(editor, { commands, signal: mount.signal, enabled: () => true });
     const view = list.view;
     return {

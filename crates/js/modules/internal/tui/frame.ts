@@ -47,7 +47,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     reload: () => {},
     startup: () => startup,
   });
-  const root = create === undefined ? undefined : core.scene.setRoot("test", create);
+  const root = create === undefined ? undefined : core.scene.wrapRoot("test", create);
   let frame: Frame;
   const draw = (): Frame => {
     screen.clear();

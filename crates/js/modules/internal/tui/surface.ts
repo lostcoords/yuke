@@ -21,6 +21,7 @@ import type {
   Pane,
   Panes,
   RestoreView,
+  RootFactory,
   SelectOptions,
   Startup,
   StatusEntry,
@@ -230,7 +231,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       );
       return cancel;
     }),
-    setRoot: live((create: ViewFactory): Mount => mounted(core.scene.setRoot(owner, create))),
+    wrapRoot: live((create: RootFactory): Mount => mounted(core.scene.wrapRoot(owner, create))),
     overlay: live(
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),

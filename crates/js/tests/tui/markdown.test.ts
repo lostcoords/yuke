@@ -520,7 +520,7 @@ test("a gap between two table cells maps to the pipe between them", () => {
 /** The drawn style of the first cell of each segment of `source` that shows more than spaces. */
 function looks(frame: FrameTest, source: string): Record<string, unknown> {
   const rows = new Markdown(source).rows(40);
-  frame.surface("demo").tui.setRoot(() => ({
+  frame.surface("demo").tui.wrapRoot(() => ({
     draw: (canvas) => {
       rows.forEach((row, at) => {
         let column = 0;

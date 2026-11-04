@@ -826,6 +826,9 @@ declare module "yuke:tui" {
   /** Make the view of a new mount. A throw closes the mount and gives one fault. */
   export type ViewFactory = (mount: Mount) => View;
 
+  /** Make a root view around `inner`, the root below it. A throw closes the mount and gives one fault. */
+  export type RootFactory = (mount: Mount, inner: View) => View;
+
   /**
    * Why the core opens a pane. `start` is the first pane of a start without saved panes. `new` is a split, the pane
    * after a close of the last pane, or a saved empty pane of a restore.
@@ -842,7 +845,7 @@ declare module "yuke:tui" {
 
   /** The pane tree of the core. */
   export interface Panes {
-    /** The view of the tree, for a root layout. */
+    /** The view of the tree. */
     readonly view: View;
     /** The active pane beneath any modal. */
     readonly active: Pane | undefined;
@@ -964,8 +967,15 @@ declare module "yuke:tui" {
     readonly after: (delay: number, callback: () => void) => () => void;
     /** The time in milliseconds on the clock of `after`. The difference of two times is a duration. `advance` moves it. */
     readonly now: () => number;
-    /** Set the root view. Its close gives the default root back: the pane tree alone. */
-    readonly setRoot: (create: ViewFactory) => Mount;
+    /**
+     * Add a root view around the current root. Bundled plugins load first, then the plugins in config order. A later
+     * call wraps this root. The close removes only this root. A root that does not place `inner` covers the screen.
+     *
+     * ```ts
+     * tui.wrapRoot((mount, inner) => stack("row", [{ view: inner, size: "fill" }, { view: sidebar, size: 42 }]));
+     * ```
+     */
+    readonly wrapRoot: (create: RootFactory) => Mount;
     readonly overlay: (create: ViewFactory, options?: OverlayOptions) => Mount;
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;

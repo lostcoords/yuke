@@ -1,5 +1,6 @@
 /**
- * The bundled plugin `bar`: the status bar in the last row, below the pane tree. It draws the items of `tui.status`.
+ * The bundled plugin `bar`: the status bar in the last row, below the root that it wraps. It draws the items of
+ * `tui.status`.
  * Without room, it drops whole items by priority and cuts the last item that still does not fit.
  */
 
@@ -47,9 +48,9 @@ export function apply(ctx: PluginContext<Options>): undefined {
       draw(canvas, fitted(items, canvas.width));
     },
   };
-  tui.setRoot(() =>
+  tui.wrapRoot((_mount, inner) =>
     stack("column", [
-      { view: tui.panes.view, size: "fill" },
+      { view: inner, size: "fill" },
       { view: bar, size: 1 },
     ]),
   );

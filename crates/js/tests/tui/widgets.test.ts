@@ -61,7 +61,7 @@ test("a watch that starts inside an attach sees each mount once", () => {
   const core = new Core(terminal.driver);
   const first = new TextEditor();
   const second = new TextEditor();
-  core.scene.setRoot("chat", () => ({
+  core.scene.wrapRoot("chat", () => ({
     draw() {},
     layout: () => [
       { view: first, rect: { column: 0, row: 0, width: 5, height: 1 } },
@@ -80,7 +80,7 @@ test("a watch that starts inside an attach sees each mount once", () => {
     return undefined;
   });
   terminal.screen(core);
-  core.scene.setRoot("chat", () => ({ draw() {} }));
+  core.scene.wrapRoot("chat", () => ({ draw() {} }));
   terminal.screen(core);
   equal(log, ["inner first", "inner second", "inner cleanup first", "inner cleanup second"]);
 });
@@ -128,11 +128,29 @@ test("an early handler takes a continuation before the keymap and enter alone re
   equal(core.keymap.pending(), "");
 });
 
+test("a wrap and a close of a root keep the mount of a widget in a pane", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  const tui = createSurface(core, "chat", new AbortController().signal);
+  const log: string[] = [];
+  core.widgets.watch("watcher", () => {
+    log.push("attach");
+    return () => log.push("cleanup");
+  });
+  tui.panes.split(() => holder(new TextEditor()));
+  terminal.screen(core);
+  const root = tui.wrapRoot((_mount, inner) => inner);
+  terminal.screen(core);
+  root.close();
+  terminal.screen(core);
+  equal(log, ["attach"]);
+});
+
 test("each extension adds its own part and the stop of one plugin leaves the other", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const editor = new TextEditor();
-  core.scene.setRoot("chat", () => holder(editor));
+  core.scene.wrapRoot("chat", () => holder(editor));
   const typed: string[] = [];
   const extend = (mount: WidgetMount, name: string, shape: "block" | "bar"): (() => void) => {
     const extension = mount.widget.extend(mount.signal);
@@ -195,7 +213,7 @@ test("a change of a placed editor by code asks for a frame", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const editor = new TextEditor();
-  core.scene.setRoot("chat", () => holder(editor));
+  core.scene.wrapRoot("chat", () => holder(editor));
   terminal.screen(core);
   const asked = terminal.requests();
   editor.replace(0, 0, "a");

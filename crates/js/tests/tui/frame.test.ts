@@ -71,7 +71,7 @@ test("a list of styles merges per field and a later style wins", () => {
   using frame = createFrame({ width: 4, height: 1 });
   const surface = frame.surface("demo");
   surface.tui.styles.set({ "demo:mark": { fg: 1, bold: true } });
-  surface.tui.setRoot(() => ({
+  surface.tui.wrapRoot(() => ({
     draw: (canvas) => {
       canvas.text(0, 0, "a", ["demo:mark", { bold: false, bg: 2 }]);
     },
