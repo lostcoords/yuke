@@ -2,7 +2,7 @@
 
 A theme sets the colors and the text styles of yuke. yuke has one theme, `default`. This theme works on light and dark terminals.
 
-To change the theme, run `/themes:open`. Use the arrow keys to see a theme. Push Enter to keep the theme. Push Esc to go back to the old theme.
+To change the theme, run `/themes`. Use the arrow keys to see a theme. Push Enter to keep the theme. Push Esc to go back to the old theme.
 
 ## Write a theme
 
@@ -41,7 +41,7 @@ Add the folder to `~/.config/yuke/config.json`:
 }
 ```
 
-Run `/reload`. Then select `nord` in `/themes:open`. Run `/reload` again after each change to the theme.
+Run `/reload`. Then select `nord` in `/themes`. Run `/reload` again after each change to the theme.
 
 Set only the values that you want to change. All other values come from `default`. If you set only `dark` or only `light`, yuke uses the same values on the two backgrounds.
 

@@ -506,7 +506,7 @@ test("a slash word lists the matching commands above the composer, and enter run
   frame.draw();
   equal(
     [listed, rows(frame.frame).includes("p/m"), composer.state.text],
-    [[" /chat:model  Choose the model and the reasoning"], true, ""],
+    [[" /model  Choose the model and the reasoning"], true, ""],
   );
 });
 
@@ -514,15 +514,17 @@ test("up and down move through the enabled commands, and enter runs the selected
   using frame = createFrame({ width: 60, height: 14 });
   const chat = await loadChat(frame);
   const ran: string[] = [];
-  chat.tui.commands.add({ name: "alp0", run: () => {}, enabled: () => false });
+  chat.tui.commands.add({ name: "alp0", slash: "alp0", run: () => {}, enabled: () => false });
   chat.tui.commands.add({
     name: "alpha",
+    slash: "alpha",
     run: () => {
       ran.push("alpha");
     },
   });
   chat.tui.commands.add({
     name: "alpine",
+    slash: "alpine",
     run: () => {
       ran.push("alpine");
     },
@@ -541,6 +543,7 @@ test("a pane with no row above the rule shows no commands, and the list takes no
   const ran: string[] = [];
   chat.tui.commands.add({
     name: "alpha",
+    slash: "alpha",
     run: () => {
       ran.push("alpha");
     },
@@ -552,26 +555,40 @@ test("a pane with no row above the rule shows no commands, and the list takes no
   equal(ran, []);
 });
 
+test("a command that gives false keeps its slash draft, and a command that runs empties it", async () => {
+  using frame = createFrame({ width: 60, height: 14 });
+  const chat = await loadChat(frame);
+  let refuse = true;
+  chat.tui.commands.add({ name: "ask", slash: "ask", argumentHint: "<text>", run: () => (refuse ? false : undefined) });
+  frame.start();
+  frame.paste("/ask why");
+  frame.key("enter");
+  equal(composerOf(chat).state.text, "/ask why");
+  refuse = false;
+  frame.key("enter");
+  equal(composerOf(chat).state.text, "");
+});
+
 test("a pane with few rows above the rule shows the first commands", async () => {
   using frame = createFrame({ width: 60, height: 5 });
   const chat = await loadChat(frame);
-  for (const name of ["alpha1", "alpha2", "alpha3"]) chat.tui.commands.add({ name, run: () => {} });
+  for (const name of ["alpha1", "alpha2", "alpha3"]) chat.tui.commands.add({ name, slash: name, run: () => {} });
   frame.start();
   frame.key("/ a l p h a");
   frame.draw();
-  equal(rows(frame.frame).slice(0, 2), [" /chat:alpha1", " /chat:alpha2"]);
+  equal(rows(frame.frame).slice(0, 2), [" /alpha1", " /alpha2"]);
 });
 
 test("a question in the place of the composer hides the commands", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
-  chat.tui.commands.add({ name: "alpha", run: () => {} });
+  chat.tui.commands.add({ name: "alpha", slash: "alpha", run: () => {} });
   frame.start();
   await settled();
   const listed = (): boolean => {
     frame.draw();
-    return rows(frame.frame).some((line) => line.includes("/chat:alpha"));
+    return rows(frame.frame).some((line) => line.includes("/alpha"));
   };
   frame.key("/ a l p");
   const before = listed();
@@ -595,7 +612,7 @@ test("esc hides the commands until the draft changes, and a draft with no comman
   await settled();
   const listed = (): boolean => {
     frame.draw();
-    return rows(frame.frame).some((line) => line.includes("/chat:model"));
+    return rows(frame.frame).some((line) => line.includes("/model"));
   };
   frame.key("/ m o");
   frame.key("esc");

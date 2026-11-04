@@ -147,7 +147,10 @@ declare module "yuke:chat" {
 
   export interface ChatCommandsOptions {
     /** The commands to list and run. `tui.commands` fits. */
-    readonly commands: { readonly list: () => readonly CommandItem[]; readonly run: (name: string) => boolean };
+    readonly commands: {
+      readonly list: () => readonly CommandItem[];
+      readonly run: (name: string, args?: string) => boolean;
+    };
     /** Its abort removes the watch of the editor. */
     readonly signal: AbortSignal;
     /** While this gives `false`, the list shows nothing and takes no key. */
@@ -155,9 +158,12 @@ declare module "yuke:chat" {
   }
 
   /**
-   * A list of the enabled commands that match a draft of one slash word, such as `/mod`. The list shows above a
-   * composer. Up and Down move the selection. Enter runs the selected command and empties the editor. Esc hides the list
-   * until the next edit. A draft with no match stays a message.
+   * A list of the enabled commands with a `slash` word that match a draft of one word, such as `/mod`. A draft with more
+   * text, such as `/mode fast`, matches only the word `mode` of a command with an `argumentHint`, and Enter gives it
+   * `"fast"`. The list shows above a composer. Up and Down move the selection. Tab writes the selected word in the
+   * editor. Enter runs the selected command and empties the editor. A run that gives `false` keeps the draft. Esc hides
+   * the list until the next edit. A draft with no match stays a message. The word of a draft that runs a command gets
+   * the style group `chat.command`.
    *
    * ```ts
    * const commands = new ChatCommands(editor, { commands: tui.commands, signal: mount.signal, enabled: () => true });

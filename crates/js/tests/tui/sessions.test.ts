@@ -33,7 +33,7 @@ async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
   return { chat, sessions, notices };
 }
 
-/** Run `/sessions:open`, and give the drawn rows after its list loads. */
+/** Run `/sessions`, and give the drawn rows after its list loads. */
 async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadChat>>): Promise<string[]> {
   chat.tui.commands.run("sessions:open");
   await settled();

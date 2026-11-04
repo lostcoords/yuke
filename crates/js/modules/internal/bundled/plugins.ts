@@ -29,16 +29,19 @@ export function apply(ctx: PluginContext): undefined {
   const report = (what: string) => (error: unknown) => ctx.notify("error", `${what}: ${String(error)}`);
   tui.commands.add({
     name: "open",
+    slash: "plugins",
     description: "Show the plugins of config.json, and sync, update, add, or remove them",
     run: () => open(ctx, tui, plugins).catch(report("the plugins did not load")),
   });
   tui.commands.add({
     name: "sync",
+    slash: "plugins:sync",
     description: "Install the locked Git plugins, and lock the new ones",
     run: () => sync(ctx, plugins).catch(report("the sync failed")),
   });
   tui.commands.add({
     name: "update",
+    slash: "plugins:update",
     description: "Check each Git plugin for a new commit of its ref",
     run: () => update(ctx, tui, plugins).catch(report("the update failed")),
   });

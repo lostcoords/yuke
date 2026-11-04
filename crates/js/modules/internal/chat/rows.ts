@@ -15,6 +15,7 @@ export const STYLE = {
   error: "chat.error",
   hint: "chat.hint",
   rule: "chat.rule",
+  command: "chat.command",
   selected: "picker.selected",
   toolOutput: "chat.tool.output",
   toolPending: "chat.tool.pending",

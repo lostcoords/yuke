@@ -57,6 +57,7 @@ export async function apply(ctx: PluginContext): Promise<undefined> {
   tui.styles.setTheme(await saved(ctx));
   tui.commands.add({
     name: "open",
+    slash: "themes",
     description: "Choose a theme",
     run: () => open(ctx, tui),
   });

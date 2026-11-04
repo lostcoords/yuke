@@ -26,6 +26,7 @@ const GAUGE = 6;
 
 /** The commands of the chat: the name, the description, the keys, their context, and the action. Each action uses the active pane. */
 const COMMANDS: readonly {
+  readonly slash?: string;
   readonly name: string;
   readonly description: string;
   readonly keys: readonly string[];
@@ -82,6 +83,7 @@ const COMMANDS: readonly {
   },
   {
     name: "model",
+    slash: "model",
     description: "Choose the model and the reasoning",
     keys: ["ctrl+k m"],
     in: "chat",
@@ -90,6 +92,7 @@ const COMMANDS: readonly {
   },
   {
     name: "rename",
+    slash: "rename",
     description: "Rename the session",
     keys: [],
     in: "chat",
@@ -365,6 +368,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   for (const command of COMMANDS) {
     tui.commands.add({
       name: command.name,
+      slash: command.slash,
       description: command.description,
       run: () => {
         const pane = active();

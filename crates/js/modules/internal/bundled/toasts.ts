@@ -138,6 +138,7 @@ export function apply(ctx: PluginContext): undefined {
   tui.keys.bind("ctrl+l", "dismiss");
   tui.commands.add({
     name: "history",
+    slash: "messages",
     description: "Show the notices",
     run: () => {
       const notices = tui.notices.list().toReversed();

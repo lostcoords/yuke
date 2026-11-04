@@ -12,6 +12,8 @@ interface Entry {
   readonly command: Command;
   readonly description: string | undefined;
   /** True after a throw of `enabled` gave its one fault. */
+  readonly slash: string | undefined;
+  readonly argumentHint: string | undefined;
   faulted: boolean;
 }
 
@@ -34,11 +36,15 @@ export class Commands {
    * plugin surface. A duplicate name throws a `TypeError`. A run is a method call, so a class command keeps its `this`.
    */
   add(command: Command, name: string = command.name): () => void {
-    const { description, run, enabled } = command;
+    const { description, run, enabled, slash, argumentHint } = command;
     if (typeof name !== "string" || !NAME.test(name)) {
       throw new TypeError(`'${String(name)}' is no command name: letters, digits, and : . _ -`);
     }
     if (typeof run !== "function") throw new TypeError(`the command ${name} has no run function`);
+    // The text after a space is the text of the command, so a word with a space never matches.
+    if (slash !== undefined && !NAME.test(slash)) {
+      throw new TypeError(`'${slash}' is no slash word: letters, digits, and : . _ -`);
+    }
     if (description !== undefined && typeof description !== "string") {
       throw new TypeError(`the description of ${name} is a string`);
     }
@@ -46,7 +52,7 @@ export class Commands {
       throw new TypeError(`the enabled check of ${name} is a function`);
     }
     if (this.#commands.has(name)) throw new TypeError(`the command ${name} exists`);
-    const entry: Entry = { command, description, faulted: false };
+    const entry: Entry = { command, description, slash, argumentHint, faulted: false };
     this.#commands.set(name, entry);
     this.#changed();
     return () => {
@@ -63,8 +69,8 @@ export class Commands {
   }
 
   /**
-   * Run the command `name` with `args`. Return `false` when it is missing or disabled, else `true`, also when the run
-   * fails.
+   * Run the command `name` with `args`. Return `false` when it is missing, disabled, or when its run gives `false`, else
+   * `true`, also when it fails.
    */
   run(name: string, args?: unknown): boolean {
     const entry = this.#commands.get(name);
@@ -80,6 +86,10 @@ export class Commands {
       failed(error);
       return true;
     }
+    if (result === false) {
+      this.#changed();
+      return false;
+    }
     if (result === undefined) {
       this.#changed();
     } else {
@@ -91,11 +101,19 @@ export class Commands {
 
   /** The commands, in the order of their adds. */
   list(): CommandItem[] {
-    return [...this.#commands].map(([name, entry]) => ({
-      name,
-      ...(entry.description === undefined ? {} : { description: entry.description }),
-      enabled: this.#enabled(name, entry),
-    }));
+    const claimed = new Set<string | undefined>();
+    return [...this.#commands].map(([name, entry]) => {
+      // The first command with a word keeps it, and a later one shows its full name.
+      const slash = claimed.has(entry.slash) ? name : entry.slash;
+      if (slash !== undefined) claimed.add(slash);
+      return {
+        name,
+        ...(entry.description === undefined ? {} : { description: entry.description }),
+        ...(slash === undefined ? {} : { slash }),
+        ...(entry.argumentHint === undefined ? {} : { argumentHint: entry.argumentHint }),
+        enabled: this.#enabled(name, entry),
+      };
+    });
   }
 
   /**

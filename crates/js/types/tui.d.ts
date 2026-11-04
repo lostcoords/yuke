@@ -207,8 +207,22 @@ declare module "yuke:tui" {
     readonly name: string;
     /** One line for a list of commands, beside the name. */
     readonly description?: string | undefined;
-    /** Run the command. The keymap does not wait for a promise, so the keys go on during the run. */
-    readonly run: (args: unknown) => void | Promise<void>;
+    /**
+     * The word that a user types in a chat, such as `model` for `/model`. Without it, the command has no slash form, and
+     * it runs by a key or by `commands.run`. The word has no space. The first command with a word keeps it. A later one
+     * shows its full name.
+     */
+    readonly slash?: string | undefined;
+    /**
+     * A hint for the text after the slash word, such as `<mode>`. With it, `/word some text` in a chat runs the command
+     * with `"some text"` as `args`. Without it, that draft stays a message.
+     */
+    readonly argumentHint?: string | undefined;
+    /**
+     * Run the command. Give `false` when it did nothing: a key binding then passes the key on, and a slash draft stays
+     * in the editor. A promise counts as a run. The keymap does not wait for it, so the keys go on during the run.
+     */
+    readonly run: (args: unknown) => false | void | Promise<void>;
     /** False when the command cannot run now. A disabled command passes its key on. */
     readonly enabled?: (() => boolean) | undefined;
   }
@@ -217,6 +231,9 @@ declare module "yuke:tui" {
   export interface CommandItem {
     readonly name: string;
     readonly description?: string | undefined;
+    /** The word that this command answers to. A later command with a taken word has its full name here. */
+    readonly slash?: string | undefined;
+    readonly argumentHint?: string | undefined;
     readonly enabled: boolean;
   }
 
@@ -997,7 +1014,7 @@ declare module "yuke:tui" {
     readonly select: <T extends object>(options: SelectOptions<T>) => Promise<T | undefined>;
     readonly commands: {
       readonly add: (command: Command) => () => void;
-      /** Run a command. `false` when it is missing or disabled, else `true`, also when the run fails later. */
+      /** Run a command. `false` when it is missing or disabled, or when its run gives `false`, else `true`. */
       readonly run: (name: string, args?: unknown) => boolean;
       readonly list: () => readonly CommandItem[];
     };

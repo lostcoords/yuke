@@ -19,6 +19,7 @@ export function apply(ctx: PluginContext): undefined {
   if (tui === undefined) return undefined;
   tui.commands.add({
     name: "open",
+    slash: "sessions",
     description: "Show a recent session in the pane",
     run: () =>
       open(ctx, tui).catch((error: unknown) => ctx.notify("error", `the sessions did not load: ${String(error)}`)),

@@ -545,6 +545,36 @@ test("a view beside the panes gets the mouse and leaves the focus on the active 
   equal(tui.panes.active, left);
 });
 
+test("the first command with a slash word keeps it, and a later one shows its full name", () => {
+  const core = new Core(fakeTerminal().driver);
+  const signal = new AbortController().signal;
+  const add = (owner: string, slash: string | undefined) =>
+    createSurface(core, owner, signal).commands.add({ name: "run", slash, run() {} });
+  const removeFirst = add("first", "go");
+  add("second", "go");
+  add("plain", undefined);
+  const words = () =>
+    Object.fromEntries(
+      core.commands
+        .list()
+        .filter((item) => item.name.endsWith(":run"))
+        .map((item) => [item.name, item.slash]),
+    );
+  equal(words(), { "first:run": "go", "second:run": "second:run", "plain:run": undefined });
+  // A word with a space never matches a draft, so the add refuses it.
+  assert(
+    throws(() => createSurface(core, "bad", signal).commands.add({ name: "run", slash: "a b", run() {} })) instanceof
+      TypeError,
+  );
+  // The word goes to the next command when its holder leaves.
+  removeFirst();
+  equal(words(), { "second:run": "go", "plain:run": undefined });
+  // A full name that a later command shows also counts as taken.
+  add("third", "go");
+  add("fourth", "third:run");
+  equal(words()["fourth:run"], "fourth:run");
+});
+
 test("the cursor of the focused view reaches the screen inside its clip with its shape", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);

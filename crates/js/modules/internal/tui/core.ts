@@ -277,16 +277,21 @@ export class Core {
 
   #addCommands(): void {
     const driver = this.driver;
-    const add = (name: string, description: string, run: () => void): void => {
-      this.commands.add({ name: `${CORE}:${name}`, description, run });
+    const add = (name: string, description: string, run: () => void, slash?: string): void => {
+      this.commands.add({ name: `${CORE}:${name}`, description, slash, run });
     };
-    add("quit", "Quit yuke", () => {
-      const quit = (text?: string): void => driver.quit(text);
-      if (this.quitGuard === undefined) quit();
-      else this.quitGuard(quit);
-    });
+    add(
+      "quit",
+      "Quit yuke",
+      () => {
+        const quit = (text?: string): void => driver.quit(text);
+        if (this.quitGuard === undefined) quit();
+        else this.quitGuard(quit);
+      },
+      "quit",
+    );
     add("suspend", "Suspend yuke to the shell", () => driver.suspend());
-    add("reload", "Reload the plugins", () => driver.reload(this.snapshot()));
+    add("reload", "Reload the plugins", () => driver.reload(this.snapshot()), "reload");
     add("split-right", "Split the pane to the right", () => this.panes.splitDefault("row"));
     add("split-down", "Split the pane down", () => this.panes.splitDefault("column"));
     add("close", "Close the pane", () => this.panes.closeActive());

@@ -381,7 +381,7 @@ async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_rest
     let (restarted_display, restarted_output) = self::display();
     let restarted = started_on(&place, &restarted_display, Some(id)).await;
     restarted_output.shows("Message").await;
-    restarted_display.send(Input::Event(Event::Paste("/sessions:open".to_owned())));
+    restarted_display.send(Input::Event(Event::Paste("/sessions".to_owned())));
     restarted_display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
     restarted_output.contains("Saved from TUI").await;
     assert_eq!(
