@@ -39,17 +39,11 @@ impl Serialize for ViewEvent {
 
 /// Add the session functions to `object`, the export object of the native module. Each request runs as a local task,
 /// so a request that JavaScript stops awaiting still ends.
-pub(super) fn add<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    sessions: &Rc<dyn Sessions>,
-    queue: &Queue<'js>,
-) -> rquickjs::Result<()> {
+pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
     // The hold and the view of each open handle, by its key. The drop of an entry ends both.
     let held: Rc<RefCell<HashMap<u32, Box<dyn Any>>>> = Rc::default();
 
-    add_facts(ctx, object, sessions, queue)?;
-    let open_queue = queue.clone();
+    add_facts(ctx, object, sessions)?;
 
     let (open_sessions, open_held) = (Rc::clone(sessions), Rc::clone(&held));
     object.set(
@@ -59,13 +53,14 @@ pub(super) fn add<'js>(
             move |ctx: Ctx<'js>, arguments: Json<(u32, SessionId, usize)>| -> rquickjs::Result<Promise<'js>> {
                 let (key, id, tail) = arguments.0;
                 let (sessions, held) = (Rc::clone(&open_sessions), Rc::clone(&open_held));
-                let sender = open_queue.sender.clone();
+                let queue = Queue::of(&ctx);
+                let sender = queue.sender.clone();
                 let sink = Rc::new(move |event| {
                     if sender.send(Delivery::View(key, Box::new(event))).is_err() {
                         // The engine stopped, so it takes no more events.
                     }
                 });
-                let (promise, _abort) = open_queue.request(
+                let (promise, _abort) = queue.request(
                     &ctx,
                     async move { sessions.open(id, tail, sink).await },
                     move |ctx, result| {
@@ -86,25 +81,19 @@ pub(super) fn add<'js>(
         })?,
     )?;
 
-    add_requests(object, sessions, queue)?;
+    add_requests(object, sessions)?;
     add_calls(ctx, object, sessions)
 }
 
 /// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.on`. One watch runs at a time. A new watch ends
 /// the old one. The key of each fact names the watch that sent it.
-fn add_facts<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    sessions: &Rc<dyn Sessions>,
-    queue: &Queue<'js>,
-) -> rquickjs::Result<()> {
-    let sender = queue.sender.clone();
+fn add_facts<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
     let watch: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::default();
     let (sessions, started) = (Rc::clone(sessions), Rc::clone(&watch));
     object.set(
         "factsWatch",
-        Function::new(ctx.clone(), move |key: u32| {
-            let sender = sender.clone();
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>, key: u32| {
+            let sender = Queue::of(&ctx).sender;
             let sink: FactSink = Rc::new(move |fact| {
                 if sender.send(Delivery::Fact(key, fact)).is_err() {
                     // The engine stopped, so it takes no more facts.
@@ -122,11 +111,10 @@ fn add_facts<'js>(
 }
 
 /// Add the asynchronous requests, which run as local tasks.
-fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
-    add_put_blob(object, sessions, queue)?;
+fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
+    add_put_blob(object, sessions)?;
     let request = Requests {
         sessions: Rc::clone(sessions),
-        queue: queue.clone(),
     };
     request.add(
         object,
@@ -210,7 +198,7 @@ fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &
 }
 
 /// Add the requests of `ctx.get("plugins")`. A sync, a check, and an add fetch, so each one answers an operation.
-fn add_plugin_requests<'js>(request: &Requests<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
+fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(object, "pluginsList", |sessions, (): ()| async move {
         sessions.list_plugins().await
     })?;
@@ -294,9 +282,8 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessio
 
 /// Add `sessionPutBlob(id, bytes)`. The bytes come as a `Uint8Array`, not as JSON, so the call copies them before the
 /// task runs.
-fn add_put_blob<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &Queue<'js>) -> rquickjs::Result<()> {
+fn add_put_blob<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
     let sessions = Rc::clone(sessions);
-    let queue = queue.clone();
     object.set(
         "sessionPutBlob",
         Function::new(
@@ -304,7 +291,7 @@ fn add_put_blob<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &
             move |ctx: Ctx<'js>, id: Json<SessionId>, bytes: TypedArray<'js, u8>| -> rquickjs::Result<Promise<'js>> {
                 let bytes = crate::bytes::copy(&bytes)?;
                 let sessions = Rc::clone(&sessions);
-                let (promise, _abort) = queue.request(
+                let (promise, _abort) = Queue::of(&ctx).request(
                     &ctx,
                     async move { sessions.put_blob(id.0, bytes).await },
                     |ctx, result| joined(ctx, result).map(Json),
@@ -331,13 +318,12 @@ fn failure(ctx: &Ctx<'_>, error: &SessionsError) -> rquickjs::Error {
 
 /// Adds the asynchronous requests: each one takes its arguments as one JSON value, runs as a local task, and answers a
 /// promise of its JSON.
-struct Requests<'js> {
+struct Requests {
     sessions: Rc<dyn Sessions>,
-    queue: Queue<'js>,
 }
 
-impl<'js> Requests<'js> {
-    fn add<A, T, F>(
+impl Requests {
+    fn add<'js, A, T, F>(
         &self,
         object: &Object<'js>,
         name: &str,
@@ -349,14 +335,13 @@ impl<'js> Requests<'js> {
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Rc::clone(&self.sessions);
-        let queue = self.queue.clone();
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Promise<'js>> {
                     let (promise, _abort) =
-                        queue.request(&ctx, run(Rc::clone(&sessions), arguments.0), |ctx, result| {
+                        Queue::of(&ctx).request(&ctx, run(Rc::clone(&sessions), arguments.0), |ctx, result| {
                             joined(ctx, result).map(Json)
                         })?;
                     Ok(promise)
@@ -367,7 +352,7 @@ impl<'js> Requests<'js> {
 
     /// Add a request as [`Requests::add`] does, which answers an operation. Its `cancel` drops the task, so a child
     /// process of the task stops, and the promise rejects with `{ cancelled: true }`.
-    fn add_operation<A, T, F>(
+    fn add_operation<'js, A, T, F>(
         &self,
         object: &Object<'js>,
         name: &str,
@@ -379,22 +364,20 @@ impl<'js> Requests<'js> {
         F: Future<Output = Result<T, SessionsError>> + 'static,
     {
         let sessions = Rc::clone(&self.sessions);
-        let queue = self.queue.clone();
         object.set(
             name,
             Function::new(
                 object.ctx().clone(),
                 move |ctx: Ctx<'js>, arguments: Json<A>| -> rquickjs::Result<Operation<'js>> {
-                    let (promise, abort) = queue.request(
-                        &ctx,
-                        run(Rc::clone(&sessions), arguments.0),
-                        |ctx, result| match result {
-                            Err(error) if error.is_cancelled() => {
-                                Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?))
+                    let (promise, abort) =
+                        Queue::of(&ctx).request(&ctx, run(Rc::clone(&sessions), arguments.0), |ctx, result| {
+                            match result {
+                                Err(error) if error.is_cancelled() => {
+                                    Err(ctx.throw(Cancelled { cancelled: true }.into_js(ctx)?))
+                                }
+                                result => joined(ctx, result).map(Json),
                             }
-                            result => joined(ctx, result).map(Json),
-                        },
-                    )?;
+                        })?;
                     let cancel = Function::new(ctx, move || abort.abort())?;
                     Ok(Operation { promise, cancel })
                 },

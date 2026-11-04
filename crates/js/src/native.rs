@@ -118,7 +118,7 @@ pub(crate) fn install(
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
     let queue = delivery::Queue::new(ctx, &object, reports.clone())?;
-    sessions::add(ctx, &object, &options.sessions, &queue)?;
+    sessions::add(ctx, &object, &options.sessions)?;
     term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
@@ -131,7 +131,7 @@ pub(crate) fn install(
     url::add(ctx, &object)?;
     console::add(ctx, &object, reports.clone())?;
     tools::add(ctx, &object, registry, reports)?;
-    crate::test_host::add(ctx, &object, options.test_host.as_ref(), &queue)?;
+    crate::test_host::add(ctx, &object, options.test_host.as_ref())?;
     if ctx.store_userdata(queue).is_err() {
         return Err(throw(ctx, ErrorClass::Error, "the delivery queue cannot be stored"));
     }

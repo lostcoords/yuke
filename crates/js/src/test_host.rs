@@ -61,12 +61,7 @@ pub trait TestHost {
 }
 
 /// Add the natives of the test host to `object`, the export object of the native module.
-pub(crate) fn add<'js>(
-    ctx: &Ctx<'js>,
-    object: &Object<'js>,
-    host: Option<&Rc<dyn TestHost>>,
-    queue: &Queue<'js>,
-) -> rquickjs::Result<()> {
+pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, host: Option<&Rc<dyn TestHost>>) -> rquickjs::Result<()> {
     object.set(
         "testSettled",
         Function::new(
@@ -94,28 +89,24 @@ pub(crate) fn add<'js>(
         object,
         "testHostCreate",
         host,
-        queue,
         |host, request: Json<serde_json::Value>, _token| async move { host.create(request.0).await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostClose",
         host,
-        queue,
         |host, _request: Json<()>, _token| async move { host.close().await.map(Json) },
     )?;
     add_operation(
         object,
         "testHostRun",
         host,
-        queue,
         |host, request: RunRequest, token| async move { run_point(&*host, request, token).await },
     )?;
     add_operation(
         object,
         "testHostCall",
         host,
-        queue,
         |host, request: CallRequest, token| async move { call_tool(&*host, request, token).await },
     )
 }
@@ -126,7 +117,6 @@ fn add_operation<'js, A, T, F>(
     object: &Object<'js>,
     name: &str,
     host: Option<&Rc<dyn TestHost>>,
-    queue: &Queue<'js>,
     run: impl Fn(Rc<dyn TestHost>, A, CancellationToken) -> F + 'js,
 ) -> rquickjs::Result<()>
 where
@@ -135,7 +125,6 @@ where
     F: Future<Output = Result<T, TestError>> + 'static,
 {
     let host = host.cloned();
-    let queue = queue.clone();
     object.set(
         name,
         Function::new(
@@ -143,7 +132,7 @@ where
             move |ctx: Ctx<'js>, argument: A| -> rquickjs::Result<Operation<'js>> {
                 let host = host.clone().ok_or_else(|| throw(&ctx, ErrorClass::Error, NO_HOST))?;
                 let token = CancellationToken::new();
-                let (promise, _abort) = queue.request(&ctx, run(host, argument, token.clone()), joined)?;
+                let (promise, _abort) = Queue::of(&ctx).request(&ctx, run(host, argument, token.clone()), joined)?;
                 let cancel = Function::new(ctx, move || token.cancel())?;
                 Ok(Operation { promise, cancel })
             },
