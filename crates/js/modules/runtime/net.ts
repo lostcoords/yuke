@@ -2,13 +2,12 @@
 
 import { addAbortStep } from "yuke:internal/events";
 import { type NetConnection, netClose, netConnect } from "yuke:internal/native";
-import { Connection, ConnectionError, failureOf } from "yuke:internal/net";
-import type { ConnectOptions, UnixConnection } from "yuke:net";
+import { Connection, ConnectionError, failureOf, Listener } from "yuke:internal/net";
+import type { ConnectOptions, ListenOptions, UnixConnection, UnixListener } from "yuke:net";
 
 export { ConnectionError };
 
 export async function connect(options: ConnectOptions): Promise<UnixConnection> {
-  if (options.transport !== "unix") throw new TypeError('the option transport is not "unix"');
   if (!options.path.startsWith("/")) throw new TypeError("the option path is not an absolute path");
   const signal = options.signal;
   signal?.throwIfAborted();
@@ -30,6 +29,12 @@ export async function connect(options: ConnectOptions): Promise<UnixConnection> 
   return new Connection(native, signal);
 }
 
+export function listen(options: ListenOptions): UnixListener {
+  if (!options.path.startsWith("/")) throw new TypeError("the option path is not an absolute path");
+  options.signal?.throwIfAborted();
+  return new Listener(options.path, options.signal);
+}
+
 // The check against `types/net.d.ts` keeps this code and the declarations of the authors in step.
-const declared = { ConnectionError, connect } satisfies typeof import("yuke:net");
+const declared = { ConnectionError, connect, listen } satisfies typeof import("yuke:net");
 void declared;

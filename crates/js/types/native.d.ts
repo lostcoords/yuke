@@ -218,7 +218,7 @@ declare module "yuke:internal/native" {
   export interface NetConnection {
     readonly __netConnection: never;
   }
-  /** A test server on a Unix socket. When QuickJS frees it, the listener closes. */
+  /** A listener on a Unix socket. When QuickJS frees it, the listener closes and removes its socket file. */
   export interface NetListener {
     readonly __netListener: never;
   }
@@ -228,17 +228,22 @@ declare module "yuke:internal/native" {
    */
   export function netConnect(path: string): Operation<NetConnection>;
   /** The next chunk from the peer, or `undefined` at the end. It rejects as `netConnect` does, and a closed connection as a stop. */
-  export function netRead(connection: NetConnection): Operation<Uint8Array | undefined>;
+  export function netRead(connection: NetConnection): Promise<Uint8Array | undefined>;
   /** Write each byte of `bytes`. A closed connection rejects as a stop does. */
-  export function netWrite(connection: NetConnection, bytes: Uint8Array): Operation<void>;
-  /** Close `connection`. */
+  export function netWrite(connection: NetConnection, bytes: Uint8Array): Promise<void>;
+  /** Close `connection`. Each pending read and write then rejects as a stop does. */
   export function netClose(connection: NetConnection): void;
-  /** Listen at a new socket file in the folder for temporary files. A failure throws `{ code, message }`. */
-  export function netListen(): { readonly listener: NetListener; readonly path: string };
+  /** Listen at `path`. An existing path stays as it is. A failure throws `{ code, message }`. */
+  export function netListen(path: string): NetListener;
   /** The next connection to `listener`. A closed listener rejects as a stop does. */
-  export function netAccept(listener: NetListener): Operation<NetConnection>;
-  /** Close `listener`, and remove its socket file. A second call does nothing. A failure throws `{ code, message }`. */
+  export function netAccept(listener: NetListener): Promise<NetConnection>;
+  /**
+   * Close `listener`, and remove its socket file. Each pending accept then rejects as a stop does. A second call does
+   * nothing. A failed removal throws `{ code, message }`.
+   */
   export function netUnlisten(listener: NetListener): void;
+  /** A new socket path in the folder for temporary files, with no file yet. */
+  export function testSocketPath(): string;
 
   /** Send an entry of `console`, a notice from the source `console`. */
   export function writeConsole(level: NoticeLevel, text: string): void;

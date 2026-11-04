@@ -21,7 +21,7 @@ test("a request and its reply cross the socket, the writes keep their order, and
   using server = listen();
   const path = server.path;
   const accepted = server.accept();
-  using client = await connect({ transport: "unix", path });
+  using client = await connect({ path });
   using peer = await accepted;
   await client.write(bytes("ping\n"));
   const reader = peer.readable.getReader();
@@ -44,7 +44,7 @@ test("a close ends the stream, rejects each later write, breaks the pipe of the 
   using server = listen();
   const path = server.path;
   const accepted = server.accept();
-  const client = await connect({ transport: "unix", path });
+  const client = await connect({ path });
   using peer = await accepted;
   const reader = client.readable.getReader();
   const read = reader.read();
@@ -53,7 +53,7 @@ test("a close ends the stream, rejects each later write, breaks the pipe of the 
   equal(await read, { done: true, value: undefined });
   const error = await rejects(client.write(bytes("late")));
   assert(error instanceof ConnectionError);
-  equal([error.code, error.message], [undefined, "the connection is closed"]);
+  equal([error.code, error.message], ["ERR_CLOSED", "the connection is closed"]);
   // The peer sees the end of the closed connection, and its write fails.
   equal(await readAll(peer), "");
   const broken = await rejects(peer.write(bytes("gone")));
@@ -66,7 +66,7 @@ test("an abort stops an open read and an open write with its reason, and closes 
   const path = server.path;
   const accepted = server.accept();
   const controller = new AbortController();
-  using client = await connect({ transport: "unix", path, signal: controller.signal });
+  using client = await connect({ path, signal: controller.signal });
   using peer = await accepted;
   const read = client.readable.getReader().read();
   // The peer reads one chunk only, so the write of 16 MiB runs and waits for room in the socket.
@@ -85,25 +85,15 @@ test("an aborted signal stops the connect, and an option that is not valid throw
   using server = listen();
   const path = server.path;
   const reason = new Error("before");
-  equal(await rejects(connect({ transport: "unix", path, signal: AbortSignal.abort(reason) })), reason);
-  for (const options of [
-    { transport: "unix", path: "relative.sock" },
-    { transport: "tcp", path },
-  ] as const) {
-    const error = await rejects(connect(options as never));
-    assert(error instanceof TypeError);
-  }
+  equal(await rejects(connect({ path, signal: AbortSignal.abort(reason) })), reason);
+  const error = await rejects(connect({ path: "relative.sock" }));
+  assert(error instanceof TypeError);
 });
 
-test("a close of the server stops its open accept and removes its socket file", async () => {
+test("a connect to a removed socket fails with ENOENT and names its path", async () => {
   const server = listen();
-  const accepted = server.accept();
   server.close();
-  server.close();
-  const stopped = await rejects(accepted);
-  assert(stopped instanceof ConnectionError);
-  equal(stopped.code, undefined);
-  const error = await rejects(connect({ transport: "unix", path: server.path }));
+  const error = await rejects(connect({ path: server.path }));
   assert(error instanceof ConnectionError);
   equal(error.code, "ENOENT");
   assert(error.message.startsWith(`connect ${server.path}: `), error.message);

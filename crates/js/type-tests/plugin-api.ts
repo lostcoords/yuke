@@ -237,7 +237,7 @@ void programs;
 async function sockets(): Promise<void> {
   const { connect, ConnectionError } = await import("yuke:net");
   try {
-    using connection = await connect({ transport: "unix", path: "/tmp/h.sock", signal: ctx.signal });
+    using connection = await connect({ path: "/tmp/h.sock", signal: ctx.signal });
     await connection.write(new TextEncoder().encode("ping\n"));
     for await (const chunk of connection.readable) {
       const bytes: Uint8Array = chunk;
@@ -247,10 +247,8 @@ async function sockets(): Promise<void> {
     const code: string | undefined = error instanceof ConnectionError ? error.code : undefined;
     void code;
   }
-  // @ts-expect-error: only Unix sockets exist.
-  await connect({ transport: "tcp", path: "/tmp/h.sock" });
   // @ts-expect-error: a write takes bytes.
-  await (await connect({ transport: "unix", path: "/tmp/h.sock" })).write("ping");
+  await (await connect({ path: "/tmp/h.sock" })).write("ping");
 }
 void sockets;
 

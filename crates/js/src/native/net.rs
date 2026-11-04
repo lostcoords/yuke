@@ -1,10 +1,10 @@
 //! The native of `yuke:net`: connections to Unix sockets on tokio.
 //! - `netConnect` connects to a path. `netRead` reads one chunk, and gives `undefined` at the end.
 //! - `netWrite` writes each byte. `netClose` shuts down both directions of the socket.
-//! - `netListen`, `netAccept`, and `netUnlisten` serve the test server of `yuke:test`.
+//! - `netListen` binds a path. `netAccept` gives the next connection. `netUnlisten` closes and removes the socket file.
+//! - `testSocketPath` gives `yuke:test` a new socket path.
 //! - A failure rejects with a record `{ code, message }`. A stop or a closed connection rejects with `{ cancelled: true }`.
 
-use std::cell::RefCell;
 use std::future::poll_fn;
 use std::io;
 use std::path::PathBuf;
@@ -14,10 +14,11 @@ use std::task::{Poll, ready};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rquickjs::class::Trace;
-use rquickjs::{Class, Ctx, Function, IntoJs, JsLifetime, Object, TypedArray};
+use rquickjs::{Class, Ctx, Function, IntoJs, JsLifetime, Object, Promise, TypedArray};
 use rustix::io::Errno;
 use rustix::net::{Shutdown, shutdown};
 use tokio::net::{UnixListener, UnixStream};
+use yuke_engine::CancellationToken;
 
 use super::{Cancelled, Operation};
 
@@ -31,40 +32,50 @@ pub(crate) struct Connection {
     /// `None` after a close. Operations borrow the socket only during a poll.
     #[qjs(skip_trace)]
     stream: Option<UnixStream>,
+    /// A close cancels it, so each pending read and write ends.
+    #[qjs(skip_trace)]
+    stop: CancellationToken,
 }
 
 impl Connection {
     fn of(stream: UnixStream) -> Self {
-        Self { stream: Some(stream) }
+        Self {
+            stream: Some(stream),
+            stop: CancellationToken::new(),
+        }
     }
 }
 
-/// A test server. The listener drops at `netUnlisten`, or when QuickJS frees the object.
+/// A listener with the socket file that it created. `netUnlisten` or a free by QuickJS closes it and removes the file.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "NetListener")]
 pub(crate) struct Listener {
     /// An accept shares the listener across its wait.
     #[qjs(skip_trace)]
-    listener: RefCell<Option<Rc<UnixListener>>>,
-    /// The socket file. `netUnlisten` removes it.
+    socket: Option<Rc<UnixListener>>,
+    /// A close cancels it, so each pending accept ends and drops its share of the listener.
+    #[qjs(skip_trace)]
+    stop: CancellationToken,
+    /// The socket file. The close of the listener removes it.
     #[qjs(skip_trace)]
     path: PathBuf,
 }
 
-/// A started test server and the path of its socket.
-#[derive(IntoJs)]
-struct Served<'js> {
-    listener: Class<'js, Listener>,
-    path: String,
+impl Drop for Listener {
+    fn drop(&mut self) {
+        if self.socket.is_some() && std::fs::remove_file(&self.path).is_err() {
+            // The runtime shuts down or no plugin holds the listener, so no caller can get the failure.
+        }
+    }
 }
 
-/// The count of the test servers of the process, for the name of the next socket file.
+/// The count of the test socket paths of the process, for the name of the next socket file.
 static LISTENERS: AtomicU64 = AtomicU64::new(0);
 
-/// Add the functions of the connections and of the test server to `object`, the export object of the native module.
+/// Add the functions of the connections and of the listeners to `object`, the export object of the native module.
 pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     add_connections(ctx, object)?;
-    add_test_server(ctx, object)
+    add_listeners(ctx, object)
 }
 
 /// Add `netConnect`, `netRead`, `netWrite`, and `netClose`.
@@ -85,7 +96,8 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
     object.set(
         "netRead",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, connection: Class<'js, Connection>| {
-            Operation::start(&ctx, move |ctx, stop| async move {
+            let stop = connection.borrow().stop.clone();
+            Promise::wrap_future(&ctx.clone(), async move {
                 let mut buffer = vec![0; CHUNK];
                 let read = tokio::select! {
                     read = poll_fn(|task| {
@@ -116,7 +128,8 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
             ctx.clone(),
             |ctx: Ctx<'js>, connection: Class<'js, Connection>, bytes: TypedArray<'js, u8>| {
                 let bytes = crate::bytes::copy(&bytes)?;
-                Operation::start(&ctx, move |ctx, stop| async move {
+                let stop = connection.borrow().stop.clone();
+                Promise::wrap_future(&ctx.clone(), async move {
                     let mut written = 0;
                     tokio::select! {
                         written = poll_fn(|task| {
@@ -149,6 +162,7 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
             let Some(stream) = &state.stream else {
                 return Ok(());
             };
+            state.stop.cancel();
             match shutdown(stream, Shutdown::Both) {
                 Ok(()) | Err(Errno::NOTCONN) => {}
                 Err(error) => return Err(failure(&ctx, "close", &error.into())),
@@ -161,38 +175,46 @@ fn add_connections<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
     Ok(())
 }
 
-/// Add `netListen`, `netAccept`, and `netUnlisten`.
-fn add_test_server<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
+/// Add `netListen`, `netAccept`, `netUnlisten`, and `testSocketPath`.
+fn add_listeners<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
     object.set(
         "netListen",
-        Function::new(ctx.clone(), |ctx: Ctx<'js>| {
+        Function::new(ctx.clone(), |ctx: Ctx<'js>, path: String| {
+            let listener =
+                UnixListener::bind(&path).map_err(|error| failure(&ctx, &format!("listen {path}"), &error))?;
+            Class::instance(
+                ctx,
+                Listener {
+                    socket: Some(Rc::new(listener)),
+                    stop: CancellationToken::new(),
+                    path: path.into(),
+                },
+            )
+        })?,
+    )?;
+    object.set(
+        "testSocketPath",
+        Function::new(ctx.clone(), || {
             // The scratch folder of a test can be too long for a socket path, so the server takes a short one.
             // The time keeps the name new when a later process gets the pid of a killed one that left its file.
             let time = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |time| time.as_micros());
             let id = LISTENERS.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!("yuke-{}-{time}-{id}.sock", std::process::id()));
-            let listener = UnixListener::bind(&path)
-                .map_err(|error| failure(&ctx, &format!("listen {}", path.display()), &error))?;
-            let listener = Class::instance(
-                ctx,
-                Listener {
-                    listener: RefCell::new(Some(Rc::new(listener))),
-                    path: path.clone(),
-                },
-            )?;
-            Ok::<_, rquickjs::Error>(Served {
-                listener,
-                path: path.to_string_lossy().into_owned(),
-            })
+            std::env::temp_dir()
+                .join(format!("yuke-{}-{time}-{id}.sock", std::process::id()))
+                .to_string_lossy()
+                .into_owned()
         })?,
     )?;
     object.set(
         "netAccept",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, listener: Class<'js, Listener>| {
-            Operation::start(&ctx, move |ctx, stop| async move {
-                let shared = listener.borrow().listener.borrow().clone();
+            Promise::wrap_future(&ctx.clone(), async move {
+                let (shared, stop) = {
+                    let state = listener.borrow();
+                    (state.socket.clone(), state.stop.clone())
+                };
                 let Some(shared) = shared else {
                     return Err(cancelled(&ctx));
                 };
@@ -208,12 +230,17 @@ fn add_test_server<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Resul
     object.set(
         "netUnlisten",
         Function::new(ctx.clone(), |ctx: Ctx<'js>, listener: Class<'js, Listener>| {
-            let state = listener.borrow();
-            if state.listener.borrow_mut().take().is_none() {
+            let mut state = listener.borrow_mut();
+            if state.socket.take().is_none() {
                 return Ok(());
             }
-            std::fs::remove_file(&state.path)
-                .map_err(|error| failure(&ctx, &format!("unlisten {}", state.path.display()), &error))
+            state.stop.cancel();
+            match std::fs::remove_file(&state.path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    Err(failure(&ctx, &format!("unlisten {}", state.path.display()), &error))
+                }
+                _ => Ok(()),
+            }
         })?,
     )?;
     Ok(())
@@ -234,6 +261,7 @@ fn failure(ctx: &Ctx<'_>, operation: &str, error: &io::Error) -> rquickjs::Error
         (Errno::ACCESS, "EACCES"),
         (Errno::PIPE, "EPIPE"),
         (Errno::CONNRESET, "ECONNRESET"),
+        (Errno::ADDRINUSE, "EADDRINUSE"),
     ];
     let errno = Errno::from_io_error(error);
     let record = NetError {

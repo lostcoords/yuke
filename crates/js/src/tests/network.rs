@@ -1,6 +1,8 @@
 //! The global `fetch` against loopback servers of `yuke_http::testing`: the request on the wire, the response, the
-//! redirects, the failures, and the aborts. The last tests check `yuke:net` against Unix sockets of tokio.
+//! redirects, the failures, and the aborts. The last tests check `yuke:net` against Unix sockets of tokio, and the
+//! socket files of its listeners from outside the runtime.
 
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use yuke_http::testing::{Server, listen};
@@ -440,7 +442,7 @@ async fn a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused() {
         "a_connect_to_a_socket_file_without_a_server_fails_with_econnrefused",
         &format!(
             "const {{ connect, ConnectionError }} = await import('yuke:net');
-             return await connect({{ transport: 'unix', path: {path:?} }})
+             return await connect({{ path: {path:?} }})
                .then(() => 'fulfilled', (error) => `${{error instanceof ConnectionError}} ${{error.code}}`);"
         ),
     )
@@ -459,7 +461,7 @@ async fn the_shutdown_of_the_runtime_closes_an_open_connection_during_a_read() {
         &runtime,
         &format!(
             "const {{ connect }} = await import('yuke:net');
-             globalThis.kept = await connect({{ transport: 'unix', path: {path:?} }});
+             globalThis.kept = await connect({{ path: {path:?} }});
              globalThis.read = globalThis.kept.readable.getReader().read();"
         ),
     )
@@ -477,4 +479,68 @@ async fn the_shutdown_of_the_runtime_closes_an_open_connection_during_a_read() {
     .unwrap();
     std::fs::remove_file(&path).unwrap();
     assert_eq!(read, 0);
+}
+
+#[tokio::test(flavor = "local")]
+async fn the_shutdown_of_the_runtime_removes_the_socket_file_of_a_listener_during_an_accept() {
+    let path = socket_path("listen-shutdown");
+    let folder = folder("the_shutdown_of_the_runtime_removes_the_socket_file_of_a_listener_during_an_accept");
+    let (runtime, _reports) = start(&folder).await;
+    evaluate::<()>(
+        &runtime,
+        &format!(
+            "const {{ listen }} = await import('yuke:net');
+             globalThis.kept = listen({{ path: {path:?} }});
+             globalThis.accepted = globalThis.kept.accept();"
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(path.exists());
+    runtime.shutdown().await.unwrap();
+    assert!(!path.exists());
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_failed_removal_throws_from_a_close_and_stays_silent_in_an_abort() {
+    let folder = std::env::temp_dir().join(format!("yuke-listen-removal-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let closed = folder.join("closed.sock");
+    let aborted = folder.join("aborted.sock");
+    let name = "a_failed_removal_throws_from_a_close_and_stays_silent_in_an_abort";
+    let scratch = self::folder(name);
+    let (runtime, _reports) = start(&scratch).await;
+    evaluate::<()>(
+        &runtime,
+        &format!(
+            "const {{ listen }} = await import('yuke:net');
+             globalThis.closed = listen({{ path: {closed:?} }});
+             globalThis.controller = new AbortController();
+             globalThis.aborted = listen({{ path: {aborted:?}, signal: controller.signal }});"
+        ),
+    )
+    .await
+    .unwrap();
+    // A folder with no write permission refuses the removal of its entries.
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let body = evaluate::<String>(
+        &runtime,
+        "const { ConnectionError } = await import('yuke:net');
+         let failure;
+         try {
+           globalThis.closed.close();
+         } catch (error) {
+           failure = `${error instanceof ConnectionError} ${error.code}`;
+         }
+         globalThis.closed.close();
+         // A throw here stops the other steps of a shared signal.
+         controller.abort();
+         return failure;",
+    );
+    let text = tokio::time::timeout(Duration::from_secs(5), body).await;
+    // The folder comes back before each check, so a failure leaves no folder that a removal cannot empty.
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    runtime.shutdown().await.unwrap();
+    std::fs::remove_dir_all(&folder).unwrap();
+    assert_eq!(text.unwrap().unwrap(), "true EACCES");
 }

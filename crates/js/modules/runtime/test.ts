@@ -1,12 +1,11 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
 import { createHost, reply } from "yuke:internal/host";
-import { netAccept, netListen, netUnlisten, testSettled } from "yuke:internal/native";
-import { Connection, failureOf } from "yuke:internal/net";
+import { testSettled, testSocketPath } from "yuke:internal/native";
+import { Listener } from "yuke:internal/net";
 import { folder, register } from "yuke:internal/test";
 import { createFrame } from "yuke:internal/tui/frame";
-import type { UnixConnection } from "yuke:net";
-import type { TestServer } from "yuke:test";
+import type { UnixListener } from "yuke:net";
 
 export { createFrame, createHost, folder, reply };
 
@@ -14,39 +13,8 @@ export async function settled(): Promise<void> {
   await testSettled();
 }
 
-export function listen(): TestServer {
-  let served: ReturnType<typeof netListen>;
-  try {
-    served = netListen();
-  } catch (error) {
-    throw failureOf(undefined, error);
-  }
-  const native = served.listener;
-  const stops = new Set<() => void>();
-  const close = (): void => {
-    for (const stop of stops) stop();
-    try {
-      netUnlisten(native);
-    } catch (error) {
-      throw failureOf(undefined, error);
-    }
-  };
-  return {
-    path: served.path,
-    async accept(): Promise<UnixConnection> {
-      const { promise, cancel } = netAccept(native);
-      stops.add(cancel);
-      try {
-        return new Connection(await promise, undefined);
-      } catch (error) {
-        throw failureOf(undefined, error);
-      } finally {
-        stops.delete(cancel);
-      }
-    },
-    close,
-    [Symbol.dispose]: close,
-  };
+export function listen(): UnixListener {
+  return new Listener(testSocketPath(), undefined);
 }
 
 /** The most characters of a value in a failure. */
