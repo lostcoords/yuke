@@ -77,6 +77,19 @@ test("a copy puts a line end between two sections and between two items, in disp
   void frame;
 });
 
+test("a Markdown row maps each cell to its source across a paragraph line break", () => {
+  const text = "one\ntwo";
+  const markdown = new Markdown(text);
+  const section = { key: "s", kind: "text" as const, text, render: (width: number) => markdown.rows(width) };
+  const view = new TextView({ document: document("d", { key: "i", sections: [section] }) });
+  using frame = createFrame({ width: 20, height: 2 }, () => view);
+  frame.draw();
+  equal(
+    [view.rows.text(0), view.rows.at({ column: 5, row: 0 }), view.rows.point(at("i", "s", 5))],
+    ["one two", at("i", "s", 5), { column: 5, row: 0 }],
+  );
+});
+
 test("a Markdown section maps rows to its source, a replacement as a whole", () => {
   const text = "- **bold** item";
   const markdown = new Markdown(text);

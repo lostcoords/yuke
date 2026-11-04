@@ -719,6 +719,17 @@ function segmentsJoin(a: Part, b: Part): boolean {
   return a.source?.kind === "text" && b.source?.kind === "text" && a.source.to === b.source.from;
 }
 
+/** Add `part` to `parts`. It extends the last part when `segmentsJoin` allows, so a row holds few objects. */
+function appendPart(parts: Part[], part: Part): void {
+  const last = parts.at(-1);
+  if (last !== undefined && segmentsJoin(last, part)) {
+    last.text += part.text;
+    if (last.source !== undefined && part.source !== undefined) {
+      last.source = mapping("text", last.source.from, part.source.to);
+    }
+  } else parts.push(part);
+}
+
 interface Word {
   pieces: Part[];
   width: number;
@@ -753,7 +764,7 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
   const emit = (join: string): boolean => {
     if (rows.length >= limit) return false;
     const prefix = rows.length === 0 ? first : rest;
-    const segs = prefix === undefined ? line.slice() : [prefix, ...line];
+    const segs = prefix === undefined ? line : [prefix, ...line];
     const rowWidth = lineWidth + (rows.length === 0 ? firstWidth : restWidth);
     rows.push({
       segments: segs.length > 0 ? segs : [{ text: "", style: options.emptyStyle ?? STYLE.text }],
@@ -781,10 +792,10 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
       continue;
     }
     if (line.length > 0) {
-      line.push({ ...(word.space ?? { text: " ", style: STYLE.text }) });
+      appendPart(line, word.space ?? { text: " ", style: STYLE.text });
       lineWidth += spaceWidth;
     }
-    line.push(...word.pieces);
+    for (const piece of word.pieces) appendPart(line, piece);
     lineWidth += word.width;
   }
   if (rows.length < limit) emit("\n");
@@ -843,13 +854,7 @@ function hardBreak(pieces: readonly Part[], width: number, limit: number): Row[]
     return out.length < limit;
   };
   const append = (segment: Part, cells: number): void => {
-    const last = segments.at(-1);
-    if (last !== undefined && segmentsJoin(last, segment)) {
-      last.text += segment.text;
-      if (last.source !== undefined && segment.source !== undefined) {
-        last.source = mapping("text", last.source.from, segment.source.to);
-      }
-    } else segments.push(segment);
+    appendPart(segments, segment);
     lineWidth += cells;
   };
   for (const piece of pieces) {

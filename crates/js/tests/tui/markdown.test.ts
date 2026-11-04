@@ -26,6 +26,12 @@ function find(rows: readonly TextRow[], style: string, text: string): Segment | 
   return segmentsOf(rows).find((s) => s.style === style && s.text === text);
 }
 
+/** The source offset of `word` in the first segment that shows it, through its `text` mapping. */
+function offsetOf(rows: readonly TextRow[], word: string): number | undefined {
+  const segment = segmentsOf(rows).find((s) => s.text.includes(word));
+  return segment?.source === undefined ? undefined : segment.source.from + segment.text.indexOf(word);
+}
+
 test("inline markup gives strong, emphasis, code, and both", () => {
   equal(
     [
@@ -44,8 +50,8 @@ test("an inner strong span keeps the outer emphasis", () => {
   equal(
     [
       has(rows, "markdown.strongEmphasis", "y"),
-      has(rows, "markdown.emphasis", "x"),
-      has(rows, "markdown.emphasis", "z"),
+      has(rows, "markdown.emphasis", "x "),
+      has(rows, "markdown.emphasis", " z"),
     ],
     [true, true, true],
   );
@@ -93,15 +99,12 @@ test("a link shows its label and its target, and each piece carries the target",
   equal(
     segmentsOf(rows).map((s) => [s.text, s.style, s.link]),
     [
-      ["see", "markdown.text", undefined],
-      [" ", "markdown.text", undefined],
+      ["see ", "markdown.text", undefined],
       ["[", "markdown.link", "http://x/a_b"],
-      ["the", "markdown.linkText", "http://x/a_b"],
-      [" ", "markdown.linkText", "http://x/a_b"],
+      ["the ", "markdown.linkText", "http://x/a_b"],
       ["docs", "markdown.strong", "http://x/a_b"],
       ["](http://x/a_b)", "markdown.link", "http://x/a_b"],
-      [" ", "markdown.text", undefined],
-      ["ok", "markdown.text", undefined],
+      [" ok", "markdown.text", undefined],
     ],
   );
 });
@@ -260,12 +263,8 @@ test("each segment maps back to its source at each width", () => {
         if (s.source === undefined) continue;
         const span = source.slice(s.source.from, s.source.to);
         const inside = s.source.from >= 0 && s.source.to > s.source.from && s.source.to <= source.length;
-        const blank = s.text.trim() === "" && span.trim() === "";
-        if (
-          !inside ||
-          (s.source.kind === "text" && span.length !== s.text.length) ||
-          (s.source.kind === "text" && span !== s.text && !blank)
-        ) {
+        // A line break in a paragraph shows as one space, so it is still one source unit for one shown unit.
+        if (!inside || (s.source.kind === "text" && span.replaceAll("\n", " ") !== s.text)) {
           wrong.push(`${width} ${JSON.stringify(source)} ${JSON.stringify(s)}`);
         }
       }
@@ -303,7 +302,7 @@ test("a wrapped word, a second paragraph line, and a second quote line keep thei
   equal(
     [
       find(rowsOf(wrapped, 12), "markdown.text", "delta")?.source?.from,
-      find(rowsOf(paragraph, 80), "markdown.text", "three")?.source?.from,
+      offsetOf(rowsOf(paragraph, 80), "three"),
       find(quoted, "markdown.quote", "two")?.source?.from,
       lines(quoted),
       quote.slice(bar?.source?.from, bar?.source?.to),
@@ -375,11 +374,11 @@ test("two blocks with the same text keep their own offsets, also after the strea
   );
 });
 
-test("an offset indexes the source after the line break change", () => {
+test("an offset indexes the source with each line break as one unit", () => {
   const markdown = new Markdown();
   markdown.setText("one two\r\nthree");
-  const three = find(markdown.rows(80), "markdown.text", "three");
-  equal(markdown.source().slice(three?.source?.from, three?.source?.to), "three");
+  const at = offsetOf(markdown.rows(80), "three") as number;
+  equal(markdown.source().slice(at, at + "three".length), "three");
 });
 
 // An ASCII word breaks by its cell count, and a word with wide characters breaks between graphemes. A wide word takes
@@ -392,6 +391,21 @@ test("a word wider than the row breaks at the width, also with wide characters",
       ["ab", "日", "本c", "d"],
       ["日本", "ab"],
     ],
+  );
+});
+
+test("the words of a wrapped row form one segment with one source range", () => {
+  const rows = rowsOf("one two three four five", 13);
+  equal(
+    rows.map((row) => row.segments.map((s) => [s.text, s.source?.kind, s.source?.from, s.source?.to])),
+    [[["one two three", "text", 0, 13]], [["four five", "text", 14, 23]]],
+  );
+});
+
+test("a joined row splits at a style, at a link, and at a longer blank run", () => {
+  equal(
+    segmentsOf(rowsOf("a **b** c [d](http://x) e  f", 80)).map((s) => s.text),
+    ["a ", "b", " c ", "[", "d", "](http://x)", " e", " ", "f"],
   );
 });
 
@@ -512,7 +526,7 @@ function looks(frame: FrameTest, source: string): Record<string, unknown> {
 test("a Markdown text draws its look without a plugin", () => {
   using frame = createFrame({ width: 40, height: 12 });
   equal(looks(frame, "plain **b** *i* ***both*** `c`"), {
-    plain: {},
+    "plain ": {},
     b: { bold: true },
     i: { italic: true },
     both: { bold: true, italic: true },
