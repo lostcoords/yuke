@@ -168,7 +168,12 @@ const turnEntries: Entry[] = [
     display: shown,
   },
   { kind: "text", key: "5:0", text: "Fixed.", refusal: false, draft: false },
-  { kind: "end", key: "6:end", end: { outcome: { completed: { finishReason: "stop" } } } },
+  {
+    kind: "end",
+    key: "6:end",
+    end: { outcome: { completed: { finishReason: "stop" } } },
+    answer: answer("stop"),
+  },
 ];
 
 test("a live transcript ends equal to a replay of its saved events", () => {
@@ -296,8 +301,36 @@ test("a cancel mid-draft keeps only what its commit saved", () => {
   equal(transcript.entries, [
     input,
     { kind: "text", key: "3:0", text: "I run ", refusal: false, draft: false },
-    { kind: "end", key: "3:end", end: { outcome: "cancelled" } },
+    { kind: "end", key: "3:end", end: { outcome: "cancelled" }, answer: undefined },
   ]);
+});
+
+test("an end keeps the last saved answer before it, and the next end without an answer has none", () => {
+  const first = { ...answer("tool_calls"), origin: { model: "first", baseUrl: "https://p" } };
+  const last = { ...answer("stop"), origin: { model: "last", baseUrl: "https://p" } };
+  const transcript = opened([
+    commit(1, { blocks: [{ tool_call: call }], answer: first }),
+    commit(2, { blocks: [{ assistant_text: "done" }], answer: last }),
+    commit(3, { end: { outcome: "cancelled" } }),
+    commit(4, { end: { outcome: "cancelled" } }),
+  ]);
+  const ends = transcript.entries.filter((entry) => entry.kind === "end");
+  equal(
+    ends.map((entry) => entry.answer?.origin.model),
+    ["last", undefined],
+  );
+});
+
+test("an older page gives an end its answer, and an end without a change keeps its object", () => {
+  const saved = commit(1, { blocks: [{ assistant_text: "done" }], answer: answer("stop") });
+  const transcript = opened([
+    commit(2, { end: { outcome: "cancelled" } }),
+    commit(3, { end: { outcome: "cancelled" } }),
+  ]);
+  const [end, other] = transcript.entries;
+  transcript.insert([saved]);
+  const after = transcript.entries.filter((entry) => entry.kind === "end");
+  equal([after[0]?.answer?.origin.model, after[0] === end, after[1] === other], ["m", false, true]);
 });
 
 test("a context replacement adds a marker and keeps the entries before it", () => {

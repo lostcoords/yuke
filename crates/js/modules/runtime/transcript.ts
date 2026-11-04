@@ -2,6 +2,7 @@
 
 import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
 import type {
+  Answer,
   DisplayBlock,
   Input,
   InputId,
@@ -67,6 +68,8 @@ export class Transcript {
   #draft: { id: string; keys: Map<number, string> } | undefined;
   /** The keys of the calls of the last answer that wait for their saved result, in call order. */
   #calls: string[] = [];
+  /** The last saved answer since the last end. A turn saves its end in a commit of its own. */
+  #turnAnswer: Answer | undefined;
   /** During a re-fold, the entries before it by key, so an entry that did not change keeps its object. */
   #previous: Map<string, Entry> | undefined;
 
@@ -111,6 +114,7 @@ export class Transcript {
     this.#index.clear();
     this.#draft = undefined;
     this.#calls = [];
+    this.#turnAnswer = undefined;
     for (const update of event.snapshot.updates) this.#update(update);
   }
 
@@ -135,6 +139,7 @@ export class Transcript {
     this.entries.length = 0;
     this.#index.clear();
     this.#calls = [];
+    this.#turnAnswer = undefined;
     for (const event of this.#saved) this.#fold(event);
     this.#previous = undefined;
     for (const entry of draft) this.#index.set(entry.key, this.entries.push(entry) - 1);
@@ -254,7 +259,10 @@ export class Transcript {
     const commit = event.commit;
     // A replaced context makes the counts of the earlier answer stale, until the next answer.
     if (commit.replaced !== null) this.#usage = undefined;
-    if (commit.answer !== null) this.#usage = commit.answer.usage;
+    if (commit.answer !== null) {
+      this.#usage = commit.answer.usage;
+      this.#turnAnswer = commit.answer;
+    }
     if (commit.replaced !== null) this.#put({ kind: "compaction", key: `${event.seq}:replaced` });
     let offset = 0;
     for (const input of event.consumed) {
@@ -304,7 +312,10 @@ export class Transcript {
         }
       }
     }
-    if (commit.end !== null) this.#put({ kind: "end", key: `${event.seq}:end`, end: commit.end });
+    if (commit.end !== null) {
+      this.#put({ kind: "end", key: `${event.seq}:end`, end: commit.end, answer: this.#turnAnswer });
+      this.#turnAnswer = undefined;
+    }
   }
 
   #at(key: string | undefined): Entry | undefined {
@@ -329,6 +340,8 @@ export class Transcript {
    */
   #kept(entry: Entry): Entry {
     const previous = this.#previous?.get(entry.key);
+    // An older page can bring the answer of an end.
+    if (entry.kind === "end" && previous?.kind === "end" && previous.answer !== entry.answer) return entry;
     if (previous === undefined || entry.kind !== "tool" || entry.status === "waiting") return previous ?? entry;
     // One saved event gives a result object, its display, and its duration, so the result stands for all three.
     const same =

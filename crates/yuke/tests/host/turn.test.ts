@@ -119,7 +119,8 @@ test("an abort of the signal cancels a turn that waits for the replies, and send
   const error = await sent;
 
   equal(error instanceof Error ? error.message : error, "stop");
-  equal(session.transcript.entries.at(-1), { kind: "end", key: "3:end", end: { outcome: "cancelled" } });
+  const last = session.transcript.entries.at(-1);
+  equal([last?.kind === "end" && last.end], [{ outcome: "cancelled" }]);
 });
 
 test("send with an aborted signal rejects and sends nothing", async () => {

@@ -12,6 +12,7 @@
 declare module "yuke:transcript" {
   import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
   import type {
+    Answer,
     Block,
     DisplayBlock,
     EventNumber,
@@ -82,8 +83,12 @@ declare module "yuke:transcript" {
   /** The model context was replaced here, for example by a compaction. The entries before it stay. */
   export type CompactionEntry = Frozen<{ kind: "compaction"; key: string }>;
 
-  /** The end of a turn. */
-  export type EndEntry = Frozen<{ kind: "end"; key: string; end: TurnEnd }>;
+  /**
+   * The end of a turn. `answer` is the last saved answer of the turn: the model that gave it, its usage, and its finish
+   * reason. The usage is of that answer, not of the whole turn. `answer` is `undefined` for a turn without an answer, or
+   * until an older page adds the answer.
+   */
+  export type EndEntry = Frozen<{ kind: "end"; key: string; end: TurnEnd; answer: Answer | undefined }>;
 
   /** One entry of the conversation. `key` is unique in the transcript and has no meaning beyond that. */
   export type Entry = InputEntry | TextEntry | ReasoningEntry | ToolEntry | CompactionEntry | EndEntry;
