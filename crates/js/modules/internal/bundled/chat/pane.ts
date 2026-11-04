@@ -141,7 +141,7 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
-  /** The answer of the read-only source of the `chat` service for `session`. */
+  /** The first answer of the read-only sources of the `chat` service for `session`. */
   readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
   /** The panes that are open. */
   readonly open: Set<PaneActions>;

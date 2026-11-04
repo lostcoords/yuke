@@ -156,7 +156,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
   const panes = new WeakMap<View, PaneActions>();
   const open = new Set<PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
-  let readOnly: ((session: SessionId) => ChatReadOnly | undefined) | undefined;
+  // One entry per call of `addReadOnly`, so each disposer removes its own.
+  const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
   let frame: ComposerFrame | undefined;
   ctx.provide("chat", {
     show: async (id) => {
@@ -190,13 +191,12 @@ export async function apply(ctx: PluginContext): Promise<void> {
         repaint();
       };
     },
-    setReadOnly: (source) => {
-      readOnly = source;
+    addReadOnly: (source) => {
+      const entry = { source };
+      readOnlySources.add(entry);
       repaint();
       return () => {
-        if (readOnly !== source) return;
-        readOnly = undefined;
-        repaint();
+        if (readOnlySources.delete(entry)) repaint();
       };
     },
     setComposerFrame: (next) => {
@@ -240,7 +240,13 @@ export async function apply(ctx: PluginContext): Promise<void> {
     open,
     presenter: () => presenter,
     frame: () => frame,
-    readOnly: (session) => readOnly?.(session),
+    readOnly: (session) => {
+      for (const entry of readOnlySources) {
+        const answer = entry.source(session);
+        if (answer !== undefined) return answer;
+      }
+      return undefined;
+    },
     composerViews: (place) => [...composerViews].filter((entry) => entry.place === place),
     moved: (view) => {
       for (const listener of listeners) listener(view);

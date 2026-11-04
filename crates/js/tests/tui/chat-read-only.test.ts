@@ -17,7 +17,7 @@ async function opened() {
   const frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(3));
   const chat = await loadChat(frame, sessions);
-  const end = chat.chat.setReadOnly((session) =>
+  const end = chat.chat.addReadOnly((session) =>
     session === "s1" ? { text: "A child session", back: "p1" } : undefined,
   );
   frame.start();
@@ -131,16 +131,20 @@ test("the key back gives the composer the focus after a press on the transcript"
   equal(rows(frame.frame).at(-2), "draft");
 });
 
-test("the disposer of the source gives the composer back, and an old disposer does nothing", async () => {
+test("the sources answer in add order, and a disposer removes only its own source", async () => {
   const { frame, chat, end } = await opened();
   using _frame = frame;
-
-  const later = chat.chat.setReadOnly(() => ({ text: "Later", back: "p1" }));
+  const row = () => rows(frame.draw()).at(-2);
+  // A source that gives no answer for this session leaves the next source.
+  chat.chat.addReadOnly((session) => (session === "s2" ? { text: "Other", back: "p1" } : undefined));
+  const second = chat.chat.addReadOnly(() => ({ text: "Second", back: "p1" }));
+  const third = chat.chat.addReadOnly(() => ({ text: "Third", back: "p1" }));
+  equal(row(), "A child session · esc back");
+  // A later source leaves first, and the first answer stays.
+  third();
+  equal(row(), "A child session · esc back");
   end();
-  frame.draw();
-  const kept = rows(frame.frame).at(-2);
-  later();
-  frame.draw();
-
-  equal([kept, rows(frame.frame).at(-2)], ["Later · esc back", "Message…"]);
+  equal(row(), "Second · esc back");
+  second();
+  equal(row(), "Message…");
 });

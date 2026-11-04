@@ -147,7 +147,7 @@ test("two panes on one session count its work once", async () => {
 test("a read-only session warns about its own job, and a quit names its parent to resume", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
-  chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
   frame.draw();
 
   frame.key("ctrl+q");
@@ -160,7 +160,7 @@ test("a read-only session warns about its own job, and a quit names its parent t
 test("an idle read-only session warns while its parent runs a turn, and not after that turn", async () => {
   const { frame, chat } = await opened();
   using _frame = frame;
-  chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
   chat.fact("session.opened", { sessionId: "p1", state: "running", questions: [] });
   frame.draw();
 
@@ -176,7 +176,7 @@ test("an idle read-only session warns while its parent runs a turn, and not afte
 test("two read-only children of one parent count each job, and a quit resumes the parent once", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
-  chat.chat.setReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
+  chat.chat.addReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
   chat.tui.commands.run("core:split-right");
   await settled();
   await chat.chat.show("s2");
@@ -192,7 +192,7 @@ test("two read-only children of one parent count each job, and a quit resumes th
 test("a read-only pane and a pane of its parent count both sessions, and a quit resumes the parent once", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
-  chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
   chat.tui.commands.run("core:split-right");
   await settled();
   await chat.chat.show("p1");

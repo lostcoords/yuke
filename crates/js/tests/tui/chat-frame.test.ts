@@ -124,7 +124,7 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   await settled();
   frame.draw();
   equal(seen.at(-1), "question true false 0 s1");
-  const end = chat.chat.setReadOnly(() => ({ text: "A child session", back: "p1" }));
+  const end = chat.chat.addReadOnly(() => ({ text: "A child session", back: "p1" }));
   frame.draw();
   equal(seen.at(-1), "readOnly true false 0 s1");
   end();
@@ -167,7 +167,7 @@ test("a disposer of the chat service runs after the chat plugin stops", async ()
   const disposers = [
     chat.chat.setComposerFrame({ inset: () => ({}), draw() {} }),
     chat.chat.present((options) => new ChatDocument(options.key, options.folds)),
-    chat.chat.setReadOnly(() => undefined),
+    chat.chat.addReadOnly(() => undefined),
     chat.chat.addComposerView("below", () => composerRows(() => [])),
   ];
   frame.start();

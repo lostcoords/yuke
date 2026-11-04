@@ -406,17 +406,18 @@ declare module "yuke:chat" {
       create: (mount: Mount, pane: ChatPane) => ComposerView,
     ) => () => void;
     /**
-     * Make sessions read-only in each chat pane. `source` gets the session of a pane at each layout and each key, so a
-     * source must be cheap and synchronous. For a session with an answer, the pane shows a row in place of the composer.
-     * The pane sends no message, shows no question, and does not cancel the turn. Its transcript still scrolls, and the
-     * key of `chat:interrupt` shows the session `back`. The last call wins. A disposer ends the rule only if its source
-     * is current. A client of `yuke --rpc` can still send input to the session.
+     * Add a source of read-only sessions for each chat pane. `source` gets the session of a pane at each layout and each
+     * key, so a source must be cheap and synchronous. For a session with an answer, the pane shows a row in place of the
+     * composer. The pane sends no message, shows no question, and does not cancel the turn. Its transcript still scrolls,
+     * and the key of `chat:interrupt` shows the session `back`. The first source in add order that answers for a session
+     * wins, and the returned function removes only this source. A client of `yuke --rpc` can still send input to the
+     * session.
      *
      * ```ts
-     * chat.setReadOnly((session) => (isChild(session) ? { text: "A child session", back: parentOf(session) } : undefined));
+     * chat.addReadOnly((session) => (isChild(session) ? { text: "A child session", back: parentOf(session) } : undefined));
      * ```
      */
-    readonly setReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
+    readonly addReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
     /**
      * Replace the frame around the input of each chat pane. The last call wins. A disposer restores the default only if
      * its frame is current.
