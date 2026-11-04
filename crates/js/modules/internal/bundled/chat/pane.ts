@@ -8,6 +8,7 @@ import {
   ChatCommands,
   ChatComposer,
   ChatDocument,
+  type ChatPane,
   type ChatPresentation,
   type ChatPresentationOptions,
   ChatQuestions,
@@ -16,14 +17,14 @@ import {
   ChatWorking,
   type ComposerContext,
   type ComposerFrame,
-  type ComposerRow,
-  type ComposerRowPlace,
-  type ComposerRowsContext,
+  type ComposerPlace,
+  type ComposerView,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
 import {
@@ -123,6 +124,13 @@ export interface PaneActions {
   };
 }
 
+/** One call of `addComposerView`. The abort of `stop` ends its view in each pane. */
+export interface ComposerViewEntry {
+  readonly place: ComposerPlace;
+  readonly create: (mount: Mount, pane: ChatPane) => ComposerView;
+  readonly stop: AbortController;
+}
+
 /** What each pane of the chat shares. */
 export interface Chat {
   readonly ctx: PluginContext;
@@ -139,8 +147,8 @@ export interface Chat {
   readonly open: Set<PaneActions>;
   /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
-  /** The rows for `pane` of the sources at `place`, in add order. The first source past `room` rows ends the list. */
-  readonly rows: (place: ComposerRowPlace, pane: ComposerRowsContext, room: number) => ComposerRow[];
+  /** The views of the `chat` service at `place`, in add order. */
+  readonly composerViews: (place: ComposerPlace) => readonly ComposerViewEntry[];
   /** The frame of the `chat` service around the input. Without one, a pane draws two rules. */
   readonly frame: () => ComposerFrame | undefined;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
@@ -516,15 +524,77 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   // The layout keeps the place of the frame and the shown waiting messages for the draw.
   let frame = RULES;
-  let frameContext: ComposerContext = { session: undefined, width: 0, kind: "composer", running: false };
+  let frameContext: ComposerContext;
   let frameRow = 0;
   let inputRect: Rect = { column: 0, row: 0, width: 0, height: 0 };
   let noticeRow = -1;
   let listRows = 0;
   let workingRows = 0;
   let shown: [InputId, Frozen<Input>][] = [];
-  let rowsAbove: ComposerRow[] = [];
-  let rowsBelow: ComposerRow[] = [];
+  // The view of each call of `addComposerView` in this pane, or `undefined` after its factory failed or it closed.
+  const composerViews = new Map<ComposerViewEntry, ComposerView | undefined>();
+  const chatPaneFields: ChatPane = {
+    get view() {
+      return pane;
+    },
+    get session() {
+      return chatSession.id;
+    },
+    get transcript() {
+      return chatSession.transcript;
+    },
+    get running() {
+      return working.active;
+    },
+  };
+  /** The views at `place` with their heights, which share `room` rows in add order. */
+  const placedViews = (place: ComposerPlace, width: number, room: number) => {
+    let left = room;
+    return chat.composerViews(place).flatMap((entry) => {
+      if (!composerViews.has(entry)) {
+        // A view that closed itself stays closed, so its factory runs once in this pane.
+        const child = createMount(() => composerViews.set(entry, undefined));
+        const stop = (): void => {
+          child.close();
+          composerViews.delete(entry);
+        };
+        entry.stop.signal.addEventListener("abort", stop, { once: true });
+        mount.signal.addEventListener(
+          "abort",
+          () => {
+            entry.stop.signal.removeEventListener("abort", stop);
+            child.close();
+          },
+          { once: true },
+        );
+        const created = startView(
+          ctx.name,
+          (own) => entry.create(own, chatPaneFields),
+          child,
+          (_source, text) => ctx.notify("error", text),
+        );
+        composerViews.set(entry, created as ComposerView | undefined);
+      }
+      const shown = composerViews.get(entry);
+      const height = shown === undefined ? 0 : Math.min(Math.floor(shown.heightFor(width)) || 0, left);
+      if (shown === undefined || height <= 0) return [];
+      left -= height;
+      return [{ view: shown, height }];
+    });
+  };
+  /** The placements of `views` in a column from `row`. */
+  const stacked = (
+    views: readonly { readonly view: ComposerView; readonly height: number }[],
+    row: number,
+    width: number,
+  ) => {
+    let at = row;
+    return views.map(({ view: shown, height }) => {
+      const rect = { column: 0, row: at, width, height };
+      at += height;
+      return { view: shown, rect };
+    });
+  };
   /** The frame around the input: its view places the input, so a click and the cursor stay local to the input. */
   const frameView: View = {
     get style() {
@@ -550,12 +620,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // A question and a read-only row hide the composer, and the composer keeps its draft.
       const question = questions.current;
-      const context = { session: chatSession.id, width: size.width };
-      rowsBelow = chat.rows("below", context, Math.floor(size.height / 2));
-      const left = size.height - rowsBelow.length;
+      const below = placedViews("below", size.width, Math.floor(size.height / 2));
+      const left = size.height - below.reduce((rows, entry) => rows + entry.height, 0);
       frame = chat.frame() ?? RULES;
       const kind = locked() !== undefined ? "readOnly" : question !== undefined ? "question" : "composer";
-      frameContext = { ...context, kind, running: working.active };
+      frameContext = { ...chatPaneFields, width: size.width, kind };
       const inset = frame.inset(frameContext);
       const top = inset.top ?? 0;
       const insetLeft = inset.left ?? 0;
@@ -580,11 +649,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const list = chatComposer.waiting;
       const above = Math.max(0, free - workingRow);
       shown = list.slice(Math.max(0, list.length - above));
-      // Plugin rows get the rows that the strip leaves, at most half the rows above the frame.
-      rowsAbove = chat.rows("above", context, Math.min(above - shown.length, Math.floor(frameRow / 2)));
+      // Plugin views get the rows that the strip leaves, at most half the rows above the frame.
+      const aboveViews = placedViews("above", size.width, Math.min(above - shown.length, Math.floor(frameRow / 2)));
+      const aboveRows = aboveViews.reduce((rows, entry) => rows + entry.height, 0);
       // One empty row goes below the transcript, and a running turn adds one below the working row. The transcript gets
       // the other rows. A pane adds an empty row only when the transcript keeps a row, so a short pane drops it first.
-      let transcriptRows = above - shown.length - rowsAbove.length;
+      let transcriptRows = above - shown.length - aboveRows;
       const gap = transcriptRows > 1 ? 1 : 0;
       transcriptRows -= gap;
       const workingGap = workingRow === 1 && transcriptRows > 1 ? 1 : 0;
@@ -595,6 +665,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         { view, rect: { column: 0, row: 0, width: size.width, height: transcriptRows } },
         { view: frameView, rect: { column: 0, row: frameRow, width: size.width, height: frameRows } },
         { view: commands.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
+        ...stacked(aboveViews, frameRow - listRows - workingRows - shown.length - aboveRows, size.width),
+        ...stacked(below, left, size.width),
       ];
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
@@ -610,14 +682,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return placements;
     },
     draw(canvas: Canvas): void {
-      for (const [at, row] of rowsBelow.entries()) {
-        canvas.text(0, canvas.height - rowsBelow.length + at, clipped(row.text, canvas.width), row.style);
-      }
       const listRow = frameRow - listRows;
       const stripRow = listRow - workingRows - shown.length;
-      for (const [at, row] of rowsAbove.entries()) {
-        canvas.text(0, stripRow - rowsAbove.length + at, clipped(row.text, canvas.width), row.style);
-      }
       for (const [at, entry] of shown.entries()) {
         const row = stripRow + at;
         const hint = at === shown.length - 1 ? " ↑ edit" : "";

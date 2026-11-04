@@ -13,7 +13,17 @@ declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
   import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
-  import type { Canvas, CanvasStyle, CommandItem, EditorState, Rect, TextDocument, TextEditor, View } from "yuke:tui";
+  import type {
+    Canvas,
+    CanvasStyle,
+    CommandItem,
+    EditorState,
+    Mount,
+    Rect,
+    TextDocument,
+    TextEditor,
+    View,
+  } from "yuke:tui";
 
   export interface ChatSessionOptions {
     /** Its abort ends the handle. */
@@ -273,20 +283,34 @@ declare module "yuke:chat" {
     readonly changed: () => void;
   }
 
-  /** One row of a plugin in a chat pane. The chat cuts a longer text to the pane width and ends it with `…`. */
+  /** One row of `composerRows`. The chat cuts a longer text to the width and ends it with `…`. */
   export interface ComposerRow {
     readonly text: string;
     readonly style?: CanvasStyle | undefined;
   }
 
-  /** The side of the composer where a row source shows its rows. */
-  export type ComposerRowPlace = "above" | "below";
+  /** The side of the composer where a view shows. */
+  export type ComposerPlace = "above" | "below";
 
-  /** The chat pane that a row source gives rows for. */
-  export interface ComposerRowsContext {
+  /** A chat pane. Each field reads the current state. */
+  export interface ChatPane {
+    readonly view: View;
     readonly session: SessionId | undefined;
-    readonly width: number;
+    readonly transcript: Transcript;
+    /** A turn of the session runs. */
+    readonly running: boolean;
   }
+
+  /** A view that says how many rows it wants at `width`. A `TextEditor` fits. Each layout calls it, so keep it cheap. */
+  export interface ComposerView extends View {
+    readonly heightFor: (width: number) => number;
+  }
+
+  /**
+   * A view of plain text rows, for `addComposerView`. Each layout and draw calls `source`, so keep it cheap. With less
+   * room, the first rows show.
+   */
+  export function composerRows(source: (width: number) => readonly ComposerRow[]): ComposerView;
 
   /** The whole cells around the input of a chat pane. A missing side has no cells. */
   export interface Insets {
@@ -297,11 +321,11 @@ declare module "yuke:chat" {
   }
 
   /** The chat pane that a frame gets at each layout. */
-  export interface ComposerContext extends ComposerRowsContext {
+  export interface ComposerContext extends ChatPane {
+    /** The width of the pane. */
+    readonly width: number;
     /** The view in the input area: the composer, a question, or the row of a read-only session. */
     readonly kind: "composer" | "question" | "readOnly";
-    /** A turn of the session runs. */
-    readonly running: boolean;
   }
 
   /** The chat pane that a frame gets at each draw. */
@@ -359,26 +383,27 @@ declare module "yuke:chat" {
     /** Call `listener` after each change of the session of a chat pane. */
     readonly onChange: (listener: (view: View) => void) => () => void;
     /**
-     * Add rows on one side of the composer of each chat pane. The pane calls the sources at each layout, so keep each
-     * source cheap and synchronous. After a change of its data, a plugin calls `tui.requestFrame()`.
+     * Add a view on one side of the composer of each chat pane. `create` runs once per pane, at a layout. A close of the
+     * pane or the returned function ends `mount`. A view that closes `mount` stays closed in that pane. After a change of
+     * its data, a plugin calls `tui.requestFrame()`.
      *
-     * - `above`: The rows show below the transcript and above the waiting messages, the working row, and the command
-     *   list. The chat gives them the free rows, at most half the rows above the frame of the input.
-     * - `below`: The rows show on the last rows of the pane, and the composer moves up. The chat gives them at most half
-     *   the pane height.
+     * - `above`: The view shows below the transcript and above the waiting messages, the working row, and the command list.
+     *   The views share the free rows, at most half the rows above the frame of the input.
+     * - `below`: The view shows on the last rows of the pane, and the composer moves up. The views share at most half the
+     *   pane height.
      *
-     * The chat shows all rows of a source, or none. In each place, the chat shows the sources in add order. The first
-     * source that does not fit hides the later sources, and the chat does not call these sources.
-     *
-     * Each call adds one source. The returned function removes that source only.
+     * The views show in add order. Each gets its height or the rows that remain, and a view reads its place in
+     * `canvas.height`. A height of 0 places no view.
      *
      * ```ts
-     * chat.addComposerRows("below", (pane) => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : []));
+     * chat.addComposerView("below", (mount, pane) =>
+     *   composerRows(() => (open(pane.session) ? [{ text: `${count(pane.session)} questions`, style: { fg: "accent" } }] : [])),
+     * );
      * ```
      */
-    readonly addComposerRows: (
-      place: ComposerRowPlace,
-      source: (pane: ComposerRowsContext) => readonly ComposerRow[],
+    readonly addComposerView: (
+      place: ComposerPlace,
+      create: (mount: Mount, pane: ChatPane) => ComposerView,
     ) => () => void;
     /**
      * Make sessions read-only in each chat pane. `source` gets the session of a pane at each layout and each key, so a

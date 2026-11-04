@@ -1,15 +1,27 @@
 /** The code of the public module `yuke:chat`. Its declaration is `types/chat.d.ts`, and the check at the end compares the two. */
 
-import type { ChatSessionOptions } from "yuke:chat";
+import type { ChatSessionOptions, ComposerRow, ComposerView } from "yuke:chat";
 import { ChatCommands } from "yuke:internal/chat/commands";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
 import { callEach } from "yuke:internal/chat/listeners";
 import { ChatQuestions } from "yuke:internal/chat/questions";
+import { clipped } from "yuke:internal/chat/rows";
 import { ChatWorking } from "yuke:internal/chat/working";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 
 export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking };
+
+export function composerRows(source: (width: number) => readonly ComposerRow[]): ComposerView {
+  return {
+    heightFor: (width) => source(width).length,
+    draw: (canvas) => {
+      for (const [row, entry] of source(canvas.width).entries()) {
+        canvas.text(0, row, clipped(entry.text, canvas.width), entry.style);
+      }
+    },
+  };
+}
 
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
@@ -205,6 +217,7 @@ export class ChatSession {
 // The check against `types/chat.d.ts` keeps this code and the declarations of the authors in step.
 const declared = {
   ChatSession,
+  composerRows,
   ChatCommands,
   ChatComposer,
   ChatDocument,

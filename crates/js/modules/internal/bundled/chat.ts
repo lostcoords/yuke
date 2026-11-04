@@ -5,17 +5,15 @@
  * shows a session in a pane for other plugins.
  */
 
-import type {
-  ChatPresentation,
-  ChatPresentationOptions,
-  ChatReadOnly,
-  ComposerFrame,
-  ComposerRow,
-  ComposerRowPlace,
-  ComposerRowsContext,
-} from "yuke:chat";
+import type { ChatPresentation, ChatPresentationOptions, ChatReadOnly, ComposerFrame } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
+import {
+  type Chat,
+  type ComposerViewEntry,
+  chatPane,
+  type PaneActions,
+  type PaneState,
+} from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo, SessionId } from "yuke:protocol";
@@ -153,11 +151,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
   const repaint = (): void => {
     if (!ctx.signal.aborted) tui?.requestFrame();
   };
-  // One entry per call of `addComposerRows`, so the same source can show twice and each disposer removes its own.
-  const sources = new Set<{
-    readonly place: ComposerRowPlace;
-    readonly source: (pane: ComposerRowsContext) => readonly ComposerRow[];
-  }>();
+  // One entry per call of `addComposerView`, so each disposer removes its own.
+  const composerViews = new Set<ComposerViewEntry>();
   const panes = new WeakMap<View, PaneActions>();
   const open = new Set<PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
@@ -185,12 +180,14 @@ export async function apply(ctx: PluginContext): Promise<void> {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    addComposerRows: (place, source) => {
-      const entry = { place, source };
-      sources.add(entry);
+    addComposerView: (place, create) => {
+      const entry = { place, create, stop: new AbortController() };
+      composerViews.add(entry);
       repaint();
       return () => {
-        if (sources.delete(entry)) repaint();
+        if (!composerViews.delete(entry)) return;
+        entry.stop.abort();
+        repaint();
       };
     },
     setReadOnly: (source) => {
@@ -244,16 +241,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     presenter: () => presenter,
     frame: () => frame,
     readOnly: (session) => readOnly?.(session),
-    rows: (place, pane, room) => {
-      const rows: ComposerRow[] = [];
-      for (const entry of sources) {
-        if (entry.place !== place) continue;
-        const added = entry.source(pane);
-        if (rows.length + added.length > room) break;
-        rows.push(...added);
-      }
-      return rows;
-    },
+    composerViews: (place) => [...composerViews].filter((entry) => entry.place === place),
     moved: (view) => {
       for (const listener of listeners) listener(view);
     },
