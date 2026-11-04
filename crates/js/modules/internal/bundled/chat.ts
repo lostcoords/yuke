@@ -301,8 +301,11 @@ export async function apply(ctx: PluginContext): Promise<void> {
     );
     const turns = [...work.values()].filter((entry) => entry.turn).length;
     const jobs = [...work.values()].reduce((count, entry) => count + entry.jobs, 0);
+    // The host writes this text after it restores the terminal, so the user can open each session again.
+    const resume = [...work.keys()].map((session) => `To resume this session, run: yuke -r ${session}`).join("\n");
+    const leave = (): void => quit(resume === "" ? undefined : resume);
     if (asked !== undefined || turns + jobs === 0) {
-      quit();
+      leave();
       return;
     }
     const counts = [
@@ -315,8 +318,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
       title: () => "Stop everything and quit?",
       body: { draw: (canvas) => canvas.text(1, 0, clipped(text, Math.max(0, canvas.width - 1))) },
       keys: [
-        { key: "enter", label: "stop and quit", run: quit },
-        { key: "ctrl+q", label: "stop and quit", run: quit },
+        { key: "enter", label: "stop and quit", run: leave },
+        { key: "ctrl+q", label: "stop and quit", run: leave },
         { key: "esc", label: "stay", run: stay },
       ],
       rows: 3,

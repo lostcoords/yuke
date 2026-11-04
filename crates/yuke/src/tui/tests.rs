@@ -390,3 +390,19 @@ async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_rest
     );
     restarted.shutdown().await;
 }
+
+#[tokio::test(flavor = "local")]
+async fn a_quit_during_a_reload_keeps_its_text_and_drops_the_other_requests() {
+    let (sender, mut requests) = tokio::sync::mpsc::unbounded_channel();
+    for request in [
+        yuke_js::Request::Suspend,
+        yuke_js::Request::Reload("{}".to_owned()),
+        yuke_js::Request::Quit(Some("bye".to_owned())),
+    ] {
+        sender.send(request).unwrap();
+    }
+    drop(sender);
+
+    assert_eq!(super::quit(&mut requests).await, Some("bye".to_owned()));
+    assert_eq!(super::quit(&mut requests).await, None);
+}

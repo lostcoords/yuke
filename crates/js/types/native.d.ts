@@ -440,8 +440,8 @@ declare module "yuke:internal/native" {
     /** The cells and the cursor. A hidden cursor gives no `cursor` key. */
     frame(): Omit<Frame, "cursor"> & { readonly cursor?: Cursor };
   }
-  /** Ask the host to quit. */
-  export function termQuit(): void;
+  /** Ask the host to quit. The host writes `text`, when there is one, after it restores the terminal. */
+  export function termQuit(text: string | undefined): void;
   /** Ask the host to give the terminal to the shell until it resumes yuke. */
   export function termSuspend(): void;
   /** Ask the host to load the plugins again in a new runtime, whose start event gets `snapshot`. */

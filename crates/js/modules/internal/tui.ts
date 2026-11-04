@@ -29,7 +29,7 @@ const core = new Core({
     const bytes = await clipboardReadImage();
     return bytes === undefined ? undefined : Object.freeze({ bytes, mime: "image/png" });
   },
-  quit: () => term.quit(),
+  quit: (text) => term.quit(text),
   suspend: () => term.suspend(),
   reload: (snapshot) => term.reload(snapshot),
   startup: () => term.startup,

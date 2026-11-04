@@ -205,16 +205,26 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
         })?,
     )?;
 
-    for (name, request) in [("termQuit", Request::Quit), ("termSuspend", Request::Suspend)] {
-        let held = Rc::clone(frames);
-        set(
-            name,
-            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
-                held.display(&ctx)?.ask(request.clone());
+    let held = Rc::clone(frames);
+    set(
+        "termQuit",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, text: Option<String>| -> rquickjs::Result<_> {
+                held.display(&ctx)?.ask(Request::Quit(text));
                 Ok(())
-            })?,
-        )?;
-    }
+            },
+        )?,
+    )?;
+
+    let held = Rc::clone(frames);
+    set(
+        "termSuspend",
+        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
+            held.display(&ctx)?.ask(Request::Suspend);
+            Ok(())
+        })?,
+    )?;
 
     let held = Rc::clone(frames);
     set(

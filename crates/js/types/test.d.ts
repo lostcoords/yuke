@@ -92,8 +92,8 @@ declare module "yuke:test" {
   export interface FrameTest extends Disposable {
     /** The last drawn frame. */
     readonly frame: Frame;
-    /** The count of the quits that reached the driver. */
-    readonly quits: number;
+    /** The text of each quit that reached the driver, the oldest first. A quit without text gives `undefined`. */
+    readonly quits: readonly (string | undefined)[];
     /** The texts that `tui.copy` sent, the oldest first. */
     readonly copies: readonly string[];
     /** The image that `tui.readImage` gives. The default is none. */

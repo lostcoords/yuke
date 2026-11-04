@@ -169,19 +169,19 @@ test("a guard decides on a quit, and its disposer ends it", () => {
   using frame = createFrame({ width: 60, height: 10 });
   const tui = frame.surface("test").tui;
   tui.keys.bind("ctrl+q", "core:quit");
-  let held: (() => void) | undefined;
+  let held: ((text?: string) => void) | undefined;
   const end = tui.guardQuit((quit) => {
     held = quit;
   });
 
   frame.key("ctrl+q");
-  const asked = frame.quits;
-  held?.();
-  const after = frame.quits;
+  const asked = frame.quits.length;
+  held?.("bye");
+  const after = frame.quits.length;
   end();
   frame.key("ctrl+q");
 
-  equal([asked, after, frame.quits], [0, 1, 2]);
+  equal([asked, after, frame.quits], [0, 1, ["bye", undefined]]);
 });
 
 test("a key of more than one stroke throws", () => {

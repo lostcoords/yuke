@@ -138,7 +138,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
   });
 
-  const guardQuit = live((guard: (quit: () => void) => void): (() => void) => {
+  const guardQuit = live((guard: (quit: (text?: string) => void) => void): (() => void) => {
     core.quitGuard = guard;
     return scope.own(() => {
       if (core.quitGuard === guard) core.quitGuard = undefined;

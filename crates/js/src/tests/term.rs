@@ -515,10 +515,14 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
 #[tokio::test(flavor = "local")]
 async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the_background() {
     let (runtime, _reports, display, output, mut requests) = started("quit_and_suspend_reach_the_host").await;
-    evaluate::<()>(&runtime, "term.quit(); term.suspend(); term.reload('{\"panes\":2}');")
-        .await
-        .unwrap();
-    assert_eq!(requests.recv().await, Some(Request::Quit));
+    evaluate::<()>(
+        &runtime,
+        "term.quit(); term.quit('bye'); term.suspend(); term.reload('{\"panes\":2}');",
+    )
+    .await
+    .unwrap();
+    assert_eq!(requests.recv().await, Some(Request::Quit(None)));
+    assert_eq!(requests.recv().await, Some(Request::Quit(Some("bye".to_owned()))));
     assert_eq!(requests.recv().await, Some(Request::Suspend));
     assert_eq!(
         requests.recv().await,

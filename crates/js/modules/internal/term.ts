@@ -81,9 +81,9 @@ export const term = {
   copy(text: string): void {
     termCopy(text.toWellFormed());
   },
-  /** Ask the host to quit. */
-  quit(): void {
-    termQuit();
+  /** Ask the host to quit. The host writes `text`, when there is one, after it restores the terminal. */
+  quit(text?: string): void {
+    termQuit(text);
   },
   /** Ask the host to give the terminal to the shell until the shell resumes yuke. A `resize` event comes after. */
   suspend(): void {

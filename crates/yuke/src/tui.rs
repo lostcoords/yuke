@@ -1,7 +1,7 @@
 //! The terminal interface: `yuke` with no `-p`. The terminal and its display live here, so they outlive a reload of
 //! the plugins. The plugin runtime imports `yuke:internal/tui`, which draws on the display.
 
-use std::io;
+use std::io::{self, Write};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -33,7 +33,8 @@ impl Observer for Notices {
 }
 
 /// Run the interface on the terminal of the process until a quit or `shutdown`. The start pane shows the session of
-/// `choice`. The drop of the terminal restores the device, also after an error. Then each unread notice goes to stderr.
+/// `choice`. The drop of the terminal restores the device, also after an error. Then each unread notice goes to stderr,
+/// and the quit text goes to stdout.
 pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: CancellationToken) -> Result<(), String> {
     let failed = |what: &'static str| move |error: io::Error| format!("{what}: {error}");
     // A bad choice fails before the terminal opens, so its error is the only output.
@@ -81,17 +82,21 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
     for notice in display.take_notices() {
         warn(&format!("{}: {}", notice.source, notice.message));
     }
-    ended
+    if let Some(text) = ended? {
+        writeln!(io::stdout(), "{text}").map_err(failed("the output did not write"))?;
+    }
+    Ok(())
 }
 
 /// Start the app on the display of `host` with `store` and `startup`, and serve the host until a quit or `shutdown`.
+/// Returns the quit text, if any.
 async fn serve(
     host: &mut Host,
     machine: Machine,
     store: Arc<dyn Store>,
     startup: Startup,
     shutdown: &CancellationToken,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     host.start_reader()
         .map_err(|error| format!("the terminal input: {error}"))?;
     let machine = Machine {
@@ -127,21 +132,26 @@ struct Host {
 
 impl Host {
     /// Answer the requests of the JavaScript and pass each resize, until a quit, the end of the input, or `shutdown`.
-    /// Without `app`, while the first plugins load, a reload gives a notice.
-    async fn serve(&mut self, shutdown: &CancellationToken, mut app: Option<&mut App>) -> Result<(), String> {
+    /// Returns the quit text, if any. Without `app`, while the first plugins load, a reload gives a notice.
+    async fn serve(
+        &mut self,
+        shutdown: &CancellationToken,
+        mut app: Option<&mut App>,
+    ) -> Result<Option<String>, String> {
         loop {
             let answered = tokio::select! {
-                () = shutdown.cancelled() => return Ok(()),
+                () = shutdown.cancelled() => return Ok(None),
                 // The host keeps the display, so the requests never end.
                 request = self.requests.recv() => match request {
-                    Some(Request::Quit) | None => return Ok(()),
+                    Some(Request::Quit(text)) => return Ok(text),
+                    None => return Ok(None),
                     Some(Request::Suspend) => self.suspend(),
                     Some(Request::Reload(snapshot)) => {
                         // A quit drops the reload, as it drops the first load, and the app shuts down after it.
                         tokio::select! {
                             () = reload(app.as_deref_mut(), &self.display, snapshot) => Ok(()),
-                            () = shutdown.cancelled() => return Ok(()),
-                            () = quit(&mut self.requests) => return Ok(()),
+                            () = shutdown.cancelled() => return Ok(None),
+                            text = quit(&mut self.requests) => return Ok(text),
                         }
                     }
                 },
@@ -175,14 +185,16 @@ impl Host {
     }
 }
 
-/// Wait for a quit or the end of `requests`. The other requests go, so a second ctrl+r during a reload does nothing.
-async fn quit(requests: &mut mpsc::UnboundedReceiver<Request>) {
+/// Wait for a quit or the end of `requests`, and return the quit text, if any. Drop the other requests, so a second
+/// ctrl+r during a reload does nothing.
+async fn quit(requests: &mut mpsc::UnboundedReceiver<Request>) -> Option<String> {
     while let Some(request) = requests.recv().await {
         match request {
-            Request::Quit => return,
+            Request::Quit(text) => return text,
             Request::Suspend | Request::Reload(_) => {}
         }
     }
+    None
 }
 
 /// Load the plugins of `app` again, and show the new runtime with `snapshot`. A failure keeps the old runtime and gives

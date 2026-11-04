@@ -46,8 +46,8 @@ pub enum Input {
 /// What the JavaScript asks of the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
-    /// `term.quit()` ran.
-    Quit,
+    /// `term.quit(text)` ran. The host writes the text, when there is one, after it restores the terminal.
+    Quit(Option<String>),
     /// `term.suspend()` ran: give the terminal to the shell until the shell resumes yuke.
     Suspend,
     /// `term.reload(snapshot)` ran: load the plugins again, and give `snapshot` to the start event of the new runtime.

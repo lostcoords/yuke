@@ -8,6 +8,7 @@ import { rows } from "./rows.ts";
 const JOB: Job = { id: "j1", label: "npm run dev", state: "running", kind: "process", command: "npm", log: "/tmp/j" };
 const SUBAGENT: Job = { id: "j2", label: "Read", state: "running", kind: "plugin", plugin: "agents" };
 const RUNNING: SessionUpdate = { sessionUpdate: "state", state: "running" };
+const RESUME = "To resume this session, run: yuke -r s1";
 
 /** A chat pane on the session `s1` with the running jobs `jobs`. */
 async function opened(jobs: readonly Job[] = []) {
@@ -28,13 +29,28 @@ const screen = (frame: ReturnType<typeof createFrame>): string[] => {
   return rows(frame.frame);
 };
 
-test("a quit with no work goes on at once", async () => {
+test("a quit with no work ends at once and writes the resume command", async () => {
   const { frame } = await opened();
   using _frame = frame;
 
   frame.key("ctrl+q");
 
-  equal(frame.quits, 1);
+  equal(frame.quits, [RESUME]);
+});
+
+test("a quit names each session once and leaves out a pane without a session", async () => {
+  const { frame, chat } = await opened();
+  using _frame = frame;
+  chat.tui.commands.run("core:split-right");
+  await settled();
+  chat.tui.commands.run("core:split-right");
+  await settled();
+  await chat.chat.show("s1");
+  await settled();
+
+  frame.key("ctrl+q");
+
+  equal(frame.quits, [RESUME]);
 });
 
 test("a quit with jobs asks, and it names the keys and what runs", async () => {
@@ -43,7 +59,7 @@ test("a quit with jobs asks, and it names the keys and what runs", async () => {
 
   frame.key("ctrl+q");
 
-  equal(frame.quits, 0);
+  equal(frame.quits, []);
   equal(screen(frame).slice(-3), [
     " Stop everything and quit?",
     " 2 jobs are running.",
@@ -77,7 +93,7 @@ test("Esc stays, and the work goes on", async () => {
   frame.key("ctrl+q");
   frame.key("esc");
 
-  equal(frame.quits, 0);
+  equal(frame.quits, []);
   equal(sessions.state.cancels, 0);
   equal(screen(frame).includes(" Stop everything and quit?"), false);
 });
@@ -89,7 +105,7 @@ test("Enter in the dialog quits", async () => {
   frame.key("ctrl+q");
   frame.key("enter");
 
-  equal(frame.quits, 1);
+  equal(frame.quits, [RESUME]);
 });
 
 test("a second quit key in the dialog quits, also after a stay and a new question", async () => {
@@ -99,10 +115,10 @@ test("a second quit key in the dialog quits, also after a stay and a new questio
   frame.key("ctrl+q");
   frame.key("esc");
   frame.key("ctrl+q");
-  const asked = frame.quits;
+  const asked = frame.quits.length;
   frame.key("ctrl+q");
 
-  equal([asked, frame.quits], [0, 1]);
+  equal([asked, frame.quits], [0, [RESUME]]);
 });
 
 test("the quit command in the dialog quits and opens no second question", async () => {
@@ -112,7 +128,7 @@ test("the quit command in the dialog quits and opens no second question", async 
   frame.key("ctrl+q");
   chat.tui.commands.run("core:quit");
 
-  equal(frame.quits, 1);
+  equal(frame.quits, [RESUME]);
 });
 
 test("two panes on one session count its work once", async () => {
@@ -136,5 +152,5 @@ test("a read-only session does not count, because its parent holds its work", as
 
   frame.key("ctrl+q");
 
-  equal(frame.quits, 1);
+  equal(frame.quits, [undefined]);
 });

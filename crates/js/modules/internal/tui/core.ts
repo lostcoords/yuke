@@ -43,7 +43,8 @@ export interface Driver {
   readonly now: () => number;
   readonly copy: (text: string) => void;
   readonly readImage: () => Promise<ClipboardImage | undefined>;
-  readonly quit: () => void;
+  /** Quit. The host writes `text`, when there is one, after it restores the terminal. */
+  readonly quit: (text?: string) => void;
   readonly suspend: () => void;
   readonly reload: (snapshot: string) => void;
   /** How the terminal interface started. The core reads it once. */
@@ -272,7 +273,7 @@ export class Core {
   }
 
   /** The function that decides on a quit. Without one, a quit goes on at once. */
-  quitGuard: ((quit: () => void) => void) | undefined;
+  quitGuard: ((quit: (text?: string) => void) => void) | undefined;
 
   #addCommands(): void {
     const driver = this.driver;
@@ -280,7 +281,7 @@ export class Core {
       this.commands.add({ name: `${CORE}:${name}`, description, run });
     };
     add("quit", "Quit yuke", () => {
-      const quit = (): void => driver.quit();
+      const quit = (text?: string): void => driver.quit(text);
       if (this.quitGuard === undefined) quit();
       else this.quitGuard(quit);
     });

@@ -970,10 +970,11 @@ declare module "yuke:tui" {
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
     /**
-     * Decide on each quit: `guard` gets the function that quits, and it can call that function later or never. The last
-     * call wins. The returned function ends the guard, if it is current. A kill of the process does not ask.
+     * Decide on each quit: `guard` gets the function that quits, and it can call that function later or never. yuke
+     * writes the `text` of that call, when there is one, after it restores the terminal. The last call wins. The
+     * returned function ends the guard, if it is current. A kill of the process does not ask.
      */
-    readonly guardQuit: (guard: (quit: () => void) => void) => () => void;
+    readonly guardQuit: (guard: (quit: (text?: string) => void) => void) => () => void;
     /**
      * Let the user choose one of `items` in a dialog. Gives the item, or `undefined` for Esc, an abort of `signal`, and
      * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.
