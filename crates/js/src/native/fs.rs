@@ -429,17 +429,17 @@ fn operation<'js, T: IntoJs<'js> + Send + 'static>(
 fn read(path: &Path, position: u64, length: Option<u64>, stop: &CancellationToken) -> Result<Vec<u8>, Failure> {
     // The check before each chunk is the first check too. An open and a seek change nothing.
     let fail = |error| Failure::new(error, path);
-    check_kind(fs::metadata(path).map_err(fail)?.file_type()).map_err(fail)?;
+    let metadata = fs::metadata(path).map_err(fail)?;
+    check_kind(metadata.file_type()).map_err(fail)?;
     let mut file = File::open(path).map_err(fail)?;
     file.seek(SeekFrom::Start(position)).map_err(fail)?;
     let mut reader = file.take(length.unwrap_or(u64::MAX));
-    let mut bytes = Vec::new();
+    // The file size sets the capacity, so a small file needs no chunk.
+    let size = metadata.len().saturating_sub(position).min(reader.limit());
+    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
     loop {
         check(stop)?;
-        let start = bytes.len();
-        bytes.resize(start + CHUNK, 0);
-        let count = reader.read(&mut bytes[start..]).map_err(fail)?;
-        bytes.truncate(start + count);
+        let count = (&mut reader).take(CHUNK as u64).read_to_end(&mut bytes).map_err(fail)?;
         if count == 0 {
             return Ok(bytes);
         }
@@ -657,7 +657,37 @@ mod tests {
 
     use yuke_engine::CancellationToken;
 
-    use super::{CHUNK, Creation, Failure, Placement, write};
+    use super::{CHUNK, Creation, Failure, Placement, read, write};
+
+    #[test]
+    fn a_read_of_a_small_file_allocates_no_chunk() {
+        let folder = yuke_testing::folder("js", "a_read_of_a_small_file_allocates_no_chunk");
+        let path = folder.join("small.json");
+        fs::write(&path, "{}").unwrap();
+
+        let bytes = read(&path, 0, None, &CancellationToken::new()).unwrap();
+
+        assert_eq!(bytes, b"{}");
+        assert!(bytes.capacity() < CHUNK, "{}", bytes.capacity());
+    }
+
+    #[test]
+    fn a_read_across_chunks_gives_its_range_and_a_stop_ends_it() {
+        let folder = yuke_testing::folder("js", "a_read_across_chunks_gives_its_range_and_a_stop_ends_it");
+        let path = folder.join("big.bin");
+        let content: Vec<u8> = (0..=250).cycle().take(2 * CHUNK + 3).collect();
+        fs::write(&path, &content).unwrap();
+        let open = CancellationToken::new();
+
+        assert_eq!(read(&path, 0, None, &open).unwrap(), content);
+        let range = read(&path, 5, Some(CHUNK as u64 + 7), &open).unwrap();
+        assert_eq!(range, content[5..CHUNK + 12]);
+        assert_eq!(read(&path, content.len() as u64 + 9, None, &open).unwrap(), b"");
+
+        let stopped = CancellationToken::new();
+        stopped.cancel();
+        assert!(matches!(read(&path, 0, None, &stopped), Err(Failure::Cancelled)));
+    }
 
     #[test]
     fn a_stop_during_an_atomic_write_leaves_the_old_file_and_no_temporary_file() {
