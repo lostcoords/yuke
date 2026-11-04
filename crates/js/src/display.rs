@@ -27,7 +27,7 @@ pub struct Interface {
 pub struct Startup {
     /// The folder that yuke started in.
     pub cwd: String,
-    /// The session of `--continue` or `--session`.
+    /// The session of `--continue` or `--resume`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionId>,
 }

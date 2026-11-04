@@ -60,7 +60,7 @@ struct Cli {
 
     /// Serve the yuke protocol on stdin and stdout.
     // Clap does not check `requires` beside a conflicting flag, so `--rpc` names each print flag.
-    #[arg(long, conflicts_with_all = ["prompt", "json", "model", "reasoning", "session", "continue_newest"])]
+    #[arg(long, conflicts_with_all = ["prompt", "json", "model", "reasoning", "resume", "continue_newest"])]
     rpc: bool,
 
     /// Serve the clients of a Unix socket, one at a time. The sessions outlive each client.
@@ -83,9 +83,9 @@ struct Cli {
     #[arg(long, value_enum, requires = "prompt")]
     reasoning: Option<Reasoning>,
 
-    /// Continue the session with this id.
-    #[arg(long, value_name = "ID", conflicts_with = "continue_newest")]
-    session: Option<SessionId>,
+    /// Resume the session with this id, in any folder.
+    #[arg(short = 'r', long, value_name = "ID", conflicts_with = "continue_newest")]
+    resume: Option<SessionId>,
 
     /// Continue the session of the current folder with the newest event.
     #[arg(short = 'c', long = "continue")]
@@ -194,7 +194,7 @@ impl Cli {
             };
         }
 
-        let session = match (self.session, self.continue_newest) {
+        let session = match (self.resume, self.continue_newest) {
             (Some(id), _) => SessionChoice::Id(id),
             (None, true) => SessionChoice::Newest,
             (None, false) => SessionChoice::New,
@@ -815,7 +815,7 @@ mod tests {
             );
         }
         let id = SessionId::generate().to_string();
-        for flag in [&["-c"][..], &["--session", &id]] {
+        for flag in [&["-c"][..], &["-r", &id]] {
             assert_eq!(
                 mode(&[&["--rpc"][..], flag].concat()),
                 Err(ErrorKind::ArgumentConflict),
@@ -825,16 +825,13 @@ mod tests {
     }
 
     #[test]
-    fn continue_and_session_choose_the_start_session_of_the_terminal_interface() {
+    fn continue_and_resume_choose_the_start_session_of_the_terminal_interface() {
         let id = SessionId::generate();
         assert_eq!(mode(&["-c"]), Ok(Mode::Tui(SessionChoice::Newest)));
         assert_eq!(
-            mode(&["--session", &id.to_string()]),
+            mode(&["--resume", &id.to_string()]),
             Ok(Mode::Tui(SessionChoice::Id(id)))
         );
-        assert_eq!(
-            mode(&["-c", "--session", &id.to_string()]),
-            Err(ErrorKind::ArgumentConflict)
-        );
+        assert_eq!(mode(&["-c", "-r", &id.to_string()]), Err(ErrorKind::ArgumentConflict));
     }
 }

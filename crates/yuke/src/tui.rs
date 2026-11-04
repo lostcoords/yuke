@@ -47,7 +47,7 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
             store
                 .session_summary(id)
                 .await
-                .map_err(|error| format!("--session {id}: {}", chain_text(&error)))?;
+                .map_err(|error| format!("--resume {id}: {}", chain_text(&error)))?;
             Some(id)
         }
         SessionChoice::Newest => Some(newest_session(store.as_ref(), &cwd).await?),

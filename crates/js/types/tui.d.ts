@@ -942,7 +942,7 @@ declare module "yuke:tui" {
   export interface Startup {
     /** The folder that yuke started in. */
     readonly cwd: string;
-    /** The session of `--continue` or `--session`. The start pane shows it. A restored pane keeps its saved session. */
+    /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
     readonly session?: SessionId | undefined;
   }
 
