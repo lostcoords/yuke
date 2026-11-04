@@ -15,7 +15,6 @@ use std::time::Duration;
 use bytes::Bytes;
 use http::header::{CONNECTION, CONTENT_LENGTH, HOST, TRANSFER_ENCODING, USER_AGENT};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
-use http_body_util::Full;
 use hyper::body::{Body as _, Incoming};
 use hyper::client::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -75,8 +74,9 @@ pub struct Request {
     pub url: String,
     /// The headers. A name can repeat, and its values keep their order.
     pub headers: HeaderMap,
-    /// The body. It is empty for a request without a body.
-    pub body: Bytes,
+    /// The body, in parts that the client sends in order, so a large body needs no copy. A request with no body has no
+    /// parts.
+    pub body: Vec<Bytes>,
 }
 
 impl Request {
@@ -86,7 +86,7 @@ impl Request {
             method,
             url: url.into(),
             headers: HeaderMap::new(),
-            body: Bytes::new(),
+            body: Vec::new(),
         }
     }
 }
@@ -98,7 +98,7 @@ impl fmt::Debug for Request {
             .field("method", &self.method)
             .field("url", &self.url)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
-            .field("body", &self.body.len())
+            .field("body", &self.body.iter().map(Bytes::len).sum::<usize>())
             .finish()
     }
 }
@@ -267,11 +267,11 @@ impl Client {
 
     /// The hyper request of `request`, with the headers that the client adds. hyper decides the wire order and the
     /// case of the fields.
-    fn build(&self, target: &Target, request: Request) -> Result<http::Request<Full<Bytes>>, Error> {
+    fn build(&self, target: &Target, request: Request) -> Result<http::Request<Parts>, Error> {
         let Request {
             method,
             headers: mut fields,
-            body,
+            mut body,
             ..
         } = request;
         let full = |result: Result<_, http::header::MaxSizeReached>| result.map_err(|_| Error::InvalidRequest);
@@ -281,13 +281,16 @@ impl Client {
         fields.remove(TRANSFER_ENCODING);
         fields.remove(CONTENT_LENGTH);
         // RFC 9110 asks for a length on a request of a method that defines content, even an empty one.
-        if !body.is_empty() || [Method::POST, Method::PUT, Method::PATCH].contains(&method) {
-            full(fields.try_insert(CONTENT_LENGTH, HeaderValue::from(body.len())))?;
+        let length: usize = body.iter().map(Bytes::len).sum();
+        if length != 0 || [Method::POST, Method::PUT, Method::PATCH].contains(&method) {
+            full(fields.try_insert(CONTENT_LENGTH, HeaderValue::from(length)))?;
         }
         if !fields.contains_key(USER_AGENT) {
             full(fields.try_insert(USER_AGENT, self.user_agent.clone()))?;
         }
-        let mut http_request = http::Request::new(Full::new(body));
+        // hyper takes no empty frame.
+        body.retain(|part| !part.is_empty());
+        let mut http_request = http::Request::new(Parts(body.into_iter()));
         *http_request.method_mut() = method;
         *http_request.uri_mut() = target.path.clone();
         *http_request.headers_mut() = fields;
@@ -370,12 +373,35 @@ trait Socket: AsyncRead + AsyncWrite + Send + Unpin {}
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Socket for T {}
 
-type Connection = http1::Connection<TokioIo<Box<dyn Socket>>, Full<Bytes>>;
+type Connection = http1::Connection<TokioIo<Box<dyn Socket>>, Parts>;
+
+/// The body of a request: one frame for each part, so hyper queues each buffer and copies none.
+struct Parts(std::vec::IntoIter<Bytes>);
+
+impl hyper::body::Body for Parts {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        Poll::Ready(self.0.next().map(|part| Ok(hyper::body::Frame::data(part))))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.as_slice().is_empty()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::with_exact(self.0.as_slice().iter().map(|part| part.len() as u64).sum())
+    }
+}
 
 /// Send the request on a new connection, and drive the connection until the head arrives.
 async fn send(
     socket: Box<dyn Socket>,
-    request: http::Request<Full<Bytes>>,
+    request: http::Request<Parts>,
 ) -> Result<(http::Response<Incoming>, Connection), Error> {
     let (mut sender, mut connection) = http1::handshake(TokioIo::new(socket))
         .await

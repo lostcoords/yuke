@@ -160,17 +160,17 @@ impl Header {
 }
 
 /// The request bytes to send: the URL, the headers, and the body in parts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Outgoing<'a> {
     url: &'a str,
     headers: &'a [Header],
     /// The body in parts, sent in order. A long context stays in one part across requests.
-    body: [&'a [u8]; 3],
+    body: [Bytes; 3],
 }
 
 impl<'a> Outgoing<'a> {
     /// A request whose body is three parts, sent in order.
-    pub(crate) fn from_parts(url: &'a str, headers: &'a [Header], body: [&'a [u8]; 3]) -> Self {
+    pub(crate) fn from_parts(url: &'a str, headers: &'a [Header], body: [Bytes; 3]) -> Self {
         Outgoing { url, headers, body }
     }
 
@@ -184,14 +184,9 @@ impl<'a> Outgoing<'a> {
         self.headers
     }
 
-    /// The body parts, sent in order.
-    pub fn body(&self) -> impl Iterator<Item = &'a [u8]> {
-        self.body.into_iter()
-    }
-
-    /// The byte count of the whole body.
-    pub fn body_len(&self) -> usize {
-        self.body.iter().map(|part| part.len()).sum()
+    /// The body parts, sent in order. A clone of a part shares its buffer.
+    pub fn body(&self) -> &[Bytes; 3] {
+        &self.body
     }
 }
 

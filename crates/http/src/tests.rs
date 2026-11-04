@@ -24,7 +24,7 @@ fn client(idle_timeout: Option<Duration>) -> Client {
 /// A `POST` of `{}` to `/messages` on the local server at `port`.
 fn post(port: u16) -> Request {
     Request {
-        body: Bytes::from_static(b"{}"),
+        body: vec![Bytes::from_static(b"{}")],
         ..Request::new(Method::POST, format!("http://127.0.0.1:{port}/messages"))
     }
 }
@@ -90,7 +90,7 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
         let value = HeaderValue::from_bytes(value.as_bytes()).unwrap();
         request.headers.append(HeaderName::from_static(name), value);
     }
-    request.body = Bytes::from_static(b"{\"a\":1}");
+    request.body = vec![Bytes::from_static(b"{\"a\":"), Bytes::new(), Bytes::from_static(b"1}")];
 
     let out = run(&client(None), request, None).await;
     let seen = served.await.unwrap();
@@ -108,6 +108,27 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
     let answers: Vec<_> = out.headers.get_all("x-answer").iter().collect();
     assert_eq!(answers, ["a", "b"]);
     assert_eq!(out.bytes, BODY.as_bytes());
+}
+
+#[tokio::test]
+async fn a_body_in_large_parts_arrives_whole_with_its_total_content_length() {
+    let server = Server {
+        status: 200,
+        ..Server::default()
+    };
+    let (port, served) = listen(server).await;
+    let (first, second) = (vec![b'a'; 1 << 21], vec![b'b'; 1 << 20]);
+    let expected = [first.as_slice(), second.as_slice()].concat();
+    let request = Request {
+        body: vec![Bytes::from(first), Bytes::new(), Bytes::from(second)],
+        ..post(port)
+    };
+
+    assert_eq!(run(&client(None), request, None).await.error, None);
+    let seen = served.await.unwrap();
+    assert_eq!(seen.values("content-length"), [expected.len().to_string()]);
+    assert_eq!(seen.values("transfer-encoding"), Vec::<&str>::new());
+    assert!(seen.body == expected, "the body differs");
 }
 
 #[tokio::test]
@@ -133,7 +154,7 @@ async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
         request
             .headers
             .insert(TRANSFER_ENCODING, HeaderValue::from_static("gzip"));
-        request.body = Bytes::from(body);
+        request.body = vec![Bytes::from(body)];
         assert_eq!(run(&client, request, None).await.error, None);
         seen.push(served.await.unwrap());
     }

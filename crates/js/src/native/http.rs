@@ -134,7 +134,7 @@ fn request(
         map.append(name, value);
     }
     request.headers = map;
-    request.body = crate::bytes::copy(body).map_err(|_| invalid())?.into();
+    request.body = vec![crate::bytes::copy(body).map_err(|_| invalid())?.into()];
     Ok(request)
 }
 

@@ -1,8 +1,12 @@
 //! Encode requests. The encoder keeps each encoding, so the next request writes only the changed elements, the last
-//! element, and the head. It hashes every block, and it copies no transcript-sized buffer per request.
+//! element, and the head. It hashes every block. A request shares its buffer, so the encoder copies the buffer only
+//! when a request outlives it or the next encode.
 
+use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+
+use bytes::Bytes;
 
 use crate::request::{Block, Modality, OriginRef, Protocol, Request, Target, Wire};
 use crate::route::Credential;
@@ -106,7 +110,7 @@ impl std::error::Error for EncodeError {
 }
 
 /// One encoded request. Its bytes borrow the encoder until the next `encode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Encoded<'a> {
     /// The URL, headers, and body parts to send.
     pub(crate) http: Outgoing<'a>,
@@ -116,11 +120,17 @@ pub struct Encoded<'a> {
     pub(crate) origin: OriginRef<'a>,
 }
 
+thread_local! {
+    /// The largest buffer of a dropped encoder. A long context grows one buffer, not a new one at each turn.
+    static SPARE: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
+}
+
 /// The encoder of one context. See the module documentation. `Debug` writes no request bytes.
 #[derive(Default)]
 pub struct Encoder {
-    /// The encoded elements, joined by commas, then the head of the last request. One buffer holds both.
-    items: Vec<u8>,
+    /// The encoded elements, joined by commas, then the head of the last request. One buffer holds both. A request
+    /// shares it. The next encode gets it back with its capacity when no request still holds it.
+    items: Bytes,
     /// The hash of each block the elements encode, and whether it holds the cache marker, so a moved marker encodes
     /// both elements again.
     hashes: Vec<u64>,
@@ -184,9 +194,18 @@ impl Encoder {
         }
 
         self.head.build(target, credential, request.session_id)?;
-        let elements_end = self.serialize(target, &request)?;
-        let items = &self.items;
-        let body = [&items[elements_end..], &items[..elements_end], b"]}".as_slice()];
+        let mut items = Vec::from(std::mem::take(&mut self.items));
+        if items.capacity() == 0 {
+            items = SPARE.take();
+        }
+        let written = self.serialize(target, &request, &mut items);
+        self.items = Bytes::from(items);
+        let elements_end = written?;
+        let body = [
+            self.items.slice(elements_end..),
+            self.items.slice(..elements_end),
+            Bytes::from_static(b"]}"),
+        ];
 
         Ok(Encoded {
             http: Outgoing::from_parts(&self.head.url, &self.head.headers, body),
@@ -197,11 +216,11 @@ impl Encoder {
 
     /// Drop the elements that can change, and return the block to encode from. `marker` is the block of the new
     /// cache marker. The hashes of the equal blocks stay, so the caller hashes only the blocks after them.
-    fn keep(&mut self, key: u64, blocks: &[Block], marker: Option<usize>) -> usize {
+    fn keep(&mut self, items: &mut Vec<u8>, key: u64, blocks: &[Block], marker: Option<usize>) -> usize {
         let complete = self.elements_end.take();
         // The buffer holds elements of this key from here on, also after a failure.
         if std::mem::replace(&mut self.key, key) != key {
-            self.items.clear();
+            items.clear();
             self.hashes.clear();
             self.elements.clear();
             return 0;
@@ -219,7 +238,7 @@ impl Encoder {
             && same == blocks.len()
             && same == self.hashes.len()
         {
-            self.items.truncate(end);
+            items.truncate(end);
             return same;
         }
 
@@ -229,22 +248,22 @@ impl Encoder {
         // again. That element is also the last one when every block is equal, and a new block can extend it.
         while let Some(last) = self.elements.pop() {
             if last.block < same {
-                self.items.truncate(last.offset);
+                items.truncate(last.offset);
                 return last.block;
             }
         }
 
-        self.items.clear();
+        items.clear();
         0
     }
 
     /// Write the body as the context elements, then the head. Return where the elements end. Only an element that
     /// this call encodes reads its blobs.
-    fn serialize(&mut self, target: &Target, request: &Request<'_>) -> Result<usize, EncodeError> {
+    fn serialize(&mut self, target: &Target, request: &Request<'_>, items: &mut Vec<u8>) -> Result<usize, EncodeError> {
         let blocks = request.blocks;
         let key = element_key(target, request);
         let marker = wire::cache_index(target.wire, request.cacheable_blocks());
-        let from = self.keep(key, blocks, marker);
+        let from = self.keep(items, key, blocks, marker);
         let hashed = self.hashes.len();
         self.hashes.extend(
             blocks
@@ -257,8 +276,8 @@ impl Encoder {
         // A failed write leaves a partial last element, and the next request drops the last element first.
         // The buffer holds only kept elements here, so any byte means an element comes first.
         let mut jw = JsonWriter {
-            comma: !self.items.is_empty(),
-            out: &mut self.items,
+            comma: !items.is_empty(),
+            out: items,
         };
 
         self.elements.reserve(blocks.len().saturating_sub(from));
@@ -276,14 +295,27 @@ impl Encoder {
         }
 
         // The next request truncates to a kept element, which drops this head too.
-        let elements_end = self.items.len();
-        let head_element = wire::write_head(&mut self.items, target, request);
+        let elements_end = items.len();
+        let head_element = wire::write_head(items, target, request);
         self.elements_end = Some(elements_end);
         if head_element && elements_end != 0 {
-            self.items.push(b',');
+            items.push(b',');
         }
 
         Ok(elements_end)
+    }
+}
+
+impl Drop for Encoder {
+    fn drop(&mut self) {
+        let mut items = Vec::from(std::mem::take(&mut self.items));
+        items.clear();
+        let spare = SPARE.take();
+        SPARE.set(if items.capacity() >= spare.capacity() {
+            items
+        } else {
+            spare
+        });
     }
 }
 
@@ -350,7 +382,7 @@ mod tests {
     }
 
     fn body(encoded: &Encoded<'_>) -> Vec<u8> {
-        encoded.http.body().flatten().copied().collect::<Vec<u8>>()
+        encoded.http.body().iter().flatten().copied().collect::<Vec<u8>>()
     }
 
     /// Check that `encoded` holds the body a fresh encoder writes for the same request: a kept element must equal
@@ -911,6 +943,56 @@ mod tests {
         let text = format!("{encoder:?}");
         assert!(!text.contains("sk-secret"), "{text}");
         assert!(!text.contains("gw-secret"), "{text}");
+    }
+
+    fn sent(parts: &[Bytes; 3]) -> Vec<u8> {
+        parts.iter().flatten().copied().collect()
+    }
+
+    #[test]
+    fn a_new_encoder_writes_into_the_buffer_of_a_dropped_encoder() {
+        let blocks = [Block::user_text("a"), Block::assistant_text("b")];
+        let target = target_of("m", ALL_WIRES[0]);
+        let mut first = Encoder::new();
+        let encoded = first.encode(&target, &Credential::None, Request::new(&blocks)).unwrap();
+        let buffer = encoded.http.body()[1].as_ptr();
+        drop(encoded);
+        drop(first);
+
+        // The turn makes its encoder before a hook can send a side request, so only an encode takes the buffer.
+        let _turn = Encoder::new();
+        let mut side = Encoder::new();
+        let encoded = side.encode(&target, &Credential::None, Request::new(&blocks)).unwrap();
+        assert_eq!(encoded.http.body()[1].as_ptr(), buffer);
+    }
+
+    #[test]
+    fn a_request_keeps_its_bytes_after_a_later_encode_and_after_the_drop_of_its_encoder() {
+        let short = [Block::user_text("a")];
+        let long = [Block::user_text("a"), Block::assistant_text("b"), Block::user_text("c")];
+        let target = target_of("m", ALL_WIRES[0]);
+        let mut encoder = Encoder::new();
+        let held = encoder
+            .encode(&target, &Credential::None, Request::new(&short))
+            .unwrap()
+            .http
+            .body()
+            .clone();
+        let expected = sent(&held);
+
+        encode_checked(&mut encoder, "m", ALL_WIRES[0], Request::new(&long)).unwrap();
+        assert_eq!(sent(&held), expected);
+
+        let held = encoder
+            .encode(&target, &Credential::None, Request::new(&short))
+            .unwrap()
+            .http
+            .body()
+            .clone();
+        drop(encoder);
+        let mut next = Encoder::new();
+        encode_checked(&mut next, "m", ALL_WIRES[0], Request::new(&long)).unwrap();
+        assert_eq!(sent(&held), expected);
     }
 
     // The inputs drop before the encoded request is read, so the borrow checker proves that it borrows none of them.

@@ -91,7 +91,7 @@ mod tests {
         let encoded = encoder
             .encode(&target, &Credential::None, Request::new(&blocks))
             .unwrap();
-        let body = String::from_utf8(encoded.http.body().flatten().copied().collect::<Vec<u8>>()).unwrap();
+        let body = String::from_utf8(encoded.http.body().iter().flatten().copied().collect::<Vec<u8>>()).unwrap();
         let body: serde_json::Value = serde_json::from_str(&body).unwrap();
         let assistant = body["messages"]
             .as_array()

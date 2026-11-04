@@ -518,7 +518,7 @@ impl Transport for ScriptedTransport {
         let mut script = self.script();
         let sent = Sent {
             url: request.url().to_owned(),
-            body: String::from_utf8_lossy(&request.body().flatten().copied().collect::<Vec<u8>>()).into_owned(),
+            body: String::from_utf8_lossy(&request.body().iter().flatten().copied().collect::<Vec<u8>>()).into_owned(),
             headers: request.headers().to_vec(),
         };
         let protocol = sent.protocol();
@@ -765,7 +765,7 @@ mod tests {
                 text: "part".to_owned(),
             });
             let url = format!("https://example.test/v1{}", protocol_path(protocol));
-            let request = Outgoing::from_parts(&url, &[], [b"{}", &[], &[]]);
+            let request = Outgoing::from_parts(&url, &[], [Bytes::from_static(b"{}"), Bytes::new(), Bytes::new()]);
 
             let (_, mut body) = block_on(transport.open(&request, None)).unwrap();
             let mut context = Context::from_waker(Waker::noop());
@@ -789,7 +789,11 @@ mod tests {
     #[test]
     fn a_stalled_reply_sends_its_body_and_never_ends() {
         let transport = ScriptedTransport::default().then_stall(text_reply("part"));
-        let request = Outgoing::from_parts("https://example.test/v1/messages", &[], [b"{}", &[], &[]]);
+        let request = Outgoing::from_parts(
+            "https://example.test/v1/messages",
+            &[],
+            [Bytes::from_static(b"{}"), Bytes::new(), Bytes::new()],
+        );
 
         let (head, mut body) = block_on(transport.open(&request, None)).unwrap();
         let mut context = Context::from_waker(Waker::noop());

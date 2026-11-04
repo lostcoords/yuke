@@ -20,18 +20,13 @@ impl Transport for Client {
         request: &'a Outgoing<'_>,
         deadline: Option<std::time::Instant>,
     ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
-        // The client sends a body that owns its bytes, so the parts join here once.
-        let mut body = Vec::with_capacity(request.body_len());
-        for part in request.body() {
-            body.extend_from_slice(part);
-        }
         let plan = Plan {
             url: request.url(),
             headers: request.headers(),
             content_type: "application/json",
             // The provider sends SSE, so request it.
             accept: "text/event-stream",
-            body,
+            body: request.body().to_vec(),
         };
         Box::pin(round_trip(self, plan, deadline))
     }
@@ -48,7 +43,7 @@ impl Exchange for Client {
             headers: &[],
             content_type: request.content_type,
             accept: "application/json",
-            body: request.body.to_vec(),
+            body: vec![Bytes::copy_from_slice(request.body)],
         };
         Box::pin(async move {
             let (head, mut body) = round_trip(self, plan, deadline).await?;
@@ -71,7 +66,7 @@ struct Plan<'a> {
     headers: &'a [Header],
     content_type: &'static str,
     accept: &'static str,
-    body: Vec<u8>,
+    body: Vec<Bytes>,
 }
 
 /// Send `plan` with the provider rules, and read the head. The body streams.
@@ -82,7 +77,7 @@ async fn round_trip(
 ) -> Result<(Head, BoxBody), Fault> {
     let mut request = yuke_http::Request::new(Method::POST, plan.url);
     request.headers = headers(&plan)?;
-    request.body = Bytes::from(plan.body);
+    request.body = plan.body;
     let response = client.send(request, deadline).await.map_err(fault_of)?;
     let status = response.status.as_u16();
     // The client never follows a redirect, so the key never reaches another origin. A 304 has no redirect target.

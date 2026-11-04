@@ -33,7 +33,7 @@ pub(crate) fn replay(model: &str, kind: ReplayKind, data: &str) -> ReasoningRepl
 pub(crate) fn write(model: &str, wire: Wire, request: Request<'_>) -> Result<String, EncodeError> {
     let mut encoder = Encoder::new();
     let encoded = encoder.encode(&target_of(model, wire), &Credential::None, request)?;
-    Ok(String::from_utf8(encoded.http.body().flatten().copied().collect::<Vec<u8>>()).unwrap())
+    Ok(String::from_utf8(encoded.http.body().iter().flatten().copied().collect::<Vec<u8>>()).unwrap())
 }
 
 /// Write the whole request, with the test blob store when the request names none.
