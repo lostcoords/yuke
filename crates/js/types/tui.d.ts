@@ -501,13 +501,13 @@ declare module "yuke:tui" {
   /**
    * A part of an item, such as a reply, a tool title, or a tool output. `render` gives its rows at a width, and the
    * offsets of their sources index `text`. Without `render`, the text wraps plainly. A render with no rows hides it.
+   * A render can run again for one width, and its rows must stay the same.
    */
   export interface TextSection {
     readonly key: string;
     /** A `label` is a title line, such as the header of a tool. */
     readonly kind: "text" | "label";
     readonly text: string;
-    readonly stops?: readonly number[] | undefined;
     readonly render?: ((width: number) => readonly TextRow[]) | undefined;
   }
 
@@ -645,9 +645,10 @@ declare module "yuke:tui" {
     );
 
   /**
-   * A Markdown text as styled rows. `setText` and `append` parse again only the last two blocks when the text grows.
-   * The style groups are `markdown.*`, and `styles.set` changes their look. Each source offset indexes `source()`.
-   * Calls share cached rows, so do not change them.
+   * A Markdown text as styled rows. A text that grows through `setText` or `append` parses again only its last two
+   * blocks. Calls share the cached rows of a text that changes, so do not change them. A text that stays keeps only its
+   * source, and each read parses it. The style groups are `markdown.*`, and `styles.set` changes their look. Each source
+   * offset indexes `source()`.
    */
   export class Markdown {
     constructor(text?: string);
@@ -683,7 +684,10 @@ declare module "yuke:tui" {
     readonly items?: readonly T[] | undefined;
     /** A key that stays the same for one item across updates. Two items cannot share one key. */
     readonly key: (item: T) => string;
-    /** Give the rows of `item` at `width` cells. The list keeps them while the item object and the width stay. */
+    /**
+     * Give the rows of `item` at `width` cells. The list keeps the height of each item and the rows of recent items, so
+     * it can call this again for the same item and width. The rows must stay the same.
+     */
     readonly render: (item: T, width: number) => readonly TextRow[];
     /** The default is false. */
     readonly followTail?: boolean | undefined;
@@ -702,7 +706,10 @@ declare module "yuke:tui" {
     constructor(options: ScrollListOptions<T>);
     readonly items: readonly T[];
     readonly state: ScrollState;
-    /** Replace the items. An item object that stays keeps its rows, so give a new object for a changed item. */
+    /**
+     * Replace the items. An item object that stays keeps its height at one width, so give a new object for a changed
+     * item.
+     */
     setItems(items: readonly T[]): void;
     scrollBy(rows: number): void;
     scrollTo(row: number): void;
@@ -754,7 +761,7 @@ declare module "yuke:tui" {
     /** A key that stays the same for one item. New items keep the selection on it; a new query selects the first result. */
     readonly key: (item: T) => string;
     readonly label: (item: T) => string;
-    /** The picker shows this dim text after the label. The default rank does not match it. */
+    /** The picker shows this dim text after the label. The default rank does not match it. It can run again for one item. */
     readonly detail?: ((item: T) => string) | undefined;
     /**
      * The shown items for a query, in their final order. The picker does not sort them again. The default matches
@@ -763,7 +770,7 @@ declare module "yuke:tui" {
     readonly rank?: ((query: string, items: readonly T[]) => readonly PickerMatch<T>[]) | undefined;
     /**
      * The rows of a match. The default shows the label with its ranges marked, then the detail. It marks a selected
-     * row.
+     * row. It can run again for one match, width, and selection, and the rows must stay the same.
      */
     readonly render?: ((match: PickerMatch<T>, width: number, selected: boolean) => readonly TextRow[]) | undefined;
     /** Enter chooses the selected item. A left press on a result selects it and chooses it. */

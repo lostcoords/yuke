@@ -1,7 +1,7 @@
 /**
- * `ScrollList` of `yuke:tui`: items rendered to rows, scrolled by display rows. Each item object keeps its rows for one
- * width, and prefix heights find the first visible item. The top item and its row offset stay across a prepend, an
- * update, and a resize. A list that follows the tail stays at the bottom.
+ * `ScrollList` of `yuke:tui`: items rendered to rows, scrolled by display rows. Each item object keeps its height for
+ * one width, and prefix heights find the first visible item. Only recent items keep their rows. The top item and its
+ * row offset stay across a prepend, an update, and a resize. A list that follows the tail stays at the bottom.
  */
 import { registerHost, type WidgetHost } from "yuke:internal/tui/widgets";
 import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow } from "yuke:tui";
@@ -9,8 +9,16 @@ import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Siz
 /** A wheel step moves this many rows. */
 const WHEEL_ROWS = 3;
 
+/** The rendered rows that a list keeps outside its view, so a long list costs little more than its heights. */
+const KEPT_ROWS = 2000;
+
 interface Entry<T> {
   readonly item: T;
+  readonly key: string;
+  readonly height: number;
+}
+
+interface Rendered {
   readonly key: string;
   readonly rows: readonly TextRow[];
 }
@@ -25,7 +33,10 @@ export class ScrollList<T extends object> {
   readonly #key: (item: T) => string;
   readonly #render: (item: T, width: number) => readonly TextRow[];
   readonly #requestOlder: (() => void | Promise<void>) | undefined;
-  readonly #cache = new WeakMap<T, { readonly width: number; readonly rows: readonly TextRow[] }>();
+  readonly #heights = new WeakMap<T, { readonly width: number; readonly height: number }>();
+  /** The oldest render comes first. */
+  readonly #rendered = new Map<T, Rendered>();
+  #renderedRows = 0;
   readonly #listeners = new Set<(state: ScrollState) => void>();
   #items: readonly T[] = [];
   #entries: Entry<T>[] = [];
@@ -77,7 +88,7 @@ export class ScrollList<T extends object> {
   }
 
   /**
-   * Replace the items. An item object that stays keeps its rows. An item that is new or replaced below a view that does
+   * Replace the items. An item object that stays keeps its height at one width. An item that is new or replaced below a view that does
    * not follow the tail sets `changedBelow`.
    */
   setItems(items: readonly T[]): void {
@@ -98,7 +109,7 @@ export class ScrollList<T extends object> {
     if (!this.#following && before.length > 0 && this.#size.height > 0) {
       const bottom = this.#top + this.#size.height;
       const below = this.#entries.some(
-        (entry, at) => !old.has(entry.item) && entry.rows.length > 0 && (this.#prefix[at + 1] as number) > bottom,
+        (entry, at) => !old.has(entry.item) && entry.height > 0 && (this.#prefix[at + 1] as number) > bottom,
       );
       if (below) this.#changedBelow = true;
     }
@@ -125,7 +136,7 @@ export class ScrollList<T extends object> {
   scrollToItem(key: string, row = 0): boolean {
     const at = this.#index.get(key);
     if (at === undefined || !Number.isInteger(row) || row < 0) return false;
-    if (row >= (this.#entries[at] as Entry<T>).rows.length) return false;
+    if (row >= (this.#entries[at] as Entry<T>).height) return false;
     this.#moveTo((this.#prefix[at] as number) + row);
     return true;
   }
@@ -134,7 +145,7 @@ export class ScrollList<T extends object> {
   ensureVisible(key: string, row = 0): boolean {
     const at = this.#index.get(key);
     if (at === undefined || this.#size.height <= 0) return false;
-    const height = (this.#entries[at] as Entry<T>).rows.length;
+    const height = (this.#entries[at] as Entry<T>).height;
     if (!Number.isInteger(row) || row < 0 || row >= height) return false;
     const target = (this.#prefix[at] as number) + row;
     if (target < this.#top) this.#moveTo(target);
@@ -152,7 +163,7 @@ export class ScrollList<T extends object> {
     const at = this.#entryAt(row);
     const entry = this.#entries[at] as Entry<T>;
     const local = row - (this.#prefix[at] as number);
-    return { item: entry.item, row: local, text: entry.rows[local] as TextRow };
+    return { item: entry.item, row: local, text: this.#rowsOf(entry)[local] as TextRow };
   }
 
   /**
@@ -162,7 +173,7 @@ export class ScrollList<T extends object> {
   rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined {
     const at = this.#index.get(key);
     if (at === undefined) return undefined;
-    return { start: this.#prefix[at] as number, rows: (this.#entries[at] as Entry<T>).rows };
+    return { start: this.#prefix[at] as number, rows: this.#rowsOf(this.#entries[at] as Entry<T>) };
   }
 
   /** Give each later change of the state to `listener`, until the remover runs. */
@@ -197,7 +208,7 @@ export class ScrollList<T extends object> {
     if (at < 0) return;
     let row = this.#top - (this.#prefix[at] as number);
     for (let line = 0; line < canvas.height && at < this.#entries.length; line += 1) {
-      const rows = (this.#entries[at] as Entry<T>).rows;
+      const rows = this.#rowsOf(this.#entries[at] as Entry<T>);
       if (row >= rows.length) {
         at += 1;
         row = 0;
@@ -228,23 +239,69 @@ export class ScrollList<T extends object> {
     size: Size = this.#size,
   ): void {
     const entries = keyed.map((entry): Entry<T> => {
-      const cached = this.#cache.get(entry.item);
-      if (cached !== undefined && cached.width === width)
-        return { item: entry.item, key: entry.key, rows: cached.rows };
+      const known = this.#heights.get(entry.item);
+      if (known !== undefined && known.width === width) {
+        return { item: entry.item, key: entry.key, height: known.height };
+      }
       const rows = width > 0 ? this.#render(entry.item, width) : [];
       if (!Array.isArray(rows)) throw new TypeError("a scroll list render gives an array of rows");
-      if (width > 0) this.#cache.set(entry.item, { width, rows });
-      return { item: entry.item, key: entry.key, rows };
+      if (width > 0) {
+        this.#heights.set(entry.item, { width, height: rows.length });
+        this.#keep(entry.item, entry.key, rows);
+      }
+      return { item: entry.item, key: entry.key, height: rows.length };
     });
     const anchor = this.#anchor();
     const order = this.#entries.map((entry) => entry.key);
     this.#items = entries.map((entry) => entry.item);
     this.#entries = entries;
+    const present = new Set(this.#items);
+    for (const [item, kept] of this.#rendered) if (!present.has(item)) this.#forget(item, kept);
     this.#prefix = [0];
-    for (const entry of entries) this.#prefix.push((this.#prefix.at(-1) as number) + entry.rows.length);
+    for (const entry of entries) this.#prefix.push((this.#prefix.at(-1) as number) + entry.height);
     this.#index = new Map(entries.map((entry, at) => [entry.key, at]));
     this.#size = { width: size.width, height: size.height };
     this.#top = this.#following ? this.#last() : this.#anchored(anchor, order);
+    this.#trim();
+  }
+
+  /** The rows of `entry` at the width of the list. It renders them again after they left the kept rows. */
+  #rowsOf(entry: Entry<T>): readonly TextRow[] {
+    if (entry.height === 0) return [];
+    const kept = this.#rendered.get(entry.item);
+    if (kept !== undefined) return kept.rows;
+    const rows = this.#render(entry.item, this.#size.width);
+    this.#keep(entry.item, entry.key, rows);
+    return rows;
+  }
+
+  /** Keep the rows of `item`, and trim the older rows. */
+  #keep(item: T, key: string, rows: readonly TextRow[]): void {
+    const old = this.#rendered.get(item);
+    if (old !== undefined) this.#forget(item, old);
+    if (rows.length === 0) return;
+    this.#rendered.set(item, { key, rows });
+    this.#renderedRows += rows.length;
+    this.#trim(item);
+  }
+
+  /** While the kept rows exceed `KEPT_ROWS`, drop the oldest items outside the view. A caller reads `newest`, so it stays. */
+  #trim(newest?: T): void {
+    for (const [oldest, kept] of this.#rendered) {
+      if (this.#renderedRows <= KEPT_ROWS) break;
+      if (oldest !== newest && !this.#inView(kept.key)) this.#forget(oldest, kept);
+    }
+  }
+
+  #forget(item: T, kept: Rendered): void {
+    this.#rendered.delete(item);
+    this.#renderedRows -= kept.rows.length;
+  }
+
+  #inView(key: string): boolean {
+    const at = this.#index.get(key);
+    if (at === undefined) return false;
+    return (this.#prefix[at] as number) < this.#top + this.#size.height && (this.#prefix[at + 1] as number) > this.#top;
   }
 
   /** The anchor of the view now, or `undefined` before a layout or without rows. */
@@ -260,7 +317,7 @@ export class ScrollList<T extends object> {
     const rowOf = (key: string, row: number): number | undefined => {
       const at = this.#index.get(key);
       if (at === undefined) return undefined;
-      const height = (this.#entries[at] as Entry<T>).rows.length;
+      const height = (this.#entries[at] as Entry<T>).height;
       if (height === 0) return undefined;
       return (this.#prefix[at] as number) + Math.min(row, height - 1);
     };

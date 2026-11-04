@@ -67,9 +67,6 @@ type Align = "left" | "center" | "right";
 interface BlockBase {
   at: number;
   end: number;
-  raw: string;
-  /** The last block can still grow while a stream appends, so it has no cache. */
-  open?: boolean;
 }
 
 /** A table cell, with the source offset of the pipe before it when it has one. */
@@ -206,9 +203,9 @@ function segment(text: string, base: number): Block[] {
   const blocks: Block[] = [];
   const push = (parsed: Parsed, first: number, last: number): void => {
     const at = start(first);
-    // Each line but the last ends in "\n", so the source slice is the joined lines.
+    // Each line but the last ends in "\n".
     const end = start(last) - 1;
-    blocks.push({ ...parsed, at, end, raw: text.slice(at - base, end - base) } as Block);
+    blocks.push({ ...parsed, at, end } as Block);
   };
 
   let i = 0;
@@ -347,9 +344,6 @@ function segment(text: string, base: number): Block[] {
     i = j;
   }
 
-  // The last block can still grow while a stream appends, so it never enters the cache.
-  const last = blocks.at(-1);
-  if (last !== undefined) last.open = true;
   return blocks;
 }
 
@@ -1053,23 +1047,34 @@ function normalized(text: string): string {
 }
 
 interface CacheEntry {
-  raw: string;
+  end: number;
   width: number;
   rows: readonly TextRow[];
 }
 
+/** The parse of a text that changes. While the source only grows, an offset and an end name one text. */
+interface Stream {
+  /** The source text that the last parse read, so an append never slices the whole source. */
+  tail: string;
+  readonly blocks: Block[];
+  readonly cache: Map<number, CacheEntry>;
+}
+
+function newStream(): Stream {
+  return { tail: "", blocks: [], cache: new Map() };
+}
+
 /**
- * A Markdown text as styled rows. A text that extends the old one parses again only its last two blocks, and another
- * text parses from the start. Each source offset indexes `source()`. The cache shares the rows, so they are read-only.
+ * A Markdown text as styled rows. A text that changes keeps its blocks and the rows of its closed blocks, so a stream
+ * parses again only its last two blocks. A text that stays keeps only its source, and each read parses it. Each source
+ * offset indexes `source()`. The cache shares the rows, so they are read-only.
  */
 export class Markdown {
   #source = "";
-  /** The source text that the last parse read, so an append never slices the whole source. */
-  #tail = "";
+  /** The state of a text that changed after its first value. */
+  #stream: Stream | undefined;
   /** The input ended in "\r", so a "\n" at the start of the next fragment belongs to that line break. */
   #carriageReturn = false;
-  readonly #blocks: Block[] = [];
-  readonly #cache = new Map<number, CacheEntry>();
 
   constructor(text = "") {
     this.setText(text);
@@ -1081,10 +1086,8 @@ export class Markdown {
     this.#carriageReturn = text.endsWith("\r");
     const source = normalized(text);
     if (source === this.#source) return false;
-    if (!source.startsWith(this.#source)) {
-      this.#cache.clear();
-      this.#blocks.length = 0;
-    }
+    if (!source.startsWith(this.#source)) this.#stream = newStream();
+    else if (this.#source !== "") this.#stream ??= newStream();
     this.#source = source;
     this.#parse(source);
     return true;
@@ -1097,8 +1100,9 @@ export class Markdown {
     if (fragment !== "") this.#carriageReturn = raw.endsWith("\r");
     if (raw === "") return;
     const added = normalized(raw);
+    if (this.#source !== "") this.#stream ??= newStream();
     this.#source += added;
-    this.#parse(this.#tail + added);
+    this.#parse((this.#stream?.tail ?? "") + added);
   }
 
   /** The source with each "\r\n" and "\r" as "\n". Each source offset indexes this text. */
@@ -1108,7 +1112,7 @@ export class Markdown {
 
   /** The kind and the source range of each block, in order. A code block has its fence language, or "". */
   blocks(): readonly MarkdownBlock[] {
-    return this.#blocks.map(
+    return this.#parsed().map(
       (block): MarkdownBlock =>
         block.kind === "code"
           ? { kind: block.kind, from: block.at, to: block.end, language: block.language }
@@ -1123,7 +1127,7 @@ export class Markdown {
   rows(width: number, limit = Number.POSITIVE_INFINITY): readonly TextRow[] {
     const most = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Number.POSITIVE_INFINITY;
     const out: TextRow[] = [];
-    for (const [index, block] of this.#blocks.entries()) {
+    for (const [index, block] of this.#parsed().entries()) {
       if (out.length >= most) break;
       if (index > 0) out.push(plainRow(""));
       out.push(...this.#blockRows(block, width, most - out.length));
@@ -1133,31 +1137,38 @@ export class Markdown {
     return out;
   }
 
+  #parsed(): readonly Block[] {
+    return this.#stream?.blocks ?? segment(this.#source, 0);
+  }
+
   /** Parse again from the block before the last one. `text` is the end of the source, which holds it already. */
   #parse(text: string): void {
+    const stream = this.#stream;
+    if (stream === undefined) return;
     const source = this.#source;
     const at = source.length - text.length;
-    const keep = Math.max(0, this.#blocks.length - 2);
-    const from = keep > 0 ? (this.#blocks[keep] as Block).at : 0;
+    const keep = Math.max(0, stream.blocks.length - 2);
+    const from = keep > 0 ? (stream.blocks[keep] as Block).at : 0;
     // A tail of fewer than two blocks starts before `at`, so only then the parse slices the whole source.
     const tail = from >= at ? text.slice(from - at) : source.slice(from);
     const blocks = segment(tail, from);
-    this.#blocks.length = keep;
-    this.#blocks.push(...blocks);
-    this.#tail = tail;
+    stream.blocks.length = keep;
+    stream.blocks.push(...blocks);
+    stream.tail = tail;
   }
 
-  /** The rows of `block`. The cache keys on the block offset, and `raw` tells a change under one offset. */
+  /** The rows of `block`. A stream caches them by the offset of the block, and a new end tells that the block grew. */
   #blockRows(block: Block, width: number, limit: number): readonly TextRow[] {
-    if (block.open === true) return renderBlock(block, width, limit);
-    const entry = this.#cache.get(block.at);
-    const fresh = entry !== undefined && entry.raw === block.raw && entry.width === width;
+    const stream = this.#stream;
+    if (stream === undefined) return renderBlock(block, width, limit);
+    const entry = stream.cache.get(block.at);
+    const fresh = entry !== undefined && entry.end === block.end && entry.width === width;
     if (limit !== Number.POSITIVE_INFINITY) {
       return fresh ? entry.rows.slice(0, limit) : renderBlock(block, width, limit);
     }
     if (fresh) return entry.rows;
     const rows = renderBlock(block, width);
-    this.#cache.set(block.at, { raw: block.raw, width, rows });
+    stream.cache.set(block.at, { end: block.end, width, rows });
     return rows;
   }
 }

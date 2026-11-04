@@ -160,6 +160,37 @@ test("the list renders only new item objects until the width changes", () => {
   equal(renders.slice(4), ["a", "b", "c"]);
 });
 
+test("a long list renders an item again after its rows left, and two items in view stay rendered", () => {
+  const large = (key: string): Item => ({ key, text: key.repeat(3000) });
+  const { scroll, renders } = list([large("a"), large("b"), large("c")]);
+  using frame = createFrame({ width: 2, height: 2 }, () => scroll);
+  // The heights need one render of each item. Then "a" left the kept rows, and the view needs it again.
+  frame.draw();
+  equal(renders, ["a", "b", "c", "a"]);
+  equal(scroll.state.total, 4500);
+  scroll.scrollTo(1499);
+  equal(rows(frame.draw()), ["aa", "bb"]);
+  equal(renders.slice(4), ["b"]);
+  scroll.scrollBy(-1);
+  scroll.scrollBy(1);
+  equal(rows(frame.draw()), ["aa", "bb"]);
+  equal(renders.slice(4), ["b"]);
+  // "c" left the kept rows, and a read gives its rows again.
+  equal(scroll.rowAt(3000)?.text.segments[0]?.text, "cc");
+  equal(scroll.rowsOf("c")?.rows.length, 1500);
+  equal(renders.slice(4), ["b", "c"]);
+});
+
+test("a long item that arrives below the view leaves the kept rows", () => {
+  const { scroll, renders } = list([{ key: "a", text: "a0a1a2a3" }]);
+  using frame = createFrame({ width: 2, height: 2 }, () => scroll);
+  frame.draw();
+  scroll.setItems([...scroll.items, { key: "b", text: "b".repeat(6000) }]);
+  equal(renders, ["a", "b"]);
+  equal(scroll.rowAt(4)?.text.segments[0]?.text, "bb");
+  equal(renders, ["a", "b", "b"]);
+});
+
 test("the wheel scrolls the list", () => {
   const { scroll } = list([{ key: "a", text: "a0a1a2a3a4a5" }]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
