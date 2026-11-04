@@ -2,7 +2,7 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
 import { on } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
-import { emit, notify } from "yuke:internal/native";
+import { emit, notify, runtimeVersion } from "yuke:internal/native";
 import { catalog, plugins, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
@@ -114,6 +114,7 @@ export async function load(spec: PluginSpec): Promise<void> {
     }
     const options = optionsOf(spec.options, optionsSchema);
     const ctx: PluginContext<Options> = Object.freeze({
+      version: runtimeVersion(),
       name: spec.name,
       dataDir: spec.dataDir,
       options,

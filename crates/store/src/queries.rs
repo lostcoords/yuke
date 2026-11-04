@@ -497,6 +497,21 @@ FROM sessions WHERE id = :source;",
         )
     }
 
+    #[derive(Debug)]
+    pub(crate) struct SetSessionPromptParams {
+        pub(crate) id: [u8; 16],
+        pub(crate) prompt: String,
+    }
+
+    /// Set the destination prompt while a fork is still private in its creation transaction.
+    pub(crate) fn set_session_prompt(connection: &Connection, params: &SetSessionPromptParams) -> Result<usize> {
+        execute(
+            connection,
+            r"UPDATE sessions SET prompt = :prompt WHERE id = :id;",
+            &[(":id", &params.id), (":prompt", &params.prompt)],
+        )
+    }
+
     /// Give the session the time and the id of its newest event.
     pub(crate) fn touch_session(connection: &Connection, id: [u8; 16]) -> Result<usize> {
         execute(

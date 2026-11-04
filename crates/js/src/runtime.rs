@@ -42,6 +42,8 @@ const WEB: &str = "yuke:internal/web";
 /// The settings of a runtime.
 #[derive(Clone)]
 pub struct Options {
+    /// The version of the running host. Plugins read it from their context without starting another process.
+    pub version: String,
     /// The folder that keeps the JavaScript of each TypeScript file. The runtime makes it when it is missing.
     pub cache: PathBuf,
 
@@ -73,6 +75,7 @@ pub struct Options {
 impl fmt::Debug for Options {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Options")
+            .field("version", &self.version)
             .field("cache", &self.cache)
             .field("processes", &self.processes)
             .field("http", &self.http)

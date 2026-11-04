@@ -598,6 +598,8 @@ declare module "yuke:tui" {
 
   /** A placed text widget. `signal` aborts when the widget leaves the tree. */
   export interface WidgetMount {
+    /** The widget rectangle in screen cells at the last layout. A later layout replaces the value. */
+    readonly rect: Rect;
     readonly widget: TextEditor | TextView;
     readonly pane: Pane | undefined;
     readonly group: object;
@@ -614,9 +616,10 @@ declare module "yuke:tui" {
   /**
    * The source of a segment. A `text` mapping has one source unit for each shown unit, so an offset in the segment
    * maps to `from` plus that offset. A `replacement` stands for its whole source range, such as a list mark for "- ".
+   * An `elision` maps its shown prefix unit by unit. Its last character stands for the remaining source range.
    */
   export interface SourceMapping extends OffsetRange {
-    readonly kind: "text" | "replacement";
+    readonly kind: "text" | "replacement" | "elision";
   }
 
   /** A styled piece of a row. A segment with `copy: false`, such as alignment padding, stays out of a copy. */

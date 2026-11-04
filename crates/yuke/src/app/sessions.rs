@@ -384,9 +384,37 @@ impl SessionService {
     ///
     /// Returns [`AppError::Store`] when the store fails, [`AppError::Invalid`] for a model that cannot run,
     /// [`AppError::Internal`] when the plugins do not open, [`AppError::Reloading`], and [`AppError::Stopped`].
-    pub(crate) async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
+    pub(crate) async fn fork(
+        &self,
+        id: SessionId,
+        through: Option<EventNumber>,
+        cwd: Option<std::path::PathBuf>,
+    ) -> Result<SessionId, AppError> {
         admit(self.registry.borrow().phase)?;
-        let session = Session::fork(Arc::clone(&self.shared.store), id, through).await?;
+        let destination = if let Some(cwd) = cwd {
+            let cwd = canonical(cwd).await?;
+            let prompt = system_prompt(
+                cwd.clone(),
+                self.shared.machine.home.clone(),
+                self.shared.plugin_folders().to_vec(),
+            )
+            .await?;
+            for warning in prompt.warnings {
+                self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
+                    session_id: None,
+                    level: NoticeLevel::Warn,
+                    source: SOURCE.to_owned(),
+                    message: warning,
+                }));
+            }
+            Some(yuke_agent::ForkDestination {
+                cwd,
+                prompt: prompt.sections,
+            })
+        } else {
+            None
+        };
+        let session = Session::fork(Arc::clone(&self.shared.store), id, through, destination).await?;
         self.start_new(session).await
     }
 

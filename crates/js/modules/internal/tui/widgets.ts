@@ -10,6 +10,7 @@ import type {
   KeyEvent,
   MouseEvent,
   Pane,
+  Rect,
   TextAppearance,
   TextEditor,
   TextExtension,
@@ -218,6 +219,7 @@ export class TextSupport<P, E> {
 
 /** A hosted view at its place: its pane and the layer that holds it. */
 export interface PlacedView {
+  readonly rect: Rect;
   readonly view: View;
   readonly pane: Pane | undefined;
   readonly layer: object;
@@ -260,6 +262,7 @@ export function supportOf(view: View): WidgetSupport | undefined {
 }
 
 interface Mounted {
+  rect: Rect;
   readonly mount: WidgetMount;
   readonly controller: AbortController;
   readonly layer: object;
@@ -305,7 +308,10 @@ export class WidgetMounts {
     }
     for (const [view, mounted] of [...this.#mounted]) {
       const entry = now.get(view);
-      if (entry !== undefined && entry.pane === mounted.mount.pane && entry.layer === mounted.layer) continue;
+      if (entry !== undefined && entry.pane === mounted.mount.pane && entry.layer === mounted.layer) {
+        mounted.rect = entry.rect;
+        continue;
+      }
       this.#mounted.delete(view);
       mounted.controller.abort();
       for (const watch of this.#watches) {
@@ -320,12 +326,16 @@ export class WidgetMounts {
       if (found === undefined || this.#mounted.has(entry.view)) continue;
       const controller = new AbortController();
       const mount = Object.freeze({
+        get rect(): Rect {
+          return mounted.rect;
+        },
         widget: found.widget,
         pane: entry.pane,
         group: found.support.group,
         signal: controller.signal,
       });
-      this.#mounted.set(entry.view, { mount, controller, layer: entry.layer });
+      const mounted = { mount, controller, layer: entry.layer, rect: entry.rect };
+      this.#mounted.set(entry.view, mounted);
       added.push(mount);
     }
     for (const mount of added) {

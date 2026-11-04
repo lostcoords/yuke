@@ -21,6 +21,10 @@ FROM sessions WHERE id = :source;
 --- Keep `settings`, the settings of the newest settings event, in the row of the session.
 UPDATE sessions SET settings = :settings WHERE id = :id;
 
+--! set_session_prompt (id: [u8; 16], prompt: String)
+--- Set the destination prompt while a fork is still private in its creation transaction.
+UPDATE sessions SET prompt = :prompt WHERE id = :id;
+
 --! touch_session (id: [u8; 16])
 --- Give the session the time and the id of its newest event.
 UPDATE sessions

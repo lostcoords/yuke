@@ -104,7 +104,7 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
         return item(entry.key, { key: "text", kind: "text", text, render: (width) => filledRows(text, width) });
       }
       const sender = entry.source.kind === "plugin" ? sourceName(entry.source.name) : "you";
-      const title = entry.inputKind === "notification" ? `notification · ${sender}` : `message · ${sender}`;
+      const title = `${entry.inputKind} · ${sender}`;
       return item(entry.key, label(title, STYLE.meta), plain("text", text, undefined));
     }
     case "text": {

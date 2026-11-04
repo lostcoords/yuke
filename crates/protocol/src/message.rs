@@ -473,6 +473,10 @@ pub struct ForkSessionParams {
     /// the first commit when no turn completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<EventNumber>,
+    /// The working folder of the fork. The destination supplies its instructions, skills, and MCP configuration.
+    /// None keeps the folder and prompt at the fork point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
 }
 
 /// The params of `session/new`.

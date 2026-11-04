@@ -48,6 +48,7 @@ import type {
   Settings,
   StoredEvent,
   SyncPluginsResult,
+  ToolDefinition,
   Usage,
 } from "yuke:protocol";
 import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
@@ -91,6 +92,7 @@ export type {
   Settings,
   StoredEvent,
   SyncPluginsResult,
+  ToolDefinition,
   Usage,
 } from "yuke:protocol";
 
@@ -115,6 +117,20 @@ export interface Services {
   readonly chat: ChatService;
 }
 
+/** A saved model context and a cold preview. Live drafts and pending input stay outside it. */
+export interface SessionInspection {
+  /** The context estimate, calibrated by inputTokens when the provider reported it. */
+  readonly contextTokens: number;
+  /** The newest reported input count, or null before an answer or after a replacement. */
+  readonly inputTokens: number | null;
+  readonly settings: SessionSettings;
+  readonly context: readonly Block[];
+  /** Prompt hooks run for this preview. Round hooks do not run. */
+  readonly prompt: readonly { readonly key: string; readonly text: string }[];
+  /** All registered tools, before round hooks choose what to offer. */
+  readonly tools: readonly ToolDefinition[];
+}
+
 /**
  * The sessions of yuke. A session that a plugin creates is an ordinary session: each client can load it and send it
  * input. A session with a parent stays out of the default list. A failed request rejects with an `Error` that tells why.
@@ -127,13 +143,15 @@ export interface Sessions {
    */
   readonly create: (settings: SessionSettings, options?: { readonly parent?: SessionId }) => Promise<SessionId>;
   /** Fork session `id` through the end of the completed turn `through`, or its newest one, and open the fork. */
-  readonly fork: (id: SessionId, through?: EventNumber) => Promise<SessionId>;
+  readonly fork: (id: SessionId, through?: EventNumber, cwd?: string) => Promise<SessionId>;
   /**
    * A page of the saved sessions, newest first. `nextCursor` continues the list. Without `parent`, the page holds only
    * the sessions without a parent. With `parent`, it holds the sessions of that parent.
    */
   readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
   /** The row of the saved session `id`, with its activity now. */
+  /** Read an open session without taking its writer lock or sending a model request. */
+  readonly inspect: (id: SessionId) => Promise<SessionInspection>;
   readonly get: (id: SessionId) => Promise<SessionRow>;
   /** Delete the saved session `id` and its descendants. The call fails while one of these sessions is open. */
   readonly remove: (id: SessionId) => Promise<void>;
@@ -192,6 +210,12 @@ export interface SessionHandle {
    * turn starts when the session is idle.
    */
   readonly input: (content: readonly Block[], modelContent?: readonly Block[]) => Promise<InputId>;
+  /**
+   * Record completed local work without a reply. It bypasses input admission hooks. Idle sessions save it without a
+   * model request. A running turn reads it at its next round, or saves it when the turn ends. The receipt means accepted;
+   * `idle()` waits for durable consumption. Never rerun the action if saving its record fails.
+   */
+  readonly record: (display: string, text: string) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
   readonly sendNotification: (display: string, text: string) => Promise<InputId>;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
@@ -274,6 +298,8 @@ export type Frozen<T> = T extends readonly (infer U)[]
  * `Record<string, never>`.
  */
 export interface PluginContext<O = Record<string, never>> {
+  /** The version of this running host, including its build identity. */
+  readonly version: string;
   /** The name of the plugin, from its `plugin.json`, or the name of a bundled plugin of yuke. */
   readonly name: string;
   /** The absolute data folder of the plugin. It exists, and it stays across reloads. */
@@ -542,6 +568,9 @@ export interface SideRequestResult {
  *   `reasoning` leaves out has no value. An unknown field or a value of another shape fails the turn.
  */
 export interface RoundBeforeAnswer {
+  /** Offer only these tool names for this round. An empty list offers none. Later handlers replace the list.
+   * This controls the request. Use `tool.before` to reject execution of other calls. */
+  readonly tools?: readonly string[] | undefined;
   readonly replace?: { readonly head: readonly Block[]; readonly keep: number } | undefined;
   readonly model?: ModelReference | undefined;
   readonly settings?: Partial<Settings> | undefined;

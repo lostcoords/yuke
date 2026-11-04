@@ -4,7 +4,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
+use yuke_engine::{
+    CancellationToken, Commit, Driver, Inbox, InputBatch, Journal, Outcome, RoundError, TurnEnd, TurnError,
+};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputSource, LiveUpdate, SessionEvent, SessionId, SessionSettings,
     SessionUpdate, StoredEvent,
@@ -115,15 +117,16 @@ impl From<TakeError> for SessionError {
 impl TurnInputs<'_> {
     /// Take each pending input that the turn did not take, and return their model blocks in input order. The input
     /// hook checks each input first. The notes of the session pass without the hook.
-    async fn take(&self) -> Result<Vec<yuke_ai::Block>, TakeError> {
+    async fn take(&self) -> Result<InputBatch, TakeError> {
         let pending = self.store.pending(self.id).await?;
         let mut blocks = Vec::new();
+        let mut reply = false;
         for mut input in pending {
             if lock(&self.taken).iter().any(|known| known.id == input.id) {
                 continue;
             }
             let ours = matches!(input.input.source(), InputSource::Plugin { name } if name == SESSION_SOURCE);
-            let decision = if ours {
+            let decision = if ours || !input.input.needs_reply() {
                 InputDecision::Keep
             } else {
                 self.hook.before_input(&input).await.map_err(TakeError::Hook)?
@@ -161,17 +164,18 @@ impl TurnInputs<'_> {
                     continue;
                 }
             }
+            reply |= input.input.needs_reply();
             let (consumed, model_blocks) = input.into_consumed();
             lock(&self.taken).push(consumed);
             blocks.extend(model_blocks);
         }
-        Ok(blocks)
+        Ok(InputBatch { blocks, reply })
     }
 }
 
 #[async_trait(?Send)]
 impl Inbox for TurnJournal<'_> {
-    async fn take(&self) -> Result<Vec<yuke_ai::Block>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn take(&self) -> Result<InputBatch, Box<dyn std::error::Error + Send + Sync>> {
         self.inputs.take().await.map_err(|error| match error {
             TakeError::Store(error) => error.into(),
             TakeError::Hook(error) => error,
@@ -252,8 +256,9 @@ impl Session {
         store: Arc<dyn Store>,
         source: SessionId,
         through: Option<EventNumber>,
+        destination: Option<crate::ForkDestination>,
     ) -> Result<Session, StoreError> {
-        let opened = store.fork_session(source, through).await?;
+        let opened = store.fork_session(source, through, destination).await?;
         Ok(Session::from_opened(store, opened))
     }
 
@@ -340,6 +345,60 @@ impl Session {
         self.settings = settings;
         self.lease = lease;
         Ok(event_number)
+    }
+
+    /// Save pending records without a model request. A reply input leaves the queue unchanged and returns false.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-session or store error. A failed write leaves the session stale until recovery.
+    pub async fn flush_records(&mut self, observer: &dyn SessionObserver) -> Result<bool, SessionError> {
+        if self.is_stale() {
+            return Err(SessionError::Stale);
+        }
+        let pending = self.store.pending(self.id).await?;
+        if pending.is_empty() || pending.iter().any(|input| input.input.needs_reply()) {
+            return Ok(false);
+        }
+        let mut blocks = Vec::new();
+        let mut consumed = Vec::with_capacity(pending.len());
+        for input in pending {
+            let (record, content) = input.into_consumed();
+            consumed.push(record);
+            blocks.extend(content);
+        }
+        self.save_records(blocks, consumed, Some(observer)).await?;
+        Ok(true)
+    }
+
+    async fn save_records(
+        &mut self,
+        blocks: Vec<yuke_ai::Block>,
+        consumed: Vec<ConsumedInput>,
+        observer: Option<&dyn SessionObserver>,
+    ) -> Result<(), SessionError> {
+        let end = TurnEnd::Outcome(Outcome::Completed {
+            finish_reason: yuke_ai::FinishReason::Stop,
+        });
+        let commit = Commit {
+            end: Some(end.clone()),
+            ..Commit::blocks(blocks)
+        };
+        let lease = self.lease.take();
+        let event_number = self.store.commit(self.id, &commit, &consumed).await?;
+        self.context.extend_from_slice(&commit.blocks);
+        self.newest_turn = NewestTurn::Ended(end);
+        self.lease = lease;
+        if let Some(observer) = observer {
+            observer.update(SessionUpdate::Saved(StoredEvent {
+                event_number,
+                event: SessionEvent::Commit {
+                    commit: commit.into_owned(),
+                    consumed,
+                },
+            }));
+        }
+        Ok(())
     }
 
     /// The next turn with `driver`. The turn takes each pending input as its input. When the turn runs, the session
@@ -480,8 +539,16 @@ impl<'s> SessionTurn<'s> {
             taken: Mutex::default(),
         };
         let mut input = inputs.take().await?;
-        if input.is_empty() {
+        if input.blocks.is_empty() {
             return Err(SessionError::NoInput);
+        }
+        if !input.reply {
+            let consumed = std::mem::take(&mut *lock(&inputs.taken));
+            drop(inputs);
+            session.save_records(input.blocks, consumed, observer).await?;
+            return Ok(Outcome::Completed {
+                finish_reason: yuke_ai::FinishReason::Stop,
+            });
         }
         // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
         // before its first commit leaves its note pending.
@@ -490,7 +557,7 @@ impl<'s> SessionTurn<'s> {
             .any(|taken| matches!(&taken.source, InputSource::Plugin { name } if name == SESSION_SOURCE));
         if !noted && let Some(note) = interruption_note(&session.newest_turn) {
             session.store.accept_input(session.id, note).await?;
-            input.extend(inputs.take().await?);
+            input.blocks.extend(inputs.take().await?.blocks);
         }
         // The future holds the lease while the turn runs, so a dropped future releases it.
         let lease = session.lease.take();
@@ -507,7 +574,7 @@ impl<'s> SessionTurn<'s> {
         let session_id = session.id.to_string();
         let system = prompt_text(prompt.as_deref().unwrap_or(&session.prompt));
         let turn = driver
-            .turn(&mut session.context, input)
+            .turn(&mut session.context, input.blocks)
             .system(&system)
             .settings(&session.settings.settings)
             .session_id(&session_id)

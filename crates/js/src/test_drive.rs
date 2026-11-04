@@ -378,6 +378,9 @@ fn plan_json(plan: RoundPlan) -> Result<serde_json::Value, TestError> {
             serde_json::Value::String(model.target.model.to_string()),
         );
     }
+    if let Some(tools) = plan.tools {
+        json.insert("tools".into(), serde_json::to_value(tools)?);
+    }
     if let Some(settings) = plan.settings {
         json.insert("settings".to_owned(), serde_json::to_value(settings)?);
     }

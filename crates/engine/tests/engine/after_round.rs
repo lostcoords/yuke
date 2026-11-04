@@ -100,7 +100,7 @@ struct Broken;
 
 #[async_trait(?Send)]
 impl Inbox for Broken {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
+    async fn take(&self) -> Result<yuke_engine::InputBatch, Box<dyn Error + Send + Sync>> {
         Err("the store is gone".into())
     }
 }

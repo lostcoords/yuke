@@ -105,6 +105,9 @@ pub struct RoundPlan {
     pub model: Option<Model>,
     /// The settings of this round. The next round uses the turn's settings again.
     pub settings: Option<Settings>,
+    /// Offer only these tool names for this round. `None` offers all tools. An empty list offers none.
+    /// This controls the request, not tool execution; use `before_tool` to reject calls.
+    pub tools: Option<Vec<String>>,
 }
 
 /// The answer of [`Hooks::before_tool`].

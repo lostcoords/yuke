@@ -34,12 +34,21 @@ impl Sessions for PluginSessions {
         Ok(self.service()?.create(settings, parent).await?)
     }
 
-    async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, SessionsError> {
-        Ok(self.service()?.fork(id, through).await?)
+    async fn fork(
+        &self,
+        id: SessionId,
+        through: Option<EventNumber>,
+        cwd: Option<std::path::PathBuf>,
+    ) -> Result<SessionId, SessionsError> {
+        Ok(self.service()?.fork(id, through, cwd).await?)
     }
 
     async fn list(&self, params: ListSessionsParams) -> Result<ListSessionsResult, SessionsError> {
         Ok(self.service()?.list(params).await?)
+    }
+
+    async fn inspect(&self, id: SessionId) -> Result<yuke_js::SessionInspection, SessionsError> {
+        Ok(self.service()?.live(id)?.inspect().await?)
     }
 
     async fn get(&self, id: SessionId) -> Result<SessionRow, SessionsError> {

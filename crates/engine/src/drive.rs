@@ -119,6 +119,24 @@ impl Timer for NoWait {
     async fn sleep(&self, _: Duration) {}
 }
 
+/// Inputs taken together. Records enter the context but do not extend a completed response.
+#[derive(Debug, Default)]
+pub struct InputBatch {
+    /// Owned blocks in their input order.
+    pub blocks: Vec<Block>,
+    /// At least one input asks for a response.
+    pub reply: bool,
+}
+
+impl From<Vec<Block>> for InputBatch {
+    fn from(blocks: Vec<Block>) -> Self {
+        Self {
+            reply: !blocks.is_empty(),
+            blocks,
+        }
+    }
+}
+
 /// Holds the input that arrives during a turn. The driver takes it after a round only when the turn continues, so
 /// input never changes a request in flight.
 #[async_trait(?Send)]
@@ -129,7 +147,7 @@ pub trait Inbox {
     /// # Errors
     ///
     /// Returns why the inbox cannot give its input. The turn then ends with [`RoundError::Inbox`].
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>>;
+    async fn take(&self) -> Result<InputBatch, Box<dyn Error + Send + Sync>>;
 }
 
 /// Saves the commits of each turn. The driver awaits each commit before the turn goes on, and a cancel does not
@@ -150,8 +168,8 @@ struct NoInput;
 
 #[async_trait(?Send)]
 impl Inbox for NoInput {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
-        Ok(Vec::new())
+    async fn take(&self) -> Result<InputBatch, Box<dyn Error + Send + Sync>> {
+        Ok(InputBatch::default())
     }
 }
 
@@ -660,6 +678,17 @@ impl TurnParts<'_> {
             let model = plan.model.as_ref().unwrap_or(driver.model);
             let settings = plan.settings.as_ref().unwrap_or(self.settings);
             let tools = declared.tools(model.target.tool_search);
+            let filtered;
+            let tools = if let Some(names) = &plan.tools {
+                filtered = tools
+                    .iter()
+                    .filter(|tool| names.contains(&tool.name))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                &filtered
+            } else {
+                tools
+            };
             let request = self.request_of(turn_state.context(), tools, settings);
             let error = match driver
                 .send(encoder, request, model, self.observer, cancellation_token)

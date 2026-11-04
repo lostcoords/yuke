@@ -63,8 +63,8 @@ impl Batches {
 
 #[async_trait(?Send)]
 impl Inbox for Batches {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
-        Ok(self.batches.lock().unwrap().pop_front().unwrap_or_default())
+    async fn take(&self) -> Result<yuke_engine::InputBatch, Box<dyn Error + Send + Sync>> {
+        Ok(self.batches.lock().unwrap().pop_front().unwrap_or_default().into())
     }
 }
 
@@ -89,8 +89,8 @@ impl Queue {
 
 #[async_trait(?Send)]
 impl Inbox for Queue {
-    async fn take(&self) -> Result<Vec<Block>, Box<dyn Error + Send + Sync>> {
-        Ok(std::mem::take(&mut *self.0.lock().unwrap()))
+    async fn take(&self) -> Result<yuke_engine::InputBatch, Box<dyn Error + Send + Sync>> {
+        Ok(std::mem::take(&mut *self.0.lock().unwrap()).into())
     }
 }
 

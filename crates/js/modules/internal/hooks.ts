@@ -298,6 +298,7 @@ type EventOf<K extends RoundPoint> = Parameters<SessionHooks[K]>[0];
  * last change.
  */
 interface RoundBeforePlan {
+  tools?: readonly string[];
   replace?: { readonly plugin: string; readonly head: readonly Block[]; readonly keep: number };
   model?: { readonly plugin: string; readonly provider: string; readonly model: string };
   settings?: { readonly plugin: string; readonly changes: Readonly<Record<string, unknown>> };
@@ -378,6 +379,7 @@ function startRoundPlan<K extends RoundPoint>(
           kept = Math.min(kept, keeps);
           plan.replace = { plugin, head, keep: kept };
         }
+        if (answer.tools !== undefined) plan.tools = jsonCopy(answer.tools, "the answer");
         if (answer.model !== undefined) {
           plan.model = { plugin, provider: answer.model.provider, model: answer.model.model };
         }

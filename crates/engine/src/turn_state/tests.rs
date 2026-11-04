@@ -108,7 +108,7 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
         }
     ));
     assert!(matches!(
-        turn_state.proceed(vec![Block::user_text("also run the tests")]),
+        turn_state.proceed(vec![Block::user_text("also run the tests")].into()),
         Action::Send(_)
     ));
     assert_eq!(
@@ -152,7 +152,7 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
             ..
         }
     ));
-    assert!(matches!(turn_state.proceed(Vec::new()), Action::Send(_)));
+    assert!(matches!(turn_state.proceed(Vec::new().into()), Action::Send(_)));
 
     let not_run = "was not executed: the response hit the output token limit, so its arguments may be truncated.";
     assert_eq!(
@@ -178,7 +178,7 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let _ = turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin());
 
     assert!(matches!(
-        turn_state.proceed(Vec::new()),
+        turn_state.proceed(Vec::new().into()),
         Action::Done {
             result: Ok(Outcome::Completed {
                 finish_reason: FinishReason::ContentFilter
@@ -349,4 +349,24 @@ fn a_commit_reads_back_from_its_json() {
         assert_eq!(serde_json::to_string(&commit).unwrap(), json);
         assert_eq!(serde_json::from_str::<Commit<'static>>(json).unwrap(), commit);
     }
+}
+
+#[test]
+fn a_completed_command_enters_the_context_without_extending_a_final_answer() {
+    let mut context = Vec::new();
+    let mut turn_state = TurnState::new(&mut context, None);
+    let _ = turn_state.send(vec![Block::user_text("work")]);
+    let _ = turn_state.model_finished(answer("done"), origin());
+    let action = turn_state.proceed(crate::InputBatch {
+        blocks: vec![Block::user_text("command output")],
+        reply: false,
+    });
+    assert!(matches!(
+        action,
+        Action::Done {
+            result: Ok(Outcome::Completed { .. }),
+            ..
+        }
+    ));
+    assert_eq!(context.last(), Some(&Block::user_text("command output")));
 }

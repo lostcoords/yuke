@@ -377,6 +377,7 @@ declare module "yuke:test" {
 
   /** The plan of a round as the host keeps it. */
   export interface RoundPlan {
+    readonly tools?: readonly string[];
     readonly replace?: { readonly head: readonly Block[]; readonly keep: number };
     /** The id of the model of the round. */
     readonly model?: string;

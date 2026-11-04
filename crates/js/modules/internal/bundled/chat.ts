@@ -6,6 +6,8 @@
  */
 
 import type {
+  ChatModelChoice,
+  ChatModelPickerContext,
   ChatPresentation,
   ChatPresentationOptions,
   ChatReadOnly,
@@ -14,7 +16,13 @@ import type {
   ComposerRowsContext,
 } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { type Chat, chatPane, type PaneActions, type PaneState } from "yuke:internal/bundled/chat/pane";
+import {
+  type Chat,
+  chatPane,
+  type EmptyViewRegistration,
+  type PaneActions,
+  type PaneState,
+} from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
 import type { PluginContext } from "yuke:plugins";
 import type { ModelInfo, SessionId } from "yuke:protocol";
@@ -144,9 +152,40 @@ export async function apply(ctx: PluginContext): Promise<void> {
   }>();
   const panes = new WeakMap<View, PaneActions>();
   const open = new Set<PaneActions>();
+  let emptyView: EmptyViewRegistration | undefined;
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   let readOnly: ((session: SessionId) => ChatReadOnly | undefined) | undefined;
+  let modelPicker: ((context: ChatModelPickerContext) => Promise<ChatModelChoice | undefined>) | undefined;
+  const newChat = (cwd?: string): void => {
+    if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
+    const previous = tui.panes.active;
+    const folder = cwd ?? (previous === undefined ? undefined : panes.get(previous.view)?.folder());
+    tui.panes.split((mount) => chatPane(chat, mount, { cwd: folder }));
+    previous?.close();
+  };
   ctx.provide("chat", {
+    setEmptyView: (factory) => {
+      emptyView?.controller.abort();
+      const registration = { factory, controller: new AbortController() };
+      emptyView = registration;
+      tui?.requestFrame();
+      return () => {
+        if (emptyView !== registration) return;
+        registration.controller.abort();
+        emptyView = undefined;
+        tui?.requestFrame();
+      };
+    },
+    newChat,
+    folder: (view) => panes.get(view)?.folder(),
+    start: async () => active()?.start(),
+    chooseModel: async (picker) => active()?.chooseModel(picker),
+    setModelPicker: (picker) => {
+      modelPicker = picker;
+      return () => {
+        if (modelPicker === picker) modelPicker = undefined;
+      };
+    },
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
       const pane = active();
@@ -204,6 +243,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
+    modelPicker: () => modelPicker,
+    emptyView: () => emptyView,
     open,
     presenter: () => presenter,
     readOnly: (session) => readOnly?.(session),
@@ -319,8 +360,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
   });
   tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
-    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
+    chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined, cwd: active()?.folder() }),
   );
+  tui.commands.add({ name: "new", description: "Start a fresh chat in this pane", run: () => newChat() });
   for (const command of COMMANDS) {
     tui.commands.add({
       name: command.name,

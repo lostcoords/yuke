@@ -866,6 +866,7 @@ async fn start_runtime(
 ) -> Result<(Runtime, JoinHandle<()>), yuke_js::Error> {
     let test = shared.machine.test.as_ref();
     let (runtime, reports) = Runtime::start(Options {
+        version: env!("YUKE_VERSION").to_owned(),
         cache: test.map_or_else(|| shared.machine.paths.cache.join("js"), |test| test.cache.clone()),
         processes: Rc::clone(&shared.processes),
         models: Rc::new(PluginModels(Rc::clone(shared))),

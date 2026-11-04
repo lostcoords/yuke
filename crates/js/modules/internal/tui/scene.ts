@@ -144,7 +144,7 @@ export class Scene {
     }
     const hosted: PlacedView[] = [];
     const collect = (target: Target, layer: Layer): void => {
-      if (isHosted(target.view)) hosted.push({ view: target.view, pane: target.pane, layer });
+      if (isHosted(target.view)) hosted.push({ view: target.view, pane: target.pane, layer, rect: target.rect });
       for (const child of target.children) collect(child, layer);
     };
     for (const layer of [this.#root, ...this.#overlays]) if (layer.tree !== undefined) collect(layer.tree, layer);

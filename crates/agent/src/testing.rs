@@ -45,6 +45,7 @@ macro_rules! store_tests {
             a_reader_opens_while_a_writer_holds_the_session,
             a_reader_holds_no_lock,
             a_pending_input_stays_until_a_commit_consumes_it,
+            a_recorded_input_keeps_its_reply_policy_after_a_saved_load,
             a_consumed_input_id_is_not_given_again,
             a_commit_of_an_input_that_is_not_pending_saves_nothing,
             a_commit_with_fewer_blocks_than_its_inputs_saves_nothing,
@@ -61,6 +62,7 @@ macro_rules! store_tests {
             a_deleted_session_is_not_found,
             a_delete_of_a_held_session_gets_owned,
             a_fork_has_the_settings_and_the_context_of_its_source_and_no_pending_input,
+            a_fork_to_another_folder_keeps_history_and_replaces_only_its_own_settings_and_prompt,
             a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease,
             a_commit_to_a_fork_or_its_source_does_not_change_the_other,
             a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source,
@@ -205,7 +207,7 @@ pub async fn a_session_keeps_its_prompt_and_a_fork_copies_it(store: &dyn Store) 
     let id = created.id;
     store.set_settings(id, &settings("two")).await.unwrap();
 
-    let forked = store.fork_session(id, None).await.unwrap();
+    let forked = store.fork_session(id, None, None).await.unwrap();
 
     assert_eq!(created.prompt, sections);
     assert_eq!(store.open(id, Access::Read).await.unwrap().prompt, sections);
@@ -804,8 +806,8 @@ pub async fn an_unknown_session_is_not_found(store: &dyn Store) {
     let put = store.put_blob(id, b"image".to_vec()).await;
     let read = store.read_blob(id, &blob_of(b"image").digest);
     let delete = store.delete_session(id).await;
-    let fork = store.fork_session(id, None).await;
-    let fork_at = store.fork_session(id, Some(EventNumber(2))).await;
+    let fork = store.fork_session(id, None, None).await;
+    let fork_at = store.fork_session(id, Some(EventNumber(2)), None).await;
     let load = store.load(id, EventPage::After(None)).await;
     let remove = store.remove_input(id, InputId(1)).await;
 
@@ -951,7 +953,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
         yuke_ai::Block::assistant_text("c"),
     ];
 
-    let fork = store.fork_session(source, None).await.unwrap();
+    let fork = store.fork_session(source, None, None).await.unwrap();
 
     assert_ne!(fork.id, source);
     assert_eq!(fork.settings, settings("one"));
@@ -968,13 +970,46 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
 pub async fn a_source_forks_while_its_writer_keeps_its_lease_and_the_fork_has_its_own_lease(store: &dyn Store) {
     let source = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
 
-    let fork = store.fork_session(source.id, None).await.unwrap();
+    let fork = store.fork_session(source.id, None, None).await.unwrap();
 
     assert!(fork.lease.is_some());
     let fork_writer = store.open(fork.id, Access::Write).await;
     let source_writer = store.open(source.id, Access::Write).await;
     assert!(matches!(fork_writer, Err(StoreError::Owned)), "{fork_writer:?}");
     assert!(matches!(source_writer, Err(StoreError::Owned)), "{source_writer:?}");
+}
+
+/// A fork changes its folder and prompt atomically while its source keeps its history and context.
+pub async fn a_fork_to_another_folder_keeps_history_and_replaces_only_its_own_settings_and_prompt(store: &dyn Store) {
+    let source = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let blocks = [
+        yuke_ai::Block::user_text("keep this history"),
+        yuke_ai::Block::assistant_text("saved answer"),
+    ];
+    store.commit(source.id, &end(&blocks), &[]).await.unwrap();
+    let destination_prompt = vec![PromptSection::new("instructions", "destination instructions")];
+    let fork = store
+        .fork_session(
+            source.id,
+            None,
+            Some(crate::ForkDestination {
+                cwd: "/destination".into(),
+                prompt: destination_prompt.clone(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fork.context, blocks);
+    assert_eq!(fork.settings.cwd, Path::new("/destination"));
+    assert_eq!(fork.settings.model, settings("one").model);
+    assert_eq!(fork.prompt, destination_prompt);
+    let saved = store.open(fork.id, Access::Read).await.unwrap();
+    assert_eq!(saved.settings, fork.settings);
+    assert_eq!(saved.prompt, destination_prompt);
+    let original = store.open(source.id, Access::Read).await.unwrap();
+    assert_eq!(original.context, blocks);
+    assert_eq!(original.settings, settings("one"));
+    assert_eq!(original.prompt, prompt());
 }
 
 /// A commit to a fork does not change its source, and a commit to the source does not change the fork.
@@ -988,7 +1023,7 @@ pub async fn a_commit_to_a_fork_or_its_source_does_not_change_the_other(store: &
         .commit(source, &end(&[yuke_ai::Block::user_text("a")]), &[])
         .await
         .unwrap();
-    let fork = store.fork_session(source, None).await.unwrap().id;
+    let fork = store.fork_session(source, None, None).await.unwrap().id;
 
     store
         .commit(fork, &end(&[yuke_ai::Block::user_text("fork")]), &[])
@@ -1016,7 +1051,7 @@ pub async fn a_fork_keeps_the_blobs_of_its_source_after_the_delete_of_the_source
     let source = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
     let first = store.put_blob(source.id, b"image".to_vec()).await.unwrap();
     let second = store.put_blob(source.id, b"audio".to_vec()).await.unwrap();
-    let fork = store.fork_session(source.id, None).await.unwrap().id;
+    let fork = store.fork_session(source.id, None, None).await.unwrap().id;
     let source_id = source.id;
 
     drop(source);
@@ -1050,7 +1085,7 @@ pub async fn a_fork_of_a_source_in_a_running_turn_ends_at_its_newest_completed_t
         .await
         .unwrap();
 
-    let fork = store.fork_session(source, None).await.unwrap();
+    let fork = store.fork_session(source, None, None).await.unwrap();
 
     assert_eq!(fork.context, [yuke_ai::Block::assistant_text("a")]);
     assert_eq!(fork.settings, settings("one"));
@@ -1084,8 +1119,8 @@ pub async fn a_fork_at_an_earlier_completed_turn_has_the_context_and_the_setting
         .await
         .unwrap();
 
-    let first = store.fork_session(source, Some(EventNumber(2))).await.unwrap();
-    let second = store.fork_session(source, Some(EventNumber(4))).await.unwrap();
+    let first = store.fork_session(source, Some(EventNumber(2)), None).await.unwrap();
+    let second = store.fork_session(source, Some(EventNumber(4)), None).await.unwrap();
 
     assert_eq!(first.context, [yuke_ai::Block::assistant_text("a")]);
     assert_eq!(first.settings, settings("one"));
@@ -1119,7 +1154,7 @@ pub async fn a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_complete
     }
 
     for through in [0, 1, 2, 3, 4, 5, 6, u64::MAX] {
-        let fork = store.fork_session(source, Some(EventNumber(through))).await;
+        let fork = store.fork_session(source, Some(EventNumber(through)), None).await;
 
         assert!(
             matches!(fork, Err(StoreError::NotACompletedTurn)),
@@ -1142,7 +1177,7 @@ pub async fn a_source_without_a_completed_turn_forks_to_its_settings_and_an_empt
         .unwrap();
     store.set_settings(source, &settings("three")).await.unwrap();
 
-    let fork = store.fork_session(source, None).await.unwrap();
+    let fork = store.fork_session(source, None, None).await.unwrap();
 
     assert_eq!(fork.context, []);
     assert_eq!(fork.settings, settings("two"));
@@ -1432,7 +1467,7 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
         .map(|loaded| loaded.events)
         .unwrap();
 
-    let fork = store.fork_session(source, None).await.unwrap().id;
+    let fork = store.fork_session(source, None, None).await.unwrap().id;
     store.set_settings(fork, &settings("two")).await.unwrap();
 
     let fork_events = store
@@ -1719,7 +1754,7 @@ pub async fn a_child_keeps_its_parent_at_an_open_and_its_fork_has_none(store: &d
         .id;
 
     let opened = store.open(child, Access::Read).await.unwrap();
-    let fork = store.fork_session(child, None).await.unwrap();
+    let fork = store.fork_session(child, None, None).await.unwrap();
 
     assert_eq!(opened.parent, Some(parent));
     assert_eq!(fork.parent, None);
@@ -1760,7 +1795,7 @@ pub async fn a_fork_is_the_newest_session_and_names_its_source(store: &dyn Store
         .await
         .unwrap();
 
-    let fork = store.fork_session(source, None).await.unwrap().id;
+    let fork = store.fork_session(source, None, None).await.unwrap().id;
 
     let summary = store.session_summary(fork).await.unwrap();
     assert_eq!(listed(&store.list_sessions(None, None, None, 1).await.unwrap()), [fork]);
@@ -1850,7 +1885,7 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
     );
     assert_eq!(store.pending(source.id).await.unwrap(), []);
 
-    let fork = store.fork_session(source.id, Some(receipt)).await.unwrap();
+    let fork = store.fork_session(source.id, Some(receipt), None).await.unwrap();
     let fork_receipt = store.commit(fork.id, &end(&[]), &[]).await.unwrap();
     let source_receipt = store.commit(source.id, &end(&[]), &[]).await.unwrap();
     assert_eq!(fork_receipt, EventNumber(4));
@@ -1869,4 +1904,18 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
             },
         }]
     );
+}
+
+/// An accepted local record keeps its no-reply policy through the store's saved JSON.
+pub async fn a_recorded_input_keeps_its_reply_policy_after_a_saved_load(store: &dyn Store) {
+    let opened = store
+        .create_session(&settings("test-model"), &prompt(), None)
+        .await
+        .unwrap();
+    let input = Input::notification("shell", "pwd", "/workspace").recorded();
+    store.accept_input(opened.id, input.clone()).await.unwrap();
+    let loaded = store.load(opened.id, EventPage::After(None)).await.unwrap();
+    assert_eq!(loaded.pending.len(), 1);
+    assert_eq!(loaded.pending[0].input, input);
+    assert!(!loaded.pending[0].input.needs_reply());
 }

@@ -158,7 +158,12 @@ impl Sessions for Scripted {
     async fn create(&self, _: SessionSettings, _: Option<SessionId>) -> Result<SessionId, SessionsError> {
         Err("unused".into())
     }
-    async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, SessionsError> {
+    async fn fork(
+        &self,
+        id: SessionId,
+        through: Option<EventNumber>,
+        _cwd: Option<PathBuf>,
+    ) -> Result<SessionId, SessionsError> {
         self.record(format!("fork {id} {through:?}"));
         Ok(id)
     }
@@ -168,6 +173,9 @@ impl Sessions for Scripted {
             sessions: Vec::new(),
             next_cursor: None,
         })
+    }
+    async fn inspect(&self, id: SessionId) -> Result<crate::SessionInspection, SessionsError> {
+        Err(format!("no session {id}").into())
     }
     async fn get(&self, id: SessionId) -> Result<SessionRow, SessionsError> {
         Err(format!("no session {id}").into())

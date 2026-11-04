@@ -21,6 +21,7 @@ import {
   sessionMcpServers,
   sessionNotify,
   sessionPutBlob,
+  sessionRecord,
   sessionRemoveInput,
   sessionRespond,
   sessionSetSettings,
@@ -29,6 +30,7 @@ import {
   sessionsEvents,
   sessionsFork,
   sessionsGet,
+  sessionsInspect,
   sessionsList,
   sessionsListen,
   sessionsOpen,
@@ -115,6 +117,10 @@ async function open(
       live();
       return sessionInput([id, content, modelContent ?? null]);
     },
+    async record(display, text) {
+      live();
+      return sessionRecord([id, plugin, display, text]);
+    },
     async sendNotification(display, text) {
       live();
       return sessionNotify([id, plugin, display, text]);
@@ -170,8 +176,9 @@ async function open(
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
   return Object.freeze({
     create: (settings, options) => sessionsCreate([settings, options?.parent ?? null]),
-    fork: (id, through) => sessionsFork([id, through ?? null]),
+    fork: (id, through, cwd) => sessionsFork([id, through ?? null, cwd ?? null]),
     list: (params) => sessionsList(params ?? {}),
+    inspect: (id) => sessionsInspect(id),
     get: (id) => sessionsGet(id),
     async remove(id) {
       await sessionsRemove(id);

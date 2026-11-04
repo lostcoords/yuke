@@ -56,6 +56,24 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   equal(core.widgets.list().length, 1);
 });
 
+test("a widget mount keeps its identity and reports its latest screen rectangle after reflow", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  const tui = createSurface(core, "chat", new AbortController().signal);
+  const editor = new TextEditor();
+  let column = 2;
+  let width = 9;
+  tui.setRoot(() => ({ draw() {}, layout: () => [{ view: editor, rect: { column, row: 1, width, height: 2 } }] }));
+  terminal.screen(core);
+  const mount = core.widgets.list()[0];
+  equal(mount?.rect, { column: 2, row: 1, width: 9, height: 2 });
+  column = 5;
+  width = 4;
+  terminal.screen(core);
+  equal(core.widgets.list()[0], mount);
+  equal(mount?.rect, { column: 5, row: 1, width: 4, height: 2 });
+});
+
 test("a watch that starts inside an attach sees each mount once", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);

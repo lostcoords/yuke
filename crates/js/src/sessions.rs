@@ -68,6 +68,43 @@ pub enum Fact {
 /// Receives the facts of one watch after the host state borrow ends. A call must not block.
 pub type FactSink = Rc<dyn Fn(Fact)>;
 
+/// A saved context and the registered tools, with the prompt preview after the prompt hooks.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInspection {
+    /// Settings from the same store snapshot as the context.
+    pub settings: SessionSettings,
+    /// The current context estimate, calibrated by the newest reported input count when present.
+    pub context_tokens: u64,
+    /// The newest reported input count. None means the estimate counts only saved blocks.
+    pub input_tokens: Option<u64>,
+    /// The owned, saved model blocks. Live drafts and pending input are not included.
+    pub context: Vec<yuke_ai::Block>,
+    /// The prompt sections after the current prompt hooks. Round hooks do not run.
+    pub prompt: Vec<yuke_agent::PromptSection>,
+    /// The registered native, plugin, and available MCP tools. Round hooks can offer a subset.
+    pub tools: Vec<yuke_ai::ToolDefinition>,
+}
+
+impl SessionInspection {
+    /// Consume a saved snapshot and the current prompt and tools. Any lease in the snapshot drops here.
+    pub fn from_saved(
+        saved: yuke_agent::Opened,
+        prompt: Vec<yuke_agent::PromptSection>,
+        tools: Vec<yuke_ai::ToolDefinition>,
+    ) -> Self {
+        let context_tokens = crate::native::ai::context_tokens(&saved.context, saved.input_tokens);
+        Self {
+            settings: saved.settings,
+            context: saved.context,
+            context_tokens,
+            input_tokens: saved.input_tokens,
+            prompt,
+            tools,
+        }
+    }
+}
+
 /// The sessions and the catalog that the plugins use. The consumer gives one value to each runtime. Each async call runs
 /// as a local task of the host runtime. A sync call runs on the engine task, so it must not block.
 #[async_trait(?Send)]
@@ -84,7 +121,19 @@ pub trait Sessions {
     /// # Errors
     ///
     /// Returns why the request failed.
-    async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, SessionsError>;
+    async fn fork(
+        &self,
+        id: SessionId,
+        through: Option<EventNumber>,
+        cwd: Option<std::path::PathBuf>,
+    ) -> Result<SessionId, SessionsError>;
+
+    /// Read the saved context and preview the prompt and registered tools of an open session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store, plugin, or closed-session error. It sends no model request.
+    async fn inspect(&self, id: SessionId) -> Result<SessionInspection, SessionsError>;
 
     /// A page of the saved sessions, newest first.
     ///

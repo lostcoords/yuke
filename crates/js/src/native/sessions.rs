@@ -138,13 +138,18 @@ fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &
     request.add(
         object,
         "sessionsFork",
-        |sessions, (id, through): (SessionId, Option<EventNumber>)| async move { sessions.fork(id, through).await },
+        |sessions, (id, through, cwd): (SessionId, Option<EventNumber>, Option<std::path::PathBuf>)| async move {
+            sessions.fork(id, through, cwd).await
+        },
     )?;
     request.add(
         object,
         "sessionsList",
         |sessions, params: ListSessionsParams| async move { sessions.list(params).await },
     )?;
+    request.add(object, "sessionsInspect", |sessions, id: SessionId| async move {
+        sessions.inspect(id).await
+    })?;
     request.add(object, "sessionsGet", |sessions, id: SessionId| async move {
         sessions.get(id).await
     })?;
@@ -175,6 +180,15 @@ fn add_requests<'js>(object: &Object<'js>, sessions: &Rc<dyn Sessions>, queue: &
         "sessionNotify",
         |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
             sessions.input(id, Input::notification(&plugin, &display, &text)).await
+        },
+    )?;
+    request.add(
+        object,
+        "sessionRecord",
+        |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
+            sessions
+                .input(id, Input::notification(&plugin, &display, &text).recorded())
+                .await
         },
     )?;
     request.add(object, "sessionIdle", |sessions, id: SessionId| async move {

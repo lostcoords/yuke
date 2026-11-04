@@ -103,6 +103,7 @@ impl crate::Sessions for NoSessions {
         &self,
         _: yuke_protocol::SessionId,
         _: Option<yuke_protocol::EventNumber>,
+        _: Option<PathBuf>,
     ) -> Result<yuke_protocol::SessionId, crate::SessionsError> {
         no_sessions()
     }
@@ -110,6 +111,9 @@ impl crate::Sessions for NoSessions {
         &self,
         _: yuke_protocol::ListSessionsParams,
     ) -> Result<yuke_protocol::ListSessionsResult, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn inspect(&self, _: yuke_protocol::SessionId) -> Result<crate::SessionInspection, crate::SessionsError> {
         no_sessions()
     }
     async fn get(&self, _: yuke_protocol::SessionId) -> Result<yuke_protocol::SessionRow, crate::SessionsError> {
@@ -227,6 +231,7 @@ impl crate::Sessions for NoSessions {
 /// The options of a test runtime in `folder` with `processes`.
 fn options(folder: &Path, processes: Rc<Processes>) -> Options {
     Options {
+        version: "test-host".to_owned(),
         cache: folder.join("cache"),
         processes,
         models: Rc::new(NoModels),

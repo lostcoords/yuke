@@ -172,6 +172,11 @@ struct ModelEntry {
     protocol: Option<Protocol>,
     #[serde(default)]
     limits: Limits,
+    #[serde(default)]
+    input: Vec<yuke_protocol::Modality>,
+    #[serde(default)]
+    output: Vec<yuke_protocol::Modality>,
+    tools: Option<bool>,
     cost: Option<Vec<PriceBand>>,
     #[serde(default)]
     reasoning_levels: Vec<Option<Effort>>,
@@ -387,10 +392,10 @@ impl ModelEntry {
             limits: self.limits,
             cost,
             caps: Caps {
+                tools: self.tools,
                 tool_search: flags.supports_tool_search,
                 disable_reasoning: flags.can_disable_reasoning,
                 cache_breakpoint: flags.supports_cache_breakpoint,
-                ..Caps::default()
             },
             reasoning_levels: self.reasoning_levels.into(),
             dialect: Dialect {
@@ -401,7 +406,10 @@ impl ModelEntry {
                 },
                 anthropic_thinking,
             },
-            modalities: catalog::Modalities::default(),
+            modalities: catalog::Modalities {
+                input: self.input.into_iter().map(modality).collect(),
+                output: self.output.into_iter().map(modality).collect(),
+            },
         })
     }
 }
@@ -489,3 +497,14 @@ fn valid_base_url(url: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests;
+
+/// Convert a configuration modality. The protocol enum excludes unknown media kinds.
+fn modality(kind: yuke_protocol::Modality) -> yuke_ai::Modality {
+    match kind {
+        yuke_protocol::Modality::Text => yuke_ai::Modality::Text,
+        yuke_protocol::Modality::Image => yuke_ai::Modality::Image,
+        yuke_protocol::Modality::Audio => yuke_ai::Modality::Audio,
+        yuke_protocol::Modality::Video => yuke_ai::Modality::Video,
+        yuke_protocol::Modality::Pdf => yuke_ai::Modality::Pdf,
+    }
+}

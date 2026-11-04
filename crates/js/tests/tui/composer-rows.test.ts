@@ -48,7 +48,7 @@ test("plugin rows show below the transcript and above the waiting messages, cut 
       ],
       true,
       ["first source, a longer …", "its second row", " fix the test     ↑ edit"],
-      { session: "s1", width: 24 },
+      { session: "s1", width: 24, composer: chat.tui.focused },
     ],
   );
 });
@@ -99,7 +99,7 @@ test("rows below show under the composer, cut to the width, in add order, and th
       ["above", rule, "Message…", rule, "first source, a longer …", "its second row", "second source"],
       true,
       ["above", rule, "Message…", rule, "first source, a longer …", "its second row"],
-      { session: "s1", width: 24 },
+      { session: "s1", width: 24, composer: chat.tui.focused },
     ],
   );
 });

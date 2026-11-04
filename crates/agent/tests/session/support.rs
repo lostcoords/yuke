@@ -118,8 +118,13 @@ impl Store for FailingStore {
         self.store.create_session(settings, prompt, parent).await
     }
 
-    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
-        self.store.fork_session(source, through).await
+    async fn fork_session(
+        &self,
+        source: SessionId,
+        through: Option<EventNumber>,
+        destination: Option<yuke_agent::ForkDestination>,
+    ) -> Result<Opened, StoreError> {
+        self.store.fork_session(source, through, destination).await
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {

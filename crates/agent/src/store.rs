@@ -12,6 +12,15 @@ use yuke_protocol::{
 
 use crate::PromptSection;
 
+/// The owned destination of a fork. Its folder supplies the new prompt. The source history stays unchanged.
+#[derive(Debug)]
+pub struct ForkDestination {
+    /// The canonical working folder of the new session.
+    pub cwd: std::path::PathBuf,
+    /// The system prompt sections of that folder. The new session owns their bytes.
+    pub prompt: Vec<PromptSection>,
+}
+
 /// Saves and loads sessions. Each method is one atomic durable step. One writer at a time owns a session. A second
 /// [`Access::Write`] open gets [`StoreError::Owned`] until the [`Lease`] of the first writer drops and its writes end.
 /// Only the holder of the lease calls [`Store::set_settings`] and [`Store::commit`]. Any caller can accept input.
@@ -45,7 +54,12 @@ pub trait Store: Send + Sync {
     /// Returns [`StoreError::NotFound`] for an unknown source, [`StoreError::NotACompletedTurn`] when event `through`
     /// does not end a completed turn, and [`StoreError::Failed`] when the save fails. A failed save leaves no new
     /// session. When the delete of a partial copy fails, the error of that delete returns in place of the first one.
-    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError>;
+    async fn fork_session(
+        &self,
+        source: SessionId,
+        through: Option<EventNumber>,
+        destination: Option<ForkDestination>,
+    ) -> Result<Opened, StoreError>;
 
     /// Replace the settings of session `id` with `settings`. Return the event number of the settings event only after
     /// the durable write succeeds.

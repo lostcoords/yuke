@@ -8,6 +8,9 @@ import {
   ChatCommands,
   ChatComposer,
   ChatDocument,
+  type ChatModelChoice,
+  type ChatModelPicker,
+  type ChatModelPickerContext,
   type ChatPresentation,
   type ChatPresentationOptions,
   ChatQuestions,
@@ -17,6 +20,7 @@ import {
   type ComposerRow,
   type ComposerRowPlace,
   type ComposerRowsContext,
+  type EmptyChatFactory,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { EMPTY } from "yuke:internal/chat/composer";
@@ -49,6 +53,7 @@ interface Viewport {
  * a transcript that does not follow the tail.
  */
 export interface PaneState {
+  readonly cwd?: string | undefined;
   readonly session?: SessionId | undefined;
   readonly draft?: EditorState | undefined;
   readonly folds?: readonly (readonly [string, boolean])[] | undefined;
@@ -57,10 +62,13 @@ export interface PaneState {
 
 /** What the commands of the plugin do in a pane. */
 export interface PaneActions {
+  /** Create or reopen the pane session without sending its draft. */
+  readonly start: () => Promise<SessionId | undefined>;
+  readonly folder: () => string;
   readonly toggleTools: () => void;
   readonly send: () => Promise<void>;
   /** Let the user choose the model and the reasoning of the pane. */
-  readonly chooseModel: () => Promise<void>;
+  readonly chooseModel: (picker?: ChatModelPicker) => Promise<void>;
   /** Put the image of the clipboard at the caret of the composer. */
   readonly pasteImage: () => Promise<void>;
   /**
@@ -103,6 +111,12 @@ export interface PaneActions {
   };
 }
 
+/** One empty-view factory and its owned lifetime across all panes. */
+export interface EmptyViewRegistration {
+  readonly factory: EmptyChatFactory;
+  readonly controller: AbortController;
+}
+
 /** What each pane of the chat shares. */
 export interface Chat {
   readonly ctx: PluginContext;
@@ -113,6 +127,8 @@ export interface Chat {
   readonly refresh: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
+  readonly emptyView: () => EmptyViewRegistration | undefined;
+  readonly modelPicker: () => ((context: ChatModelPickerContext) => Promise<ChatModelChoice | undefined>) | undefined;
   /** The answer of the read-only source of the `chat` service for `session`. */
   readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
   /** The panes that are open. */
@@ -132,6 +148,7 @@ export interface Chat {
 export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const ctx = chat.ctx;
   const tui = chat.tui;
+  let folder = state.cwd ?? tui.startup.cwd;
   const chatSession = new ChatSession(ctx.get("sessions"), { signal: mount.signal, id: state.session });
   // The draft of each session that this pane left by `show`, for the return to it.
   const drafts = new Map<SessionId, EditorState>();
@@ -182,6 +199,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   // The pane follows each change of its session: the folds, the place, and the next layout.
   chatSession.onChange(() => {
+    folder = chatSession.transcript.settings?.cwd ?? folder;
     if (chatSession.id !== bound) {
       // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
       document = create(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
@@ -244,7 +262,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    * Return the settings of the saved choice, else the settings that the user picks.
    * With `pick`, the picker opens and the saved choice does not count.
    */
-  const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
+  const settingsOf = async (pick: boolean, customPicker?: ChatModelPicker): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
     const saved = pick ? undefined : chat.choice.current;
@@ -253,18 +271,35 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     );
     let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
     if (chosen === undefined || reasoning === undefined) {
-      chosen = await tui.select({
-        items: models,
-        label: (entry) => `${entry.provider}/${entry.model.id}`,
-        signal: mount.signal,
-      });
-      if (chosen === undefined) return undefined;
-      reasoning = await tui.select({
-        items: chosen.model.reasoning,
-        label: (choice) => choice.level,
-        signal: mount.signal,
-      });
-      if (reasoning === undefined) return undefined;
+      const picker = customPicker ?? chat.modelPicker();
+      if (picker !== undefined) {
+        const choice = await picker({
+          providers,
+          current: chatSession.transcript.settings,
+          saved: chat.choice.current,
+          signal: mount.signal,
+        });
+        if (choice === undefined || mount.signal.aborted) return undefined;
+        chosen = models.find(
+          (entry) => entry.provider === choice.model.provider && entry.model.id === choice.model.model,
+        );
+        reasoning = chosen?.model.reasoning.find((entry) => entry.level === choice.reasoning);
+        if (chosen === undefined || reasoning === undefined)
+          throw new Error("the chosen model or reasoning is not in the ready catalog");
+      } else {
+        chosen = await tui.select({
+          items: models,
+          label: (entry) => `${entry.provider}/${entry.model.id}`,
+          signal: mount.signal,
+        });
+        if (chosen === undefined) return undefined;
+        reasoning = await tui.select({
+          items: chosen.model.reasoning,
+          label: (choice) => choice.level,
+          signal: mount.signal,
+        });
+        if (reasoning === undefined) return undefined;
+      }
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
         await chat.choice.save(choice);
@@ -285,7 +320,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         toolChoice: "auto",
         outputSchema: null,
       },
-      cwd: tui.startup.cwd,
+      cwd: folder,
     };
   };
 
@@ -294,11 +329,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    * A pane with a session also saves them in the session.
    * The session keeps its folder and the rest of its settings.
    */
-  const chooseModel = async (): Promise<void> => {
+  const chooseModel = async (picker?: ChatModelPicker): Promise<void> => {
     if (busy) return;
     busy = true;
     try {
-      const settings = await settingsOf(true);
+      const settings = await settingsOf(true, picker);
       if (settings === undefined || mount.signal.aborted) return;
       const id = chatSession.id;
       if (id === undefined) return;
@@ -418,6 +453,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let rowsAbove: ComposerRow[] = [];
   let rowsBelow: ComposerRow[] = [];
   let closeRow = -1;
+  let emptyRegistration: EmptyViewRegistration | undefined;
+  let emptyView: View | undefined;
   const pane: View = {
     contexts: ["chat"],
     layout(size: Size): readonly Placement[] {
@@ -433,7 +470,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       }
       // A question and a read-only row hide the composer, and the composer keeps its draft.
       const question = questions.current;
-      const context = { session: chatSession.id, width: size.width };
+      const context = { session: chatSession.id, width: size.width, composer };
       rowsBelow = chat.rows("below", context, Math.floor(size.height / 2));
       const left = size.height - rowsBelow.length;
       // A short pane gives up the rule below the composer first: the two rules and the composer need three rows.
@@ -454,8 +491,27 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       shown = list.slice(Math.max(0, list.length - above));
       // Plugin rows get the rows that the strip leaves, at most half the rows above the rule.
       rowsAbove = chat.rows("above", context, Math.min(above - shown.length, Math.floor(Math.max(0, ruleRow) / 2)));
+      let body: View = view;
+      if (chatSession.id === undefined && composer.state.text === "" && composer.state.spans.length === 0) {
+        const registration = chat.emptyView();
+        if (registration !== emptyRegistration) {
+          emptyRegistration = registration;
+          emptyView = undefined;
+          if (registration !== undefined) {
+            emptyView = registration.factory({
+              composer,
+              cwd: folder,
+              get model() {
+                return chat.choice.current;
+              },
+              signal: AbortSignal.any([mount.signal, registration.controller.signal]),
+            });
+          }
+        }
+        body = emptyView ?? view;
+      }
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length - rowsAbove.length } },
+        { view: body, rect: { column: 0, row: 0, width: size.width, height: above - shown.length - rowsAbove.length } },
         {
           view: input(),
           rect: { column: 0, row: composerRow, width: size.width, height: usable - composerRow },
@@ -524,6 +580,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return {
         type: "pane",
         state: {
+          ...(folder === tui.startup.cwd ? {} : { cwd: folder }),
           ...(chatSession.id === undefined ? {} : { session: chatSession.id }),
           draft: composer.state as unknown as JsonValue,
           folds: document.folds,
@@ -552,6 +609,16 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     drafts.delete(id);
   };
   const actions: PaneActions = {
+    start: async () => {
+      if (busy || chatComposer.busy) throw new Error("the pane is busy");
+      busy = true;
+      try {
+        return (await sessionHandle())?.id;
+      } finally {
+        busy = false;
+      }
+    },
+    folder: () => folder,
     session: () => chatSession.id,
     show,
     status: () => ({

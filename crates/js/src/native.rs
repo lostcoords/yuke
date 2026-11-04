@@ -118,6 +118,8 @@ pub(crate) fn install(
 ) -> rquickjs::Result<()> {
     let object = Object::new(ctx.clone())?;
     let queue = delivery::Queue::new(ctx, &object, reports.clone())?;
+    let version = options.version.clone();
+    object.set("runtimeVersion", Function::new(ctx.clone(), move || version.clone())?)?;
     sessions::add(ctx, &object, &options.sessions, &queue)?;
     term::add(ctx, &object, frames)?;
     ai::add(ctx, &object, &options.models)?;

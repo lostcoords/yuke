@@ -11,7 +11,15 @@
  */
 declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
-  import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
+  import type {
+    Input,
+    InputId,
+    ModelReference,
+    ProviderInfo,
+    ReasoningLevel,
+    SessionId,
+    SessionSettings,
+  } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
   import type { CanvasStyle, CommandItem, EditorState, TextDocument, TextEditor, View } from "yuke:tui";
 
@@ -278,6 +286,8 @@ declare module "yuke:chat" {
 
   /** The chat pane that a row source gives rows for. */
   export interface ComposerRowsContext {
+    /** The composer of this pane. Read its state without changing it during layout. */
+    readonly composer: TextEditor;
     readonly session: SessionId | undefined;
     readonly width: number;
   }
@@ -290,11 +300,61 @@ declare module "yuke:chat" {
     readonly back: SessionId;
   }
 
+  /** One custom view in an empty, unsent pane. The composer keeps keyboard focus. */
+  export interface EmptyChatContext {
+    readonly composer: TextEditor;
+    readonly cwd: string;
+    /** The saved choice for new chats. Undefined before a choice exists. Read it at draw time. */
+    readonly model: ChatModelChoice | undefined;
+    /** Aborts when the pane closes or the factory replaces this view. */
+    readonly signal: AbortSignal;
+  }
+
+  /** Create one empty view per pane. Its geometry is the area above the composer. */
+  export type EmptyChatFactory = (context: EmptyChatContext) => View;
+
+  /** The model and reasoning level of a chat. It holds no credential. */
+  export interface ChatModelChoice {
+    readonly model: ModelReference;
+    readonly reasoning: ReasoningLevel;
+  }
+
+  /** The input of a custom model picker. Its signal ends with the pane. */
+  export interface ChatModelPickerContext {
+    readonly providers: readonly ProviderInfo[];
+    readonly current: Frozen<SessionSettings> | undefined;
+    readonly saved: ChatModelChoice | undefined;
+    readonly signal: AbortSignal;
+  }
+
+  /** A custom picker. An undefined result cancels the choice. */
+  export type ChatModelPicker = (context: ChatModelPickerContext) => Promise<ChatModelChoice | undefined>;
+
   /**
    * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
    * pane exists.
    */
   export interface ChatService {
+    /**
+     * Show a custom view above an empty, unsent composer. Typed text, attachments, or a saved session hide it.
+     * The last factory wins. Its disposer restores the default only while that factory is current.
+     * The view stays in the pane, below dialogs and notices. It must leave keyboard focus with the composer.
+     */
+    readonly setEmptyView: (factory: EmptyChatFactory) => () => void;
+    /** Replace the active pane with a fresh chat. The old draft is discarded; a saved session stays saved. */
+    readonly newChat: (cwd?: string) => void;
+    /** The working folder of the chat pane, including an unsent draft. Undefined for another view. */
+    readonly folder: (view: View) => string | undefined;
+    /**
+     * Replace the model picker for each chat pane. An undefined result cancels the choice. The chat checks the choice
+     * against the ready catalog, saves it for new chats, and applies it to the current session.
+     * The last registration wins. Its disposer restores the default only while this picker is current.
+     */
+    readonly setModelPicker: (picker: ChatModelPicker) => () => void;
+    /** Create or reopen the active chat without sending its draft. Undefined after cancel or outside a chat pane. */
+    readonly start: () => Promise<SessionId | undefined>;
+    /** Choose a model in the active chat pane, with a picker for this call or the registered picker. A busy pane does nothing. */
+    readonly chooseModel: (picker?: ChatModelPicker) => Promise<void>;
     /**
      * Show the session `id` in the focused chat pane, or in a new chat pane when the focused pane is no chat pane. The
      * pane keeps its draft for its old session. It rejects when the open fails or the pane is busy, as with a send.
