@@ -238,9 +238,15 @@ export async function loadChat(
   const notices: string[] = [];
   const services: Record<string, unknown> = { tui: surface.tui, sessions, catalog };
   const provided = new Map<string, unknown>();
+  const facts = new Map<string, Set<(data: unknown) => void>>();
   await apply({
     get: (name: string) => services[name],
     provide: (name: string, value: unknown) => provided.set(name, value),
+    on: (event: string, listener: (data: unknown) => void) => {
+      const listeners = facts.get(event) ?? new Set();
+      facts.set(event, listeners.add(listener));
+      return () => listeners.delete(listener);
+    },
     options: {},
     signal: surface.signal,
     dataDir: folder(),
@@ -249,7 +255,11 @@ export async function loadChat(
   const transcript = (): TextView =>
     surface.tui.widgets.list().find((mount) => mount.widget instanceof TextView)?.widget as TextView;
   const chat = provided.get("chat") as ChatService;
-  return { tui: surface.tui, opened: sessions.opened, notices, transcript, chat };
+  /** Send the event `event` with its data to the listeners of the chat. */
+  const fact = (event: string, data: unknown): void => {
+    for (const listener of facts.get(event) ?? []) listener(data);
+  };
+  return { tui: surface.tui, surface, opened: sessions.opened, notices, transcript, chat, fact };
 }
 
 /** One ready provider `p` with the model `m` (levels default, off, high) and the model `n` (levels default, low). */

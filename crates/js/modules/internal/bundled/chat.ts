@@ -146,6 +146,10 @@ const COMMANDS: readonly {
 export async function apply(ctx: PluginContext): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
+  // A disposer can run after this plugin stops, and a stopped `tui` throws.
+  const repaint = (): void => {
+    if (!ctx.signal.aborted) tui?.requestFrame();
+  };
   // One entry per call of `addComposerRows`, so the same source can show twice and each disposer removes its own.
   const sources = new Set<{
     readonly place: ComposerRowPlace;
@@ -181,40 +185,50 @@ export async function apply(ctx: PluginContext): Promise<void> {
     addComposerRows: (place, source) => {
       const entry = { place, source };
       sources.add(entry);
-      tui?.requestFrame();
+      repaint();
       return () => {
-        if (sources.delete(entry)) tui?.requestFrame();
+        if (sources.delete(entry)) repaint();
       };
     },
     setReadOnly: (source) => {
       readOnly = source;
-      tui?.requestFrame();
+      repaint();
       return () => {
         if (readOnly !== source) return;
         readOnly = undefined;
-        tui?.requestFrame();
+        repaint();
       };
     },
     setComposerFrame: (next) => {
       frame = next;
-      tui?.requestFrame();
+      repaint();
       return () => {
         if (frame !== next) return;
         frame = undefined;
-        tui?.requestFrame();
+        repaint();
       };
     },
     present: (factory) => {
       presenter = factory;
-      tui?.requestFrame();
+      repaint();
       return () => {
         if (presenter !== factory) return;
         presenter = undefined;
-        tui?.requestFrame();
+        repaint();
       };
     },
   });
   if (tui === undefined) return undefined;
+  const runningSessions = new Set<SessionId>();
+  ctx.on("session.opened", ({ sessionId, state }) => {
+    if (state === "running") runningSessions.add(sessionId);
+  });
+  ctx.on("session.update", ({ sessionId, update }) => {
+    if (update.sessionUpdate !== "state") return;
+    if (update.state === "running") runningSessions.add(sessionId);
+    else runningSessions.delete(sessionId);
+  });
+  ctx.on("session.closed", ({ sessionId }) => runningSessions.delete(sessionId));
   const chat: Chat = {
     ctx,
     tui,
@@ -311,10 +325,14 @@ export async function apply(ctx: PluginContext): Promise<void> {
         return entry === undefined ? [] : [[entry.session, entry] as const];
       }),
     );
-    const turns = [...work.values()].filter((entry) => entry.turn).length;
+    // A read-only pane resumes at its parent, and the parent can have no pane, so its turn counts here.
+    const resumed = new Set([...work.values()].map((entry) => entry.resume));
+    const running = new Set([...work.values()].filter((entry) => entry.turn).map((entry) => entry.session));
+    for (const session of resumed) if (runningSessions.has(session)) running.add(session);
+    const turns = running.size;
     const jobs = [...work.values()].reduce((count, entry) => count + entry.jobs, 0);
     // The host writes this text after it restores the terminal, so the user can open each session again.
-    const resume = [...work.keys()].map((session) => `To resume this session, run: yuke -r ${session}`).join("\n");
+    const resume = [...resumed].map((session) => `To resume this session, run: yuke -r ${session}`).join("\n");
     const leave = (): void => quit(resume === "" ? undefined : resume);
     if (asked !== undefined || turns + jobs === 0) {
       leave();

@@ -1,6 +1,6 @@
 // The frame around the input of a chat pane: its insets, its paint, its context, and its owner.
 
-import type { ComposerFrameContext } from "yuke:chat";
+import { ChatDocument, type ComposerFrameContext } from "yuke:chat";
 import type { InteractionRequest } from "yuke:protocol";
 import { createFrame, equal, settled, test } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
@@ -159,4 +159,18 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   second();
   frame.draw();
   equal(rows(frame.frame).slice(-3), ["─".repeat(10), "Message…", "─".repeat(10)]);
+});
+
+test("a disposer of the chat service runs after the chat plugin stops", async () => {
+  using frame = createFrame({ width: 10, height: 4 });
+  const chat = await loadChat(frame);
+  const disposers = [
+    chat.chat.setComposerFrame({ inset: () => ({}), draw() {} }),
+    chat.chat.present((options) => new ChatDocument(options.key, options.folds)),
+    chat.chat.setReadOnly(() => undefined),
+    chat.chat.addComposerRows("below", () => []),
+  ];
+  frame.start();
+  chat.surface.close();
+  for (const dispose of disposers) dispose();
 });

@@ -144,7 +144,7 @@ test("two panes on one session count its work once", async () => {
   equal(screen(frame).join("\n").includes("1 job is running."), true);
 });
 
-test("a read-only session does not count, because its parent holds its work", async () => {
+test("a read-only session warns about its own job, and a quit names its parent to resume", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
   chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
@@ -152,5 +152,55 @@ test("a read-only session does not count, because its parent holds its work", as
 
   frame.key("ctrl+q");
 
-  equal(frame.quits, [undefined]);
+  equal(screen(frame).join("\n").includes("1 job is running."), true);
+  frame.key("ctrl+q");
+  equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
+});
+
+test("an idle read-only session warns while its parent runs a turn, and not after that turn", async () => {
+  const { frame, chat } = await opened();
+  using _frame = frame;
+  chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  chat.fact("session.opened", { sessionId: "p1", state: "running", questions: [] });
+  frame.draw();
+
+  frame.key("ctrl+q");
+  equal(screen(frame).join("\n").includes("1 turn is running."), true);
+  frame.key("esc");
+
+  chat.fact("session.update", { sessionId: "p1", update: { sessionUpdate: "state", state: "idle" } });
+  frame.key("ctrl+q");
+  equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
+});
+
+test("two read-only children of one parent count each job, and a quit resumes the parent once", async () => {
+  const { frame, chat } = await opened([JOB]);
+  using _frame = frame;
+  chat.chat.setReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
+  chat.tui.commands.run("core:split-right");
+  await settled();
+  await chat.chat.show("s2");
+  await settled();
+  frame.draw();
+
+  frame.key("ctrl+q");
+  equal(screen(frame).join("\n").includes("2 jobs are running."), true);
+  frame.key("ctrl+q");
+  equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
+});
+
+test("a read-only pane and a pane of its parent count both sessions, and a quit resumes the parent once", async () => {
+  const { frame, chat } = await opened([JOB]);
+  using _frame = frame;
+  chat.chat.setReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  chat.tui.commands.run("core:split-right");
+  await settled();
+  await chat.chat.show("p1");
+  await settled();
+  frame.draw();
+
+  frame.key("ctrl+q");
+  equal(screen(frame).join("\n").includes("2 jobs are running."), true);
+  frame.key("ctrl+q");
+  equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
 });

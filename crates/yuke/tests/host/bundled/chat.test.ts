@@ -29,6 +29,7 @@ async function chatFrame(sessions: Sessions, id: string): Promise<FrameTest> {
   };
   await chat({
     get: (name: string) => services[name],
+    on: () => () => {},
     provide() {},
     options: {},
     signal: surface.signal,
@@ -113,7 +114,15 @@ test("the first send of a pane with a saved choice creates its session and gets 
   const surface = frame.surface("chat");
   const known = services as { readonly sessions: Sessions; readonly catalog: unknown };
   const get = (name: string) => (name === "tui" ? surface.tui : name === "catalog" ? known.catalog : known.sessions);
-  await chat({ get, provide() {}, options: {}, signal: surface.signal, dataDir: folder(), notify() {} } as never);
+  await chat({
+    get,
+    on: () => () => {},
+    provide() {},
+    options: {},
+    signal: surface.signal,
+    dataDir: folder(),
+    notify() {},
+  } as never);
   frame.start();
   frame.paste("hello");
   frame.key("enter");
@@ -158,6 +167,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   let shown: ChatService | undefined;
   await chat({
     get: (name: string) => services[name],
+    on: () => () => {},
     provide: (_name: string, service: ChatService) => {
       shown = service;
     },
