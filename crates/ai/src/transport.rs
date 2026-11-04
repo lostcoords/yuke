@@ -83,7 +83,7 @@ pub enum Fault {
     /// The TLS handshake rejected the certificate of the provider, for example an expired one or one of an unknown
     /// issuer.
     CertificateRejected,
-    /// The TLS configuration could not be built, for example because the platform gives no root certificate.
+    /// The TLS configuration could not be built, for example because no root certificate loads.
     TlsSetupFailed,
     /// A wait for the peer (the send, the head, or a body read) passed the idle deadline.
     IdleTimeout,

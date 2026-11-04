@@ -139,7 +139,7 @@ pub enum Error {
     ConnectTimeout,
     /// The TLS handshake rejected the certificate of the peer, for example an expired one or one of an unknown issuer.
     CertificateRejected,
-    /// The TLS configuration could not be built, for example because the platform gives no root certificate.
+    /// The TLS configuration could not be built, for example because no root certificate loads.
     TlsSetupFailed,
     /// A wait for the peer (the send, the head, or a body read) passed the idle timeout.
     IdleTimeout,
@@ -173,9 +173,10 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// The client. It uses HTTP/1.1 over tokio, and rustls with the aws-lc-rs provider.
-/// - On Unix outside Apple and Android, the `webpki` verifier checks certificates against the system roots. The roots
-///   come from the paths in `SSL_CERT_FILE` or `SSL_CERT_DIR`, else from the system bundle file.
-/// - On other platforms, the platform verifier checks certificates.
+/// - The `webpki` verifier checks certificates against the system roots.
+/// - On macOS, the roots come from `SSL_CERT_FILE`, else from `/etc/ssl/cert.pem`.
+/// - On other platforms, the roots come from the paths in `SSL_CERT_FILE` or `SSL_CERT_DIR`, else from the system bundle
+///   file.
 /// - The key exchange offers the hybrid post-quantum group `X25519MLKEM768` first.
 #[derive(Debug)]
 pub struct Client {
@@ -336,7 +337,7 @@ impl Client {
 ///
 /// `SSL_CERT_FILE` or `SSL_CERT_DIR` names the exact roots. Otherwise the roots come from the system bundle file, and
 /// from the certificate folders only when no bundle file exists. A root only in a folder then needs `SSL_CERT_DIR`.
-#[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
+#[cfg(not(target_os = "macos"))]
 fn with_verifier(
     builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
 ) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
@@ -352,12 +353,20 @@ fn with_verifier(
     (!roots.is_empty()).then(|| builder.with_root_certificates(roots))
 }
 
-/// Give `builder` the platform verifier. Return `None` when the verifier cannot start.
-#[cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))]
+/// Give `builder` the `webpki` verifier with the roots of `SSL_CERT_FILE`, else of the bundle file of the system. Return
+/// `None` when no root loads.
+#[cfg(target_os = "macos")]
 fn with_verifier(
     builder: rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier>,
 ) -> Option<rustls::ConfigBuilder<rustls::ClientConfig, rustls::client::WantsClientCert>> {
-    rustls_platform_verifier::BuilderVerifierExt::with_platform_verifier(builder).ok()
+    use rustls::pki_types::CertificateDer;
+    use rustls::pki_types::pem::PemObject;
+
+    let file = std::env::var_os("SSL_CERT_FILE").unwrap_or_else(|| "/etc/ssl/cert.pem".into());
+    let mut roots = rustls::RootCertStore::empty();
+    // A bad section loses only itself, as on the other platforms. The iterator ends at an I/O error.
+    roots.add_parsable_certificates(CertificateDer::pem_file_iter(file).ok()?.flatten());
+    (!roots.is_empty()).then(|| builder.with_root_certificates(roots))
 }
 
 /// The error of a failed TLS handshake. The connector wraps the rustls error in the I/O error.

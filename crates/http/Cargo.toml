@@ -19,12 +19,10 @@ rustls = { version = "0.23.45", default-features = false, features = ["aws-lc-rs
 tokio = { version = "1.53", features = ["net", "time"] }
 tokio-rustls = { version = "0.26.6", default-features = false }
 
-[target.'cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))'.dependencies]
+# rustls-native-certs links Security.framework on macOS, so the client reads the roots file there itself.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
 openssl-probe = "0.2.1"
 rustls-native-certs = "0.8.4"
-
-[target.'cfg(not(all(unix, not(target_vendor = "apple"), not(target_os = "android"))))'.dependencies]
-rustls-platform-verifier = "0.7.1"
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt", "sync", "time"] }

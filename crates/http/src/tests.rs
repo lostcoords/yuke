@@ -439,8 +439,6 @@ async fn a_failed_send_names_the_dns_or_the_connect() {
     peer.await.unwrap();
 }
 
-// Linux reads certificate-file settings. macOS uses the system certificate store.
-#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn missing_root_certificates_fail_only_https() {
     // A child process keeps the root-store settings apart from the other tests.
@@ -505,6 +503,91 @@ fn ssl_cert_dir_names_the_exact_roots() {
         assert!(status.success(), "{expected}");
     }
     std::fs::remove_dir_all(&base).unwrap();
+}
+
+// A test root and a server certificate for 127.0.0.1 that the root signed. The key belongs to the server certificate.
+const TEST_ROOT: &str = "-----BEGIN CERTIFICATE-----\nMIIBTTCB9KADAgECAgkAkvlkYLCR9qYwCgYIKoZIzj0EAwIwGTEXMBUGA1UEAwwO\neXVrZSB0ZXN0IHJvb3QwIBcNMjYxMTA0MDg0MDUwWhgPMjEyNjEwMTEwODQwNTBa\nMBkxFzAVBgNVBAMMDnl1a2UgdGVzdCByb290MFkwEwYHKoZIzj0CAQYIKoZIzj0D\nAQcDQgAEvJs2A5BJybNDPGYo2Wg7jU123ITXN8SgtoVG1ulkIM4DzvZtjyJ6atGJ\n348fQEscA5T/e9YoHCIrEvTl8fvgAKMjMCEwDwYDVR0TAQH/BAUwAwEB/zAOBgNV\nHQ8BAf8EBAMCAgQwCgYIKoZIzj0EAwIDSAAwRQIhALhtvWGrB80h1G0g208bHDNT\nR86FZ2jZuRRe+4t3EpLiAiBW/ebDm+qC4hhvk5LBvAGW6/Az6z3eJjBQN8Fo/Yhv\n7g==\n-----END CERTIFICATE-----\n";
+const TEST_SERVER_CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----\nMIIBbDCCARKgAwIBAgIJAMwS4tTs0d6yMAoGCCqGSM49BAMCMBkxFzAVBgNVBAMM\nDnl1a2UgdGVzdCByb290MCAXDTI2MTEwNDA4NDA1MFoYDzIxMjYxMDExMDg0MDUw\nWjAUMRIwEAYDVQQDDAkxMjcuMC4wLjEwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAATHubM1nPCMEtWOgq6R+A+qa6CRD0M8/R3Sxjn0mX8I1L2kYuorctjekDaIf448\nSlqYQNlHDyxafCBOu0mi+MbZo0YwRDAPBgNVHREECDAGhwR/AAABMAwGA1UdEwEB\n/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMAoGCCqG\nSM49BAMCA0gAMEUCIC0sblwbN4PLuOPNFXOqhVpicXsA+qqEVI7imuTAc8VnAiEA\nz2DaaMCV6Texom4GdE4MEK3vFJJXHJz1A6TDdTsS2Co=\n-----END CERTIFICATE-----\n";
+const TEST_SERVER_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgbsZofkPG+78UBJHF\nIaSQYtPEmK8qMkTECacdfs/u8PKhRANCAATHubM1nPCMEtWOgq6R+A+qa6CRD0M8\n/R3Sxjn0mX8I1L2kYuorctjekDaIf448SlqYQNlHDyxafCBOu0mi+MbZ\n-----END PRIVATE KEY-----\n";
+
+#[tokio::test]
+async fn ssl_cert_file_decides_whether_a_handshake_succeeds() {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use tokio::io::AsyncReadExt;
+
+    // A child process keeps the root-store settings apart from the other tests. The variable holds the expected result.
+    const HANDSHAKE_CHILD: &str = "HTTP_TEST_HANDSHAKE_CHILD";
+
+    let Ok(expected) = std::env::var(HANDSHAKE_CHILD) else {
+        let folder = std::env::temp_dir().join(format!("yuke-http-handshake-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        // A bad section loses only itself. A file with only the server certificate lacks the root that signed it.
+        let bad_section = format!("-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n{TEST_ROOT}");
+        for (name, roots, expected) in [
+            ("root", TEST_ROOT, "trusted"),
+            ("bad-section", bad_section.as_str(), "trusted"),
+            ("other", TEST_SERVER_CERTIFICATE, "rejected"),
+        ] {
+            let file = folder.join(format!("{name}.pem"));
+            std::fs::write(&file, roots).unwrap();
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "tests::ssl_cert_file_decides_whether_a_handshake_succeeds"])
+                .env(HANDSHAKE_CHILD, expected)
+                .env("SSL_CERT_FILE", file)
+                .env_remove("SSL_CERT_DIR")
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{expected}");
+        }
+        std::fs::remove_dir_all(&folder).unwrap();
+        return;
+    };
+
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from_pem_slice(TEST_SERVER_CERTIFICATE.as_bytes()).unwrap()],
+            PrivateKeyDer::from_pem_slice(TEST_SERVER_KEY.as_bytes()).unwrap(),
+        )
+        .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        // The client ends a rejected handshake, so only a trusted one reaches the request.
+        let Ok(mut stream) = acceptor.accept(tcp).await else {
+            return;
+        };
+        let mut seen = Vec::new();
+        while !seen.ends_with(b"{}") {
+            assert_ne!(stream.read_buf(&mut seen).await.unwrap(), 0);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+            .await
+            .unwrap();
+        stream.shutdown().await.unwrap();
+    });
+
+    let request = Request {
+        body: vec![Bytes::from_static(b"{}")],
+        ..Request::new(Method::POST, format!("https://127.0.0.1:{port}/messages"))
+    };
+    let out = run(&client(None), request, None).await;
+    if expected == "trusted" {
+        assert_eq!(out.error, None);
+        assert_eq!(out.status, Some(StatusCode::OK));
+        assert_eq!(out.bytes, b"ok");
+    } else {
+        assert_eq!(out.error, Some(Error::CertificateRejected));
+    }
+    server.await.unwrap();
 }
 
 // The connector wraps the rustls error in the I/O error, and a rejected certificate gets an error of its own.
