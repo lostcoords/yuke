@@ -8,7 +8,7 @@ import type { ChatPresentation } from "yuke:chat";
 import { filledRows, indented, item, label, plain, STYLE } from "yuke:internal/chat/rows";
 import { shownDuration, toolItem } from "yuke:internal/chat/tools";
 import { sourceName } from "yuke:internal/source-name";
-import type { Entry, Status, Transcript } from "yuke:transcript";
+import type { Entry, ReasoningEntry, Status, Transcript } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
 
 /** The key of the item of a failure of the running turn. It comes after the entries. */
@@ -42,10 +42,10 @@ export class ChatDocument implements ChatPresentation {
     return [...this.#folds];
   }
 
-  /** Open or fold the entry `key`, a tool or a thought with text. Return `false` when that entry has no fold. */
+  /** Open or fold the entry `key`, a tool or a thought with text to show. Return `false` when that entry has no fold. */
   toggle(transcript: Transcript, key: string): boolean {
     const entry = transcript.entries.find((candidate) => candidate.key === key);
-    if (entry === undefined || !(entry.kind === "tool" || (entry.kind === "reasoning" && entry.text !== ""))) {
+    if (entry === undefined || !(entry.kind === "tool" || (entry.kind === "reasoning" && hasText(entry)))) {
       return false;
     }
     this.#folds.set(key, !this.#open(entry));
@@ -118,8 +118,9 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
       return entry.refusal ? item(entry.key, label("refused", STYLE.error), body) : item(entry.key, body);
     }
     case "reasoning": {
+      // An encrypted thought streams no text. The working row still shows the reasoning phase.
+      if (!hasText(entry)) return { key: entry.key, sections: [] };
       const title = label(entry.draft ? "thinking" : "thought", STYLE.title);
-      if (entry.text === "") return item(entry.key, title);
       const body = plain("text", entry.text, STYLE.thought);
       return item(entry.key, title, open ? body : { ...body, render: () => [] });
     }
@@ -137,6 +138,11 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
       return { key: entry.key, sections: [] };
     }
   }
+}
+
+/** Whether the thought `entry` has text other than white space. Without that text, the thought draws no rows. */
+function hasText(entry: ReasoningEntry): boolean {
+  return entry.text.trim() !== "";
 }
 
 /** The item of a failure of the running turn. */

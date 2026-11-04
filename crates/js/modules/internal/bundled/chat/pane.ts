@@ -531,18 +531,27 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const composerRows = Math.min(wanted, Math.max(1, Math.floor(usable / 2)));
       const composerRow = Math.max(0, usable - composerRows);
       ruleRow = composerRow - 1;
-      // The command list sits on the rule, and the working row sits on the list while a turn runs.
+      // The command list sits on the rule. While a turn runs, the working row sits above the list.
       listRows = Math.min(commands.rows, Math.max(0, ruleRow));
-      workingRows = working.active && ruleRow - listRows > 0 ? 1 : 0;
-      // The strip takes the rows above the working row that its messages need, and the transcript gets the rest. When
-      // rows run out, the strip keeps the newest messages.
+      const free = ruleRow - listRows;
+      const workingRow = working.active && free > 0 ? 1 : 0;
+      // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
+      // newest messages.
       const list = chatComposer.waiting;
-      const above = Math.max(0, ruleRow - listRows - workingRows);
+      const above = Math.max(0, free - workingRow);
       shown = list.slice(Math.max(0, list.length - above));
       // Plugin rows get the rows that the strip leaves, at most half the rows above the rule.
       rowsAbove = chat.rows("above", context, Math.min(above - shown.length, Math.floor(Math.max(0, ruleRow) / 2)));
+      // One empty row goes below the transcript, and a running turn adds one below the working row. The transcript gets
+      // the other rows. A pane adds an empty row only when the transcript keeps a row, so a short pane drops it first.
+      let transcriptRows = above - shown.length - rowsAbove.length;
+      const gap = transcriptRows > 1 ? 1 : 0;
+      transcriptRows -= gap;
+      const workingGap = workingRow === 1 && transcriptRows > 1 ? 1 : 0;
+      transcriptRows -= workingGap;
+      workingRows = workingRow + workingGap;
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: above - shown.length - rowsAbove.length } },
+        { view, rect: { column: 0, row: 0, width: size.width, height: transcriptRows } },
         {
           view: input(),
           rect: { column: 0, row: composerRow, width: size.width, height: usable - composerRow },
@@ -584,7 +593,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // While the list shows, Esc hides the list, so the row shows no cancel key.
       const key = listRows > 0 || locked() !== undefined ? undefined : tui.keys.keysOf("chat:interrupt")[0];
       const row =
-        workingRows === 1
+        workingRows > 0
           ? working.text({
               cancelKey: key,
               backgroundKey: locked() === undefined ? tui.keys.keysOf("chat:background")[0] : undefined,
@@ -592,8 +601,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
             })
           : undefined;
       if (row !== undefined) {
-        canvas.text(0, listRow - 1, row.spinner, STYLE.hint);
-        canvas.text(2, listRow - 1, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
+        canvas.text(0, listRow - workingRows, row.spinner, STYLE.hint);
+        canvas.text(2, listRow - workingRows, clipped(row.text, Math.max(0, canvas.width - 2)), STYLE.meta);
       }
       canvas.text(0, ruleRow, "─".repeat(canvas.width), STYLE.rule);
       // The rule shows a failed history load, so the text stays in sight at any scroll place.

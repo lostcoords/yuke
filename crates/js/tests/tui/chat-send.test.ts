@@ -380,7 +380,7 @@ test("page keys scroll the transcript, and a pane of one row keeps the composer"
   frame.start();
   const bottom = chat.transcript().scroll.state.top;
   frame.key("page_up");
-  equal(chat.transcript().scroll.state.top, bottom - 5);
+  equal(chat.transcript().scroll.state.top, bottom - 4);
   frame.key("ctrl+home");
   equal(transcriptRows(frame)[1], " reply 2");
   frame.key("ctrl+end");
@@ -645,7 +645,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
     "────────────────────────",
   ]);
   // The transcript gives the strip its rows.
-  equal(chat.transcript().scroll.state.height, 4);
+  equal(chat.transcript().scroll.state.height, 3);
 });
 
 test("up recalls the newest waiting message with its images, the next up puts the older one above, and an edit or a caret move ends it", async () => {

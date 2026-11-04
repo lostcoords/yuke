@@ -42,7 +42,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
-  using frame = createFrame({ width: 10, height: 5 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 10, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
   frame.start();
   // Row 0 is the gap before the reply, and column 0 is its indent.
@@ -175,7 +175,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   const sessions = fakeSessions(replies(250));
   const chat = await loadChat(frame, sessions);
   frame.start();
-  equal(transcriptRows(frame).at(-1), " reply 250");
+  equal(transcriptRows(frame).slice(-2), [" reply 250", ""]);
   for (let visit = 0; visit < 3; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
@@ -230,7 +230,7 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   equal(rows(frame.frame).at(-3), "────────────────────");
   sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
   frame.draw();
-  equal(transcriptRows(frame).at(-1), " reply 32");
+  equal(transcriptRows(frame).slice(-2), [" reply 32", ""]);
 });
 
 test("a reload keeps the folds and the scrolled place of a pane", async () => {

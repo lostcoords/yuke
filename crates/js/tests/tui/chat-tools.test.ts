@@ -423,7 +423,7 @@ test("a click on the text of an open thought folds it", async () => {
 });
 
 test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
-  using frame = createFrame({ width: 40, height: 15 }, undefined, { cwd: "/w", session: "s1" });
+  using frame = createFrame({ width: 40, height: 16 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls(
     { name: "one", args: {}, hints: PROBE, result: ok(lines("a", 3)) },
     { name: "two", args: {}, hints: PROBE, result: ok(lines("b", 40)) },

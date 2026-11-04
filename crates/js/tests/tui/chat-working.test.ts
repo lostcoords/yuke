@@ -6,22 +6,23 @@ import { rows } from "./rows.ts";
 
 const hints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
 
-test("a running turn shows its phase and time above the rule, and the end of the turn takes the row away", async () => {
+test("a running turn shows its phase and time above an empty row before the rule, and the end of the turn takes the working row away", async () => {
   const sessions = fakeSessions(replies(2));
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
   await settled();
   using _clock = fixedClock();
-  /** Draw the frame, and give the row above the rule. */
+  /** Draw the frame. Return the text two rows above the rule. */
   const row = (): string => {
     frame.draw();
     const all = rows(frame.frame);
-    return all[all.findIndex((text) => text.startsWith("──")) - 1] ?? "";
+    return all[all.findIndex((text) => text.startsWith("──")) - 2] ?? "";
   };
   const idle = row();
   sessions.push({ sessionUpdate: "state", state: "running" });
   const start = row();
+  const gap = rows(frame.frame)[rows(frame.frame).findIndex((text) => text.startsWith("──")) - 1];
   frame.advance(1080);
   const later = row();
   const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
@@ -52,9 +53,10 @@ test("a running turn shows its phase and time above the rule, and the end of the
   sessions.push({ sessionUpdate: "state", state: "running" });
   const next = row();
   equal(
-    [idle.includes("to interrupt"), start, later, tool, running, done, retry, ended, next],
+    [idle.includes("to interrupt"), gap, start, later, tool, running, done, retry, ended, next],
     [
       false,
+      "",
       "⠋ Working… (0s · esc to interrupt)",
       "⠸ Working… (1s · esc to interrupt)",
       "⠸ Working… (1s · esc to interrupt)",
@@ -105,6 +107,58 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   const responding = phase();
   model({ kind: "block_started", block: 2, blockKind: "tool_call" });
   equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
+});
+
+test("a thought without text to show draws no rows, and the working row still shows the reasoning phase", async () => {
+  const sessions = fakeSessions(replies(20));
+  using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, sessions);
+  frame.start();
+  await settled();
+  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
+  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  /** Draw the frame. Return the rows above the working row and the phase of the working row. */
+  const shown = (): [string[], string | undefined] => {
+    frame.draw();
+    const all = rows(frame.frame);
+    const working = all.findIndex((text) => text.includes("to interrupt"));
+    return [all.slice(0, working), all[working]?.slice(2).split(" (")[0]];
+  };
+  // The transcript follows its tail, so a row of the thought moves the replies up.
+  const before = shown()[0];
+  model({ kind: "block_started", block: 0, blockKind: "reasoning" });
+  const empty = shown();
+  model({ kind: "reasoning_delta", block: 0, text: " \n" });
+  const blank = shown();
+  model({ kind: "reasoning_delta", block: 0, text: "Hmm" });
+  const thought = shown();
+  equal(
+    [empty, blank, [thought[0].slice(-4), thought[1]]],
+    [
+      [before, "Reasoning…"],
+      [before, "Reasoning…"],
+      [[" reply 20", "", " thinking", ""], "Reasoning…"],
+    ],
+  );
+});
+
+test("a short pane gives up the empty rows before the last row of the transcript", async () => {
+  const sessions = fakeSessions(replies(2));
+  using frame = createFrame({ width: 50, height: 5 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, sessions);
+  frame.start();
+  await settled();
+  using _clock = fixedClock();
+  sessions.push({ sessionUpdate: "state", state: "running" });
+  frame.draw();
+  equal(rows(frame.frame), [
+    " reply 2",
+    "⠋ Working… (0s · esc to interrupt)",
+    "─".repeat(50),
+    "Message…",
+    "─".repeat(50),
+  ]);
 });
 
 test("a close of the session by another client takes the working row away", async () => {
