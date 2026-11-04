@@ -76,7 +76,7 @@ test("a pane draws the same transcript live and after a reload", async () => {
     "",
     " Greet Ada.",
     "",
-    " greet",
+    ' greet {"who":"Ada"}',
     " hello Ada",
     "",
     " Done.",

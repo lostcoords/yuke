@@ -111,6 +111,19 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   equal(frame.copies, [command]);
 });
 
+test("a long subject fills one head row, and an open call shows the whole subject", async () => {
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const command = `${"a".repeat(3000)} end`;
+  const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: ok("") });
+  const chat = await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  equal(transcriptRows(frame).slice(0, 3), ["", ` exec ${"a".repeat(22)}…`, ""]);
+  click(frame, 2, 1);
+  chat.transcript().scroll.scrollTo(Number.MAX_SAFE_INTEGER);
+  frame.draw();
+  equal(transcriptRows(frame).filter((row) => row.endsWith(" end")).length, 1);
+});
+
 test("a subject that fits in one row copies as it shows, and an open call does not show it twice", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "npm test" }, hints: EXEC, result: ok("") });
@@ -184,32 +197,75 @@ test("a long title gives way to the state, and a subject without room stays out 
   equal(transcriptRows(frame).slice(0, 3), ["", " A title o… · error", ""]);
 });
 
-test("an open call with incomplete arguments shows them as they came", async () => {
+test("an open call shows only its subject, and a call without a subject hint shows its raw arguments", async () => {
+  using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "write", args: { path: "a.rs", content: "x" }, hints: READ, result: ok("") },
+    { name: "probe", args: { depth: 2 }, hints: PROBE, result: ok("") },
+    { name: "probe", args: {}, hints: PROBE, result: ok("") },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  click(frame, 2, 1);
+  equal(transcriptRows(frame).slice(0, 7), ["", " write a.rs", "", ' Probe {"depth":2}', "", " Probe", ""]);
+  // Raw arguments have no link, so a click on them copies nothing.
+  click(frame, 10, 3);
+  equal(frame.copies, []);
+});
+
+test("a call without a subject hint shows its incomplete raw arguments", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "read", arguments: '{"path":"a' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
     commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: READ, folder: "/w" }], results: [] },
+      display: { calls: [{ blockIndex: 0, hints: PROBE, folder: "/w" }], results: [] },
     }),
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(2, 3), [' {"path":"a']);
+  equal(transcriptRows(frame).slice(1, 2), [' Probe {"path":"a · waiting']);
 });
 
-test("an open call shows the arguments other than its subject, and a call without a subject shows them all", async () => {
-  using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
-  const saved = calls(
-    { name: "write", args: { path: "a.rs", content: "x" }, hints: READ, result: ok("") },
-    { name: "probe", args: { depth: 2 }, hints: PROBE, result: ok("") },
+test("a streaming call shows its raw arguments, and the subject takes their place when the hints come", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  await loadChat(frame, sessions);
+  frame.start();
+  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  const head = (): string | undefined => {
+    frame.draw();
+    return transcriptRows(frame)[1];
+  };
+  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
+  model({ kind: "block_started", block: 0, blockKind: "tool_call" });
+  model({ kind: "tool_input_delta", block: 0, text: '{"command":' });
+  const streaming = head();
+  const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
+  model({ kind: "tool_input_delta", block: 0, text: '"make"}' });
+  model({ kind: "block_stopped", block: 0, call });
+  const stopped = head();
+  sessions.push(
+    commit(2, [{ tool_call: call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    }),
   );
+  sessions.push({ sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 2, blocks: [0] });
+  equal(
+    [streaming, stopped, head()],
+    [' tool {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
+  );
+});
+
+test("a failed call with a display shows the display in place of its text", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const hints: ToolHints = { title: "Fetch", subject: { argument: "url", kind: "uri" }, preview: "head" };
+  const result = { callId: "", content: '{"errors":[{"status":404}]}', isError: true };
+  const display: DisplayBlock[] = [{ kind: "markdown", text: "Page not found (HTTP 404)." }];
+  const saved = calls({ name: "fetch", args: { url: "https://a.b/c" }, hints, result, display });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  click(frame, 2, 1);
-  click(frame, 2, 4);
-  equal(transcriptRows(frame).slice(0, 7), ["", " write a.rs", ' {"content":"x"}', "", " Probe", ' {"depth":2}', ""]);
+  equal(transcriptRows(frame).slice(0, 4), ["", " Fetch https://a.b/c · error", " Page not found (HTTP 404).", ""]);
 });
 
 test("the live output of a call gives way to its result at once", async () => {
@@ -550,7 +606,7 @@ test("a call that ended well shows a bold name, its subject in accent, dim outpu
   );
 });
 
-test("a failed call has a band behind each of its rows, and its text in the danger color", async () => {
+test("a failed call has a band behind each row, and its text has the output style", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const result = { callId: "", content: "broken", isError: true };
   await loadChat(frame, fakeSessions(calls({ name: "read", args: { path: "a.rs" }, hints: READ, result })));
@@ -572,7 +628,7 @@ test("a failed call has a band behind each of its rows, and its text in the dang
       { bold: true, bg: band },
       { fg: "#a8cfa0", bg: band },
       { bg: band },
-      { fg: "#ff7b72", bg: band },
+      { ...OUTPUT, bg: band },
       { bg: band },
       { bg: band },
     ],
@@ -636,19 +692,4 @@ test("the failure of a turn shows in bold in the danger color", async () => {
   frame.start();
   const row = transcriptRows(frame).findIndex((line) => line.includes("failed: boom"));
   equal(frame.frame.cells[row]?.[1]?.style, { fg: "#ff7b72", bold: true });
-});
-
-test("the arguments of an open call and a media label have the look of the output", async () => {
-  using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
-  const media = [{ mime: "image/png", blob: { digest: "a".repeat(64), len: 2048 } }];
-  const saved = calls(
-    { name: "write", args: { path: "a.rs", content: "x" }, hints: READ, result: ok("") },
-    { name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } },
-  );
-  await loadChat(frame, fakeSessions(saved));
-  frame.start();
-  click(frame, 2, 1);
-  const shown = transcriptRows(frame);
-  const look = (text: string) => frame.frame.cells[shown.findIndex((row) => row.includes(text))]?.[1]?.style;
-  equal([look("content"), look("image/png")], [OUTPUT, OUTPUT]);
 });

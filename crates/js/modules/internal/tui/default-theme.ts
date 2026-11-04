@@ -18,7 +18,6 @@ const GROUPS: Readonly<Record<string, Style>> = {
   "chat.hint": { fg: "accent" },
   "chat.rule": { dim: true },
   "chat.tool.output": { fg: "surfaceFg", dim: true },
-  "chat.tool.error": { fg: "danger" },
   "chat.tool.pending": { bg: "pendingBg" },
   "chat.tool.failed": { bg: "errorBg" },
   "chat.diff.header": { bold: true },
