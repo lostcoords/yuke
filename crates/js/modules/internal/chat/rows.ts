@@ -21,7 +21,7 @@ export const STYLE = {
   toolPending: "chat.tool.pending",
   toolFailed: "chat.tool.failed",
   diffHeader: "chat.diff.header",
-  diffHunk: "chat.diff.hunk",
+  diffGutter: "chat.diff.gutter",
   diffAdd: "chat.diff.add",
   diffDelete: "chat.diff.delete",
   diffContext: "chat.diff.context",

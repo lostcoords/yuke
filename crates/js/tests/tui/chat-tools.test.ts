@@ -383,9 +383,9 @@ test("a result with only media shows a label with the type, the number, and the 
   ]);
 });
 
-test("the display blocks of a result share one preview, and a diff keeps its styles and its text in a copy", async () => {
-  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
-  const patch = "@@ -1 +1 @@\n-old\n+new\n same";
+test("the display blocks of a result share one preview, and a diff copies its lines without numbers", async () => {
+  using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
+  const patch = "@@ -1,2 +1,2 @@\n-old\n+new\n same\n@@ -9 +9 @@\n-c\n+d";
   const display: DisplayBlock[] = [
     { kind: "markdown", text: "**Edited**" },
     { kind: "diff", path: "src/a.rs", patch },
@@ -394,26 +394,25 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
   const saved = calls({ name: "edit", args: { path: "src/a.rs" }, hints: edit, result: ok("done"), display });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
-  const shown = transcriptRows(frame);
-  equal(shown.slice(0, 9), [
-    "",
-    " edit src/a.rs",
+  equal(transcriptRows(frame).slice(2, 11), [
     " Edited",
     " src/a.rs",
-    " @@ -1 +1 @@",
-    " -old",
-    " +new",
-    "  same",
+    " 1 -old",
+    " 1 +new",
+    " 2  same",
+    "   ⋮",
+    " 9 -c",
+    " 9 +d",
     "",
   ]);
-  const background = (row: number) => frame.frame.cells[row]?.[2]?.style.bg;
-  equal([background(6), background(5)], ["#20372a", "#3a2426"]);
-  // A drag from the path to the end of the last line copies the diff block as its source.
+  const background = (row: number) => frame.frame.cells[row]?.[3]?.style.bg;
+  equal([background(5), background(4)], ["#20372a", "#3a2426"]);
+  // A drag from the path to the end of the last line has no numbers, no header, no ⋮, and no blank line.
   frame.mouse(mouse(1, 3, "press"));
-  frame.mouse(mouse(6, 7, "drag"));
-  frame.mouse(mouse(6, 7, "release"));
-  equal(frame.copies, [`src/a.rs\n${patch}`]);
-  // The source offsets of the diff rows come after the Markdown block in the source of the result.
+  frame.mouse(mouse(8, 9, "drag"));
+  frame.mouse(mouse(8, 9, "release"));
+  equal(frame.copies, ["src/a.rs\n-old\n+new\n same\n-c\n+d"]);
+  // The source offsets of the diff rows come after the Markdown block, and the source keeps each header.
   const transcript = chat.transcript();
   const selection = transcript.selection;
   equal(
@@ -422,9 +421,70 @@ test("the display blocks of a result share one preview, and a diff keeps its sty
   );
   // A drag from the Markdown block to the end copies both blocks with the line end between them.
   frame.mouse(mouse(1, 2, "press"));
-  frame.mouse(mouse(6, 7, "drag"));
-  frame.mouse(mouse(6, 7, "release"));
-  equal(frame.copies, [`src/a.rs\n${patch}`, `Edited\nsrc/a.rs\n${patch}`]);
+  frame.mouse(mouse(8, 9, "drag"));
+  frame.mouse(mouse(8, 9, "release"));
+  equal(frame.copies.at(-1), "Edited\nsrc/a.rs\n-old\n+new\n same\n-c\n+d");
+});
+
+/** A frame with one call `edit` of `patch` at `width`, and the rows of the transcript after the head row. */
+async function diffShown(patch: string, width = 40) {
+  const frame = createFrame({ width, height: 24 }, undefined, { cwd: "/w", session: "s1" });
+  const edit: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
+  const display: DisplayBlock[] = [{ kind: "diff", path: "a.rs", patch }];
+  const saved = calls({ name: "edit", args: { path: "a.rs" }, hints: edit, result: ok("done"), display });
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  return { frame, shown: transcriptRows(frame).slice(2) };
+}
+
+test("a diff numbers each line from its hunk header: old on a removed line, new on the others", async () => {
+  const patch = "@@ -9,5 +9,2 @@\n a\n-b\n-c\n+B\n-d\n\\ No newline at end of file\n@@ -99,1 +99,2 @@\n e\n+f\n";
+  const { frame, shown } = await diffShown(patch);
+  using _frame = frame;
+
+  equal(shown.slice(0, 11), [
+    " a.rs",
+    "   9  a",
+    "  10 -b",
+    "  11 -c",
+    "  10 +B",
+    "  12 -d",
+    "     \\ No newline at end of file",
+    "     ⋮",
+    "  99  e",
+    " 100 +f",
+    "",
+  ]);
+});
+
+test("a line of a hunk that starts with dashes or plus signs is a removed line or an added line", async () => {
+  const { frame, shown } = await diffShown("@@ -1,3 +1,2 @@\n--- a comment\n+++b\n x\n");
+  using _frame = frame;
+
+  equal(shown.slice(1, 4), [" 1 --- a comment", " 1 +++b", " 2  x"]);
+  const background = (row: number) => frame.frame.cells[row]?.[3]?.style.bg;
+  equal([background(3), background(4)], ["#3a2426", "#20372a"]);
+});
+
+test("a wrapped line of a diff shows one number, and a copy joins its rows", async () => {
+  const { frame, shown } = await diffShown("@@ -7,1 +7,1 @@\n-abcdefghijklmnop\n", 14);
+  using _frame = frame;
+
+  equal(shown.slice(1, 3), [" 7 -abcdefghi", "   jklmnop"]);
+  frame.mouse(mouse(3, 3, "press"));
+  frame.mouse(mouse(10, 4, "drag"));
+  frame.mouse(mouse(10, 4, "release"));
+  equal(frame.copies, ["-abcdefghijklmnop"]);
+});
+
+test("a drag from the ⋮ copies the next hunk without a line end before it", async () => {
+  const { frame } = await diffShown("@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d\n");
+  using _frame = frame;
+
+  frame.mouse(mouse(3, 5, "press"));
+  frame.mouse(mouse(8, 7, "drag"));
+  frame.mouse(mouse(8, 7, "release"));
+  equal(frame.copies, ["-c\n+d"]);
 });
 
 test("a click on a subject copies its path in the folder of the call, and a click on the title opens the call", async () => {

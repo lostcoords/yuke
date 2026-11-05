@@ -22,7 +22,7 @@ const GROUPS: Readonly<Record<string, Style>> = {
   "chat.tool.pending": { bg: "pendingBg" },
   "chat.tool.failed": { bg: "errorBg" },
   "chat.diff.header": { bold: true },
-  "chat.diff.hunk": { fg: "accent", dim: true },
+  "chat.diff.gutter": { fg: "surfaceFg", dim: true },
   "chat.diff.add": { fg: "strongFg", bg: "diffAddBg" },
   "chat.diff.delete": { fg: "danger", bg: "diffDelBg" },
   "chat.diff.context": { fg: "surfaceFg", dim: true },
