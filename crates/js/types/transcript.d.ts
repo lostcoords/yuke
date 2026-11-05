@@ -45,7 +45,12 @@ declare module "yuke:transcript" {
   /** Text of the model. `draft` is true while it streams. */
   export type TextEntry = Frozen<{ kind: "text"; key: string; text: string; refusal: boolean; draft: boolean }>;
 
-  /** Reasoning of the model. `draft` is true while it streams. */
+  /**
+   * One run of consecutive reasoning blocks in one model response. Readable block texts keep their content, with a
+   * blank line between them. Empty or whitespace-only blocks add no text. An empty live run stays until its response
+   * ends; an empty saved run has no entry. `draft` is true until the response saves. The key anchors the first source
+   * block, also when that block has no text. A saved response replaces its draft with saved keys.
+   */
   export type ReasoningEntry = Frozen<{ kind: "reasoning"; key: string; text: string; draft: boolean }>;
 
   /**

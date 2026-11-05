@@ -19,6 +19,18 @@ import type { Entry, Interaction, TurnFailure } from "yuke:transcript";
 
 type Saved = Frozen<StoredEvent>;
 
+interface Draft {
+  readonly id: string;
+  /** The first public entry of the draft. Several source blocks can share one entry. */
+  start: number;
+  /** The public entry key of each source block. */
+  readonly keys: Map<number, string>;
+  /** The source texts of each reasoning run, in block-start order. */
+  readonly reasoning: Map<string, Map<number, string>>;
+  /** The reasoning run of the last block that started, until a different block kind starts. */
+  tail: string | undefined;
+}
+
 /** The hints of a call whose tool gave none, or before the host handles it. */
 const NO_HINTS: Frozen<ToolHints> = Object.freeze({ title: null, subject: null, preview: "head" });
 
@@ -64,8 +76,8 @@ export class Transcript {
   #saved: Saved[] = [];
   /** The position of each entry, by key. */
   readonly #index = new Map<string, number>();
-  /** The open draft and the key of each of its blocks. Its entries end the list. */
-  #draft: { id: string; keys: Map<number, string> } | undefined;
+  /** The open draft. Its public entries end the list. */
+  #draft: Draft | undefined;
   /** The keys of the calls of the last answer that wait for their saved result, in call order. */
   #calls: string[] = [];
   /** The last saved answer since the last end. A turn saves its end in a commit of its own. */
@@ -134,7 +146,7 @@ export class Transcript {
         break;
       }
     }
-    const draft = this.entries.slice(this.entries.length - (this.#draft?.keys.size ?? 0));
+    const draft = this.#draft === undefined ? [] : this.entries.slice(this.#draft.start);
     this.#previous = new Map(this.entries.map((entry) => [entry.key, entry]));
     this.entries.length = 0;
     this.#index.clear();
@@ -142,6 +154,7 @@ export class Transcript {
     this.#turnAnswer = undefined;
     for (const event of this.#saved) this.#fold(event);
     this.#previous = undefined;
+    if (this.#draft !== undefined) this.#draft.start = this.entries.length;
     for (const entry of draft) this.#index.set(entry.key, this.entries.push(entry) - 1);
   }
 
@@ -203,7 +216,13 @@ export class Transcript {
         break;
       case "draft_started":
         this.#dropDraft();
-        this.#draft = { id: update.draftId, keys: new Map() };
+        this.#draft = {
+          id: update.draftId,
+          start: this.entries.length,
+          keys: new Map(),
+          reasoning: new Map(),
+          tail: undefined,
+        };
         this.#status = undefined;
         break;
       case "draft_committed":
@@ -216,11 +235,24 @@ export class Transcript {
         const model = update.event;
         if (model.kind === "block_started") {
           const key = `draft:${draft.id}:${model.block}`;
-          draft.keys.set(model.block, key);
-          if (model.blockKind === "reasoning") this.#put({ kind: "reasoning", key, text: "", draft: true });
-          else if (model.blockKind === "tool_call") {
-            this.#put({ kind: "tool", key, name: "", arguments: "", status: "streaming", ...UNHANDLED });
-          } else this.#put({ kind: "text", key, text: "", refusal: model.blockKind === "refusal", draft: true });
+          if (model.blockKind === "reasoning") {
+            const group = draft.tail ?? key;
+            let parts = draft.reasoning.get(group);
+            if (parts === undefined) {
+              parts = new Map();
+              draft.reasoning.set(group, parts);
+              this.#put({ kind: "reasoning", key: group, text: "", draft: true });
+            }
+            parts.set(model.block, "");
+            draft.keys.set(model.block, group);
+            draft.tail = group;
+          } else {
+            draft.tail = undefined;
+            draft.keys.set(model.block, key);
+            if (model.blockKind === "tool_call")
+              this.#put({ kind: "tool", key, name: "", arguments: "", status: "streaming", ...UNHANDLED });
+            else this.#put({ kind: "text", key, text: "", refusal: model.blockKind === "refusal", draft: true });
+          }
           break;
         }
         if (model.kind === "response_completed" || model.kind === "reasoning_section_started") break;
@@ -231,7 +263,13 @@ export class Transcript {
         } else if (model.kind === "block_stopped") {
           if (entry.kind === "tool" && model.call !== null)
             this.#set({ ...entry, ...called(model.call), status: "waiting" });
-        } else if (entry.kind === "text" || entry.kind === "reasoning") {
+        } else if (entry.kind === "reasoning") {
+          // A later block can start before an earlier block sends its last delta.
+          const parts = draft.reasoning.get(entry.key) as Map<number, string>;
+          parts.set(model.block, (parts.get(model.block) as string) + model.text);
+          const text = [...parts.values()].filter((part) => part.trim() !== "").join("\n\n");
+          if (text !== entry.text) this.#set({ ...entry, text });
+        } else if (entry.kind === "text") {
           this.#set({ ...entry, text: entry.text + model.text });
         }
         break;
@@ -278,16 +316,25 @@ export class Transcript {
     }
     const refusal = commit.answer?.finishReason === "refusal";
     let answer = false;
+    let reasoning: { key: string; parts: string[] } | undefined;
+    const flushReasoning = (): void => {
+      if (reasoning === undefined) return;
+      const text = reasoning.parts.join("\n\n");
+      if (text !== "") this.#put({ kind: "reasoning", key: reasoning.key, text, draft: false });
+      reasoning = undefined;
+    };
     for (const [index, block] of commit.blocks.entries()) {
       if (index < offset) continue;
       const key = `${event.seq}:${index}`;
+      if ("reasoning" in block) {
+        reasoning ??= { key, parts: [] };
+        if (block.reasoning.text.trim() !== "") reasoning.parts.push(block.reasoning.text);
+        continue;
+      }
+      flushReasoning();
       if ("assistant_text" in block)
         this.#put({ kind: "text", key, text: block.assistant_text, refusal, draft: false });
-      else if ("reasoning" in block) {
-        // A reasoning block without text only carries the replay data of the provider.
-        if (block.reasoning.text !== "")
-          this.#put({ kind: "reasoning", key, text: block.reasoning.text, draft: false });
-      } else if ("tool_call" in block) {
+      else if ("tool_call" in block) {
         if (!answer) this.#calls = [];
         answer = true;
         this.#calls.push(key);
@@ -312,6 +359,7 @@ export class Transcript {
         }
       }
     }
+    flushReasoning();
     if (commit.end !== null) {
       this.#put({ kind: "end", key: `${event.seq}:end`, end: commit.end, answer: this.#turnAnswer });
       this.#turnAnswer = undefined;
@@ -340,6 +388,8 @@ export class Transcript {
    */
   #kept(entry: Entry): Entry {
     const previous = this.#previous?.get(entry.key);
+    if (entry.kind === "reasoning" && previous?.kind === "reasoning")
+      return previous.text === entry.text && previous.draft === entry.draft ? previous : entry;
     // An older page can bring the answer of an end.
     if (entry.kind === "end" && previous?.kind === "end" && previous.answer !== entry.answer) return entry;
     if (previous === undefined || entry.kind !== "tool" || entry.status === "waiting") return previous ?? entry;
@@ -355,8 +405,8 @@ export class Transcript {
   #dropDraft(): void {
     const draft = this.#draft;
     if (draft === undefined) return;
-    for (const key of draft.keys.values()) this.#index.delete(key);
-    this.entries.length -= draft.keys.size;
+    for (const entry of this.entries.slice(draft.start)) this.#index.delete(entry.key);
+    this.entries.length = draft.start;
     this.#draft = undefined;
   }
 }
