@@ -1,6 +1,6 @@
 # yuke
 
-Unleash you harness.
+A fast, lightweight, TypeScript-scriptable coding agent.
 
 ## Development
 
