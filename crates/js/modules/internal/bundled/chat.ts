@@ -140,7 +140,7 @@ const COMMANDS: readonly {
     keys: ["esc", "ctrl+c"],
     in: "question",
     run: (pane) => pane.cancelQuestion(),
-    enabled: (pane) => pane.asking(),
+    enabled: (pane) => pane.asking() && !pane.locked(),
   },
 ];
 

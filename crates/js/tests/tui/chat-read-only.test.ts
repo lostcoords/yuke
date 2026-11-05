@@ -58,10 +58,10 @@ test("a read-only session turns off the commands that change it, and keeps the c
   const enabled = (name: string) => chat.tui.commands.list().find((command) => command.name === name)?.enabled;
 
   equal(
-    ["model", "send", "clear", "background", "paste-image", "page-up", "toggle-tools"].map((name) =>
+    ["model", "send", "clear", "background", "paste-image", "cancel-question", "page-up", "toggle-tools"].map((name) =>
       enabled(`chat:${name}`),
     ),
-    [false, false, false, false, false, true, true],
+    [false, false, false, false, false, false, true, true],
   );
 });
 

@@ -60,7 +60,10 @@ declare module "yuke:chat" {
      * the result of the first call. It rejects with the failure of a running open.
      */
     ensure(settings: () => Promise<SessionSettings | undefined>): Promise<SessionHandle | undefined>;
-    /** Load one page of history: the missing events of a gap first, else the page before the first held event. */
+    /**
+     * Load one page of history: the missing events of a gap first, else the page before the first held event. It does
+     * not reject. A failure goes in `historyError`, and no later page loads until the next open.
+     */
     loadOlderHistory(): Promise<void>;
     /**
      * Call `listener` after each change: an open, an event, the end of the handle, or a page.
@@ -282,7 +285,7 @@ declare module "yuke:chat" {
 
   /** What a chat pane gives the factory of `setPresentation`. */
   export interface ChatPresentationOptions {
-    /** The key of the document. */
+    /** The key of the document. Pass it on, and do not read a meaning from it. */
     readonly key: string;
     /** The saved fold choices. */
     readonly folds: readonly (readonly [string, boolean])[] | undefined;
@@ -384,12 +387,16 @@ declare module "yuke:chat" {
   export interface ChatService {
     /**
      * Show the session `id` in the focused chat pane, or in a new chat pane when the focused pane is no chat pane. The
-     * pane keeps its draft for its old session. It rejects when the open fails or the pane is busy, as with a send.
+     * pane keeps its draft for its old session. A pane without a session carries its draft to `id`. It rejects when the
+     * open fails or the pane is busy, as with a send.
      */
     readonly show: (id: SessionId) => Promise<void>;
     /** The session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
     readonly session: (view: View) => SessionId | undefined;
-    /** Call `listener` after each change of the session of a chat pane. */
+    /**
+     * Call `listener` after a chat pane moves to another session. It gets no call for a pane that starts on a session,
+     * or for a close.
+     */
     readonly onChange: (listener: (view: View) => void) => () => void;
     /**
      * Add a view on one side of the composer of each chat pane. `create` runs once per pane, at a layout. A close of the
