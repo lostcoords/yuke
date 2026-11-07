@@ -81,7 +81,7 @@ impl BlobStore for TestBlobs {
 
 fn digest_of(data: &[u8]) -> crate::Digest {
     assert!(data.len() <= 32);
-    let mut digest = [0; 32];
-    digest[..data.len()].copy_from_slice(data);
+    let mut digest = crate::Digest([0; 32]);
+    digest.0[..data.len()].copy_from_slice(data);
     digest
 }

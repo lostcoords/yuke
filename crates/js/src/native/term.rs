@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::tools::Json;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use rquickjs::function::Opt;
 use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -739,14 +741,13 @@ fn hex(text: &str) -> Option<Rgb> {
 
 /// The OSC 52 sequence that puts `text` on the clipboard, inside a tmux passthrough as well when `tmux` holds.
 fn copy_bytes(text: &str, tmux: bool) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    yuke_ai::encode_base64_into(&mut encoded, text.as_bytes());
+    let encoded = STANDARD.encode(text);
     let mut bytes = b"\x1b]52;c;".to_vec();
-    bytes.extend_from_slice(&encoded);
+    bytes.extend_from_slice(encoded.as_bytes());
     bytes.push(0x07);
     if tmux {
         bytes.extend_from_slice(b"\x1bPtmux;\x1b\x1b]52;c;");
-        bytes.extend_from_slice(&encoded);
+        bytes.extend_from_slice(encoded.as_bytes());
         bytes.extend_from_slice(b"\x07\x1b\\");
     }
     bytes

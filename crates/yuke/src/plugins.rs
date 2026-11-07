@@ -193,7 +193,7 @@ pub(crate) fn repository_key(url: &str) -> String {
     let last = last.strip_suffix(".git").unwrap_or(last);
     // The URL is not a safe folder name, so each other character becomes `-`.
     let name = last.replace(|c: char| !c.is_ascii_alphanumeric() && !"-_.".contains(c), "-");
-    let hash = yuke_ai::hex(&yuke_agent::blob_of(url.as_bytes()).digest);
+    let hash = yuke_agent::blob_of(url.as_bytes()).digest.to_string();
     format!("{name}-{}", &hash[..16])
 }
 

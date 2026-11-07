@@ -14,6 +14,7 @@ ts = ["dep:ts-rs"]
 http = ["dep:yuke-http"]
 
 [dependencies]
+base64 = "0.23.1"
 bytes = "1.12"
 memchr = "2.8"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -38,4 +39,8 @@ required-features = ["http"]
 
 [[example]]
 name = "tools"
+required-features = ["http"]
+
+[[example]]
+name = "custom_target"
 required-features = ["http"]

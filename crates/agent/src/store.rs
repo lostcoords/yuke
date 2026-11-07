@@ -201,7 +201,7 @@ pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
     use sha2::Digest;
 
     yuke_ai::Blob {
-        digest: sha2::Sha256::digest(bytes).into(),
+        digest: yuke_ai::Digest(sha2::Sha256::digest(bytes).into()),
         len: bytes.len(),
     }
 }

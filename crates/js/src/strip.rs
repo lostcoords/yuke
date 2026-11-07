@@ -88,5 +88,5 @@ fn key(source: &str) -> String {
         hasher.update([0]);
         hasher.update(text.as_bytes());
     }
-    yuke_ai::hex(&hasher.finalize())
+    yuke_ai::Digest(hasher.finalize().into()).to_string()
 }

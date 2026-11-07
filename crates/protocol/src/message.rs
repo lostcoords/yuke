@@ -767,19 +767,21 @@ pub struct GetBlobResult {
 
 /// Write the bytes of a blob to JSON as standard padded base64, and read them back.
 mod media_bytes {
+    use base64::Engine;
+    use base64::engine::general_purpose::{STANDARD, STANDARD_PAD_INDIFFERENT};
     use serde::de::Error;
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub(super) fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
-        let mut text = Vec::new();
-        yuke_ai::encode_base64_into(&mut text, bytes);
-        serializer.serialize_str(str::from_utf8(&text).map_err(serde::ser::Error::custom)?)
+        serializer.serialize_str(&STANDARD.encode(bytes))
     }
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         // An owned text, because a JSON text with an escape, or a buffered message, has no borrowed form.
         let text = String::deserialize(deserializer)?;
-        yuke_ai::decode_base64(text.as_bytes()).ok_or_else(|| D::Error::custom("the data is not standard base64"))
+        STANDARD_PAD_INDIFFERENT
+            .decode(text)
+            .map_err(|_| D::Error::custom("the data is not standard base64"))
     }
 }
 

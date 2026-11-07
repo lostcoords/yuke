@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use yuke_agent::StoreError;
-use yuke_ai::hex;
 use yuke_sql::rusqlite::Connection;
 
 use crate::store::{failed, has_session};
@@ -21,9 +20,9 @@ const TEMPORARY_PREFIX: &str = ".tmp-";
 /// The counter of the temporary files of this process. The process id and the counter make the name of each file.
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-/// The folder of session `session` in the folder `sessions`.
+/// The folder of session `session` in the folder `sessions`. Its name is the 32 lowercase hex characters of the id.
 pub(crate) fn session_folder(sessions: &Path, session: &[u8; 16]) -> PathBuf {
-    sessions.join(hex(session))
+    sessions.join(format!("{:032x}", u128::from_be_bytes(*session)))
 }
 
 /// The lock of a session folder. A forked child process holds a copy of each open file until its exec, and a close
@@ -68,7 +67,7 @@ pub(crate) fn write_blob(folder: &Path, bytes: &[u8]) -> io::Result<yuke_ai::Blo
     let mut file = File::create(&temporary)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    std::fs::rename(&temporary, folder.join(hex(&blob.digest)))?;
+    std::fs::rename(&temporary, folder.join(blob.digest.to_string()))?;
 
     sync_folder(folder)?;
     Ok(blob)
@@ -112,7 +111,7 @@ pub(crate) fn sync_folder(folder: &Path) -> io::Result<()> {
 /// The bytes of the blob `digest` in `folder`. A missing file gives `None`, and a missing folder gives
 /// [`StoreError::NotFound`], because a session folder lives as long as its session.
 pub(crate) fn read_blob(folder: &Path, digest: &yuke_ai::Digest) -> Result<Option<Vec<u8>>, StoreError> {
-    match std::fs::read(folder.join(hex(digest))) {
+    match std::fs::read(folder.join(digest.to_string())) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if folder.is_dir() {
@@ -172,6 +171,19 @@ fn parse_session(name: &str) -> Option<[u8; 16]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Saved sessions keep their folders, so the name must not change, and the cleanup must read it back.
+    #[test]
+    fn a_session_folder_has_the_lowercase_hex_of_the_session_id_as_its_name() {
+        let id = [
+            0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x10,
+        ];
+
+        let folder = session_folder(Path::new("sessions"), &id);
+
+        assert_eq!(folder, Path::new("sessions/000123456789abcdeffedcba98765410"));
+        assert_eq!(parse_session("000123456789abcdeffedcba98765410"), Some(id));
+    }
 
     // A forked child process holds a copy of the file, as `try_clone` makes one here. The copy must not keep the lock.
     #[test]

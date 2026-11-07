@@ -3283,6 +3283,7 @@ dependencies = [
 name = "yuke-ai"
 version = "0.0.1-dev"
 dependencies = [
+ "base64",
  "bytes",
  "memchr",
  "serde",
@@ -3329,6 +3330,7 @@ name = "yuke-js"
 version = "0.0.1-dev"
 dependencies = [
  "async-trait",
+ "base64",
  "clipboard-rs",
  "oxc_allocator",
  "oxc_codegen",
@@ -3357,6 +3359,7 @@ name = "yuke-mcp"
 version = "0.0.1-dev"
 dependencies = [
  "async-trait",
+ "base64",
  "process-wrap",
  "rmcp",
  "rustix",
@@ -3373,6 +3376,7 @@ dependencies = [
 name = "yuke-protocol"
 version = "0.0.1-dev"
 dependencies = [
+ "base64",
  "serde",
  "serde_json",
  "ts-rs",

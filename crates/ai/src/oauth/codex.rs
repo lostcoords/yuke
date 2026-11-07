@@ -3,11 +3,12 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD_INDIFFERENT;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{FlowLogin, Grant, OAuthError, PendingLogin, Poll, TokenAnswer};
-use crate::base64;
 use crate::transport::Exchange;
 
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -141,6 +142,6 @@ fn claims(token: &str) -> Option<Value> {
     if header.is_empty() || payload.is_empty() || signature.is_empty() {
         return None;
     }
-    let bytes = base64::decode_url_safe(payload.as_bytes())?;
+    let bytes = URL_SAFE_NO_PAD_INDIFFERENT.decode(payload).ok()?;
     serde_json::from_slice(&bytes).ok()
 }

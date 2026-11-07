@@ -23,7 +23,7 @@ pub(super) fn key(folder: &Path, config: &yuke_mcp::Config) -> Result<String, se
     let mut bytes = real.as_os_str().as_bytes().to_vec();
     bytes.push(0);
     bytes.extend(serde_json::to_vec(config)?);
-    Ok(yuke_ai::hex(&yuke_agent::blob_of(&bytes).digest))
+    Ok(yuke_agent::blob_of(&bytes).digest.to_string())
 }
 
 /// Whether the user confirmed the servers of `key`.

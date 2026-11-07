@@ -8,6 +8,8 @@ use std::process::Stdio;
 use std::rc::Rc;
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_PAD_INDIFFERENT;
 use process_wrap::tokio::{CommandWrap, ProcessSession};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ClientRequest,
@@ -549,8 +551,10 @@ async fn content(result: CallToolResult, media: &dyn MediaStore) -> ToolContent 
     }
 }
 
-/// Store the base64 image `data`.
+/// Store the base64 image `data`. The padding is optional.
 async fn image_of(data: &str, media: &dyn MediaStore) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
-    let bytes = yuke_ai::decode_base64(data.as_bytes()).ok_or("its data is not base64")?;
+    let bytes = STANDARD_PAD_INDIFFERENT
+        .decode(data)
+        .map_err(|_| "its data is not base64")?;
     media.put_media(bytes).await
 }

@@ -9,6 +9,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use yuke_ai::scripted::{ScriptedTransport, text_reply, tool_reply};
 use yuke_ai::{Blob, Block, Target};
 use yuke_engine::NoWait;
@@ -37,7 +39,7 @@ impl yuke_ai::BlobStore for Recorded {
 impl MediaStore for Recorded {
     async fn put_media(&self, bytes: Vec<u8>) -> Result<Blob, Box<dyn std::error::Error + Send + Sync>> {
         let blob = Blob {
-            digest: [7; 32],
+            digest: yuke_ai::Digest([7; 32]),
             len: bytes.len(),
         };
         self.0.lock().unwrap().push(bytes);
@@ -194,10 +196,7 @@ async fn the_model_reads_the_text_the_image_the_error_and_the_structure_of_the_r
     for text in ["hello", "a picture", "it broke", r#"{\"answer\":42}"#] {
         assert!(request.contains(text), "{text}: {request}");
     }
-    assert_eq!(
-        *media.0.lock().unwrap(),
-        [yuke_ai::decode_base64(PIXEL.as_bytes()).unwrap()]
-    );
+    assert_eq!(*media.0.lock().unwrap(), [STANDARD.decode(PIXEL).unwrap()]);
     servers.close().await;
 }
 

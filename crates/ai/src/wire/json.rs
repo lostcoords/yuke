@@ -3,6 +3,9 @@
 
 use std::io::Write as _;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+
 use crate::json::Value;
 
 /// A writer of one JSON value tree into a byte buffer. It places the commas between members and elements.
@@ -158,7 +161,12 @@ impl<'b> JsonWriter<'b> {
             escape_into(self.out, mime.as_bytes());
             self.out.extend_from_slice(b";base64,");
         }
-        crate::base64::encode_base64_into(self.out, data);
+        let start = self.out.len();
+        // Padded base64 writes 4 characters for each started group of 3 bytes.
+        self.out.resize(start + data.len().div_ceil(3) * 4, 0);
+        if STANDARD.encode_slice(data, &mut self.out[start..]).is_err() {
+            unreachable!("the output holds the padded length of the data");
+        }
         self.out.push(b'"');
         self.value_done();
     }

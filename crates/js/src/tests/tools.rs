@@ -88,7 +88,7 @@ impl MediaStore for TestHost {
             return Err(Arc::clone(error).into());
         }
         let blob = yuke_ai::Blob {
-            digest: [7; 32],
+            digest: yuke_ai::Digest([7; 32]),
             len: bytes.len(),
         };
         self.media.borrow_mut().push(bytes);

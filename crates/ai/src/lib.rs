@@ -1,7 +1,6 @@
 //! Model calls over Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. [`generate`] returns one owned
 //! [`Response`]. [`Encoder`] and [`Reply`] split the same call into steps that lend until the next call.
 
-mod base64;
 pub mod catalog;
 mod encoder;
 mod failure;
@@ -23,7 +22,6 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
-pub use base64::{decode_base64, encode_base64_into};
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
 pub use reply::Reply;
@@ -32,7 +30,7 @@ pub use request::{
     Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
     ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
     Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
-    answer_text, hex,
+    answer_text,
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
@@ -132,7 +130,7 @@ mod tests {
         };
         let store_error: Box<dyn std::error::Error + Send + Sync> = "the store is locked".into();
         let blob_read = Error::from(EncodeError::BlobRead {
-            digest: [0; 32],
+            digest: Digest([0; 32]),
             source: store_error,
         });
 

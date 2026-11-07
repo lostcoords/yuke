@@ -574,7 +574,7 @@ mod tests {
         }
 
         let file = Blob {
-            digest: [0; 32],
+            digest: crate::Digest([0; 32]),
             len: 4,
         };
         let blocks = [Block::Media(Media::new(file, "text/plain"))];

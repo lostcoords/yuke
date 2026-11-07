@@ -55,7 +55,7 @@ fn result() -> ToolResult {
         is_error: false,
         media: vec![Media::new(
             Blob {
-                digest: [1; 32],
+                digest: yuke_ai::Digest([1; 32]),
                 len: 3,
             },
             "image/png",
@@ -354,7 +354,7 @@ async fn round_after_joins_the_texts_of_the_answer_with_newlines() {
 fn an_estimate_charges_each_media_item_and_the_larger_of_the_reasoning_text_and_its_state() {
     let media = Media::new(
         Blob {
-            digest: [0; 32],
+            digest: yuke_ai::Digest([0; 32]),
             len: 3,
         },
         "image/png",

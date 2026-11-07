@@ -83,15 +83,9 @@ impl fmt::Display for EncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unsupported(reason) => fmt::Display::fmt(reason, f),
-            Self::UnresolvedBlob { digest } => {
-                f.write_str("the caller could not resolve the attachment blob ")?;
-                digest.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
-            }
+            Self::UnresolvedBlob { digest } => write!(f, "the caller could not resolve the attachment blob {digest}"),
             // The text names no cause, because `source` returns it.
-            Self::BlobRead { digest, .. } => {
-                f.write_str("the blob store failed to read the attachment blob ")?;
-                digest.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
-            }
+            Self::BlobRead { digest, .. } => write!(f, "the blob store failed to read the attachment blob {digest}"),
             Self::CredentialMismatch => f.write_str("the credential does not match the route"),
             // A rejected name can hold a control byte, so it prints escaped.
             Self::InvalidHeader { name } => write!(f, "the request header {name:?} is invalid"),

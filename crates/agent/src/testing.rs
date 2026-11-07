@@ -839,11 +839,11 @@ pub async fn a_put_blob_reads_back(store: &dyn Store) {
     let blob = store.put_blob(id, b"image".to_vec()).await.unwrap();
 
     // The SHA-256 of "image", as `printf image | shasum -a 256` gives it.
-    let digest = [
-        0x61, 0x05, 0xd6, 0xcc, 0x76, 0xaf, 0x40, 0x03, 0x25, 0xe9, 0x4d, 0x58, 0x8c, 0xe5, 0x11, 0xbe, 0x5b, 0xfd,
-        0xbb, 0x73, 0xb4, 0x37, 0xdc, 0x51, 0xec, 0xa4, 0x39, 0x17, 0xd7, 0xa4, 0x3e, 0x3d,
-    ];
-    assert_eq!(blob, yuke_ai::Blob { digest, len: 5 });
+    assert_eq!(
+        blob.digest.to_string(),
+        "6105d6cc76af400325e94d588ce511be5bfdbb73b437dc51eca43917d7a43e3d"
+    );
+    assert_eq!(blob.len, 5);
     assert_eq!(
         store.read_blob(id, &blob.digest).unwrap().as_deref(),
         Some(&b"image"[..])

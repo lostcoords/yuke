@@ -44,6 +44,13 @@ Set `OPENAI_API_KEY`. These examples send live requests. API charges can apply.
 | [Streaming chat](examples/chat.rs) | `mise exec -- cargo run --example chat` |
 | [Tool calls](examples/tools.rs) | `mise exec -- cargo run --example tools` |
 
+The catalog is optional. A program can write each `Target` itself. This example calls a local OpenAI-compatible
+server, Ollama by default, and sends no credential. Set `MODEL`, and set `BASE_URL` for another server.
+
+| Example | Command |
+| --- | --- |
+| [Custom target](examples/custom_target.rs) | `MODEL=<model> mise exec -- cargo run --example custom_target` |
+
 ## Development
 
 Run commands from the repository root.

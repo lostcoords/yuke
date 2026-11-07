@@ -154,8 +154,51 @@ pub enum Modality {
     Other,
 }
 
-/// The digest of the content of a blob, such as its SHA-256.
-pub type Digest = [u8; 32];
+/// The digest of the content of a blob, such as its SHA-256. Its text is 64 lowercase hex characters, in `Display` and
+/// in JSON, and it also names a stored file. JSON reads either case.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Digest(pub [u8; 32]);
+
+impl fmt::Display for Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
+    }
+}
+
+impl fmt::Debug for Digest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Digest({self})")
+    }
+}
+
+impl Serialize for Digest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Digest {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, Unexpected};
+
+        let text = String::deserialize(deserializer)?;
+        let invalid = || D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters");
+        if text.len() != 64 {
+            return Err(invalid());
+        }
+        let digit = |byte: u8| match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            b'A'..=b'F' => Ok(byte - b'A' + 10),
+            _ => Err(invalid()),
+        };
+        let mut digest = [0; 32];
+        for (byte, &[high, low]) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
+            *byte = digit(high)? << 4 | digit(low)?;
+        }
+        Ok(Digest(digest))
+    }
+}
 
 /// Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
 /// of a resumed context reads no blob that the encoder kept.
@@ -164,7 +207,6 @@ pub type Digest = [u8; 32];
 #[serde(rename_all = "camelCase")]
 pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
-    #[serde(with = "digest_hex")]
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub digest: Digest,
     /// The byte count of the content. [`BlobStore`] answers are checked against it.
@@ -194,38 +236,6 @@ pub(crate) fn read_blob<'s>(store: Option<&'s dyn BlobStore>, blob: &Blob) -> Re
     bytes
         .filter(|bytes| bytes.len() == blob.len)
         .ok_or(EncodeError::UnresolvedBlob { digest })
-}
-
-/// Write a blob digest to JSON as 64 lowercase hex characters, the text that also names a stored file. Read either
-/// case.
-mod digest_hex {
-    use serde::de::{Error, Unexpected};
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    use super::{Digest, hex};
-
-    pub(super) fn serialize<S: Serializer>(digest: &Digest, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&hex(digest))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Digest, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        let invalid = || D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters");
-        if text.len() != 64 {
-            return Err(invalid());
-        }
-        let digit = |byte: u8| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            b'A'..=b'F' => Ok(byte - b'A' + 10),
-            _ => Err(invalid()),
-        };
-        let mut digest = [0; 32];
-        for (byte, &[high, low]) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
-            *byte = digit(high)? << 4 | digit(low)?;
-        }
-        Ok(digest)
-    }
 }
 
 /// Which side a block belongs to: the user or the assistant.
@@ -313,17 +323,6 @@ pub fn answer_text(context: &[Block]) -> String {
         })
         .collect();
     texts.join("\n")
-}
-
-/// The lowercase hex text of `bytes`. The text of a [`Digest`] is also the name of its stored file.
-pub fn hex(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        text.push(char::from(DIGITS[usize::from(byte & 15)]));
-    }
-    text
 }
 
 /// One attachment. Its media type selects the block each protocol writes.
@@ -996,7 +995,7 @@ mod tests {
     #[test]
     fn a_media_type_names_its_kind_in_any_letter_case() {
         let blob = Blob {
-            digest: [0; 32],
+            digest: Digest([0; 32]),
             len: 0,
         };
         let kinds: Vec<Modality> = ["IMAGE/PNG", "Application/PDF", "text/Plain"]
@@ -1043,10 +1042,14 @@ mod tests {
     #[test]
     fn blob_read_checks_length() {
         let blob = Blob {
-            digest: [0; 32],
+            digest: Digest([0; 32]),
             len: 2,
         };
-        let missing = || Err(EncodeError::UnresolvedBlob { digest: [0; 32] });
+        let missing = || {
+            Err(EncodeError::UnresolvedBlob {
+                digest: Digest([0; 32]),
+            })
+        };
         assert_same(read_blob(None, &blob), missing());
         assert_same(read_blob(Some(&Store), &blob), Ok(Cow::Borrowed(&b"ab"[..])));
         // The store holds other content under this digest, so the request must not send it.
@@ -1058,7 +1061,7 @@ mod tests {
     fn block_json_keeps_its_stored_shape() {
         let digest = "00ff".repeat(16);
         let blob = Blob {
-            digest: [0x00, 0xff].repeat(16).try_into().unwrap(),
+            digest: Digest([0x00, 0xff].repeat(16).try_into().unwrap()),
             len: 3,
         };
         let replay = ReasoningReplay {
@@ -1127,9 +1130,9 @@ mod tests {
     #[test]
     fn digest_json_needs_64_hex_characters() {
         let parse = |digest: &str| serde_json::from_str::<Blob>(&format!(r#"{{"digest":"{digest}","len":1}}"#));
-        let mut expected = [0; 32];
-        expected[0] = 0xab;
-        expected[31] = 0x09;
+        let mut expected = Digest([0; 32]);
+        expected.0[0] = 0xab;
+        expected.0[31] = 0x09;
         let text = format!("ab{}09", "0".repeat(60));
         assert_eq!(parse(&text).unwrap().digest, expected);
         assert_eq!(parse(&text.to_uppercase()).unwrap().digest, expected);

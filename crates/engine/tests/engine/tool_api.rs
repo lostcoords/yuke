@@ -224,7 +224,7 @@ impl BlobStore for TwoBytes {
 fn image() -> Media {
     Media::new(
         Blob {
-            digest: [7; 32],
+            digest: yuke_ai::Digest([7; 32]),
             len: 2,
         },
         "image/png",
