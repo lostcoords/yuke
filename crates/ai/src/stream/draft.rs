@@ -7,7 +7,7 @@ use crate::json::Malformed;
 use crate::request::{Origin, ReasoningReplayRef, ReplayKind, ToolCallRef};
 use crate::response::{
     BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Delta, Done, Event, FinishReason, ResponseLimits,
-    Usage,
+    StartedBlock, Usage,
 };
 
 /// A reducer fails on malformed or oversized input. A provider error is no decode error: the reducer names it.
@@ -65,7 +65,7 @@ enum Text {
 /// One event of the current payload.
 #[derive(Debug, Clone)]
 enum Pending {
-    Started(BlockId, BlockKind),
+    Started(BlockId),
     /// A text, refusal, reasoning, or argument fragment. The block kind names which.
     Delta(BlockId, BlockKind, Text),
     Section(BlockId),
@@ -133,7 +133,17 @@ impl Draft {
             self.payload
         );
         match &self.events[index] {
-            &Pending::Started(block, kind) => Event::BlockStarted(BlockStarted { block, kind }),
+            &Pending::Started(block) => {
+                // A tool block gives the name that the provider sent by the end of the payload.
+                let started = &self.blocks[block as usize];
+                let content = match started.kind {
+                    BlockKind::Text => StartedBlock::Text,
+                    BlockKind::Refusal => StartedBlock::Refusal,
+                    BlockKind::Reasoning => StartedBlock::Reasoning,
+                    BlockKind::ToolCall => StartedBlock::ToolCall { name: &started.name },
+                };
+                Event::BlockStarted(BlockStarted { block, content })
+            }
             Pending::Delta(block, kind, text) => {
                 let delta = Delta {
                     block: *block,
@@ -196,7 +206,7 @@ impl Draft {
             bytes: String::new(),
             replay: None,
         });
-        self.events.push(Pending::Started(id, kind));
+        self.events.push(Pending::Started(id));
         Ok(id)
     }
 

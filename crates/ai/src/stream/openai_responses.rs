@@ -465,7 +465,7 @@ mod tests {
                 continue;
             }
             fed.unwrap();
-            h.expect_trace("start 0 tool_call\nstop 0 tool_call id=\"call_9\" name=\"tool_search\" arguments=\"{}\"");
+            h.expect_trace("start 0 tool_call \"tool_search\"\nstop 0 tool_call id=\"call_9\" name=\"tool_search\" arguments=\"{}\"");
         }
     }
 
@@ -487,7 +487,7 @@ mod tests {
                 h.feed(&[r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#])
                     .unwrap();
                 h.expect_trace(
-                    "start 0 tool_call\n\
+                    "start 0 tool_call \"tool_search\"\n\
                      stop 0 tool_call id=\"call_9\" name=\"tool_search\" arguments=\"{\\\"query\\\":\\\"read\\\",\\\"limit\\\":2}\"\n\
                      done tool_calls \"completed\"",
                 );
@@ -512,9 +512,9 @@ mod tests {
             r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
         ]).unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"read\"\n\
              args 0 \"{\\\"path\\\":\\\"\"\n\
-             start 1 tool_call\n\
+             start 1 tool_call \"read\"\n\
              args 1 \"{\\\"path\\\":\\\"b\\\"}\"\n\
              args 0 \"a\\\"}\"\n\
              stop 1 tool_call id=\"call_b\" name=\"read\" arguments=\"{\\\"path\\\":\\\"b\\\"}\"\n\
@@ -533,7 +533,7 @@ mod tests {
             r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","arguments":"{\"a\":3}"}}"#,
         ]).unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"run\"\n\
              args 0 \"{\\\"a\\\":1}\"\n\
              stop 0 tool_call id=\"call_1\" name=\"run\" arguments=\"{\\\"a\\\":3}\"",
         );
@@ -695,7 +695,7 @@ mod tests {
         h.expect_trace(
             "start 0 text\n\
              text_delta 0 \"a\"\n\
-             start 1 tool_call\n\
+             start 1 tool_call \"read\"\n\
              args 1 \"{}\"\n\
              stop 1 tool_call id=\"c\" name=\"read\" arguments=\"{}\"\n\
              stop 0 text\n\
@@ -820,7 +820,7 @@ mod tests {
             r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
         ])
         .unwrap();
-        h.expect_trace("start 0 tool_call\ndone stop \"completed\"");
+        h.expect_trace("start 0 tool_call \"run\"\ndone stop \"completed\"");
     }
 
     // These are the frames the provider sent when `max_output_tokens` cut a call off in its arguments.
@@ -838,7 +838,7 @@ mod tests {
                     r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","call_id":"call_1","name":"exec"}}"#,
                     r#"{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{}}}"#,
                 ],
-                "start 0 tool_call\ndone length \"max_output_tokens\"",
+                "start 0 tool_call \"exec\"\ndone length \"max_output_tokens\"",
             ),
         ];
         for (events, expected) in cases {
@@ -858,7 +858,7 @@ mod tests {
                     r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"cmd\":\"cargo "}"#,
                     r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
                 ],
-                "start 0 tool_call\nargs 0 \"{\\\"cmd\\\":\\\"cargo \"\ndone stop \"completed\"",
+                "start 0 tool_call \"run\"\nargs 0 \"{\\\"cmd\\\":\\\"cargo \"\ndone stop \"completed\"",
             ),
             (
                 &[
@@ -867,7 +867,7 @@ mod tests {
                     r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{}"}}"#,
                     r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
                 ],
-                "start 0 tool_call\nstart 1 tool_call\nstop 0 tool_call id=\"call_a\" name=\"read\" arguments=\"{}\"\ndone tool_calls \"completed\"",
+                "start 0 tool_call \"read\"\nstart 1 tool_call \"read\"\nstop 0 tool_call id=\"call_a\" name=\"read\" arguments=\"{}\"\ndone tool_calls \"completed\"",
             ),
         ];
         for (events, expected) in cases {
@@ -907,7 +907,7 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"run\"\n\
              stop 0 tool_call id=\"call_1\" name=\"run\" arguments=\"{}\"\n\
              start 1 refusal\n\
              stop 1 refusal\n\

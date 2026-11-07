@@ -197,6 +197,25 @@ pub enum LiveUpdate {
     },
 }
 
+/// What a block holds when it starts. A refusal is the text of a model that declined the request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StartedBlock {
+    /// Answer text.
+    Text,
+    /// The text of a model that declined.
+    Refusal,
+    /// Reasoning text.
+    Reasoning,
+    /// A tool call.
+    ToolCall {
+        /// The name of the tool, or an empty name when the provider has not named it yet. The block stop gives
+        /// the final call.
+        name: String,
+    },
+}
+
 /// An owned model event for clients. Block ids belong to one draft and follow block start order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -206,8 +225,8 @@ pub enum ModelUpdate {
     BlockStarted {
         /// The block id.
         block: u32,
-        /// The content kind.
-        block_kind: yuke_ai::BlockKind,
+        /// What the block holds.
+        content: StartedBlock,
     },
     /// Answer text arrives.
     TextDelta {
@@ -265,7 +284,12 @@ impl From<yuke_ai::Event<'_>> for ModelUpdate {
         match event {
             yuke_ai::Event::BlockStarted(started) => Self::BlockStarted {
                 block: started.block,
-                block_kind: started.kind,
+                content: match started.content {
+                    yuke_ai::StartedBlock::Text => StartedBlock::Text,
+                    yuke_ai::StartedBlock::Refusal => StartedBlock::Refusal,
+                    yuke_ai::StartedBlock::Reasoning => StartedBlock::Reasoning,
+                    yuke_ai::StartedBlock::ToolCall { name } => StartedBlock::ToolCall { name: name.to_owned() },
+                },
             },
             yuke_ai::Event::TextDelta(delta) => Self::TextDelta {
                 block: delta.block,

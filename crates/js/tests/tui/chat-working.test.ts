@@ -99,13 +99,13 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
       .split(" (")[0];
   };
   const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
-  model({ kind: "block_started", block: 0, blockKind: "reasoning" });
+  model({ kind: "block_started", block: 0, content: { kind: "reasoning" } });
   model({ kind: "reasoning_delta", block: 0, text: "Hmm" });
   const reasoning = phase();
-  model({ kind: "block_started", block: 1, blockKind: "text" });
+  model({ kind: "block_started", block: 1, content: { kind: "text" } });
   model({ kind: "text_delta", block: 1, text: "Sure" });
   const responding = phase();
-  model({ kind: "block_started", block: 2, blockKind: "tool_call" });
+  model({ kind: "block_started", block: 2, content: { kind: "tool_call", name: "bash" } });
   equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
 });
 
@@ -127,7 +127,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   };
   // The transcript follows its tail, so a row of the thought moves the replies up.
   const before = shown()[0];
-  model({ kind: "block_started", block: 0, blockKind: "reasoning" });
+  model({ kind: "block_started", block: 0, content: { kind: "reasoning" } });
   const empty = shown();
   model({ kind: "reasoning_delta", block: 0, text: " \n" });
   const blank = shown();

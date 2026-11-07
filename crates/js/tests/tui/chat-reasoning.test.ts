@@ -51,12 +51,12 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   sessions.push({
     sessionUpdate: "model",
     draftId: "d",
-    event: { kind: "block_started", block: 0, blockKind: "reasoning" },
+    event: { kind: "block_started", block: 0, content: { kind: "reasoning" } },
   });
   sessions.push({
     sessionUpdate: "model",
     draftId: "d",
-    event: { kind: "block_started", block: 1, blockKind: "reasoning" },
+    event: { kind: "block_started", block: 1, content: { kind: "reasoning" } },
   });
   sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoning_delta", block: 1, text: " \n\t" } });
   frame.draw();

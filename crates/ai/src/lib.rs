@@ -33,8 +33,8 @@ pub use request::{
     answer_text,
 };
 pub use response::{
-    AttemptError, AttemptInfo, BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta,
-    Done, Error, Event, FinishReason, Partial, PartialBlock, Response, ResponseLimits, Usage,
+    AttemptError, AttemptInfo, BlockId, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta, Done,
+    Error, Event, FinishReason, Partial, PartialBlock, Response, ResponseLimits, StartedBlock, Usage,
 };
 use route::Credential;
 pub use stream::Options;

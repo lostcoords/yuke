@@ -389,7 +389,7 @@ pub(crate) fn label(event: &TurnEvent<'_>) -> String {
             })
         }
         TurnEvent::Model(yuke_ai::Event::BlockStarted(started)) => {
-            format!("start {} {:?}", started.block, started.kind)
+            format!("start {} {:?}", started.block, started.content)
         }
         TurnEvent::Model(yuke_ai::Event::TextDelta(delta)) => format!("text {}", delta.text),
         TurnEvent::Model(yuke_ai::Event::ReasoningDelta(delta)) => format!("reasoning {}", delta.text),

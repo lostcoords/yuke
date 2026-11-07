@@ -235,7 +235,7 @@ export class Transcript {
         const model = update.event;
         if (model.kind === "block_started") {
           const key = `draft:${draft.id}:${model.block}`;
-          if (model.blockKind === "reasoning") {
+          if (model.content.kind === "reasoning") {
             const group = draft.tail ?? key;
             let parts = draft.reasoning.get(group);
             if (parts === undefined) {
@@ -249,9 +249,10 @@ export class Transcript {
           } else {
             draft.tail = undefined;
             draft.keys.set(model.block, key);
-            if (model.blockKind === "tool_call")
-              this.#put({ kind: "tool", key, name: "", arguments: "", status: "streaming", ...UNHANDLED });
-            else this.#put({ kind: "text", key, text: "", refusal: model.blockKind === "refusal", draft: true });
+            if (model.content.kind === "tool_call") {
+              const name = model.content.name;
+              this.#put({ kind: "tool", key, name, arguments: "", status: "streaming", ...UNHANDLED });
+            } else this.#put({ kind: "text", key, text: "", refusal: model.content.kind === "refusal", draft: true });
           }
           break;
         }

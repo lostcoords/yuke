@@ -109,7 +109,7 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
 
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "empty" },
-    model("empty", { kind: "block_started", block: 4, blockKind: "reasoning" }),
+    model("empty", { kind: "block_started", block: 4, content: { kind: "reasoning" } }),
   ]);
   const entry = reasoning(transcript)[0];
   equal(entry, { kind: "reasoning", key: "draft:empty:4", text: "", draft: true });
@@ -121,14 +121,14 @@ test("a live group keeps its first key and only changes when its retained text c
   const entries = transcript.entries;
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "d1" },
-    model("d1", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoning_delta", block: 0, text: "  first  " }),
   ]);
   const first = reasoning(transcript)[0];
   assert(first !== undefined, "the first reasoning group is missing");
 
   fed(transcript, [
-    model("d1", { kind: "block_started", block: 1, blockKind: "reasoning" }),
+    model("d1", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoning_delta", block: 1, text: " \t" }),
   ]);
   assert(transcript.entries === entries, "the entries array changed");
@@ -141,9 +141,9 @@ test("a live group keeps its first key and only changes when its retained text c
   equal([changed.key, changed.text], ["draft:d1:0", "  first  \n\n \tsecond"]);
 
   fed(transcript, [
-    model("d1", { kind: "block_started", block: 2, blockKind: "text" }),
+    model("d1", { kind: "block_started", block: 2, content: { kind: "text" } }),
     model("d1", { kind: "text_delta", block: 2, text: "answer" }),
-    model("d1", { kind: "block_started", block: 3, blockKind: "reasoning" }),
+    model("d1", { kind: "block_started", block: 3, content: { kind: "reasoning" } }),
   ]);
   const emptyGroup = reasoning(transcript)[1];
   assert(emptyGroup !== undefined, "the second live group is missing");
@@ -158,11 +158,11 @@ test("a live group keeps its first key and only changes when its retained text c
 test("interleaved reasoning deltas route back to their source group", () => {
   const transcript = fed(opened(), [
     { sessionUpdate: "draft_started", draftId: "interleaved" },
-    model("interleaved", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("interleaved", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("interleaved", { kind: "reasoning_delta", block: 0, text: "one" }),
-    model("interleaved", { kind: "block_started", block: 1, blockKind: "reasoning" }),
+    model("interleaved", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("interleaved", { kind: "reasoning_delta", block: 1, text: "two" }),
-    model("interleaved", { kind: "block_started", block: 2, blockKind: "text" }),
+    model("interleaved", { kind: "block_started", block: 2, content: { kind: "text" } }),
     model("interleaved", { kind: "text_delta", block: 2, text: "answer" }),
     model("interleaved", { kind: "reasoning_delta", block: 0, text: " late" }),
   ]);
@@ -179,11 +179,11 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
   });
   const updates: SessionUpdate[] = [
     { sessionUpdate: "draft_started", draftId: "d1" },
-    model("d1", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoning_delta", block: 0, text: "first" }),
-    model("d1", { kind: "block_started", block: 1, blockKind: "reasoning" }),
+    model("d1", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoning_delta", block: 1, text: "second" }),
-    model("d1", { kind: "block_started", block: 2, blockKind: "text" }),
+    model("d1", { kind: "block_started", block: 2, content: { kind: "text" } }),
     model("d1", { kind: "text_delta", block: 2, text: "answer" }),
     saved,
     { sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 4, blocks: [0, 1, 2] },
@@ -202,8 +202,8 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   const transcript = opened([commit(1, { blocks: [{ reasoning: { text: "saved" } }] })]);
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "discarded" },
-    model("discarded", { kind: "block_started", block: 0, blockKind: "reasoning" }),
-    model("discarded", { kind: "block_started", block: 1, blockKind: "reasoning" }),
+    model("discarded", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
+    model("discarded", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("discarded", { kind: "reasoning_delta", block: 1, text: "not saved" }),
     { sessionUpdate: "draft_discarded", draftId: "discarded", reason: "failed" },
   ]);
@@ -214,7 +214,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
 
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "cancelled" },
-    model("cancelled", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("cancelled", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("cancelled", { kind: "reasoning_delta", block: 0, text: "cancelled" }),
     commit(2, { blocks: [{ reasoning: { text: "cancelled" } }], end: { outcome: "cancelled" } }),
     { sessionUpdate: "draft_discarded", draftId: "cancelled", reason: "failed" },
@@ -229,7 +229,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
 
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "replacement" },
-    model("replacement", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("replacement", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("replacement", { kind: "reasoning_delta", block: 0, text: "replacement" }),
     commit(3, { blocks: [{ reasoning: { text: "replacement" } }] }),
     { sessionUpdate: "draft_committed", draftId: "replacement", eventNumber: 3, blocks: [0] },
@@ -245,7 +245,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
 
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "unconfirmed" },
-    model("unconfirmed", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("unconfirmed", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     { sessionUpdate: "turn_unconfirmed" },
   ]);
   equal(
@@ -302,11 +302,11 @@ test("inserting older and gap events preserves a live group, tool state, and cac
     { sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 2 }, call },
     { sessionUpdate: "tool_output", execution: { eventNumber: 3, blockIndex: 2 }, text: "running" },
     { sessionUpdate: "draft_started", draftId: "live" },
-    model("live", { kind: "block_started", block: 0, blockKind: "reasoning" }),
+    model("live", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
     model("live", { kind: "reasoning_delta", block: 0, text: "draft one" }),
-    model("live", { kind: "block_started", block: 1, blockKind: "reasoning" }),
+    model("live", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("live", { kind: "reasoning_delta", block: 1, text: "draft two" }),
-    model("live", { kind: "block_started", block: 2, blockKind: "tool_call" }),
+    model("live", { kind: "block_started", block: 2, content: { kind: "tool_call", name: "bash" } }),
     model("live", { kind: "tool_input_delta", block: 2, text: "{}" }),
     model("live", { kind: "block_stopped", block: 2, call }),
   ]);

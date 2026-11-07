@@ -48,5 +48,5 @@ pub use session::{
 };
 pub use update::{
     BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionSnapshot, SessionState, SessionUpdate,
-    SessionUpdateParams,
+    SessionUpdateParams, StartedBlock,
 };

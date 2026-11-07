@@ -145,10 +145,10 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
         labels.labels(),
         [
             "response started",
-            "start 0 ToolCall",
+            "start 0 ToolCall { name: \"echo\" }",
             "arguments 0 {}",
             "stop 0",
-            "start 1 ToolCall",
+            "start 1 ToolCall { name: \"echo\" }",
             "arguments 1 {}",
             "stop 1",
             "done ToolCalls",

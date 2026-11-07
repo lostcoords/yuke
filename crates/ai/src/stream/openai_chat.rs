@@ -606,9 +606,9 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"one\"\n\
              args 0 \"{\\\"a\\\":\"\n\
-             start 1 tool_call\n\
+             start 1 tool_call \"two\"\n\
              args 1 \"{\\\"b\\\":\"\n\
              args 0 \"1}\"\n\
              args 1 \"2}\"\n\
@@ -638,7 +638,7 @@ mod tests {
              start 1 text\n\
              text_delta 1 \"The\"\n\
              reasoning_delta 0 \" works.\"\n\
-             start 2 tool_call\n\
+             start 2 tool_call \"read\"\n\
              args 2 \"{}\"\n\
              reasoning_delta 0 \" Done.\"\n\
              text_delta 1 \" plugin\"\n\
@@ -660,7 +660,7 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"read\"\n\
              stop 0 tool_call id=\"real_id\" name=\"read\" arguments=\"{}\"\n\
              done tool_calls \"tool_calls\"",
         );
@@ -733,9 +733,9 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"one\"\n\
              args 0 \"{}\"\n\
-             start 1 tool_call\n\
+             start 1 tool_call \"two\"\n\
              args 1 \"{}\"\n\
              stop 0 tool_call id=\"a\" name=\"one\" arguments=\"{}\"\n\
              stop 1 tool_call id=\"b\" name=\"two\" arguments=\"{}\"\n\

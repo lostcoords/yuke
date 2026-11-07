@@ -87,12 +87,6 @@ len: number, };
 export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": string } | { "reasoning": Reasoning } | { "tool_call": ToolCall };
 
 /**
- * The kind of a streamed block. A refusal is the text of a model that declined the request. The library keeps the
- * refusal apart from the answer text.
- */
-export type BlockKind = "text" | "refusal" | "reasoning" | "tool_call";
-
-/**
  * A block position within one session. A tool execution uses the position of its call, not its result.
  */
 export type BlockPosition = { 
@@ -721,9 +715,9 @@ export type ModelUpdate = { "kind": "block_started",
  */
 block: number, 
 /**
- * The content kind.
+ * What the block holds.
  */
-blockKind: BlockKind, } | { "kind": "text_delta", 
+content: StartedBlock, } | { "kind": "text_delta", 
 /**
  * The block id.
  */
@@ -1276,6 +1270,16 @@ toolChoice: ToolChoice,
  * The schema of the response. `None` leaves the response free.
  */
 outputSchema: OutputSchema | null, };
+
+/**
+ * What a block holds when it starts. A refusal is the text of a model that declined the request.
+ */
+export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind": "reasoning" } | { "kind": "tool_call", 
+/**
+ * The name of the tool, or an empty name when the provider has not named it yet. The block stop gives
+ * the final call.
+ */
+name: string, };
 
 /**
  * One saved event of a session, with its event number. Its JSON holds the number as `seq` beside the fields of the

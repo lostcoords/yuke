@@ -693,12 +693,12 @@ fn live_updates_preserve_draft_and_execution_identity_in_json() {
         ),
         (
             json!({ "sessionUpdate": "model", "draftId": draft,
-                "event": { "kind": "block_started", "block": 2, "blockKind": "tool_call" } }),
+                "event": { "kind": "block_started", "block": 2, "content": { "kind": "tool_call", "name": "read" } } }),
             LiveUpdate::Model {
                 draft_id,
                 event: yuke_protocol::ModelUpdate::BlockStarted {
                     block: 2,
-                    block_kind: yuke_ai::BlockKind::ToolCall,
+                    content: yuke_protocol::StartedBlock::ToolCall { name: "read".into() },
                 },
             },
         ),

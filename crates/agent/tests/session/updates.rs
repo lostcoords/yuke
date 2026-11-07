@@ -111,7 +111,7 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
         [
             ModelUpdate::BlockStarted {
                 block: 0,
-                block_kind: yuke_ai::BlockKind::Reasoning
+                content: yuke_protocol::StartedBlock::Reasoning
             },
             ModelUpdate::ReasoningDelta {
                 block: 0,
@@ -119,7 +119,7 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
             },
             ModelUpdate::BlockStarted {
                 block: 1,
-                block_kind: yuke_ai::BlockKind::Text
+                content: yuke_protocol::StartedBlock::Text
             },
             ModelUpdate::TextDelta {
                 block: 1,
@@ -276,6 +276,36 @@ async fn a_finished_tool_reports_its_duration() {
         })
         .collect();
     assert!(matches!(durations[..], [Some(_)]), "{durations:?}");
+}
+
+#[tokio::test]
+async fn the_live_start_of_a_tool_call_names_its_tool() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "send", "{}")]), text_reply("done")]);
+    let model = model();
+    let tools = tools();
+    let store = Arc::new(MemoryStore::new());
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
+    store.accept_input(session.id(), user_input("go")).await.unwrap();
+    let capture = Capture::default();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait).toolset(&tools))
+        .observer(&capture)
+        .run()
+        .await
+        .unwrap();
+    let started = capture.live().into_iter().find_map(|update| match update {
+        LiveUpdate::Model {
+            event: ModelUpdate::BlockStarted { content, .. },
+            ..
+        } => Some(content),
+        _ => None,
+    });
+    assert_eq!(
+        started,
+        Some(yuke_protocol::StartedBlock::ToolCall { name: "send".into() })
+    );
 }
 
 #[tokio::test]
@@ -746,7 +776,7 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         [
             ModelUpdate::BlockStarted {
                 block: 0,
-                block_kind: yuke_ai::BlockKind::Reasoning
+                content: yuke_protocol::StartedBlock::Reasoning
             },
             ModelUpdate::ReasoningSectionStarted { block: 0 },
             ModelUpdate::ReasoningDelta {

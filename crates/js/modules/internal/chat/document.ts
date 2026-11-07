@@ -1,7 +1,7 @@
 /**
  * `ChatDocument` of `yuke:chat`: one item for each entry of a transcript, with its folds, and one item after them for a
- * failure of the running turn. An item stays the same object while its entry, its fold, and its shown duration stay, so
- * the view keeps its rows.
+ * failure of the running turn. A tool search that does not fail has no item. An item stays the same object while its
+ * entry, its fold, and its shown duration stay, so the view keeps its rows.
  */
 
 import type { ChatPresentation } from "yuke:chat";
@@ -13,6 +13,9 @@ import { Markdown, type TextDocument, type TextItem, type TextSection } from "yu
 
 /** The key of the item of a failure of the running turn. It comes after the entries. */
 const STATUS = "status";
+
+/** The tool of the engine that loads deferred tools. */
+const SEARCH_TOOL_NAME = "tool_search";
 
 interface Cached {
   readonly entry: Entry;
@@ -52,9 +55,9 @@ export class ChatDocument implements ChatPresentation {
     return true;
   }
 
-  /** Open each loaded tool when one of them is folded. Otherwise, fold each one. A later tool starts folded. */
+  /** Open each shown tool when one of them is folded. Otherwise, fold each one. A later tool starts folded. */
   toggleTools(transcript: Transcript): void {
-    const tools = transcript.entries.filter((entry) => entry.kind === "tool");
+    const tools = transcript.entries.filter((entry) => entry.kind === "tool" && shown(entry));
     const open = tools.some((entry) => !this.#open(entry));
     for (const entry of tools) this.#folds.set(entry.key, open);
   }
@@ -65,6 +68,7 @@ export class ChatDocument implements ChatPresentation {
     const items: TextItem[] = [];
     const now = Date.now();
     for (const entry of transcript.entries) {
+      if (!shown(entry)) continue;
       const open = this.#open(entry);
       const duration = entry.kind === "tool" ? shownDuration(entry, now) : undefined;
       let cached = this.#cache.get(entry.key);
@@ -93,6 +97,14 @@ export class ChatDocument implements ChatPresentation {
   #open(entry: Entry): boolean {
     return this.#folds.get(entry.key) ?? (entry.kind !== "reasoning" && entry.kind !== "tool");
   }
+}
+
+/**
+ * Whether the document has an item for `entry`. A tool search only prepares the calls after it, so only a failed
+ * search shows.
+ */
+function shown(entry: Entry): boolean {
+  return !(entry.kind === "tool" && entry.name === SEARCH_TOOL_NAME && entry.result?.isError !== true);
 }
 
 /** The item of `entry`. A text entry needs `markdown`, which holds its text. */

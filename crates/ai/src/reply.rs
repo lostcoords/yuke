@@ -5,7 +5,7 @@ use crate::encoder::Encoded;
 use crate::failure::Failure;
 use crate::request::{Reasoning, ReasoningReplay};
 use crate::response::{
-    AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, PartialBlock, Response,
+    AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, PartialBlock, Response, StartedBlock,
 };
 use crate::stream::{Options, Stream};
 use crate::transport::Transport;
@@ -93,7 +93,15 @@ impl Reply {
 /// Keep what one event says.
 fn keep(parts: &mut Vec<Part>, end: &mut End, event: &Event<'_>) {
     match event {
-        Event::BlockStarted(started) => parts.push(Part::Open(started.kind, String::new())),
+        Event::BlockStarted(started) => {
+            let kind = match started.content {
+                StartedBlock::Text => BlockKind::Text,
+                StartedBlock::Refusal => BlockKind::Refusal,
+                StartedBlock::Reasoning => BlockKind::Reasoning,
+                StartedBlock::ToolCall { .. } => BlockKind::ToolCall,
+            };
+            parts.push(Part::Open(kind, String::new()));
+        }
         Event::TextDelta(delta) | Event::RefusalDelta(delta) | Event::ReasoningDelta(delta) => {
             if let Part::Open(_, text) = &mut parts[delta.block as usize] {
                 text.push_str(delta.text);

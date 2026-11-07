@@ -227,7 +227,7 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   equal(transcriptRows(frame).slice(1, 2), [' Probe {"path":"a · waiting']);
 });
 
-test("a streaming call shows its raw arguments, and the subject takes their place when the hints come", async () => {
+test("a streaming call shows its name and raw arguments, and the subject takes their place when the hints come", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
@@ -238,7 +238,7 @@ test("a streaming call shows its raw arguments, and the subject takes their plac
     return transcriptRows(frame)[1];
   };
   sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
-  model({ kind: "block_started", block: 0, blockKind: "tool_call" });
+  model({ kind: "block_started", block: 0, content: { kind: "tool_call", name: "exec" } });
   model({ kind: "tool_input_delta", block: 0, text: '{"command":' });
   const streaming = head();
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
@@ -253,8 +253,66 @@ test("a streaming call shows its raw arguments, and the subject takes their plac
   sessions.push({ sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 2, blocks: [0] });
   equal(
     [streaming, stopped, head()],
-    [' tool {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
+    [' exec {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
   );
+});
+
+test("a tool search that ends well shows no row, and a failed one shows its error", async () => {
+  using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const search: ToolHints = { title: null, subject: null, preview: "head" };
+  const saved = calls(
+    { name: "tool_search", args: { query: "slack" }, hints: search, result: ok("loaded slack_send") },
+    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("x") },
+    { name: "tool_search", args: { query: "jira" }, hints: search, result: { ...ok("no match"), isError: true } },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  equal(transcriptRows(frame).slice(0, 6), [
+    "",
+    " read a.rs",
+    "",
+    ' tool_search {"query":"jira"} · error',
+    " no match",
+    "",
+  ]);
+});
+
+test("the tool toggle folds each shown tool when each one is open, and a hidden tool search does not count", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const search: ToolHints = { title: null, subject: null, preview: "head" };
+  const saved = calls(
+    { name: "tool_search", args: { query: "read" }, hints: search, result: ok("loaded read") },
+    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("x") },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  click(frame, 2, 1);
+  frame.draw();
+  const opened = transcriptRows(frame).slice(0, 3);
+  frame.key("ctrl+o");
+  frame.draw();
+  equal(
+    [opened, transcriptRows(frame).slice(0, 3)],
+    [
+      ["", " read a.rs", " x"],
+      ["", " read a.rs", ""],
+    ],
+  );
+});
+
+test("a streaming tool search shows no row from its start", async () => {
+  using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  await loadChat(frame, sessions);
+  frame.start();
+  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
+  model({ kind: "block_started", block: 0, content: { kind: "text" } });
+  model({ kind: "text_delta", block: 0, text: "I look for a tool." });
+  model({ kind: "block_started", block: 1, content: { kind: "tool_call", name: "tool_search" } });
+  model({ kind: "tool_input_delta", block: 1, text: '{"query":' });
+  frame.draw();
+  equal(transcriptRows(frame), ["", " I look for a tool.", "", "", ""]);
 });
 
 test("a failed call with a display shows the display in place of its text", async () => {

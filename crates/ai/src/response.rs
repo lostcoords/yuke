@@ -128,19 +128,12 @@ pub struct AttemptInfo {
 /// A dense identifier that a reducer assigns to a block of one stream.
 pub type BlockId = u32;
 
-/// The kind of a streamed block. A refusal is the text of a model that declined the request. The library keeps the
-/// refusal apart from the answer text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
-pub enum BlockKind {
-    /// Answer text.
+/// The kind of a streamed block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BlockKind {
     Text,
-    /// The text of a model that declined.
     Refusal,
-    /// Reasoning text.
     Reasoning,
-    /// A tool call.
     ToolCall,
 }
 
@@ -148,7 +141,7 @@ pub enum BlockKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event<'a> {
     /// A block starts. Ids are dense from 0, in start order.
-    BlockStarted(BlockStarted),
+    BlockStarted(BlockStarted<'a>),
     /// Answer text of a block.
     TextDelta(Delta<'a>),
     /// Refusal text of a block.
@@ -165,13 +158,31 @@ pub enum Event<'a> {
     Done(Done<'a>),
 }
 
-/// The block that an event names, and its kind.
+/// The block that starts, and what it holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BlockStarted {
+pub struct BlockStarted<'a> {
     /// The block.
     pub block: BlockId,
-    /// Its kind.
-    pub kind: BlockKind,
+    /// What the block holds.
+    pub content: StartedBlock<'a>,
+}
+
+/// What a block holds when it starts. A refusal is the text of a model that declined the request. The library keeps
+/// the refusal apart from the answer text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StartedBlock<'a> {
+    /// Answer text.
+    Text,
+    /// The text of a model that declined.
+    Refusal,
+    /// Reasoning text.
+    Reasoning,
+    /// A tool call.
+    ToolCall {
+        /// The name of the tool, or an empty name when the provider has not named it yet. The block stop gives
+        /// the final call.
+        name: &'a str,
+    },
 }
 
 /// Borrowed text for one block. The event variant tells answer, refusal, reasoning, and argument bytes apart.

@@ -406,7 +406,7 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace(
-            "start 0 tool_call\n\
+            "start 0 tool_call \"run\"\n\
              args 0 \"{\\\"cmd\\\":\\\"cargo \"\n\
              args 0 \"test\\\"}\"\n\
              stop 0 tool_call id=\"toolu_1\" name=\"run\" arguments=\"{\\\"cmd\\\":\\\"cargo test\\\"}\"\n\

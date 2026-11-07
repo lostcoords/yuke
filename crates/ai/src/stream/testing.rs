@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use crate::failure::{Failure, ProviderKind};
 use crate::request::{Origin, Protocol, ReplayKind};
-use crate::response::{BlockKind, BlockResult, Event, ResponseLimits};
+use crate::response::{BlockResult, Event, ResponseLimits, StartedBlock};
 use crate::testing::block_on;
 use crate::wire::json::escape_into;
 
@@ -95,7 +95,12 @@ fn quoted(text: &str) -> String {
 /// A string is a JSON string, and `done` names only the usage counts that the provider reported.
 pub(crate) fn trace_line(event: &Event<'_>) -> String {
     match event {
-        Event::BlockStarted(started) => format!("start {} {}", started.block, kind_name(started.kind)),
+        Event::BlockStarted(started) => match started.content {
+            StartedBlock::Text => format!("start {} text", started.block),
+            StartedBlock::Refusal => format!("start {} refusal", started.block),
+            StartedBlock::Reasoning => format!("start {} reasoning", started.block),
+            StartedBlock::ToolCall { name } => format!("start {} tool_call {}", started.block, quoted(name)),
+        },
         Event::TextDelta(delta) => format!("text_delta {} {}", delta.block, quoted(delta.text)),
         Event::RefusalDelta(delta) => format!("refusal_delta {} {}", delta.block, quoted(delta.text)),
         Event::ReasoningDelta(delta) => format!("reasoning_delta {} {}", delta.block, quoted(delta.text)),
@@ -156,16 +161,6 @@ pub(crate) fn item_line(item: &Result<Event<'_>, Failure>) -> String {
 /// Render the failure that ends an attempt as one trace line.
 pub(crate) fn failure_line(failure: Failure) -> String {
     format!("failed {}", failure_name(failure))
-}
-
-/// The trace name of a block kind.
-fn kind_name(kind: BlockKind) -> &'static str {
-    match kind {
-        BlockKind::Text => "text",
-        BlockKind::Refusal => "refusal",
-        BlockKind::Reasoning => "reasoning",
-        BlockKind::ToolCall => "tool_call",
-    }
 }
 
 /// The trace name of a failure: the provider kind in snake case, or the variant name.
