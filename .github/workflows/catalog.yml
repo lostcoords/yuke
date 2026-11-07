@@ -18,7 +18,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-      - run: mise exec -- crates/ai/scripts/generate-catalog.sh
+      - run: |
+          mise exec -- crates/ai/scripts/generate-catalog.sh
+          crates/ai/scripts/catalog-changes.sh <(git show HEAD:crates/ai/src/catalog/generated.rs) \
+            crates/ai/src/catalog/generated.rs > "$RUNNER_TEMP/body.md"
 
       # A pull request from GITHUB_TOKEN starts no CI, so the App opens it.
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -38,7 +41,7 @@ jobs:
           add-paths: crates/ai/src/catalog/generated.rs
           commit-message: 'chore(ai): update the catalog'
           title: 'chore(ai): update the catalog'
-          body: Generated from https://catalog.yuke.sh/v1/catalog?executable=true.
+          body-path: ${{ runner.temp }}/body.md
 
       # The number is set only while a pull request is open. The ruleset holds the merge until CI passes.
       - if: steps.pull-request.outputs.pull-request-number
