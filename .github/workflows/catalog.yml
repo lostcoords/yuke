@@ -34,6 +34,7 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           branch: bot/catalog
           delete-branch: true
+          sign-commits: true
           add-paths: crates/ai/src/catalog/generated.rs
           commit-message: 'chore(ai): update the catalog'
           title: 'chore(ai): update the catalog'
