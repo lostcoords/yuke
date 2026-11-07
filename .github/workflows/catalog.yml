@@ -3,7 +3,7 @@ name: Catalog
 # catalog.yuke.sh syncs from models.dev each hour and holds no GitHub credential, so this repository polls it.
 on:
   schedule:
-    - cron: '23 */6 * * *'
+    - cron: '23 6 * * *'
   workflow_dispatch:
 
 permissions:
