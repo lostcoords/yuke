@@ -578,6 +578,37 @@ error: string, } | { "sessionUpdate": "round_failed",
 error: string, };
 
 /**
+ * The id of a login of `auth/login`. A server process gives each login a larger id than the logins before it.
+ */
+export type LoginId = number;
+
+/**
+ * How a login ended.
+ */
+export type LoginOutcome = { "kind": "succeeded" } | { "kind": "cancelled" } | { "kind": "failed", 
+/**
+ * The text of the failure. It holds no token.
+ */
+message: string, };
+
+/**
+ * The result of `auth/login`: the code that the user confirms on the page of the provider.
+ */
+export type LoginResult = { 
+/**
+ * The login. Its `auth/login_finished` names it.
+ */
+loginId: LoginId, 
+/**
+ * The page where the user approves the login.
+ */
+verificationUrl: string, 
+/**
+ * The code that the user confirms on the page, or enters when the page asks.
+ */
+userCode: string, };
+
+/**
  * One plugin of `config.json` in `plugin/list`.
  */
 export type ManagedPlugin = { 
@@ -1254,6 +1285,19 @@ export type SessionTitle = string;
  * A saved event or a temporary fact of a turn.
  */
 export type SessionUpdate = StoredEvent | LiveUpdate;
+
+/**
+ * The params of `auth/set_api_key`.
+ */
+export type SetApiKeyParams = { 
+/**
+ * The id of a provider with an API key variable, as `catalog/list` gives it.
+ */
+provider: string, 
+/**
+ * The API key. It is not empty and has no control character.
+ */
+apiKey: string, };
 
 /**
  * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store

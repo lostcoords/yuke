@@ -22,6 +22,9 @@ declare module "yuke:internal/native" {
     ListPluginsResult,
     ListSessionsParams,
     ListSessionsResult,
+    LoginId,
+    LoginOutcome,
+    LoginResult,
     McpServer,
     NoticeParams,
     RemovePluginParams,
@@ -32,6 +35,7 @@ declare module "yuke:internal/native" {
     SessionState,
     SessionTitle,
     SessionUpdate,
+    SetApiKeyParams,
     StoredEvent,
     SyncPluginsParams,
     SyncPluginsResult,
@@ -528,6 +532,11 @@ declare module "yuke:internal/native" {
   export function sessionJobs(id: SessionId): Job[];
   export function sessionMcpServers(id: SessionId): McpServer[];
   export function catalogList(all: boolean): Promise<ListCatalogResult>;
+  export function authLogin(provider: string): Promise<LoginResult>;
+  export function authWaitForLogin(id: LoginId): Promise<LoginOutcome>;
+  export function authCancelLogin(id: LoginId): void;
+  export function authSetApiKey(params: SetApiKeyParams): Promise<void>;
+  export function authLogout(provider: string): Promise<void>;
   export function pluginsList(nothing: null): Promise<ListPluginsResult>;
   export function pluginsSync(params: SyncPluginsParams): Operation<SyncPluginsResult>;
   export function pluginsCheck(params: CheckPluginsParams): Operation<CheckPluginsResult>;

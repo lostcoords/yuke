@@ -1,8 +1,13 @@
-// The sessions, the catalog, and the plugin manager of yuke for the plugins: `ctx.get("sessions")`,
-// `ctx.get("catalog")`, and `ctx.get("plugins")`.
+// The sessions, the catalog, the credentials, and the plugin manager of yuke for the plugins: `ctx.get("sessions")`,
+// `ctx.get("catalog")`, `ctx.get("auth")`, and `ctx.get("plugins")`.
 
 import { underStop } from "yuke:internal/events";
 import {
+  authCancelLogin,
+  authLogin,
+  authLogout,
+  authSetApiKey,
+  authWaitForLogin,
   catalogList,
   type ViewEvent as NativeViewEvent,
   pluginsAdd,
@@ -36,8 +41,8 @@ import {
   sessionsRemove,
   sessionsRename,
 } from "yuke:internal/native";
-import type { Catalog, OpenOptions, PluginManager, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
-import type { SessionId } from "yuke:protocol";
+import type { Auth, Catalog, OpenOptions, PluginManager, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
+import type { LoginOutcome, SessionId } from "yuke:protocol";
 
 const { reportError } = globalThis;
 
@@ -192,6 +197,29 @@ export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
 export const catalog: Catalog = Object.freeze({
   list: (options) => catalogList(options?.all === true),
 } satisfies Catalog);
+
+/** The credentials of the providers. */
+export const auth: Auth = Object.freeze({
+  async login(provider, options) {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
+    const started = await authLogin(provider);
+    const cancel = (): void => authCancelLogin(started.loginId);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
+    let end: Promise<LoginOutcome> | undefined;
+    return Object.freeze({
+      verificationUrl: started.verificationUrl,
+      userCode: started.userCode,
+      waitForEnd: () => {
+        end ??= authWaitForLogin(started.loginId);
+        return end;
+      },
+    });
+  },
+  setApiKey: (provider, apiKey) => authSetApiKey({ provider, apiKey }),
+  logout: (provider) => authLogout(provider),
+} satisfies Auth);
 
 /** The plugin manager of the profile. */
 export const plugins: PluginManager = Object.freeze({

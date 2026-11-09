@@ -1,5 +1,6 @@
-//! The sessions, the model catalog, and the plugin manager of the consumer, for `ctx.get("sessions")`,
-//! `ctx.get("catalog")`, and `ctx.get("plugins")` of the plugins. The methods mirror the requests of the protocol.
+//! The sessions, the model catalog, the credentials, and the plugin manager of the consumer, for
+//! `ctx.get("sessions")`, `ctx.get("catalog")`, `ctx.get("auth")`, and `ctx.get("plugins")` of the plugins. The methods
+//! mirror the requests of the protocol.
 
 use std::any::Any;
 use std::error::Error;
@@ -10,8 +11,9 @@ use serde::Serialize;
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, McpServer, NoticeParams, SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState,
-    SessionTitle, SessionUpdate, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer, NoticeParams, SessionId, SessionRow,
+    SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StoredEvent,
+    SyncPluginsParams, SyncPluginsResult,
 };
 
 /// The failure of a request. The plugin gets its text.
@@ -230,6 +232,38 @@ pub trait Sessions {
     ///
     /// Returns why the request failed.
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, SessionsError>;
+
+    /// Start a device login of `provider`, and give its code, as `auth/login` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn login(&self, provider: String) -> Result<LoginResult, SessionsError>;
+
+    /// Wait for the end of the login `id` from [`Sessions::login`], and give its outcome. The login can have ended.
+    /// Only one call can wait for a login.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn wait_for_login(&self, id: LoginId) -> Result<LoginOutcome, SessionsError>;
+
+    /// Ask the login `id` to stop, as `auth/cancel_login` does. A login that ended has nothing to stop.
+    fn cancel_login(&self, id: LoginId);
+
+    /// Store an API key, as `auth/set_api_key` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn set_api_key(&self, params: SetApiKeyParams) -> Result<(), SessionsError>;
+
+    /// Remove what yuke stored for `provider`, as `auth/logout` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the request failed.
+    async fn logout(&self, provider: String) -> Result<(), SessionsError>;
 
     /// The plugins of `config.json` with their state, as `plugin/list` gives them.
     ///

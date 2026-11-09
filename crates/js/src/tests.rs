@@ -230,6 +230,22 @@ impl crate::Sessions for NoSessions {
     async fn catalog(&self, _: bool) -> Result<yuke_protocol::ListCatalogResult, crate::SessionsError> {
         no_sessions()
     }
+    async fn login(&self, _: String) -> Result<yuke_protocol::LoginResult, crate::SessionsError> {
+        no_sessions()
+    }
+    async fn wait_for_login(
+        &self,
+        _: yuke_protocol::LoginId,
+    ) -> Result<yuke_protocol::LoginOutcome, crate::SessionsError> {
+        no_sessions()
+    }
+    fn cancel_login(&self, _: yuke_protocol::LoginId) {}
+    async fn set_api_key(&self, _: yuke_protocol::SetApiKeyParams) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
+    async fn logout(&self, _: String) -> Result<(), crate::SessionsError> {
+        no_sessions()
+    }
 }
 
 /// The options of a test runtime in `folder` with `processes`.

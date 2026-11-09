@@ -3,7 +3,7 @@ import { hostSignal } from "yuke:internal/events";
 import { on } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import { emit, notify } from "yuke:internal/native";
-import { catalog, plugins, sessionsOf } from "yuke:internal/sessions";
+import { auth, catalog, plugins, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
 import type {
@@ -131,6 +131,7 @@ export async function load(spec: PluginSpec): Promise<void> {
           return sessions as ServiceOf<K>;
         }
         if (name === "catalog") return catalog as ServiceOf<K>;
+        if (name === "auth") return auth as ServiceOf<K>;
         if (name === "plugins") return plugins as ServiceOf<K>;
         return services.get(name) as ServiceOf<K>;
       },

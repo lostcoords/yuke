@@ -1,16 +1,19 @@
-//! The sessions, the catalog, and the plugin manager of the app for the plugins: `ctx.get("sessions")`,
-//! `ctx.get("catalog")`, and `ctx.get("plugins")`.
+//! The sessions, the catalog, the credentials, and the plugin manager of the app for the plugins: `ctx.get("sessions")`,
+//! `ctx.get("catalog")`, `ctx.get("auth")`, and `ctx.get("plugins")`.
 
 use std::any::Any;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use async_trait::async_trait;
+use tokio::sync::oneshot;
 use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
-    ListSessionsResult, McpServer, SessionId, SessionRow, SessionSettings, SessionTitle, StoredEvent,
-    SyncPluginsParams, SyncPluginsResult,
+    ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer, SessionId, SessionRow, SessionSettings,
+    SessionTitle, SetApiKeyParams, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
 use super::sessions::SessionService;
@@ -20,6 +23,8 @@ use super::{AppError, Shared};
 pub(super) struct PluginSessions {
     pub(super) service: Weak<SessionService>,
     pub(super) shared: Rc<Shared>,
+    /// The end of each login of the plugins that no call waits for yet. It keeps the end of a login that has ended.
+    pub(super) login_ends: RefCell<HashMap<LoginId, oneshot::Receiver<LoginOutcome>>>,
 }
 
 impl PluginSessions {
@@ -147,6 +152,33 @@ impl Sessions for PluginSessions {
 
     async fn catalog(&self, all: bool) -> Result<ListCatalogResult, SessionsError> {
         Ok(self.shared.catalog(all).await?)
+    }
+
+    async fn login(&self, provider: String) -> Result<LoginResult, SessionsError> {
+        let (result, end) = self.shared.login(provider).await?;
+        self.login_ends.borrow_mut().insert(result.login_id, end);
+        Ok(result)
+    }
+
+    async fn wait_for_login(&self, id: LoginId) -> Result<LoginOutcome, SessionsError> {
+        let end = self.login_ends.borrow_mut().remove(&id).ok_or(AppError::NoLogin(id))?;
+        Ok(end
+            .await
+            .map_err(|error| AppError::Internal(format!("the login task failed: {error}")))?)
+    }
+
+    fn cancel_login(&self, id: LoginId) {
+        if self.shared.cancel_login(id).is_err() {
+            // The login ended, so it has nothing to stop.
+        }
+    }
+
+    async fn set_api_key(&self, params: SetApiKeyParams) -> Result<(), SessionsError> {
+        Ok(self.shared.set_api_key(&params.provider, params.api_key).await?)
+    }
+
+    async fn logout(&self, provider: String) -> Result<(), SessionsError> {
+        Ok(self.shared.logout(&provider).await?)
     }
 
     async fn list_plugins(&self) -> Result<ListPluginsResult, SessionsError> {

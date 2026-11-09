@@ -31,6 +31,7 @@ import type {
   ListPluginsResult,
   ListSessionsParams,
   ListSessionsResult,
+  LoginOutcome,
   McpServer,
   ModelReference,
   NoticeLevel,
@@ -73,6 +74,7 @@ export type {
   ListPluginsResult,
   ListSessionsParams,
   ListSessionsResult,
+  LoginOutcome,
   McpServer,
   ModelReference,
   NoticeLevel,
@@ -97,11 +99,12 @@ export type {
 /**
  * The services of the plugins, by name. A provider ships a declaration file that adds its service to this interface:
  * `declare module "yuke:plugins" { interface Services { "acme.notes.v1": Notes } }`. Each plugin that uses the service
- * includes that file. A name without a declaration fails the type check. Four services belong to yuke itself and
+ * includes that file. A name without a declaration fails the type check. Five services belong to yuke itself and
  * need no `uses` entry:
  * - `tui`: the terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`.
  * - `sessions`: the sessions, in each mode.
  * - `catalog`: the providers and their models, in each mode.
+ * - `auth`: the credentials of the providers, in each mode.
  * - `plugins`: the plugin manager of `config.json` and `plugins.lock`, in each mode.
  *
  * The bundled chat provides `chat`, the chat panes of the terminal interface. A plugin that uses it needs a `uses`
@@ -111,6 +114,7 @@ export interface Services {
   readonly tui: Tui | undefined;
   readonly sessions: Sessions;
   readonly catalog: Catalog;
+  readonly auth: Auth;
   readonly plugins: PluginManager;
   readonly chat: ChatService;
 }
@@ -234,6 +238,27 @@ export interface SessionHandle {
 export interface Catalog {
   /** Every provider with `options.all`, else only the providers that are ready. */
   readonly list: (options?: { readonly all?: boolean }) => Promise<ListCatalogResult>;
+}
+
+/** A device login that has started. The user opens the URL and enters the code. */
+export interface LoginInProgress {
+  readonly verificationUrl: string;
+  readonly userCode: string;
+  /** Wait for the end of the login, and give its outcome. A login that has ended gives its outcome too. */
+  readonly waitForEnd: () => Promise<LoginOutcome>;
+}
+
+/** The credentials of the providers, as the requests `auth/login`, `auth/set_api_key`, and `auth/logout` do. */
+export interface Auth {
+  /**
+   * Start a device login of `provider`. A new login of the provider ends the login before it as `cancelled`.
+   * `options.signal` cancels the login. The stored login stays in `auth.json` until the new login saves.
+   */
+  readonly login: (provider: string, options?: { readonly signal?: AbortSignal }) => Promise<LoginInProgress>;
+  /** Store `apiKey` in `auth.json`. The new key replaces the stored key and wins over the variable of the provider. */
+  readonly setApiKey: (provider: string, apiKey: string) => Promise<void>;
+  /** Remove what yuke stored for `provider`. yuke revokes nothing at the provider. */
+  readonly logout: (provider: string) => Promise<void>;
 }
 
 /**

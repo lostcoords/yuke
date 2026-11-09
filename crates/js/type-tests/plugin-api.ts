@@ -2,6 +2,7 @@
 
 import type { GenerateTextOptions } from "yuke:ai";
 import type {
+  Auth,
   Block,
   Catalog,
   FinishReason,
@@ -183,6 +184,7 @@ ctx.provide("test.notes.v1", null);
 // The sessions and the catalog of yuke are services that are never undefined, in each mode.
 assert<Equal<ReturnType<typeof ctx.get<"sessions">>, Sessions>>();
 assert<Equal<ReturnType<typeof ctx.get<"catalog">>, Catalog>>();
+assert<Equal<ReturnType<typeof ctx.get<"auth">>, Auth>>();
 export async function drive(sessions: Sessions): Promise<void> {
   const handle = await sessions.open("id", { tail: 50, onEvent: (event) => void event });
   await handle.sendMessage([{ user_text: "hi" }]);

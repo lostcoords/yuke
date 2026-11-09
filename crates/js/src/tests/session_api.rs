@@ -10,9 +10,9 @@ use std::rc::Rc;
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
     InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult,
-    ListSessionsParams, ListSessionsResult, LiveUpdate, McpServer, ModelReference, SessionId, SessionRow,
-    SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate, StoredEvent, SyncPluginsParams,
-    SyncPluginsResult,
+    ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId, LoginOutcome, LoginResult, McpServer, ModelReference,
+    SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate,
+    SetApiKeyParams, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -28,6 +28,8 @@ struct Scripted {
     /// The holds that ended.
     released: Rc<Cell<usize>>,
     follow_up_on_cancel: Cell<bool>,
+    /// A login waits for this. A cancel gives the permit, and so does a test that ends the login.
+    login_end: tokio::sync::Notify,
 }
 
 /// A hold of [`Scripted`]. Its drop counts.
@@ -285,6 +287,31 @@ impl Sessions for Scripted {
         self.record(format!("catalog {all}"));
         Ok(ListCatalogResult { providers: Vec::new() })
     }
+    async fn login(&self, provider: String) -> Result<LoginResult, SessionsError> {
+        self.record(format!("login {provider}"));
+        Ok(LoginResult {
+            login_id: LoginId(7),
+            verification_url: "https://example.com/device".to_owned(),
+            user_code: "CODE".to_owned(),
+        })
+    }
+    async fn wait_for_login(&self, id: LoginId) -> Result<LoginOutcome, SessionsError> {
+        self.record(format!("wait for login {}", id.0));
+        self.login_end.notified().await;
+        Ok(LoginOutcome::Cancelled)
+    }
+    fn cancel_login(&self, id: LoginId) {
+        self.record(format!("cancel login {}", id.0));
+        self.login_end.notify_one();
+    }
+    async fn set_api_key(&self, params: SetApiKeyParams) -> Result<(), SessionsError> {
+        self.record(format!("set api key {} {}", params.provider, params.api_key));
+        Ok(())
+    }
+    async fn logout(&self, provider: String) -> Result<(), SessionsError> {
+        self.record(format!("logout {provider}"));
+        Ok(())
+    }
     async fn list_plugins(&self) -> Result<ListPluginsResult, SessionsError> {
         self.record("plugins list".to_owned());
         Ok(ListPluginsResult { plugins: Vec::new() })
@@ -342,6 +369,7 @@ async fn started(name: &str, scripted: &Rc<Scripted>) -> Runtime {
                globalThis.context = ctx;
                globalThis.sessions = ctx.get('sessions');
                globalThis.catalog = ctx.get('catalog');
+               globalThis.auth = ctx.get('auth');
                globalThis.plugins = ctx.get('plugins');
                globalThis.seen = [];
              }
@@ -593,6 +621,8 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
              await sessions.events(id, {{ limit: 3 }});
              await sessions.list();
              await catalog.list();
+             await auth.setApiKey('opencode', 'the-key');
+             await auth.logout('opencode');
              await sessions.closeForAll(id);
              return JSON.stringify([input, removed]);",
             session()
@@ -623,8 +653,77 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
             format!("events {id} None 3"),
             "list None".to_owned(),
             "catalog false".to_owned(),
+            "set api key opencode the-key".to_owned(),
+            "logout opencode".to_owned(),
             format!("close {id}"),
         ]
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_login_gives_its_code_and_an_abort_cancels_it_and_each_wait_shares_one_end() {
+    let scripted = Rc::new(Scripted::default());
+    let runtime = started(
+        "a_login_gives_its_code_and_an_abort_cancels_it_and_each_wait_shares_one_end",
+        &scripted,
+    )
+    .await;
+
+    let answer = evaluate::<String>(
+        &runtime,
+        "const control = new AbortController();
+         const login = await auth.login('xai-grok', { signal: control.signal });
+         control.abort();
+         const outcome = await login.waitForEnd();
+         await login.waitForEnd();
+         return JSON.stringify([login.verificationUrl, login.userCode, outcome]);",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(answer, r#"["https://example.com/device","CODE",{"kind":"cancelled"}]"#);
+    assert_eq!(
+        scripted.calls(),
+        ["login xai-grok", "cancel login 7", "wait for login 7"]
+    );
+}
+
+#[tokio::test(flavor = "local")]
+async fn an_abort_while_a_login_starts_cancels_it_and_an_abort_before_the_start_starts_nothing() {
+    let scripted = Rc::new(Scripted::default());
+    let runtime = started(
+        "an_abort_while_a_login_starts_cancels_it_and_an_abort_before_the_start_starts_nothing",
+        &scripted,
+    )
+    .await;
+
+    let before = evaluate::<String>(
+        &runtime,
+        "const control = new AbortController();
+         control.abort(new Error('stopped first'));
+         try { await auth.login('xai-grok', { signal: control.signal }); return 'started'; }
+         catch (error) { return error.message; }",
+    )
+    .await
+    .unwrap();
+    let calls_before = scripted.calls();
+    let during = evaluate::<String>(
+        &runtime,
+        "const control = new AbortController();
+         const starting = auth.login('xai-grok', { signal: control.signal });
+         control.abort();
+         const login = await starting;
+         return JSON.stringify(await login.waitForEnd());",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(before, "stopped first");
+    assert!(calls_before.is_empty(), "{calls_before:?}");
+    assert_eq!(during, r#"{"kind":"cancelled"}"#);
+    assert_eq!(
+        scripted.calls(),
+        ["login xai-grok", "cancel login 7", "wait for login 7"]
     );
 }
 

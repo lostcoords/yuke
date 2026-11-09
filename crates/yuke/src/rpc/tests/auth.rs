@@ -508,6 +508,70 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_removes_keys() {
+    let place = Place::new(
+        "rpc",
+        "a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_removes_keys",
+    );
+    place.plugin(
+        "login",
+        "export function apply(ctx) {
+           const auth = ctx.get('auth');
+           void (async () => {
+             const first = await auth.login('xai-grok');
+             const second = await auth.login('xai-grok');
+             const ends = [await first.waitForEnd(), await second.waitForEnd()];
+             const control = new AbortController();
+             const aborted = await auth.login('xai-grok', { signal: control.signal });
+             control.abort();
+             ends.push(await aborted.waitForEnd());
+             const refused = await auth.login('xai-grok');
+             ends.push(await refused.waitForEnd());
+             const removed = await auth.login('xai-grok');
+             await auth.logout('xai-grok');
+             ends.push(await removed.waitForEnd());
+             await auth.setApiKey('anthropic', 'removed-key');
+             await auth.setApiKey('openai', 'kept-key');
+             await auth.logout('anthropic');
+             ctx.sendClientEvent('ended', { code: second.userCode, ends });
+           })();
+         }",
+    );
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["login"] }"#).unwrap();
+    let answers = ScriptedExchange::default();
+    answers.push(200, LOGIN_START);
+    answers.push(200, LOGIN_START);
+    answers.push(200, r#"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#);
+    answers.push(200, LOGIN_START);
+    answers.push(200, LOGIN_START);
+    answers.push(400, r#"{"error":"access_denied"}"#);
+    answers.push(200, LOGIN_START);
+    let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
+
+    let ended = client
+        .until(|message| message["method"] == "extension/event")
+        .await
+        .pop()
+        .unwrap();
+    client.initialize().await;
+    client.end().await;
+
+    let data = &ended["params"]["data"];
+    assert_eq!(data["code"], "UC");
+    let kinds: Vec<&str> = data["ends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|end| end["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["cancelled", "succeeded", "cancelled", "failed", "cancelled"]);
+    let saved = saved_auth(&place);
+    assert_eq!(saved["openai"], json!({ "api_key": "kept-key" }));
+    assert_eq!(saved.get("anthropic"), None);
+    assert_eq!(saved.get("xai-grok"), None);
+}
+
+#[tokio::test(flavor = "local")]
 async fn a_bad_auth_file_fails_a_new_session_also_with_the_variable_set() {
     let place = Place::new("rpc", "a_bad_auth_file_fails_a_new_session_also_with_the_variable_set");
     std::fs::create_dir_all(&place.paths.data).unwrap();

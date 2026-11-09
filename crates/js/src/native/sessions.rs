@@ -1,7 +1,7 @@
-//! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`, and
-//! `ctx.get("plugins")`. The queue delivers host view events and host facts and resolves the asynchronous request
-//! promises. Synchronous natives read the current host state directly. Facts that start in JavaScript go to listeners
-//! at once.
+//! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`,
+//! `ctx.get("auth")`, and `ctx.get("plugins")`. The queue delivers host view events and host facts and resolves the
+//! asynchronous request promises. Synchronous natives read the current host state directly. Facts that start in
+//! JavaScript go to listeners at once.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -16,7 +16,8 @@ use yuke_ai::Block;
 use yuke_engine::chain_text;
 use yuke_protocol::{
     ApplyPluginsParams, CheckPluginsParams, EventNumber, Input, InputId, InputKind, InputSource, InteractionId,
-    InteractionResponse, ListSessionsParams, SessionId, SessionSettings, SessionTitle, SyncPluginsParams,
+    InteractionResponse, ListSessionsParams, LoginId, SessionId, SessionSettings, SessionTitle, SetApiKeyParams,
+    SyncPluginsParams,
 };
 
 use super::delivery::{Delivery, Queue};
@@ -194,6 +195,20 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     request.add(object, "catalogList", |sessions, all: bool| async move {
         sessions.catalog(all).await
     })?;
+    request.add(object, "authLogin", |sessions, provider: String| async move {
+        sessions.login(provider).await
+    })?;
+    request.add(object, "authWaitForLogin", |sessions, id: LoginId| async move {
+        sessions.wait_for_login(id).await
+    })?;
+    request.add(
+        object,
+        "authSetApiKey",
+        |sessions, params: SetApiKeyParams| async move { sessions.set_api_key(params).await },
+    )?;
+    request.add(object, "authLogout", |sessions, provider: String| async move {
+        sessions.logout(provider).await
+    })?;
     add_plugin_requests(&request, object)
 }
 
@@ -237,6 +252,11 @@ fn add_calls<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessio
     object.set(
         "sessionCancel",
         Function::new(ctx.clone(), move |id: Json<SessionId>| calls.cancel(id.0))?,
+    )?;
+    let calls = Rc::clone(sessions);
+    object.set(
+        "authCancelLogin",
+        Function::new(ctx.clone(), move |id: Json<LoginId>| calls.cancel_login(id.0))?,
     )?;
     let calls = Rc::clone(sessions);
     object.set(

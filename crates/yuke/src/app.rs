@@ -268,6 +268,161 @@ impl Shared {
         Ok(ListCatalogResult { providers })
     }
 
+    /// Start a device login of `provider`, and give its code and a receiver of its end. A login in progress of the
+    /// provider ends as cancelled first. A task polls the provider, saves the login in `auth.json`, and sends
+    /// `auth/login_finished`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for a provider without a login flow, and [`AppError::Internal`] when the provider
+    /// does not start the login.
+    async fn login(
+        self: &Rc<Self>,
+        provider: String,
+    ) -> Result<(LoginResult, oneshot::Receiver<LoginOutcome>), AppError> {
+        let flow = self.providers().login(&provider).map_err(AppError::Invalid)?.1;
+        if let Some(earlier) = self.pending_logins.borrow_mut().remove(&provider) {
+            earlier.stop.cancel();
+        }
+        let started = tokio::time::Instant::now();
+        let pending = crate::auth::start_login(flow, &*self.machine.exchange)
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        let login_id = LoginId(self.last_login.get() + 1);
+        self.last_login.set(login_id.0);
+        let stop = CancellationToken::new();
+        let result = LoginResult {
+            login_id,
+            verification_url: pending.verification_url.clone(),
+            user_code: pending.user_code.clone(),
+        };
+        let shared = Rc::clone(self);
+        let task_provider = provider.clone();
+        let task_stop = stop.clone();
+        let (end, ended) = oneshot::channel();
+        let task = tokio::task::spawn_local(async move {
+            let (provider, stop) = (task_provider, task_stop);
+            let exchange = Arc::clone(&shared.machine.exchange);
+            // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
+            let polled = tokio::select! {
+                polled = crate::auth::poll_login(&pending, started, &*exchange) => Some(polled),
+                () = stop.cancelled() => None,
+            };
+            let outcome = match polled {
+                None => LoginOutcome::Cancelled,
+                Some(Err(error)) => LoginOutcome::Failed {
+                    message: error.to_string(),
+                },
+                Some(Ok(grant)) => {
+                    match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
+                        Ok(()) => LoginOutcome::Succeeded,
+                        Err(error) => LoginOutcome::Failed {
+                            message: error.to_string(),
+                        },
+                    }
+                }
+            };
+            if end.send(outcome.clone()).is_err() {
+                // A client of `auth/login` learns the end from the notification.
+            }
+            {
+                let mut pending = shared.pending_logins.borrow_mut();
+                // A newer login of the provider keeps its entry.
+                if pending
+                    .get(&provider)
+                    .is_some_and(|in_progress| in_progress.id == login_id)
+                {
+                    pending.remove(&provider);
+                }
+            }
+            shared
+                .observer
+                .notify(ServerNotification::LoginFinished(LoginFinishedParams {
+                    login_id,
+                    provider,
+                    outcome,
+                }));
+        });
+        // The first poll waits one interval, so the task cannot end before its entry is there.
+        let in_progress = InProgress {
+            id: login_id,
+            stop,
+            task,
+        };
+        self.pending_logins.borrow_mut().insert(provider, in_progress);
+        Ok((result, ended))
+    }
+
+    /// Ask the login `id` in progress to stop. Its `auth/login_finished` tells how it ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::NoLogin`] when no login with this id is in progress.
+    fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
+        let pending = self.pending_logins.borrow();
+        let in_progress = pending
+            .values()
+            .find(|in_progress| in_progress.id == id)
+            .ok_or(AppError::NoLogin(id))?;
+        in_progress.stop.cancel();
+        Ok(())
+    }
+
+    /// Remove what yuke stored for `provider`: its login or its API key in `auth.json`, and the token of
+    /// `credential/update`. A login in progress of the provider ends first, and the removal comes after its task.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for an unknown provider, and [`AppError::Internal`] when yuke cannot update
+    /// `auth.json`.
+    async fn logout(&self, provider: &str) -> Result<(), AppError> {
+        self.providers().get(provider).map_err(AppError::Invalid)?;
+        let earlier = self.pending_logins.borrow_mut().remove(provider);
+        if let Some(earlier) = earlier {
+            earlier.stop.cancel();
+            // A save that started still ends, so the removal waits for the task and comes after the save.
+            earlier
+                .task
+                .await
+                .map_err(|error| AppError::Internal(format!("the login task failed: {error}")))?;
+        }
+        if let Some(source) = self.logins.borrow().get(provider) {
+            source.clear_push();
+        }
+        crate::auth::logout(provider, self.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))
+    }
+
+    /// Store `api_key` in `auth.json` as the API key of `provider`. The new key replaces the stored key and wins over
+    /// the variable of the provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppError::Invalid`] for an unknown provider, a provider without an API key variable, or a bad key, and
+    /// [`AppError::Internal`] when yuke cannot update `auth.json`.
+    async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
+        match &self.providers().get(provider).map_err(AppError::Invalid)?.auth {
+            Auth::ApiKey(Some(_)) => {}
+            Auth::ApiKey(None) => return Err(AppError::Invalid(format!("{provider} takes no API key"))),
+            Auth::OAuth(_) => {
+                return Err(AppError::Invalid(format!(
+                    "{provider} takes a login, not an API key: send auth/login"
+                )));
+            }
+            _ => return Err(AppError::Invalid(format!("yuke cannot authenticate with {provider}"))),
+        }
+        // A model request sends the key in a header, and a header holds no control character.
+        if api_key.is_empty() || api_key.chars().any(char::is_control) {
+            return Err(AppError::Invalid(
+                "apiKey: send a value that is not empty and has no control character".to_owned(),
+            ));
+        }
+        crate::auth::set_api_key(provider, api_key, self.machine.paths.data.clone())
+            .await
+            .map_err(|error| AppError::Internal(error.to_string()))
+    }
+
     /// The plugins of `config.json` with their state, for `plugin/list`.
     fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
         let loaded = Rc::clone(&self.profile.borrow().loaded);
@@ -551,151 +706,24 @@ impl App {
         self.shared.providers()
     }
 
-    /// Start a device login of `provider`, and give its code. A login in progress of the provider ends as cancelled
-    /// first. A task polls the provider, saves the login in `auth.json`, and sends `auth/login_finished`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a provider without a login flow, and [`AppError::Internal`] when the provider
-    /// does not start the login.
+    /// Start a device login of `provider`, as `Shared::login` does. A client learns the end from the notification.
     pub(crate) async fn login(&self, provider: String) -> Result<LoginResult, AppError> {
-        let flow = self.shared.providers().login(&provider).map_err(AppError::Invalid)?.1;
-        if let Some(earlier) = self.shared.pending_logins.borrow_mut().remove(&provider) {
-            earlier.stop.cancel();
-        }
-        let started = tokio::time::Instant::now();
-        let pending = crate::auth::start_login(flow, &*self.shared.machine.exchange)
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))?;
-        let login_id = LoginId(self.shared.last_login.get() + 1);
-        self.shared.last_login.set(login_id.0);
-        let stop = CancellationToken::new();
-        let result = LoginResult {
-            login_id,
-            verification_url: pending.verification_url.clone(),
-            user_code: pending.user_code.clone(),
-        };
-        let shared = Rc::clone(&self.shared);
-        let task_provider = provider.clone();
-        let task_stop = stop.clone();
-        let task = tokio::task::spawn_local(async move {
-            let (provider, stop) = (task_provider, task_stop);
-            let exchange = Arc::clone(&shared.machine.exchange);
-            // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
-            let polled = tokio::select! {
-                polled = crate::auth::poll_login(&pending, started, &*exchange) => Some(polled),
-                () = stop.cancelled() => None,
-            };
-            let outcome = match polled {
-                None => LoginOutcome::Cancelled,
-                Some(Err(error)) => LoginOutcome::Failed {
-                    message: error.to_string(),
-                },
-                Some(Ok(grant)) => {
-                    match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
-                        Ok(()) => LoginOutcome::Succeeded,
-                        Err(error) => LoginOutcome::Failed {
-                            message: error.to_string(),
-                        },
-                    }
-                }
-            };
-            {
-                let mut pending = shared.pending_logins.borrow_mut();
-                // A newer login of the provider keeps its entry.
-                if pending
-                    .get(&provider)
-                    .is_some_and(|in_progress| in_progress.id == login_id)
-                {
-                    pending.remove(&provider);
-                }
-            }
-            shared
-                .observer
-                .notify(ServerNotification::LoginFinished(LoginFinishedParams {
-                    login_id,
-                    provider,
-                    outcome,
-                }));
-        });
-        // The first poll waits one interval, so the task cannot end before its entry is there.
-        let in_progress = InProgress {
-            id: login_id,
-            stop,
-            task,
-        };
-        self.shared.pending_logins.borrow_mut().insert(provider, in_progress);
-        Ok(result)
+        Ok(self.shared.login(provider).await?.0)
     }
 
-    /// Ask the login `id` in progress to stop. Its `auth/login_finished` tells how it ended.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::NoLogin`] when no login with this id is in progress.
+    /// Ask the login `id` in progress to stop, as `Shared::cancel_login` does.
     pub(crate) fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
-        let pending = self.shared.pending_logins.borrow();
-        let in_progress = pending
-            .values()
-            .find(|in_progress| in_progress.id == id)
-            .ok_or(AppError::NoLogin(id))?;
-        in_progress.stop.cancel();
-        Ok(())
+        self.shared.cancel_login(id)
     }
 
-    /// Remove what yuke stored for `provider`: its login or its API key in `auth.json`, and the token of
-    /// `credential/update`. A login in progress of the provider ends first, and the removal comes after its task.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for an unknown provider, and [`AppError::Internal`] when yuke cannot update
-    /// `auth.json`.
+    /// Remove what yuke stored for `provider`, as `Shared::logout` does.
     pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
-        self.shared.providers().get(provider).map_err(AppError::Invalid)?;
-        let earlier = self.shared.pending_logins.borrow_mut().remove(provider);
-        if let Some(earlier) = earlier {
-            earlier.stop.cancel();
-            // A save that started still ends, so the removal waits for the task and comes after the save.
-            earlier
-                .task
-                .await
-                .map_err(|error| AppError::Internal(format!("the login task failed: {error}")))?;
-        }
-        if let Some(source) = self.shared.logins.borrow().get(provider) {
-            source.clear_push();
-        }
-        crate::auth::logout(provider, self.shared.machine.paths.data.clone())
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))
+        self.shared.logout(provider).await
     }
 
-    /// Store `api_key` in `auth.json` as the API key of `provider`. The new key replaces the stored key and wins over
-    /// the variable of the provider.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for an unknown provider, a provider without an API key variable, or a bad key, and
-    /// [`AppError::Internal`] when yuke cannot update `auth.json`.
+    /// Store `api_key` as the API key of `provider`, as `Shared::set_api_key` does.
     pub(crate) async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
-        match &self.shared.providers().get(provider).map_err(AppError::Invalid)?.auth {
-            Auth::ApiKey(Some(_)) => {}
-            Auth::ApiKey(None) => return Err(AppError::Invalid(format!("{provider} takes no API key"))),
-            Auth::OAuth(_) => {
-                return Err(AppError::Invalid(format!(
-                    "{provider} takes a login, not an API key: send auth/login"
-                )));
-            }
-            _ => return Err(AppError::Invalid(format!("yuke cannot authenticate with {provider}"))),
-        }
-        // A model request sends the key in a header, and a header holds no control character.
-        if api_key.is_empty() || api_key.chars().any(char::is_control) {
-            return Err(AppError::Invalid(
-                "apiKey: send a value that is not empty and has no control character".to_owned(),
-            ));
-        }
-        crate::auth::set_api_key(provider, api_key, self.shared.machine.paths.data.clone())
-            .await
-            .map_err(|error| AppError::Internal(error.to_string()))
+        self.shared.set_api_key(provider, api_key).await
     }
 
     /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
@@ -884,6 +912,7 @@ async fn start_runtime(
         processes: Rc::clone(&shared.processes),
         models: Rc::new(PluginModels(Rc::clone(shared))),
         sessions: Rc::new(PluginSessions {
+            login_ends: RefCell::default(),
             service: Rc::downgrade(sessions),
             shared: Rc::clone(shared),
         }),
