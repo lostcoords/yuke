@@ -5,6 +5,7 @@ description = "An HTTP/1.1 client that uses hyper and rustls. It sends one reque
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [features]
 # The feature exposes the loopback server of the tests to the tests of other crates.

@@ -5,6 +5,11 @@ description = "Provider-neutral model calls over three wire protocols."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+keywords = ["ai", "llm", "anthropic", "openai", "streaming"]
+categories = ["artificial-intelligence", "api-bindings", "asynchronous"]
+# The catalog scripts run only in this repository.
+exclude = ["scripts/"]
 
 [features]
 default = ["http"]
@@ -20,7 +25,7 @@ memchr = "2.8"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 ts-rs = { version = "12.0.1", optional = true }
-yuke-http = { path = "../http", optional = true }
+yuke-http = { path = "../http", version = "0.0.1-dev", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["macros", "rt"] }
