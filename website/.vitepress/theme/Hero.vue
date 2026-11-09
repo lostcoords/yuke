@@ -7,7 +7,7 @@ const { frontmatter } = useData();
 
 <template>
   <section class="hero yuke-section">
-    <img class="mascot" :src="withBase('/mascot/coffee.png')" alt="" width="123" height="126" />
+    <img class="mascot" :src="withBase('/mascot/coffee.png')" alt="" width="130" height="131" />
     <h1 class="yuke-heading">Unleash your <span>harness.</span></h1>
     <p class="lead">{{ frontmatter.tagline }}</p>
     <InstallCommand class="install" />
