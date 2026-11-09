@@ -2,7 +2,7 @@
 //! one task with no view (`-p`). `--rpc` serves stdin and stdout.
 //! `--rpc --listen` serves a Unix socket. `--rpc --connect` joins stdin and stdout to such a socket. `-p` writes the
 //! answer to stdout, and the end of the turn picks the exit status. `yuke login` logs in to a provider, and
-//! `yuke logout` removes the login.
+//! `yuke logout` removes its stored login or API key.
 
 mod app;
 mod auth;
@@ -101,8 +101,8 @@ enum Command {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
     },
-    /// Remove the stored login of PROVIDER from auth.json. yuke revokes no token at the provider, and a running server
-    /// keeps a token of credential/update.
+    /// Remove the stored login or API key of PROVIDER from auth.json. yuke revokes no token at the provider, and a
+    /// running server keeps a token of credential/update.
     Logout {
         /// The provider id, the first part of --model, such as xai-grok.
         provider: String,
