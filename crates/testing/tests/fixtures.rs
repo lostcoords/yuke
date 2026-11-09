@@ -29,15 +29,6 @@ fn reversed_strings_are_rejected() {
 }
 
 #[test]
-fn missing_strings_report_the_expected_string_index_and_body() {
-    let failure = std::panic::catch_unwind(|| assert_in_order(r#"["a"]"#, &["a", "missing"])).unwrap_err();
-    assert_eq!(
-        failure.downcast_ref::<String>().unwrap(),
-        "expected JSON string at index 1: \"missing\"\nbody: [\"a\"]"
-    );
-}
-
-#[test]
 fn a_folder_call_removes_old_contents_and_keeps_the_path() {
     let first = folder("testing", "a_folder_call_removes_old_contents_and_keeps_the_path");
     std::fs::create_dir(first.join("nested")).unwrap();

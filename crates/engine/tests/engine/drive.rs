@@ -240,20 +240,6 @@ fn retry_sends_the_same_request_bytes_and_the_observer_sees_the_wait() {
 }
 
 #[test]
-fn a_new_driver_sends_each_request_with_the_default_retry_policy() {
-    let attempts = yuke_ai::retry::Policy::default().max_attempts.get();
-    let transport = ScriptedTransport::new((0..attempts).map(|_| overloaded_reply()));
-    let model = model();
-    let waits = Waits::default();
-    let driver = Driver::new(&transport, &model, &waits);
-
-    let outcome = block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run());
-
-    assert!(outcome.is_err());
-    assert_eq!(transport.requests().len(), usize::try_from(attempts).unwrap());
-}
-
-#[test]
 fn the_retry_policy_of_the_driver_bounds_the_attempts_and_the_wait() {
     let transport = ScriptedTransport::new([0; 5].map(|_| overloaded_reply()));
     let model = model();

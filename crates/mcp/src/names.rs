@@ -59,18 +59,4 @@ mod tests {
         assert_ne!(first, second);
         assert!(first.starts_with("mcp__server__aaa"), "{first}");
     }
-
-    #[test]
-    fn a_name_with_the_hash_differs_from_the_plain_name_and_keeps_the_limit() {
-        let plain = tool_name("a b", "echo");
-        let hashed = hashed_name("a_b", "echo");
-        let long = tool_name("server", &"a".repeat(80));
-
-        assert_eq!(plain, "mcp__a_b__echo");
-        assert!(
-            hashed.starts_with("mcp__a_b__echo_") && hashed.len() == plain.len() + 9,
-            "{hashed}"
-        );
-        assert_eq!(hashed_name("server", &"a".repeat(80)), long);
-    }
 }

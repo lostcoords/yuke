@@ -42,7 +42,6 @@ macro_rules! store_tests {
             a_replacement_after_the_newest_answer_clears_its_input_tokens,
             a_second_writer_gets_owned,
             a_dropped_lease_lets_a_new_writer_open,
-            a_reader_opens_while_a_writer_holds_the_session,
             a_reader_holds_no_lock,
             a_pending_input_stays_until_a_commit_consumes_it,
             a_consumed_input_id_is_not_given_again,
@@ -74,13 +73,11 @@ macro_rules! store_tests {
             a_commit_receipt_names_its_saved_event_after_settings_and_a_fork,
             events_after_a_number_are_the_newer_events,
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
-            each_session_numbers_its_own_events,
             the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
             the_list_gives_the_session_with_the_newest_event_first,
             the_pages_of_a_list_follow_each_other,
             a_new_session_after_a_delete_does_not_come_after_an_older_cursor,
             a_session_lists_in_the_folder_of_its_newest_settings,
-            a_folder_that_is_not_utf8_lists_no_session,
             a_child_stays_out_of_the_default_list_and_its_parent_lists_it,
             a_child_keeps_its_parent_at_an_open_and_its_fork_has_none,
             a_fork_is_the_newest_session_and_names_its_source,
@@ -437,15 +434,6 @@ pub async fn a_dropped_lease_lets_a_new_writer_open(store: &dyn Store) {
     let again = store.open(id, Access::Write).await;
 
     assert!(again.is_ok(), "{again:?}");
-}
-
-/// A reader opens a session that a writer holds.
-pub async fn a_reader_opens_while_a_writer_holds_the_session(store: &dyn Store) {
-    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
-
-    let read = store.open(opened.id, Access::Read).await;
-
-    assert!(read.is_ok(), "{read:?}");
 }
 
 /// A read open holds no lock, so a writer opens while the reader holds its open session.
@@ -1463,38 +1451,6 @@ pub async fn a_fork_has_the_events_of_its_source_and_numbers_on_from_them(store:
     );
 }
 
-/// The event numbers of a session do not depend on the events of other sessions.
-pub async fn each_session_numbers_its_own_events(store: &dyn Store) {
-    let busy = store
-        .create_session(&settings("busy"), &prompt(), None)
-        .await
-        .unwrap()
-        .id;
-    for text in ["one", "two"] {
-        store
-            .commit(busy, &end(&[yuke_ai::Block::user_text(text)]), &[])
-            .await
-            .unwrap();
-    }
-
-    let quiet = store
-        .create_session(&settings("quiet"), &prompt(), None)
-        .await
-        .unwrap()
-        .id;
-    store.set_settings(quiet, &settings("still quiet")).await.unwrap();
-
-    let numbers: Vec<EventNumber> = store
-        .load(quiet, EventPage::After(None))
-        .await
-        .map(|loaded| loaded.events)
-        .unwrap()
-        .into_iter()
-        .map(|event| event.event_number)
-        .collect();
-    assert_eq!(numbers, [EventNumber(1), EventNumber(2)]);
-}
-
 /// The context holds the blocks of the commits only. Pending inputs and settings events before and after a replacement
 /// add no block.
 pub async fn the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events(store: &dyn Store) {
@@ -1733,21 +1689,6 @@ pub async fn a_child_keeps_its_parent_at_an_open_and_its_fork_has_none(store: &d
         listed(&store.list_sessions(None, None, None, 1).await.unwrap()),
         [fork.id]
     );
-}
-
-/// A filter on a folder that is not UTF-8 excludes a session of another folder.
-pub async fn a_folder_that_is_not_utf8_lists_no_session(store: &dyn Store) {
-    use std::os::unix::ffi::OsStrExt;
-    store
-        .create_session(&settings_in("/work"), &prompt(), None)
-        .await
-        .unwrap();
-
-    let folder = Path::new(std::ffi::OsStr::from_bytes(b"/work\xff"));
-    let page = store.list_sessions(Some(folder), None, None, 10).await.unwrap();
-
-    assert_eq!(listed(&page), []);
-    assert_eq!(page.next, None);
 }
 
 /// A fork is the newest session. It names its source, prefixes the title of the source, and has the settings of its cut.

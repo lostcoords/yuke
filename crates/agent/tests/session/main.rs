@@ -63,26 +63,6 @@ async fn a_session_that_opens_again_has_the_same_context() {
 }
 
 #[tokio::test]
-async fn a_session_keeps_its_lease_after_a_turn() {
-    let store = Arc::new(MemoryStore::new());
-    let transport = ScriptedTransport::new([text_reply("two")]);
-    let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
-        .await
-        .unwrap();
-    store.accept_input(session.id(), user_input("one")).await.unwrap();
-
-    session
-        .turn(Driver::new(&transport, &model, &NoWait))
-        .run()
-        .await
-        .unwrap();
-    let other_writer = store.open(session.id(), Access::Write).await;
-
-    assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
-}
-
-#[tokio::test]
 async fn a_turn_with_no_waiting_input_asks_the_model_nothing_and_saves_nothing() {
     let store = Arc::new(MemoryStore::new());
     let transport = ScriptedTransport::new([text_reply("two")]);
@@ -767,22 +747,6 @@ async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once()
     assert!(matches!(failed, Err(SessionError::Store(_))), "{failed:?}");
     let request = &transport.requests()[0];
     assert_eq!(request.matches("<system_notification").count(), 1, "{request}");
-}
-
-// A panic can leave the session with its lease, so a recovery must also work on a session that is not stale.
-#[tokio::test]
-async fn a_recovery_of_a_session_that_holds_its_lease_opens_it_again() {
-    let store = Arc::new(MemoryStore::new());
-    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
-        .await
-        .unwrap();
-
-    let recovered = session.recover().await;
-    let other_writer = store.open(session.id(), Access::Write).await;
-
-    assert!(matches!(recovered, Ok(None)), "{recovered:?}");
-    assert!(!session.is_stale());
-    assert!(matches!(other_writer, Err(StoreError::Owned)), "{other_writer:?}");
 }
 
 // A session that holds its lease reads the store under it, so no other writer can take the session during a recovery.

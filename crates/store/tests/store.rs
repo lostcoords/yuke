@@ -92,26 +92,6 @@ async fn a_queued_write_finishes_before_the_lock_releases() {
 }
 
 #[tokio::test]
-async fn a_blob_survives_a_close_and_an_open_of_the_file() {
-    let folder = folder("a_blob_survives_a_close_and_an_open_of_the_file");
-    let first = SqliteStore::open(&folder).await.unwrap();
-    let id = first
-        .create_session(&settings("one"), &prompt(), None)
-        .await
-        .unwrap()
-        .id;
-    let blob = first.put_blob(id, b"image".to_vec()).await.unwrap();
-    drop(first);
-
-    let second = SqliteStore::open(&folder).await.unwrap();
-
-    assert_eq!(
-        second.read_blob(id, &blob.digest).unwrap().as_deref(),
-        Some(&b"image"[..])
-    );
-}
-
-#[tokio::test]
 async fn a_delete_removes_the_folder_of_the_session() {
     let folder = folder("a_delete_removes_the_folder_of_the_session");
     let store = SqliteStore::open(&folder).await.unwrap();

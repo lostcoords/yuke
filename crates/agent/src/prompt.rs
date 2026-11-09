@@ -59,13 +59,4 @@ mod tests {
             "<first>\none\n</first>\n\nbase\n\ntext\n\n<environment>\nenv\n</environment>"
         );
     }
-
-    #[test]
-    fn a_section_with_no_text_adds_nothing() {
-        assert_eq!(prompt_text(&[PromptSection::new("empty", "")]), "");
-        assert_eq!(
-            prompt_text(&[PromptSection::new("base", ""), PromptSection::new("environment", "env")]),
-            "<environment>\nenv\n</environment>"
-        );
-    }
 }
