@@ -338,7 +338,8 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
-    use crate::wire::testing::{TestBlobs, blob, replay, target_of};
+    use crate::testing::target_of;
+    use crate::wire::testing::{TestBlobs, blob, replay};
     use crate::{
         AnthropicWire, BlobStore, ChatWire, CredentialHeader, Header, MaxTokensField, Media, OriginRef, Reasoning,
         ReasoningReplayMode, ReplayKind, ResponsesDialect, ResponsesWire, Route, SEARCH_TOOL_NAME, Settings,

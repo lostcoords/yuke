@@ -788,7 +788,7 @@ mod tests {
         .deferred()];
         let target = Target {
             tool_search: true,
-            ..crate::wire::testing::target_of("chat", chat())
+            ..crate::testing::target_of("chat", chat())
         };
 
         let result = crate::Encoder::new()

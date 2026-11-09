@@ -11,6 +11,7 @@ use std::time::Instant;
 use bytes::Bytes;
 
 use crate::response::{AttemptError, Completion, Error, Response};
+use crate::scripted::sse;
 use crate::stream::ReplyOptions;
 use crate::transport::{
     Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport,
@@ -35,47 +36,50 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
-/// A target for `protocol` at a test host, with no credential.
-pub(crate) fn target(protocol: Protocol) -> Target {
+/// The base URL of the test host.
+pub(crate) const TEST_HOST: &str = "https://example.test/v1";
+
+/// A target of `model` and `wire` at the test host, with no credential.
+pub(crate) fn target_of(model: &str, wire: Wire) -> Target {
     Target {
-        model: "test-model".into(),
+        model: model.to_owned().into(),
         route: Route {
-            base_url: "https://example.test/v1".into(),
+            base_url: TEST_HOST.into(),
             ..Route::default()
         },
-        wire: match protocol {
-            Protocol::AnthropicMessages => Wire::AnthropicMessages(AnthropicWire {
-                max_tokens: 64,
-                cache: false,
-            }),
-            Protocol::OpenaiChat => Wire::OpenaiChat(ChatWire::default()),
-            Protocol::OpenaiResponses => Wire::OpenaiResponses(ResponsesWire::default()),
-        },
-        tool_search: false,
+        // The helper enables the native tool search for each protocol that has one, so a request can defer a tool.
+        tool_search: !matches!(wire, Wire::OpenaiChat(_)),
+        wire,
     }
+}
+
+/// A target of the model `test-model` with the default wire of `protocol`.
+pub(crate) fn target(protocol: Protocol) -> Target {
+    let wire = match protocol {
+        Protocol::AnthropicMessages => Wire::AnthropicMessages(AnthropicWire {
+            max_tokens: 64,
+            cache: false,
+        }),
+        Protocol::OpenaiChat => Wire::OpenaiChat(ChatWire::default()),
+        Protocol::OpenaiResponses => Wire::OpenaiResponses(ResponsesWire::default()),
+    };
+    target_of("test-model", wire)
 }
 
 /// An Anthropic overload answer, as an HTTP body or as one stream event.
 pub(crate) const OVERLOAD_EVENT: &str =
     r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
 
-/// One SSE frame of `json`.
-pub(crate) fn frame(json: &str) -> String {
-    format!("data: {json}\n\n")
-}
-
 /// One complete Anthropic text response.
 pub(crate) fn canned_reply() -> String {
-    [
+    sse(&[
         r#"{"type":"message_start","message":{"usage":{"input_tokens":0}}}"#,
         r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
         r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello from the mock provider."}}"#,
         r#"{"type":"content_block_stop","index":0}"#,
         r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}"#,
         r#"{"type":"message_stop"}"#,
-    ]
-    .map(frame)
-    .concat()
+    ])
 }
 
 /// Generate from one user text block, as most call tests do.
@@ -215,7 +219,7 @@ impl Transport for CannedTransport {
 
 /// One exchange that a [`ScriptedExchanges`] saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Sent {
+pub(crate) struct SentExchange {
     pub(crate) url: String,
     pub(crate) content_type: &'static str,
     pub(crate) body: String,
@@ -227,7 +231,7 @@ pub(crate) struct Sent {
 #[derive(Debug, Default)]
 pub(crate) struct ScriptedExchanges {
     answers: Mutex<VecDeque<Result<ExchangeAnswer, Fault>>>,
-    sent: Mutex<Vec<Sent>>,
+    sent: Mutex<Vec<SentExchange>>,
 }
 
 impl ScriptedExchanges {
@@ -247,7 +251,7 @@ impl ScriptedExchanges {
         }
     }
 
-    pub(crate) fn sent(&self) -> Vec<Sent> {
+    pub(crate) fn sent(&self) -> Vec<SentExchange> {
         self.sent.lock().unwrap().clone()
     }
 }
@@ -258,7 +262,7 @@ impl Exchange for ScriptedExchanges {
         request: &'a ExchangeRequest<'_>,
         deadline: Option<Instant>,
     ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
-        self.sent.lock().unwrap().push(Sent {
+        self.sent.lock().unwrap().push(SentExchange {
             url: request.url.to_owned(),
             content_type: request.content_type,
             body: String::from_utf8(request.body.to_vec()).unwrap(),

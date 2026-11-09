@@ -67,17 +67,15 @@ pub async fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{CannedTransport, block_on, frame, generate_text, target};
+    use crate::scripted::sse;
+    use crate::testing::{CannedTransport, block_on, generate_text, target};
 
     #[test]
     fn openrouter_reasoning_details_round_trip() {
-        let reply = [
+        let reply = sse(&[
             r#"{"choices":[{"index":0,"delta":{"reasoning":"Plan","reasoning_details":[{"type":"reasoning.text","text":"Plan","signature":"s"}]},"finish_reason":null}]}"#,
             r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
-        ]
-        .map(frame)
-        .concat()
-            + "data: [DONE]\n\n";
+        ]) + "data: [DONE]\n\n";
         let mut target = target(Protocol::OpenaiChat);
         target.wire = Wire::OpenaiChat(ChatWire {
             reasoning_replay: ReasoningReplayMode::ReasoningDetails,

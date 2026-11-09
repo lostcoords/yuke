@@ -183,9 +183,9 @@ mod tests {
     use crate::encoder::Encoder;
     use crate::failure::ProviderKind;
     use crate::response::{AttemptInfo, FinishReason, ResponseLimits, Usage};
+    use crate::scripted::sse;
     use crate::testing::{
-        CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, frame, generate_text, generate_with,
-        target,
+        CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, generate_text, generate_with, target,
     };
     use crate::transport::Fault;
     use crate::{Block, Credential, Protocol, Request, ToolCall};
@@ -250,14 +250,12 @@ mod tests {
 
     #[test]
     fn a_cancelled_text_keeps_no_growth_capacity() {
-        let mut bytes = [
+        let mut bytes = sse(&[
             r#"{"type":"message_start","message":{"usage":{}}}"#,
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         let delta = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"say \"hi\" "}}"#;
-        bytes.push_str(&frame(delta).repeat(100));
+        bytes.push_str(&sse(&[delta]).repeat(100));
         let canned = CannedTransport::new(bytes);
         let mut reply = open_canned(&canned);
         let mut deltas = 0;
@@ -285,7 +283,7 @@ mod tests {
 
     #[test]
     fn failed_reply_keeps_text_and_complete_calls() {
-        let mut bytes = [
+        let mut bytes = sse(&[
             r#"{"type":"message_start","message":{"usage":{}}}"#,
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
@@ -300,9 +298,7 @@ mod tests {
             r#"{"type":"content_block_stop","index":4}"#,
             r#"{"type":"content_block_start","index":5,"content_block":{"type":"thinking","thinking":""}}"#,
             r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         bytes.push_str(&canned_reply()); // The reader never reaches the complete response after the failure.
         let canned = CannedTransport::new(bytes);
         let response = block_on(open_canned(&canned).finish());
@@ -338,7 +334,7 @@ mod tests {
 
     // Interleaved blocks stop out of order. Final arguments replace fragments, and one tool is dropped.
     fn interleaved_prefix() -> String {
-        [
+        sse(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.output_text.delta","output_index":0,"delta":"A"}"#,
@@ -360,16 +356,14 @@ mod tests {
             r#"{"type":"response.refusal.done","output_index":3}"#,
             r#"{"type":"response.output_item.done","output_index":1,"item":{"type":"reasoning","id":"r","encrypted_content":"encrypted"}}"#,
             r#"{"type":"response.output_item.added","output_index":5,"item":{"type":"function_call","call_id":"dropped","name":"read"}}"#,
-        ]
-        .map(frame)
-        .concat()
+        ])
     }
 
     fn interleaved_reply() -> String {
         interleaved_prefix()
-            + &frame(
+            + &sse(&[
                 r#"{"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":20,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1},"output_tokens_details":{"reasoning_tokens":3}}}}"#,
-            )
+            ])
     }
 
     #[test]
@@ -465,13 +459,11 @@ mod tests {
 
     #[test]
     fn limits_reach_stream() {
-        let two_blocks = [
+        let two_blocks = sse(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"a"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"b"}}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         for (bytes, limits) in [
             (
                 two_blocks,
@@ -504,16 +496,14 @@ mod tests {
             );
             assert_eq!(failed(&response).cause, Failure::ResponseTooLarge);
         }
-        let arguments = [
+        let arguments = sse(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"c","name":"read"}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"12345678"}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"9"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
             r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"}}"#,
             r#"{"type":"message_stop"}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         for max_tool_arg_bytes in [8, 9] {
             let canned = CannedTransport::new(arguments.clone());
             let response = generate_with(
@@ -547,16 +537,14 @@ mod tests {
     /// A Responses reply with one text block in `pieces` deltas. Each delta holds `say "hi" `, whose quotes double
     /// under JSON escaping.
     fn streamed_text_reply(pieces: usize) -> String {
-        let mut reply = [
+        let mut reply = sse(&[
             r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         for _ in 0..pieces {
             reply.push_str("data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_1\",\"delta\":\"say \\\"hi\\\" \"}\n\n");
         }
-        reply.push_str(&frame(r#"{"type":"response.output_text.done","output_index":0}"#));
+        reply.push_str(&sse(&[r#"{"type":"response.output_text.done","output_index":0}"#]));
         // Both final events repeat the whole text, escaped.
         for (head, tail) in [
             (

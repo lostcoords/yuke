@@ -273,13 +273,14 @@ async fn read_error_body(body: &mut BoxBody, max: usize) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::encoder::Encoder;
-    use crate::testing::{CannedTransport, block_on, frame, target};
+    use crate::scripted::sse;
+    use crate::testing::{CannedTransport, block_on, target};
     use crate::transport::Outgoing;
     use crate::{Block, Credential, OriginRef, ReasoningReplay, ReplayKind, Request, Target};
     use testing::read_trace;
 
     fn canned_text_reply() -> String {
-        [
+        sse(&[
             r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20}}}"#,
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}"#,
@@ -287,9 +288,7 @@ mod tests {
             r#"{"type":"content_block_stop","index":0}"#,
             r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
             r#"{"type":"message_stop"}"#,
-        ]
-        .map(frame)
-        .concat()
+        ])
     }
 
     /// Open a stream over a canned reply.
@@ -359,8 +358,8 @@ mod tests {
             Protocol::OpenaiResponses,
         ] {
             for body in [
-                frame("{not json").into_bytes(),
-                frame("{} x").into_bytes(),
+                sse(&["{not json"]).into_bytes(),
+                sse(&["{} x"]).into_bytes(),
                 b"data: \xff\n\n".to_vec(),
             ] {
                 let canned = CannedTransport::new(body);
@@ -375,13 +374,11 @@ mod tests {
 
     #[test]
     fn stream_keeps_origin_across_encodes() {
-        let thinking_reply = [
+        let thinking_reply = sse(&[
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}"#,
             r#"{"type":"content_block_stop","index":0}"#,
             r#"{"type":"message_stop"}"#,
-        ]
-        .map(frame)
-        .concat();
+        ]);
         let mut encoder = Encoder::new();
         let canned = CannedTransport::new(thinking_reply);
         let target = target(Protocol::AnthropicMessages);

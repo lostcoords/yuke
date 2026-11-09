@@ -3,27 +3,15 @@
 use std::borrow::Cow;
 
 use crate::encoder::{EncodeError, Encoder};
-use crate::{
-    Blob, BlobStore, Block, Credential, Origin, ReasoningReplay, ReplayKind, Request, Route, Target, ToolCall, Wire,
-};
+use crate::testing::{TEST_HOST, target_of};
+use crate::{Blob, BlobStore, Block, Credential, Origin, ReasoningReplay, ReplayKind, Request, ToolCall, Wire};
 
-/// A target with `model` and `wire`, and no route or credential: an encoder reads neither.
-pub(crate) fn target_of(model: &str, wire: Wire) -> Target {
-    Target {
-        model: model.to_owned().into(),
-        route: Route::default(),
-        // The helper enables the native tool search for each protocol that has one, so a request can defer a tool.
-        tool_search: !matches!(wire, Wire::OpenaiChat(_)),
-        wire,
-    }
-}
-
-/// Provider state that `model` produced at the empty test host of [`target_of`].
+/// Provider state that `model` produced at the test host.
 pub(crate) fn replay(model: &str, kind: ReplayKind, data: &str) -> ReasoningReplay {
     ReasoningReplay {
         origin: Origin {
             model: model.to_owned(),
-            base_url: String::new(),
+            base_url: TEST_HOST.to_owned(),
         },
         kind,
         data: data.to_owned(),

@@ -602,8 +602,9 @@ mod tests {
 
     #[test]
     fn non_string_reasoning_delta_fails_without_output() {
+        use crate::scripted::sse;
         use crate::stream::Stream;
-        use crate::testing::{CannedTransport, block_on, frame, target};
+        use crate::testing::{CannedTransport, block_on, target};
         use crate::{Block, Encoder, Failure, Protocol, ReplyOptions, Request};
         for (delta, valid) in [("5", false), (r#""x""#, true)] {
             let events = [
@@ -611,7 +612,7 @@ mod tests {
                 format!(r#"{{"type":"response.reasoning_text.delta","output_index":0,"delta":{delta}}}"#),
                 r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#.to_owned(),
             ];
-            let canned = CannedTransport::new(events.iter().map(|event| frame(event)).collect::<String>());
+            let canned = CannedTransport::new(sse(&events));
             let mut encoder = Encoder::new();
             let blocks = [Block::user_text("hello")];
             let encoded = encoder

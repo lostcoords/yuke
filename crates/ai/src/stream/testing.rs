@@ -24,7 +24,7 @@ impl Harness {
     pub(crate) fn new(protocol: Protocol) -> Self {
         let origin = Origin {
             model: "m".into(),
-            base_url: "https://example.test/v1".into(),
+            base_url: crate::testing::TEST_HOST.into(),
         };
         Harness {
             reducer: Reducer::new(protocol, Draft::new(origin, ResponseLimits::default())),
