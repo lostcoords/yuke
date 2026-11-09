@@ -156,6 +156,26 @@ mod tests {
         );
     }
 
+    // A shared transport meets the bound of a transport, and each request reaches the transport inside it.
+    #[test]
+    fn a_shared_transport_sends_through_the_transport_inside_it() {
+        let scripted = scripted::ScriptedTransport::new([testing::canned_reply()]);
+        let shared: std::sync::Arc<dyn Transport> = std::sync::Arc::new(scripted.clone());
+        let blocks = [Block::user_text("hello")];
+
+        let response = block_on(generate(
+            &shared,
+            &target(Protocol::AnthropicMessages),
+            &Credential::None,
+            Request::new(&blocks),
+            ReplyOptions::default(),
+        ))
+        .unwrap();
+
+        assert_eq!(response.completion.text(), "Hello from the mock provider.");
+        assert_eq!(scripted.urls(), ["https://example.test/v1/messages"]);
+    }
+
     #[test]
     fn session_types_and_futures_are_send() {
         fn send<T: Send>(_: &T) {}

@@ -938,7 +938,7 @@ mod tests {
         assert!(!text.contains("gw-secret"), "{text}");
     }
 
-    fn sent(parts: &[Bytes; 3]) -> Vec<u8> {
+    fn sent(parts: &[Bytes]) -> Vec<u8> {
         parts.iter().flatten().copied().collect()
     }
 
@@ -970,7 +970,7 @@ mod tests {
             .unwrap()
             .http
             .body()
-            .clone();
+            .to_vec();
         let expected = sent(&held);
 
         encode_checked(&mut encoder, "m", ALL_WIRES[0], Request::new(&long)).unwrap();
@@ -981,7 +981,7 @@ mod tests {
             .unwrap()
             .http
             .body()
-            .clone();
+            .to_vec();
         drop(encoder);
         let mut next = Encoder::new();
         encode_checked(&mut next, "m", ALL_WIRES[0], Request::new(&long)).unwrap();

@@ -53,6 +53,34 @@ pub trait Exchange: Send + Sync {
     ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>>;
 }
 
+// A reference, a box, and an `Arc` of a transport or an exchange forward each call to it, so a shared or boxed value
+// meets a generic bound.
+macro_rules! forward {
+    ($($pointer:ty),*) => {$(
+        impl<T: Transport + ?Sized> Transport for $pointer {
+            fn open<'a>(
+                &'a self,
+                request: &'a Outgoing<'_>,
+                deadline: Option<Instant>,
+            ) -> BoxFuture<'a, Result<(Head, BoxBody), Fault>> {
+                (**self).open(request, deadline)
+            }
+        }
+
+        impl<T: Exchange + ?Sized> Exchange for $pointer {
+            fn exchange<'a>(
+                &'a self,
+                request: &'a ExchangeRequest<'_>,
+                deadline: Option<Instant>,
+            ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
+                (**self).exchange(request, deadline)
+            }
+        }
+    )*};
+}
+
+forward!(&T, Box<T>, std::sync::Arc<T>);
+
 /// The bytes of one response body, in chunks.
 pub trait Body: Send {
     /// Poll for the next chunk. `None` ends the body.
@@ -150,7 +178,7 @@ impl<'a> Outgoing<'a> {
     }
 
     /// The body parts, sent in order. A clone of a part shares its buffer.
-    pub fn body(&self) -> &[Bytes; 3] {
+    pub fn body(&self) -> &[Bytes] {
         &self.body
     }
 }
