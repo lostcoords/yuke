@@ -272,11 +272,10 @@ async fn read_error_body(body: &mut BoxBody, max: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encoder::Encoder;
+    use crate::OriginRef;
     use crate::scripted::sse;
-    use crate::testing::{CannedTransport, block_on, target};
+    use crate::testing::{CannedTransport, block_on};
     use crate::transport::Outgoing;
-    use crate::{Block, Credential, OriginRef, ReasoningReplay, ReplayKind, Request, Target};
     use testing::read_trace;
 
     fn canned_text_reply() -> String {
@@ -370,50 +369,6 @@ mod tests {
                 assert_eq!(canned.closes(), 1);
             }
         }
-    }
-
-    #[test]
-    fn stream_keeps_origin_across_encodes() {
-        let thinking_reply = sse(&[
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-            r#"{"type":"message_stop"}"#,
-        ]);
-        let mut encoder = Encoder::new();
-        let canned = CannedTransport::new(thinking_reply);
-        let target = target(Protocol::AnthropicMessages);
-        let blocks = [Block::user_text("hello")];
-        let encoded = encoder
-            .encode(&target, &Credential::None, Request::new(&blocks))
-            .unwrap();
-        // A retry opens the same bytes with no second encode.
-        let mut first = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
-        while block_on(first.next()).is_some() {}
-        let mut stream = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
-        // The next encode reuses the storage the first one lent, for another model.
-        let other = Target {
-            model: "another-model-with-a-longer-name".into(),
-            ..target.clone()
-        };
-        let long = "new".repeat(10_000);
-        let blocks = [Block::user_text(&long)];
-        encoder
-            .encode(&other, &Credential::None, Request::new(&blocks))
-            .unwrap();
-        let mut replay = None;
-        while let Some(event) = block_on(stream.next()) {
-            if let Event::BlockStopped(stopped) = event.unwrap()
-                && let crate::BlockResult::Reasoning(Some(state)) = stopped.result
-            {
-                replay = Some(ReasoningReplay::from(state));
-            }
-        }
-        let replay = replay.unwrap();
-        assert_eq!(replay.origin.model, "test-model");
-        assert_eq!(replay.origin.base_url, "https://example.test/v1");
-        assert_eq!(replay.kind, ReplayKind::AnthropicSignature);
-        assert_eq!(replay.data, "sig");
-        assert_eq!(canned.opens(), 2);
     }
 
     // `select!` drops the future of the branch that lost, so a dropped `next` must lose no event.

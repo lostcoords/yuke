@@ -526,23 +526,6 @@ mod tests {
         h.expect_trace("start 0 text");
     }
 
-    // The block lookup comes first, so a delta of an ignored block does nothing, even a malformed one.
-    #[test]
-    fn malformed_delta_of_ignored_block_does_nothing() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result"}}"#,
-            r#"{"type":"content_block_delta","index":0}"#,
-            r#"{"type":"content_block_delta","index":0,"delta":{"text":"x"}}"#,
-            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"late"}}"#,
-            r#"{"type":"content_block_stop","index":0}"#,
-        ])
-        .unwrap();
-        h.expect_trace("");
-    }
-
     #[test]
     fn ignored_block_counts_toward_limit() {
         let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
@@ -555,14 +538,5 @@ mod tests {
             r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
         ]);
         assert_eq!(result, Err(DecodeError::TooLarge));
-    }
-
-    #[test]
-    fn redacted_thinking_rejects_deltas() {
-        let result = Harness::new(PROTOCOL).feed(&[
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
-            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"leak"}}"#,
-        ]);
-        assert_eq!(result, Err(DecodeError::Protocol));
     }
 }

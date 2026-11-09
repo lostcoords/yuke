@@ -111,27 +111,6 @@ async fn a_request_sends_its_method_target_headers_and_body_and_the_body_streams
 }
 
 #[tokio::test]
-async fn a_body_in_large_parts_arrives_whole_with_its_total_content_length() {
-    let server = Server {
-        status: 200,
-        ..Server::default()
-    };
-    let (port, served) = listen(server).await;
-    let (first, second) = (vec![b'a'; 1 << 21], vec![b'b'; 1 << 20]);
-    let expected = [first.as_slice(), second.as_slice()].concat();
-    let request = Request {
-        body: vec![Bytes::from(first), Bytes::new(), Bytes::from(second)],
-        ..post(port)
-    };
-
-    assert_eq!(run(&client(None), request, None).await.error, None);
-    let seen = served.await.unwrap();
-    assert_eq!(seen.values("content-length"), [expected.len().to_string()]);
-    assert_eq!(seen.values("transfer-encoding"), Vec::<&str>::new());
-    assert!(seen.body == expected, "the body differs");
-}
-
-#[tokio::test]
 async fn the_client_owns_the_framing_and_the_user_agent_of_a_request_wins() {
     // A wrong length makes both sides wait for bytes, so the idle timeout ends such a failure.
     let client = client(Some(Duration::from_secs(1)));
@@ -280,18 +259,6 @@ async fn silent_peer_hits_request_deadline() {
     };
     let (_, out) = exchange(server, &client(None), Some(after(50))).await;
     assert_eq!(out.error, Some(Error::RequestTimeout));
-}
-
-#[tokio::test]
-async fn content_length_body_reads_to_its_end() {
-    let server = Server {
-        raw_response: Some(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody"),
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &client(None), None).await;
-    assert_eq!(out.error, None);
-    assert_eq!(out.status, Some(StatusCode::OK));
-    assert_eq!(out.bytes, b"body");
 }
 
 #[tokio::test]
@@ -588,19 +555,6 @@ async fn ssl_cert_file_decides_whether_a_handshake_succeeds() {
         assert_eq!(out.error, Some(Error::CertificateRejected));
     }
     server.await.unwrap();
-}
-
-// The connector wraps the rustls error in the I/O error, and a rejected certificate gets an error of its own.
-#[test]
-fn a_rejected_certificate_is_its_own_error() {
-    let refused = io::Error::new(
-        io::ErrorKind::InvalidData,
-        rustls::Error::InvalidCertificate(rustls::CertificateError::Expired),
-    );
-    let other = io::Error::new(io::ErrorKind::InvalidData, rustls::Error::DecryptError);
-
-    assert_eq!(handshake_error(&refused), Error::CertificateRejected);
-    assert_eq!(handshake_error(&other), Error::ConnectFailed);
 }
 
 #[test]

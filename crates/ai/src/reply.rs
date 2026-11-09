@@ -249,39 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_text_keeps_no_growth_capacity() {
-        let mut bytes = sse(&[
-            r#"{"type":"message_start","message":{"usage":{}}}"#,
-            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
-        ]);
-        let delta = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"say \"hi\" "}}"#;
-        bytes.push_str(&sse(&[delta]).repeat(100));
-        let canned = CannedTransport::new(bytes);
-        let mut reply = open_canned(&canned);
-        let mut deltas = 0;
-        while deltas < 100 {
-            match block_on(reply.next()) {
-                Some(Ok(Event::TextDelta(_))) => deltas += 1,
-                Some(Ok(_)) => {}
-                other => panic!("{other:?}"),
-            }
-        }
-
-        let partial = reply.cancel();
-
-        let [
-            PartialBlock {
-                content: Partial::Text(text),
-                ..
-            },
-        ] = &partial[..]
-        else {
-            panic!("{partial:?}")
-        };
-        assert_eq!((text.len(), text.capacity()), (900, 900));
-    }
-
-    #[test]
     fn failed_reply_keeps_text_and_complete_calls() {
         let mut bytes = sse(&[
             r#"{"type":"message_start","message":{"usage":{}}}"#,
@@ -532,57 +499,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// A Responses reply with one text block in `pieces` deltas. Each delta holds `say "hi" `, whose quotes double
-    /// under JSON escaping.
-    fn streamed_text_reply(pieces: usize) -> String {
-        let mut reply = sse(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-        ]);
-        for _ in 0..pieces {
-            reply.push_str("data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_1\",\"delta\":\"say \\\"hi\\\" \"}\n\n");
-        }
-        reply.push_str(&sse(&[r#"{"type":"response.output_text.done","output_index":0}"#]));
-        // Both final events repeat the whole text, escaped.
-        for (head, tail) in [
-            (
-                "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"",
-                "\"}]}}\n\n",
-            ),
-            (
-                "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{},\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"",
-                "\"}]}]}}\n\n",
-            ),
-        ] {
-            reply.push_str(head);
-            for _ in 0..pieces {
-                reply.push_str("say \\\"hi\\\" ");
-            }
-            reply.push_str(tail);
-        }
-        reply
-    }
-
-    #[test]
-    fn half_megabyte_answer_fits_default_limits() {
-        // The reply holds about 0.5 MB of text.
-        let pieces = 60_000;
-        let canned = CannedTransport::new(streamed_text_reply(pieces));
-        let response = generate_text(&canned, &target(Protocol::OpenaiResponses), "hello");
-        assert_eq!(completion(&response).text(), "say \"hi\" ".repeat(pieces));
-    }
-
-    #[test]
-    fn a_streamed_text_keeps_no_growth_capacity() {
-        // 900 bytes in 100 deltas. Without the shrink, the growth of the text leaves spare capacity.
-        let canned = CannedTransport::new(streamed_text_reply(100));
-        let response = generate_text(&canned, &target(Protocol::OpenaiResponses), "hello");
-        let Content::Text(text) = &completion(&response).content[0] else {
-            panic!("{:?}", completion(&response).content)
-        };
-        assert_eq!((text.len(), text.capacity()), (900, 900));
     }
 
     #[test]

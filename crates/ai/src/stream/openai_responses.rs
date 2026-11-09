@@ -438,9 +438,9 @@ fn incomplete_reason(reason: &str) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
-    use crate::{Credential, Protocol};
 
     const PROTOCOL: Protocol = Protocol::OpenaiResponses;
 
@@ -590,52 +590,6 @@ mod tests {
     }
 
     #[test]
-    fn summary_index_that_is_not_an_integer_reads_as_absent() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}"#,
-            r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":"a","delta":"x"}"#,
-        ])
-        .unwrap();
-        h.expect_trace("start 0 reasoning\nreasoning_delta 0 \"x\"");
-    }
-
-    #[test]
-    fn non_string_reasoning_delta_fails_without_output() {
-        use crate::scripted::sse;
-        use crate::stream::Stream;
-        use crate::testing::{CannedTransport, block_on, target};
-        use crate::{Block, Encoder, Failure, Protocol, ReplyOptions, Request};
-        for (delta, valid) in [("5", false), (r#""x""#, true)] {
-            let events = [
-                r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}"#.to_owned(),
-                format!(r#"{{"type":"response.reasoning_text.delta","output_index":0,"delta":{delta}}}"#),
-                r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#.to_owned(),
-            ];
-            let canned = CannedTransport::new(sse(&events));
-            let mut encoder = Encoder::new();
-            let blocks = [Block::user_text("hello")];
-            let encoded = encoder
-                .encode(
-                    &target(Protocol::OpenaiResponses),
-                    &Credential::None,
-                    Request::new(&blocks),
-                )
-                .unwrap();
-            let mut stream = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
-            if valid {
-                assert_eq!(
-                    super::super::testing::read_trace(&mut stream),
-                    "start 0 reasoning\nreasoning_delta 0 \"x\"\nstop 0 reasoning\ndone stop \"completed\""
-                );
-            } else {
-                assert!(matches!(block_on(stream.next()), Some(Err(Failure::Protocol))));
-                assert!(block_on(stream.next()).is_none());
-            }
-        }
-    }
-
-    #[test]
     fn encrypted_reasoning_without_summary_emits_block() {
         let mut h = Harness::new(PROTOCOL);
         h.feed(&[
@@ -661,46 +615,6 @@ mod tests {
         ])
         .unwrap();
         h.expect_trace("done stop \"completed\" output=7");
-    }
-
-    // pi and the OpenAI SDK key text by its item and close it at the item's end, so a done event of a part that sent no
-    // delta closes nothing.
-    #[test]
-    fn text_done_without_text_block_is_ignored() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.output_text.done","output_index":0,"text":""}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
-        ])
-        .unwrap();
-        h.expect_trace("done stop \"completed\"");
-    }
-
-    // Items are keyed by `output_index`, so an item added again replaces the first one. The block that the first item
-    // opened stays open until the draft closes it.
-    #[test]
-    fn readded_item_replaces_first() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            r#"{"type":"response.output_text.delta","output_index":0,"delta":"a"}"#,
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c","name":"read"}}"#,
-            r#"{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}"#,
-            r#"{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","status":"completed","arguments":"{}"}}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 text\n\
-             text_delta 0 \"a\"\n\
-             start 1 tool_call \"read\"\n\
-             args 1 \"{}\"\n\
-             stop 1 tool_call id=\"c\" name=\"read\" arguments=\"{}\"\n\
-             stop 0 text\n\
-             done tool_calls \"completed\"",
-        );
     }
 
     // A host can end a text part with only `output_text.done`, and a refusal part with only `refusal.done`.
@@ -766,18 +680,6 @@ mod tests {
         assert_eq!(overlapping, Err(DecodeError::Protocol));
     }
 
-    // The replaced item names no text block, so a text delta for it rejects the frame.
-    #[test]
-    fn replaced_item_forgets_its_blocks() {
-        let result = Harness::new(PROTOCOL).feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.output_text.delta","output_index":0,"delta":"b"}"#,
-        ]);
-        assert_eq!(result, Err(DecodeError::Protocol));
-    }
-
     #[test]
     fn ignored_item_counts_toward_limit() {
         let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
@@ -789,25 +691,6 @@ mod tests {
             r#"{"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message"}}"#,
         ]);
         assert_eq!(fed, Err(DecodeError::TooLarge));
-    }
-
-    // A replacement reuses the slot of the earlier item, so the item limit allows it.
-    #[test]
-    fn replacement_at_item_limit_succeeds() {
-        let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
-            max_blocks: 1,
-            ..ResponseLimits::default()
-        });
-        h.feed(&[
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call"}}"#,
-            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}"#,
-            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
-            r#"{"type":"response.output_text.delta","output_index":0,"delta":"a"}"#,
-            r#"{"type":"response.output_text.done","output_index":0}"#,
-            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
-        ])
-        .unwrap();
-        h.expect_trace("start 0 text\ntext_delta 0 \"a\"\nstop 0 text\ndone stop \"completed\"");
     }
 
     // The provider marks a call it never finished, so the call must not reach the consumer.

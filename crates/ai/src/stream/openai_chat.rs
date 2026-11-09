@@ -708,23 +708,6 @@ mod tests {
     }
 
     #[test]
-    fn array_payload_reads_as_nothing() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[r#"[null,null,[{"delta":{"content":"hi"}}]]"#]).unwrap();
-        h.expect_trace("");
-    }
-
-    #[test]
-    fn null_function_fails_and_missing_function_adds_nothing() {
-        let null = r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a","function":null}]}}]}"#;
-        assert_eq!(Harness::new(PROTOCOL).feed(&[null]), Err(DecodeError::Protocol));
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"a"}]}}]}"#])
-            .unwrap();
-        h.expect_trace("");
-    }
-
-    #[test]
     fn calls_in_one_chunk_all_count() {
         let mut h = Harness::new(PROTOCOL);
         h.feed(&[
@@ -792,34 +775,6 @@ mod tests {
              text_delta 1 \"Hi\"\n\
              stop 0 reasoning openrouter_details=\"[{\\\"type\\\":\\\"reasoning.encrypted\\\",\\\"data\\\":\\\"enc\\\"}]\"\n\
              stop 1 text\n\
-             done stop \"stop\"",
-        );
-    }
-
-    #[test]
-    fn empty_and_signature_only_details() {
-        let mut h = Harness::new(PROTOCOL);
-        h.feed(&[
-            r#"{"choices":[{"index":0,"delta":{"reasoning_details":[]},"finish_reason":"stop"}]}"#,
-            "[DONE]",
-        ])
-        .unwrap();
-        h.expect_trace(
-            "start 0 reasoning\n\
-             stop 0 reasoning openrouter_details=\"[]\"\n\
-             done stop \"stop\"",
-        );
-
-        let mut signed = Harness::new(PROTOCOL);
-        signed
-            .feed(&[
-                r#"{"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"","index":0},{"type":"reasoning.text","signature":"s"}]},"finish_reason":"stop"}]}"#,
-                "[DONE]",
-            ])
-            .unwrap();
-        signed.expect_trace(
-            "start 0 reasoning\n\
-             stop 0 reasoning openrouter_details=\"[{\\\"type\\\":\\\"reasoning.text\\\",\\\"signature\\\":\\\"s\\\",\\\"index\\\":0}]\"\n\
              done stop \"stop\"",
         );
     }

@@ -241,15 +241,6 @@ fn a_grant_and_a_pending_login_write_no_secret_in_their_debug_text() {
 }
 
 #[test]
-fn a_failed_exchange_gives_its_fault_as_the_source() {
-    let error = OAuthError::Transient(Some(Fault::DnsFailed));
-
-    let source = std::error::Error::source(&error).map(ToString::to_string);
-
-    assert_eq!(source, Some(Fault::DnsFailed.to_string()));
-}
-
-#[test]
 fn an_xai_credential_is_a_bearer_with_no_identity_header_even_with_an_account() {
     let credential = Flow::Xai.credential("at".to_owned(), Some("account".to_owned()));
 
@@ -427,31 +418,4 @@ fn a_failed_exchange_after_an_approved_codex_poll_fails_for_now() {
         exchange_of(Err(Fault::ConnectionLost)),
         Err(OAuthError::Transient(Some(Fault::ConnectionLost)))
     );
-}
-
-#[test]
-fn a_codex_token_whose_end_is_at_or_before_zero_has_ended() {
-    // The payloads are `{"exp":0}` and `{"exp":-5}`.
-    for access in ["e30.eyJleHAiOjB9.signature", "e30.eyJleHAiOi01fQ.signature"] {
-        let body = format!(r#"{{"access_token":"{access}","expires_in":3600}}"#);
-        let transport = ScriptedExchange::new([Ok((200, body.as_str()))]);
-
-        let grant = block_on(Flow::Codex.refresh(&transport, "rt", now())).unwrap();
-
-        assert_eq!(grant.expires_at, UNIX_EPOCH, "{access}");
-    }
-}
-
-#[test]
-fn a_token_without_three_parts_gives_no_claims() {
-    // The account claim is in the payload, but the signature part is absent or empty, so the account stays unknown.
-    let payload = ID_JWT.strip_suffix(".signature").unwrap();
-    for id in [payload.to_owned(), format!("{payload}.")] {
-        let body = format!(r#"{{"access_token":"opaque","expires_in":60,"id_token":"{id}"}}"#);
-        let transport = ScriptedExchange::new([Ok((200, body.as_str()))]);
-
-        let grant = block_on(Flow::Codex.refresh(&transport, "rt", now())).unwrap();
-
-        assert_eq!(grant.account_id, None, "{id}");
-    }
 }

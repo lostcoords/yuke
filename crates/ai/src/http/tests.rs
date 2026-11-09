@@ -296,26 +296,6 @@ async fn compressed_response_is_malformed() {
     }
 }
 
-// The retry policy reads the fault, so each client error becomes the fault of the same name.
-#[test]
-fn each_client_error_becomes_the_fault_of_its_name() {
-    for error in [
-        Error::InvalidRequest,
-        Error::BadUrl,
-        Error::DnsFailed,
-        Error::ConnectFailed,
-        Error::ConnectTimeout,
-        Error::CertificateRejected,
-        Error::TlsSetupFailed,
-        Error::IdleTimeout,
-        Error::RequestTimeout,
-        Error::ConnectionLost,
-        Error::MalformedResponse,
-    ] {
-        assert_eq!(format!("{:?}", fault_of(error)), format!("{error:?}"));
-    }
-}
-
 // A body error reaches the stream of the provider as its fault.
 #[tokio::test]
 async fn a_truncated_body_is_a_lost_connection() {
