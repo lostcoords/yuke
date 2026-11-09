@@ -18,8 +18,4 @@
   <path fill="#0c0d0c" d="M50 87 L36 73.5 L37.5 72 L50 84.2 L62.5 72 L64 73.5 Z" />
   <ellipse cx="24.5" cy="45" rx="3" ry="4.5" fill="#f4f2eb" />
   <ellipse cx="75.5" cy="45" rx="3" ry="4.5" fill="#f4f2eb" />
-  <g stroke="#0c0d0c" stroke-width="2.6" stroke-linecap="round">
-    <path d="M45.5 41 V47" />
-    <path d="M54.5 41 V47" />
-  </g>
 </svg>
