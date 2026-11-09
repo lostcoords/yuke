@@ -6,7 +6,7 @@ import { ChatDocument } from "yuke:chat";
 export function apply(ctx) {
   if (!ctx.get("tui")) return undefined;
 
-  return ctx.get("chat").present((options) => {
+  return ctx.get("chat").setPresentation((options) => {
     const inner = new ChatDocument(options.key, options.folds);
     /** @type {WeakMap<import("yuke:tui").TextItem, import("yuke:tui").TextItem>} */
     const cache = new WeakMap();

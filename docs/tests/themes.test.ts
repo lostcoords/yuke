@@ -9,7 +9,7 @@ test("the documented theme colors text when selected and unload restores the def
   await using host = await createHost({
     plugins: [{ name: "nord", apply: (ctx) => nord.apply(withSurface(ctx, frame.surface("nord"))) }],
   });
-  tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "accent", { fg: "accent" }) }));
+  tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "accent", { fg: "accent" }) }));
   tui.styles.setTheme("nord");
   const selected = frame.draw().cells[0]?.[0]?.style.fg;
   await host.close();
@@ -25,7 +25,7 @@ test("the documented theme listener changes its group on each theme selection", 
       { name: "aware", apply: (ctx) => aware.apply(withSurface(ctx, frame.surface("aware"))) },
     ],
   });
-  tui.setRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "note", "notes.title") }));
+  tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "note", "notes.title") }));
   tui.styles.setTheme("nord");
   const selected = frame.draw().cells[0]?.[0]?.style.fg;
   tui.styles.setTheme("default");

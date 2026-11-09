@@ -7,9 +7,9 @@ export function apply(ctx) {
   const tui = ctx.get("tui");
   if (!tui) return undefined;
 
-  const root = tui.setRoot(() =>
+  const root = tui.wrapRoot((_mount, inner) =>
     stack("row", [
-      { view: tui.panes.view, size: "fill" },
+      { view: inner, size: "fill" },
       {
         size: (size) => (size.width >= 80 ? 24 : 0),
         view: {

@@ -94,12 +94,12 @@ A `View` draws through a `Canvas`. It can also define layout, input handlers, fo
 - `tui.panes.active` reads the active pane beneath a modal.
 - `tui.focused` reads the deepest focused view.
 - `tui.focus(view)` requests focus for a placed view.
-- `tui.setRoot(factory)` replaces the root layout. Closing its mount restores the pane tree alone.
+- `tui.wrapRoot(factory)` adds a root view around the current root. The factory gets the mount and the inner root. Closing its mount removes only this root.
 - `tui.views.register(type, restore)` registers a saved view type for reload.
 
 A factory receives a `Mount`. Its signal ends work when that view closes. Register a view type and supply `view.snapshot()` when a custom pane needs reload restoration.
 
-Import `stack` from `yuke:tui` for a row or column layout. Each child has a fixed cell size, `"fill"`, or a size callback. [`sidebar.js`](examples/sidebar.js) places a small help column beside `tui.panes.view`. It hides that column in a narrow terminal. It does not replace the chat pane implementation.
+Import `stack` from `yuke:tui` for a row or column layout. Each child has a fixed cell size, `"fill"`, or a size callback. [`sidebar.js`](examples/sidebar.js) places a small help column beside the inner root. It hides that column in a narrow terminal. It does not replace the chat pane implementation.
 
 ## Text widgets
 
@@ -118,11 +118,11 @@ The bundled `chat` plugin provides the `chat` service. Declare `"uses": ["chat"]
 | `show(id)` | Open a session in a chat pane. |
 | `session(view)` | Read the session of a chat pane view. |
 | `onChange(listener)` | Watch changes to the session of chat panes. |
-| `addComposerRows(place, source)` | Add rows above or below composers. |
+| `addComposerView(place, factory)` | Add a view above or below composers. |
 | `setReadOnly(source)` | Show selected sessions without a composer. |
-| `present(factory)` | Replace transcript presentation. |
+| `setPresentation(factory)` | Replace transcript presentation. |
 
-A composer row source runs at layout. Keep it cheap and synchronous. Call `tui.requestFrame()` after its data changes. [`chat-api.js`](examples/chat-api.js) adds a session label below each composer.
+A composer view says its height with `heightFor(width)`. `composerRows(source)` from `yuke:chat` makes one from plain text rows. Its source runs at each layout and draw. Keep it cheap and synchronous. Call `tui.requestFrame()` after its data changes. [`chat-api.js`](examples/chat-api.js) adds a session label below each composer.
 
 A read-only source returns `{ text, back }` for a selected session, or `undefined` for an editable session. The pane shows that text instead of the composer. This rule changes the terminal pane only; an RPC client can still send input.
 
@@ -132,9 +132,9 @@ For a new chat frontend, use the public blocks from `yuke:chat`: `ChatSession`, 
 
 `Transcript` from `yuke:transcript` folds session events into typed entries. `ChatDocument` from `yuke:chat` projects those entries into a `TextDocument`. The default document supports Markdown, tool calls, reasoning, errors, and folds.
 
-`chat.present(factory)` installs a `ChatPresentation` for each chat pane. The factory gets a document key, saved folds, an abort signal, and a `changed()` callback. The last factory wins. Its remover restores the default only if that factory remains current.
+`chat.setPresentation(factory)` installs a `ChatPresentation` for each chat pane. The factory gets a document key, saved folds, an abort signal, and a `requestUpdate()` callback. The last factory wins. Its remover restores the default only if that factory remains current.
 
-A presentation must implement `folds`, `toggle`, `toggleTools`, and `project`. Keep item keys across updates. Keep each unchanged item object so text views can reuse its rows. Call `options.changed()` after a presentation state change that needs a new projection.
+A presentation must implement `folds`, `toggle`, `toggleTools`, and `project`. Keep item keys across updates. Keep each unchanged item object so text views can reuse its rows. Call `options.requestUpdate()` after a presentation state change that needs a new projection.
 
 [`tree-transcript.js`](examples/tree-transcript.js) wraps `ChatDocument`. It adds plain tree marks to labels and keeps the default fold behavior. It does not group tool calls or add a details window.
 
