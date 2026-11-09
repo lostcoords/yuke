@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use yuke_ai::transport::{BoxFuture, ExchangeAnswer, ExchangeRequest, Fault};
 
 use super::*;
-use crate::testing::Answers;
+use yuke_ai::scripted::{ScriptedExchange, SentExchange};
 
 const PROVIDER: &str = "xai-grok";
 
@@ -86,7 +86,7 @@ fn hold_lock(folder: &Path) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
 #[derive(Debug, Clone, Default)]
 struct Slow {
     delay: Duration,
-    script: Answers,
+    script: ScriptedExchange,
 }
 
 impl Exchange for Slow {
@@ -107,7 +107,7 @@ impl Exchange for Slow {
 struct Gated {
     gate: Arc<tokio::sync::Notify>,
     arrived: Arc<tokio::sync::Notify>,
-    script: Answers,
+    script: ScriptedExchange,
 }
 
 impl Exchange for Gated {
@@ -129,7 +129,7 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
     let folder = folder("a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone");
     let other = json!({"other": {"access_token": "a", "refresh_token": "r", "expires_at": 1}});
     fs::write(folder.join(FILE), other.to_string()).unwrap();
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, START);
     answers.push(400, r#"{"error":"authorization_pending"}"#);
     answers.push(400, r#"{"error":"slow_down"}"#);
@@ -146,7 +146,7 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
 
     assert!(logged_in.is_ok(), "{logged_in:?}");
     assert_eq!(shown, Some(("UC".to_owned(), "https://x.ai/d?c=UC".to_owned())));
-    assert_eq!(answers.bodies().len(), 6);
+    assert_eq!(answers.sent().len(), 6);
     // One interval before the first poll, 5 seconds more after `slow_down`, and a doubled backoff after each failure.
     assert_eq!(started.elapsed(), Duration::from_secs(1 + 1 + 6 + 6 + 12));
     let content = file(&folder);
@@ -163,7 +163,7 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
 #[tokio::test(flavor = "local", start_paused = true)]
 async fn a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing() {
     let folder = folder("a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, START);
     answers.push(400, r#"{"error":"access_denied"}"#);
     answers.push(200, START);
@@ -186,7 +186,7 @@ async fn a_denied_login_or_a_grant_without_a_refresh_token_saves_nothing() {
 #[tokio::test(flavor = "local", start_paused = true)]
 async fn login_errors_keep_the_complete_transport_cause_text() {
     let folder = folder("login_errors_keep_the_complete_transport_cause_text");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push_fault(Fault::DnsFailed);
     answers.push_fault(Fault::DnsFailed);
 
@@ -211,7 +211,7 @@ async fn login_errors_keep_the_complete_transport_cause_text() {
 #[tokio::test(flavor = "local", start_paused = true)]
 async fn a_login_without_an_approval_ends_at_its_limit() {
     let folder = folder("a_login_without_an_approval_ends_at_its_limit");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     // Three polls at 299 seconds fit in the 15 minutes of the limit, and a fourth does not.
     answers.push(
         200,
@@ -227,7 +227,7 @@ async fn a_login_without_an_approval_ends_at_its_limit() {
         expired.unwrap_err().to_string(),
         "the login expired before its approval"
     );
-    assert_eq!(answers.bodies().len(), 4);
+    assert_eq!(answers.sent().len(), 4);
 }
 
 #[tokio::test(flavor = "local", start_paused = true)]
@@ -235,7 +235,7 @@ async fn the_login_limit_counts_the_time_of_the_requests() {
     let folder = folder("the_login_limit_counts_the_time_of_the_requests");
     let slow = Slow {
         delay: Duration::from_secs(10),
-        script: Answers::default(),
+        script: ScriptedExchange::default(),
     };
     // The waits fit three polls at 299 seconds, but the requests add 10 seconds each, so the third one is late.
     slow.script.push(
@@ -252,26 +252,26 @@ async fn the_login_limit_counts_the_time_of_the_requests() {
         expired.unwrap_err().to_string(),
         "the login expired before its approval"
     );
-    assert_eq!(slow.script.bodies().len(), 3);
+    assert_eq!(slow.script.sent().len(), 3);
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_valid_login_serves_each_attempt_with_no_refresh() {
     let folder = folder("a_valid_login_serves_each_attempt_with_no_refresh");
     save(&folder, "at", "rt", 3600);
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
 
     let token = token_of(&source(&folder, answers.clone(), LOCK_LIMIT)).await;
 
     assert_eq!(token, Ok("at".to_owned()));
-    assert_eq!(answers.bodies(), Vec::<String>::new());
+    assert_eq!(answers.sent(), Vec::<SentExchange>::new());
 }
 
 #[tokio::test(flavor = "local")]
 async fn no_login_is_an_error_that_names_the_login_command() {
     let folder = folder("no_login_is_an_error_that_names_the_login_command");
 
-    let token = token_of(&source(&folder, Answers::default(), LOCK_LIMIT)).await;
+    let token = token_of(&source(&folder, ScriptedExchange::default(), LOCK_LIMIT)).await;
 
     assert_eq!(
         token,
@@ -283,7 +283,7 @@ async fn no_login_is_an_error_that_names_the_login_command() {
 async fn a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_comes() {
     let folder = folder("a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_comes");
     save(&folder, "at", "rt", 60);
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, r#"{"access_token":"new","expires_in":3600}"#);
     let source = source(&folder, answers.clone(), LOCK_LIMIT);
 
@@ -293,9 +293,13 @@ async fn a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_co
     assert_eq!(first, Ok("new".to_owned()));
     assert_eq!(second, Ok("new".to_owned()));
     assert_eq!(saved(&folder), Some(("new".to_owned(), "rt".to_owned())));
-    let exchanges = answers.bodies();
+    let exchanges = answers.sent();
     assert_eq!(exchanges.len(), 1);
-    assert!(exchanges[0].ends_with("&refresh_token=rt"), "{}", exchanges[0]);
+    assert!(
+        exchanges[0].body.ends_with("&refresh_token=rt"),
+        "{}",
+        exchanges[0].body
+    );
 }
 
 // Another process can refresh while this one waits for the lock. The spent token must not go out again.
@@ -303,7 +307,7 @@ async fn a_login_near_its_end_refreshes_and_keeps_its_refresh_token_when_none_co
 async fn a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh() {
     let folder = folder("a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh");
     save(&folder, "at", "rt", 60);
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     let source = source(&folder, answers.clone(), LOCK_LIMIT);
     let (release, holder) = hold_lock(&folder);
 
@@ -316,13 +320,13 @@ async fn a_login_that_another_process_refreshed_during_the_wait_needs_no_refresh
     let token = attempt.await.unwrap();
 
     assert_eq!(token, Ok("fresh".to_owned()));
-    assert_eq!(answers.bodies(), Vec::<String>::new());
+    assert_eq!(answers.sent(), Vec::<SentExchange>::new());
 }
 
 #[tokio::test(flavor = "local")]
 async fn past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes() {
     let folder = folder("past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     let source = source(&folder, answers.clone(), Duration::from_millis(200));
     let (release, holder) = hold_lock(&folder);
 
@@ -341,13 +345,13 @@ async fn past_the_lock_limit_only_a_valid_token_serves_and_nothing_refreshes() {
             .ends_with("another process holds the lock"),
         "{expired:?}"
     );
-    assert_eq!(answers.bodies(), Vec::<String>::new());
+    assert_eq!(answers.sent(), Vec::<SentExchange>::new());
 }
 
 #[tokio::test(flavor = "local")]
 async fn a_refresh_that_fails_for_now_serves_a_valid_token_and_keeps_the_login() {
     let folder = folder("a_refresh_that_fails_for_now_serves_a_valid_token_and_keeps_the_login");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(503, "{}");
     answers.push(503, "{}");
     let source = source(&folder, answers.clone(), LOCK_LIMIT);
@@ -372,7 +376,7 @@ async fn a_token_that_ends_during_a_failed_refresh_does_not_serve() {
     save(&folder, "at", "rt", 1);
     let slow = Slow {
         delay: Duration::from_millis(1500),
-        script: Answers::default(),
+        script: ScriptedExchange::default(),
     };
     slow.script.push(503, "{}");
 
@@ -387,7 +391,7 @@ async fn a_token_that_ends_during_a_failed_refresh_does_not_serve() {
 #[tokio::test(flavor = "local")]
 async fn a_refused_or_unknown_refresh_removes_the_login() {
     let folder = folder("a_refused_or_unknown_refresh_removes_the_login");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(400, r#"{"error":"invalid_grant"}"#);
     // The request can have reached the provider, so its token can be spent.
     answers.push_fault(Fault::ConnectionLost);
@@ -414,7 +418,7 @@ async fn a_refresh_that_cannot_save_never_sends_the_old_token_again() {
     save(&folder, "at", "rt", 60);
     // The lock file exists, so the source can open it in the folder that it cannot write.
     fs::write(folder.join(LOCK), "").unwrap();
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, r#"{"access_token":"new","refresh_token":"rt2","expires_in":3600}"#);
     let source = source(&folder, answers.clone(), LOCK_LIMIT);
     fs::set_permissions(&folder, Permissions::from_mode(0o500)).unwrap();
@@ -426,7 +430,7 @@ async fn a_refresh_that_cannot_save_never_sends_the_old_token_again() {
     assert_eq!(refreshed, Ok("new".to_owned()));
     // The old access token is still valid, so it serves without a second refresh.
     assert_eq!(again, Ok("at".to_owned()));
-    assert_eq!(answers.bodies().len(), 1);
+    assert_eq!(answers.sent().len(), 1);
 }
 
 #[tokio::test(flavor = "local")]
@@ -447,7 +451,7 @@ async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
     yuke_js::settled().await;
 
     assert_eq!(saved(&folder), Some(("new".to_owned(), "rt2".to_owned())));
-    assert_eq!(gated.script.bodies().len(), 1);
+    assert_eq!(gated.script.sent().len(), 1);
 }
 
 // A refresh answer can omit the ID token. The account must stay, or each later request loses its account header.
@@ -459,7 +463,7 @@ async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
         "access_token": "at", "refresh_token": "rt", "expires_at": expires_at, "account_id": "account-1"
     }});
     fs::write(folder.join(FILE), content.to_string()).unwrap();
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, r#"{"access_token":"new","expires_in":3600}"#);
     let source = LoginSource::new(
         "openai-codex".to_owned(),
@@ -495,7 +499,7 @@ fn pushed(access_token: &str, ends_in: i64) -> Pushed {
 async fn a_pushed_token_replaces_a_valid_login_and_the_newest_push_wins() {
     let folder = folder("pushed_replaces_login");
     save(&folder, "from-file", "refresh", 3600);
-    let source = source(&folder, Answers::default(), LOCK_LIMIT);
+    let source = source(&folder, ScriptedExchange::default(), LOCK_LIMIT);
     assert_eq!(token_of(&source).await, Ok("from-file".to_owned()));
 
     // A pushed token serves until its end, with no margin, because the client refreshes it.
@@ -512,7 +516,7 @@ async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() 
     let folder = folder("expired_push");
     // A refresh would take an answer that the script does not have, and the test would panic.
     save(&folder, "from-file", "refresh", 3600);
-    let source = source(&folder, Answers::default(), LOCK_LIMIT);
+    let source = source(&folder, ScriptedExchange::default(), LOCK_LIMIT);
 
     source.push(pushed("pushed", -1));
 
@@ -530,7 +534,7 @@ async fn a_pushed_token_of_the_codex_flow_names_its_account() {
         "openai-codex".to_owned(),
         Flow::Codex,
         folder("pushed_account"),
-        Arc::new(Answers::default()),
+        Arc::new(ScriptedExchange::default()),
         LOCK_LIMIT,
     );
 

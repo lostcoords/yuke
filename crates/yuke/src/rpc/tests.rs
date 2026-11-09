@@ -19,7 +19,8 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, text_reply, tool_reply};
 
 use crate::app::Machine;
 use crate::providers::Providers;
-use crate::testing::{Answers, Place, with_key};
+use crate::testing::{Place, with_key};
+use yuke_ai::scripted::ScriptedExchange;
 
 /// Settings of a session in the work folder of `place`.
 fn settings(place: &Place) -> Value {
@@ -60,11 +61,11 @@ impl Client {
 
     /// The only client of a server, as on stdin and stdout.
     fn start(place: &Place, transport: Box<dyn Transport>) -> Client {
-        Client::start_with(place, transport, Answers::default())
+        Client::start_with(place, transport, ScriptedExchange::default())
     }
 
     /// The only client of a server whose logins and refreshes get `exchange`.
-    fn start_with(place: &Place, transport: Box<dyn Transport>, exchange: Answers) -> Client {
+    fn start_with(place: &Place, transport: Box<dyn Transport>, exchange: ScriptedExchange) -> Client {
         let (input, server_input) = tokio::io::duplex(1 << 16);
         let (server_output, output) = tokio::io::duplex(1 << 16);
         let machine = Machine {

@@ -258,7 +258,7 @@ fn finished(message: &Value, id: &Value) -> bool {
 #[tokio::test(flavor = "local")]
 async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
     let place = Place::new("rpc", "a_login_gives_its_code_at_once_and_its_end_saves_the_login");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, LOGIN_START);
     answers.push(200, r#"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#);
     let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
@@ -285,7 +285,7 @@ async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
 #[tokio::test(flavor = "local")]
 async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
     let place = Place::new("rpc", "a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, LOGIN_START);
     answers.push(200, LOGIN_START);
     let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
@@ -322,7 +322,7 @@ async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
 #[tokio::test(flavor = "local")]
 async fn a_login_of_a_provider_without_a_flow_or_a_refused_start_fails() {
     let place = Place::new("rpc", "a_login_of_a_provider_without_a_flow_or_a_refused_start_fails");
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(400, r#"{"error":"invalid_client"}"#);
     let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
     client.initialize().await;
@@ -349,7 +349,7 @@ async fn a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_log
         "openai-codex": { "access_token": "b", "refresh_token": "s", "expires_at": 0 },
     });
     std::fs::write(place.paths.data.join("auth.json"), logins.to_string()).unwrap();
-    let answers = Answers::default();
+    let answers = ScriptedExchange::default();
     answers.push(200, LOGIN_START);
     let mut client = Client::start_with(&place, Box::new(ScriptedTransport::default()), answers);
     client.initialize().await;

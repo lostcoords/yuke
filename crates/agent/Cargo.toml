@@ -19,6 +19,7 @@ yuke-engine = { path = "../engine" }
 yuke-protocol = { path = "../protocol" }
 
 [dev-dependencies]
+yuke-ai = { path = "../ai", default-features = false, features = ["scripted"] }
 yuke-testing = { path = "../testing" }
 tokio = { version = "1.53", features = ["macros", "rt"] }
 

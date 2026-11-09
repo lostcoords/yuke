@@ -38,6 +38,7 @@ name = "servers"
 required-features = ["test-server"]
 
 [dev-dependencies]
+yuke-ai = { path = "../ai", default-features = false, features = ["scripted"] }
 tokio = { version = "1.53", features = ["macros", "process", "rt", "sync", "time"] }
 yuke-testing = { path = "../testing" }
 

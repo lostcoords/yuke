@@ -1,16 +1,14 @@
 //! Test transports and folders that only the yuke tests use. The shared fixtures live in `yuke-testing`.
 
-use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use yuke_ai::transport::{
-    Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport,
-};
+use yuke_ai::scripted::ScriptedExchange;
+use yuke_ai::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use yuke_store::SqliteStore;
 
 use async_trait::async_trait;
@@ -38,50 +36,6 @@ impl Body for OneChunk {
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Result<Bytes, Fault>>> {
         std::task::Poll::Ready(self.0.take().map(Ok))
-    }
-}
-
-/// Answers each exchange with the next scripted answer, and records each request body. A clone shares the script and
-/// the records.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Answers(Arc<Mutex<ExchangeScript>>);
-
-#[derive(Debug, Default)]
-struct ExchangeScript {
-    answers: VecDeque<Result<ExchangeAnswer, Fault>>,
-    bodies: Vec<String>,
-}
-
-impl Answers {
-    /// Add an answer of `status` and `body` to the end of the script.
-    pub(crate) fn push(&self, status: u16, body: &str) {
-        self.0.lock().unwrap().answers.push_back(Ok(ExchangeAnswer {
-            head: Head::new(status),
-            body: body.as_bytes().to_vec(),
-        }));
-    }
-
-    /// Add an exchange that fails with `fault` to the end of the script.
-    pub(crate) fn push_fault(&self, fault: Fault) {
-        self.0.lock().unwrap().answers.push_back(Err(fault));
-    }
-
-    /// The request bodies, in send order.
-    pub(crate) fn bodies(&self) -> Vec<String> {
-        self.0.lock().unwrap().bodies.clone()
-    }
-}
-
-impl Exchange for Answers {
-    fn exchange<'a>(
-        &'a self,
-        request: &'a ExchangeRequest<'_>,
-        _: Option<Instant>,
-    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
-        let mut script = self.0.lock().unwrap();
-        script.bodies.push(String::from_utf8(request.body.to_vec()).unwrap());
-        let answer = script.answers.pop_front().expect("the script has no answer left");
-        Box::pin(std::future::ready(answer))
     }
 }
 
@@ -116,7 +70,7 @@ impl Place {
             home: Some(self.home.clone()),
             variable,
             transport: transport.into(),
-            exchange: Arc::new(Answers::default()),
+            exchange: Arc::new(ScriptedExchange::default()),
             fetch: Arc::new(
                 yuke_http::Client::new(yuke_http::ClientOptions {
                     idle_timeout: None,

@@ -13,6 +13,7 @@ mod reply;
 mod request;
 mod response;
 pub mod retry;
+#[cfg(any(test, feature = "scripted"))]
 pub mod scripted;
 mod stream;
 mod target;

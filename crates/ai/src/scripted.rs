@@ -1,7 +1,9 @@
 //! A transport that answers with scripted replies, for the tests of yuke and of its plugins. A reply is an [`Answer`],
 //! which the transport writes in the stream format of the protocol of each request, or a body as it is. The functions
 //! of this module write the Anthropic SSE of an answer. The provider path then runs as with a real provider: the
-//! stream, the retries, and the tools.
+//! stream, the retries, and the tools. [`ScriptedExchange`] answers the small exchanges of the OAuth flows.
+//!
+//! The feature `scripted` turns this module on.
 
 use std::collections::VecDeque;
 use std::fmt::{Display, Write};
@@ -13,7 +15,9 @@ use std::time::Instant;
 use bytes::Bytes;
 use serde_json::{Value, json};
 
-use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
+use crate::transport::{
+    Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport,
+};
 use crate::wire::outgoing::protocol_path;
 use crate::{Header, Protocol};
 
@@ -567,6 +571,109 @@ impl Body for OneChunk {
             None if self.stalls => Poll::Pending,
             None => Poll::Ready(None),
         }
+    }
+}
+
+/// One exchange that a [`ScriptedExchange`] got.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SentExchange {
+    /// The URL of the request.
+    pub url: String,
+    /// The media type of the body.
+    pub content_type: &'static str,
+    /// The body of the request, as text.
+    pub body: String,
+    /// Whether the request had a deadline, so that a silent server cannot hold the caller.
+    pub has_deadline: bool,
+}
+
+/// Answers each exchange with the next scripted result, and records each request. A clone shares the script and the
+/// records. An exchange after the last answer fails with [`Fault::ConnectFailed`], and [`ScriptedExchange::check`]
+/// reports it.
+#[derive(Debug, Clone, Default)]
+pub struct ScriptedExchange {
+    script: Arc<Mutex<ExchangeScript>>,
+}
+
+#[derive(Debug, Default)]
+struct ExchangeScript {
+    answers: VecDeque<Result<ExchangeAnswer, Fault>>,
+    sent: Vec<SentExchange>,
+    /// The number of exchanges that found no answer.
+    unanswered: usize,
+}
+
+impl ScriptedExchange {
+    /// An exchange that answers with `answers`, in order. Each answer is a status and a body, or a fault.
+    pub fn new<'a>(answers: impl IntoIterator<Item = Result<(u16, &'a str), Fault>>) -> Self {
+        let exchange = ScriptedExchange::default();
+        for answer in answers {
+            match answer {
+                Ok((status, body)) => exchange.push(status, body),
+                Err(fault) => exchange.push_fault(fault),
+            }
+        }
+        exchange
+    }
+
+    /// Add an answer of `status` and `body` to the end of the script.
+    pub fn push(&self, status: u16, body: &str) {
+        self.script().answers.push_back(Ok(ExchangeAnswer {
+            head: Head::new(status),
+            body: body.as_bytes().to_vec(),
+        }));
+    }
+
+    /// Add an exchange that fails with `fault` to the end of the script.
+    pub fn push_fault(&self, fault: Fault) {
+        self.script().answers.push_back(Err(fault));
+    }
+
+    fn script(&self) -> MutexGuard<'_, ExchangeScript> {
+        self.script.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The requests, in send order.
+    pub fn sent(&self) -> Vec<SentExchange> {
+        self.script().sent.clone()
+    }
+
+    /// Check that each exchange got a scripted answer, and that each answer went out.
+    ///
+    /// # Errors
+    ///
+    /// Returns a text that names the exchanges without an answer and the answers without an exchange.
+    pub fn check(&self) -> Result<(), String> {
+        let script = self.script();
+        match (script.unanswered, script.answers.len()) {
+            (0, 0) => Ok(()),
+            (unanswered, 0) => Err(format!("{unanswered} exchange(s) came after the last scripted answer")),
+            (0, unused) => Err(format!("{unused} scripted answer(s) got no exchange")),
+            (unanswered, unused) => Err(format!(
+                "{unanswered} exchange(s) came after the last scripted answer, and {unused} answer(s) got no exchange"
+            )),
+        }
+    }
+}
+
+impl Exchange for ScriptedExchange {
+    fn exchange<'a>(
+        &'a self,
+        request: &'a ExchangeRequest<'_>,
+        deadline: Option<Instant>,
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
+        let mut script = self.script();
+        script.sent.push(SentExchange {
+            url: request.url.to_owned(),
+            content_type: request.content_type,
+            body: String::from_utf8_lossy(request.body).into_owned(),
+            has_deadline: deadline.is_some(),
+        });
+        let answer = script.answers.pop_front().unwrap_or_else(|| {
+            script.unanswered += 1;
+            Err(Fault::ConnectFailed)
+        });
+        Box::pin(std::future::ready(answer))
     }
 }
 

@@ -17,6 +17,8 @@ default = ["http"]
 ts = ["dep:ts-rs"]
 # Implement `Transport` and `Exchange` for the `yuke-http` client. The client uses HTTP/1.1 with tokio and rustls.
 http = ["dep:yuke-http"]
+# A transport and an exchange that answer with scripted replies, for tests.
+scripted = []
 
 [dependencies]
 base64 = "0.23.1"
@@ -33,6 +35,9 @@ yuke-http = { path = "../http", features = ["testing"] }
 
 [lints]
 workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [[example]]
 name = "oneshot"

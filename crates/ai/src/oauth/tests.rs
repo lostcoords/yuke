@@ -5,14 +5,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::json;
 
 use super::*;
-use crate::testing::{ScriptedExchanges, block_on};
+use crate::scripted::ScriptedExchange;
+use crate::testing::block_on;
 
 fn now() -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(1_000_000)
 }
 
 fn start_of(body: &'static str) -> Result<PendingLogin, OAuthError> {
-    block_on(Flow::Xai.start(&ScriptedExchanges::new([Ok((200, body))])))
+    block_on(Flow::Xai.start(&ScriptedExchange::new([Ok((200, body))])))
 }
 
 /// The default interval and lifetime, written apart from the constants of the module.
@@ -25,18 +26,18 @@ fn pending() -> PendingLogin {
 }
 
 fn poll_of(answer: Result<(u16, &'static str), Fault>) -> Result<Poll, OAuthError> {
-    let transport = ScriptedExchanges::new([answer]);
+    let transport = ScriptedExchange::new([answer]);
     block_on(pending().poll(&transport, now()))
 }
 
 fn xai_refresh_of(answer: Result<(u16, &'static str), Fault>) -> Result<Grant, OAuthError> {
-    let transport = ScriptedExchanges::new([answer]);
+    let transport = ScriptedExchange::new([answer]);
     block_on(Flow::Xai.refresh(&transport, "old-refresh", now()))
 }
 
 #[test]
 fn a_start_sends_the_client_and_reads_the_code_and_the_complete_page() {
-    let transport = ScriptedExchanges::new([Ok((
+    let transport = ScriptedExchange::new([Ok((
         200,
         r#"{"device_code":"dc","user_code":"UC","verification_uri":"https://x.ai/d",
             "verification_uri_complete":"https://x.ai/d?code=UC","interval":7}"#,
@@ -63,8 +64,8 @@ fn a_start_sends_the_client_and_reads_the_code_and_the_complete_page() {
 fn a_start_takes_the_other_spellings_and_fails_without_a_code() {
     let other = start_of(r#"{"device_code":"dc","usercode":"UC","verification_uri":"https://x.ai/d"}"#).unwrap();
     let blank = start_of(r#"{"device_code":"dc","user_code":" ","verification_uri":"u"}"#);
-    let refused = block_on(Flow::Xai.start(&ScriptedExchanges::new([Ok((503, "{}"))])));
-    let unreachable = block_on(Flow::Xai.start(&ScriptedExchanges::new([Err(Fault::DnsFailed)])));
+    let refused = block_on(Flow::Xai.start(&ScriptedExchange::new([Ok((503, "{}"))])));
+    let unreachable = block_on(Flow::Xai.start(&ScriptedExchange::new([Err(Fault::DnsFailed)])));
 
     assert_eq!(other.user_code, "UC");
     assert_eq!(other.verification_url, "https://x.ai/d");
@@ -148,7 +149,7 @@ fn an_approved_poll_gives_the_grant_with_its_end() {
 
 #[test]
 fn a_refresh_sends_its_token_as_a_form_and_reads_the_new_grant() {
-    let transport = ScriptedExchanges::new([Ok((200, r#"{"access_token":"new","expires_in":60}"#))]);
+    let transport = ScriptedExchange::new([Ok((200, r#"{"access_token":"new","expires_in":60}"#))]);
 
     let grant = block_on(Flow::Xai.refresh(&transport, "a b&c=/é~*-._", now())).unwrap();
 
@@ -215,7 +216,7 @@ fn a_refresh_repeats_only_when_its_request_never_left() {
 
 #[test]
 fn an_empty_refresh_token_ends_the_grant_and_sends_nothing() {
-    let transport = ScriptedExchanges::new([]);
+    let transport = ScriptedExchange::new([]);
 
     let refreshed = block_on(Flow::Xai.refresh(&transport, "", now()));
 
@@ -263,7 +264,7 @@ fn an_xai_credential_is_a_bearer_with_no_identity_header_even_with_an_account() 
 
 #[test]
 fn a_poll_sends_the_device_code_of_its_login() {
-    let transport = ScriptedExchanges::new([Ok((400, r#"{"error":"authorization_pending"}"#))]);
+    let transport = ScriptedExchange::new([Ok((400, r#"{"error":"authorization_pending"}"#))]);
 
     block_on(pending().poll(&transport, now())).unwrap();
 
@@ -282,13 +283,13 @@ const ACCESS_JWT: &str = "e30.eyJleHAiOjIwMDAwMDB9.signature";
 const ID_JWT: &str =
     "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjb3VudC0xIn19.signature";
 
-fn codex_pending(transport: &ScriptedExchanges) -> PendingLogin {
+fn codex_pending(transport: &ScriptedExchange) -> PendingLogin {
     block_on(Flow::Codex.start(transport)).unwrap()
 }
 
 #[test]
 fn a_codex_start_sends_json_and_points_to_the_fixed_page() {
-    let transport = ScriptedExchanges::new([Ok((200, r#"{"device_auth_id":"da","usercode":"UC","interval":"7"}"#))]);
+    let transport = ScriptedExchange::new([Ok((200, r#"{"device_auth_id":"da","usercode":"UC","interval":"7"}"#))]);
 
     let login = codex_pending(&transport);
 
@@ -306,7 +307,7 @@ fn a_codex_start_sends_json_and_points_to_the_fixed_page() {
 fn a_codex_poll_waits_on_403_or_404_and_fails_for_now_on_another_status() {
     let start = Ok((200, r#"{"device_auth_id":"da","user_code":"UC"}"#));
     let poll_of = |answer| {
-        let transport = ScriptedExchanges::new([start, answer]);
+        let transport = ScriptedExchange::new([start, answer]);
         let login = codex_pending(&transport);
         block_on(login.poll(&transport, now()))
     };
@@ -324,7 +325,7 @@ fn a_codex_poll_waits_on_403_or_404_and_fails_for_now_on_another_status() {
 fn an_approved_codex_poll_exchanges_the_code_and_reads_the_account_and_the_end() {
     let tokens =
         format!(r#"{{"access_token":"{ACCESS_JWT}","refresh_token":"rt","id_token":"{ID_JWT}","expires_in":60}}"#);
-    let transport = ScriptedExchanges::new([
+    let transport = ScriptedExchange::new([
         Ok((200, r#"{"device_auth_id":"da","user_code":"UC"}"#)),
         Ok((200, r#"{"authorization_code":"ac","code_verifier":"cv"}"#)),
         Ok((200, tokens.as_str())),
@@ -355,7 +356,7 @@ fn an_approved_codex_poll_exchanges_the_code_and_reads_the_account_and_the_end()
 
 #[test]
 fn a_codex_token_that_is_no_jwt_takes_its_lifetime_and_no_account() {
-    let transport = ScriptedExchanges::new([Ok((
+    let transport = ScriptedExchange::new([Ok((
         200,
         r#"{"access_token":"opaque","expires_in":60,"id_token":"x.!.y"}"#,
     ))]);
@@ -369,7 +370,7 @@ fn a_codex_token_that_is_no_jwt_takes_its_lifetime_and_no_account() {
 #[test]
 fn a_codex_refresh_sends_json_and_ends_the_grant_on_its_own_codes() {
     let codex_refresh_of = |answer| {
-        let transport = ScriptedExchanges::new([answer]);
+        let transport = ScriptedExchange::new([answer]);
         let refreshed = block_on(Flow::Codex.refresh(&transport, "rt", now()));
         (refreshed, transport.sent())
     };
@@ -412,7 +413,7 @@ fn a_codex_credential_names_its_account_in_a_header() {
 #[test]
 fn a_failed_exchange_after_an_approved_codex_poll_fails_for_now() {
     let exchange_of = |answer| {
-        let transport = ScriptedExchanges::new([
+        let transport = ScriptedExchange::new([
             Ok((200, r#"{"device_auth_id":"da","user_code":"UC"}"#)),
             Ok((200, r#"{"authorization_code":"ac","code_verifier":"cv"}"#)),
             answer,
@@ -433,7 +434,7 @@ fn a_codex_token_whose_end_is_at_or_before_zero_has_ended() {
     // The payloads are `{"exp":0}` and `{"exp":-5}`.
     for access in ["e30.eyJleHAiOjB9.signature", "e30.eyJleHAiOi01fQ.signature"] {
         let body = format!(r#"{{"access_token":"{access}","expires_in":3600}}"#);
-        let transport = ScriptedExchanges::new([Ok((200, body.as_str()))]);
+        let transport = ScriptedExchange::new([Ok((200, body.as_str()))]);
 
         let grant = block_on(Flow::Codex.refresh(&transport, "rt", now())).unwrap();
 
@@ -447,7 +448,7 @@ fn a_token_without_three_parts_gives_no_claims() {
     let payload = ID_JWT.strip_suffix(".signature").unwrap();
     for id in [payload.to_owned(), format!("{payload}.")] {
         let body = format!(r#"{{"access_token":"opaque","expires_in":60,"id_token":"{id}"}}"#);
-        let transport = ScriptedExchanges::new([Ok((200, body.as_str()))]);
+        let transport = ScriptedExchange::new([Ok((200, body.as_str()))]);
 
         let grant = block_on(Flow::Codex.refresh(&transport, "rt", now())).unwrap();
 
