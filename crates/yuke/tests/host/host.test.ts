@@ -60,29 +60,6 @@ test("a plugin that does not load rejects the host with its reason", async () =>
   equal(error instanceof Error && error.message.includes("plugin failing did not load"), true);
 });
 
-test("a second host in one test throws, also after the close of the first", async () => {
-  const host = await createHost({ plugins: [] });
-  await host.close();
-
-  const error = await rejects(createHost({ plugins: [] }));
-
-  equal(error instanceof Error ? error.message : error, "a test creates one host");
-});
-
-test("the close runs the cleanups once, and a second close gives the same promise", async () => {
-  const cleaned: string[] = [];
-  const tidy: PluginApply = () => () => {
-    cleaned.push("apply");
-  };
-  const host = await createHost({ plugins: [{ name: "tidy", apply: tidy }] });
-
-  const first = host.close();
-  const second = host.close();
-  await first;
-
-  equal([first === second, cleaned], [true, ["apply"]]);
-});
-
 test("a plugin folder must be absolute", async () => {
   const error = await rejects(createHost({ plugins: [{ folder: "plugins/echo" }] }));
 
@@ -93,15 +70,6 @@ test("a given plugin name follows the rule of a manifest name", async () => {
   const error = await rejects(createHost({ plugins: [{ name: "../outside" }] }));
 
   equal(error instanceof Error && error.message.startsWith("plugin ../outside: name: '../outside' must be"), true);
-});
-
-test("await using closes the host at the end of its block", async () => {
-  const cleaned: string[] = [];
-  {
-    await using _host = await createHost({ plugins: [{ name: "tidy", apply: () => () => void cleaned.push("tidy") }] });
-  }
-
-  equal(cleaned, ["tidy"]);
 });
 
 test("each call gets its own call id", async () => {

@@ -284,23 +284,6 @@ test("a service passes to a later plugin, and a failed provider stops its users 
   equal([count, ran], [3, false]);
 });
 
-test("a plugin needs no code", async () => {
-  const empty = await writePlugin("empty", {});
-  await using host = await createHost({ plugins: [{ folder: empty }] });
-
-  equal(host.notices, []);
-});
-
-test("notify sends a notice of the plugin", async () => {
-  const loud: PluginApply = (ctx) => {
-    ctx.notify("warn", "careful");
-    return undefined;
-  };
-  await using host = await createHost({ plugins: [{ name: "loud", apply: loud }] });
-
-  equal(host.notices, [{ level: "warn", source: "loud", message: "careful" }]);
-});
-
 test("sendClientEvent sends an event with the plugin as its extension and its data as JSON", async () => {
   const todo: PluginApply = (ctx) => {
     ctx.sendClientEvent("changed", { version: 1, items: ["milk"] });

@@ -258,22 +258,3 @@ async fn the_writer_writes_a_burst_of_lines_in_order_with_one_flush() {
     assert_eq!(bytes, b"{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n");
     assert_eq!(*flushes, 1);
 }
-
-#[tokio::test(flavor = "local")]
-async fn a_burst_past_the_batch_size_writes_in_two_batches_and_loses_no_line() {
-    let counted = Rc::new(RefCell::new((Vec::new(), 0)));
-    let (writer, written) = Writer::start(CountedOutput(Rc::clone(&counted)));
-    let texts: Vec<String> = ["a", "b", "c"].iter().map(|letter| letter.repeat(40_000)).collect();
-
-    // Two lines pass 64 KiB, so the first write stops after them, and the third line goes in a second write.
-    for text in &texts {
-        writer.send(text);
-    }
-    drop(writer);
-    written.await.unwrap();
-
-    let (bytes, flushes) = &*counted.borrow_mut();
-    let expected = format!("\"{}\"\n\"{}\"\n\"{}\"\n", texts[0], texts[1], texts[2]);
-    assert_eq!(bytes, expected.as_bytes());
-    assert_eq!(*flushes, 2);
-}

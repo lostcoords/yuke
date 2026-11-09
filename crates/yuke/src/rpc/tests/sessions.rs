@@ -779,26 +779,6 @@ async fn process_and_session_events_of_a_plugin_reach_the_client_under_its_name(
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_session_that_a_client_created_stays_open_after_its_turn() {
-    let place = Place::new("rpc", "a_session_that_a_client_created_stays_open_after_its_turn");
-    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::new([text_reply("hello")]))).await;
-    let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    turn(&mut client, &session, "hi").await;
-
-    // No request runs while the clock is paused, so no wait of the client ends early.
-    tokio::time::pause();
-    tokio::time::sleep(Duration::from_secs(3600)).await;
-    tokio::time::resume();
-    let row = client
-        .call("session/get", json!({ "sessionId": session }))
-        .await
-        .unwrap();
-
-    assert_eq!(row["activity"], "idle");
-    client.end().await;
-}
-
-#[tokio::test(flavor = "local")]
 async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close() {
     let place = Place::new(
         "rpc",

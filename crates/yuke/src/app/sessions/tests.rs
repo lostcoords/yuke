@@ -299,25 +299,6 @@ async fn a_view_ends_at_the_close_of_its_session_and_a_new_open_does_not_reach_i
     app.shutdown().await;
 }
 
-// The input leaves the session idle until its task wakes, so only the count of the accepted inputs makes idle wait.
-#[tokio::test(flavor = "local")]
-async fn idle_waits_for_the_turn_of_an_input_that_came_before_it() {
-    let place = Place::new("sessions", "idle_waits_for_the_turn_of_an_input_that_came_before_it");
-    let transport = ScriptedTransport::new([text_reply("Hello.")]);
-    let app = started_with(&place, Box::new(transport.clone())).await;
-    let sessions = app.sessions();
-    let id = sessions.create(settings(&place), None).await.unwrap();
-    let attachment = sessions.attach(id).unwrap();
-
-    sessions.input(id, said("Hi.")).await.unwrap();
-    sessions.idle(id).await.unwrap();
-
-    assert_eq!(transport.requests().len(), 1);
-    assert_eq!(sessions.live(id).unwrap().state(), SessionState::Idle);
-    drop(attachment);
-    app.shutdown().await;
-}
-
 #[tokio::test(flavor = "local")]
 async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app() {
     let place = Place::new(

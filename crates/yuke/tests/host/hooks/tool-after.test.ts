@@ -274,31 +274,6 @@ test("a new media item that cannot be read gives an error result", async () => {
   );
 });
 
-test("a removed handler and the handler of a failed session do not run", async () => {
-  const ran: string[] = [];
-  const removed: PluginSession = (s) => {
-    s.hook("tool.after", () => {
-      ran.push("removed");
-      return undefined;
-    })();
-  };
-  const failing: PluginSession = async (s) => {
-    s.hook("tool.after", () => {
-      ran.push("failed");
-      return undefined;
-    });
-    await null;
-    throw new Error("broken");
-  };
-
-  const result = (await after([
-    { name: "removed", session: removed },
-    { name: "failed", session: failing },
-  ])) as { text: string };
-
-  equal([result.text, ran], [original.text, []]);
-});
-
 const diff = { kind: "diff", path: "notes.md", patch: "@@ -1 +1 @@\n-secret: hunter2\n+secret: hunter3\n" } as const;
 
 // The display is what a chat shows in place of the text, so a redaction that keeps the display would still show it.

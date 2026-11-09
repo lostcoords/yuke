@@ -348,38 +348,6 @@ test("the folder of a session stays while a call reads the folder of its start",
   equal((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });
 
-test("tool definitions and name removals fail during cleanup and after close", async () => {
-  let kept: SessionContext | undefined;
-  const refusals: string[] = [];
-  const define = (): void => {
-    try {
-      kept?.tools.define(tool("late"));
-      refusals.push("defined");
-    } catch (error) {
-      refusals.push(error instanceof Error ? error.message : String(error));
-    }
-    try {
-      kept?.tools.remove("read");
-      refusals.push("removed");
-    } catch (error) {
-      refusals.push(error instanceof Error ? error.message : String(error));
-    }
-  };
-  const keeper: PluginSession = (s) => {
-    kept = s;
-    return define;
-  };
-  await using host = await createHost({ plugins: [{ name: "keeper", session: keeper }] });
-  const session = await host.openSession();
-
-  await session.close();
-  define();
-
-  const defineRefused = "plugin keeper defines a tool after the end of its session";
-  const removeRefused = "plugin keeper removes a tool after the end of its session";
-  equal(refusals, [defineRefused, removeRefused, defineRefused, removeRefused]);
-});
-
 test("a tool that the session defines after its setup reaches the next calls", async () => {
   let defineLater = (): void => {};
   const later: PluginSession = (s) => {

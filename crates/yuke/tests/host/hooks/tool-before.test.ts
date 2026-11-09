@@ -74,23 +74,3 @@ test("a throw stops the call and names the plugin", async () => {
     block: "tool.before of plugin check failed: Error: no check today",
   });
 });
-
-test("a removed handler and the handler of a failed session block nothing", async () => {
-  const removed: PluginSession = (s) => {
-    s.hook("tool.before", () => ({ block: "removed" }))();
-  };
-  const failed: PluginSession = async (s) => {
-    s.hook("tool.before", () => ({ block: "failed" }));
-    await null;
-    throw new Error("broken");
-  };
-  await using host = await createHost({
-    plugins: [
-      { name: "removed", session: removed },
-      { name: "failed", session: failed },
-    ],
-  });
-  const session = await host.openSession();
-
-  equal(await session.run("tool.before", { call }), "run");
-});

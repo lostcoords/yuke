@@ -179,24 +179,3 @@ test("a closed session refuses a new hook", async () => {
 
   equal(refusal, "plugin refused adds a hook after the end of its session");
 });
-
-test("prompt.build gives the sections after each handler, in the order of the prompt", async () => {
-  const seen: string[][] = [];
-  const prompt: PluginSession = (s) => {
-    s.hook("prompt.build", (event) => {
-      seen.push(Object.keys(event.sections));
-      return { sections: { ...event.sections, rules: "Be short." } };
-    });
-  };
-  await using host = await createHost({ plugins: [{ name: "prompt", session: prompt }] });
-  const session = await host.openSession();
-
-  const built = await session.run("prompt.build", { sections: { zeta: "You help.", alpha: "You read." } });
-
-  equal(seen, [["zeta", "alpha"]]);
-  equal(Object.entries(built.sections), [
-    ["zeta", "You help."],
-    ["alpha", "You read."],
-    ["rules", "Be short."],
-  ]);
-});

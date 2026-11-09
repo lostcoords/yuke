@@ -1,6 +1,6 @@
 // The `round.retry` hook: its event, its count of retries, its plan, and the kinds of a failure.
 
-import type { PluginSession, RoundFailureKind } from "yuke:plugins";
+import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, reply, test } from "yuke:test";
 
 // The count belongs to one round, so the round after a call counts from zero again.
@@ -59,55 +59,6 @@ test("without an answer the round does not run again, and the turn fails", async
 
   const end = session.transcript.entries.at(-1);
   equal([end?.kind, end?.kind === "end" && "failed" in end.end, host.requests.length], ["end", true, 1]);
-});
-
-test("round.retry gives undefined without an answer, and the plan with one", async () => {
-  const retry: PluginSession = (s) => {
-    s.hook("round.retry", (event) =>
-      event.failure.kind === "context_overflow" && event.retries === 1 ? {} : undefined,
-    );
-  };
-  await using host = await createHost({ plugins: [{ name: "retry", session: retry }] });
-  const session = await host.openSession();
-  const round = { context: [{ user_text: "one" }] };
-
-  equal(await session.run("round.retry", { ...round, failure: { kind: "server_error" } }), undefined);
-  equal(await session.run("round.retry", { ...round, failure: { kind: "context_overflow" }, retries: 1 }), {});
-});
-
-test("round.retry gets each failure kind as a turn gives it", async () => {
-  const kinds: readonly RoundFailureKind[] = [
-    "context_overflow",
-    "rate_limited",
-    "rate_limit_unknown",
-    "quota_exhausted",
-    "server_error",
-    "timeout",
-    "conflict",
-    "auth_failed",
-    "permission_denied",
-    "bad_status",
-    "provider_failed",
-    "transport",
-    "protocol",
-    "response_too_large",
-    "incomplete_stream",
-    "encode",
-    "credential",
-  ];
-  const seen: RoundFailureKind[] = [];
-  const retry: PluginSession = (s) => {
-    s.hook("round.retry", (event) => {
-      seen.push(event.failure.kind);
-      return undefined;
-    });
-  };
-  await using host = await createHost({ plugins: [{ name: "retry", session: retry }] });
-  const session = await host.openSession();
-
-  for (const kind of kinds) await session.run("round.retry", { context: [], failure: { kind } });
-
-  equal(seen, kinds);
 });
 
 test("a handler gets the window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {

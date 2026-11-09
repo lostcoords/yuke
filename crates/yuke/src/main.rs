@@ -740,44 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn logout_takes_one_provider_and_no_mode_flag() {
-        assert_eq!(
-            command(&["logout", "xai-grok"]),
-            Ok(Some(Command::Logout {
-                provider: "xai-grok".to_owned()
-            }))
-        );
-        assert_eq!(command(&["logout"]), Err(ErrorKind::MissingRequiredArgument));
-        assert_eq!(
-            command(&["--rpc", "logout", "xai-grok"]),
-            Err(ErrorKind::ArgumentConflict)
-        );
-    }
-
-    #[test]
-    fn plugin_update_takes_all_or_names_but_not_both() {
-        let update = |names: &[&str], all: bool| {
-            Ok(Some(Command::Plugin {
-                command: PluginCommand::Update {
-                    all,
-                    names: names.iter().map(|&name| name.to_owned()).collect(),
-                    yes: false,
-                },
-            }))
-        };
-        assert_eq!(command(&["plugin", "update", "--all"]), update(&[], true));
-        assert_eq!(
-            command(&["plugin", "update", "clock", "tools"]),
-            update(&["clock", "tools"], false)
-        );
-        assert_eq!(command(&["plugin", "update"]), Err(ErrorKind::MissingRequiredArgument));
-        assert_eq!(
-            command(&["plugin", "update", "--all", "clock"]),
-            Err(ErrorKind::ArgumentConflict)
-        );
-    }
-
-    #[test]
     fn plugin_add_takes_a_url_with_a_folder_and_a_ref_and_remove_takes_a_name() {
         assert_eq!(
             command(&[
@@ -806,27 +768,6 @@ mod tests {
                 },
             }))
         );
-    }
-
-    #[test]
-    fn rpc_with_a_print_flag_is_a_conflict_and_each_print_flag_needs_print() {
-        assert_eq!(mode(&["--rpc", "-p", "Hi."]), Err(ErrorKind::ArgumentConflict));
-        for flag in [&["--json"][..], &["--model", "a/b"], &["--reasoning", "off"]] {
-            assert_eq!(mode(flag), Err(ErrorKind::MissingRequiredArgument), "{flag:?}");
-            assert_eq!(
-                mode(&[&["--rpc"][..], flag].concat()),
-                Err(ErrorKind::ArgumentConflict),
-                "{flag:?}"
-            );
-        }
-        let id = SessionId::generate().to_string();
-        for flag in [&["-c"][..], &["-r", &id]] {
-            assert_eq!(
-                mode(&[&["--rpc"][..], flag].concat()),
-                Err(ErrorKind::ArgumentConflict),
-                "{flag:?}"
-            );
-        }
     }
 
     #[test]

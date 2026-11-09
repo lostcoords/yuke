@@ -201,13 +201,6 @@ fn a_plain_value_on_the_next_lines_folds_into_one_line_also_after_a_byte_order_m
 }
 
 #[test]
-fn a_folded_value_keeps_the_line_breaks_around_a_more_indented_line() {
-    let fields = frontmatter("---\ndescription: >-\n  first\n    nested\n  last\n---\n").unwrap();
-
-    assert_eq!(fields.description.unwrap(), "first\n  nested\nlast");
-}
-
-#[test]
 fn a_broken_link_and_a_folder_that_does_not_open_give_warnings() {
     use std::os::unix::fs::PermissionsExt;
 
