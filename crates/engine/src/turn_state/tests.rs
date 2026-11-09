@@ -3,7 +3,10 @@ use std::borrow::Cow;
 use yuke_ai::{Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage};
 use yuke_testing::origin;
 
-use super::{Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, TurnState};
+use super::{
+    Action, Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, TurnState,
+    answer_text,
+};
 use crate::model::RoundError;
 use crate::tool::{DisplayBlock, Finished, Preview, Subject, SubjectKind, ToolHints};
 
@@ -350,4 +353,29 @@ fn a_commit_reads_back_from_its_json() {
         assert_eq!(serde_json::to_string(&commit).unwrap(), json);
         assert_eq!(serde_json::from_str::<Commit<'static>>(json).unwrap(), commit);
     }
+}
+
+#[test]
+fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
+    let context = [
+        Block::user_text("Go."),
+        Block::assistant_text("Early."),
+        Block::ToolResult(ToolResult::error("call-1", "failed")),
+        Block::assistant_text("One."),
+        Block::assistant_text("Two."),
+        Block::ToolCall(ToolCall {
+            call_id: "call-2".to_owned(),
+            name: "exec".to_owned(),
+            arguments: "{}".to_owned(),
+        }),
+        Block::ToolResult(ToolResult::error("call-2", "not run")),
+    ];
+
+    assert_eq!(answer_text(&context), "One.\nTwo.");
+    assert_eq!(answer_text(&context[..1]), "");
+    // An empty answer adds no block, so the input of its round ends the context.
+    assert_eq!(
+        answer_text(&[Block::assistant_text("Old."), Block::user_text("New.")]),
+        ""
+    );
 }

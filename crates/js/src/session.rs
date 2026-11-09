@@ -11,10 +11,10 @@ use async_trait::async_trait;
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Module, Object, Promise, Value};
 use tokio::sync::oneshot;
 use yuke_agent::{InputDecision, InputHook, PromptSection};
-use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult, answer_text};
+use yuke_ai::{Block, Failure, FinishReason, ProviderKind, ToolCall, ToolResult};
 use yuke_engine::{
     CancellationToken, DisplayBlock, Hooks, Replaced, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
-    ToolOutcome, chain_text,
+    ToolOutcome, answer_text, chain_text,
 };
 use yuke_protocol::{
     Input, InputKind, InputSource, InteractionRequest, InteractionResponse, ModelReference, PendingInput,

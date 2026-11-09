@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
-use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, ToolCall, ToolResult, Usage};
+use yuke_ai::{Block, Completion, FinishReason, Origin, Partial, Role, ToolCall, ToolResult, Usage};
 
 use crate::model::RoundError;
 use crate::tool::{DisplayBlock, Finished, ToolHints, ToolOutcome};
@@ -467,6 +467,28 @@ pub fn chain_text(error: &dyn std::error::Error) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(": ")
+}
+
+/// The text of the last answer in `context`: the text blocks of the assistant blocks before the tool results at the end,
+/// one per line. A context that ends with other user input has no answer after it, so its text is empty.
+pub fn answer_text(context: &[Block]) -> String {
+    // The results of the calls of an answer come after it, also the error results of a cancel.
+    let end = context
+        .iter()
+        .rposition(|block| !matches!(block, Block::ToolResult(_)))
+        .map_or(0, |last| last + 1);
+    let start = context[..end]
+        .iter()
+        .rposition(|block| block.role() != Role::Assistant)
+        .map_or(0, |last| last + 1);
+    let texts: Vec<&str> = context[start..end]
+        .iter()
+        .filter_map(|block| match block {
+            Block::AssistantText(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    texts.join("\n")
 }
 
 /// The reason of a call that did not run, because the user cancelled the turn.

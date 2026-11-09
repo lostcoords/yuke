@@ -26,7 +26,7 @@ mod testing;
 
 pub use block::{
     Blob, BlobStore, Block, Digest, Media, Modality, Origin, OriginRef, Reasoning, ReasoningReplay, ReasoningReplayRef,
-    ReplayKind, Role, ToolCall, ToolCallRef, ToolResult, answer_text,
+    ReplayKind, Role, ToolCall, ToolCallRef, ToolResult,
 };
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};

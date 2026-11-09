@@ -24,5 +24,5 @@ pub use tool::{
     ToolContext, ToolHints, ToolNameError, ToolOutcome, Toolset, check_tool_name, parse_arguments, tool_name_character,
 };
 pub use turn_state::{
-    Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, chain_text,
+    Answer, CallDisplay, Commit, CommitDisplay, Outcome, Replaced, ResultDisplay, TurnEnd, answer_text, chain_text,
 };

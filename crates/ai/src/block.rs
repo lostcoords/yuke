@@ -295,28 +295,6 @@ impl From<ToolResult> for Block {
     }
 }
 
-/// The text of the last answer in `context`: the text blocks of the assistant blocks before the tool results at the end,
-/// one per line. A context that ends with other user input has no answer after it, so its text is empty.
-pub fn answer_text(context: &[Block]) -> String {
-    // The results of the calls of an answer come after it, also the error results of a cancel.
-    let end = context
-        .iter()
-        .rposition(|block| !matches!(block, Block::ToolResult(_)))
-        .map_or(0, |last| last + 1);
-    let start = context[..end]
-        .iter()
-        .rposition(|block| block.role() != Role::Assistant)
-        .map_or(0, |last| last + 1);
-    let texts: Vec<&str> = context[start..end]
-        .iter()
-        .filter_map(|block| match block {
-            Block::AssistantText(text) => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    texts.join("\n")
-}
-
 /// One attachment. Its media type selects the block each protocol writes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -499,31 +477,6 @@ mod tests {
             .collect();
 
         assert_eq!(kinds, [Modality::Image, Modality::Pdf, Modality::Text]);
-    }
-
-    #[test]
-    fn the_answer_text_is_the_text_of_the_last_run_of_assistant_blocks() {
-        let context = [
-            Block::user_text("Go."),
-            Block::assistant_text("Early."),
-            Block::ToolResult(ToolResult::error("call-1", "failed")),
-            Block::assistant_text("One."),
-            Block::assistant_text("Two."),
-            Block::ToolCall(ToolCall {
-                call_id: "call-2".to_owned(),
-                name: "exec".to_owned(),
-                arguments: "{}".to_owned(),
-            }),
-            Block::ToolResult(ToolResult::error("call-2", "not run")),
-        ];
-
-        assert_eq!(answer_text(&context), "One.\nTwo.");
-        assert_eq!(answer_text(&context[..1]), "");
-        // An empty answer adds no block, so the input of its round ends the context.
-        assert_eq!(
-            answer_text(&[Block::assistant_text("Old."), Block::user_text("New.")]),
-            ""
-        );
     }
 
     struct Store;

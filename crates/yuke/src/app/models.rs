@@ -92,7 +92,7 @@ async fn send(
     Ok(CompleteAnswer {
         finish_reason: completion.finish_reason,
         usage: completion.usage,
-        text: yuke_ai::answer_text(&completion.into_blocks().collect::<Vec<_>>()),
+        text: yuke_engine::answer_text(&completion.into_blocks().collect::<Vec<_>>()),
     })
 }
 
