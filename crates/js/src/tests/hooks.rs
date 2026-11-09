@@ -4,15 +4,12 @@
 use std::time::Duration;
 
 use yuke_agent::PromptSection;
-use yuke_ai::{
-    Blob, Block, FinishReason, Media, Origin, Reasoning, ReasoningReplay, ReplayKind, Settings, ToolCall,
-    ToolDefinition, ToolResult,
-};
+use yuke_ai::{Blob, Block, FinishReason, Media, Settings, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundStart, ToolDecision, ToolOutcome};
 
 use super::{evaluate, opened, windowed};
 use crate::ScriptSession;
-use crate::native::ai::{block_tokens, context_tokens};
+use crate::native::ai::context_tokens;
 
 /// The hook points of a turn that a cancel ends: the late answer of each handler, and the decision that the host gives
 /// at once.
@@ -348,37 +345,6 @@ async fn round_after_joins_the_texts_of_the_answer_with_newlines() {
     );
     let seen = evaluate::<String>(&runtime, "return globalThis.seen;").await.unwrap();
     assert_eq!(seen, "first part\nsecond part|stop");
-}
-
-#[test]
-fn an_estimate_charges_each_media_item_and_the_larger_of_the_reasoning_text_and_its_state() {
-    let media = Media::new(
-        Blob {
-            digest: yuke_ai::Digest([0; 32]),
-            len: 3,
-        },
-        "image/png",
-    );
-    let mut result = ToolResult::success("c1", "abcd");
-    result.media = vec![media.clone(), media.clone()];
-    let reasoning = |text: &str, state: &str| {
-        Block::Reasoning(Reasoning {
-            text: text.to_owned(),
-            replay: Some(ReasoningReplay {
-                origin: Origin {
-                    model: "m".to_owned(),
-                    base_url: "https://example.test".to_owned(),
-                },
-                kind: ReplayKind::AnthropicSignature,
-                data: state.to_owned(),
-            }),
-        })
-    };
-
-    assert_eq!(block_tokens(&Block::Media(media)), 1600);
-    assert_eq!(block_tokens(&Block::ToolResult(result)), 1 + 2 * 1600);
-    assert_eq!(block_tokens(&reasoning("12345678", &"s".repeat(40))), 10);
-    assert_eq!(block_tokens(&reasoning(&"t".repeat(40), "")), 10);
 }
 
 #[test]

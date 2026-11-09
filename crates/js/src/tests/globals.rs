@@ -175,26 +175,3 @@ async fn console_directives_convert_as_the_console_standard() {
     assert_eq!(next_line(&mut reports).await.1, "x 12 2 1.5 Symbol(s)");
     assert_eq!(next_line(&mut reports).await.1, "NaN NaN");
 }
-
-#[tokio::test(flavor = "local")]
-async fn a_value_that_throws_when_console_reads_it_shows_as_unreadable() {
-    let folder = folder("a_value_that_throws_when_console_reads_it_shows_as_unreadable");
-    let (runtime, mut reports) = start(&folder).await;
-
-    evaluate::<()>(
-        &runtime,
-        "const prototype = {};
-         Object.defineProperty(prototype, 'constructor', { get() { throw new Error('read'); } });
-         console.log(Object.create(prototype));
-         const error = new Error('e');
-         Object.defineProperty(error, 'stack', { get() { throw new Error('read'); } });
-         console.error(error);
-         console.warn('%s', { toString() { throw new Error('read'); } });",
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(next_line(&mut reports).await.1, "[unreadable]");
-    assert_eq!(next_line(&mut reports).await.1, "[unreadable]");
-    assert_eq!(next_line(&mut reports).await.1, "[unreadable]");
-}

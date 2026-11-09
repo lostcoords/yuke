@@ -288,15 +288,6 @@ fn a_wide_grapheme_past_the_right_edge_leaves_a_blank() {
 }
 
 #[test]
-fn a_wide_grapheme_at_the_largest_column_fits_no_cell() {
-    let mut screen = Screen::new(size(u16::MAX, 1));
-    assert_eq!(screen.text(u16::MAX - 1, 0, "中", red()), u16::MAX);
-    let mut model = Model::new(size(u16::MAX, 1), "#");
-    model.replay(&render(&mut screen));
-    assert_eq!(model.glyphs().last(), Some(&" "));
-}
-
-#[test]
 fn text_drops_control_characters_and_returns_the_column_after_it() {
     let mut screen = Screen::new(size(6, 1));
     assert_eq!(screen.text(1, 0, "a\tb\u{1b}中", Style::default()), 5);

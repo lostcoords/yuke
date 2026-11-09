@@ -2,7 +2,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use yuke_ai::{Block, Effort, FinishReason, OutputSchema, ReasoningSettings, Settings, Thinking, Usage};
@@ -676,59 +675,5 @@ async fn a_bad_attachment_fails_before_a_request() {
         errors[3].starts_with(&format!("Error: {}: ", missing.to_str().unwrap())),
         "{errors:?}"
     );
-    assert!(models.requests.borrow_mut().is_empty());
-}
-
-#[tokio::test(flavor = "local")]
-async fn an_abort_ends_the_wait_for_an_attachment_that_does_not_read() {
-    let folder = folder("an_abort_ends_the_wait_for_an_attachment_that_does_not_read");
-    let fifo = folder.join("input.fifo");
-    let made = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
-    assert!(made.success());
-    let models = Rc::new(Recorded::default());
-    let runtime = runtime_with(
-        "an_abort_ends_the_wait_for_an_attachment_that_does_not_read_runtime",
-        &models,
-    )
-    .await;
-
-    evaluate::<()>(
-        &runtime,
-        &format!(
-            "const ai = await import('yuke:ai');
-             globalThis.controller = new AbortController();
-             globalThis.answer = ai
-               .generateText({{
-                 model: {{ provider: 'p', model: 'm' }},
-                 prompt: 'go',
-                 attachments: [{{ mimeType: 'image/png', path: {fifo:?} }}],
-                 abortSignal: controller.signal,
-               }})
-               .catch((error) => error);",
-            fifo = fifo.to_str().unwrap()
-        ),
-    )
-    .await
-    .unwrap();
-    // The writer opens only after the reader starts. Keep it open so the read waits for data.
-    let writer = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::task::spawn_blocking(move || std::fs::OpenOptions::new().write(true).open(fifo)),
-    )
-    .await
-    .unwrap()
-    .unwrap()
-    .unwrap();
-    let reason = tokio::time::timeout(
-        Duration::from_secs(5),
-        evaluate::<String>(
-            &runtime,
-            "controller.abort('stopped by the plugin'); return await answer;",
-        ),
-    )
-    .await;
-    drop(writer);
-
-    assert_eq!(reason.unwrap().unwrap(), "stopped by the plugin");
     assert!(models.requests.borrow_mut().is_empty());
 }

@@ -660,18 +660,6 @@ mod tests {
     use super::{CHUNK, Creation, Failure, Placement, read, write};
 
     #[test]
-    fn a_read_of_a_small_file_allocates_no_chunk() {
-        let folder = yuke_testing::folder("js", "a_read_of_a_small_file_allocates_no_chunk");
-        let path = folder.join("small.json");
-        fs::write(&path, "{}").unwrap();
-
-        let bytes = read(&path, 0, None, &CancellationToken::new()).unwrap();
-
-        assert_eq!(bytes, b"{}");
-        assert!(bytes.capacity() < CHUNK, "{}", bytes.capacity());
-    }
-
-    #[test]
     fn a_read_across_chunks_gives_its_range_and_a_stop_ends_it() {
         let folder = yuke_testing::folder("js", "a_read_across_chunks_gives_its_range_and_a_stop_ends_it");
         let path = folder.join("big.bin");

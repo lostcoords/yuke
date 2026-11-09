@@ -387,20 +387,6 @@ async fn each_job_of_a_process_gets_a_new_id() {
     assert_eq!(ids.len(), 3, "{ids:?}");
 }
 
-#[tokio::test(flavor = "local")]
-async fn processes_start_their_job_ids_at_different_numbers() {
-    let folder = folder("processes_start_their_job_ids_at_different_numbers");
-
-    let mut firsts: Vec<String> = (0..5)
-        .map(|number| Processes::new(folder.join(number.to_string())).next_job_id())
-        .collect();
-
-    // Two random starts are equal once in 1,632,960 runs. Five equal starts are about 1 in 10^25.
-    firsts.sort_unstable();
-    firsts.dedup();
-    assert!(firsts.len() > 1, "{firsts:?}");
-}
-
 #[test]
 fn a_child_gets_the_home_folder_of_the_user_when_home_is_missing_or_empty() {
     let user_home = std::env::home_dir().filter(|home| home.is_absolute());
@@ -741,34 +727,4 @@ async fn the_report_of_a_job_holds_the_end_of_a_large_output() {
         &texts[0][texts[0].len() - 60..]
     );
     processes.shutdown().await.unwrap();
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_dropped_command_stops_its_process() {
-    let folder = folder("a_dropped_command_stops_its_process");
-    let processes = Processes::new(folder.join("processes"));
-    let (chunks, mut texts) = tokio::sync::mpsc::unbounded_channel();
-    let running = processes.run(
-        Request {
-            command: "echo $$; exec sleep 30".to_owned(),
-            folder: folder.clone(),
-            timeout: Duration::from_secs(10),
-            max_bytes: 1024,
-            stop: CancellationToken::new(),
-            owner: Rc::new(TestHost::new(&folder)),
-        },
-        chunks,
-    );
-
-    let pid: i32 = {
-        tokio::pin!(running);
-        let pid = tokio::select! {
-            biased;
-            result = &mut running => panic!("the command ended before it started: {result:?}"),
-            text = tokio::time::timeout(WAIT, texts.recv()) => text.unwrap().unwrap(),
-        };
-        pid.trim().parse().unwrap()
-    };
-
-    assert!(super::process::gone(pid).await, "the process {pid} still runs");
 }

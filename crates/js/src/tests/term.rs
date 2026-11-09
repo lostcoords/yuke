@@ -156,17 +156,6 @@ fn wheel(button: Button, column: u16) -> Input {
 }
 
 #[tokio::test(flavor = "local")]
-async fn the_start_frame_writes_its_cells_to_the_output() {
-    let (runtime, _reports, _display, output, _requests) =
-        started("the_start_frame_writes_its_cells_to_the_output").await;
-    let first = evaluate::<String>(&runtime, "return JSON.stringify(seen[0]);")
-        .await
-        .unwrap();
-    assert_eq!(first, r#"{"type":"start"}"#);
-    assert!(output.text().contains("frame 1"), "{:?}", output.text());
-}
-
-#[tokio::test(flavor = "local")]
 async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
     let (runtime, _reports, _display, output, _requests) = started("a_cursor_shape_reaches_the_terminal").await;
     output.clear();

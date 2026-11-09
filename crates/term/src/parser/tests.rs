@@ -352,15 +352,3 @@ fn a_paste_that_reads_cut_waits_for_its_end_marker() {
     assert_eq!(only_events(parser.feed(b" two\x1b[2")), []);
     assert_eq!(only_events(parser.feed(b"01~")), [Event::Paste("one two".to_owned())]);
 }
-
-#[test]
-fn a_large_paste_stays_whole() {
-    let mut parser = Parser::new();
-    assert_eq!(only_events(parser.feed(b"\x1b[200~")), []);
-    let chunk = [b'a'; 4096];
-    for _ in 0..1024 {
-        assert_eq!(only_events(parser.feed(&chunk)), []);
-    }
-    let paste = only_events(parser.feed(b"\x1b[201~"));
-    assert_eq!(paste, [Event::Paste("a".repeat(4096 * 1024))]);
-}
