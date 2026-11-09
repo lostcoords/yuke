@@ -385,10 +385,8 @@ async fn send_error(url: &str) -> Option<Error> {
 // Each case fails before the request leaves, and the error names the step that failed.
 #[tokio::test]
 async fn a_failed_send_names_the_dns_or_the_connect() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let error = send_error(&format!("http://127.0.0.1:{port}/messages")).await;
+    // Nothing listens on port 1. A freed ephemeral port can go to a parallel test before the connect.
+    let error = send_error("http://127.0.0.1:1/messages").await;
     assert_eq!(error, Some(Error::ConnectFailed));
     // The `.invalid` top-level name never resolves (RFC 2606).
     let error = send_error("http://host.invalid/messages").await;
