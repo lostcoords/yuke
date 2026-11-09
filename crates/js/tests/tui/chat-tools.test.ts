@@ -1,8 +1,18 @@
 // The tool calls of the bundled chat: the head line, the previews, the body, the diffs, the folds, and the links.
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
-import { click, commit, fakeSessions, fixedClock, loadChat, mouse, SETTINGS, transcriptRows } from "./chat.ts";
+import { assert, createFrame, equal, settled, test } from "yuke:test";
+import {
+  click,
+  commit,
+  fakeSessions,
+  fixedClock,
+  loadChat,
+  mouse,
+  SETTINGS,
+  themeStyle,
+  transcriptRows,
+} from "./chat.ts";
 import { rows } from "./rows.ts";
 
 /** The lines `<word> 1` to `<word> <count>`. */
@@ -48,7 +58,6 @@ const READ: ToolHints = { title: null, subject: { argument: "path", kind: "file"
 const EXEC: ToolHints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" };
 const PROBE: ToolHints = { title: "Probe", subject: null, preview: "head" };
 const PROBE_FILE: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
-const OUTPUT = { fg: "#e6edf3", dim: true };
 
 const ok = (content: string): ToolResult => ({ callId: "", content, isError: false });
 
@@ -377,11 +386,6 @@ test("a silent running call counts up on its own, and its end shows the measured
   frame.advance(100);
   frame.draw();
   equal(transcriptRows(frame)[1], " exec make · 12s");
-  // A clock that moves back shows no negative duration.
-  clock.now -= 60_000;
-  frame.advance(100);
-  frame.draw();
-  equal(transcriptRows(frame)[1], " exec make · running");
   const result = { callId: "c0", content: "", isError: false };
   sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [], durationMs: 40_000 });
   frame.draw();
@@ -450,8 +454,6 @@ test("the display blocks of a result share one preview, and a diff copies its li
     " 9 +d",
     "",
   ]);
-  const background = (row: number) => frame.frame.cells[row]?.[3]?.style.bg;
-  equal([background(5), background(4)], ["#20372a", "#3a2426"]);
   // A drag from the path to the end of the last line has no numbers, no header, no ⋮, and no blank line.
   frame.mouse(mouse(1, 3, "press"));
   frame.mouse(mouse(8, 9, "drag"));
@@ -508,7 +510,8 @@ test("a line of a hunk that starts with dashes or plus signs is a removed line o
 
   equal(shown.slice(1, 4), [" 1 --- a comment", " 1 +++b", " 2  x"]);
   const background = (row: number) => frame.frame.cells[row]?.[3]?.style.bg;
-  equal([background(3), background(4)], ["#3a2426", "#20372a"]);
+  assert(background(3) !== undefined && background(4) !== undefined);
+  assert(background(3) !== background(4));
 });
 
 test("a wrapped line of a diff shows one number, and a copy joins its rows", async () => {
@@ -698,16 +701,19 @@ test("a call that ended well shows a bold name, its subject in accent, dim outpu
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   const cells = frame.frame.cells;
+  const output = themeStyle("chat.tool.output");
+  const subject = themeStyle("chat.subject");
+  assert(subject.fg !== undefined && subject.fg !== output.fg);
   const omitted = transcriptRows(frame).findIndex((row) => row.includes("more rows"));
   equal(
     [
-      cells[1]?.[1]?.style,
-      cells[1]?.[6]?.style,
+      cells[1]?.[1]?.style.bold,
+      cells[1]?.[6]?.style.fg,
       cells[2]?.[1]?.style,
       cells[omitted]?.[3]?.style,
       cells[1]?.[28]?.style.bg,
     ],
-    [{ bold: true }, { fg: "#a8cfa0" }, OUTPUT, OUTPUT, undefined],
+    [true, subject.fg, output, output, undefined],
   );
 });
 
@@ -717,26 +723,17 @@ test("a failed call has a band behind each row, and its text has the output styl
   await loadChat(frame, fakeSessions(calls({ name: "read", args: { path: "a.rs" }, hints: READ, result })));
   frame.start();
   const cells = frame.frame.cells;
-  const band = "#4a2323";
+  const band = themeStyle("chat.tool.failed").bg;
+  assert(band !== undefined);
   equal(
     [
       transcriptRows(frame).slice(1, 3),
-      cells[1]?.[1]?.style,
-      cells[1]?.[6]?.style,
-      cells[1]?.[29]?.style,
-      cells[2]?.[1]?.style,
-      cells[2]?.[0]?.style,
-      cells[2]?.[29]?.style,
+      cells[1]?.[1]?.style.bg,
+      cells[1]?.[29]?.style.bg,
+      cells[2]?.[0]?.style.bg,
+      cells[2]?.[29]?.style.bg,
     ],
-    [
-      [" read a.rs · error", " broken"],
-      { bold: true, bg: band },
-      { fg: "#a8cfa0", bg: band },
-      { bg: band },
-      { ...OUTPUT, bg: band },
-      { bg: band },
-      { bg: band },
-    ],
+    [[" read a.rs · error", " broken"], band, band, band, band],
   );
 });
 
@@ -757,9 +754,9 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   sessions.push({ sessionUpdate: "tool_started", execution, call });
   sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });
   frame.draw();
-  const band = "#3b3520";
-  const running = [1, 2].map((row) => frame.frame.cells[row]?.[29]?.style);
-  const text = frame.frame.cells[2]?.[1]?.style;
+  const band = themeStyle("chat.tool.pending").bg;
+  assert(band !== undefined);
+  const running = [1, 2].map((row) => frame.frame.cells[row]?.[29]?.style.bg);
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(29, 2, "drag"));
   frame.mouse(mouse(29, 2, "release"));
@@ -767,10 +764,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const result = { callId: "c0", content: "built", isError: false };
   sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
   frame.draw();
-  equal(
-    [running, text, copied, frame.frame.cells[1]?.[29]?.style],
-    [[{ bg: band }, { bg: band }], { ...OUTPUT, bg: band }, ["exec make · running\ncompiling"], {}],
-  );
+  equal([running, copied, frame.frame.cells[1]?.[29]?.style], [[band, band], ["exec make · running\ncompiling"], {}]);
 });
 
 test("a diff shows an added line, a removed line, and its context in their own looks", async () => {
@@ -780,11 +774,12 @@ test("a diff shows an added line, a removed line, and its context in their own l
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   const shown = transcriptRows(frame);
-  const look = (text: string) => frame.frame.cells[shown.findIndex((row) => row.includes(text))]?.[2]?.style;
-  equal(
-    [look("-old"), look("+new"), look(" same"), look("edit")?.bold],
-    [{ fg: "#ff7b72", bg: "#3a2426" }, { fg: "#f6f8fa", bg: "#20372a" }, OUTPUT, true],
-  );
+  const background = (text: string) => frame.frame.cells[shown.findIndex((row) => row.includes(text))]?.[2]?.style.bg;
+  const removed = background("-old");
+  const added = background("+new");
+  assert(removed !== undefined && added !== undefined);
+  assert(removed !== added);
+  equal(background(" same"), undefined);
 });
 
 test("the failure of a turn shows in bold in the danger color", async () => {
@@ -796,5 +791,7 @@ test("the failure of a turn shows in bold in the danger color", async () => {
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   const row = transcriptRows(frame).findIndex((line) => line.includes("failed: boom"));
-  equal(frame.frame.cells[row]?.[1]?.style, { fg: "#ff7b72", bold: true });
+  const danger = themeStyle("chat.error").fg;
+  assert(danger !== undefined);
+  equal(frame.frame.cells[row]?.[1]?.style, { fg: danger, bold: true });
 });

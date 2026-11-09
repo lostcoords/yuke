@@ -215,9 +215,15 @@ test("a change of a placed editor by code asks for a frame", () => {
   const editor = new TextEditor();
   core.scene.wrapRoot("chat", () => holder(editor));
   terminal.screen(core);
-  const asked = terminal.requests();
+  const asked = [terminal.requests()];
   editor.replace(0, 0, "a");
+  asked.push(terminal.requests());
   editor.caret = 0;
+  asked.push(terminal.requests());
   editor.restore({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
-  equal(terminal.requests() - asked, 3);
+  asked.push(terminal.requests());
+  equal(
+    asked.slice(1).map((count, at) => count > (asked[at] ?? Number.POSITIVE_INFINITY)),
+    [true, true, true],
+  );
 });

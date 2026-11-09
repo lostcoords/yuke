@@ -15,7 +15,7 @@ import type {
   SessionUpdate,
   StoredEvent,
 } from "yuke:protocol";
-import { type FrameTest, folder } from "yuke:test";
+import { createFrame, type FrameTest, folder } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -23,6 +23,16 @@ export const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, 
 
 export function mouse(column: number, row: number, action: MouseEvent["action"]): MouseEvent {
   return { type: "mouse", column, row, button: "left", action, modifiers: MODIFIERS };
+}
+
+/** The cell style that the default theme gives to the style group `group`, read from a draw of one cell. */
+export function themeStyle(group: string) {
+  using frame = createFrame({ width: 1, height: 1 }, () => ({
+    draw(canvas) {
+      canvas.text(0, 0, "x", group);
+    },
+  }));
+  return frame.draw().cells[0]?.[0]?.style ?? {};
 }
 
 /** One call of `sessions.open`: the session, the tail, the signal of its handle, and its event callback. */

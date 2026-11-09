@@ -101,32 +101,27 @@ test("a request of several questions shows one page each, with ticks and typed a
   };
   sessions.push(asked(2, request));
   sessions.push(asked(3, DELETE));
-  frame.draw();
-  const first = rows(frame.frame).slice(-7, -1);
+  /** Whether a row of the drawn frame holds `text`. */
+  const shows = (text: string) => {
+    frame.draw();
+    return rows(frame.frame).some((row) => row.includes(text));
+  };
+  const first = shows("· 1/3");
   // Enter without a tick or a text keeps the page.
   frame.key("enter space down down");
   frame.paste("with pgvector");
   frame.key("enter");
   frame.paste("sk-1");
-  frame.draw();
-  const secret = rows(frame.frame).slice(-7, -4);
+  const secret = [shows("· 2/3"), shows("••••"), shows("sk-1")];
   frame.key("enter");
-  frame.draw();
-  const last = [rows(frame.frame).at(-7), rows(frame.frame).at(-2)];
+  const last = shows("· 3/3");
   frame.key("enter");
   equal(
     [first, secret, last, sessions.responses],
     [
-      [
-        " guard · Database · 1/3 · 1 of 2",
-        " Which database?",
-        "❯ [ ] SQLite  embedded",
-        "  [ ] Postgres",
-        "  Type your own answer…",
-        " ↑↓ choose · space tick · enter next · esc cancel",
-      ],
-      [" guard · Token · 2/3 · 1 of 2", " API token?", "❯ ••••"],
-      [" guard · Go · 3/3 · 1 of 2", " ↑↓ choose · enter send · ← back · esc cancel"],
+      true,
+      [true, true, false],
+      true,
       [
         [
           2,

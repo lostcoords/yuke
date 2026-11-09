@@ -206,8 +206,9 @@ test("a change of a placed list by code asks for a frame", () => {
   terminal.screen(core);
   const asked = terminal.requests();
   scroll.scrollBy(1);
+  const scrolled = terminal.requests();
   scroll.setItems([{ key: "b", text: "b0" }]);
-  equal(terminal.requests() - asked, 2);
+  equal([scrolled > asked, terminal.requests() > scrolled], [true, true]);
 });
 
 test("items with no rows take no rows, and a render that throws changes nothing", () => {

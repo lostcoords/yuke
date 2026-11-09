@@ -393,8 +393,10 @@ test("the selection has a default look that a plugin changes", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "hello"])) });
   using frame = createFrame({ width: 8, height: 1 }, () => view);
   view.selection = { anchor: at("i", "s", 0), head: at("i", "s", 2) };
-  const before = frame.draw().cells[0]?.[1]?.style;
+  const before = frame.draw().cells[0];
+  // The default look marks the selected cell and leaves the next cell plain.
+  equal([before?.[1]?.style.bg !== undefined, before?.[2]?.style], [true, {}]);
   frame.surface("theme").tui.styles.set({ "textView.selection": { fg: 1, bg: null } });
   const cells = frame.draw().cells[0];
-  equal([before, cells?.[1]?.style, cells?.[2]?.style], [{ fg: "#e6edf3", bg: "#355c4a" }, { fg: 1 }, {}]);
+  equal([cells?.[1]?.style, cells?.[2]?.style], [{ fg: 1 }, {}]);
 });

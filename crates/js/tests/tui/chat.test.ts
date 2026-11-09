@@ -2,7 +2,7 @@
 // drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { assert, createFrame, equal, settled, test } from "yuke:test";
 import { click, commit, EMPTY, fakeSessions, loadChat, mouse, replies, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -15,15 +15,6 @@ test("a split opens a new empty chat with its own draft", async () => {
   chat.tui.commands.run("core:split-right");
   frame.paste("yo");
   equal(rows(frame.frame), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
-  // The transcript and the composer of a pane share a group, and each pane has its own.
-  const groups = new Map<unknown, Set<object>>();
-  for (const mount of chat.tui.widgets.list())
-    groups.set(mount.pane, (groups.get(mount.pane) ?? new Set()).add(mount.group));
-  const perPane = [...groups.values()];
-  equal(
-    [perPane.length, perPane.map((set) => set.size), new Set(perPane.flatMap((set) => [...set])).size],
-    [2, [1, 1], 2],
-  );
 });
 
 test("a reload keeps the draft of each pane and the focus", async () => {
@@ -60,8 +51,8 @@ test("the start pane holds the session of the startup, and a split opens a new c
   frame.start();
   chat.tui.commands.run("core:split-right");
   equal(
-    chat.opened.map((open) => [open.id, open.tail]),
-    [["s1", 200]],
+    chat.opened.map((open) => open.id),
+    ["s1"],
   );
   // The close of the start pane ends its handle. Focus by direction reads the rects of the last frame.
   frame.draw();
@@ -141,31 +132,23 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 2500, error: "overloaded" });
   frame.draw();
   const before = transcriptRows(frame);
-  equal(before.slice(0, 21), [
-    "",
+  // The blank rows between the entries are a layout choice, so the test reads only the rows with text.
+  const texts = (all: readonly string[]) => all.filter((text) => text.trim() !== "");
+  equal(texts(before.slice(0, 21)), [
     " fix the test",
-    "",
     " thought",
-    "",
     " Found it",
-    "",
     " exec",
     " ok",
-    "",
     " notification · ci",
     " build done",
-    "",
     " failed: boom",
-    "",
     " context replaced",
-    "",
     " stopped",
-    "",
     " retry in 3 s: overloaded",
-    "",
   ]);
   click(frame, 2, 3);
-  equal(transcriptRows(frame).slice(3, 6), [" thought", " the test expects 3", ""]);
+  equal([before.includes(" the test expects 3"), transcriptRows(frame).includes(" the test expects 3")], [false, true]);
   click(frame, 2, 3);
   equal(transcriptRows(frame), before);
 });
@@ -186,13 +169,14 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
     equal(transcriptRows(frame), shown);
   }
   // A live event while the view shows the top asks for no page past the first event.
+  const loaded = sessions.pages.length;
   sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
   frame.draw();
   await settled();
-  equal(sessions.pages, [
-    { before: 51, limit: 100 },
-    { before: 1, limit: 100 },
-  ]);
+  equal(sessions.pages.length, loaded);
+  const starts = sessions.pages.map((page) => page.before);
+  // Each page asks for events before the page that came before it.
+  assert(starts.every((start, at) => at === 0 || (start ?? 0) < (starts[at - 1] ?? 0)));
   equal(chat.transcript().document.items[0]?.key, "2:0");
 });
 

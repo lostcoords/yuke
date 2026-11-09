@@ -4,7 +4,7 @@
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:plugins";
 import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { assert, createFrame, equal, type FrameTest, settled, test } from "yuke:test";
 import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
@@ -109,6 +109,10 @@ async function press(frame: FrameTest, ...keys: [string, ...string[]]): Promise<
 
 const shows = (all: readonly string[], text: string) => all.some((line) => line.includes(text));
 
+/** Whether one row of `all` holds every text of `texts`, in any column. */
+const showsRow = (all: readonly string[], ...texts: string[]) =>
+  all.some((line) => texts.every((text) => line.includes(text)));
+
 test("the dashboard shows the plugins in sections with their state, and enter shows the details", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const fake = manager([]);
@@ -122,18 +126,18 @@ test("the dashboard shows the plugins in sections with their state, and enter sh
     [
       shows(opened, "Plugins · 5"),
       shows(opened, "Needs sync (2)"),
-      shows(opened, "! ?            https://h/weather  not locked"),
-      shows(opened, "! ?            https://h/maps  8d02e77 not installed"),
+      showsRow(opened, "https://h/weather", "not locked"),
+      showsRow(opened, "https://h/maps", "8d02e77", "not installed"),
       shows(opened, "Installed (2)"),
-      shows(opened, `● clock        ${SOURCE}  3f9c1a2`),
-      shows(opened, "○ tools        https://h/tools  3f9c1a2 not loaded"),
+      showsRow(opened, "●", "clock", SOURCE, "3f9c1a2"),
+      showsRow(opened, "○", "tools", "https://h/tools", "3f9c1a2", "not loaded"),
       shows(opened, "Local (1)"),
-      shows(opened, "● notes        ./notes"),
+      showsRow(opened, "●", "notes", "./notes"),
     ],
     [true, true, true, true, true, true, true, true, true],
   );
   // The first plugin needs a sync and has no name, so `u` and `d` do not work on it.
-  equal(shows(opened, "S: sync · U: update all · a: add · /: search · R: reload · esc: close"), true);
+  equal([shows(opened, "S: sync"), shows(opened, "esc: close"), shows(opened, "u: update")], [true, true, false]);
   equal(
     [
       shows(detailed, `${SOURCE} · commit ${OLD} · loaded`),
@@ -348,13 +352,9 @@ test("the dashboard has a default look that a plugin changes", async () => {
     "plugins.detail": { fg: 2, dim: null },
     "picker.selected": { fg: 3, bg: null },
   });
-  equal(
-    [before, looks()],
-    [
-      [{ bold: true }, { fg: "#e6edf3", bg: "#355c4a" }, { dim: true }, { fg: "#e6edf3", bg: "#355c4a" }],
-      [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }],
-    ],
-  );
+  // The band of the selected row reaches the last column.
+  assert(before[1]?.bg !== undefined);
+  equal([before[3]?.bg, looks()], [before[1]?.bg, [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }]]);
 });
 
 test("the line of an empty dashboard uses the look of the details", async () => {

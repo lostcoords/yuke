@@ -135,8 +135,9 @@ test("a frame shows the prompt, the text, a label, the selection, and the cursor
   });
   const cells = frame.draw().cells[1];
   equal(row(cells, 1, 11), "> hi [p]  ");
-  // The selection reverses "hi"; the label takes the accent color of the dark palette.
-  equal([cells?.[3]?.style, cells?.[6]?.style], [{ reverse: true }, { fg: "#a8cfa0" }]);
+  // The selection reverses "hi", and the label has a color that the plain text has not.
+  equal(cells?.[3]?.style, { reverse: true });
+  assert(cells?.[6]?.style.fg !== undefined && cells[6].style.fg !== cells[5]?.style.fg);
   equal(frame.frame.cursor, { column: 5, row: 1, shape: "block" });
   // The close of the surface ends the extension, so the cursor takes the shape of the terminal again.
   surface.close();
@@ -453,10 +454,11 @@ test("the selection, a label, and the placeholder have a default look that a plu
     "editor.label": { fg: 2 },
     "editor.placeholder": { fg: 3, dim: null },
   });
+  const after = looks();
   equal(
-    [before, looks()],
+    [before.map((style, at) => JSON.stringify(style) !== JSON.stringify(after[at])), after],
     [
-      [{ reverse: true }, { fg: "#a8cfa0" }, { dim: true }],
+      [true, true, true],
       [{ fg: 1 }, { fg: 2 }, { fg: 3 }],
     ],
   );

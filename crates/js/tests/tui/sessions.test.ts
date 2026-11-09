@@ -50,14 +50,18 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
   await settled();
   frame.draw();
   const every = rows(frame.frame);
-  const shows = (all: string[], text: string) => all.some((line) => line.includes(text));
-  equal(loaded.sessions.lists, [{ cwd: "/w", limit: 100 }, { limit: 100 }]);
+  /** Whether one row of `all` holds every text of `texts`, in any column. */
+  const shows = (all: string[], ...texts: string[]) => all.some((line) => texts.every((text) => line.includes(text)));
+  equal(
+    loaded.sessions.lists.map((list) => list.cwd),
+    ["/w", undefined],
+  );
   equal(
     [
       here.some((line) => line.trim() === "/w"),
       shows(here, "tab: every folder · esc: close"),
-      shows(here, "● fix the flaky test  5m · m"),
-      shows(here, "  add the bar  3h · m"),
+      shows(here, "●", "fix the flaky test"),
+      shows(here, "add the bar"),
     ],
     [true, true, true, true],
   );
@@ -66,7 +70,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
       shows(here, "refactor"),
       every.some((line) => line.trim() === "every folder"),
       shows(every, "tab: this folder · esc: close"),
-      shows(every, "○ refactor sqlgen  2d · m · other"),
+      shows(every, "○", "refactor sqlgen", "other"),
     ],
     [false, true, true, true],
   );

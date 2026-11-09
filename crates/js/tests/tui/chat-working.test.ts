@@ -19,25 +19,27 @@ test("a running turn shows its phase and time above an empty row before the rule
     const all = rows(frame.frame);
     return all[all.findIndex((text) => text.startsWith("──")) - 2] ?? "";
   };
+  /** The row without its spinner glyph, which changes with each frame of the spinner. */
+  const phase = (): string => row().slice(2);
   const idle = row();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  const start = row();
+  const start = phase();
   const gap = rows(frame.frame)[rows(frame.frame).findIndex((text) => text.startsWith("──")) - 1];
   frame.advance(1080);
-  const later = row();
+  const later = phase();
   const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
   sessions.push(
     commit(3, [{ tool_call: call }], {
       display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] },
     }),
   );
-  const tool = row();
+  const tool = phase();
   const pendingCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   sessions.push({ sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 0 }, call });
-  const running = row();
+  const running = phase();
   const runningCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   sessions.push(commit(4, [{ tool_result: { callId: "c1", content: "ok", isError: false } }]));
-  const done = row();
+  const done = phase();
   const completedCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   equal(
     [pendingCommand, runningCommand, completedCommand],
@@ -45,26 +47,26 @@ test("a running turn shows its phase and time above an empty row before the rule
   );
   sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 5000, error: "overloaded" });
   frame.advance(2000);
-  const retry = row();
+  const retry = phase();
   sessions.push({ sessionUpdate: "state", state: "idle" });
   frame.draw();
   const ended = rows(frame.frame).some((text) => text.includes("to interrupt"));
   // The retry status stays in the transcript until the next draft, and the next turn shows no old countdown.
   sessions.push({ sessionUpdate: "state", state: "running" });
-  const next = row();
+  const next = phase();
   equal(
     [idle.includes("to interrupt"), gap, start, later, tool, running, done, retry, ended, next],
     [
       false,
       "",
-      "⠋ Working… (0s · esc to interrupt)",
-      "⠸ Working… (1s · esc to interrupt)",
-      "⠸ Working… (1s · esc to interrupt)",
-      "⠸ Working… (1s · esc to interrupt)",
-      "⠸ Working… (1s · esc to interrupt)",
-      "⠇ Retrying in 3s… (3s · esc to interrupt)",
+      "Working… (0s · esc to interrupt)",
+      "Working… (1s · esc to interrupt)",
+      "Working… (1s · esc to interrupt)",
+      "Working… (1s · esc to interrupt)",
+      "Working… (1s · esc to interrupt)",
+      "Retrying in 3s… (3s · esc to interrupt)",
       false,
-      "⠋ Working… (0s · esc to interrupt)",
+      "Working… (0s · esc to interrupt)",
     ],
   );
 });
@@ -152,13 +154,11 @@ test("a short pane gives up the empty rows before the last row of the transcript
   using _clock = fixedClock();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
-  equal(rows(frame.frame), [
-    " reply 2",
-    "⠋ Working… (0s · esc to interrupt)",
-    "─".repeat(50),
-    "Message…",
-    "─".repeat(50),
-  ]);
+  // The spinner glyph changes with each frame of the spinner, so the test compares the text after it.
+  equal(
+    rows(frame.frame).map((text, at) => (at === 1 ? text.slice(2) : text)),
+    [" reply 2", "Working… (0s · esc to interrupt)", "─".repeat(50), "Message…", "─".repeat(50)],
+  );
 });
 
 test("a close of the session by another client takes the working row away", async () => {
@@ -188,7 +188,7 @@ test("the working row shows no cancel key while the command list takes esc", asy
   frame.key("esc");
   frame.draw();
   const hidden = rows(frame.frame).find((text) => text.includes("Working…"));
-  equal([listed, hidden], ["⠋ Working… (0s)", "⠋ Working… (0s · esc to interrupt)"]);
+  equal([listed?.slice(2), hidden?.slice(2)], ["Working… (0s)", "Working… (0s · esc to interrupt)"]);
 });
 
 /** A frame of `width` with a chat whose exec of `command` runs. */
@@ -238,7 +238,7 @@ test("a long command stays in the transcript and leaves room for the interrupt a
 
   frame.advance(2000);
 
-  equal(workingRow(frame), "⠴ Working… (2s · esc to interrupt · ctrl+b to background)");
+  equal(workingRow(frame).slice(2), "Working… (2s · esc to interrupt · ctrl+b to background)");
   equal(
     rows(frame.frame)
       .find((text) => text.includes("exec cargo test"))
@@ -256,5 +256,8 @@ test("a narrow row drops the background hint, then the interrupt hint", async ()
   wide.frame.advance(2000);
   narrow.frame.advance(2000);
 
-  equal([workingRow(wide.frame), workingRow(narrow.frame)], ["⠴ Working… (2s · esc to interrupt)", "⠴ Working… (2s)"]);
+  equal(
+    [workingRow(wide.frame).slice(2), workingRow(narrow.frame).slice(2)],
+    ["Working… (2s · esc to interrupt)", "Working… (2s)"],
+  );
 });

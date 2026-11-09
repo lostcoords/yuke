@@ -1,7 +1,7 @@
 // `ChatCommands` of `yuke:chat` above a bare editor: the rows, the scroll, the selection, the labels, and the run.
 
 import { ChatCommands, type ChatCommandsOptions } from "yuke:chat";
-import { createFrame, equal, type FrameTest, test } from "yuke:test";
+import { assert, createFrame, equal, type FrameTest, test } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -161,16 +161,9 @@ test("the selected row has a default look that a plugin changes", () => {
   const tui = frame.surface("chat").tui;
   frame.key("/ a");
   const row = () => frame.draw().cells[0];
-  const before = [row()?.[1]?.style, row()?.[29]?.style];
+  // The band reaches the last cell of the row.
+  const before = [row()?.[1]?.style.bg, row()?.[29]?.style.bg];
+  assert(before[0] !== undefined);
   tui.styles.set({ "picker.selected": { fg: 1, bg: null } });
-  equal(
-    [before, row()?.[1]?.style],
-    [
-      [
-        { fg: "#e6edf3", bg: "#355c4a" },
-        { fg: "#e6edf3", bg: "#355c4a" },
-      ],
-      { fg: 1 },
-    ],
-  );
+  equal([before[1], row()?.[1]?.style], [before[0], { fg: 1 }]);
 });
