@@ -25,6 +25,7 @@ Catalog generation script:
 | --- | --- | --- |
 | `http` | Enabled | `Transport` and `Exchange` for the [`yuke-http`](../http) client. HTTP/1.1 with Tokio, hyper, and rustls. |
 | `ts` | Disabled | TypeScript declarations of the serde types through ts-rs. |
+| `scripted` | Disabled | `ScriptedTransport` and `ScriptedExchange`, which answer with scripted replies, for tests. |
 
 All protocols work without default features. Supply a custom [`Transport`](src/transport.rs). The OAuth flows of
 [`oauth`](src/oauth.rs) need an [`Exchange`](src/transport.rs).

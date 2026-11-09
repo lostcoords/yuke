@@ -37,7 +37,7 @@ yuke-http = { path = "../http", features = ["testing"] }
 workspace = true
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["http", "scripted"]
 
 [[example]]
 name = "oneshot"

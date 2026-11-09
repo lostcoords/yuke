@@ -714,6 +714,10 @@ mod tests {
             panic!("no print mode");
         };
         assert_eq!(task.reasoning, Some(ReasoningLevel::Default));
+        assert_eq!(
+            mode(&["-p", "Hi.", "--reasoning", "extreme"]),
+            Err(ErrorKind::ValueValidation)
+        );
     }
 
     #[test]

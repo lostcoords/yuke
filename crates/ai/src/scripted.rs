@@ -757,6 +757,32 @@ mod tests {
         assert_eq!(transport.check(), Err("1 scripted reply(s) got no request".to_owned()));
     }
 
+    #[test]
+    fn an_exchange_after_the_last_answer_fails_and_the_check_names_it() {
+        let exchange = ScriptedExchange::new([Ok((200, "{}"))]);
+        let request = ExchangeRequest {
+            url: "https://example.test/token",
+            content_type: "application/json",
+            body: b"{}",
+            max_answer: 1024,
+        };
+
+        let first = block_on(exchange.exchange(&request, None));
+        let second = block_on(exchange.exchange(&request, None));
+
+        assert_eq!(first.map(|answer| answer.body), Ok(b"{}".to_vec()));
+        assert_eq!(second, Err(Fault::ConnectFailed));
+        assert_eq!(
+            exchange.check(),
+            Err("1 exchange(s) came after the last scripted answer".to_owned())
+        );
+        exchange.push(200, "{}");
+        assert_eq!(
+            exchange.check(),
+            Err("1 exchange(s) came after the last scripted answer, and 1 answer(s) got no exchange".to_owned())
+        );
+    }
+
     const PROTOCOLS: [Protocol; 3] = [
         Protocol::AnthropicMessages,
         Protocol::OpenaiChat,

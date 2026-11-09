@@ -514,9 +514,9 @@ async fn a_pushed_token_replaces_a_valid_login_and_the_newest_push_wins() {
 #[tokio::test(flavor = "local")]
 async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() {
     let folder = folder("expired_push");
-    // A refresh would take an answer that the script does not have, and the test would panic.
     save(&folder, "from-file", "refresh", 3600);
-    let source = source(&folder, ScriptedExchange::default(), LOCK_LIMIT);
+    let answers = ScriptedExchange::default();
+    let source = source(&folder, answers.clone(), LOCK_LIMIT);
 
     source.push(pushed("pushed", -1));
 
@@ -526,6 +526,7 @@ async fn an_expired_push_fails_and_never_falls_back_to_the_login_or_a_refresh() 
             "the accessToken of credential/update for {PROVIDER} expired: send a new credential/update"
         ))
     );
+    assert_eq!(answers.sent(), Vec::<SentExchange>::new());
 }
 
 #[tokio::test(flavor = "local")]
