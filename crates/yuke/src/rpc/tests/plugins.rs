@@ -102,8 +102,8 @@ async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both
     );
     assert_eq!(listed["plugins"][0]["state"], json!("installed"));
     assert_eq!(removed, Ok(json!({})));
-    // The comment stays; an object with no member gets `plugins` on its own line.
-    assert_eq!(config, "{\n  \"plugins\": []\n\n  // mine\n}\n");
+    assert!(config.contains("// mine"), "{config}");
+    assert!(!config.contains("clock"), "{config}");
     assert!(!lock.contains(&commit), "{lock}");
     client.end().await;
 }

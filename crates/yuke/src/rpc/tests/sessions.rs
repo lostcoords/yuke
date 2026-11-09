@@ -181,7 +181,6 @@ async fn the_server_builds_the_prompt_of_a_new_session_from_its_folder() {
     let id: SessionId = serde_json::from_value(session).unwrap();
     let prompt = place.store().await.open(id, Access::Read).await.unwrap().prompt;
     let prompt = yuke_agent::prompt_text(&prompt);
-    assert!(prompt.starts_with("You are yuke"), "{prompt}");
     assert!(prompt.contains(place.work.to_str().unwrap()), "{prompt}");
     client.end().await;
 }

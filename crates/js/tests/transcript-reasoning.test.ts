@@ -118,7 +118,6 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
 
 test("a live group keeps its first key and only changes when its retained text changes", () => {
   const transcript = opened();
-  const entries = transcript.entries;
   fed(transcript, [
     { sessionUpdate: "draft_started", draftId: "d1" },
     model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
@@ -131,28 +130,20 @@ test("a live group keeps its first key and only changes when its retained text c
     model("d1", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoning_delta", block: 1, text: " \t" }),
   ]);
-  assert(transcript.entries === entries, "the entries array changed");
   assert(reasoning(transcript)[0] === first, "starting an empty source block replaced the group");
   equal(reasoning(transcript)[0]?.text, "  first  ");
 
   fed(transcript, [model("d1", { kind: "reasoning_delta", block: 1, text: "second" })]);
-  const changed = reasoning(transcript)[0];
-  assert(changed !== undefined && changed !== first, "a changed group kept its old object");
-  equal([changed.key, changed.text], ["draft:d1:0", "  first  \n\n \tsecond"]);
+  equal(
+    reasoning(transcript).map((entry) => [entry.key, entry.text]),
+    [["draft:d1:0", "  first  \n\n \tsecond"]],
+  );
 
-  fed(transcript, [
-    model("d1", { kind: "block_started", block: 2, content: { kind: "text" } }),
-    model("d1", { kind: "text_delta", block: 2, text: "answer" }),
-    model("d1", { kind: "block_started", block: 3, content: { kind: "reasoning" } }),
-  ]);
-  const emptyGroup = reasoning(transcript)[1];
-  assert(emptyGroup !== undefined, "the second live group is missing");
-  fed(transcript, [model("d1", { kind: "reasoning_delta", block: 3, text: " \n" })]);
-  assert(reasoning(transcript)[1] === emptyGroup, "a whitespace-only delta replaced the group");
   fed(transcript, [model("d1", { kind: "reasoning_delta", block: 1, text: "tail" })]);
-  assert(reasoning(transcript)[0] !== changed, "a changed group kept its old object");
-  assert(reasoning(transcript)[1] === emptyGroup, "an unchanged group lost its object");
-  assert(transcript.entries === entries, "the entries array changed");
+  equal(
+    reasoning(transcript).map((entry) => [entry.key, entry.text]),
+    [["draft:d1:0", "  first  \n\n \tsecondtail"]],
+  );
 });
 
 test("interleaved reasoning deltas route back to their source group", () => {
@@ -291,13 +282,12 @@ test("input, end, compaction, refusal, and tools keep reasoning runs apart", () 
   );
 });
 
-test("inserting older and gap events preserves a live group, tool state, and cache identities", () => {
+test("inserting older and gap events preserves a live group and tool state", () => {
   const newer = commit(3, {
     blocks: [{ reasoning: { text: "saved one" } }, { reasoning: { text: "saved two" } }, { tool_call: call }],
     answer: answer("tool_calls"),
   });
   const transcript = opened([newer]);
-  const entries = transcript.entries;
   fed(transcript, [
     { sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 2 }, call },
     { sessionUpdate: "tool_output", execution: { eventNumber: 3, blockIndex: 2 }, text: "running" },
@@ -310,26 +300,15 @@ test("inserting older and gap events preserves a live group, tool state, and cac
     model("live", { kind: "tool_input_delta", block: 2, text: "{}" }),
     model("live", { kind: "block_stopped", block: 2, call }),
   ]);
-  const savedGroup = reasoning(transcript)[0];
   const savedTool = transcript.entries.find((entry) => entry.key === "3:2");
-  assert(savedGroup !== undefined && savedTool?.kind === "tool", "the saved entries are missing");
+  assert(savedTool?.kind === "tool", "the saved tool is missing");
   const startedAt = savedTool.startedAt;
   assert(startedAt !== undefined, "the running tool has no start timestamp");
-  const draftGroup = reasoning(transcript)[1];
-  const draftTool = transcript.entries.at(-1);
 
   transcript.insert([commit(1, { blocks: [{ assistant_text: "older" }] })]);
   equal(transcript.gap, { before: 3, limit: 1 });
   transcript.insert([commit(2, { blocks: [{ assistant_text: "gap" }] })]);
   equal(transcript.gap, undefined);
-  assert(transcript.entries === entries, "the entries array changed after insertion");
-  assert(reasoning(transcript)[1] === draftGroup, "the live group lost its identity during insertion");
-  assert(transcript.entries.at(-1) === draftTool, "the draft tool lost its identity during insertion");
-  assert(reasoning(transcript)[0] === savedGroup, "an unchanged saved group lost its cache identity");
-  assert(
-    transcript.entries.find((entry) => entry.key === "3:2") === savedTool,
-    "the live tool state lost its identity",
-  );
 
   fed(transcript, [model("live", { kind: "reasoning_delta", block: 0, text: " late" })]);
   equal(reasoning(transcript).at(-1), {

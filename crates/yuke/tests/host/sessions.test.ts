@@ -112,7 +112,7 @@ test("a child session names its parent, stays out of the default list, and leave
     children.sessions.map((row) => [row.session.sessionId, row.session.parent]),
     [[child, session.id]],
   );
-  equal(String(failure).length > 0, true);
+  equal(String(failure), "Error: the store has no such session");
 });
 
 test("a child that opens again names its saved parent", async () => {

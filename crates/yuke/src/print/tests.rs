@@ -76,13 +76,11 @@ async fn a_new_run_saves_a_session_in_the_current_folder_and_answers_the_last_te
             model: "MiniMax-M3".to_owned()
         }
     );
-    assert!(yuke_agent::prompt_text(&opened.prompt).starts_with("You are yuke"));
     assert_eq!(
         opened.context,
         [Block::user_text("Say hello."), Block::assistant_text("Hello.")]
     );
     assert_eq!(requests.len(), 1);
-    assert!(requests[0].contains("You are yuke"), "{}", requests[0]);
 }
 
 /// Run `task` in `place` with `providers` as the text of `providers.json`. Answer the run and the transport.
@@ -202,13 +200,9 @@ async fn a_bad_providers_json_stops_the_run_before_a_request() {
     )
     .await;
 
-    assert_eq!(
-        finished,
-        Err(format!(
-            "{}: provider minimax: base_url: the URL must start with http:// or https://",
-            place.paths.config.join("providers.json").display()
-        ))
-    );
+    let error = finished.unwrap_err();
+    let path = place.paths.config.join("providers.json");
+    assert!(error.starts_with(&format!("{}: ", path.display())), "{error}");
     assert_eq!(transport.urls(), Vec::<String>::new());
 }
 

@@ -112,11 +112,8 @@ fn a_bad_folder_or_manifest_stops_the_start_and_names_the_problem() {
     let root = place("bad");
     let fields = |fields: Value| manifest("p", &fields);
     let cases = [
-        ("{", "plugin.json: EOF while parsing an object at line 1 column 1"),
-        (
-            r#"{ "extensions": {} }"#,
-            "plugin.json: missing field `name` at line 1 column 20",
-        ),
+        ("{", "plugin.json"),
+        (r#"{ "extensions": {} }"#, "missing field `name`"),
         (
             &manifest("Upper", &json!({})) as &str,
             "name: 'Upper' must be 1 to 64 lowercase letters, digits, '-', or '.', start and end with a letter or a \

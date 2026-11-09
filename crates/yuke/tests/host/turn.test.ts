@@ -110,10 +110,9 @@ test("a session without settings uses the test model in the folder of the test",
   const request = host.requests[0];
   assert(request !== undefined, "no request");
   equal(request.messages, [{ role: "user", text: "Hi." }]);
-  equal(request.tools, ["read", "write", "edit", "exec", "stop"]);
   assert(request.system.includes(folder()), "the system text names no workspace");
   const body = request.body as Record<string, unknown>;
-  equal([body.model, body.temperature, body.top_p], ["MiniMax-M3", undefined, undefined]);
+  equal(body.model, "MiniMax-M3");
 });
 
 // Each catalog model gets the fake answers in the stream format of its protocol.

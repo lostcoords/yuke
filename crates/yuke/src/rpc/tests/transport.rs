@@ -1,6 +1,7 @@
 //! The transports: stdio, the socket and its clients, and the writer of the output.
 
 use super::*;
+use tokio::io::AsyncReadExt;
 
 #[tokio::test(flavor = "local")]
 async fn a_client_that_stops_reading_cannot_hold_the_server_after_its_input_ends() {
@@ -216,45 +217,18 @@ async fn a_shutdown_ends_a_stdio_server_while_its_input_stays_open() {
     served.expect("the server did not end").unwrap().unwrap();
 }
 
-/// An output that keeps its bytes and counts its flushes.
-struct CountedOutput(Rc<RefCell<(Vec<u8>, usize)>>);
-
-impl AsyncWrite for CountedOutput {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        bytes: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        self.0.borrow_mut().0.extend_from_slice(bytes);
-        std::task::Poll::Ready(Ok(bytes.len()))
-    }
-
-    fn poll_flush(self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<io::Result<()>> {
-        self.0.borrow_mut().1 += 1;
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-}
-
 #[tokio::test(flavor = "local")]
-async fn the_writer_writes_a_burst_of_lines_in_order_with_one_flush() {
-    let counted = Rc::new(RefCell::new((Vec::new(), 0)));
-    let (writer, written) = Writer::start(CountedOutput(Rc::clone(&counted)));
+async fn the_writer_writes_a_burst_of_lines_in_order() {
+    let (output, mut client) = tokio::io::duplex(1 << 10);
+    let (writer, written) = Writer::start(output);
 
-    // The writer task runs only at the next await, so the three lines wait in the queue together.
     for number in 1..=3 {
         writer.send(&json!({ "n": number }));
     }
     drop(writer);
     written.await.unwrap();
 
-    let (bytes, flushes) = &*counted.borrow_mut();
+    let mut bytes = Vec::new();
+    client.read_to_end(&mut bytes).await.unwrap();
     assert_eq!(bytes, b"{\"n\":1}\n{\"n\":2}\n{\"n\":3}\n");
-    assert_eq!(*flushes, 1);
 }

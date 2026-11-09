@@ -225,7 +225,7 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
     host.notices.map((notice) => [notice.source, notice.level, notice.message.split("\n")[0]]),
     [["three", "error", "the cleanup of the plugin failed: Error: broken cleanup"]],
   );
-  equal(host.notices[0]?.message.includes("plugins.test.ts:"), true);
+  equal(/\n\s+at /.test(host.notices[0]?.message ?? ""), true);
 });
 
 test("a service passes to a later plugin, and a failed provider stops its users before they run", async () => {

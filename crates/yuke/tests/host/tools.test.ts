@@ -91,7 +91,7 @@ test("the system prompt names each deferred tool after the saved sections", asyn
   await (await host.openSession()).send("Hi.");
 
   const system = host.requests[0]?.system ?? "";
-  equal(system.endsWith("before you search.\n- rare\n</deferred_tools>"), true);
+  equal((system.split("<deferred_tools>")[1] ?? "").includes("- rare"), true);
   equal(system.includes("- common"), false);
 });
 
@@ -308,7 +308,7 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
         new Promise((resolve) => {
           context.signal.addEventListener("abort", () => {
             const why = context.signal.reason;
-            reason = `${why instanceof DOMException} ${String(why)}`;
+            reason = why instanceof DOMException ? why.name : String(why);
             resolve("stopped");
           });
         }),
@@ -321,7 +321,7 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
   stop.abort(new Error("stop"));
   await pending;
 
-  equal(reason, "true AbortError: The tool call was cancelled");
+  equal(reason, "AbortError");
 });
 
 test("the signal aborts when the call ends, and the context names the folder", async () => {

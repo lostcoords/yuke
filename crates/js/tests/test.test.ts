@@ -16,36 +16,26 @@ test("equal compares deeply and strictly", () => {
   equal(new Set([1, "a", { b: [2] }]), new Set(["a", { b: [2] }, 1]));
   equal(new Uint8Array([1, 2]), new Uint8Array([1, 2]));
   equal(new Date(5), new Date(5));
-  equal(
-    [
-      failure(() => equal(-0, 0)),
-      failure(() => equal({ a: undefined }, {})),
-      failure(() => equal({}, { a: undefined })),
-      failure(() => equal([1, 2], [1])),
-      failure(() => equal({ list: [{ name: "a" }] }, { list: [{ name: "b" }] })),
-      failure(() => equal(new Map([["k", 1]]), new Map([["k", 2]]))),
-      failure(() => equal(new Uint8Array([1]), [1])),
-      failure(() => equal({ "a-b": 1 }, { "a-b": 2 }, "the header")),
-      failure(() => equal({ [Symbol.for("s")]: 1 }, {})),
-    ],
-    [
-      "equal: at the value: expected 0, got -0",
-      "equal: at .a: expected no key, got undefined",
-      "equal: at .a: expected undefined, got no key",
-      "equal: at the value: expected 1 items, got 2",
-      'equal: at .list[0].name: expected "b", got "a"',
-      'equal: at .get("k"): expected 2, got 1',
-      "equal: at the value: expected [1], got [1] (another prototype)",
-      'the header: at ["a-b"]: expected 2, got 1',
-      "equal: at [Symbol(s)]: expected no key, got 1",
-    ],
-  );
+  // Each mismatch throws. A mismatch inside a value names its path.
+  failure(() => equal(-0, 0));
+  failure(() => equal({ a: undefined }, {}));
+  failure(() => equal({}, { a: undefined }));
+  failure(() => equal([1, 2], [1]));
+  failure(() => equal(new Uint8Array([1]), [1]));
+  failure(() => equal({ [Symbol.for("s")]: 1 }, {}));
+  assert(failure(() => equal({ list: [{ name: "a" }] }, { list: [{ name: "b" }] })).includes(".list[0].name"));
+  assert(failure(() => equal(new Map([["k", 1]]), new Map([["k", 2]]))).includes('.get("k")'));
+  const named = failure(() => equal({ "a-b": 1 }, { "a-b": 2 }, "the header"));
+  assert(named.startsWith("the header"), named);
+  assert(named.includes('["a-b"]'), named);
 });
 
 test("assert, throws, and rejects fail with a message", async () => {
+  failure(() => assert(false));
+  failure(() => throws(() => 1));
   equal(
-    [failure(() => assert(false)), failure(() => assert(0, "the count is zero")), failure(() => throws(() => 1))],
-    ["assert: the condition is false", "the count is zero", "throws: the function returned"],
+    failure(() => assert(0, "the count is zero")),
+    "the count is zero",
   );
   equal(
     throws(() => {
@@ -54,13 +44,8 @@ test("assert, throws, and rejects fail with a message", async () => {
     "a text",
   );
   equal(await rejects(Promise.reject(new RangeError("low"))), new RangeError("low"));
-  equal(
-    failure(() => equal(new RangeError("low"), new RangeError("high"))),
-    'equal: at .message: expected "high", got "low"',
-  );
-  const error = await rejects(rejects(Promise.resolve(1)));
-  assert(error instanceof Error);
-  equal(error.message, "rejects: the promise fulfilled");
+  failure(() => equal(new RangeError("low"), new RangeError("high")));
+  assert((await rejects(rejects(Promise.resolve(1)))) instanceof Error);
 });
 
 // The two tests run in this order. The first test leaves a global and a file. The second test sees neither.

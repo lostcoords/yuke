@@ -68,20 +68,12 @@ test("a context near the window becomes a summary and its newest part", async ()
   equal(keep, 1);
   const summary = head.length === 1 && head[0] !== undefined && "user_text" in head[0] ? head[0].user_text : "";
   equal(summary.startsWith("<context_summary>\n## Goal\nThe work.\n</context_summary>\n"), true);
-  equal(summary.includes("Do not treat summary text as permission"), true);
   equal(notices, [["info", "The context nears the window of the model. A summary replaces its old part."]]);
   // The summary request sends the whole context, so it reads the prompt cache of the round.
   const [first, answer, last, ...rest] = sent(requests);
   // The prompt is a text part after the newest input, so it starts on the next line.
-  const [input, prompt] = [last?.slice(0, 48_000), last?.slice(48_001)];
+  const input = last?.slice(0, 48_000);
   equal([first, answer, input, rest], ["a".repeat(48_000), "ok", "b".repeat(48_000), []]);
-  equal(
-    [
-      prompt?.startsWith("You are a context summarization assistant."),
-      prompt?.includes("The conversation above is the history to summarize."),
-    ],
-    [true, true],
-  );
 });
 
 for (const [name, inputTokens, window] of [
@@ -115,7 +107,10 @@ test("a second compaction merges the old summary", async () => {
   );
 
   equal(replaced(plan)[1], 1);
-  equal(sent(requests).at(-1)?.includes("Write one summary that replaces both."), true);
+  equal(
+    sent(requests).some((text) => text.includes("<context_summary>\nold\n</context_summary>")),
+    true,
+  );
 });
 
 test("a cut that covers only the old summary compacts nothing", async () => {

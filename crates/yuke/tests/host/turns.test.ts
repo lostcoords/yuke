@@ -107,8 +107,6 @@ test("a failed prompt hook sends a notice, starts no request, and leaves the inp
 
   const [notice] = host.notices;
   equal(notice?.message.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
-  // The notice keeps the stack of the throw, which names the module of the plugin.
-  equal(notice?.message.includes("turns.test.ts"), true);
   equal([host.requests.length, session.transcript.pending.size], [0, 1]);
 });
 

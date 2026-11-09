@@ -141,21 +141,21 @@ test("a composer sends the draft, and a refused input comes back above newer tex
   );
 });
 
-test("a composer labels a long paste, and a paste handler added later takes a paste first", async () => {
+test("a composer makes one span of a long paste, and a paste handler added later takes a paste first", async () => {
   const sessions = fakeSessions(replies(2));
   const owner = new AbortController();
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   const editor = new TextEditor();
   new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
   editor.paste("a".repeat(301));
-  const labeled = editor.state.spans.map((span) => span.label);
+  const spanCount = editor.state.spans.length;
   editor.reset({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
   editor.extend(owner.signal).onPaste((text) => {
     editor.replace(0, 0, "claimed");
     return text.length > 0;
   });
   editor.paste("b".repeat(301));
-  equal([labeled, editor.state.text, editor.state.spans], [["[Pasted text · 301 chars]"], "claimed", []]);
+  equal([spanCount, editor.state.text, editor.state.spans], [1, "claimed", []]);
 });
 
 test("attachImage stores the image and puts it over the selection, and an abort during the handle stores nothing", async () => {

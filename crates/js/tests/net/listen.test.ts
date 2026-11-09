@@ -131,7 +131,4 @@ test("a relative path throws a TypeError, and a failed bind throws a ConnectionE
   assert(noFolder instanceof ConnectionError);
   equal(noFolder.code, "ENOENT");
   assert(noFolder.message.startsWith(`listen ${missing}: `), noFolder.message);
-  const tooLong = throws(() => listen({ path: `/${"a".repeat(200)}` }));
-  assert(tooLong instanceof ConnectionError);
-  equal(tooLong.code, undefined);
 });

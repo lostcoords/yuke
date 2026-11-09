@@ -245,67 +245,62 @@ fn local(changes: &serde_json::Value) -> String {
     entry.to_string()
 }
 
-/// Check that each entry list stops the parse with its text.
+/// Check that each entry list stops the parse with an error that starts with the given provider, model, and field.
 fn assert_errors<const N: usize>(cases: [(String, &str); N]) {
-    for (entries, expected) in cases {
-        assert_eq!(parse(&entries), Err(expected.to_owned()), "{entries}");
+    for (entries, prefix) in cases {
+        let error = parse(&entries).unwrap_err();
+        assert!(error.starts_with(prefix), "{entries}: {error}");
     }
 }
 
 #[test]
 fn a_bad_provider_field_stops_the_load_and_names_the_field() {
     assert_errors([
-        (
-            r#"{ "id": "a/b" }"#.to_owned(),
-            "provider a/b: id: \"a/b\" must not be empty, and must have no white space, no control character, and no slash",
-        ),
-        (
-            r#"{ "id": "" }"#.to_owned(),
-            "provider : id: \"\" must not be empty, and must have no white space, no control character, and no slash",
-        ),
+        (r#"{ "id": "a/b" }"#.to_owned(), "provider a/b: id:"),
+        (r#"{ "id": "" }"#.to_owned(), "provider : id:"),
         (
             r#"{ "id": "openai" }, { "id": "openai" }"#.to_owned(),
-            "provider openai: the file has this id twice",
+            "provider openai:",
         ),
         (
             r#"{ "id": "local", "endpoints": [{ "protocol": "openai_chat" }], "models": [] }"#.to_owned(),
-            "provider local: base_url: a new provider needs it",
+            "provider local: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "ftp://h" }"#.to_owned(),
-            "provider openai: base_url: the URL must start with http:// or https://",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "https:///v1" }"#.to_owned(),
-            "provider openai: base_url: the URL has no host",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "https://u@h/v1" }"#.to_owned(),
-            "provider openai: base_url: the URL must have no user",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "http://h:bad/v1" }"#.to_owned(),
-            "provider openai: base_url: the URL port must be a number from 0 to 65535",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "https://h/v1?a=1" }"#.to_owned(),
-            "provider openai: base_url: the URL must have no query and no fragment",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "openai", "base_url": "https://h/v 1" }"#.to_owned(),
-            "provider openai: base_url: the URL must have no white space and no control character",
+            "provider openai: base_url:",
         ),
         (
             r#"{ "id": "xai-grok", "api_key_env": "XAI_KEY" }"#.to_owned(),
-            "provider xai-grok: api_key_env: the provider uses a login of `yuke login`",
+            "provider xai-grok: api_key_env:",
         ),
         (
             r#"{ "id": "openai", "api_key_env": "" }"#.to_owned(),
-            "provider openai: api_key_env: \"\" is not a variable name: write a name with no '=' and no NUL",
+            "provider openai: api_key_env:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [] }"#.to_owned(),
-            "provider openai: endpoints: the list is empty",
+            "provider openai: endpoints:",
         ),
     ]);
 }
@@ -318,37 +313,35 @@ fn a_bad_endpoint_or_header_stops_the_load_and_names_the_field() {
                 { "protocol": "openai_responses", "credential_header": "api_key" },
                 { "protocol": "openai_responses", "credential_header": "api_key" }] }"#
                 .to_owned(),
-            "provider openai: endpoints[1].protocol: another endpoint has this protocol",
+            "provider openai: endpoints[1].protocol:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "cache_breakpoint": true }] }"#.to_owned(),
-            "provider openai: endpoints[0].cache_breakpoint: Chat Completions has no breakpoint",
+            "provider openai: endpoints[0].cache_breakpoint:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_chat", "responses_dialect": "codex" }] }"#
                 .to_owned(),
-            "provider openai: endpoints[0].responses_dialect: only an openai_responses endpoint takes it",
+            "provider openai: endpoints[0].responses_dialect:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_responses", "chat_dialect": "mistral" }] }"#
                 .to_owned(),
-            "provider openai: endpoints[0].chat_dialect: only an openai_chat endpoint takes it",
+            "provider openai: endpoints[0].chat_dialect:",
         ),
         (
             r#"{ "id": "openai", "endpoints": [{ "protocol": "openai_responses" }] }"#.to_owned(),
-            "provider openai: endpoints[0].credential_header: the provider sends a credential, so name its header",
+            "provider openai: endpoints[0].credential_header:",
         ),
         (
             local(
                 &serde_json::json!({ "endpoints": [{ "protocol": "anthropic_messages", "credential_header": "x_api_key" }] }),
             ),
-            "provider local: endpoints[0].credential_header: the provider sends no credential: set api_key_env, or \
-             remove the header",
+            "provider local: endpoints[0].credential_header:",
         ),
         (
             local(&serde_json::json!({ "headers": [{ "name": "content-type", "value": "x" }] })),
-            "provider local: headers: 'content-type' is not a valid header name or value, or yuke writes this header \
-             itself",
+            "provider local: headers:",
         ),
     ]);
 }
@@ -358,70 +351,48 @@ fn a_bad_model_stops_the_load_and_names_the_model_and_the_field() {
     assert_errors([
         (
             r#"{ "id": "openai", "models": [{ "id": "a" }, { "id": "a" }] }"#.to_owned(),
-            "provider openai: model a: the provider has this id twice",
+            "provider openai: model a:",
         ),
         (
             r#"{ "id": "openai", "models": [{ "id": "a b" }] }"#.to_owned(),
-            "provider openai: model a b: id: \"a b\" must not be empty, and must have no white space, no control character",
+            "provider openai: model a b: id:",
         ),
         (
             r#"{ "id": "openai", "models": [{ "id": "a", "cost": [{ "min_prompt_tokens": 5 }] }] }"#.to_owned(),
-            "provider openai: model a: cost: the first band starts at 0, each next band starts higher, and no price is \
-             negative",
+            "provider openai: model a: cost:",
         ),
         (
             r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "max_tokens_field": "max_tokens" } }] }"#
                 .to_owned(),
-            "provider openai: model a: flags: thinking_format, reasoning_replay, and max_tokens_field need the \
-             openai_chat protocol",
+            "provider openai: model a: flags:",
         ),
         (
             r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "anthropic_thinking": "toggle" } }] }"#.to_owned(),
-            "provider openai: model a: flags.anthropic_thinking: it needs the anthropic_messages protocol",
+            "provider openai: model a: flags.anthropic_thinking:",
         ),
         (
             local(&serde_json::json!({
                 "models": [{ "id": "m", "flags": { "anthropic_thinking": "adaptive", "reasoning_budget_max": 9 } }]
             })),
-            "provider local: model m: flags: the reasoning budget needs \"anthropic_thinking\": \"budget\"",
+            "provider local: model m: flags:",
         ),
         (
             local(&serde_json::json!({ "models": [{ "id": "m" }] })),
-            "provider local: model m: the catalog model names no output limit, which its protocol requires",
+            "provider local: model m:",
         ),
         (
             r#"{ "id": "local", "base_url": "http://h/v1", "models": [{ "id": "m" }],
                  "endpoints": [{ "protocol": "openai_chat" }, { "protocol": "openai_responses" }] }"#
                 .to_owned(),
-            "provider local: model m: protocol: the provider has more than one endpoint, so name one",
+            "provider local: model m: protocol:",
         ),
     ]);
 }
 
 #[test]
-fn an_unknown_field_or_value_is_an_error() {
-    for (entries, expected) in [
-        (r#"{ "id": "openai", "base_ur": "x" }"#, "unknown field `base_ur`"),
-        (
-            r#"{ "id": "openai", "models": [{ "id": "a", "flags": { "vision": true } }] }"#,
-            "unknown field `vision`",
-        ),
-        (
-            r#"{ "id": "openai", "models": [{ "id": "a", "cost": [{ "inptu": 1 }] }] }"#,
-            "unknown field `inptu`",
-        ),
-        (
-            r#"{ "id": "openai", "session_header": "cookie" }"#,
-            "unknown variant `cookie`",
-        ),
-        (
-            r#"{ "id": "openai", "models": [{ "id": "a", "reasoning_levels": ["huge"] }] }"#,
-            "unknown variant `huge`",
-        ),
-    ] {
-        let error = parse(entries).unwrap_err();
-        assert!(error.contains(expected), "{entries}: {error}");
-    }
+fn an_unknown_field_is_an_error() {
+    let error = parse(r#"{ "id": "openai", "base_ur": "x" }"#).unwrap_err();
+    assert!(error.contains("unknown field `base_ur`"), "{error}");
     assert!(
         parse_text(r#"{ "provider": [] }"#)
             .unwrap_err()

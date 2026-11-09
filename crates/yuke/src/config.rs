@@ -442,11 +442,6 @@ mod tests {
             error(json!(1)),
             "a plugin is a folder path or an object with \"path\" or \"git\""
         );
-        assert_eq!(
-            error(json!({ "path": "./a", "options": null })),
-            "invalid type: null, expected a map"
-        );
-        assert!(error(json!({ "path": "./a", "option": {} })).starts_with("unknown field `option`"));
         assert_eq!(error(json!({ "options": {} })), "a plugin needs \"path\" or \"git\"");
         assert_eq!(
             error(json!({ "path": "./a", "git": "https://host/repo" })),

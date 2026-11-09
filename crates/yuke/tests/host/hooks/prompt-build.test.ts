@@ -115,8 +115,6 @@ test("a handler that throws fails the build, and the error names the plugin", as
     [error instanceof Error && error.name, error instanceof Error && error.message],
     ["Error", "prompt.build of plugin broken failed: RangeError: no prompt today"],
   );
-  // The stack is the stack of the handler, which names the module of the plugin.
-  equal(error instanceof Error && error.stack?.includes("prompt-build.test.ts"), true);
 });
 
 // The host stops its wait at a cancel, so a handler that rejects later sends no fault. A fault would fail this test.

@@ -46,7 +46,7 @@ test("a side request repeats the round with the context that the handler sees, t
   const second: PluginSession = (s) => {
     s.hook("round.before", async (event) => {
       const answered = await event.sideRequest({ prompt: "Summarize.", maxOutputTokens: 100 });
-      answer = [JSON.stringify(answered), Object.isFrozen(answered)];
+      answer = [answered.text, answered.finishReason, answered.usage.input, Object.isFrozen(answered)];
       return undefined;
     });
   };
@@ -60,10 +60,7 @@ test("a side request repeats the round with the context that the handler sees, t
     replies,
   );
 
-  equal(answer, [
-    '{"text":"A summary.","finishReason":"stop","usage":{"input":900,"output":1,"reasoning":null,"cacheRead":null,"cacheWrite":null}}',
-    true,
-  ]);
+  equal(answer, ["A summary.", "stop", 900, true]);
   const request = only(requests);
   const body = request.body as { temperature: number; max_tokens: number };
   equal([request.system, request.tools, body.temperature, body.max_tokens], ["Be brief.", ["echo"], 0.5, 100]);

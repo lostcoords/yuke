@@ -665,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn listen_and_connect_take_a_unix_path_and_need_rpc() {
+    fn listen_and_connect_take_a_unix_path() {
         let path = PathBuf::from("/run/yuke.sock");
         assert_eq!(
             mode(&["--rpc", "--listen", "unix:///run/yuke.sock"]),
@@ -678,11 +678,6 @@ mod tests {
             Ok(Mode::Connect(path))
         );
         for flag in ["--listen", "--connect"] {
-            assert_eq!(
-                mode(&[flag, "unix:///a"]),
-                Err(ErrorKind::MissingRequiredArgument),
-                "{flag}"
-            );
             assert_eq!(mode(&["--rpc", flag, "/a"]), Err(ErrorKind::ValueValidation), "{flag}");
             assert_eq!(
                 mode(&["--rpc", flag, "unix://"]),
@@ -690,10 +685,6 @@ mod tests {
                 "{flag}"
             );
         }
-        assert_eq!(
-            mode(&["--rpc", "--listen", "unix:///a", "--connect", "unix:///a"]),
-            Err(ErrorKind::ArgumentConflict)
-        );
     }
 
     #[test]

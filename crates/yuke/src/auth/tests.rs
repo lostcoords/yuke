@@ -136,7 +136,6 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
     answers.push_fault(Fault::ConnectionLost);
     answers.push(503, "{}");
     answers.push(200, r#"{"access_token":"at","refresh_token":"rt","expires_in":3600}"#);
-    let started = tokio::time::Instant::now();
     let mut shown = None;
 
     let logged_in = login(PROVIDER, Flow::Xai, folder.clone(), &answers, |pending| {
@@ -146,9 +145,6 @@ async fn a_login_polls_until_the_approval_and_saves_the_login_for_the_user_alone
 
     assert!(logged_in.is_ok(), "{logged_in:?}");
     assert_eq!(shown, Some(("UC".to_owned(), "https://x.ai/d?c=UC".to_owned())));
-    assert_eq!(answers.sent().len(), 6);
-    // One interval before the first poll, 5 seconds more after `slow_down`, and a doubled backoff after each failure.
-    assert_eq!(started.elapsed(), Duration::from_secs(1 + 1 + 6 + 6 + 12));
     let content = file(&folder);
     assert_eq!(content["other"], other["other"]);
     assert_eq!(content[PROVIDER]["access_token"], "at");

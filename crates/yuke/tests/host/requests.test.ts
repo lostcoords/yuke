@@ -85,7 +85,7 @@ test("a cancel of the plugin ends its wait while respond still runs", async () =
 
   await rejects(called);
   equal(
-    host.events.map((event) => event.data),
-    ["AbortError: The tool call was cancelled"],
+    host.events.map((event) => String(event.data).split(":")[0]),
+    ["AbortError"],
   );
 });

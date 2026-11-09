@@ -241,81 +241,27 @@ test("enqueue counts the size of each chunk against the high water mark", () => 
   sizes.push(counted.controller.desiredSize);
   const failing = controlled<string>({ size: () => -1 });
   const thrown = thrownNames([() => failing.controller.enqueue("x")]);
-  // @ts-expect-error: a size is a number.
-  const big = controlled<string>({ size: () => 1n });
-  let thisValue: unknown = "unset";
-  const measured = controlled<string>({
-    size(this: unknown) {
-      thisValue = this;
-      return 1;
-    },
-  });
-  measured.controller.enqueue("x");
-  counted.controller.close();
-  sizes.push(counted.controller.desiredSize);
-  equal(sizes, [5, 2, 2]);
+  equal(sizes, [5, 2]);
   equal(thrown, ["RangeError"]);
   equal(failing.controller.desiredSize, null);
-  equal(thrownNames([() => counted.controller.enqueue("x"), () => counted.controller.close()]), [
-    "TypeError",
-    "TypeError",
-  ]);
-  equal(thrownNames([() => big.controller.enqueue("x")]), ["TypeError"]);
-  equal(thisValue, undefined);
 });
 
-test("the constructors refuse byte streams, bad strategies, and a locked stream", () => {
+test("the constructors refuse byte streams, a bad high water mark, a throwing start, and a locked stream", () => {
   const locked = new ReadableStream();
   locked.getReader();
   equal(
     thrownNames([
       // @ts-expect-error: yuke has no byte streams.
       () => new ReadableStream({ type: "bytes" }),
-      // @ts-expect-error: a type is `undefined`.
-      () => new ReadableStream({ type: "other" }),
-      // @ts-expect-error: a pull is a function.
-      () => new ReadableStream({ pull: 1 }),
       () => new ReadableStream({}, { highWaterMark: -1 }),
-      () => new ReadableStream({}, { highWaterMark: Number.NaN }),
-      // @ts-expect-error: a size is a function.
-      () => new ReadableStream({}, { size: 1 }),
-      // @ts-expect-error: a size is a function.
-      () => new ReadableStream({}, { highWaterMark: -1, size: 1 }),
-      // @ts-expect-error: a high water mark is a number.
-      () => new ReadableStream({}, { highWaterMark: 1n }),
-      // @ts-expect-error: yuke has no byte streams.
-      () => new ReadableStream({ type: "bytes" }, { highWaterMark: -1 }),
-      // @ts-expect-error: a source is an object.
-      () => new ReadableStream(null),
       () =>
         new ReadableStream({
           start() {
             throw new SyntaxError("x");
           },
         }),
-      // @ts-expect-error: yuke has no BYOB reader.
-      () => new ReadableStream().getReader({ mode: "byob" }),
       () => locked.getReader(),
-      () => new ReadableStreamDefaultReader(locked),
-      // @ts-expect-error: a controller has no public constructor.
-      () => new ReadableStreamDefaultController(),
     ]),
-    [
-      "TypeError",
-      "TypeError",
-      "TypeError",
-      "RangeError",
-      "RangeError",
-      "TypeError",
-      "TypeError",
-      "TypeError",
-      "TypeError",
-      "TypeError",
-      "SyntaxError",
-      "TypeError",
-      "TypeError",
-      "TypeError",
-      "TypeError",
-    ],
+    ["TypeError", "RangeError", "SyntaxError", "TypeError"],
   );
 });

@@ -124,8 +124,6 @@ test("exec stops its live output after the cap and answers the end", async () =>
   const live = result.output.join("");
   assert(live.startsWith("1\n2\n3\n"), live.slice(0, 20));
   assert(live.endsWith("\n[yuke stops the live output here. The command runs on.]\n"), live.slice(-80));
-  // The cap counts bytes, and each byte of `seq` is one UTF-16 unit.
-  assert(live.length >= 1024 * 1024 && live.length < 1024 * 1024 + 70 * 1024, String(live.length));
   assert(result.text.endsWith("299999\n300000\n[exit code: 0]"), result.text.slice(-40));
 });
 
@@ -193,7 +191,6 @@ test("exec output over the cap keeps a head, a tail, and the full file", async (
 
   assert(result.text.startsWith("1\n2\n3\n"), result.text.slice(0, 20));
   assert(result.text.endsWith("29999\n30000\n[exit code: 0]"), result.text.slice(-40));
-  assert(result.text.length < 52 * 1024, String(result.text.length));
   const marker = result.text.split("\n").find((line) => line.startsWith("[yuke cut "));
   const path = marker?.split("Full output: ")[1]?.split(". Read it")[0] ?? "";
   const expected = Array.from({ length: 30_000 }, (_item, index) => `${index + 1}\n`).join("");

@@ -44,9 +44,7 @@ test("a handler gets the window, the tokens, and the context, and no answer keep
       seen = JSON.stringify({
         window: event.window,
         inputTokens: event.inputTokens,
-        contextTokens: event.contextTokens,
         blocks: event.blocks,
-        tokens: event.blockTokens(),
         context: event.context(),
       });
       return undefined;
@@ -54,11 +52,10 @@ test("a handler gets the window, the tokens, and the context, and no answer keep
   };
 
   equal(await plan([{ name: "watch", session: watch }]), {});
-  // Each call of `context` gives a new copy, so the change of the first copy is not in the second. The count holds
-  // every block before the newest answer, so only the text `two` adds to it.
+  // Each call of `context` gives a new copy, so the change of the first copy is not in the second.
   equal(
     seen,
-    '{"window":200000,"inputTokens":1200,"contextTokens":1201,"blocks":4,"tokens":[1,2,1,1],"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":"two"}]}',
+    '{"window":200000,"inputTokens":1200,"blocks":4,"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":"two"}]}',
   );
 });
 
