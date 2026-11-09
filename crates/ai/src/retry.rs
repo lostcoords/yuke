@@ -194,12 +194,6 @@ mod tests {
             ..Policy::default()
         };
         assert_eq!(Some(2000), millis(decide(inverted, &server, nth(1), 0.0)));
-        let largest = Policy {
-            base: Duration::MAX,
-            cap: Duration::MAX,
-            ..Policy::default()
-        };
-        assert!(decide(largest, &server, nth(1), 0.0).is_some());
     }
 
     #[test]

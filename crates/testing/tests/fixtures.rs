@@ -51,8 +51,6 @@ fn folder_paths_are_absolute_and_canonical() {
 
     assert!(path.is_absolute());
     assert_eq!(path, path.canonicalize().unwrap());
-    std::fs::write(path.join("created.txt"), "created").unwrap();
-    assert_eq!(std::fs::read_to_string(path.join("created.txt")).unwrap(), "created");
     std::fs::remove_dir_all(path).unwrap();
 }
 

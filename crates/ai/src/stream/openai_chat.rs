@@ -793,8 +793,8 @@ mod tests {
             serde_json::to_string(&data).unwrap()
         );
         let expected = format!("[{entry},{entry}]");
-        assert_eq!(expected.len(), 203);
-        for bound in [200, 203] {
+        // The merged details are the bound: one byte less fails, and the exact size succeeds.
+        for bound in [expected.len() - 1, expected.len()] {
             let mut h = Harness::new(PROTOCOL).limits(ResponseLimits {
                 max_event_bytes: bound,
                 ..ResponseLimits::default()
@@ -804,7 +804,7 @@ mod tests {
                 h.feed(&[chunk]).unwrap();
             }
             let result = h.feed(&["[DONE]"]);
-            if bound == 200 {
+            if bound < expected.len() {
                 assert_eq!(result, Err(DecodeError::TooLarge));
             } else {
                 assert_eq!(result, Ok(()));

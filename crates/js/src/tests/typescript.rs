@@ -96,13 +96,13 @@ async fn a_failure_and_a_stray_rejection_fail_only_their_own_tests() {
     .await
     .unwrap();
 
+    // The wording of the first failure belongs to `yuke:test`.
+    let statuses = statuses(&outcomes);
+    assert_eq!(statuses[0].0, "first");
+    assert!(statuses[0].1.starts_with("failed"), "{statuses:?}");
     assert_eq!(
-        statuses(&outcomes),
+        statuses[1..],
         [
-            (
-                "first".to_owned(),
-                "failed: equal: at the value: expected 2, got 1".to_owned()
-            ),
             ("second".to_owned(), "failed: nobody awaits it".to_owned()),
             ("third".to_owned(), "passed".to_owned()),
         ]

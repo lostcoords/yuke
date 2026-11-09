@@ -208,9 +208,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unescaped_strings_borrow_input() {
+    fn plain_and_escaped_strings_read_their_text() {
         let value = parse_bytes(br#"{"plain":"abc","escaped":"a\nb"}"#).unwrap();
-        assert!(matches!(value.get("plain"), Some(Value::String(Cow::Borrowed("abc")))));
+        assert_eq!(value.get_str("plain"), Some("abc"));
         assert_eq!(value.get_str("escaped"), Some("a\nb"));
     }
 

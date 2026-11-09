@@ -137,27 +137,22 @@ async fn a_server_starts_and_gives_its_tools_deferred_with_their_names_and_schem
 
     assert_eq!(
         servers.states(),
-        [server("test", McpServerState::Connected { tools: 6 })]
+        [server("test", McpServerState::Connected { tools: tools.len() })]
     );
     // The newest version with `initialize`, which each server of this era speaks.
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "initialize \"2025-11-25\"\n");
     assert_eq!(*changes.borrow_mut(), servers.states());
-    let names: Vec<_> = tools.iter().map(|(definition, _)| definition.name.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "mcp__test__echo",
-            "mcp__test__picture",
-            "mcp__test__fail",
-            "mcp__test__structured",
-            "mcp__test__wait",
-            "mcp__test__exit"
-        ]
-    );
+    let tool = |name: &str| {
+        tools
+            .iter()
+            .find(|(definition, _)| definition.name == name)
+            .unwrap_or_else(|| panic!("the server gives no tool {name}"))
+    };
     // A tool title, else an annotation title, is the title of the summary line.
-    let titles: Vec<_> = tools.iter().take(3).map(|(_, tool)| tool.hints().title).collect();
-    assert_eq!(titles, [Some("Echo".to_owned()), Some("Picture".to_owned()), None]);
-    let (echo, _) = &tools[0];
+    assert_eq!(tool("mcp__test__echo").1.hints().title, Some("Echo".to_owned()));
+    assert_eq!(tool("mcp__test__picture").1.hints().title, Some("Picture".to_owned()));
+    assert_eq!(tool("mcp__test__fail").1.hints().title, None);
+    let (echo, _) = tool("mcp__test__echo");
     assert!(echo.defer_loading);
     assert_eq!(echo.description, "Echo the text.");
     assert_eq!(

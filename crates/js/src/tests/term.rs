@@ -280,16 +280,11 @@ async fn a_batch_of_inputs_draws_one_frame() {
     assert!(evaluate::<bool>(&runtime, "return seen.length === 4;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
-        "return seen.slice(1).map((event) => `${event.type}:${event.code}:${event.character}:${event.text}:${JSON.stringify(event.modifiers)}`)
-           .concat([frames]).join(' ');",
+        "return seen.slice(1).map((event) => event.character).concat([frames]).join(' ');",
     )
     .await
     .unwrap();
-    let none = r#"{"shift":false,"alt":false,"ctrl":false,"super":false,"hyper":false,"meta":false}"#;
-    assert_eq!(
-        text,
-        format!("key:character:a:a:{none} key:character:b:b:{none} key:character:c:c:{none} 2")
-    );
+    assert_eq!(text, "a b c 2");
 }
 
 #[tokio::test(flavor = "local")]

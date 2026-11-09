@@ -52,9 +52,14 @@ fn migrated() -> Connection {
 
 #[test]
 fn migrations_hold_each_migration_file_in_number_order() {
-    let files: Vec<String> = ["0001_notes.sql", "0002_pins.sql", "0003_tags.sql"]
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(fixture().join("migrations"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    paths.sort();
+    let files: Vec<String> = paths
         .iter()
-        .map(|name| std::fs::read_to_string(fixture().join("migrations").join(name)).unwrap())
+        .map(|path| std::fs::read_to_string(path).unwrap())
         .collect();
 
     assert_eq!(queries::MIGRATIONS, files);

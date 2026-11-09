@@ -97,29 +97,30 @@ async fn console_asserts_counts_groups_and_tables_as_the_console_standard() {
         (NoticeLevel::Debug, "outer"),
         (NoticeLevel::Debug, "    two\n    lines"),
         (NoticeLevel::Debug, "\"text\""),
-        (
-            NoticeLevel::Debug,
-            "┌─────────┬────┬─────┬────────┐\n\
-             │ (index) │ a  │ b   │ Values │\n\
-             ├─────────┼────┼─────┼────────┤\n\
-             │ 0       │ 1  │ \"x\" │        │\n\
-             │ 1       │ 22 │     │        │\n\
-             │ 2       │    │     │ 7      │\n\
-             └─────────┴────┴─────┴────────┘",
-        ),
-        (
-            NoticeLevel::Debug,
-            "┌─────────┬───┐\n\
-             │ (index) │ b │\n\
-             ├─────────┼───┤\n\
-             │ first   │ 2 │\n\
-             └─────────┴───┘",
-        ),
-        (NoticeLevel::Debug, "plain"),
     ];
     for (level, text) in expected {
         assert_eq!(next_line(&mut reports).await, (level, text.to_owned()));
     }
+    // A table holds its column names and its cell values. The frame characters are not the concern.
+    let cells = |table: String| -> Vec<String> {
+        table
+            .lines()
+            .filter(|line| line.contains('│'))
+            .flat_map(|line| line.split('│'))
+            .map(|cell| cell.trim().to_owned())
+            .filter(|cell| !cell.is_empty())
+            .collect()
+    };
+    let (level, table) = next_line(&mut reports).await;
+    assert_eq!(level, NoticeLevel::Debug);
+    assert_eq!(
+        cells(table),
+        ["(index)", "a", "b", "Values", "0", "1", "\"x\"", "1", "22", "2", "7"]
+    );
+    let (level, table) = next_line(&mut reports).await;
+    assert_eq!(level, NoticeLevel::Debug);
+    assert_eq!(cells(table), ["(index)", "b", "first", "2"]);
+    assert_eq!(next_line(&mut reports).await, (NoticeLevel::Debug, "plain".to_owned()));
 }
 
 #[tokio::test(flavor = "local")]

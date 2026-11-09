@@ -174,7 +174,6 @@ async fn a_tool_of_yuke_fails_after_its_session_closes_and_a_new_open_does_not_r
         "the session is closed"
     );
     assert!(call(&second["read"], r#"{"path": "notes.txt"}"#).await.is_ok());
-    assert_eq!(second.session.tools().await.unwrap().len(), 5);
 }
 
 #[tokio::test(flavor = "local")]

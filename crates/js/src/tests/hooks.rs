@@ -5,25 +5,53 @@ use std::time::Duration;
 
 use yuke_agent::PromptSection;
 use yuke_ai::{Blob, Block, FinishReason, Media, Settings, ToolCall, ToolDefinition, ToolResult};
-use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundStart, ToolDecision, ToolOutcome};
+use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundDecision, RoundStart, ToolDecision, ToolOutcome};
 
 use super::{evaluate, opened, windowed};
 use crate::ScriptSession;
 use crate::native::ai::context_tokens;
 
+/// What the hooks of a session decide at a hook point for a plain event.
+#[derive(Debug, PartialEq)]
+enum Decision {
+    Tool(ToolDecision),
+    /// The text of the replacement result, or `None` when the result stays.
+    ToolReplaced(Option<String>),
+    /// The round stays as it is.
+    RoundStays,
+    /// A plan that changes the context, the model, or the settings.
+    RoundChanged,
+    Round(RoundDecision),
+    Prompt(Vec<PromptSection>),
+    Failed(String),
+}
+
 /// The hook points of a turn that a cancel ends: the late answer of each handler, and the decision that the host gives
 /// at once.
-const CANCELLED: [(&str, &str, &str); 5] = [
-    ("tool.before", "{ block: 'too late' }", "Run"),
-    ("tool.after", "{ text: 'too late' }", "None"),
-    ("round.before", "{ settings: { temperature: 0.9 } }", "the round stays"),
-    ("round.after", "{ stop: true }", "Ok(Proceed)"),
-    (
-        "prompt.build",
-        "{ sections: { late: 'x' } }",
-        r#"Ok([("base", "You are yuke."), ("environment", "workspace: /work")])"#,
-    ),
-];
+fn cancelled() -> [(&'static str, &'static str, Decision); 5] {
+    [
+        (
+            "tool.before",
+            "{ block: 'too late' }",
+            Decision::Tool(ToolDecision::Run),
+        ),
+        ("tool.after", "{ text: 'too late' }", Decision::ToolReplaced(None)),
+        (
+            "round.before",
+            "{ settings: { temperature: 0.9 } }",
+            Decision::RoundStays,
+        ),
+        ("round.after", "{ stop: true }", Decision::Round(RoundDecision::Proceed)),
+        (
+            "prompt.build",
+            "{ sections: { late: 'x' } }",
+            Decision::Prompt(vec![
+                PromptSection::new("base", "You are yuke."),
+                PromptSection::new("environment", "workspace: /work"),
+            ]),
+        ),
+    ]
+}
 
 fn call() -> ToolCall {
     ToolCall {
@@ -66,8 +94,8 @@ fn result() -> ToolResult {
     }
 }
 
-/// The decision of the hooks of `session` at `point` for a plain event under `token`, as its debug text.
-async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) -> String {
+/// The decision of the hooks of `session` at `point` for a plain event under `token`.
+async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) -> Decision {
     let hooks = session.hooks(token.clone());
     let context = [Block::user_text("one")];
     let settings = Settings::new();
@@ -82,40 +110,36 @@ async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) 
     };
     let decided = async {
         match point {
-            "tool.before" => format!("{:?}", hooks.before_tool(&call()).await),
-            "tool.after" => format!(
-                "{:?}",
+            "tool.before" => Decision::Tool(hooks.before_tool(&call()).await),
+            "tool.after" => Decision::ToolReplaced(
                 hooks
                     .after_tool(&call(), &outcome())
                     .await
-                    .map(|answer| answer.result.content)
+                    .map(|answer| answer.result.content),
             ),
             "round.before" => match hooks.before_round(&round).await {
                 Ok(plan) if plan.replace.is_none() && plan.model.is_none() && plan.settings.is_none() => {
-                    "the round stays".to_owned()
+                    Decision::RoundStays
                 }
-                other => format!("{other:?}"),
+                Ok(_) => Decision::RoundChanged,
+                Err(error) => Decision::Failed(error.to_string()),
             },
-            "round.after" => format!(
-                "{:?}",
-                hooks
-                    .after_round(&[Block::assistant_text("done")], Some(FinishReason::Stop))
-                    .await
-                    .map_err(|error| error.to_string())
-            ),
+            "round.after" => match hooks
+                .after_round(&[Block::assistant_text("done")], Some(FinishReason::Stop))
+                .await
+            {
+                Ok(decision) => Decision::Round(decision),
+                Err(error) => Decision::Failed(error.to_string()),
+            },
             "prompt.build" => {
                 let saved = [
                     PromptSection::new("base", "You are yuke."),
                     PromptSection::new("environment", "workspace: /work"),
                 ];
-                let built = session.build_prompt(&saved, &token).await;
-                format!(
-                    "{:?}",
-                    built.map(|sections| sections
-                        .into_iter()
-                        .map(|section| (section.key, section.text))
-                        .collect::<Vec<_>>())
-                )
+                match session.build_prompt(&saved, &token).await {
+                    Ok(sections) => Decision::Prompt(sections),
+                    Err(error) => Decision::Failed(error.to_string()),
+                }
             }
             other => panic!("{other} is no hook point"),
         }
@@ -127,7 +151,7 @@ async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) 
 // count.
 #[tokio::test(flavor = "local")]
 async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once() {
-    for (point, late, expected) in CANCELLED {
+    for (point, late, expected) in cancelled() {
         let (runtime, session, _reports) = opened(
             &format!("a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once/{point}"),
             &[(
@@ -220,8 +244,12 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
 #[tokio::test(flavor = "local")]
 async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
     for (point, answer, expected) in [
-        ("tool.before", "{ block: 'too late' }", "Run"),
-        ("tool.after", "{ text: 'too late' }", "None"),
+        (
+            "tool.before",
+            "{ block: 'too late' }",
+            Decision::Tool(ToolDecision::Run),
+        ),
+        ("tool.after", "{ text: 'too late' }", Decision::ToolReplaced(None)),
     ] {
         let (runtime, session, _reports) = opened(
             &format!("an_answer_that_comes_after_the_close_of_the_session_does_not_count/{point}"),

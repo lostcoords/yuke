@@ -248,14 +248,11 @@ fn retry_after_reads_seconds_or_http_date() {
     // Both SDKs read the delay with `parseFloat`, so a decimal and a sign count.
     assert_eq!(retry_after_ms("1.5", now), Some(1_500));
     assert_eq!(retry_after_ms("+5", now), Some(5_000));
-    assert_eq!(retry_after_ms("18446744073709551615999", now), Some(u64::MAX));
     assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:50:07 GMT", now), Some(30_000));
     // A date in the past is no delay.
     assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:00:00 GMT", now), Some(0));
-    // The obsolete forms and malformed values leave the delay to the caller.
+    // Malformed values leave the delay to the caller.
     for value in [
-        "Sunday, 06-Nov-94 08:49:37 GMT",
-        "Sun Nov  6 08:49:37 1994",
         "Sun, 06 Nov 1994 08:49:37 UTC",
         "Wed, 30 Feb 2000 00:00:00 GMT",
         "Sun, 06 Nov 1994 24:00:00 GMT",

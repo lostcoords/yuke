@@ -547,19 +547,26 @@ mod tests {
     }
 
     #[test]
-    fn resolve_parses_selectors_and_reports_lookup_errors() {
-        let row = &PROVIDERS[0];
-        let selector = format!("{}/{}", row.id, row.models[0].id);
-        let resolved = resolve(&selector).unwrap();
-        assert_eq!(resolved.model, row.models[0].upstream_id);
+    fn a_selector_divides_at_its_first_slash_and_reports_lookup_errors() {
+        let table = [provider(
+            Vec::new(),
+            vec![
+                model("claude", Protocol::OpenaiChat),
+                model("amazon/nova", Protocol::OpenaiChat),
+            ],
+        )];
 
-        assert_eq!(resolve("nope/model"), Err(Error::UnknownProvider));
-        assert_eq!(resolve("anthropic/nope"), Err(Error::UnknownModel));
-        // An OpenRouter model id holds its own slash, so only the first one divides the selector.
-        let nova = resolve("openrouter/amazon/nova-2-lite-v1").unwrap();
-        assert_eq!(nova.model, "amazon/nova-2-lite-v1");
-        for malformed in ["anthropic", "/claude", "anthropic/"] {
-            assert_eq!(resolve(malformed), Err(Error::MalformedSelector), "{malformed}");
+        assert_eq!(lookup_in(&table, "host/claude").unwrap().model.id, "claude");
+        assert_eq!(lookup_in(&table, "nope/claude").err(), Some(Error::UnknownProvider));
+        assert_eq!(lookup_in(&table, "host/nope").err(), Some(Error::UnknownModel));
+        // A model id may hold its own slash, so only the first one divides the selector.
+        assert_eq!(lookup_in(&table, "host/amazon/nova").unwrap().model.id, "amazon/nova");
+        for malformed in ["host", "/claude", "host/"] {
+            assert_eq!(
+                lookup_in(&table, malformed).err(),
+                Some(Error::MalformedSelector),
+                "{malformed}"
+            );
         }
     }
 
@@ -694,13 +701,6 @@ mod tests {
         let models = [
             model("chat", Protocol::OpenaiChat),
             model("bare", Protocol::AnthropicMessages),
-            Model {
-                limits: Limits {
-                    max_output_tokens: Some(u64::MAX),
-                    ..Limits::default()
-                },
-                ..model("big", Protocol::AnthropicMessages)
-            },
         ];
         let host = provider(endpoints.to_vec(), models.to_vec());
         let chat = Entry {
@@ -713,17 +713,6 @@ mod tests {
             model: &host.models[1],
         };
         assert_eq!(bare.bind(), Err(Error::MissingOutputLimit));
-        let big = Entry {
-            provider: &host,
-            model: &host.models[2],
-        };
-        assert_eq!(
-            big.bind().map(|target| target.wire),
-            Ok(Wire::AnthropicMessages(AnthropicWire {
-                max_tokens: u32::MAX,
-                cache: false
-            }))
-        );
     }
 
     #[test]

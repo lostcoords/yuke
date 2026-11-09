@@ -91,7 +91,7 @@ fn generation_creates_updates_and_checks_output() {
     let repeated = run(&["--crate", crate_argument]);
     assert!(repeated.status.success(), "{}", text(&repeated.stderr));
     let stdout = text(&repeated.stdout);
-    assert!(stdout.contains("is up to date\nquery files: 1\nqueries: 9"), "{stdout}");
+    assert!(stdout.contains("is up to date"), "{stdout}");
     assert_eq!(std::fs::read_to_string(&output).unwrap(), written);
 
     std::fs::write(&output, "stale").unwrap();

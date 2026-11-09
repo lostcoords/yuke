@@ -363,11 +363,17 @@ async fn the_built_in_tools_come_with_their_definitions() {
 
     let tools = Tools::open(&runtime, host).await;
 
-    assert_eq!(tools.names(), ["read", "write", "edit", "exec", "stop"]);
-    let (read, read_tool) = &tools.list[0];
+    let tool = |name: &str| {
+        tools
+            .list
+            .iter()
+            .find(|(definition, _)| definition.name == name)
+            .unwrap()
+    };
+    let (read, read_tool) = tool("read");
     assert!(read.input_schema.contains("\"offset\""), "{}", read.input_schema);
     assert_eq!(read_tool.concurrency(), Concurrency::Parallel);
-    assert_eq!(tools.list[1].1.concurrency(), Concurrency::Serial);
+    assert_eq!(tool("write").1.concurrency(), Concurrency::Serial);
 }
 
 #[tokio::test(flavor = "local")]

@@ -77,15 +77,13 @@ fn toolset(tool: Show) -> Toolset {
 
 /// An observer that keeps the display of each finish.
 #[derive(Default)]
-struct Shows(Mutex<Vec<String>>);
+struct Shows(Mutex<Vec<(String, Vec<DisplayBlock>)>>);
 
 impl Observer for Shows {
     fn event(&self, event: &TurnEvent<'_>) {
-        let line = match event {
-            TurnEvent::ToolFinished { result, display, .. } => format!("finish {} {display:?}", result.call_id),
-            _ => return,
-        };
-        self.0.lock().unwrap().push(line);
+        if let TurnEvent::ToolFinished { result, display, .. } = event {
+            self.0.lock().unwrap().push((result.call_id.clone(), display.to_vec()));
+        }
     }
 }
 
@@ -137,7 +135,7 @@ fn the_answer_saves_the_hints_and_the_folder_of_each_call_and_the_results_save_t
     assert!(saved[2..].iter().all(|commit| commit.display.is_empty()));
     assert_eq!(
         *shows.0.lock().unwrap(),
-        [r#"finish c1 [Markdown { text: "*shown*" }]"#, "finish c2 []",]
+        [("c1".to_owned(), vec![shown("*shown*")]), ("c2".to_owned(), Vec::new())]
     );
 }
 

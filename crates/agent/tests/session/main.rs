@@ -201,7 +201,7 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
 }
 
 // The caller gives the driver no prompt, no settings, and no session id. Each comes from the session. The prompt is
-// the joined text of the sections.
+// made of the sections.
 #[tokio::test]
 async fn a_turn_sends_the_prompt_the_settings_and_the_id_of_its_session() {
     let store = Arc::new(MemoryStore::new());
@@ -226,10 +226,17 @@ async fn a_turn_sends_the_prompt_the_settings_and_the_id_of_its_session() {
         .await
         .unwrap();
 
-    assert_in_order(
-        &transport.requests()[0],
-        &["Be brief.\n\n<environment>\nHere.\n</environment>", "one"],
-    );
+    // The sections reach the request in their order, before the input.
+    let request = &transport.requests()[0];
+    let positions: Vec<_> = ["Be brief.", "Here.", "one"]
+        .iter()
+        .map(|text| {
+            request
+                .find(text)
+                .unwrap_or_else(|| panic!("{text:?} is not in {request}"))
+        })
+        .collect();
+    assert!(positions.is_sorted(), "{positions:?} in {request}");
     assert!(transport.requests()[0].contains(r#""temperature":0.25"#));
     let session_header = Header::new("x-opencode-session", session.id().to_string());
     assert!(

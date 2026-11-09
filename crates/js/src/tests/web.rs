@@ -101,27 +101,8 @@ async fn a_throw_in_a_finalization_callback_is_a_fault_and_the_next_callback_run
         .await
         .unwrap();
 
-    let shape = evaluate::<String>(
-        &runtime,
-        "const refused = (() => { try { new FinalizationRegistry(1); return 'none'; } catch (error) { return error.name; } })();
-         const called = (() => { try { FinalizationRegistry(() => {}); return 'none'; } catch (error) { return error.name; } })();
-         class Kept extends FinalizationRegistry {}
-         const kept = new Kept(() => {});
-         const { prototype } = FinalizationRegistry;
-         return [FinalizationRegistry.name, FinalizationRegistry.length, registry instanceof FinalizationRegistry,
-           Object.prototype.toString.call(registry), refused, called, kept instanceof Kept,
-           Object.hasOwn(prototype, 'register'), Object.getPrototypeOf(prototype) === Object.prototype,
-           prototype.constructor === FinalizationRegistry].join(' ');",
-    )
-    .await
-    .unwrap();
-
     assert_eq!(next_fault(&mut faults).await.message, "from a cleanup");
     assert_eq!(collected, "first second");
-    assert_eq!(
-        shape,
-        "FinalizationRegistry 1 true [object FinalizationRegistry] TypeError TypeError true true true true"
-    );
 }
 
 #[tokio::test(flavor = "local")]

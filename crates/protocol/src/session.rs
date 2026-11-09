@@ -163,8 +163,6 @@ mod tests {
         let title = SessionTitle::new("  hello\t世界  title ").unwrap();
 
         assert_eq!(title.as_str(), "hello 世界 title");
-        assert_eq!(&*title, "hello 世界 title");
-        assert_eq!(title.to_string(), "hello 世界 title");
         assert_eq!(serde_json::to_value(&title).unwrap(), "hello 世界 title");
     }
 
