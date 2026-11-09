@@ -271,7 +271,7 @@ async fn no_login_is_an_error_that_names_the_login_command() {
 
     assert_eq!(
         token,
-        Err("no login for xai-grok: run `yuke login xai-grok`".to_owned())
+        Err("no login for xai-grok: run /login xai-grok or `yuke login xai-grok`".to_owned())
     );
 }
 
@@ -392,7 +392,7 @@ async fn a_refused_or_unknown_refresh_removes_the_login() {
     // The request can have reached the provider, so its token can be spent.
     answers.push_fault(Fault::ConnectionLost);
     let source = source(&folder, answers.clone(), LOCK_LIMIT);
-    let ended = Err("the login for xai-grok ended: run `yuke login xai-grok` again".to_owned());
+    let ended = Err("the login for xai-grok ended: run /login xai-grok or `yuke login xai-grok`".to_owned());
 
     save(&folder, "at", "rt", 60);
     let refused = token_of(&source).await;

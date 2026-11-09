@@ -514,7 +514,7 @@ async fn a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_remove
         "a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_removes_keys",
     );
     place.plugin(
-        "login",
+        "wizard",
         "export function apply(ctx) {
            const auth = ctx.get('auth');
            void (async () => {
@@ -537,7 +537,7 @@ async fn a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_remove
            })();
          }",
     );
-    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["login"] }"#).unwrap();
+    std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["wizard"] }"#).unwrap();
     let answers = ScriptedExchange::default();
     answers.push(200, LOGIN_START);
     answers.push(200, LOGIN_START);

@@ -139,6 +139,8 @@ export interface Chat {
   readonly panes: WeakMap<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
   readonly refresh: () => void;
+  /** Read the catalog again, then show the status items. A provider can be ready since the last read. */
+  readonly refreshModels: () => void;
   /** The saved pick of a new session. */
   readonly choice: SavedChoice;
   /** The first answer of the read-only sources of the `chat` service for `session`. */
@@ -277,6 +279,10 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
+    if (models.length === 0) {
+      ctx.notify("info", "no provider is ready: run /login");
+      return undefined;
+    }
     const saved = pick ? undefined : chat.choice.current;
     let chosen = models.find(
       (entry) => entry.provider === saved?.model.provider && entry.model.id === saved?.model.model,
@@ -299,7 +305,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       try {
         await chat.choice.save(choice);
         // The first send uses the saved choice, so the status bar shows it.
-        chat.refresh();
+        chat.refreshModels();
       } catch (error) {
         // The session can start without the saved choice.
         ctx.notify("error", `the model choice did not save: ${String(error)}`);

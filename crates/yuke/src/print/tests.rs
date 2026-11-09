@@ -256,7 +256,7 @@ async fn a_missing_or_empty_api_key_is_an_error_and_saves_no_session() {
 
         assert_eq!(
             finished,
-            Err("no API key: set MINIMAX_API_KEY for MiniMax (minimax.io)".to_owned())
+            Err("no API key for MiniMax (minimax.io): run /login minimax or set MINIMAX_API_KEY".to_owned())
         );
     }
     let page = place.store().await.list_sessions(None, None, None, 10).await.unwrap();

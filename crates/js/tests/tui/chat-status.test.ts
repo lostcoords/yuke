@@ -1,7 +1,7 @@
 // The status items of the bundled chat: the model, the token share of the last answer, and the jobs of the focused pane.
 
 import { writeTextFile } from "yuke:fs";
-import type { Job, StoredEvent } from "yuke:protocol";
+import type { Job, ProviderInfo, ProviderState, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, folder, settled, test } from "yuke:test";
 import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -184,4 +184,49 @@ test("a pane whose session does not open shows no saved pick", async () => {
   chat.tui.commands.run("core:focus-left");
   frame.draw();
   equal(shownItems(chat), []);
+});
+
+test("the bar of a session of a provider that was not ready at the start shows its level after a login", async () => {
+  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", session: "s1" });
+  const sessions = fakeSessions(SAVED);
+  // Without `all`, the catalog at the start holds no ready provider.
+  const catalog = {
+    list: async (options?: { all?: boolean }) => (options?.all === true ? CATALOG : { providers: [] }),
+  };
+  const chat = await loadChat(frame, sessions, catalog);
+  frame.start();
+  await settled();
+  frame.draw();
+
+  equal(chat.tui.status.list().find((item) => item.key === "chat:model")?.text, "m high");
+});
+
+test("the bar hides a saved pick of a provider that is not ready, and a new pick after a login shows", async () => {
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
+    baseDir: folder(),
+  });
+  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/launch" });
+  let state: ProviderState = { kind: "needs_login" };
+  const providers = (): ProviderInfo[] => CATALOG.providers.map((provider) => ({ ...provider, state })) as never;
+  const catalog = {
+    list: async (options?: { all?: boolean }) => ({
+      providers: options?.all === true || state.kind === "ready" ? providers() : [],
+    }),
+  };
+  const chat = await loadChat(frame, fakeSessions(), catalog);
+  frame.start();
+  await settled();
+  frame.draw();
+  const model = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:model")?.text;
+  const before = model();
+
+  state = { kind: "ready", credential: { kind: "stored_api_key" } };
+  chat.tui.commands.run("chat:model");
+  await settled();
+  frame.key("enter");
+  await settled();
+  frame.key("h i g h enter");
+  await settled();
+
+  equal([before, model()], [undefined, "m high"]);
 });

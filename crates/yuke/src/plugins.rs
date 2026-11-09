@@ -91,6 +91,12 @@ const BUNDLED: &[Bundled] = &[
         provides: &[],
     },
     Bundled {
+        name: "login",
+        module: "yuke:internal/bundled/login",
+        uses: &[],
+        provides: &[],
+    },
+    Bundled {
         name: "plugins",
         module: "yuke:internal/bundled/plugins",
         uses: &[],

@@ -246,6 +246,18 @@ test("a pane whose open failed opens its session again at the next send", async 
   );
 });
 
+test("a send with no ready provider names /login, opens no picker, and keeps the draft", async () => {
+  using frame = createFrame({ width: 40, height: 14 }, undefined, { cwd: "/launch" });
+  const sessions = fakeSessions();
+  const chat = await loadChat(frame, sessions, { list: async () => ({ providers: [] }) });
+  frame.start();
+  frame.paste("hi");
+  frame.key("enter");
+  await settled();
+  equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
+  equal(chat.notices, ["info no provider is ready: run /login"]);
+});
+
 test("a cancel of the model picker, a catalog that fails, and a pane close each keep the draft and create nothing", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();

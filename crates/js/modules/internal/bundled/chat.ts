@@ -234,6 +234,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
     tui,
     panes,
     refresh: () => publish(),
+    refreshModels: () => {
+      void readModels().then(publish);
+    },
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
@@ -256,20 +259,31 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
-  // Activation finishes the reads before any pane can use their state.
-  const models = await ctx
-    .get("catalog")
-    .list()
-    .then(
-      (catalog) =>
-        new Map<string, ModelInfo>(
-          catalog.providers.flatMap((provider) =>
-            provider.models.map((model) => [`${provider.id}/${model.id}`, model]),
-          ),
-        ),
-      // Without the catalog, the model item has no level, and the context item is a token count.
-      () => undefined,
-    );
+  // A session can use a provider that is not ready now, so the list holds each provider.
+  let models: Map<string, ModelInfo> | undefined;
+  let ready: ReadonlySet<string> = new Set();
+  const readModels = (): Promise<void> =>
+    ctx
+      .get("catalog")
+      .list({ all: true })
+      .then(
+        (catalog) => {
+          const providers = catalog.providers;
+          models = new Map(
+            providers.flatMap((provider) => provider.models.map((model) => [`${provider.id}/${model.id}`, model])),
+          );
+          ready = new Set(
+            providers.filter((provider) => provider.state.kind === "ready").map((provider) => provider.id),
+          );
+        },
+        // Without the catalog, the model item has no level, and the context item is a token count.
+        () => {
+          models = undefined;
+          ready = new Set();
+        },
+      );
+  // Activation finishes the read before any pane can use the state.
+  await readModels();
   /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
   /** The open question before a quit. */
   let asked: Mount | undefined;
@@ -280,8 +294,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const settings = status?.settings;
     if (status === undefined || settings === undefined) {
       for (const key of ["context", "jobs"]) tui.status.delete(key);
-      // A pane without a session shows the saved pick that its first send uses, while the catalog still has it.
-      const pick = status === undefined || status.bound ? undefined : chat.choice.current;
+      // A pane without a session shows the saved pick that its first send uses, while its provider is ready.
+      const saved = status === undefined || status.bound ? undefined : chat.choice.current;
+      const pick = saved !== undefined && ready.has(saved.model.provider) ? saved : undefined;
       const level = models
         ?.get(`${pick?.model.provider}/${pick?.model.model}`)
         ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;

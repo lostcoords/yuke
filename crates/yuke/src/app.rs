@@ -965,8 +965,12 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
     let provider = entry.provider;
     let source: Arc<dyn CredentialSource> = match &provider.auth {
         Auth::ApiKey(Some(name)) => {
-            let key = api_key(shared, &provider.id, name)?
-                .ok_or_else(|| AppError::Invalid(format!("no API key: set {name} for {}", provider.name)))?;
+            let key = api_key(shared, &provider.id, name)?.ok_or_else(|| {
+                AppError::Invalid(format!(
+                    "no API key for {}: run /login {} or set {name}",
+                    provider.name, provider.id
+                ))
+            })?;
             Arc::new(Credential::ApiKey(key.into()))
         }
         Auth::ApiKey(None) => Arc::new(Credential::None),

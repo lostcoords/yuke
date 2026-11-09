@@ -921,6 +921,8 @@ declare module "yuke:tui" {
     readonly items: readonly T[];
     /** The text of an item. Each item has its own label. */
     readonly label: (item: T) => string;
+    /** The dim text after the label. A query does not match it. */
+    readonly detail?: ((item: T) => string) | undefined;
     /** The text of the head row. Without it, the dialog has no head row. */
     readonly title?: string | undefined;
     /** The dialog closes when this signal aborts, for example at the end of a pane. */

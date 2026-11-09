@@ -427,7 +427,7 @@ impl Login {
         let provider = self.provider.clone();
         blocking(move || files.login(&provider))
             .await?
-            .ok_or_else(|| format!("no login for {}: run `yuke login {}`", self.provider, self.provider).into())
+            .ok_or_else(|| format!("no login for {0}: run /login {0} or `yuke login {0}`", self.provider).into())
     }
 
     /// The login of the next attempt.
@@ -500,8 +500,8 @@ impl Login {
 
     fn ended(&self) -> Box<dyn Error + Send + Sync> {
         format!(
-            "the login for {} ended: run `yuke login {}` again",
-            self.provider, self.provider
+            "the login for {0} ended: run /login {0} or `yuke login {0}`",
+            self.provider
         )
         .into()
     }

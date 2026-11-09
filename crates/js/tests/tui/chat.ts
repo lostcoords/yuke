@@ -278,7 +278,7 @@ export const CATALOG = {
     {
       id: "p",
       name: "P",
-      state: "ready",
+      state: { kind: "ready", credential: { kind: "none" } },
       models: [
         {
           id: "m",

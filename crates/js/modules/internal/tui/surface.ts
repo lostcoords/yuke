@@ -171,6 +171,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           items: options.items,
           key: options.label,
           label: options.label,
+          detail: options.detail,
           choose: (item) => {
             picked = item;
             mount.close();
