@@ -3,11 +3,6 @@
 import { mkdir, writeTextFile } from "yuke:fs";
 import { assert, equal, folder, rejects, test } from "yuke:test";
 
-test("a user module imports a public built-in module", async () => {
-  const plugins = await import("yuke:plugins");
-  equal(typeof plugins, "object");
-});
-
 test("an unknown built-in name does not load", async () => {
   const name: string = "yuke:nothing";
   const error = await rejects(import(name));

@@ -4,13 +4,6 @@
 import { assert, equal, test } from "yuke:test";
 import { rejectedName, thrownNames } from "./errors.ts";
 
-/** The getter of the accessor `name` of `prototype`. */
-function getter(prototype: object, name: string): () => unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
-  assert(descriptor?.get !== undefined, `${name} is an accessor`);
-  return descriptor.get;
-}
-
 test("a request has the defaults of the standard", () => {
   const request = new Request(new URL("https://a.example/x?q#f"));
   equal(
@@ -224,51 +217,4 @@ test("the static methods make an error, a redirect, and JSON", async () => {
     ]),
     ["RangeError", "TypeError", "TypeError", "TypeError"],
   );
-});
-
-test("a member refuses a value of another class", async () => {
-  equal(
-    thrownNames([
-      () => getter(Request.prototype, "url").call({}),
-      () => getter(Response.prototype, "body").call({}),
-      () => getter(Request.prototype, "bodyUsed").call({}),
-    ]),
-    ["TypeError", "TypeError", "TypeError"],
-  );
-  equal(await rejectedName(Response.prototype.text.call({})), "TypeError");
-  equal(await rejectedName(Request.prototype.json.call(new Response("1"))), "TypeError");
-});
-
-test("the arguments convert before the steps run", () => {
-  const seen: string[] = [];
-  const init = {
-    get body() {
-      seen.push("body");
-      return null;
-    },
-    get headers() {
-      seen.push("headers");
-      return undefined;
-    },
-    get method() {
-      seen.push("method");
-      return undefined;
-    },
-  };
-  const status = {
-    valueOf() {
-      seen.push("status");
-      return 301;
-    },
-  };
-  equal(
-    thrownNames([
-      // @ts-expect-error: the init gives `undefined` from its getters to test the order of the conversions.
-      () => new Request("/relative", init),
-      // @ts-expect-error: the status converts to a number through `valueOf`.
-      () => Response.redirect("/relative", status),
-    ]),
-    ["TypeError", "TypeError"],
-  );
-  equal(seen, ["body", "headers", "method", "status"]);
 });

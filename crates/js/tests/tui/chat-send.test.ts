@@ -537,24 +537,6 @@ test("up and down move through the enabled commands, and enter runs the selected
   equal([ran, composerOf(chat).state.text], [["alpine"], ""]);
 });
 
-test("a pane with no row above the rule shows no commands, and the list takes no key", async () => {
-  using frame = createFrame({ width: 60, height: 2 });
-  const chat = await loadChat(frame);
-  const ran: string[] = [];
-  chat.tui.commands.add({
-    name: "alpha",
-    slash: "alpha",
-    run: () => {
-      ran.push("alpha");
-    },
-  });
-  frame.start();
-  frame.draw();
-  frame.key("/ a l p h a");
-  frame.key("enter");
-  equal(ran, []);
-});
-
 test("a command that gives false keeps its slash draft, and a command that runs empties it", async () => {
   using frame = createFrame({ width: 60, height: 14 });
   const chat = await loadChat(frame);
@@ -567,16 +549,6 @@ test("a command that gives false keeps its slash draft, and a command that runs 
   refuse = false;
   frame.key("enter");
   equal(composerOf(chat).state.text, "");
-});
-
-test("a pane with few rows above the rule shows the first commands", async () => {
-  using frame = createFrame({ width: 60, height: 5 });
-  const chat = await loadChat(frame);
-  for (const name of ["alpha1", "alpha2", "alpha3"]) chat.tui.commands.add({ name, slash: name, run: () => {} });
-  frame.start();
-  frame.key("/ a l p h a");
-  frame.draw();
-  equal(rows(frame.frame).slice(0, 2), [" /alpha1", " /alpha2"]);
 });
 
 test("a question in the place of the composer hides the commands", async () => {

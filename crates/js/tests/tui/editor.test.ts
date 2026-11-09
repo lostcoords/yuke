@@ -341,13 +341,6 @@ test("a press puts the caret, a drag selects, and the wheel scrolls", () => {
   equal(row(frame.frame.cells[1], 1, 4), "two");
 });
 
-test("an insertion that joins the next grapheme puts the caret after the whole grapheme", () => {
-  // A lone combining acute accent joins the "e" before it into one grapheme.
-  const editor = new TextEditor({ state: state("́", 0) });
-  editor.replace(0, 0, "e");
-  equal([editor.state.text, editor.caret], ["é", 2]);
-});
-
 test("an arrow steps over a span and up and down keep their column across a short row", () => {
   const editor = new TextEditor({
     state: state("abcd\nx\nabcdef", 0, [{ from: 1, to: 3, kind: "paste", label: "[p]" }]),

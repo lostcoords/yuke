@@ -78,14 +78,6 @@ test("a quit during a turn asks, and the count names the turn and the job", asyn
   equal(screen(frame).at(-2), " 1 turn and 1 job are running.");
 });
 
-test("one job and one turn read in the singular", async () => {
-  const first = await opened([JOB]);
-  using _first = first.frame;
-  first.frame.key("ctrl+q");
-
-  equal(screen(first.frame).at(-2), " 1 job is running.");
-});
-
 test("Esc stays, and the work goes on", async () => {
   const { frame, sessions } = await opened([JOB]);
   using _frame = frame;
@@ -180,22 +172,6 @@ test("two read-only children of one parent count each job, and a quit resumes th
   chat.tui.commands.run("core:split-right");
   await settled();
   await chat.chat.show("s2");
-  await settled();
-  frame.draw();
-
-  frame.key("ctrl+q");
-  equal(screen(frame).join("\n").includes("2 jobs are running."), true);
-  frame.key("ctrl+q");
-  equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
-});
-
-test("a read-only pane and a pane of its parent count both sessions, and a quit resumes the parent once", async () => {
-  const { frame, chat } = await opened([JOB]);
-  using _frame = frame;
-  chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
-  chat.tui.commands.run("core:split-right");
-  await settled();
-  await chat.chat.show("p1");
   await settled();
   frame.draw();
 

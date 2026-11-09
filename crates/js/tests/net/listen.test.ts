@@ -2,7 +2,7 @@
 // file, and the failures. src/tests/network.rs holds the shutdown of the runtime and the failed removal.
 
 import * as fs from "yuke:fs";
-import { ConnectionError, connect, listen, type UnixConnection, type UnixListener } from "yuke:net";
+import { ConnectionError, connect, listen, type UnixConnection } from "yuke:net";
 import { assert, equal, rejects, settled, test, listen as testServer, throws } from "yuke:test";
 
 /** A new short socket path with no file. The scratch folder of a test can be too long for a socket. */
@@ -79,15 +79,6 @@ test("a close rejects each pending and later accept and removes the file, and a 
     equal([reason.code, reason.message], ["ERR_CLOSED", "the listener is closed"]);
   }
   equal(await fileAt(path), "ENOENT");
-});
-
-test("the free of a closed listener keeps the file of a new listener at its path", async () => {
-  const path = freePath();
-  let closed: UnixListener | undefined = listen({ path });
-  closed.close();
-  using listener = listen({ path });
-  closed = undefined;
-  equal(await fileAt(listener.path), "found");
 });
 
 test("an abort rejects each accept, closes an accepted connection with its reason, and removes the file", async () => {

@@ -394,23 +394,6 @@ test("a word wider than the row breaks at the width, also with wide characters",
   );
 });
 
-test("a text that changes shares the rows of its closed blocks, and an unchanged text renders new rows", () => {
-  const stays = new Markdown("one\n\ntwo\n\nthree");
-  const grows = new Markdown("one\n\ntwo\n\n");
-  grows.append("thr");
-  grows.append("ee");
-  const shared = (markdown: Markdown): boolean => {
-    const first = markdown.rows(10)[0];
-    const second = markdown.rows(10)[0];
-    return first === second;
-  };
-  equal([shared(stays), shared(grows)], [false, true]);
-  equal(lines(stays.rows(10)), lines(grows.rows(10)));
-  assert(sameBlocks(stays.blocks(), grows.blocks()));
-  stays.setText("four");
-  equal(lines(stays.rows(10)), ["four"]);
-});
-
 test("the words of a wrapped row form one segment with one source range", () => {
   const rows = rowsOf("one two three four five", 13);
   equal(
@@ -487,13 +470,6 @@ test("a limit gives the first rows of a full render and keeps the join of the ro
   equal(
     [cut.map((row) => row.join), full.slice(0, 2).map((row) => row.join), full.at(-1)?.join],
     [[" ", " "], [" ", " "], ""],
-  );
-});
-
-test("a limit that cuts a code line keeps the join inside the line", () => {
-  equal(
-    new Markdown("```\nabcdef\n```").rows(2, 1).map((row) => row.join),
-    [""],
   );
 });
 

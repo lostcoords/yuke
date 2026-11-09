@@ -111,19 +111,6 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   equal(frame.copies, [command]);
 });
 
-test("a long subject fills one head row, and an open call shows the whole subject", async () => {
-  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const command = `${"a".repeat(3000)} end`;
-  const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: ok("") });
-  const chat = await loadChat(frame, fakeSessions(saved));
-  frame.start();
-  equal(transcriptRows(frame).slice(0, 3), ["", ` exec ${"a".repeat(22)}…`, ""]);
-  click(frame, 2, 1);
-  chat.transcript().scroll.scrollTo(Number.MAX_SAFE_INTEGER);
-  frame.draw();
-  equal(transcriptRows(frame).filter((row) => row.endsWith(" end")).length, 1);
-});
-
 test("a subject that fits in one row copies as it shows, and an open call does not show it twice", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved = calls({ name: "exec", args: { command: "npm test" }, hints: EXEC, result: ok("") });

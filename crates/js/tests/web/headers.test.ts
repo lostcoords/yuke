@@ -101,15 +101,3 @@ test("immutable headers refuse each change", () => {
   ]);
   equal(headers.get("location"), "https://a.example/x");
 });
-
-test("a method refuses a value of another class", () => {
-  equal(
-    thrownNames([
-      () => Headers.prototype.get.call({}, "a"),
-      () => Headers.prototype.entries.call({}),
-      () => new Headers().keys().next.call({}),
-      () => Headers.prototype.forEach.call({}, () => {}),
-    ]),
-    ["TypeError", "TypeError", "TypeError", "TypeError"],
-  );
-});

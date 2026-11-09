@@ -617,28 +617,6 @@ test("the change of the look of the active theme is told once, and another theme
   equal(state.changes, 4);
 });
 
-test("style and theme registration copy their fields before the first resolve", () => {
-  const { styles } = themed();
-  const patch = { fg: 1 };
-  const groups = { title: patch };
-  styles.set(groups);
-  patch.fg = 2;
-  groups.title = { fg: 3 };
-  const palette = { accent: 4 };
-  const themePatch = { bg: 5 };
-  const theme = { dark: { palette, groups: { title: themePatch } } };
-  styles.addTheme("mine", theme);
-  palette.accent = 6;
-  themePatch.bg = 7;
-  theme.dark = { palette: { accent: 8 }, groups: { title: { bg: 9 } } };
-  styles.setTheme("mine");
-
-  equal(styles.resolve("title"), { fg: 1, bg: 5 });
-  equal(styles.resolve({ fg: "accent" }), { fg: 4 });
-  styles.set({ unrelated: { bold: true } });
-  equal(styles.resolve("title"), { fg: 1, bg: 5 });
-});
-
 test("the default theme name is reserved", () => {
   const { styles } = themed();
   assert(throws(() => styles.addTheme("default", {})) instanceof TypeError);

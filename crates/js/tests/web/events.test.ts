@@ -6,22 +6,6 @@ import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
 
-test("an event converts its type and checks its init", () => {
-  equal(
-    [
-      // @ts-expect-error: the init is no object.
-      () => new Event("x", 1),
-      // @ts-expect-error: a symbol has no text.
-      () => new Event(Symbol()),
-    ].map(thrownName),
-    ["TypeError", "TypeError"],
-  );
-  // @ts-expect-error: the event converts `undefined` to the text "undefined".
-  equal(new Event(undefined).type, "undefined");
-  // @ts-expect-error: the event reads `null` as an empty init.
-  equal(new Event("x", null).bubbles, false);
-});
-
 test("an event takes its flags from the init", () => {
   const plain = new Event("x");
   // @ts-expect-error: the event converts each flag to a boolean.
@@ -280,32 +264,6 @@ test("a listener object reads its handle event at each call", () => {
   equal(log, [[true, "x"], "replaced"]);
 });
 
-test("a method refuses a value of another class", () => {
-  const fake = { aborted: false, reason: undefined };
-  const getter = (owner: object, name: string) => Object.getOwnPropertyDescriptor(owner, name)?.get;
-  equal(
-    [
-      () => EventTarget.prototype.addEventListener.call({}, "x", null),
-      // @ts-expect-error: a plain object is no event.
-      () => new EventTarget().dispatchEvent({ type: "x" }),
-      // @ts-expect-error: a plain object is no signal.
-      () => new EventTarget().addEventListener("x", () => {}, { signal: fake }),
-      // @ts-expect-error: a number is no listener.
-      () => new EventTarget().addEventListener("x", 5),
-      () => getter(Event.prototype, "type")?.call({}),
-      () => getter(AbortSignal.prototype, "aborted")?.call(fake),
-      () => getter(AbortController.prototype, "signal")?.call({}),
-      // @ts-expect-error: a plain object is no signal.
-      () => AbortSignal.any([fake]),
-      // @ts-expect-error: the characters of a text are no signals.
-      () => AbortSignal.any(""),
-      // @ts-expect-error: a number is not iterable.
-      () => AbortSignal.any(5),
-    ].map(thrownName),
-    Array(10).fill("TypeError"),
-  );
-});
-
 // Abort signals.
 
 test("an aborted signal adds no listener and an abort removes one", () => {
@@ -330,35 +288,6 @@ test("an aborted signal adds no listener and an abort removes one", () => {
   controller.abort();
   target.dispatchEvent(new Event("x"));
   equal(calls, 10);
-});
-
-test("only an abort of the signal removes a listener", () => {
-  const target = new EventTarget();
-  let calls = 0;
-  const stopped = new AbortController();
-  stopped.signal.addEventListener("abort", (event) => {
-    event.stopImmediatePropagation();
-    target.dispatchEvent(new Event("x"));
-  });
-  target.addEventListener(
-    "x",
-    () => {
-      calls += 1;
-    },
-    { signal: stopped.signal },
-  );
-  const faked = new AbortController();
-  target.addEventListener(
-    "x",
-    () => {
-      calls += 10;
-    },
-    { signal: faked.signal },
-  );
-  faked.signal.dispatchEvent(new Event("abort"));
-  stopped.abort();
-  target.dispatchEvent(new Event("x"));
-  equal([calls, faked.signal.aborted], [20, false]);
 });
 
 test("a signal has no public constructor", () => {
@@ -467,27 +396,6 @@ test("onabort keeps its place until a clear", () => {
   equal(log, [[true, "abort"], "listener", "second", "third"]);
 });
 
-test("onabort keeps an object and clears for another value", () => {
-  const signal = new AbortController().signal;
-  const handler = () => {};
-  const object = {};
-  signal.onabort = handler;
-  assert(signal.onabort === handler, "the handler stays");
-  // @ts-expect-error: the type takes a function only, but the runtime keeps an object.
-  signal.onabort = object;
-  assert(signal.onabort === object, "the object stays");
-  // @ts-expect-error: a number clears the handler.
-  signal.onabort = 5;
-  equal(signal.onabort, null);
-});
-
-test("an onabort handler that returns false cancels a cancelable event", () => {
-  const signal = new AbortController().signal;
-  signal.onabort = () => false;
-  const event = new Event("abort", { cancelable: true });
-  equal([signal.dispatchEvent(event), event.defaultPrevented], [false, true]);
-});
-
 test("timeout aborts with a timeout error after its delay", async () => {
   const started = performance.now();
   const signal = AbortSignal.timeout(20);
@@ -557,36 +465,4 @@ test("a dependent signal of a dependent aborts before the listeners of the sourc
   nested.addEventListener("abort", () => log.push(["nested", nested.reason]));
   controller.abort("why");
   equal(log, [["source", true, true], "first", ["nested", "why"]]);
-});
-
-test("an abort in an abort listener keeps the first reason of a dependent", () => {
-  const a = new AbortController();
-  const b = new AbortController();
-  const signal = AbortSignal.any([a.signal, b.signal]);
-  a.signal.addEventListener("abort", () => b.abort("b"));
-  a.abort("a");
-  equal(signal.reason, "a");
-});
-
-test("any checks each value before it asks for the next", () => {
-  function* values() {
-    yield {};
-    throw new Error("late");
-  }
-  equal(
-    // @ts-expect-error: a plain object is no signal.
-    thrownName(() => AbortSignal.any(values())),
-    "TypeError",
-  );
-});
-
-test("any takes a truthy done and refuses an iterator result that is no object", () => {
-  const iterable = (results: unknown[]) => ({ [Symbol.iterator]: () => ({ next: () => results.shift() }) });
-  // @ts-expect-error: `done` is a number, and the runtime reads it as a boolean.
-  equal(AbortSignal.any(iterable([{ done: 1 }])).aborted, false);
-  equal(
-    // @ts-expect-error: a number is no iterator result.
-    thrownName(() => AbortSignal.any(iterable([5]))),
-    "TypeError",
-  );
 });

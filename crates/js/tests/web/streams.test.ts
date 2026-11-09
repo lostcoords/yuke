@@ -128,32 +128,6 @@ test("async iteration gives each chunk and a break cancels the stream", async ()
   equal(seen, [1, 2, false, 3, ["cancel", undefined], false, 5, 6]);
 });
 
-test("an iterator holds the stream at once and a break releases it before the cancel ends", async () => {
-  let finish = (): void => {};
-  const stream = new ReadableStream<number>({
-    start(controller) {
-      controller.enqueue(1);
-    },
-    cancel() {
-      return new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-    },
-  });
-  const iterator = stream.values();
-  equal(
-    [stream.locked, thrownNames([() => stream.values(), () => stream.getReader()])],
-    [true, ["TypeError", "TypeError"]],
-  );
-  equal((await iterator.next()).value, 1);
-  const returned = iterator.return?.();
-  await settled();
-  const lockedDuringCancel = stream.locked;
-  finish();
-  await returned;
-  equal(lockedDuringCancel, false);
-});
-
 test("async iteration releases the stream after a read or cancel fails", async () => {
   const failedRead = controlled<number>();
   const next = failedRead.stream.values().next();

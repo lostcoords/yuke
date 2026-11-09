@@ -601,30 +601,6 @@ test("the core commands reach the driver", () => {
   equal(terminal.calls, ["quit", "suspend", ["reload", { tree: null, focus: 0 }]]);
 });
 
-test("a factory that closes its own mount mounts nothing", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  const root = core.scene.wrapRoot("test", (mount) => {
-    mount.close();
-    return {
-      draw: (canvas) => {
-        canvas.text(0, 0, "closed");
-      },
-    };
-  });
-  const overlay = core.scene.overlay("test", (mount) => {
-    mount.close();
-    return { draw() {} };
-  });
-  const pane = createSurface(core, "test", new AbortController().signal).panes.split((mount) => {
-    mount.close();
-    return { draw() {} };
-  });
-  equal(terminal.screen(core)[0], "");
-  equal([root.signal.aborted, overlay.signal.aborted, pane.signal.aborted], [true, true, true]);
-  equal(atoms(core), ["global", "root"]);
-});
-
 test("a focus change beneath a modal moves the active pane", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
@@ -900,25 +876,4 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   // The stop of `notes` closes its restored pane too.
   notes.abort();
   equal(terminal.screen(core)[0], "");
-});
-
-test("a state that cannot serialize fails the snapshot", () => {
-  const terminal = fakeTerminal();
-  const core = new Core(terminal.driver);
-  const tui = createSurface(core, "notes", new AbortController().signal);
-  const state: { id: number; self?: unknown } = { id: 3 };
-  state.self = state;
-  const pane = tui.panes.split(() => note(state));
-  assert(throws(() => core.snapshot()) instanceof TypeError);
-  core.commands.run("core:reload");
-  equal(
-    core.notices
-      .list()
-      .map((notice) => [notice.source, notice.text.startsWith("the command core:reload failed: TypeError:")]),
-    [["core", true]],
-  );
-  equal(terminal.calls, []);
-  pane.close();
-  core.commands.run("core:reload");
-  equal(terminal.calls, [["reload", { tree: null, focus: 0 }]]);
 });

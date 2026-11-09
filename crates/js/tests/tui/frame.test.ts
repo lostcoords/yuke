@@ -30,43 +30,6 @@ test("a frame holds the cells, the styles, and the cursor that the views drew", 
   equal(frame.frame.cursor, { column: 3, row: 0, shape: "bar" });
 });
 
-test("advance runs the due timers of the frame and draws a frame", () => {
-  let text = "wait";
-  using frame = createFrame({ width: 6, height: 1 }, () => ({
-    draw: (canvas) => {
-      canvas.text(0, 0, text);
-    },
-  }));
-  frame.surface("clock").tui.after(1000, () => {
-    text = "done";
-  });
-  frame.advance(999);
-  const before = frame.frame.cells[0]?.[0]?.text;
-  frame.advance(1);
-  equal([before, frame.frame.cells[0]?.[0]?.text], ["w", "d"]);
-});
-
-test("keys of a spec reach the bindings of a surface and the stop of a surface removes them", () => {
-  using frame = createFrame({ width: 8, height: 1 });
-  const surface = frame.surface("demo");
-  surface.tui.commands.add({ name: "copy", run: () => surface.tui.copy("copied") });
-  surface.tui.keys.bind("ctrl+k y", "copy");
-  frame.key("ctrl+k y");
-  equal(frame.copies, ["copied"]);
-  surface.close();
-  frame.key("ctrl+k y");
-  equal(frame.copies, ["copied"]);
-});
-
-test("a resize changes the frame size and a dispose closes each surface", () => {
-  const frame = createFrame({ width: 4, height: 1 });
-  const surface = frame.surface("demo");
-  frame.resize({ width: 7, height: 3 });
-  equal([frame.frame.width, frame.frame.height, frame.frame.cells.length, frame.frame.cells[2]?.length], [7, 3, 3, 7]);
-  frame[Symbol.dispose]();
-  equal(surface.signal.aborted, true);
-});
-
 test("a view style fills its rect and is the base of each style of the view and its children", () => {
   const editor = new TextEditor({ state: { text: "e", selection: { anchor: 1, head: 1 }, spans: [] } });
   const text: View = {

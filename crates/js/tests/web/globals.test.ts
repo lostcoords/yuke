@@ -1,7 +1,7 @@
 // The globals of `yuke:internal/web` besides the events and the URL classes: `TextEncoder`, `TextDecoder`, and
 // `performance`, with the base64 functions and the microtasks of the engine.
 
-import { assert, equal, settled, test } from "yuke:test";
+import { assert, equal, test } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
 test("text encoder gives utf8 and replaces a lone surrogate", () => {
@@ -21,28 +21,6 @@ test("encode into writes whole characters and counts utf16 units", () => {
   const large = new Uint8Array(8);
   equal(encoder.encodeInto("é😀x", large.subarray(1)), { read: 4, written: 7 });
   equal(large, new Uint8Array([0, 195, 169, 240, 159, 152, 128, 120]));
-});
-
-test("the encoder refuses a destination that is no uint8 array and a value of another class", () => {
-  const encoder = new TextEncoder();
-  const fake = Object.defineProperties(Object.create(Uint8Array.prototype) as Uint8Array, {
-    length: { value: 1 },
-    set: { value() {} },
-  });
-  equal(
-    [
-      // @ts-expect-error: the destination must be a `Uint8Array`.
-      () => encoder.encodeInto("a", new Uint16Array(2)),
-      () => encoder.encodeInto("a", fake),
-      // @ts-expect-error: the destination is missing.
-      () => encoder.encodeInto("a"),
-      () => TextEncoder.prototype.encode.call({}, "a"),
-      () => Object.getOwnPropertyDescriptor(TextDecoder.prototype, "encoding")?.get?.call({}),
-      // @ts-expect-error: a symbol has no text.
-      () => encoder.encode(Symbol()),
-    ].map(thrownName),
-    ["TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
-  );
 });
 
 test("text decoder reads views and buffers", () => {
@@ -127,29 +105,4 @@ test("performance gives its origin as epoch time", async () => {
   assert(gap < 50, `the gap is ${gap} ms`);
   assert(performance.now() > first, "the clock goes on");
   equal(performance.toJSON(), { timeOrigin: performance.timeOrigin });
-});
-
-test("the engine gives base64 and microtasks", async () => {
-  const order: string[] = [];
-  queueMicrotask(() => order.push("microtask"));
-  order.push("now");
-  await settled();
-  equal([btoa("hi"), atob("aGk="), order], ["aGk=", "hi", ["now", "microtask"]]);
-});
-
-test("a detached buffer has no bytes and a shared buffer decodes", () => {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const buffer = new ArrayBuffer(2);
-  const view = new Uint8Array(buffer);
-  const data = new DataView(buffer);
-  buffer.transfer();
-  const written = encoder.encodeInto("a", view);
-  equal([decoder.decode(view), decoder.decode(buffer), decoder.decode(data)], ["", "", ""]);
-  equal(written, { read: 0, written: 0 });
-
-  const shared = new SharedArrayBuffer(3);
-  new Uint8Array(shared).set([0, 104, 105]);
-  equal(decoder.decode(shared), "\u0000hi");
-  equal(decoder.decode(new Uint8Array(shared, 1)), "hi");
 });

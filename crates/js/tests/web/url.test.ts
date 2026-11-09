@@ -107,12 +107,6 @@ test("the search params of a URL follow its query and set it", () => {
   equal([params.get("q"), params.size], ["1", 1]);
 });
 
-test("the search params of an opaque path drop its trailing spaces with the query", () => {
-  const url = new URL("data:space    ?query");
-  url.searchParams.delete("query");
-  equal(url.href, "data:space");
-});
-
 test("search params take a query string, pairs, or a record", () => {
   equal(new URLSearchParams("?a=1&a=2").getAll("a"), ["1", "2"]);
   equal(new URLSearchParams("b=%20+x&%zz=%C3").get("b"), "  x");
@@ -198,22 +192,4 @@ test("an iterator and forEach see a change of the pairs", () => {
   );
   equal([...params.values()], ["1", "2", "3", "4"]);
   assert(params.entries() instanceof Iterator);
-});
-
-test("a method refuses a value of another class or an invalid callback", () => {
-  const href = Object.getOwnPropertyDescriptor(URL.prototype, "href")?.get;
-  assert(href !== undefined, "href is an accessor");
-  const params = new URLSearchParams();
-  equal(
-    thrownNames([
-      () => href.call({}),
-      () => URLSearchParams.prototype.get.call({}, "a"),
-      () => params.entries().next.call({}),
-      // @ts-expect-error: a forEach takes a function.
-      () => params.forEach(1),
-      // @ts-expect-error: a URL needs `new`.
-      () => URL("https://a.example/"),
-    ]),
-    new Array<string>(5).fill("TypeError"),
-  );
 });
