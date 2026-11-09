@@ -12,11 +12,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures_util::future::join_all;
 use tokio_util::sync::CancellationToken;
-use yuke_ai::retry;
 use yuke_ai::transport::Transport;
 use yuke_ai::{
-    AttemptError, BlobStore, Block, Encoder, Options, Origin, OriginRef, Partial, Reply, Request, Response,
-    ResponseLimits, SEARCH_TOOL_NAME, Settings, ToolCall, ToolDefinition, ToolResult,
+    AttemptError, BlobStore, Block, Encoder, Origin, OriginRef, Partial, Reply, ReplyOptions, Request, Response,
+    ResponseLimits, SEARCH_TOOL_NAME, Settings, ToolCall, ToolDefinition, ToolResult, retry,
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
@@ -353,7 +352,7 @@ impl<'a> Driver<'a> {
                 Reply::open(
                     self.transport,
                     &encoded,
-                    Options {
+                    ReplyOptions {
                         limits: self.response_limits,
                         deadline: None,
                     },

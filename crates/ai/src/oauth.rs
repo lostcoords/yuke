@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::route::{Credential, OAuth};
-use crate::transport::{Answer, Exchange, ExchangeRequest, Fault, Header};
+use crate::transport::{Exchange, ExchangeAnswer, ExchangeRequest, Fault};
+use crate::{Credential, Header, OAuth};
 
 /// The interval of a device login whose start names none. RFC 8628 section 3.2 gives this default.
 const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
@@ -216,7 +216,12 @@ impl std::error::Error for OAuthError {
 }
 
 /// Post `body` with the media type `content_type` to `url`, and return the whole answer.
-async fn post(exchange: &dyn Exchange, url: &str, content_type: &'static str, body: &[u8]) -> Result<Answer, Fault> {
+async fn post(
+    exchange: &dyn Exchange,
+    url: &str,
+    content_type: &'static str,
+    body: &[u8],
+) -> Result<ExchangeAnswer, Fault> {
     let request = ExchangeRequest {
         url,
         content_type,
@@ -229,17 +234,17 @@ async fn post(exchange: &dyn Exchange, url: &str, content_type: &'static str, bo
 }
 
 /// Post the form `fields` to `url`, and return the whole answer.
-async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) -> Result<Answer, Fault> {
+async fn post_form(exchange: &dyn Exchange, url: &str, fields: &[(&str, &str)]) -> Result<ExchangeAnswer, Fault> {
     post(exchange, url, FORM, form(fields).as_bytes()).await
 }
 
 /// Post `body` as JSON to `url`, and return the whole answer.
-async fn post_json(exchange: &dyn Exchange, url: &str, body: &Value) -> Result<Answer, Fault> {
+async fn post_json(exchange: &dyn Exchange, url: &str, body: &Value) -> Result<ExchangeAnswer, Fault> {
     post(exchange, url, JSON, body.to_string().as_bytes()).await
 }
 
 /// The answer of an exchange that must succeed. A fault or a status outside 2xx gives `Transient`.
-fn accepted(result: Result<Answer, Fault>) -> Result<Answer, OAuthError> {
+fn accepted(result: Result<ExchangeAnswer, Fault>) -> Result<ExchangeAnswer, OAuthError> {
     let answer = result.map_err(|fault| OAuthError::Transient(Some(fault)))?;
     if succeeded(answer.head.status) {
         Ok(answer)
@@ -367,7 +372,7 @@ fn grant(body: &[u8], now: SystemTime) -> Result<Grant, OAuthError> {
 /// The outcome of a refresh answer. `permanent` lists the codes that end the grant in this flow, and `grant` reads
 /// the token answer of the flow.
 fn refreshed(
-    answer: &Answer,
+    answer: &ExchangeAnswer,
     permanent: &[&str],
     now: SystemTime,
     grant: fn(&[u8], SystemTime) -> Result<Grant, OAuthError>,

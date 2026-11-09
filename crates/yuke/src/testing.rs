@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use yuke_ai::transport::{
-    Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport,
+    Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport,
 };
 use yuke_store::SqliteStore;
 
@@ -48,14 +48,14 @@ pub(crate) struct Answers(Arc<Mutex<ExchangeScript>>);
 
 #[derive(Debug, Default)]
 struct ExchangeScript {
-    answers: VecDeque<Result<Answer, Fault>>,
+    answers: VecDeque<Result<ExchangeAnswer, Fault>>,
     bodies: Vec<String>,
 }
 
 impl Answers {
     /// Add an answer of `status` and `body` to the end of the script.
     pub(crate) fn push(&self, status: u16, body: &str) {
-        self.0.lock().unwrap().answers.push_back(Ok(Answer {
+        self.0.lock().unwrap().answers.push_back(Ok(ExchangeAnswer {
             head: Head::new(status),
             body: body.as_bytes().to_vec(),
         }));
@@ -77,7 +77,7 @@ impl Exchange for Answers {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         _: Option<Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
         let mut script = self.0.lock().unwrap();
         script.bodies.push(String::from_utf8(request.body.to_vec()).unwrap());
         let answer = script.answers.pop_front().expect("the script has no answer left");

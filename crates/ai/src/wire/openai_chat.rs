@@ -1,9 +1,10 @@
 //! Serialize OpenAI Chat Completions requests from the neutral request.
 
+use crate::block::read_blob;
 use crate::encoder::{EncodeError, Unsupported};
-use crate::request::{
+use crate::{
     BlobStore, Block, ChatDialect, ChatWire, MaxTokensField, Media, Modality, ReasoningReplayMode, ReasoningSettings,
-    Request, Target, ThinkingFormat, ToolChoice, ToolResult, read_blob,
+    Request, Target, ThinkingFormat, ToolChoice, ToolResult,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -419,10 +420,10 @@ fn write_effort_object(jw: &mut JsonWriter<'_>, level: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToolResult;
-    use crate::request::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolDefinition, Wire};
-    use crate::route::Credential;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
+    use crate::{
+        Credential, Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolDefinition, ToolResult, Wire,
+    };
 
     fn chat() -> Wire {
         Wire::OpenaiChat(ChatWire::default())

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::encoder::EncodeError;
 use crate::failure::{Failure, detail_text};
-use crate::request::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
+use crate::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
 
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.

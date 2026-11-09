@@ -5,8 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use yuke_ai::Target;
-use yuke_ai::route::Credential;
+use yuke_ai::{Credential, Target};
 
 use crate::turn_state::chain_text;
 

@@ -10,12 +10,11 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::oauth::Flow;
-use crate::request::{
-    AnthropicWire, ChatDialect, ChatWire, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
-    ReasoningSettings, ResponsesDialect, ResponsesWire, Target, Thinking, ThinkingDisplay, ThinkingFormat, Wire,
+use crate::{
+    AnthropicWire, ChatDialect, ChatWire, CredentialHeader, Effort, Header, MaxTokensField, Modality, Protocol,
+    ReasoningReplayMode, ReasoningSettings, ResponsesDialect, ResponsesWire, Route, SessionHeader, Target, Thinking,
+    ThinkingDisplay, ThinkingFormat, Wire,
 };
-use crate::route::{CredentialHeader, Route, SessionHeader};
-use crate::transport::Header;
 
 pub use generated::{PROVIDERS, REVISION};
 

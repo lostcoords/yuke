@@ -3,10 +3,10 @@
 use std::fmt::Write as _;
 
 use crate::failure::{Failure, ProviderKind};
-use crate::request::{Origin, Protocol, ReplayKind};
 use crate::response::{BlockResult, Event, ResponseLimits, StartedBlock};
 use crate::testing::block_on;
 use crate::wire::json::escape_into;
+use crate::{Origin, Protocol, ReplayKind};
 
 use super::draft::{DecodeError, Draft};
 use super::{Reducer, Stream};

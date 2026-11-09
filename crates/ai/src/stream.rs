@@ -13,9 +13,9 @@ use std::time::Instant;
 
 use crate::encoder::Encoded;
 use crate::failure::{self, Failure, ProviderKind};
-use crate::request::{Origin, Protocol};
 use crate::response::{AttemptInfo, Event, ResponseLimits};
 use crate::transport::{self, BoxBody, Transport};
+use crate::{Origin, Protocol};
 use draft::{DecodeError, Draft};
 use sse::{Sse, Step};
 
@@ -65,7 +65,7 @@ impl Reducer {
 
 /// How to receive one attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Options {
+pub struct ReplyOptions {
     /// Bounds on what the response can make the library hold.
     pub limits: ResponseLimits,
     /// The end of the whole exchange, and it can span several attempts. Past it, the attempt fails with
@@ -112,7 +112,7 @@ impl std::fmt::Debug for Stream {
 impl Stream {
     /// Open one attempt. Borrow `request` only until this returns. An opening fault, and an answer other than 200,
     /// become the first event.
-    pub(crate) async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Stream {
+    pub(crate) async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: ReplyOptions) -> Stream {
         let limits = options.limits;
         // The stream keeps no request bytes, so the reasoning origin is its own copy.
         let draft = Draft::new(Origin::from(request.origin), limits);
@@ -272,13 +272,10 @@ async fn read_error_body(body: &mut BoxBody, max: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Target;
     use crate::encoder::Encoder;
-    use crate::request::OriginRef;
-    use crate::request::{Block, ReasoningReplay, ReplayKind, Request};
-    use crate::route::Credential;
     use crate::testing::{CannedTransport, block_on, frame, target};
     use crate::transport::Outgoing;
+    use crate::{Block, Credential, OriginRef, ReasoningReplay, ReplayKind, Request, Target};
     use testing::read_trace;
 
     fn canned_text_reply() -> String {
@@ -309,7 +306,7 @@ mod tests {
                 base_url: "",
             },
         };
-        block_on(Stream::open(canned, &request, Options::default()))
+        block_on(Stream::open(canned, &request, ReplyOptions::default()))
     }
 
     // Some servers close the stream right after the last `data:` line (openai/openai-node#2725).
@@ -393,9 +390,9 @@ mod tests {
             .encode(&target, &Credential::None, Request::new(&blocks))
             .unwrap();
         // A retry opens the same bytes with no second encode.
-        let mut first = block_on(Stream::open(&canned, &encoded, Options::default()));
+        let mut first = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
         while block_on(first.next()).is_some() {}
-        let mut stream = block_on(Stream::open(&canned, &encoded, Options::default()));
+        let mut stream = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
         // The next encode reuses the storage the first one lent, for another model.
         let other = Target {
             model: "another-model-with-a-longer-name".into(),

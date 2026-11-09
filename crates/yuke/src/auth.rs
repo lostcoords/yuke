@@ -13,8 +13,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use yuke_ai::Credential;
 use yuke_ai::oauth::{Flow, Grant, OAuthError, PendingLogin, Poll};
-use yuke_ai::route::Credential;
 use yuke_ai::transport::Exchange;
 use yuke_engine::{CredentialSource, chain_text};
 use yuke_protocol::UpdateCredentialParams;

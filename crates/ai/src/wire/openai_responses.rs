@@ -1,9 +1,10 @@
 //! Serialize an OpenAI Responses request from the neutral request.
 
+use crate::block::read_blob;
 use crate::encoder::{EncodeError, Unsupported};
-use crate::request::{
+use crate::{
     BlobStore, Block, Media, Modality, ReasoningSettings, Request, ResponsesDialect, ResponsesWire, SEARCH_TOOL_NAME,
-    Target, ToolChoice, ToolDefinition, ToolResult, read_blob,
+    Target, ToolChoice, ToolDefinition, ToolResult,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -327,10 +328,8 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToolResult;
-    use crate::Wire;
-    use crate::request::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking};
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
+    use crate::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolResult, Wire};
 
     fn responses() -> Wire {
         Wire::OpenaiResponses(ResponsesWire::default())

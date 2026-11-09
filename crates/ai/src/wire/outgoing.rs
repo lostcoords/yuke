@@ -1,9 +1,8 @@
 //! Build the URL and headers of one request from its route and credential. The encoder adds the body.
 
 use crate::encoder::EncodeError;
-use crate::request::{OriginRef, Protocol, Target};
-use crate::route::{self, Credential, CredentialHeader};
-use crate::transport::Header;
+use crate::target::{self, Credential, CredentialHeader};
+use crate::{Header, OriginRef, Protocol, Target};
 
 /// The URL, the headers, and the origin of one request.
 #[derive(Debug, Default)]
@@ -45,11 +44,11 @@ impl HeadText {
                 .find(|header| identity.iter().any(|own| own.name.eq_ignore_ascii_case(&header.name)))
                 .map(|header| &*header.name)
         };
-        let invalid = route::invalid_header(identity, &written)
-            .or_else(|| route::invalid_header(&route.headers, &written))
+        let invalid = target::invalid_header(identity, &written)
+            .or_else(|| target::invalid_header(&route.headers, &written))
             .or_else(repeats_identity)
-            .or_else(|| (!route::valid_header_value(secret)).then_some(written[0]))
-            .or_else(|| session.and_then(|(name, value)| (!route::valid_header_value(value)).then_some(name)));
+            .or_else(|| (!target::valid_header_value(secret)).then_some(written[0]))
+            .or_else(|| session.and_then(|(name, value)| (!target::valid_header_value(value)).then_some(name)));
         if let Some(name) = invalid {
             return Err(EncodeError::InvalidHeader { name: name.to_owned() });
         }
@@ -97,9 +96,8 @@ pub(crate) fn protocol_path(protocol: Protocol) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{AnthropicWire, ChatWire, ResponsesWire, Wire};
-    use crate::route::{OAuth, Route, SessionHeader};
     use crate::testing::assert_same;
+    use crate::{AnthropicWire, ChatWire, OAuth, ResponsesWire, Route, SessionHeader, Wire};
 
     fn header(name: &str, value: &str) -> Header {
         Header::new(name.to_owned(), value.to_owned())

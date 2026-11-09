@@ -10,11 +10,11 @@ pub(crate) mod outgoing;
 pub(crate) mod testing;
 
 use crate::encoder::EncodeError;
-use crate::request::{Block, Request, Target, ToolDefinition, Wire};
+use crate::{Block, Request, Target, ToolDefinition, Wire};
 use json::JsonWriter;
 
 /// Tell whether the protocol of `target` writes `block`. It writes a reasoning block only when
-/// [`Reasoning::replay_to`](crate::request::Reasoning::replay_to) gives state for `target`.
+/// [`Reasoning::replay_to`](crate::Reasoning::replay_to) gives state for `target`.
 fn writes(target: &Target, block: &Block) -> bool {
     match block {
         Block::Reasoning(reasoning) => reasoning.replay_to(target).is_some(),

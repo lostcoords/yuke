@@ -2,8 +2,8 @@
 //! `MODEL` names the model. `BASE_URL` overrides the default base URL of Ollama.
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
-use yuke_ai::route::{Credential, Route};
-use yuke_ai::{Block, ChatWire, Options, Request, Settings, Target, Wire};
+use yuke_ai::{Block, ChatWire, ReplyOptions, Request, Settings, Target, Wire};
+use yuke_ai::{Credential, Route};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let blocks = [Block::user_text("Explain Rust in one sentence.")];
     let settings = Settings::new().max_output_tokens(512);
     let request = Request::new(&blocks).settings(&settings);
-    let response = yuke_ai::generate(&http, &target, &Credential::None, request, Options::default()).await?;
+    let response = yuke_ai::generate(&http, &target, &Credential::None, request, ReplyOptions::default()).await?;
     println!("{}", response.completion.text());
     Ok(())
 }

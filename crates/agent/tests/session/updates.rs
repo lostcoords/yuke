@@ -6,9 +6,8 @@ use std::task::{Context, Waker};
 
 use async_trait::async_trait;
 use yuke_agent::{EventPage, MemoryStore, Session, SessionObserver, Store};
-use yuke_ai::route::Credential;
 use yuke_ai::scripted::{ScriptedTransport, Stalled, failed_reply, sse, text_reply, tool_reply};
-use yuke_ai::{Block, ToolDefinition, Wire};
+use yuke_ai::{Block, Credential, ToolDefinition, Wire};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
 use yuke_protocol::{

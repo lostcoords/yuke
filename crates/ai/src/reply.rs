@@ -3,12 +3,12 @@
 
 use crate::encoder::Encoded;
 use crate::failure::Failure;
-use crate::request::{Reasoning, ReasoningReplay};
 use crate::response::{
     AttemptError, BlockKind, BlockResult, Completion, Content, Event, Partial, PartialBlock, Response, StartedBlock,
 };
-use crate::stream::{Options, Stream};
+use crate::stream::{ReplyOptions, Stream};
 use crate::transport::Transport;
+use crate::{Reasoning, ReasoningReplay};
 
 /// The events of one attempt, then its owned [`Response`].
 #[derive(Debug)]
@@ -38,7 +38,7 @@ enum End {
 impl Reply {
     /// Open one attempt. Borrow `request` only until this returns. An opening fault, and an answer other than 200,
     /// become the first event.
-    pub async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: Options) -> Reply {
+    pub async fn open(transport: &dyn Transport, request: &Encoded<'_>, options: ReplyOptions) -> Reply {
         Reply {
             stream: Stream::open(transport, request, options).await,
             parts: Vec::new(),
@@ -182,14 +182,13 @@ mod tests {
     use super::*;
     use crate::encoder::Encoder;
     use crate::failure::ProviderKind;
-    use crate::request::{Block, Protocol, Request, ToolCall};
     use crate::response::{AttemptInfo, FinishReason, ResponseLimits, Usage};
-    use crate::route::Credential;
     use crate::testing::{
         CannedTransport, OVERLOAD_EVENT, block_on, canned_reply, completion, frame, generate_text, generate_with,
         target,
     };
     use crate::transport::Fault;
+    use crate::{Block, Credential, Protocol, Request, ToolCall};
 
     /// Open a reply over a canned Anthropic answer.
     fn open_canned(canned: &CannedTransport) -> Reply {
@@ -202,7 +201,7 @@ mod tests {
                 Request::new(&blocks),
             )
             .unwrap();
-        block_on(Reply::open(canned, &encoded, Options::default()))
+        block_on(Reply::open(canned, &encoded, ReplyOptions::default()))
     }
 
     fn info(response: &Result<Response, AttemptError>) -> &AttemptInfo {
@@ -422,7 +421,7 @@ mod tests {
                 &canned,
                 &target(Protocol::AnthropicMessages),
                 "hello",
-                Options { limits, deadline: None },
+                ReplyOptions { limits, deadline: None },
             );
             assert_eq!(canned.closes(), 1);
             assert_eq!(failed(&response).cause, Failure::Provider(kind));
@@ -501,7 +500,7 @@ mod tests {
                 &canned,
                 &target(Protocol::AnthropicMessages),
                 "hello",
-                Options { limits, deadline: None },
+                ReplyOptions { limits, deadline: None },
             );
             assert_eq!(failed(&response).cause, Failure::ResponseTooLarge);
         }
@@ -521,7 +520,7 @@ mod tests {
                 &canned,
                 &target(Protocol::AnthropicMessages),
                 "hello",
-                Options {
+                ReplyOptions {
                     limits: ResponseLimits {
                         max_tool_arg_bytes,
                         ..ResponseLimits::default()

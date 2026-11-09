@@ -13,9 +13,9 @@ use std::time::Instant;
 use bytes::Bytes;
 use serde_json::{Value, json};
 
-use crate::request::Protocol;
-use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Header, Outgoing, Transport};
+use crate::transport::{Body, BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
 use crate::wire::outgoing::protocol_path;
+use crate::{Header, Protocol};
 
 /// `events` as one SSE body: each event is the data of one message.
 pub fn sse<T: Display>(events: &[T]) -> String {
@@ -595,7 +595,7 @@ mod tests {
     use super::*;
     use crate::failure::{Failure, ProviderKind};
     use crate::response::{Completion, FinishReason, Partial};
-    use crate::stream::Options;
+    use crate::stream::ReplyOptions;
     use crate::stream::testing::Harness;
     use crate::testing::{block_on, generate_with, target};
 
@@ -604,8 +604,8 @@ mod tests {
         let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
         let target = target(Protocol::AnthropicMessages);
 
-        let first = generate_with(&transport, &target, "first question", Options::default()).unwrap();
-        let second = generate_with(&transport, &target, "second question", Options::default()).unwrap();
+        let first = generate_with(&transport, &target, "first question", ReplyOptions::default()).unwrap();
+        let second = generate_with(&transport, &target, "second question", ReplyOptions::default()).unwrap();
 
         assert_eq!([first.completion.text(), second.completion.text()], ["one", "two"]);
         let sent = transport.sent();
@@ -619,8 +619,8 @@ mod tests {
         let transport = ScriptedTransport::new([text_reply("one")]);
         let target = target(Protocol::AnthropicMessages);
 
-        generate_with(&transport, &target, "first", Options::default()).unwrap();
-        let error = generate_with(&transport, &target, "second", Options::default()).unwrap_err();
+        generate_with(&transport, &target, "first", ReplyOptions::default()).unwrap();
+        let error = generate_with(&transport, &target, "second", ReplyOptions::default()).unwrap_err();
 
         assert!(
             error
@@ -645,7 +645,7 @@ mod tests {
         let transport = ScriptedTransport::new([text_reply("one"), text_reply("two")]);
         let target = target(Protocol::AnthropicMessages);
 
-        generate_with(&transport, &target, "only", Options::default()).unwrap();
+        generate_with(&transport, &target, "only", ReplyOptions::default()).unwrap();
 
         assert_eq!(transport.check(), Err("1 scripted reply(s) got no request".to_owned()));
     }
@@ -694,7 +694,7 @@ mod tests {
                 transport.push_answer(answer);
             }
             let target = target(protocol);
-            let next = || generate_with(&transport, &target, "go", Options::default());
+            let next = || generate_with(&transport, &target, "go", ReplyOptions::default());
             let calls = |completion: &Completion| -> Vec<(String, String, String)> {
                 completion
                     .tool_calls()

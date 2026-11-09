@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::mpsc;
 
 use serde_json::{Value, json};
-use yuke_ai::transport::{Answer, BoxFuture, ExchangeRequest, Fault};
+use yuke_ai::transport::{BoxFuture, ExchangeAnswer, ExchangeRequest, Fault};
 
 use super::*;
 use crate::testing::Answers;
@@ -94,7 +94,7 @@ impl Exchange for Slow {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         deadline: Option<Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
         Box::pin(async move {
             tokio::time::sleep(self.delay).await;
             self.script.exchange(request, deadline).await
@@ -115,7 +115,7 @@ impl Exchange for Gated {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         deadline: Option<Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
         Box::pin(async move {
             self.arrived.notify_one();
             self.gate.notified().await;
@@ -477,7 +477,7 @@ async fn a_refresh_keeps_the_account_and_each_credential_names_it() {
     assert_eq!(oauth.access_token, "new");
     assert_eq!(
         *oauth.headers,
-        [yuke_ai::transport::Header::new("ChatGPT-Account-Id", "account-1")]
+        [yuke_ai::Header::new("ChatGPT-Account-Id", "account-1")]
     );
     assert_eq!(file(&folder)["openai-codex"]["account_id"], "account-1");
 }
@@ -545,7 +545,7 @@ async fn a_pushed_token_of_the_codex_flow_names_its_account() {
     assert_eq!(oauth.access_token, "pushed");
     assert_eq!(
         *oauth.headers,
-        [yuke_ai::transport::Header::new("ChatGPT-Account-Id", "account-1")]
+        [yuke_ai::Header::new("ChatGPT-Account-Id", "account-1")]
     );
 }
 

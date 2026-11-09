@@ -8,11 +8,10 @@ use std::hash::{Hash, Hasher};
 
 use bytes::Bytes;
 
-use crate::request::{Block, Modality, OriginRef, Protocol, Request, Target, Wire};
-use crate::route::Credential;
 use crate::transport::Outgoing;
 use crate::wire::{self, json::JsonWriter, outgoing::HeadText};
 use crate::wyhash::Wyhash;
+use crate::{Block, Credential, Modality, OriginRef, Protocol, Request, Target, Wire};
 
 /// The part of a request that a protocol or a target cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -339,15 +338,12 @@ mod tests {
     use std::borrow::Cow;
 
     use super::*;
-    use crate::Settings;
-    use crate::request::OriginRef;
-    use crate::request::{
-        AnthropicWire, BlobStore, ChatWire, MaxTokensField, Media, Reasoning, ReasoningReplayMode, ReplayKind,
-        ResponsesDialect, ResponsesWire, SEARCH_TOOL_NAME, ThinkingFormat, ToolCall, ToolDefinition, ToolResult,
-    };
-    use crate::route::{CredentialHeader, Route};
-    use crate::transport::Header;
     use crate::wire::testing::{TestBlobs, blob, replay, target_of};
+    use crate::{
+        AnthropicWire, BlobStore, ChatWire, CredentialHeader, Header, MaxTokensField, Media, OriginRef, Reasoning,
+        ReasoningReplayMode, ReplayKind, ResponsesDialect, ResponsesWire, Route, SEARCH_TOOL_NAME, Settings,
+        ThinkingFormat, ToolCall, ToolDefinition, ToolResult,
+    };
 
     const ALL_WIRES: [Wire; 3] = [
         Wire::AnthropicMessages(AnthropicWire {

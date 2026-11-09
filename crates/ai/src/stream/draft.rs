@@ -4,11 +4,11 @@
 use std::ops::Range;
 
 use crate::json::Malformed;
-use crate::request::{Origin, ReasoningReplayRef, ReplayKind, ToolCallRef};
 use crate::response::{
     BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Delta, Done, Event, FinishReason, ResponseLimits,
     StartedBlock, Usage,
 };
+use crate::{Origin, ReasoningReplayRef, ReplayKind, ToolCallRef};
 
 /// A reducer fails on malformed or oversized input. A provider error is no decode error: the reducer names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

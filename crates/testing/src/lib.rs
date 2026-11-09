@@ -10,8 +10,7 @@
 
 use std::sync::Arc;
 
-use yuke_ai::route::{Credential, Route};
-use yuke_ai::{AnthropicWire, Origin, OriginRef, Target, ToolDefinition, Wire};
+use yuke_ai::{AnthropicWire, Credential, Origin, OriginRef, Route, Target, ToolDefinition, Wire};
 use yuke_engine::Model;
 
 /// An Anthropic target at a test host. Its route takes no credential.

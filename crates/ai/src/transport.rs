@@ -3,7 +3,6 @@
 //! One transport serves many sessions, and a body owns its connection.
 //! An [`Exchange`] sends a small request and reads its whole answer, such as an OAuth token request.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -11,6 +10,8 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 
 use bytes::Bytes;
+
+use crate::Header;
 
 /// A future that a [`Transport`] returns.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -49,7 +50,7 @@ pub trait Exchange: Send + Sync {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         deadline: Option<Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>>;
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>>;
 }
 
 /// The bytes of one response body, in chunks.
@@ -122,43 +123,6 @@ impl fmt::Display for Fault {
 }
 
 impl std::error::Error for Fault {}
-
-/// One HTTP header. A `'static` text borrows, and other text is owned. `Debug` writes no value, because a header can
-/// carry a credential.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Header {
-    /// The field name.
-    pub name: Cow<'static, str>,
-    /// The field value.
-    pub value: Cow<'static, str>,
-}
-
-impl fmt::Debug for Header {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Header")
-            .field("name", &self.name)
-            .field("value", &"<redacted>")
-            .finish()
-    }
-}
-
-impl Header {
-    /// A header of `name` and `value`. A `&'static str` borrows, and a `String` moves in.
-    pub fn new(name: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
-        Header {
-            name: name.into(),
-            value: value.into(),
-        }
-    }
-
-    /// A header of two static texts, for a `static` table.
-    pub const fn from_static(name: &'static str, value: &'static str) -> Self {
-        Header {
-            name: Cow::Borrowed(name),
-            value: Cow::Borrowed(value),
-        }
-    }
-}
 
 /// The request bytes to send: the URL, the headers, and the body in parts.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -243,16 +207,16 @@ impl fmt::Debug for ExchangeRequest<'_> {
 
 /// The whole answer of an [`ExchangeRequest`]. `Debug` writes no body, because a body can carry a credential.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Answer {
+pub struct ExchangeAnswer {
     /// The response head.
     pub head: Head,
     /// The body.
     pub body: Vec<u8>,
 }
 
-impl fmt::Debug for Answer {
+impl fmt::Debug for ExchangeAnswer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Answer")
+        f.debug_struct("ExchangeAnswer")
             .field("head", &self.head)
             .field("body", &"<redacted>")
             .finish()

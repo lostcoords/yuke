@@ -6,11 +6,10 @@ use crate::catalog::{
     AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Limits, Modalities, Model, PriceBand, Provider,
 };
 use crate::oauth::Flow;
-use crate::request::{
-    ChatDialect, Effort, MaxTokensField, Modality, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat,
+use crate::{
+    ChatDialect, CredentialHeader, Effort, Header, MaxTokensField, Modality, Protocol, ReasoningReplayMode,
+    ResponsesDialect, SessionHeader, ThinkingFormat,
 };
-use crate::route::{CredentialHeader, SessionHeader};
-use crate::transport::Header;
 
 /// The identifier of this catalog snapshot.
 pub const REVISION: &str = "0de7613f00abf6d0aa1da3b7005a1518211524b3e2669e5db4ddf46b3117989e346e91ccef2dd14c159558eaed3fbf7e97960a9edc22798f9b7fa5354eaefa8e";

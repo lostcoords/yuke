@@ -2,7 +2,7 @@
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
 use yuke_ai::{
-    Block, Effort, FinishReason, Options, Request, Settings, ToolCall, ToolChoice, ToolDefinition, ToolResult,
+    Block, Effort, FinishReason, ReplyOptions, Request, Settings, ToolCall, ToolChoice, ToolDefinition, ToolResult,
 };
 
 const SCHEMA: &str = r#"{
@@ -18,7 +18,7 @@ const SCHEMA: &str = r#"{
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let key = std::env::var("OPENAI_API_KEY")?;
     let target = yuke_ai::catalog::resolve("openai/gpt-6-astra")?;
-    let credential = yuke_ai::route::Credential::ApiKey(key.into());
+    let credential = yuke_ai::Credential::ApiKey(key.into());
     let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
     let tools = [ToolDefinition {
         name: "uppercase_ascii".to_owned(),
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )];
     let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
     let request = Request::new(&context).tools(&tools).settings(&settings);
-    let first = yuke_ai::generate(&http, &target, &credential, request, Options::default())
+    let first = yuke_ai::generate(&http, &target, &credential, request, ReplyOptions::default())
         .await?
         .completion;
 
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Send the tool results back, but don't allow another round of tool calls.
     let settings = settings.tool_choice(ToolChoice::None);
     let request = Request::new(&context).tools(&tools).settings(&settings);
-    let last = yuke_ai::generate(&http, &target, &credential, request, Options::default())
+    let last = yuke_ai::generate(&http, &target, &credential, request, ReplyOptions::default())
         .await?
         .completion;
     println!("{}", last.text());

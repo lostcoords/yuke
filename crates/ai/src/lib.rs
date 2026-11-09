@@ -1,6 +1,7 @@
 //! Model calls over Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses. [`generate`] returns one owned
 //! [`Response`]. [`Encoder`] and [`Reply`] split the same call into steps that lend until the next call.
 
+mod block;
 pub mod catalog;
 mod encoder;
 mod failure;
@@ -12,9 +13,9 @@ mod reply;
 mod request;
 mod response;
 pub mod retry;
-pub mod route;
 pub mod scripted;
 mod stream;
+mod target;
 pub mod transport;
 mod wire;
 mod wyhash;
@@ -22,22 +23,27 @@ mod wyhash;
 #[cfg(test)]
 mod testing;
 
+pub use block::{
+    Blob, BlobStore, Block, Digest, Media, Modality, Origin, OriginRef, Reasoning, ReasoningReplay, ReasoningReplayRef,
+    ReplayKind, Role, ToolCall, ToolCallRef, ToolResult, answer_text,
+};
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
 pub use reply::Reply;
 pub use request::{
-    AnthropicWire, Blob, BlobStore, Block, ChatDialect, ChatWire, Digest, Effort, MaxTokensField, Media, Modality,
-    Origin, OriginRef, OutputSchema, Protocol, Reasoning, ReasoningReplay, ReasoningReplayMode, ReasoningReplayRef,
-    ReasoningSettings, ReplayKind, Request, ResponsesDialect, ResponsesWire, Role, SEARCH_TOOL_NAME, Settings, Target,
-    Thinking, ThinkingDisplay, ThinkingFormat, ToolCall, ToolCallRef, ToolChoice, ToolDefinition, ToolResult, Wire,
-    answer_text,
+    Effort, OutputSchema, ReasoningSettings, Request, SEARCH_TOOL_NAME, Settings, Thinking, ThinkingDisplay,
+    ToolChoice, ToolDefinition,
 };
 pub use response::{
     AttemptError, AttemptInfo, BlockId, BlockResult, BlockStarted, BlockStopped, Completion, Content, Delta, Done,
     Error, Event, FinishReason, Partial, PartialBlock, Response, ResponseLimits, StartedBlock, Usage,
 };
-use route::Credential;
-pub use stream::Options;
+pub use stream::ReplyOptions;
+pub use target::{
+    AnthropicWire, ChatDialect, ChatWire, Credential, CredentialHeader, Header, MaxTokensField, OAuth, Protocol,
+    ReasoningReplayMode, ResponsesDialect, ResponsesWire, Route, SessionHeader, Target, ThinkingFormat, Wire,
+    invalid_header,
+};
 use transport::Transport;
 
 /// Encode one request for `target` with `credential`, open it with `options`, and read the reply to its end. No
@@ -51,7 +57,7 @@ pub async fn generate(
     target: &Target,
     credential: &Credential,
     request: Request<'_>,
-    options: Options,
+    options: ReplyOptions,
 ) -> Result<Response, Error> {
     let mut encoder = Encoder::new();
     let encoded = encoder.encode(target, credential, request)?;
@@ -161,7 +167,7 @@ mod tests {
         let mut encoder = Encoder::new();
         send(&encoder);
         let encoded = encoder.encode(&target, &Credential::None, request).unwrap();
-        let open = Reply::open(&canned, &encoded, Options::default());
+        let open = Reply::open(&canned, &encoded, ReplyOptions::default());
         send(&open);
         let mut reply = block_on(open);
         send(&reply.next());
@@ -173,7 +179,7 @@ mod tests {
             &target,
             &Credential::None,
             request,
-            Options::default(),
+            ReplyOptions::default(),
         ));
     }
 }

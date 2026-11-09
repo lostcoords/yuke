@@ -10,8 +10,9 @@ use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT
 use yuke_http::http::{HeaderMap, HeaderValue, Method};
 use yuke_http::{Client, Error};
 
+use crate::Header;
 use crate::transport::{
-    Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Header, Outgoing, Transport, next_chunk,
+    Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport, next_chunk,
 };
 
 impl Transport for Client {
@@ -37,7 +38,7 @@ impl Exchange for Client {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         deadline: Option<std::time::Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
         let plan = Plan {
             url: request.url,
             headers: &[],
@@ -55,7 +56,7 @@ impl Exchange for Client {
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            Ok(Answer { head, body: bytes })
+            Ok(ExchangeAnswer { head, body: bytes })
         })
     }
 }
@@ -110,7 +111,7 @@ fn headers(plan: &Plan<'_>) -> Result<HeaderMap, Fault> {
     )?;
     for header in plan.headers {
         let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
-        // Any byte but a control byte is valid, as `route::valid_header_value` checks.
+        // Any byte but a control byte is valid, as `target::valid_header_value` checks.
         let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
         full(headers.try_append(name, value).map(drop))?;
     }

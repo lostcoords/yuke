@@ -1,11 +1,198 @@
-//! A route holds how one request reaches a provider, and the credential headers it presents.
+//! Where and how one model is called: the target, its route and credential, and the wire facts of each protocol.
 
 use std::borrow::Cow;
 use std::fmt;
 
 use serde::Deserialize;
 
-use crate::transport::Header;
+/// The wire protocol of one endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Protocol {
+    /// Anthropic Messages.
+    AnthropicMessages,
+    /// OpenAI Chat Completions.
+    OpenaiChat,
+    /// OpenAI Responses.
+    OpenaiResponses,
+}
+
+/// The wire facts of one protocol. Its variant selects the serializer. The model and the route fill it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Wire {
+    /// Anthropic Messages.
+    AnthropicMessages(AnthropicWire),
+    /// OpenAI Chat Completions.
+    OpenaiChat(ChatWire),
+    /// OpenAI Responses.
+    OpenaiResponses(ResponsesWire),
+}
+
+impl Wire {
+    /// The protocol this wire speaks.
+    pub fn protocol(&self) -> Protocol {
+        match self {
+            Self::AnthropicMessages(_) => Protocol::AnthropicMessages,
+            Self::OpenaiChat(_) => Protocol::OpenaiChat,
+            Self::OpenaiResponses(_) => Protocol::OpenaiResponses,
+        }
+    }
+}
+
+/// The wire facts of an Anthropic Messages endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AnthropicWire {
+    /// The default output limit. This API has none, so the target names one. A request limit replaces it.
+    pub max_tokens: u32,
+    /// Write the breakpoints the route cache policy asks for.
+    pub cache: bool,
+}
+
+/// The wire facts of an OpenAI Chat Completions endpoint and model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ChatWire {
+    /// The endpoint selects it, not the model.
+    pub dialect: ChatDialect,
+    /// The reasoning control the host accepts.
+    pub thinking_format: ThinkingFormat,
+    /// How a prior assistant turn returns its reasoning.
+    pub reasoning_replay: ReasoningReplayMode,
+    /// A compatible host keeps the original member.
+    pub max_tokens_field: MaxTokensField,
+}
+
+/// The wire facts of an OpenAI Responses endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ResponsesWire {
+    /// The endpoint selects it, not the model.
+    pub dialect: ResponsesDialect,
+    /// Write the breakpoint the route cache policy asks for.
+    pub cache: bool,
+}
+
+/// Where and how one model is called. The caller supplies a valid route, and the credential at each encode.
+/// The library applies every field as given: it reads no model capability and chooses no policy.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Target {
+    /// Upstream model ID, not the catalog selector.
+    pub model: Cow<'static, str>,
+    /// Where the request goes.
+    pub route: Route,
+    /// How the request is written for this host and model. Its variant selects the protocol.
+    /// [`crate::catalog::Entry::bind`] derives it from the catalog.
+    pub wire: Wire,
+    /// The model has a native tool search: Anthropic tool references, or the Responses client search. Chat Completions
+    /// has none. Without a native tool search, the encoder refuses a request with a deferred tool.
+    pub tool_search: bool,
+}
+
+/// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ResponsesDialect {
+    /// The OpenAI API.
+    #[default]
+    Standard,
+    /// The ChatGPT Codex backend.
+    Codex,
+}
+
+/// Select the Chat Completions body shape a host accepts. Mistral refuses any member its schema does not name,
+/// `stream_options` among them, and reports the usage of a stream without a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ChatDialect {
+    /// The OpenAI shape.
+    #[default]
+    Standard,
+    /// The Mistral shape.
+    Mistral,
+}
+
+/// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MaxTokensField {
+    /// `max_tokens`.
+    #[default]
+    MaxTokens,
+    /// `max_completion_tokens`.
+    MaxCompletionTokens,
+}
+
+/// Select how a prior assistant turn returns its reasoning, which DeepSeek requires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ReasoningReplayMode {
+    /// Return no reasoning.
+    #[default]
+    None,
+    /// Return the text as `reasoning_content`.
+    ReasoningContent,
+    /// Return the OpenRouter `reasoning_details` array.
+    ReasoningDetails,
+}
+
+/// Select the reasoning control an OpenAI-chat host accepts. The dialects disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[expect(
+    missing_docs,
+    reason = "each variant names the host whose reasoning control it writes"
+)]
+#[non_exhaustive]
+pub enum ThinkingFormat {
+    #[default]
+    None,
+    Openai,
+    Openrouter,
+    Deepseek,
+    Zai,
+    Qwen,
+}
+
+/// One HTTP header. A `'static` text borrows, and other text is owned. `Debug` writes no value, because a header can
+/// carry a credential.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Header {
+    /// The field name.
+    pub name: Cow<'static, str>,
+    /// The field value.
+    pub value: Cow<'static, str>,
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Header")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
+            .finish()
+    }
+}
+
+impl Header {
+    /// A header of `name` and `value`. A `&'static str` borrows, and a `String` moves in.
+    pub fn new(name: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
+        Header {
+            name: name.into(),
+            value: value.into(),
+        }
+    }
+
+    /// A header of two static texts, for a `static` table.
+    pub const fn from_static(name: &'static str, value: &'static str) -> Self {
+        Header {
+            name: Cow::Borrowed(name),
+            value: Cow::Borrowed(value),
+        }
+    }
+}
 
 /// Select the HTTP header and value format. This type holds no credential bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]

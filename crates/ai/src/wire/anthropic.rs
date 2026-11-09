@@ -1,8 +1,8 @@
 //! Serialize an Anthropic Messages request from the neutral request.
 
+use crate::block::read_blob;
 use crate::encoder::{EncodeError, Unsupported};
-use crate::request::read_blob;
-use crate::request::{AnthropicWire, BlobStore, Block, Media, Modality, ReplayKind, Request, Target, Thinking};
+use crate::{AnthropicWire, BlobStore, Block, Media, Modality, ReplayKind, Request, Target, Thinking};
 
 use super::json::{JsonWriter, call_arguments};
 
@@ -267,12 +267,11 @@ pub(crate) fn cacheable(block: &Block) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToolResult;
-    use crate::request::{
-        Blob, BlobStore, Effort, Origin, OutputSchema, Reasoning, ReasoningReplay, Settings, ThinkingDisplay,
-        ToolDefinition,
-    };
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
+    use crate::{
+        Blob, BlobStore, Effort, Origin, OutputSchema, Reasoning, ReasoningReplay, Settings, ThinkingDisplay,
+        ToolDefinition, ToolResult,
+    };
 
     fn anthropic(max_tokens: u32) -> crate::Wire {
         crate::Wire::AnthropicMessages(AnthropicWire {

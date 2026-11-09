@@ -6,9 +6,9 @@ use std::marker::PhantomData;
 use serde::Deserialize;
 use serde::de::{self, Deserializer, IgnoredAny, SeqAccess, Visitor};
 
+use crate::ReplayKind;
 use crate::failure::{self, ProviderKind};
 use crate::json::{self, Text, Value};
-use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 
@@ -520,7 +520,7 @@ fn is_interrupted(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::Protocol;
+    use crate::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
 

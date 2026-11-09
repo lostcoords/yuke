@@ -100,7 +100,7 @@ async fn streams_sse_body() {
 }
 
 /// Run one server and one exchange of a form `body` with an answer limit of `max_answer` bytes.
-async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen, Result<Answer, Fault>) {
+async fn exchange_once(server: Server, body: &[u8], max_answer: usize) -> (Seen, Result<ExchangeAnswer, Fault>) {
     let (port, served) = listen(server).await;
     let url = format!("http://127.0.0.1:{port}/oauth2/token");
     let request = ExchangeRequest {

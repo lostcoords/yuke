@@ -10,12 +10,14 @@ use std::time::Instant;
 
 use bytes::Bytes;
 
-use crate::request::{AnthropicWire, ChatWire, Protocol, ResponsesWire, Target, Wire};
 use crate::response::{AttemptError, Completion, Error, Response};
-use crate::route::{Credential, Route};
-use crate::stream::Options;
-use crate::transport::{Answer, Body, BoxBody, BoxFuture, Exchange, ExchangeRequest, Fault, Head, Outgoing, Transport};
-use crate::{Block, Request, generate};
+use crate::stream::ReplyOptions;
+use crate::transport::{
+    Body, BoxBody, BoxFuture, Exchange, ExchangeAnswer, ExchangeRequest, Fault, Head, Outgoing, Transport,
+};
+use crate::{
+    AnthropicWire, Block, ChatWire, Credential, Protocol, Request, ResponsesWire, Route, Target, Wire, generate,
+};
 
 /// Assert that two values print the same `Debug` text. An error with a boxed source has no `PartialEq`. Use it only
 /// for a value whose `Debug` is derived and holds no boxed source, so the text shows every field.
@@ -82,14 +84,14 @@ pub(crate) fn generate_text(
     target: &Target,
     prompt: &str,
 ) -> Result<Response, AttemptError> {
-    generate_with(transport, target, prompt, Options::default())
+    generate_with(transport, target, prompt, ReplyOptions::default())
 }
 
 pub(crate) fn generate_with(
     transport: &dyn Transport,
     target: &Target,
     prompt: &str,
-    options: Options,
+    options: ReplyOptions,
 ) -> Result<Response, AttemptError> {
     let blocks = [Block::user_text(prompt)];
     match block_on(generate(
@@ -224,7 +226,7 @@ pub(crate) struct Sent {
 /// Answer each exchange with the next scripted result, and record each request.
 #[derive(Debug, Default)]
 pub(crate) struct ScriptedExchanges {
-    answers: Mutex<VecDeque<Result<Answer, Fault>>>,
+    answers: Mutex<VecDeque<Result<ExchangeAnswer, Fault>>>,
     sent: Mutex<Vec<Sent>>,
 }
 
@@ -233,7 +235,7 @@ impl ScriptedExchanges {
         let answers = answers
             .into_iter()
             .map(|answer| {
-                answer.map(|(status, body)| Answer {
+                answer.map(|(status, body)| ExchangeAnswer {
                     head: Head::new(status),
                     body: body.as_bytes().to_vec(),
                 })
@@ -255,7 +257,7 @@ impl Exchange for ScriptedExchanges {
         &'a self,
         request: &'a ExchangeRequest<'_>,
         deadline: Option<Instant>,
-    ) -> BoxFuture<'a, Result<Answer, Fault>> {
+    ) -> BoxFuture<'a, Result<ExchangeAnswer, Fault>> {
         self.sent.lock().unwrap().push(Sent {
             url: request.url.to_owned(),
             content_type: request.content_type,

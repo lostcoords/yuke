@@ -2,9 +2,9 @@
 
 use serde::Deserialize;
 
+use crate::ReplayKind;
 use crate::failure::{self, ProviderKind};
 use crate::json::{self, Text, Value};
-use crate::request::ReplayKind;
 use crate::response::{BlockId, BlockKind, FinishReason};
 
 use super::draft::{DecodeError, Draft};
@@ -296,7 +296,7 @@ fn finish_reason(raw: &str) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::Protocol;
+    use crate::Protocol;
     use crate::response::ResponseLimits;
     use crate::stream::testing::Harness;
 

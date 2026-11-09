@@ -7,10 +7,10 @@ use serde::Deserialize;
 
 use crate::failure::{self, ProviderKind};
 use crate::json::{self, Text, Value};
-use crate::request::{ReplayKind, SEARCH_TOOL_NAME};
 use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 use crate::wyhash::Wyhash;
+use crate::{ReplayKind, SEARCH_TOOL_NAME};
 
 use super::draft::{BlockState, DecodeError, Draft, OpenTools};
 
@@ -438,10 +438,9 @@ fn incomplete_reason(reason: &str) -> FinishReason {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::Protocol;
     use crate::response::ResponseLimits;
-    use crate::route::Credential;
     use crate::stream::testing::Harness;
+    use crate::{Credential, Protocol};
 
     const PROTOCOL: Protocol = Protocol::OpenaiResponses;
 
@@ -605,7 +604,7 @@ mod tests {
     fn non_string_reasoning_delta_fails_without_output() {
         use crate::stream::Stream;
         use crate::testing::{CannedTransport, block_on, frame, target};
-        use crate::{Block, Encoder, Failure, Options, Protocol, Request};
+        use crate::{Block, Encoder, Failure, Protocol, ReplyOptions, Request};
         for (delta, valid) in [("5", false), (r#""x""#, true)] {
             let events = [
                 r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}"#.to_owned(),
@@ -622,7 +621,7 @@ mod tests {
                     Request::new(&blocks),
                 )
                 .unwrap();
-            let mut stream = block_on(Stream::open(&canned, &encoded, Options::default()));
+            let mut stream = block_on(Stream::open(&canned, &encoded, ReplyOptions::default()));
             if valid {
                 assert_eq!(
                     super::super::testing::read_trace(&mut stream),

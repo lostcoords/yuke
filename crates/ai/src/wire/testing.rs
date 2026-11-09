@@ -3,8 +3,9 @@
 use std::borrow::Cow;
 
 use crate::encoder::{EncodeError, Encoder};
-use crate::request::{Blob, BlobStore, Block, Origin, ReasoningReplay, ReplayKind, Request, Target, ToolCall, Wire};
-use crate::route::{Credential, Route};
+use crate::{
+    Blob, BlobStore, Block, Credential, Origin, ReasoningReplay, ReplayKind, Request, Route, Target, ToolCall, Wire,
+};
 
 /// A target with `model` and `wire`, and no route or credential: an encoder reads neither.
 pub(crate) fn target_of(model: &str, wire: Wire) -> Target {

@@ -10,9 +10,10 @@ use yuke_ai::catalog::{
     self, AnthropicThinking, Auth, Caps, ChatFlags, Dialect, Endpoint, Entry, Limits, Model, PriceBand, Provider,
 };
 use yuke_ai::oauth::Flow;
-use yuke_ai::route::{self, CredentialHeader, SessionHeader};
-use yuke_ai::transport::Header;
-use yuke_ai::{ChatDialect, Effort, MaxTokensField, Protocol, ReasoningReplayMode, ResponsesDialect, ThinkingFormat};
+use yuke_ai::{
+    ChatDialect, CredentialHeader, Effort, Header, MaxTokensField, Protocol, ReasoningReplayMode, ResponsesDialect,
+    SessionHeader, ThinkingFormat, invalid_header,
+};
 
 use crate::config::read_json;
 
@@ -432,7 +433,7 @@ fn check(provider: &Provider) -> Result<(), String> {
         .filter_map(|endpoint| endpoint.credential_header.map(CredentialHeader::name))
         .chain(provider.session_header.name())
         .collect();
-    if let Some(name) = route::invalid_header(&provider.headers, &written) {
+    if let Some(name) = invalid_header(&provider.headers, &written) {
         return Err(format!(
             "headers: '{name}' is not a valid header name or value, or yuke writes this header itself"
         ));
