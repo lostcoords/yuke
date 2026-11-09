@@ -36,8 +36,9 @@ use yuke_js::{Options, Origin, Processes, Report, Runtime};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ExtensionRequestParams,
     InteractionId, ListCatalogResult, ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult,
-    ModelReference, NoticeLevel, NoticeParams, ProviderState, ResponseError, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult, UpdateCredentialParams,
+    ModelReference, NoticeLevel, NoticeParams, ProviderCredential, ProviderState, ResponseError, ServerNotification,
+    SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
 
@@ -230,10 +231,18 @@ impl Shared {
             .filter_map(|provider| {
                 let kind = stored.get(provider.id.as_ref()).copied();
                 let state = match &provider.auth {
-                    Auth::ApiKey(None) => ProviderState::Ready,
+                    Auth::ApiKey(None) => ProviderState::Ready {
+                        credential: ProviderCredential::None,
+                    },
+                    // The order is the order of `api_key`, so the state names the key that a request uses.
+                    Auth::ApiKey(Some(_)) if kind == Some(StoredKind::ApiKey) => ProviderState::Ready {
+                        credential: ProviderCredential::StoredApiKey,
+                    },
                     Auth::ApiKey(Some(name)) => {
-                        if kind == Some(StoredKind::ApiKey) || variable_key(self, name).is_some() {
-                            ProviderState::Ready
+                        if variable_key(self, name).is_some() {
+                            ProviderState::Ready {
+                                credential: ProviderCredential::Variable { name: name.to_string() },
+                            }
                         } else {
                             ProviderState::NeedsApiKey {
                                 variable: name.to_string(),
@@ -243,7 +252,9 @@ impl Shared {
                     Auth::OAuth(_) => {
                         let pushed = logins.get(provider.id.as_ref()).is_some_and(LoginSource::has_pushed);
                         if pushed || kind == Some(StoredKind::Login) {
-                            ProviderState::Ready
+                            ProviderState::Ready {
+                                credential: ProviderCredential::Login,
+                            }
                         } else {
                             ProviderState::NeedsLogin
                         }
@@ -251,7 +262,7 @@ impl Shared {
                     // yuke cannot authenticate with a scheme that it does not know, so the provider is not usable.
                     _ => return None,
                 };
-                (all || state == ProviderState::Ready).then(|| catalog::provider_info(provider, state))
+                (all || matches!(state, ProviderState::Ready { .. })).then(|| catalog::provider_info(provider, state))
             })
             .collect();
         Ok(ListCatalogResult { providers })
@@ -658,8 +669,8 @@ impl App {
             .map_err(|error| AppError::Internal(error.to_string()))
     }
 
-    /// Store `api_key` in `auth.json` as the API key of `provider`. The variable of the provider wins when it is set and
-    /// not empty.
+    /// Store `api_key` in `auth.json` as the API key of `provider`. The new key replaces the stored key and wins over
+    /// the variable of the provider.
     ///
     /// # Errors
     ///
@@ -972,17 +983,16 @@ async fn save_settings(
     })
 }
 
-/// The API key of the provider `id` with the variable `name`: the variable when it holds a key, else the key in
-/// `auth.json`.
+/// The API key of the provider `id` with the variable `name`: the key in `auth.json`, else the variable when it holds a
+/// key.
 ///
 /// # Errors
 ///
 /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
 fn api_key(shared: &Shared, id: &str, name: &str) -> Result<Option<String>, AppError> {
-    if let Some(key) = variable_key(shared, name) {
-        return Ok(Some(key));
-    }
-    crate::auth::api_key(id, shared.machine.paths.data.clone()).map_err(|error| AppError::Internal(error.to_string()))
+    let stored = crate::auth::api_key(id, shared.machine.paths.data.clone())
+        .map_err(|error| AppError::Internal(error.to_string()))?;
+    Ok(stored.or_else(|| variable_key(shared, name)))
 }
 
 /// The API key in the environment variable `name`, when it is set, UTF-8, and not empty.

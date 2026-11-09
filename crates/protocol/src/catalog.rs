@@ -31,26 +31,48 @@ pub struct ProviderInfo {
     pub id: String,
     /// The display name.
     pub name: String,
-    /// Whether the provider has its credential.
+    /// Whether the provider can serve a request.
     pub state: ProviderState,
     /// The models in catalog order.
     pub models: Vec<ModelInfo>,
 }
 
-/// Whether a provider has its credential. The server checks that a key or a login is there. It does not test it.
+/// Whether a provider can serve a request. The server checks that the credential is there. It does not test the
+/// credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProviderState {
-    /// The provider needs no key, or its key, its login, or a pushed token is there.
-    Ready,
-    /// The environment variable of the API key is unset, not UTF-8, or empty, and `auth.json` holds no key.
+    /// The provider can serve a request.
+    Ready {
+        /// The credential that a request uses.
+        credential: ProviderCredential,
+    },
+    /// `auth.json` holds no key, and the environment variable of the API key is unset, not UTF-8, or empty.
     NeedsApiKey {
         /// The name of the environment variable.
         variable: String,
     },
     /// The provider has no login in `auth.json` and no token from `credential/update`.
     NeedsLogin,
+}
+
+/// The credential that a ready provider uses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderCredential {
+    /// The provider takes no credential.
+    None,
+    /// The API key in the environment variable. `auth.json` holds no key for the provider.
+    Variable {
+        /// The name of the environment variable.
+        name: String,
+    },
+    /// The API key in `auth.json`. It wins over the environment variable.
+    StoredApiKey,
+    /// The login in `auth.json`, or the token from `credential/update`.
+    Login,
 }
 
 /// A model of a provider.

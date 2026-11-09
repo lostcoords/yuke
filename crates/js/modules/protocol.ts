@@ -929,6 +929,15 @@ cacheRead?: number | null,
 cacheWrite?: number | null, };
 
 /**
+ * The credential that a ready provider uses.
+ */
+export type ProviderCredential = { "kind": "none" } | { "kind": "variable", 
+/**
+ * The name of the environment variable.
+ */
+name: string, } | { "kind": "stored_api_key" } | { "kind": "login" };
+
+/**
  * A provider and its models. The `id` of the provider and the `id` of a model make the
  * [`ModelReference`](crate::ModelReference) of a session.
  */
@@ -942,7 +951,7 @@ id: string,
  */
 name: string, 
 /**
- * Whether the provider has its credential.
+ * Whether the provider can serve a request.
  */
 state: ProviderState, 
 /**
@@ -951,9 +960,14 @@ state: ProviderState,
 models: Array<ModelInfo>, };
 
 /**
- * Whether a provider has its credential. The server checks that a key or a login is there. It does not test it.
+ * Whether a provider can serve a request. The server checks that the credential is there. It does not test the
+ * credential.
  */
-export type ProviderState = { "kind": "ready" } | { "kind": "needs_api_key", 
+export type ProviderState = { "kind": "ready", 
+/**
+ * The credential that a request uses.
+ */
+credential: ProviderCredential, } | { "kind": "needs_api_key", 
 /**
  * The name of the environment variable.
  */

@@ -16,7 +16,7 @@ id: string,
  */
 name: string, 
 /**
- * Whether the provider has its credential.
+ * Whether the provider can serve a request.
  */
 state: ProviderState, 
 /**

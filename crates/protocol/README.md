@@ -50,11 +50,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   yuke revokes no token at the provider. `yuke logout PROVIDER` changes `auth.json` only: a running server keeps a
   token of `credential/update`.
 - `auth/set_api_key { provider, apiKey }` stores the key in `auth.json` for a provider with an API key variable. The
-  variable wins when it is set and not empty. Each session takes the key at its next turn.
+  new key replaces the stored key and wins over the variable. Each session takes the key at its next turn.
 - `catalog/list` gives the providers that are ready now, or every provider with `all: true`. Each provider has its
-  state (`ready`, `needs_api_key` with the variable, or `needs_login`) and its models: limits, prices, tool support,
-  input kinds, and the reasoning choices with the reasoning settings that a session sends for each. A provider is
-  ready when its API key variable holds UTF-8 text that is not empty, when it has a stored key, a login, or a pushed
+  state (`ready` with its credential, `needs_api_key` with the variable, or `needs_login`) and its models: limits,
+  prices, tool support, input kinds, and the reasoning choices with the reasoning settings that a session sends for
+  each. A provider is ready when its API key variable holds UTF-8 text that is not empty, when it has a stored key, a login, or a pushed
   token, or when it needs no key. The server does not test the credential. A client asks again after `profile/reload`.
 - A row holds the saved facts (model, folder, title, times, fork source, parent) and the activity now: `closed`, `idle`, or
   `running`. A text message or an explicit rename supplies the title. Initial message text normalizes whitespace and truncates

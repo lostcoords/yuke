@@ -46,6 +46,7 @@ async fn a_pushed_token_serves_each_open_session_and_a_new_push_serves_the_next_
     let second_session = login_session(&mut client, &place).await;
 
     assert_eq!(push(&mut client, "first").await, Ok(json!({})));
+    let catalog = client.call("catalog/list", json!({})).await.unwrap();
     client.request("session/input", first_session).await;
     client.until(is_idle).await;
     push(&mut client, "second").await.unwrap();
@@ -55,6 +56,10 @@ async fn a_pushed_token_serves_each_open_session_and_a_new_push_serves_the_next_
     assert_eq!(
         transport.header("Authorization"),
         [Some("Bearer first".to_owned()), Some("Bearer second".to_owned())]
+    );
+    assert_eq!(
+        provider_states(&catalog)["xai-grok"],
+        json!({ "kind": "ready", "credential": { "kind": "login" } })
     );
     client.end().await;
 }
@@ -151,6 +156,7 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     // An entry of the wrong kind gives its provider no credential.
     let stored = json!({
         "openai-codex": { "access_token": "a", "refresh_token": "r", "expires_at": 0 },
+        "openai": { "api_key": "k" },
         "anthropic": { "access_token": "b", "refresh_token": "s", "expires_at": 0 },
         "xai-grok": { "api_key": "k" },
     });
@@ -170,23 +176,24 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     let refused = client.call("catalog/list", json!({ "all": "yes" })).await;
     client.end().await;
 
-    let ready_state = json!({ "kind": "ready" });
-    let ready_states = provider_states(&ready);
-    assert!(
-        ready_states.values().all(|state| *state == ready_state),
-        "{ready_states:?}"
-    );
-    assert_eq!(
-        ready_states.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["local", "minimax", "openai-codex"]
-    );
+    let ready_with = |credential: Value| json!({ "kind": "ready", "credential": credential });
+    let ready_states = BTreeMap::from([
+        ("local".to_owned(), ready_with(json!({ "kind": "none" }))),
+        (
+            "minimax".to_owned(),
+            ready_with(json!({ "kind": "variable", "name": "MINIMAX_API_KEY" })),
+        ),
+        ("openai".to_owned(), ready_with(json!({ "kind": "stored_api_key" }))),
+        ("openai-codex".to_owned(), ready_with(json!({ "kind": "login" }))),
+    ]);
+    assert_eq!(provider_states(&ready), ready_states);
     let all_states = provider_states(&all);
     assert_eq!(
         all_states["anthropic"],
         json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
     );
     assert_eq!(all_states["xai-grok"], json!({ "kind": "needs_login" }));
-    assert_eq!(all_states["openai-codex"], ready_state);
+    assert_eq!(all_states["openai-codex"], ready_states["openai-codex"]);
     assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
 
     let local = &all["providers"]
@@ -277,7 +284,10 @@ async fn a_login_gives_its_code_at_once_and_its_end_saves_the_login() {
     assert_eq!(started["verificationUrl"], "https://x.ai/d?c=UC");
     assert_eq!(end["params"]["provider"], "xai-grok");
     assert_eq!(end["params"]["outcome"], json!({ "kind": "succeeded" }));
-    assert_eq!(provider_states(&catalog)["xai-grok"], json!({ "kind": "ready" }));
+    assert_eq!(
+        provider_states(&catalog)["xai-grok"],
+        json!({ "kind": "ready", "credential": { "kind": "login" } })
+    );
     let saved: Value = serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap();
     assert_eq!(saved["xai-grok"]["access_token"], "at");
 }
@@ -410,21 +420,26 @@ async fn run_turn(client: &mut Client, session: &Value) {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_wins_over_it() {
+async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_falls_back_to_the_variable() {
     let place = Place::new(
         "rpc",
-        "a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_wins_over_it",
+        "a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_falls_back_to_the_variable",
     );
     std::fs::create_dir_all(&place.paths.data).unwrap();
     let login = json!({ "xai-grok": { "access_token": "a", "refresh_token": "r", "expires_at": 0 } });
     std::fs::write(place.paths.data.join("auth.json"), login.to_string()).unwrap();
-    let transport = ScriptedTransport::new([text_reply("one"), text_reply("two"), text_reply("three")]);
+    let transport = ScriptedTransport::new([
+        text_reply("one"),
+        text_reply("two"),
+        text_reply("three"),
+        text_reply("four"),
+    ]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let key = |provider: &str, key: &str| json!({ "provider": provider, "apiKey": key });
 
     let stored = client.call("auth/set_api_key", key("anthropic", "first-key")).await;
     client
-        .call("auth/set_api_key", key("minimax", "unused-key"))
+        .call("auth/set_api_key", key("minimax", "stored-key"))
         .await
         .unwrap();
     let saved = saved_auth(&place);
@@ -437,6 +452,11 @@ async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_w
         .unwrap();
     run_turn(&mut client, &anthropic).await;
     let minimax = new_session(&mut client, &place, "minimax", "MiniMax-M3").await;
+    run_turn(&mut client, &minimax).await;
+    client
+        .call("auth/logout", json!({ "provider": "minimax" }))
+        .await
+        .unwrap();
     run_turn(&mut client, &minimax).await;
     client
         .call("auth/logout", json!({ "provider": "anthropic" }))
@@ -452,24 +472,54 @@ async fn a_stored_api_key_serves_the_next_turn_until_a_logout_and_the_variable_w
     assert_eq!(saved["anthropic"], json!({ "api_key": "first-key" }));
     assert_eq!(saved["xai-grok"], login["xai-grok"]);
     let states = provider_states(&ready);
-    assert_eq!(states["anthropic"], json!({ "kind": "ready" }));
-    assert_eq!(states["xai-grok"], json!({ "kind": "ready" }));
+    let stored_api_key = json!({ "kind": "ready", "credential": { "kind": "stored_api_key" } });
+    assert_eq!(states["anthropic"], stored_api_key);
+    assert_eq!(states["minimax"], stored_api_key);
+    assert_eq!(
+        states["xai-grok"],
+        json!({ "kind": "ready", "credential": { "kind": "login" } })
+    );
     assert_eq!(
         transport.header("x-api-key"),
-        [Some("first-key".to_owned()), Some("second-key".to_owned()), None]
+        [Some("first-key".to_owned()), Some("second-key".to_owned()), None, None]
     );
     assert_eq!(
         transport.header("Authorization"),
-        [None, None, Some("Bearer test-key".to_owned())]
+        [
+            None,
+            None,
+            Some("Bearer stored-key".to_owned()),
+            Some("Bearer test-key".to_owned())
+        ]
+    );
+    let after = provider_states(&after);
+    assert_eq!(
+        after["anthropic"],
+        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
     );
     assert_eq!(
-        provider_states(&after)["anthropic"],
-        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
+        after["minimax"],
+        json!({ "kind": "ready", "credential": { "kind": "variable", "name": "MINIMAX_API_KEY" } })
     );
     assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     let saved = saved_auth(&place);
     let providers: Vec<&String> = saved.as_object().unwrap().keys().collect();
-    assert_eq!(providers, ["minimax", "xai-grok"]);
+    assert_eq!(providers, ["xai-grok"]);
+}
+
+#[tokio::test(flavor = "local")]
+async fn a_bad_auth_file_fails_a_new_session_also_with_the_variable_set() {
+    let place = Place::new("rpc", "a_bad_auth_file_fails_a_new_session_also_with_the_variable_set");
+    std::fs::create_dir_all(&place.paths.data).unwrap();
+    std::fs::write(place.paths.data.join("auth.json"), "not json").unwrap();
+    let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;
+
+    let mut settings = settings(&place);
+    settings["model"] = json!({ "provider": "minimax", "model": "MiniMax-M3" });
+    let refused = client.call("session/new", settings).await;
+    client.end().await;
+
+    assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INTERNAL_ERROR));
 }
 
 #[tokio::test(flavor = "local")]

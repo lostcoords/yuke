@@ -115,8 +115,8 @@ pub enum ClientRequest {
     /// Result: [`EmptyResult`].
     #[serde(rename = "auth/logout")]
     Logout(crate::LogoutParams),
-    /// Store an API key in `auth.json` for a provider with an API key variable. The variable wins when it is set and
-    /// not empty. Each session takes the key at its next turn. Result: [`EmptyResult`].
+    /// Store an API key in `auth.json` for a provider with an API key variable. The new key replaces the stored key and
+    /// wins over the variable. Each session takes the key at its next turn. Result: [`EmptyResult`].
     #[serde(rename = "auth/set_api_key")]
     SetApiKey(crate::SetApiKeyParams),
     /// List the providers and their models. Result: [`ListCatalogResult`](crate::ListCatalogResult).
