@@ -254,6 +254,36 @@ async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
 }
 
 #[tokio::test]
+async fn a_fork_copies_only_the_blob_files() {
+    let folder = folder("a_fork_copies_only_the_blob_files");
+    let store = SqliteStore::open(&folder).await.unwrap();
+    let source = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    let blob = store.put_blob(source, b"image".to_vec()).await.unwrap();
+    let sessions = folder.join("sessions");
+    let source_folder = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+    // A file manager can add a file of its own to the folder.
+    std::fs::write(source_folder.join(".DS_Store"), b"x").unwrap();
+
+    store.fork_session(source, None).await.unwrap();
+
+    let fork_folder = std::fs::read_dir(&sessions)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| *path != source_folder)
+        .unwrap();
+    let mut names: Vec<String> = std::fs::read_dir(&fork_folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, [blob.digest.to_string(), "lock".to_owned()]);
+}
+
+#[tokio::test]
 async fn a_refused_fork_point_leaves_no_session_row_and_no_folder() {
     let folder = folder("a_refused_fork_point_leaves_no_session_row_and_no_folder");
     let store = SqliteStore::open(&folder).await.unwrap();

@@ -3,12 +3,13 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(doc)]
 use crate::Request;
-use crate::{EncodeError, Protocol, Target, ToolDefinition};
+use crate::{EncodeError, ParseError, Protocol, Target, ToolDefinition};
 
 /// The kind of provider state that a reasoning block must return verbatim. Each kind names the protocol that
 /// produced the state. Only the encoder of that protocol writes it.
@@ -146,9 +147,32 @@ pub enum Modality {
 }
 
 /// The digest of the content of a blob, such as its SHA-256. Its text is 64 lowercase hex characters, in `Display` and
-/// in JSON, and it also names a stored file. JSON reads either case.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// in JSON, and it also names a stored file. `FromStr` and JSON read either case.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest(pub [u8; 32]);
+
+/// Parse 64 hex characters in either letter case.
+impl FromStr for Digest {
+    type Err = ParseError;
+
+    fn from_str(text: &str) -> Result<Self, ParseError> {
+        let invalid = || ParseError::new("a digest of 64 hex characters", text);
+        if text.len() != 64 {
+            return Err(invalid());
+        }
+        let digit = |byte: u8| match byte {
+            b'0'..=b'9' => Ok(byte - b'0'),
+            b'a'..=b'f' => Ok(byte - b'a' + 10),
+            b'A'..=b'F' => Ok(byte - b'A' + 10),
+            _ => Err(invalid()),
+        };
+        let mut digest = [0; 32];
+        for (byte, &[high, low]) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
+            *byte = digit(high)? << 4 | digit(low)?;
+        }
+        Ok(Digest(digest))
+    }
+}
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -173,21 +197,8 @@ impl<'de> Deserialize<'de> for Digest {
         use serde::de::{Error, Unexpected};
 
         let text = String::deserialize(deserializer)?;
-        let invalid = || D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters");
-        if text.len() != 64 {
-            return Err(invalid());
-        }
-        let digit = |byte: u8| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            b'A'..=b'F' => Ok(byte - b'A' + 10),
-            _ => Err(invalid()),
-        };
-        let mut digest = [0; 32];
-        for (byte, &[high, low]) in digest.iter_mut().zip(text.as_bytes().as_chunks::<2>().0) {
-            *byte = digit(high)? << 4 | digit(low)?;
-        }
-        Ok(Digest(digest))
+        text.parse()
+            .map_err(|_| D::Error::invalid_value(Unexpected::Str(&text), &"64 hex characters"))
     }
 }
 
@@ -573,6 +584,23 @@ mod tests {
             assert_eq!(serde_json::to_string(&block).unwrap(), json);
             assert_eq!(serde_json::from_str::<Block>(&json).unwrap(), block);
         }
+    }
+
+    // A store names a blob file by the text of its digest, and reads the digest back from that name.
+    #[test]
+    fn a_digest_reads_back_from_its_text() {
+        let mut digest = Digest([0; 32]);
+        digest.0[0] = 0xab;
+        digest.0[31] = 0x09;
+        let text = format!("ab{}09", "0".repeat(60));
+
+        assert_eq!(digest.to_string(), text);
+        assert_eq!(text.parse(), Ok(digest));
+        assert_eq!(text.to_uppercase().parse(), Ok(digest));
+        assert_eq!(
+            "lock".parse::<Digest>().map_err(|error| error.to_string()),
+            Err("`lock` is not a digest of 64 hex characters".to_owned())
+        );
     }
 
     #[test]

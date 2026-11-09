@@ -79,7 +79,11 @@ pub(crate) fn copy_blobs(source: &Path, destination: &Path) -> io::Result<()> {
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let name = entry.file_name();
-        if name == LOCK || name.to_string_lossy().starts_with(TEMPORARY_PREFIX) {
+        // The lock file, a temporary file, and a file of another program have no digest as their name.
+        if name
+            .to_str()
+            .is_none_or(|name| name.parse::<yuke_ai::Digest>().is_err())
+        {
             continue;
         }
 
