@@ -47,6 +47,39 @@ pub use target::{
 };
 use transport::Transport;
 
+/// A text that names no value of a type, such as an unknown finish reason. `Display` quotes the text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParseError {
+    expected: &'static str,
+    text: String,
+}
+
+impl ParseError {
+    /// The error for `text`, which is not `expected`, such as `a reasoning effort`.
+    pub fn new(expected: &'static str, text: impl Into<String>) -> Self {
+        ParseError {
+            expected,
+            text: text.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "`{}` is not {}", self.text, self.expected)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+/// Parse `text` as the serde name of a unit variant of `T`, so the derive keeps the one table of names.
+fn parse_name<'de, T: serde::Deserialize<'de>>(text: &'de str, expected: &'static str) -> Result<T, ParseError> {
+    use serde::de::IntoDeserializer;
+
+    T::deserialize(IntoDeserializer::<serde::de::value::Error>::into_deserializer(text))
+        .map_err(|_| ParseError::new(expected, text))
+}
+
 /// Encode one request for `target` with `credential`, open it with `options`, and read the reply to its end. No
 /// automatic retries and no tool execution.
 ///

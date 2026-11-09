@@ -107,6 +107,22 @@ pub enum ReasoningLevel {
     Effort(yuke_ai::Effort),
 }
 
+/// Parse the name of a level, as JSON holds it.
+impl std::str::FromStr for ReasoningLevel {
+    type Err = yuke_ai::ParseError;
+
+    fn from_str(text: &str) -> Result<Self, yuke_ai::ParseError> {
+        match text {
+            "default" => Ok(Self::Default),
+            "off" => Ok(Self::Off),
+            _ => text
+                .parse()
+                .map(Self::Effort)
+                .map_err(|_| yuke_ai::ParseError::new("a reasoning level", text)),
+        }
+    }
+}
+
 /// The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]

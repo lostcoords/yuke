@@ -250,9 +250,14 @@ fn each_reasoning_level_reads_and_writes_its_name() {
         (json!("max"), ReasoningLevel::Effort(yuke_ai::Effort::Max)),
     ];
     for (json, level) in levels {
+        assert_eq!(json.as_str().unwrap().parse(), Ok(level));
         assert_json(&json, &level);
     }
     assert!(serde_json::from_value::<ReasoningLevel>(json!("extreme")).is_err());
+    assert_eq!(
+        "extreme".parse::<ReasoningLevel>().map_err(|error| error.to_string()),
+        Err("`extreme` is not a reasoning level".to_owned())
+    );
 }
 
 #[test]

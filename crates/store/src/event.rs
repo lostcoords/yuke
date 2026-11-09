@@ -88,7 +88,7 @@ pub(crate) fn turn_end(
 
 /// Decode `name` from `column` as a finish reason.
 fn finish_reason(name: &str, column: &str) -> rusqlite::Result<yuke_ai::FinishReason> {
-    yuke_ai::FinishReason::from_name(name).ok_or_else(|| invalid(column))
+    name.parse().map_err(|_| invalid(column))
 }
 
 /// The error for an unknown value in `column`.

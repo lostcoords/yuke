@@ -312,7 +312,7 @@ impl<'c> TurnState<'c> {
         // No call runs, but each call gets a result, so the next request stays valid.
         let reason = match finish_reason {
             FinishReason::Length => OUTPUT_LIMIT_REASON.to_owned(),
-            _ => format!("the response ended with finish reason {}.", finish_reason.as_str()),
+            _ => format!("the response ended with finish reason {finish_reason}."),
         };
         let results: Vec<Block> = completion
             .tool_calls()

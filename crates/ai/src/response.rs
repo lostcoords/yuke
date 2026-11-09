@@ -1,12 +1,13 @@
 //! What a call answers: the streamed events, the collected response, and the facts of the attempt.
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::encoder::EncodeError;
 use crate::failure::{Failure, detail_text};
-use crate::{Block, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
+use crate::{Block, ParseError, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
 
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
@@ -44,19 +45,20 @@ impl FinishReason {
             Self::Unknown => "unknown",
         }
     }
+}
 
-    /// The reason that [`FinishReason::as_str`] names, or `None` for another name.
-    pub fn from_name(name: &str) -> Option<Self> {
-        Some(match name {
-            "stop" => Self::Stop,
-            "length" => Self::Length,
-            "content_filter" => Self::ContentFilter,
-            "refusal" => Self::Refusal,
-            "tool_calls" => Self::ToolCalls,
-            "pause" => Self::Pause,
-            "unknown" => Self::Unknown,
-            _ => return None,
-        })
+impl fmt::Display for FinishReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Parse the name that [`FinishReason::as_str`] gives.
+impl FromStr for FinishReason {
+    type Err = ParseError;
+
+    fn from_str(text: &str) -> Result<Self, ParseError> {
+        crate::parse_name(text, "a finish reason")
     }
 }
 
@@ -469,9 +471,12 @@ mod tests {
             FinishReason::Unknown,
         ];
         for reason in reasons {
-            assert_eq!(FinishReason::from_name(reason.as_str()), Some(reason));
+            assert_eq!(reason.to_string().parse(), Ok(reason));
         }
-        assert_eq!(FinishReason::from_name("end_turn"), None);
+        assert_eq!(
+            "end_turn".parse::<FinishReason>().map_err(|error| error.to_string()),
+            Err("`end_turn` is not a finish reason".to_owned())
+        );
     }
 
     fn completion(content: Vec<Content>) -> Completion {

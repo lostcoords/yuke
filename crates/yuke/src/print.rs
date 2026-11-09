@@ -10,12 +10,12 @@ use std::rc::Rc;
 use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::{Store, StoreError};
-use yuke_ai::catalog::ReasoningLevel;
-use yuke_ai::{Block, Effort};
+use yuke_ai::Block;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, answer_text, chain_text};
 use yuke_protocol::{
-    Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ServerNotification,
-    SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
+    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
+    StoredEvent,
 };
 
 use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
@@ -30,40 +30,9 @@ pub(crate) struct Task {
     /// session, and the run then needs a reasoning choice too.
     pub(crate) model: Option<String>,
     /// The reasoning choice. A new session needs it. For an existing session, it replaces the level of the session.
-    pub(crate) reasoning: Option<Reasoning>,
+    pub(crate) reasoning: Option<ReasoningLevel>,
     /// The session of the turn.
     pub(crate) session: SessionChoice,
-}
-
-/// A reasoning choice of the command line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum Reasoning {
-    /// Send no reasoning control, so the endpoint chooses the level.
-    Default,
-    Off,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-}
-
-impl Reasoning {
-    /// Give the level of this choice. [`Reasoning::Default`] gives `None`.
-    fn level(self) -> Option<ReasoningLevel> {
-        let effort = |effort| Some(ReasoningLevel::Effort(effort));
-        match self {
-            Self::Default => None,
-            Self::Off => Some(ReasoningLevel::Off),
-            Self::Minimal => effort(Effort::Minimal),
-            Self::Low => effort(Effort::Low),
-            Self::Medium => effort(Effort::Medium),
-            Self::High => effort(Effort::High),
-            Self::Xhigh => effort(Effort::Xhigh),
-            Self::Max => effort(Effort::Max),
-        }
-    }
 }
 
 /// The session that a run or the terminal interface opens.
@@ -207,7 +176,7 @@ const NO_REASONING: &str =
 fn new_settings(
     providers: &Providers,
     selector: &str,
-    choice: Reasoning,
+    choice: ReasoningLevel,
     cwd: &Path,
 ) -> Result<SessionSettings, String> {
     let (model, reasoning) = choose(providers, selector, choice)?;
@@ -252,12 +221,17 @@ async fn existing_session(task: &Task, id: SessionId, app: &App) -> Result<Sessi
 fn choose(
     providers: &Providers,
     selector: &str,
-    choice: Reasoning,
+    choice: ReasoningLevel,
 ) -> Result<(ModelReference, yuke_ai::ReasoningSettings), String> {
     let entry = providers
         .lookup(selector)
         .map_err(|error| format!("{selector}: {error}"))?;
-    let reasoning = match choice.level() {
+    let level = match choice {
+        ReasoningLevel::Default => None,
+        ReasoningLevel::Off => Some(yuke_ai::catalog::ReasoningLevel::Off),
+        ReasoningLevel::Effort(effort) => Some(yuke_ai::catalog::ReasoningLevel::Effort(effort)),
+    };
+    let reasoning = match level {
         Some(level) => entry
             .model
             .reasoning(level)

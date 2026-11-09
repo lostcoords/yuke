@@ -2,12 +2,13 @@
 //! encode.
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(doc)]
 use crate::{AnthropicWire, Target};
-use crate::{BlobStore, Block};
+use crate::{BlobStore, Block, ParseError};
 
 /// The name of the client tool that loads deferred tools. Responses declares it as the native `tool_search`
 /// when a request defers a tool, and streams its calls under this name.
@@ -92,6 +93,21 @@ impl Effort {
             Self::Xhigh => "xhigh",
             Self::Max => "max",
         }
+    }
+}
+
+impl fmt::Display for Effort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Parse the wire name that [`Effort::as_str`] gives.
+impl FromStr for Effort {
+    type Err = ParseError;
+
+    fn from_str(text: &str) -> Result<Self, ParseError> {
+        crate::parse_name(text, "a reasoning effort")
     }
 }
 
@@ -380,6 +396,27 @@ pub enum ToolChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A command line and a configuration name an effort by its wire name.
+    #[test]
+    fn each_effort_reads_back_from_its_wire_name() {
+        let efforts = [
+            (Effort::Minimal, "minimal"),
+            (Effort::Low, "low"),
+            (Effort::Medium, "medium"),
+            (Effort::High, "high"),
+            (Effort::Xhigh, "xhigh"),
+            (Effort::Max, "max"),
+        ];
+        for (effort, name) in efforts {
+            assert_eq!(effort.to_string(), name);
+            assert_eq!(name.parse(), Ok(effort));
+        }
+        assert_eq!(
+            "extreme".parse::<Effort>().map_err(|error| error.to_string()),
+            Err("`extreme` is not a reasoning effort".to_owned())
+        );
+    }
 
     // The store keeps the settings of each session as this JSON.
     #[test]

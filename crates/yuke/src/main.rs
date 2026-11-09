@@ -31,12 +31,12 @@ use serde_json::Map;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
 use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
-use yuke_protocol::{PluginLog, PluginSource, PluginState, PluginTarget, SessionId};
+use yuke_protocol::{PluginLog, PluginSource, PluginState, PluginTarget, ReasoningLevel, SessionId};
 
 use crate::app::{Machine, warn};
 use crate::paths::Paths;
 use crate::plugins::manager;
-use crate::print::{Finished, Reasoning, SessionChoice, Task};
+use crate::print::{Finished, SessionChoice, Task};
 use crate::providers::Providers;
 
 /// The longest wait of `yuke --rpc` for the client to read the last messages after the end of its input.
@@ -79,9 +79,10 @@ struct Cli {
     #[arg(long, value_name = "PROVIDER/MODEL", requires = "prompt")]
     model: Option<String>,
 
-    /// The reasoning choice. A new session needs it, and so does --model on a continued session.
-    #[arg(long, value_enum, requires = "prompt")]
-    reasoning: Option<Reasoning>,
+    /// The reasoning level: default, off, or an effort such as low or high. A new session needs it, and so does
+    /// --model on a continued session.
+    #[arg(long, value_name = "LEVEL", requires = "prompt")]
+    reasoning: Option<ReasoningLevel>,
 
     /// Resume the session with this id, in any folder.
     #[arg(short = 'r', long, value_name = "ID", conflicts_with = "continue_newest")]
@@ -703,7 +704,7 @@ mod tests {
                 task: Task {
                     prompt: "Hi.".to_owned(),
                     model: Some("a/b".to_owned()),
-                    reasoning: Some(Reasoning::Xhigh),
+                    reasoning: Some(ReasoningLevel::Effort(yuke_ai::Effort::Xhigh)),
                     session: SessionChoice::Newest,
                 },
                 json: true,
@@ -712,7 +713,7 @@ mod tests {
         let Ok(Mode::Print { task, .. }) = mode(&["-p", "Hi.", "--reasoning", "default"]) else {
             panic!("no print mode");
         };
-        assert_eq!(task.reasoning, Some(Reasoning::Default));
+        assert_eq!(task.reasoning, Some(ReasoningLevel::Default));
     }
 
     #[test]
