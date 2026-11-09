@@ -19,6 +19,7 @@ fn lines(context: &[Block]) -> Vec<String> {
             Block::ToolResult(result) if result.is_error => format!("error {} {}", result.call_id, result.content),
             Block::ToolResult(result) => format!("result {} {}", result.call_id, result.content),
             Block::Media(media) => format!("media {}", media.mime),
+            other => format!("{other:?}"),
         })
         .collect()
 }

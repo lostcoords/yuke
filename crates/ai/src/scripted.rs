@@ -131,6 +131,7 @@ const OVERFLOW_TEXT: &str = "prompt is too long: the scripted context overflow";
 
 /// One scripted answer of the model. The transport writes it in the stream format of the protocol of the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Answer {
     /// A complete answer with a text.
     Text {

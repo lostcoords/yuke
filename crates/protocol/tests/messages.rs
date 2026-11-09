@@ -12,8 +12,8 @@ use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionCancelParams, ExtensionEventParams,
     ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobKind, JobState,
     ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
-    NoticeParams, Notification, Request, Response, ServerNotification, ServerRequest, SessionEvent, SessionId,
-    SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StoredEvent,
+    NoticeParams, Notification, ReasoningLevel, Request, Response, ServerNotification, ServerRequest, SessionEvent,
+    SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
@@ -237,6 +237,22 @@ fn a_request_with_an_unknown_method_or_another_version_does_not_read() {
 
     assert!(serde_json::from_value::<Request<ClientRequest>>(unknown).is_err());
     assert!(serde_json::from_value::<Request<ClientRequest>>(version).is_err());
+}
+
+// Each level is its bare name, so an effort reads the same as before the level held the effort type.
+#[test]
+fn each_reasoning_level_reads_and_writes_its_name() {
+    let levels = [
+        (json!("default"), ReasoningLevel::Default),
+        (json!("off"), ReasoningLevel::Off),
+        (json!("minimal"), ReasoningLevel::Effort(yuke_ai::Effort::Minimal)),
+        (json!("xhigh"), ReasoningLevel::Effort(yuke_ai::Effort::Xhigh)),
+        (json!("max"), ReasoningLevel::Effort(yuke_ai::Effort::Max)),
+    ];
+    for (json, level) in levels {
+        assert_json(&json, &level);
+    }
+    assert!(serde_json::from_value::<ReasoningLevel>(json!("extreme")).is_err());
 }
 
 #[test]

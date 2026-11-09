@@ -3,7 +3,9 @@
 use std::cell::RefCell;
 
 use yuke_engine::{Commit, Observer, TurnEvent, chain_text};
-use yuke_protocol::{BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, SessionUpdate, StoredEvent};
+use yuke_protocol::{
+    BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionUpdate, StoredEvent,
+};
 
 /// Receives typed session updates without a wait. RPC and in-process clients use the same facts.
 /// A callback must not block. The caller owns delivery queues and serialization.
@@ -145,19 +147,13 @@ impl Observer for Updates<'_> {
                     match event {
                         yuke_ai::Event::BlockStopped(stopped) => draft.blocks.push(stopped.block),
                         yuke_ai::Event::Done(_) => draft.blocks.sort_unstable(),
-                        yuke_ai::Event::BlockStarted(_)
-                        | yuke_ai::Event::TextDelta(_)
-                        | yuke_ai::Event::RefusalDelta(_)
-                        | yuke_ai::Event::ReasoningDelta(_)
-                        | yuke_ai::Event::ToolInputDelta(_)
-                        | yuke_ai::Event::ReasoningSectionStarted(_) => {}
+                        _ => {}
                     }
                     draft.id
                 };
-                self.live(LiveUpdate::Model {
-                    draft_id,
-                    event: (*event).into(),
-                });
+                if let Some(event) = ModelUpdate::from_event(*event) {
+                    self.live(LiveUpdate::Model { draft_id, event });
+                }
             }
             TurnEvent::ToolStarted { block_index, call } => self.live(LiveUpdate::ToolStarted {
                 execution: self.execution(*block_index),

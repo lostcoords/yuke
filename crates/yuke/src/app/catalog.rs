@@ -60,7 +60,7 @@ pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
         if let Ok(settings) = model.reasoning(level) {
             let level = match level {
                 ReasoningLevel::Off => Level::Off,
-                ReasoningLevel::Effort(effort) => Level::from(effort),
+                ReasoningLevel::Effort(effort) => Level::Effort(effort),
             };
             // `providers.json` can list a level twice, and a client keys the choices by level.
             if choices.iter().all(|choice| choice.level != level) {
@@ -71,7 +71,7 @@ pub(super) fn reasoning_choices(model: &Model) -> Vec<ReasoningChoice> {
     choices
 }
 
-/// The protocol kind of `kind`. The catalog never lists `Other`.
+/// The protocol kind of `kind`, or `None` for a kind that the protocol does not name. The catalog never lists `Other`.
 fn modality(kind: AiModality) -> Option<Modality> {
     match kind {
         AiModality::Text => Some(Modality::Text),
@@ -79,6 +79,6 @@ fn modality(kind: AiModality) -> Option<Modality> {
         AiModality::Audio => Some(Modality::Audio),
         AiModality::Video => Some(Modality::Video),
         AiModality::Pdf => Some(Modality::Pdf),
-        AiModality::Other => None,
+        _ => None,
     }
 }

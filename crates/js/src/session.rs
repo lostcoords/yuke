@@ -718,7 +718,8 @@ struct RoundFailure {
     message: String,
 }
 
-/// The `kind` of `failure` for `round.retry`, or `None` for a failure of yuke itself.
+/// The `kind` of `failure` for `round.retry`. `None` for a failure of yuke itself, or for a model failure that has no
+/// kind for a plugin, so that no plugin retries a failure that it cannot tell apart.
 fn failure_kind(failure: &RoundError) -> Option<&'static str> {
     Some(match failure {
         RoundError::Credential(_) => "credential",
@@ -735,14 +736,16 @@ fn failure_kind(failure: &RoundError) -> Option<&'static str> {
                 ProviderKind::AuthFailed => "auth_failed",
                 ProviderKind::PermissionDenied => "permission_denied",
                 ProviderKind::BadStatus => "bad_status",
-                ProviderKind::ProviderFailed => "provider_failed",
+                // The kind names a provider error that no other kind names.
+                _ => "provider_failed",
             },
             Failure::Transport(_) => "transport",
             Failure::Protocol => "protocol",
             Failure::ResponseTooLarge => "response_too_large",
             Failure::IncompleteStream => "incomplete_stream",
+            _ => return None,
         },
-        RoundError::Hook { .. } | RoundError::Inbox(_) => return None,
+        RoundError::Model(_) | RoundError::Hook { .. } | RoundError::Inbox(_) => return None,
     })
 }
 

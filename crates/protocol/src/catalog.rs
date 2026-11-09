@@ -93,7 +93,7 @@ pub struct ReasoningChoice {
     pub settings: yuke_ai::ReasoningSettings,
 }
 
-/// A reasoning level of a model.
+/// A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
@@ -102,31 +102,9 @@ pub enum ReasoningLevel {
     Default,
     /// No reasoning.
     Off,
-    /// The effort `minimal`.
-    Minimal,
-    /// The effort `low`.
-    Low,
-    /// The effort `medium`.
-    Medium,
-    /// The effort `high`.
-    High,
-    /// The effort `xhigh`.
-    Xhigh,
-    /// The effort `max`.
-    Max,
-}
-
-impl From<yuke_ai::Effort> for ReasoningLevel {
-    fn from(effort: yuke_ai::Effort) -> Self {
-        match effort {
-            yuke_ai::Effort::Minimal => Self::Minimal,
-            yuke_ai::Effort::Low => Self::Low,
-            yuke_ai::Effort::Medium => Self::Medium,
-            yuke_ai::Effort::High => Self::High,
-            yuke_ai::Effort::Xhigh => Self::Xhigh,
-            yuke_ai::Effort::Max => Self::Max,
-        }
-    }
+    /// A reasoning effort.
+    #[serde(untagged)]
+    Effort(yuke_ai::Effort),
 }
 
 /// The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.

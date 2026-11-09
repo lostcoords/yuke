@@ -481,8 +481,9 @@ impl Login {
                 chain_text(&cause)
             )
             .into()),
-            // The login is gone, or its token can be spent: only a new login recovers it.
-            Err(OAuthError::Permanent | OAuthError::Ambiguous(_) | OAuthError::BadResponse) => {
+            // The login is gone, or its token can be spent: only a new login recovers it. An error that yuke does not
+            // know can have spent the token too.
+            Err(_) => {
                 if self.save(locked, None).await.is_err() {
                     lock(&self.spent).insert(stored.refresh_token);
                 }

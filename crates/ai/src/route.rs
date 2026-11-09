@@ -10,6 +10,7 @@ use crate::transport::Header;
 /// Select the HTTP header and value format. This type holds no credential bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum CredentialHeader {
     /// `x-api-key: <key>`.
     XApiKey,
@@ -80,6 +81,7 @@ pub fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Option<&'h
 /// Select the header that carries the session id. Each value names one header, so a second host can reuse it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SessionHeader {
     /// The route carries the session id in no header.
     #[default]
@@ -117,6 +119,7 @@ pub struct Route {
 
 /// The credential of a route. Presence must match [`Route::credential_header`]. `Debug` writes no secret.
 #[derive(Clone, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Credential {
     /// The route takes no credential.
     #[default]

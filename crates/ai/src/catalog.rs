@@ -58,6 +58,7 @@ pub struct Endpoint {
 
 /// The authentication scheme of a provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Auth {
     /// The environment variable name of the key, or `None` when none is known.
     ApiKey(Option<Cow<'static, str>>),
@@ -166,6 +167,7 @@ pub struct Caps {
 
 /// The request shape a named reasoning level takes on an Anthropic Messages model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum AnthropicThinking {
     /// No thinking control: the level is an effort.
     #[default]
@@ -307,6 +309,7 @@ impl Model {
 /// A selector that names nothing, an entry that cannot bind, or a reasoning level that a model does not support.
 /// Every baked entry binds, so only an entry built from caller configuration can fail to bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Error {
     /// The selector is not `provider/model`.
     MalformedSelector,

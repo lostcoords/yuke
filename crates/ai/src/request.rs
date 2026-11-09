@@ -12,6 +12,7 @@ use crate::route::Route;
 /// The wire protocol of one endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Protocol {
     /// Anthropic Messages.
     AnthropicMessages,
@@ -26,6 +27,7 @@ pub enum Protocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReplayKind {
     /// The `signature` of an Anthropic thinking block. A compatible host may send an empty one.
     AnthropicSignature,
@@ -139,6 +141,7 @@ impl From<ReasoningReplayRef<'_>> for ReasoningReplay {
 /// A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
 /// protocol names, and no model lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Modality {
     /// Text.
     Text,
@@ -262,6 +265,7 @@ impl Role {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Block {
     /// User text.
     UserText(String),
@@ -546,11 +550,12 @@ impl OutputSchema {
     }
 }
 
-/// A named reasoning effort from the closed portable set.
+/// A named reasoning effort from the portable set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[expect(missing_docs, reason = "each variant is the wire name of one effort")]
+#[non_exhaustive]
 pub enum Effort {
     Minimal,
     Low,
@@ -577,6 +582,7 @@ impl Effort {
 /// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ResponsesDialect {
     /// The OpenAI API.
     #[default]
@@ -589,6 +595,7 @@ pub enum ResponsesDialect {
 /// `stream_options` among them, and reports the usage of a stream without a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ChatDialect {
     /// The OpenAI shape.
     #[default]
@@ -600,6 +607,7 @@ pub enum ChatDialect {
 /// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MaxTokensField {
     /// `max_tokens`.
     #[default]
@@ -611,6 +619,7 @@ pub enum MaxTokensField {
 /// Select how a prior assistant turn returns its reasoning, which DeepSeek requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReasoningReplayMode {
     /// Return no reasoning.
     #[default]
@@ -628,6 +637,7 @@ pub enum ReasoningReplayMode {
     missing_docs,
     reason = "each variant names the host whose reasoning control it writes"
 )]
+#[non_exhaustive]
 pub enum ThinkingFormat {
     #[default]
     None,
@@ -642,6 +652,7 @@ pub enum ThinkingFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Thinking {
     /// Ask for no reasoning. Some hosts accept the field and reason again.
     Off,
@@ -656,6 +667,7 @@ pub enum Thinking {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ThinkingDisplay {
     /// `summarized`.
     Summarized,
@@ -694,6 +706,7 @@ impl ReasoningSettings {
 
 /// The wire facts of one protocol. Its variant selects the serializer. The model and the route fill it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Wire {
     /// Anthropic Messages.
     AnthropicMessages(AnthropicWire),
@@ -978,6 +991,7 @@ impl fmt::Debug for Request<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolChoice {
     /// The model decides.
     #[default]

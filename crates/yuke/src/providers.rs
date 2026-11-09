@@ -94,7 +94,7 @@ impl Providers {
                     self.login_providers()
                 ));
             }
-            Some((_, Auth::ApiKey(None))) | None => {}
+            _ => {}
         }
         Err(format!("yuke has no login for {id}. {}", self.login_providers()))
     }

@@ -270,7 +270,8 @@ fn request_view(sent: &Sent) -> Value {
             let system = body.get("instructions").map(text_of).unwrap_or_default();
             (system, items.collect(), names("/name"))
         }
-        Some(Protocol::AnthropicMessages) | None => {
+        // Another URL reads the fields of Anthropic Messages.
+        _ => {
             let messages = list("messages")
                 .iter()
                 .map(|item| message(item.get("role"), item.get("content")));

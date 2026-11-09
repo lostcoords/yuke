@@ -16,6 +16,7 @@ use crate::wyhash::Wyhash;
 
 /// The part of a request that a protocol or a target cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Unsupported {
     /// The request defers a tool, and the target or its protocol has no native tool search.
     DeferredTool,
@@ -52,6 +53,7 @@ impl fmt::Display for Unsupported {
 
 /// A request that cannot be encoded. The encoder sends nothing then.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EncodeError {
     /// The protocol or the target cannot carry a part of the request.
     Unsupported(Unsupported),

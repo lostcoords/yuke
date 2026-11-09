@@ -248,6 +248,8 @@ impl Shared {
                             ProviderState::NeedsLogin
                         }
                     }
+                    // yuke cannot authenticate with a scheme that it does not know, so the provider is not usable.
+                    _ => return None,
                 };
                 (all || state == ProviderState::Ready).then(|| catalog::provider_info(provider, state))
             })
@@ -672,6 +674,7 @@ impl App {
                     "{provider} takes a login, not an API key: send auth/login"
                 )));
             }
+            _ => return Err(AppError::Invalid(format!("yuke cannot authenticate with {provider}"))),
         }
         // A model request sends the key in a header, and a header holds no control character.
         if api_key.is_empty() || api_key.chars().any(char::is_control) {
@@ -928,6 +931,12 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
         }
         Auth::ApiKey(None) => Arc::new(Credential::None),
         Auth::OAuth(flow) => Arc::new(login_source(shared, &provider.id, *flow)),
+        _ => {
+            return Err(AppError::Invalid(format!(
+                "yuke cannot authenticate with {}",
+                provider.name
+            )));
+        }
     };
     let target = entry
         .bind()

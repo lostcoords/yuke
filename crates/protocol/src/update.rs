@@ -279,9 +279,10 @@ pub enum ModelUpdate {
     },
 }
 
-impl From<yuke_ai::Event<'_>> for ModelUpdate {
-    fn from(event: yuke_ai::Event<'_>) -> Self {
-        match event {
+impl ModelUpdate {
+    /// The owned update of `event`, or `None` for an event that the protocol has no update for.
+    pub fn from_event(event: yuke_ai::Event<'_>) -> Option<Self> {
+        Some(match event {
             yuke_ai::Event::BlockStarted(started) => Self::BlockStarted {
                 block: started.block,
                 content: match started.content {
@@ -289,6 +290,7 @@ impl From<yuke_ai::Event<'_>> for ModelUpdate {
                     yuke_ai::StartedBlock::Refusal => StartedBlock::Refusal,
                     yuke_ai::StartedBlock::Reasoning => StartedBlock::Reasoning,
                     yuke_ai::StartedBlock::ToolCall { name } => StartedBlock::ToolCall { name: name.to_owned() },
+                    _ => return None,
                 },
             },
             yuke_ai::Event::TextDelta(delta) => Self::TextDelta {
@@ -312,9 +314,7 @@ impl From<yuke_ai::Event<'_>> for ModelUpdate {
                 block: stopped.block,
                 call: match stopped.result {
                     yuke_ai::BlockResult::ToolCall(call) => Some(call.into()),
-                    yuke_ai::BlockResult::Text | yuke_ai::BlockResult::Refusal | yuke_ai::BlockResult::Reasoning(_) => {
-                        None
-                    }
+                    _ => None,
                 },
             },
             yuke_ai::Event::Done(done) => Self::ResponseCompleted {
@@ -322,6 +322,7 @@ impl From<yuke_ai::Event<'_>> for ModelUpdate {
                 raw_finish_reason: done.raw_finish_reason.to_owned(),
                 usage: done.usage,
             },
-        }
+            _ => return None,
+        })
     }
 }

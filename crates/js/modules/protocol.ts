@@ -229,7 +229,7 @@ export type DraftDiscardReason = "failed" | "unconfirmed";
 export type DraftId = string;
 
 /**
- * A named reasoning effort from the closed portable set.
+ * A named reasoning effort from the portable set.
  */
 export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -1051,9 +1051,9 @@ level: ReasoningLevel,
 settings: ReasoningSettings, };
 
 /**
- * A reasoning level of a model.
+ * A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
  */
-export type ReasoningLevel = "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningLevel = "default" | "off" | Effort;
 
 /**
  * Provider state, and the origin that may receive it again. The state must return to its provider verbatim.
