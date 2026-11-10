@@ -27,9 +27,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     height: () => height,
     background: () => "dark",
     truecolor: () => true,
-    text: (column, row, text, style) => {
-      screen.text(column, row, text, style);
-    },
+    text: (column, row, text, style, right) => screen.text(column, row, text, style, right),
     fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
     cursor: (cursor) => screen.cursor(cursor),
     // Each input and each `advance` draws a frame after it, and `draw()` draws one on demand.

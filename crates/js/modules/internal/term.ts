@@ -69,9 +69,12 @@ export const term = {
   fill(x: number, y: number, width: number, height: number, style?: Style): void {
     termFill(x, y, width, height, style);
   },
-  /** Write `text` on one row, clipped at the right edge, and return the column after it. */
-  text(x: number, y: number, text: string, style?: Style): number {
-    return termText(x, y, text.toWellFormed(), style);
+  /**
+   * Write the part of `text` that ends at or before the column `right` on one row, and return the column after the whole
+   * text.
+   */
+  text(x: number, y: number, text: string, style: Style | undefined, right: number): number {
+    return termText(x, y, text.toWellFormed(), style, right);
   },
   /** Show the cursor, or hide it with `undefined`. A frame starts with the cursor hidden. */
   cursor(cursor: Cursor | undefined): void {

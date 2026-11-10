@@ -8,7 +8,7 @@ use rquickjs::function::Opt;
 use rquickjs::{Array, Class, Ctx, JsLifetime, Object, Value};
 use yuke_term::{Attributes, Color, CursorShape, Rgb, Screen, Size, Style};
 
-use super::{cell, cursor_of, style_of};
+use super::{cell, cursor_of, style_of, write_text};
 use crate::error::{ErrorClass, throw};
 
 /// A grid of cells that no terminal shows.
@@ -43,12 +43,17 @@ impl TestScreen {
         self.screen.borrow_mut().clear();
     }
 
-    fn text<'js>(&self, ctx: Ctx<'js>, x: f64, y: f64, text: String, style: Opt<Value<'js>>) -> rquickjs::Result<u16> {
+    fn text<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        x: f64,
+        y: f64,
+        text: String,
+        style: Opt<Value<'js>>,
+        right: f64,
+    ) -> rquickjs::Result<f64> {
         let style = style_of(&ctx, style.0)?;
-        Ok(match (cell(x), cell(y)) {
-            (Some(x), Some(y)) => self.screen.borrow_mut().text(x, y, &text, style),
-            _ => 0,
-        })
+        Ok(write_text(&mut self.screen.borrow_mut(), x, y, &text, style, right))
     }
 
     fn fill<'js>(

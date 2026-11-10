@@ -41,10 +41,12 @@ export function fakeTerminal(): Terminal {
     height: () => HEIGHT,
     background: () => "dark",
     truecolor: () => true,
-    text: (column, row, text) => {
-      [...text].forEach((character, at) => {
-        put(column + at, row, character);
+    text: (column, row, text, _style, right) => {
+      const characters = [...text];
+      characters.forEach((character, at) => {
+        if (column + at < right) put(column + at, row, character);
       });
+      return column + characters.length;
     },
     fill: (column, row, width, height) => {
       for (let r = row; r < row + height; r += 1) for (let c = column; c < column + width; c += 1) put(c, r, " ");

@@ -33,7 +33,8 @@ export interface Driver {
   readonly height: () => number;
   readonly background: () => "dark" | "light";
   readonly truecolor: () => boolean;
-  readonly text: (column: number, row: number, text: string, style: TermStyle) => void;
+  /** Write the part of `text` that ends at or before the column `right`, and return the column after the whole text. */
+  readonly text: (column: number, row: number, text: string, style: TermStyle, right: number) => number;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
   readonly cursor: (cursor: Cursor | undefined) => void;
   readonly requestFrame: (delay?: number) => void;

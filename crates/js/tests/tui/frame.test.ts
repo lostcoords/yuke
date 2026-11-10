@@ -30,6 +30,31 @@ test("a frame holds the cells, the styles, and the cursor that the views drew", 
   equal(frame.frame.cursor, { column: 3, row: 0, shape: "bar" });
 });
 
+test("a text cut at the edges of a region leaves the cells outside and gives the column after all of it", () => {
+  const ends: number[] = [];
+  using frame = createFrame({ width: 6, height: 2 }, () => {
+    const view: View = {
+      draw: (canvas) => {
+        canvas.text(3, 0, "xyz");
+        // The wide grapheme ends after the right edge, so no part of it shows.
+        ends.push(canvas.region(0, 0, 3, 1).text(0, 0, "ab中d"));
+        // The wide grapheme starts before the left edge, so its visible cell is blank.
+        ends.push(canvas.region(2, 1, 2, 1).text(-1, 0, "中Z"));
+        ends.push(canvas.region(0, 0, 3, 1).text(0, 1, "abc"));
+      },
+    };
+    return { draw() {}, layout: () => [{ view, rect: { column: 0, row: 0, width: 6, height: 2 } }] };
+  });
+  const rows = frame.frame.cells.map((cells) => cells.map((cell) => cell.text).join(""));
+  equal(
+    [rows, ends],
+    [
+      ["ab xyz", "   Z  "],
+      [5, 2, 3],
+    ],
+  );
+});
+
 test("a view style fills its rect and is the base of each style of the view and its children", () => {
   const editor = new TextEditor({ state: { text: "e", selection: { anchor: 1, head: 1 }, spans: [] } });
   const text: View = {

@@ -3,12 +3,13 @@
  * A view uses a canvas during its draw call.
  */
 import type { TermStyle } from "yuke:internal/native";
-import { termFit, termGraphemes, termMeasure } from "yuke:internal/native";
+import { termGraphemes, termMeasure } from "yuke:internal/native";
 import type { Canvas, CanvasStyle, Rect } from "yuke:tui";
 
 /** What a canvas writes to: the screen in absolute cells. */
 export interface Screen {
-  readonly text: (column: number, row: number, text: string, style: TermStyle) => void;
+  /** Write the part of `text` that ends at or before the column `right`, and return the column after the whole text. */
+  readonly text: (column: number, row: number, text: string, style: TermStyle, right: number) => number;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
   /** The cell style of a style or of a list of styles: a later style wins per field. See `Styles.cell`. */
   readonly resolve: (style: CanvasStyle | undefined) => TermStyle;
@@ -21,9 +22,8 @@ export function createCanvas(screen: Screen, rect: Rect, clip: Rect, base?: Canv
     height: rect.height,
     text(column: number, row: number, text: string, style?: CanvasStyle): number {
       const value = String(text).toWellFormed();
-      const end = column + termMeasure(value);
-      writeText(screen, clip, rect.column + column, rect.row + row, value, screen.resolve(layered(base, style)));
-      return end;
+      const cell = screen.resolve(layered(base, style));
+      return writeText(screen, clip, rect.column + column, rect.row + row, value, cell) - rect.column;
     },
     fill(column: number, row: number, width: number, height: number, style?: CanvasStyle): void {
       const cut = intersect(clip, { column: rect.column + column, row: rect.row + row, width, height });
@@ -58,28 +58,26 @@ export function intersect(a: Rect, b: Rect): Rect {
   return { column, row, width: Math.max(0, right - column), height: Math.max(0, bottom - row) };
 }
 
-/** Write `text` from the screen cell (`column`, `row`), cut to `clip`. A wide grapheme cut at the left gives spaces. */
-function writeText(screen: Screen, clip: Rect, column: number, row: number, text: string, style: TermStyle): void {
+/**
+ * Write `text` from the screen cell (`column`, `row`), cut to `clip`, and return the screen column after the whole text.
+ * A wide grapheme cut at the left gives spaces.
+ */
+function writeText(screen: Screen, clip: Rect, column: number, row: number, text: string, style: TermStyle): number {
   const right = clip.column + clip.width;
-  if (row < clip.row || row >= clip.row + clip.height || column >= right || text === "") return;
-  let start = column;
-  let shown = text;
-  if (start < clip.column) {
-    const triples = termGraphemes(text);
-    let cells = 0;
-    let offset = text.length;
-    for (let at = 0; at < triples.length; at += 3) {
-      if (start + cells >= clip.column) {
-        offset = triples[at] ?? text.length;
-        break;
-      }
-      cells += triples[at + 2] ?? 0;
+  if (row < clip.row || row >= clip.row + clip.height || column >= right) return column + termMeasure(text);
+  if (column >= clip.column) return screen.text(column, row, text, style, right);
+  const triples = termGraphemes(text);
+  let cells = 0;
+  let offset = text.length;
+  for (let at = 0; at < triples.length; at += 3) {
+    if (column + cells >= clip.column) {
+      offset = triples[at] ?? text.length;
+      break;
     }
-    if (start + cells < clip.column) return;
-    // A wide grapheme across the left edge leaves its visible cells blank.
-    shown = " ".repeat(start + cells - clip.column) + text.slice(offset);
-    start = clip.column;
+    cells += triples[at + 2] ?? 0;
   }
-  const length = termFit(shown, right - start);
-  if (length > 0) screen.text(start, row, shown.slice(0, length), style);
+  if (column + cells < clip.column) return column + cells;
+  // A wide grapheme across the left edge leaves its visible cells blank.
+  const shown = " ".repeat(column + cells - clip.column) + text.slice(offset);
+  return screen.text(clip.column, row, shown, style, right);
 }

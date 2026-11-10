@@ -15,8 +15,8 @@ use rquickjs::{Ctx, Function, Object, Persistent, TypedArray, Value};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 use yuke_term::{
-    Attributes, BACKGROUND_QUERY, Button, Code, Color, Cursor, CursorShape, Event, Modifiers, MouseKind, Rgb, Style,
-    graphemes,
+    Attributes, BACKGROUND_QUERY, Button, Code, Color, Cursor, CursorShape, Event, Modifiers, MouseKind, Rgb, Screen,
+    Style, graphemes,
 };
 
 use crate::display::{Display, Frame, Input, Interface, Request, Scheme, scheme_of};
@@ -121,13 +121,16 @@ fn add_drawing<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -
         "termText",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>, x: f64, y: f64, text: String, style: Opt<Value<'js>>| -> rquickjs::Result<_> {
+            move |ctx: Ctx<'js>,
+                  x: f64,
+                  y: f64,
+                  text: String,
+                  style: Opt<Value<'js>>,
+                  right: f64|
+                  -> rquickjs::Result<_> {
                 let style = style_of(&ctx, style.0)?;
                 let display = held.display(&ctx)?;
-                Ok(match (cell(x), cell(y)) {
-                    (Some(x), Some(y)) => display.frame().screen.text(x, y, &text, style),
-                    _ => 0,
-                })
+                Ok(write_text(&mut display.frame().screen, x, y, &text, style, right))
             },
         )?,
     )?;
@@ -751,6 +754,26 @@ fn copy_bytes(text: &str, tmux: bool) -> Vec<u8> {
         bytes.extend_from_slice(b"\x07\x1b\\");
     }
     bytes
+}
+
+/// Write the graphemes of `text` that end at or before the column `right` from the cell (`x`, `y`) of `screen`, and give
+/// the column after the whole text. One pass measures and cuts the text, so a draw needs no other call.
+pub(super) fn write_text(screen: &mut Screen, x: f64, y: f64, text: &str, style: Style, right: f64) -> f64 {
+    let room = whole(right - x).unwrap_or(0);
+    let mut cells = 0;
+    let mut fits = true;
+    let mut shown = 0;
+    for (grapheme, width) in graphemes(text) {
+        cells += width;
+        fits = fits && cells <= room;
+        if fits {
+            shown += grapheme.len();
+        }
+    }
+    if let (Some(column), Some(row)) = (cell(x), cell(y)) {
+        screen.text(column, row, &text[..shown], style);
+    }
+    x + f64::from(small(cells))
 }
 
 /// The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`.

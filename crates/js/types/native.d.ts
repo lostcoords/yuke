@@ -425,8 +425,11 @@ declare module "yuke:internal/native" {
   export function termRequestFrame(delay: number): void;
   /** Blank a rectangle of the next frame with `style`. */
   export function termFill(x: number, y: number, width: number, height: number, style: TermStyle | undefined): void;
-  /** Write `text`, a well-formed string, on one row of the next frame, and return the column after it. */
-  export function termText(x: number, y: number, text: string, style: TermStyle | undefined): number;
+  /**
+   * Write the graphemes of `text`, a well-formed string, that end at or before the column `right` on one row of the next
+   * frame, and return the column after the whole text.
+   */
+  export function termText(x: number, y: number, text: string, style: TermStyle | undefined, right: number): number;
   /** Show the cursor of the next frame, or hide it with `undefined`. */
   export function termCursor(cursor: Cursor | undefined): void;
   /** Send `text`, a well-formed string, to the clipboard of the terminal with OSC 52. */
@@ -438,7 +441,7 @@ declare module "yuke:internal/native" {
     resize(columns: number, rows: number): void;
     /** Blank the grid and hide the cursor. */
     clear(): void;
-    text(x: number, y: number, text: string, style: TermStyle | undefined): number;
+    text(x: number, y: number, text: string, style: TermStyle | undefined, right: number): number;
     fill(x: number, y: number, width: number, height: number, style: TermStyle | undefined): void;
     cursor(cursor: Cursor | undefined): void;
     /** The cells and the cursor. A hidden cursor gives no `cursor` key. */

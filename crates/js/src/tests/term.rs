@@ -113,7 +113,7 @@ async fn hidden(name: &str) -> Started {
          globalThis.frames = 0;
          term.run({
            event: (event) => { seen.push(event); },
-           draw: () => { frames += 1; term.text(0, 0, `frame ${frames}`); term.cursor(globalThis.cursor); },
+           draw: () => { frames += 1; term.text(0, 0, `frame ${frames}`, undefined, term.width); term.cursor(globalThis.cursor); },
          });",
     )
     .await
@@ -596,7 +596,7 @@ async fn term_run_runs_once_and_draws_need_a_display() {
         "draws_need_a_display",
         &format!(
             "{NAMES}
-             return names([() => term.text(0, 0, 'a'), () => term.run({{ event() {{}}, draw() {{}} }}), () => term.width]);"
+             return names([() => term.text(0, 0, 'a', undefined, 9), () => term.run({{ event() {{}}, draw() {{}} }}), () => term.width]);"
         ),
     )
     .await;
@@ -611,12 +611,12 @@ async fn styles_take_indices_hex_colors_and_reset() {
         &format!(
             "{NAMES}
              return names([
-               () => term.text(0, 0, 'a', {{ fg: 256 }}), () => term.text(0, 0, 'a', {{ fg: '#12345' }}),
-               () => term.text(0, 0, 'a', {{ fg: '#12+456' }}), () => term.text(0, 0, 'a', {{ fg: 'red' }}),
-               () => term.text(0, 0, 'a', {{ bold: 1 }}),
-               () => term.text(0, 0, 'a', {{ fg: 3, bg: '#102030', ul: 9, bold: true }}),
-               () => term.text(0, 0, 'a', {{ bg: 'reset' }}), () => term.text(0, 0, 'a', null),
-               () => term.text(0, 0, '\\ud800'),
+               () => term.text(0, 0, 'a', {{ fg: 256 }}, 9), () => term.text(0, 0, 'a', {{ fg: '#12345' }}, 9),
+               () => term.text(0, 0, 'a', {{ fg: '#12+456' }}, 9), () => term.text(0, 0, 'a', {{ fg: 'red' }}, 9),
+               () => term.text(0, 0, 'a', {{ bold: 1 }}, 9),
+               () => term.text(0, 0, 'a', {{ fg: 3, bg: '#102030', ul: 9, bold: true }}, 9),
+               () => term.text(0, 0, 'a', {{ bg: 'reset' }}, 9), () => term.text(0, 0, 'a', null, 9),
+               () => term.text(0, 0, '\\ud800', undefined, 9),
              ]);"
         ),
     )

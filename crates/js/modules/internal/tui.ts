@@ -12,9 +12,7 @@ const core = new Core({
   height: () => term.height,
   background: () => term.background,
   truecolor: () => term.truecolor,
-  text: (column, row, text, style) => {
-    term.text(column, row, text, style);
-  },
+  text: (column, row, text, style, right) => term.text(column, row, text, style, right),
   fill: (column, row, width, height, style) => term.fill(column, row, width, height, style),
   cursor: (cursor) => term.cursor(cursor),
   requestFrame: (delay) => term.requestFrame(delay),
