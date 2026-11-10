@@ -60,29 +60,29 @@ const ci = drawn([
 const features = [
   {
     title: 'Small and fast',
-    text: "yuke is fast. Really fast. The TUI uses **12 MB** of memory and opens in **~20 ms**. And that's not all! You can extend and customize every part of it with **TypeScript plugins**.",
+    text: "yuke is fast. Really fast. The TUI uses **12\u00a0MB** of memory and opens in **~20\u00a0ms**. And that's not all! You can extend and customize every part of it with **TypeScript plugins**.",
     link: '/docs/get-started',
     linkText: 'Quick start',
     visual: { scene: empty, label: 'benchmarks', top: 0 },
   },
   {
-    title: 'Everything is a plugin',
-    text: 'The chat, the session browser, and the status bar are TypeScript plugins. Replace any of them, or add your own tools, commands, and views.',
+    title: 'Made to be hackable',
+    text: 'yuke ships only the essentials and leaves the rest to you. Shape it around your workflow with **the same plugin system yuke is built on**.',
     link: '/docs/plugins',
     linkText: 'Plugins',
     extra: true,
     visual: { scene: scene('plugins'), label: '/plugins', top: 11 },
   },
   {
-    title: 'Terminal, script, or your own app',
-    text: 'Work in the terminal UI, run one task with `--print` in a script or a CI job, or build your own client on `--rpc`.',
+    title: 'Beyond the TUI',
+    text: 'Run one-shot tasks with `-p` in a script or a CI job, or embed yuke in your own app over stdio with `--rpc`. **Your plugins work in every mode.**',
     link: '/docs/profile#modes',
     linkText: 'Modes',
     visual: { scene: ci, label: '.github/workflows/yuke.yml', top: 0 },
   },
   {
-    title: 'Multiple providers',
-    text: 'Use an API key, sign in with ChatGPT or Grok, or point yuke at a local server. Switch the model at any time.',
+    title: 'Bring your own model',
+    text: 'Use an API key, sign in with your **ChatGPT or Grok subscription**, or run local models. yuke supports Anthropic, OpenAI, OpenRouter, DeepSeek, Mistral, and more.',
     link: '/docs/providers',
     linkText: 'Connect a model',
     visual: { scene: scene('models'), label: '/model', top: 12 },
@@ -104,8 +104,9 @@ const features = [
           >
         </p>
         <p v-if="feature.extra">
-          Install more from <code>/plugins</code> or the
-          <a class="inline" :href="`${repository}-plugins`">official plugin repository</a>.
+          Find plugins in the
+          <a class="inline" :href="`${repository}-plugins`">official plugin repository</a>, and install them with
+          <code>/plugins</code>.
         </p>
         <a class="more" :href="withBase(feature.link)">{{ feature.linkText }} <span aria-hidden="true">→</span></a>
       </div>
@@ -166,7 +167,6 @@ code {
 strong {
   color: var(--vp-c-text-1);
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .inline {
