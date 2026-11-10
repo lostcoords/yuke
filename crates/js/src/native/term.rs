@@ -499,6 +499,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
                 Ok(object)
             })
         }
+        Input::Redraw => return None,
         Input::Event(Event::SchemeChanged) => {
             let mut frame = display.frame();
             if frame

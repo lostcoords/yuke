@@ -41,6 +41,8 @@ pub enum Input {
     Resize(Size),
     /// A notice of the host or of a plugin, for the user.
     Notice(NoticeParams),
+    /// Draw a frame at once, with no wait for the frame limit.
+    Redraw,
 }
 
 /// What the JavaScript asks of the host.
@@ -137,7 +139,7 @@ impl Display {
             .into_iter()
             .filter_map(|input| match input {
                 Input::Notice(notice) => Some(notice),
-                Input::Event(_) | Input::Resize(_) => None,
+                Input::Event(_) | Input::Resize(_) | Input::Redraw => None,
             })
             .collect()
     }

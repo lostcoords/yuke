@@ -288,6 +288,18 @@ async fn a_batch_of_inputs_draws_one_frame() {
 }
 
 #[tokio::test(flavor = "local")]
+async fn a_redraw_draws_a_frame_at_once_and_gives_the_handler_no_event() {
+    let (runtime, _reports, display, _output, _requests) = started("a_redraw_draws_a_frame_at_once").await;
+    // The start frame was just drawn, so an asked frame would wait for the frame limit.
+    display.send(Input::Redraw);
+    crate::settled().await;
+    let text = evaluate::<String>(&runtime, "return `${frames} ${seen.length}`;")
+        .await
+        .unwrap();
+    assert_eq!(text, "2 1");
+}
+
+#[tokio::test(flavor = "local")]
 async fn asks_for_frames_give_one_frame() {
     let (runtime, _reports, _display, output, _requests) = started("asks_for_frames_give_one_frame").await;
     evaluate::<()>(&runtime, "term.requestFrame(); term.requestFrame(5);")

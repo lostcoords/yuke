@@ -112,7 +112,11 @@ async fn serve(
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold
     // the terminal, and the app shuts down before the terminal restores.
     let ended = tokio::select! {
-        () = app.load_plugins(&plugins) => host.serve(shutdown, Some(&mut app)).await,
+        () = app.load_plugins(&plugins) => {
+            // The empty start frame is new, so the first frame of the plugins would wait for the frame limit.
+            host.display.send(Input::Redraw);
+            host.serve(shutdown, Some(&mut app)).await
+        }
         ended = host.serve(shutdown, None) => ended,
     };
     app.shutdown().await;
