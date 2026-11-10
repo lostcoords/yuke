@@ -4,8 +4,16 @@ import { repository } from './project.js';
 import { scene } from './frames.js';
 import Terminal from './Terminal.vue';
 
-// Split a text at backticks: the odd parts are code.
-const parts = (text) => text.split('`');
+// Split a text into its plain, `code`, and **strong** parts.
+const parts = (text) =>
+  text
+    .split(/(`[^`]+`|\*\*[^*]+\*\*)/)
+    .filter(Boolean)
+    .map((part) => {
+      if (part.startsWith('`')) return { kind: 'code', text: part.slice(1, -1) };
+      if (part.startsWith('**')) return { kind: 'strong', text: part.slice(2, -2) };
+      return { kind: 'plain', text: part };
+    });
 
 // Every picture shows the same number of cells, so every picture has the same size.
 const size = { cols: 60, rows: 12 };
@@ -52,7 +60,7 @@ const ci = drawn([
 const features = [
   {
     title: 'Small and fast',
-    text: 'One native binary holds the agent, the terminal UI, and the TypeScript runtime for plugins. Install it and start working.',
+    text: "yuke is fast. Really fast. The TUI uses **12 MB** of memory and opens in **~20 ms**. And that's not all! You can extend and customize every part of it with **TypeScript plugins**.",
     link: '/docs/get-started',
     linkText: 'Quick start',
     visual: { scene: empty, label: 'benchmarks', top: 0 },
@@ -90,7 +98,9 @@ const features = [
         <h2>{{ feature.title }}</h2>
         <p>
           <template v-for="(part, index) in parts(feature.text)" :key="index"
-            ><code v-if="index % 2">{{ part }}</code><template v-else>{{ part }}</template></template
+            ><code v-if="part.kind === 'code'">{{ part.text }}</code><strong v-else-if="part.kind === 'strong'">{{
+              part.text
+            }}</strong><template v-else>{{ part.text }}</template></template
           >
         </p>
         <p v-if="feature.extra">
@@ -149,6 +159,13 @@ p {
 code {
   font-family: var(--vp-font-family-mono);
   font-size: 0.9em;
+  white-space: nowrap;
+}
+
+/* The key facts of a text stand out in the color of a heading. */
+strong {
+  color: var(--vp-c-text-1);
+  font-weight: 600;
   white-space: nowrap;
 }
 
