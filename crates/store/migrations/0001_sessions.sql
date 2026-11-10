@@ -23,7 +23,7 @@ CREATE TABLE events (                      -- the commits and the settings of ea
     id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
     session_id BLOB NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     seq INTEGER NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('commit', 'settings')),
+    kind TEXT NOT NULL,                    -- commit | settings. No CHECK, so a new kind needs no table rebuild.
     blocks TEXT,                           -- JSON blocks that a commit adds
     settings TEXT,                         -- JSON SessionSettings of a settings event
     consumed TEXT,                         -- JSON records of the inputs that a commit consumed

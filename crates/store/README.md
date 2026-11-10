@@ -45,9 +45,6 @@ A fork of an unnamed session takes its own first text message as its title.
 Titles are display metadata, not model context.
 An explicit rename normalizes whitespace and rejects empty titles or titles above 200 Unicode scalar values.
 
-The title schema replaces the pre-release preview schema. Old databases are not supported. Select a fresh state
-folder for this version. The store rejects an incompatible database without deleting or converting its sessions.
-
 ## Fork
 
 - `fork_session` copies the session up to the end of a completed turn: the event that the fork names, or the newest
@@ -69,4 +66,9 @@ mise exec -- cargo run -p yuke-sqlgen
 ```
 
 A database at `user_version` `n` runs each migration after the first `n`. A database that a newer yuke migrated does
-not open.
+not open. The first migration gives a new database the yuke `application_id`. The store runs no migration on a
+database with another `application_id`, or on a database with a `user_version` and no `application_id`.
+
+The store turns foreign keys off while it runs the migrations, so a migration can rebuild a table. With foreign keys
+on, a drop of a table deletes each row that refers to it. Before each commit, the store checks that no row refers to a
+missing row. After the migrations, the store turns foreign keys on again.

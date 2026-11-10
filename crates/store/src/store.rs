@@ -19,7 +19,7 @@ use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 use crate::context;
 use crate::event;
 use crate::files::{self, SessionLock};
-use crate::queries::{events, pending_inputs, sessions};
+use crate::queries::{MIGRATIONS, events, pending_inputs, sessions};
 use crate::schema;
 
 /// A [`Store`] in one SQLite file. One connection runs every read and write in call order on its own thread.
@@ -84,7 +84,7 @@ impl SqliteStore {
         };
         store
             .call(move |connection| {
-                schema::prepare(connection).map_err(failed)?;
+                schema::prepare(connection, MIGRATIONS).map_err(failed)?;
                 files::sweep(connection, &sessions)
             })
             .await?;
