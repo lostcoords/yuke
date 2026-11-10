@@ -724,13 +724,6 @@ function appendPart(parts: Part[], part: Part): void {
   } else parts.push(part);
 }
 
-interface Word {
-  pieces: Part[];
-  width: number;
-  /** The space before the word: one cell for the blank run, with its style, its link, and its source. */
-  space: Part | undefined;
-}
-
 interface WrapOptions {
   limit?: number;
   firstPrefix?: Part;
@@ -738,9 +731,24 @@ interface WrapOptions {
   emptyStyle?: string;
 }
 
+/** Printable ASCII with blanks: each character that is no blank is one cell. */
+const ASCII_TEXT = /^[\x20-\x7e\t\n]*$/;
+
+/** The offset of the first `character` in `text` from `from`, or the length of `text`. */
+function indexOrEnd(text: string, character: string, from: number): number {
+  const at = text.indexOf(character, from);
+  return at < 0 ? text.length : at;
+}
+
+/** Whether the UTF-16 unit `code` is a space, a tab, or a line end. A wrap puts one space in place of a run of them. */
+function isBlank(code: number): boolean {
+  return code === 32 || code === 9 || code === 10;
+}
+
 /**
  * The rows of `segments` wrapped at `width`, at most `limit`. A word wider than the row breaks between graphemes.
- * A wrap at a space joins with " ". A break in a word joins with "". The last row joins with "\n".
+ * A wrap at a space joins with " ". A break in a word joins with "". The last row joins with "\n". Two words on a row
+ * have one space between them.
  */
 function wrapSegments(segments: readonly Part[], width: number, options: WrapOptions = {}): Row[] {
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
@@ -751,11 +759,38 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
   const restWidth = rest === undefined ? 0 : widthOf(rest.text);
   const rows: Row[] = [];
   const available = (): number => Math.max(1, width - (rows.length === 0 ? firstWidth : restWidth));
-  const spaceWidth = 1;
   let line: Part[] = [];
   let lineWidth = 0;
+  // The end of the row is a range of one segment that grows while the row stays contiguous in it, so a row slices each
+  // segment once and not once for each word.
+  let open: Part | undefined;
+  let openFrom = 0;
+  let openTo = 0;
+  // The word that builds, as triples of segment index, start, and end, and its cells.
+  const word: number[] = [];
+  let wordWidth = 0;
+  // The last blank run, as a segment index, a start, and an end: the space before the word that builds.
+  let blankAt = -1;
+  let blankFrom = 0;
+  let blankTo = 0;
 
+  const flush = (): void => {
+    if (open !== undefined) appendPart(line, sliceSegment(open, openFrom, openTo));
+    open = undefined;
+  };
+  const extend = (segment: Part, from: number, to: number): void => {
+    // A replacement maps each piece to its whole source, so its pieces stay apart, as `appendPart` keeps them.
+    if (open === segment && openTo === from && segment.source?.kind !== "replacement") {
+      openTo = to;
+      return;
+    }
+    flush();
+    open = segment;
+    openFrom = from;
+    openTo = to;
+  };
   const emit = (join: string): boolean => {
+    flush();
     if (rows.length >= limit) return false;
     const prefix = rows.length === 0 ? first : rest;
     const segs = prefix === undefined ? line : [prefix, ...line];
@@ -769,67 +804,88 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
     lineWidth = 0;
     return rows.length < limit;
   };
-
-  for (const word of segmentsToWords(segments)) {
-    if (rows.length >= limit) break;
-    if (line.length > 0 && lineWidth + spaceWidth + word.width > available() && !emit(" ")) break;
-    if (word.width > available()) {
-      if (line.length > 0 && !emit(" ")) break;
-      const broken = hardBreak(word.pieces, available(), limit - rows.length + 1);
+  /** Put the space before the word. Only one space character keeps its source as it is. */
+  const space = (): void => {
+    const segment = segments[blankAt] as Part;
+    if (blankTo - blankFrom === 1 && segment.text.charCodeAt(blankFrom) === 32) {
+      extend(segment, blankFrom, blankTo);
+      return;
+    }
+    flush();
+    const run = sliceSegment(segment, blankFrom, blankTo);
+    run.text = " ";
+    if (blankTo - blankFrom > 1 && run.source !== undefined) {
+      run.source = mapping("replacement", run.source.from, run.source.to);
+    }
+    appendPart(line, run);
+  };
+  const empty = (): boolean => line.length === 0 && open === undefined;
+  /** Put the word on the row, or on the next rows. Return `false` when the rows reach `limit`. */
+  const put = (): boolean => {
+    if (rows.length >= limit) return false;
+    if (!empty() && lineWidth + 1 + wordWidth > available() && !emit(" ")) return false;
+    if (wordWidth > available()) {
+      if (!empty() && !emit(" ")) return false;
+      const parts: Part[] = [];
+      for (let at = 0; at < word.length; at += 3) {
+        parts.push(sliceSegment(segments[word[at] as number] as Part, word[at + 1] as number, word[at + 2] as number));
+      }
+      const broken = hardBreak(parts, available(), limit - rows.length + 1);
       for (let i = 0; i < broken.length; i++) {
         const piece = broken[i] as Row;
         line = piece.segments;
         lineWidth = piece.width ?? 0;
-        if (i + 1 < broken.length && !emit("")) break;
+        if (i + 1 < broken.length && !emit("")) return false;
       }
-      if (rows.length >= limit) break;
-      continue;
+      return rows.length < limit;
     }
-    if (line.length > 0) {
-      appendPart(line, word.space ?? { text: " ", style: STYLE.text });
-      lineWidth += spaceWidth;
+    if (!empty()) {
+      space();
+      lineWidth += 1;
     }
-    for (const piece of word.pieces) appendPart(line, piece);
-    lineWidth += word.width;
+    for (let at = 0; at < word.length; at += 3) {
+      extend(segments[word[at] as number] as Part, word[at + 1] as number, word[at + 2] as number);
+    }
+    lineWidth += wordWidth;
+    return true;
+  };
+  const place = (): boolean => {
+    const placed = put();
+    word.length = 0;
+    wordWidth = 0;
+    return placed;
+  };
+
+  read: for (const [index, segment] of segments.entries()) {
+    const text = segment.text;
+    // A native scan finds the end of each word, and printable ASCII needs no width call.
+    const ascii = ASCII_TEXT.test(text);
+    let nextSpace = -1;
+    let nextTab = -1;
+    let nextNewline = -1;
+    let at = 0;
+    while (at < text.length) {
+      let end = at + 1;
+      if (isBlank(text.charCodeAt(at))) {
+        while (end < text.length && isBlank(text.charCodeAt(end))) end += 1;
+        if (word.length > 0 && !place()) break read;
+        blankAt = index;
+        blankFrom = at;
+        blankTo = end;
+      } else {
+        if (nextSpace < at) nextSpace = indexOrEnd(text, " ", at);
+        if (nextTab < at) nextTab = indexOrEnd(text, "\t", at);
+        if (nextNewline < at) nextNewline = indexOrEnd(text, "\n", at);
+        end = Math.min(nextSpace, nextTab, nextNewline);
+        word.push(index, at, end);
+        wordWidth += ascii ? end - at : widthOf(text.slice(at, end));
+      }
+      at = end;
+    }
   }
+  if (word.length > 0) place();
   if (rows.length < limit) emit("\n");
   return rows;
-}
-
-/** A blank run or a word, so a wrap walks a segment in runs and not in characters. */
-const RUNS = /[ \t\n]+|[^ \t\n]+/g;
-
-/**
- * The words of `segments`, split at each blank run with their source offsets. A wrap puts one space between two words.
- * The space of a longer blank run is a replacement of the whole run.
- */
-function segmentsToWords(segments: readonly Part[]): Word[] {
-  const words: Word[] = [];
-  let current: Word | undefined;
-  let space: Part | undefined;
-  for (const segment of segments) {
-    for (const m of segment.text.matchAll(RUNS)) {
-      const run = m[0];
-      if (run[0] === " " || run[0] === "\t" || run[0] === "\n") {
-        if (current !== undefined) words.push(current);
-        current = undefined;
-        space = { ...sliceSegment(segment, m.index, m.index + run.length), text: " " };
-        if (run.length > 1 && space.source !== undefined) {
-          space.source = mapping("replacement", space.source.from, space.source.to);
-        }
-        continue;
-      }
-      if (current === undefined) {
-        current = { pieces: [], width: 0, space };
-        space = undefined;
-      }
-      const piece = sliceSegment(segment, m.index, m.index + run.length);
-      current.pieces.push(piece);
-      current.width += widthOf(piece.text);
-    }
-  }
-  if (current !== undefined) words.push(current);
-  return words;
 }
 
 /**
