@@ -22,9 +22,8 @@ use yuke_term::{
 use crate::display::{Display, Frame, Input, Interface, Request, Scheme, scheme_of};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
 
-/// The shortest time between two asked frames: at most 120 frames each second, as in Codex. A frame after input does
-/// not wait.
-const FRAME_INTERVAL: Duration = Duration::from_micros(8_334);
+/// The shortest time between two asked frames: at most 60 frames each second. A frame after input does not wait.
+const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// The frame loop state of one runtime.
 #[derive(Debug)]
@@ -756,8 +755,8 @@ fn copy_bytes(text: &str, tmux: bool) -> Vec<u8> {
     bytes
 }
 
-/// Write the graphemes of `text` that end at or before the column `right` from the cell (`x`, `y`) of `screen`, and give
-/// the column after the whole text. One pass measures and cuts the text, so a draw needs no other call.
+/// Write the graphemes of `text` that end at or before the column `right` from the cell (`x`, `y`) of `screen`, and
+/// give the column after the whole text. One pass measures and cuts the text, so a draw needs no other call.
 pub(super) fn write_text(screen: &mut Screen, x: f64, y: f64, text: &str, style: Style, right: f64) -> f64 {
     let room = whole(right - x).unwrap_or(0);
     let mut cells = 0;
