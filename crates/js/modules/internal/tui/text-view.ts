@@ -3,6 +3,7 @@
  * row knows its section, and the source of each segment maps a display offset to a section offset. A copy joins rows
  * by their joins, and puts one line end between two sections and between two items.
  */
+import { layered } from "yuke:internal/tui/canvas";
 import { ScrollList } from "yuke:internal/tui/scroll";
 import { graphemes, measure, offsetAtColumn, wrap } from "yuke:internal/tui/text";
 import { attachHost, checkAppearance, registerWidget, TextSupport } from "yuke:internal/tui/widgets";
@@ -312,10 +313,12 @@ export class TextView {
       for (let at = 0; at + 1 < edges.length; at += 1) {
         const from = edges[at] as number;
         const to = edges[at + 1] as number;
-        const segment = segmentAt(view.segments, from);
-        const styles: CanvasStyle[] = segment?.style === undefined ? [] : [segment.style];
-        for (const mark of marks) if (mark.wholeRows || (mark.from <= from && mark.to >= to)) styles.push(mark.style);
-        column = canvas.text(column, line, text.slice(from, to), styles.flat() as CanvasStyle);
+        // A piece without a mark passes the style of its segment as it is, so the style cache knows it.
+        let style = segmentAt(view.segments, from)?.style;
+        for (const mark of marks) {
+          if (mark.wholeRows || (mark.from <= from && mark.to >= to)) style = layered(style, mark.style);
+        }
+        column = canvas.text(column, line, text.slice(from, to), style);
       }
       const whole = marks.filter((mark) => mark.wholeRows).map((mark) => mark.style);
       if (whole.length > 0) canvas.fill(column, line, canvas.width - column, 1, whole.flat() as CanvasStyle);

@@ -37,6 +37,9 @@ export class Styles {
   #active: string = DEFAULT;
   readonly #layers: ReadonlyMap<string, StylePatch>[] = [];
   readonly #cache = new Map<string, TermStyle>();
+  /** The cell of each group name and of no style, and of each style list or style object by identity. */
+  readonly #cells = new Map<string | undefined, TermStyle>();
+  #objectCells = new WeakMap<object, TermStyle>();
   /** The look of the cached styles, and the palette of the default theme that it starts from. */
   #look: Look | undefined;
   #base: Palette | undefined;
@@ -89,9 +92,16 @@ export class Styles {
     };
   }
 
+  /** Drop each cached style. */
+  #clear(): void {
+    this.#cache.clear();
+    this.#cells.clear();
+    this.#objectCells = new WeakMap();
+  }
+
   #lookChanged(): void {
     this.#look = undefined;
-    this.#cache.clear();
+    this.#clear();
     this.#changed();
     this.#themeChanged();
   }
@@ -131,7 +141,7 @@ export class Styles {
       base: new Map(Object.entries(DEFAULT_THEME[background].groups)),
       groups,
     };
-    this.#cache.clear();
+    this.#clear();
     return this.#look;
   }
 
@@ -142,13 +152,13 @@ export class Styles {
       layer.set(name, { ...patch });
     }
     this.#layers.push(layer);
-    this.#cache.clear();
+    this.#clear();
     this.#changed();
     return () => {
       const at = this.#layers.indexOf(layer);
       if (at < 0) return;
       this.#layers.splice(at, 1);
-      this.#cache.clear();
+      this.#clear();
       this.#changed();
     };
   }
@@ -171,20 +181,27 @@ export class Styles {
    * then takes its palette color, unless that color is `reset`. It comes last, so a band keeps the color of its text.
    */
   cell(style: CanvasStyle | undefined): TermStyle {
+    // The look comes first, so a new base palette drops the cached cells before the lookup.
+    const palette = this.#lookNow().palette;
+    const known = typeof style === "object" ? this.#objectCells.get(style) : this.#cells.get(style);
+    if (known !== undefined) return known;
     let merged: TermStyle = NO_STYLE;
     if (Array.isArray(style)) merged = Object.freeze(Object.assign({}, ...style.map((item) => this.resolve(item))));
     else if (style !== undefined) merged = this.resolve(style as string | Style);
-    if (merged.fg !== undefined && merged.bg !== undefined) return merged;
-    const palette = this.#lookNow().palette;
     const fg = merged.fg === undefined ? palette.fg : "reset";
     const bg = merged.bg === undefined ? palette.bg : "reset";
-    if (fg === "reset" && bg === "reset") return merged;
     const shown = (color: TermColor): TermColor => (this.#truecolor() ? color : indexed(color));
-    return Object.freeze({
-      ...merged,
-      ...(fg === "reset" ? {} : { fg: shown(fg) }),
-      ...(bg === "reset" ? {} : { bg: shown(bg) }),
-    });
+    const cell =
+      fg === "reset" && bg === "reset"
+        ? merged
+        : Object.freeze({
+            ...merged,
+            ...(fg === "reset" ? {} : { fg: shown(fg) }),
+            ...(bg === "reset" ? {} : { bg: shown(bg) }),
+          });
+    if (typeof style === "object") this.#objectCells.set(style, cell);
+    else this.#cells.set(style, cell);
+    return cell;
   }
 
   #named(name: string, look: Look, seen: Set<string>): TermStyle {
