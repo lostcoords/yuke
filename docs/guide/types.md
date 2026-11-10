@@ -49,7 +49,7 @@ lib/yuke/
 
 Some modules define their types directly in `modules/*.ts`. Host-backed modules use declarations in `types/*.d.ts`. The configuration includes the public declarations and maps `yuke:*` imports to the modules.
 
-The installer creates a profile `tsconfig.json` that extends the installed library configuration. Keep its absolute `extends` path. Run `tsc -p` with that profile configuration. See [Your first plugin](first-plugin.md#4-check-the-types) to include JavaScript examples.
+The installer creates a profile `tsconfig.json` that extends the installed library configuration. It does not overwrite an existing file, so keep its absolute `extends` path current after an upgrade or a move to another machine. Run `tsc -p` with that profile configuration. See [Your first plugin](first-plugin.md#4-check-the-types) to include JavaScript examples.
 
 Use a TypeScript compiler that supports the `target`, libraries, and options in the installed configuration.
 

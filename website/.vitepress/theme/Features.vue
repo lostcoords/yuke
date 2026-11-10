@@ -76,8 +76,8 @@ const features = [
   {
     title: 'Beyond the TUI',
     text: 'Run one-shot tasks with `-p` in a script or a CI job, or embed yuke in your own app over stdio with `--rpc`. **Your plugins work in every mode.**',
-    link: '/docs/profile#modes',
-    linkText: 'Modes',
+    link: '/docs/one-shot',
+    linkText: 'Headless mode',
     visual: { scene: ci, label: '.github/workflows/yuke.yml', top: 0 },
   },
   {

@@ -4,7 +4,7 @@ description: Connect cloud providers and local model servers with API keys or ac
 
 # Providers
 
-`providers.json` in the [profile](profile.md) changes built-in providers or adds providers, such as local servers. yuke reads it at startup and on profile reload. A missing file uses the built-in catalog.
+`providers.json` in the [profile](config.md) changes built-in providers or adds providers, such as local servers. yuke reads it at startup and on profile reload. A missing file uses the built-in catalog.
 
 Provider routes and credentials use separate files. `providers.json` holds routes, model facts, and API-key variable names. `auth.json` in the data directory holds stored credentials. Login and logout do not rewrite `providers.json`.
 

@@ -8,7 +8,7 @@ This tutorial adds one terminal command. It needs an installed yuke and TypeScri
 
 ## 1. Find the profile
 
-The default profile is `~/.config/yuke`. The [installer](profile.md) creates `tsconfig.json` there. That file extends the public library configuration of the installed release.
+The default profile is `~/.config/yuke`. The [installer](types.md#installed-layout) creates `tsconfig.json` there. That file extends the public library configuration of the installed release.
 
 In a POSIX shell:
 

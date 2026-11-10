@@ -1,10 +1,80 @@
 ---
-description: Write plugins with runtime and session entry points, cleanup, typed services, and host facts.
+description: Install plugins, and write them with entry points, cleanup, typed services, and host facts.
 ---
 
 # Plugins
 
-A plugin adds shared services, session behavior, or terminal UI. Its manifest names the plugin and its entry module. See [Profile](profile.md) for installation and [Your first plugin](first-plugin.md) for a small example.
+A plugin adds shared services, session behavior, or terminal UI. See [Your first plugin](first-plugin.md) for a small example.
+
+## Install plugins
+
+The `plugins` list in [`config.json`](config.md#configjson) loads your plugins, in order. Each entry is a local folder or a Git repository.
+
+```json
+{
+  "plugins": [
+    "./plugins/hello",
+    { "path": "./plugins/my-plugin", "options": { "greeting": "hi" } },
+    { "git": "https://github.com/lostcoords/yuke-plugins", "folder": "plugins/vim" }
+  ]
+}
+```
+
+An entry is a path, or an object with `path` or `git`:
+
+| Key | Default | Description |
+|---|---|---|
+| `path` | — | A folder with a `plugin.json`, the manifest that names the plugin and its entry module. A relative path starts in the profile folder. |
+| `git` | — | The URL of a Git repository, as `git` takes it. |
+| `folder` | The repository root | The plugin folder in the repository. It cannot be absolute or contain `..`. |
+| `ref` | The default branch | The branch, tag, or commit to follow. |
+| `options` | — | The options of the plugin. Each plugin defines and checks its own options. |
+
+### Git plugins
+
+yuke only loads installed plugins, and it never downloads a plugin at startup. If you add a Git plugin to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the terminal UI to install it.
+
+Manage Git plugins with these commands, or with `/plugins`:
+
+| Command | Description |
+|---|---|
+| `yuke plugin add URL` | Add a Git plugin to `config.json`, install it, and lock its commit in `plugins.lock`. `--folder` and `--ref` select the folder and the ref. |
+| `yuke plugin remove NAME` | Remove a plugin from `config.json` and `plugins.lock`. Its files stay on disk. |
+| `yuke plugin list` | Show each plugin, its locked commit, and whether it is installed. It uses no network. |
+| `yuke plugin sync` | Install the locked commits, and lock each Git plugin that you added by hand. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
+| `yuke plugin update NAME...` | Show the new commits of each plugin's ref, and ask before it moves the lock. `--all` updates every Git plugin, and `--yes` skips the question. |
+
+A plugin runs with your user rights. Read its source before you install it.
+
+## Bundled plugins
+
+yuke loads these plugins before yours:
+
+| Plugin | What it does | Options |
+|---|---|---|
+| `compaction` | Summarizes old context, in every mode. | — |
+| `themes` | Loads and selects terminal themes. | — |
+| `chat` | Draws the chat panes and provides the `chat` service. | — |
+| `sessions` | Browses saved sessions. | — |
+| `bar` | Draws the status bar. | `hide` and `order`: lists of item keys, such as `"core:keys"`. |
+| `toasts` | Shows notices and their history. | — |
+| `login` | Connects providers from the terminal UI with `/login` and `/logout`. | — |
+| `plugins` | Manages your plugins with the `/plugins` dashboard. | — |
+
+Use `disable` to turn off a bundled plugin, and `bundled` to give it options:
+
+```json
+{
+  "disable": ["toasts"],
+  "bundled": { "bar": { "hide": ["core:keys"] } }
+}
+```
+
+### Replace a bundled plugin
+
+To replace a bundled plugin, disable its name and add your replacement. A replacement must provide the services that its consumers require. It must also supply the behavior that you want to keep. Do not import `yuke:internal/*`.
+
+UI plugins return when `ctx.get("tui")` is `undefined`. The session API itself does not depend on the bundled `sessions` plugin.
 
 ## Entry points
 
@@ -109,20 +179,45 @@ A handle supplies `input`, `sendNotification`, `cancel`, `idle`, `setSettings`, 
 
 For terminal panes and drafts, use the public `chat` service. See [UI](ui.md).
 
-## Bundled plugins
+## Test and debug
 
-The default plugin order is:
+Check the types against the profile configuration:
 
-| Plugin | Purpose |
-|---|---|
-| `compaction` | Summarize old context through session hooks in every mode. |
-| `themes` | Load and select terminal themes. |
-| `chat` | Provide chat panes and the `chat` service. |
-| `sessions` | Browse saved sessions and show one in a chat pane. |
-| `bar` | Draw the terminal status bar. |
-| `toasts` | Show notices and their history. |
-| `plugins` | Manage profile plugins through terminal commands and a dashboard. |
+```sh
+tsc -p ~/.config/yuke/tsconfig.json
+```
 
-UI plugins return when `ctx.get("tui")` is `undefined`. The session API itself does not depend on the bundled `sessions` plugin.
+Use your actual profile path if it differs. For behavior tests, run `yuke test` on test files that use `yuke:test`. A test uses an isolated app and a fake model. It does not need provider credentials. See [Public types](types.md) for the test API.
 
-To replace a bundled plugin, disable its name in the [profile](profile.md) and add your replacement. A replacement must provide the services that its consumers require. It must also supply the behavior that you want to preserve. Do not import `yuke:internal/*`.
+A type check does not verify terminal input or drawing. Start a separate terminal session to check those behaviors.
+
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end before you reload. A reload replaces the JavaScript runtime, so module state resets. Process jobs continue, but plugin-owned jobs stop. A failed reload keeps the previous plugins and providers. See [Terminal UI](ui.md) for the reload controls and pane state.
+
+### Isolated check
+
+Use a temporary home, workspace, and XDG directories before you load unverified code. For example, start an empty terminal session without provider credentials:
+
+```sh
+(
+  set -eu
+  scratch="$(mktemp -d)"
+  trap 'rm -rf "$scratch"' EXIT
+  bin="$HOME/.local/bin/yuke"
+  mkdir -p "$scratch/home" "$scratch/workspace"
+  cd "$scratch/workspace"
+  env -i HOME="$scratch/home" PATH="$PATH" \
+    XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
+    XDG_CACHE_HOME="$scratch/cache" YUKE_APPNAME=yuke-doc-check \
+    "$bin"
+)
+```
+
+Press **Ctrl+Q** to exit. The subshell then removes the temporary files, including any session data. This empty profile checks startup only. To test a plugin, prepare its profile files in the temporary config directory before you start yuke. Do not copy credentials there.
+
+This is isolation, not a sandbox. A plugin can still access an absolute path or run a command with your user rights.
+
+### Debug a plugin
+
+Console output becomes a `notice` notification from the source `console`. Plugin notices and script faults also reach the active frontend. Inspect terminal notices or the `notice` messages of an RPC client. CLI startup errors go to stderr.
+
+Capture stderr or protocol notifications when you need a record of a failure. Do not publish credentials or private task content in a diagnostic report.

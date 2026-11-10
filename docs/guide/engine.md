@@ -1,5 +1,5 @@
 ---
-description: Add session hooks, make model requests, control sessions, and connect local MCP servers.
+description: Add session hooks, make model requests, fork sessions, and build subagents.
 ---
 
 # Engine
@@ -80,9 +80,7 @@ A call blocked by `tool.before` gets no `tool.after` hook. Use [host facts](plug
 
 ## Prompt
 
-The default prompt contains base instructions, applicable `AGENTS.md` files, a skill catalog, and environment facts. The skill catalog includes the workspace `.agents/skills`, the user's `~/.agents/skills`, and each profile plugin's `skills` folder. An earlier source hides a later skill with the same name.
-
-A skill is a folder with `SKILL.md`. Its name, description, and location appear in the catalog. The model reads a matching skill through the `read` tool. Use `prompt.build` to add session policy without replacing the default sections.
+The default prompt contains base instructions, applicable `AGENTS.md` files, a skill catalog, and environment facts. See [AGENTS.md and skills](instructions.md). Use `prompt.build` to add session policy without replacing the default sections.
 
 ## Conversation forks
 
@@ -123,33 +121,3 @@ A plugin can build delegation from ordinary sessions and jobs. There is no bundl
 A child stays out of the default session list. Removing its parent removes it too. Parentage does not forward answers or questions automatically. The plugin decides how to report results, forward questions, stop children, and limit recursion. Connect the job's abort signal to `handle.cancel()` when the job must stop the child's turn.
 
 `idle()` is a completion barrier, not a success result. Inspect the terminal saved commit's `end` before reporting success. A job report goes to its waiting call, or becomes a notification when the job runs in the background. See [Background jobs](tools.md#background-jobs).
-
-## MCP servers
-
-Yuke supports local MCP servers over stdio. It does not support remote HTTP, SSE, or OAuth servers.
-
-### Sources and trust
-
-The user `mcp.json` in the config folder and the session folder's `.mcp.json` each hold an `mcpServers` object. A project entry replaces a user entry with the same name. Plugins do not supply a third MCP config source.
-
-```json
-{
-  "mcpServers": {
-    "docs": {
-      "command": "docs-mcp",
-      "args": ["--stdio"],
-      "env": { "DOCS_ROOT": "${HOME}/docs" }
-    }
-  }
-}
-```
-
-A server entry accepts `command`, `args`, `env`, `cwd`, and `enabled`. The command starts directly, without a shell. A relative `cwd` starts in the session folder. The command, arguments, environment values, and folder expand `${NAME}` and `${NAME:-default}`. A missing variable without a default fails that server.
-
-User servers start without a question. Project servers need approval. Saved approval identifies the real folder and the parsed project server config; a config change can require approval again. A refusal leaves project servers untrusted. Without an answering client, they do not start.
-
-### Start and states
-
-The host starts servers for each session. A server failure does not stop other servers. Session updates report server state changes, and `SessionHandle.mcpServers()` reads their current states.
-
-Connected tools use names such as `mcp__docs__search`. Unsupported name characters become `_`; long or colliding names can get a hash suffix. MCP tools are deferred: the model finds them through tool search before use.

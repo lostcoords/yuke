@@ -12,7 +12,7 @@ Use the smallest mechanism that fits the task:
 
 | Task | Mechanism | Guide |
 |---|---|---|
-| Give the model reusable instructions | A skill or `AGENTS.md` | [Prompt](engine.md#prompt) |
+| Give the model reusable instructions | A skill or `AGENTS.md` | [AGENTS.md and skills](instructions.md) |
 | Add an operation the model can call | `s.tools.define` in `session` | [Tools](tools.md) |
 | Approve or change engine behavior | `s.hook` in `session` | [Engine hooks](engine.md#engine-hooks) |
 | Observe a host fact without blocking it | `ctx.on` in `apply` | [Events](plugins.md#events) |
@@ -20,8 +20,8 @@ Use the smallest mechanism that fits the task:
 | Browse or control sessions | `ctx.get("sessions")` | [Session handles](plugins.md#browse-and-open-sessions) |
 | Change chat presentation or open a chat pane | The `chat` service | [UI](ui.md) |
 | Share a typed value between plugins | `uses`, `provides`, `ctx.get`, and `ctx.provide` | [Services](plugins.md#services) |
-| Replace bundled behavior | Disable a bundled plugin and add a replacement | [Bundled plugins](plugins.md#bundled-plugins) |
-| Connect a local external tool server | Stdio MCP | [MCP servers](engine.md#mcp-servers) |
+| Replace bundled behavior | Disable a bundled plugin and add a replacement | [Replace a bundled plugin](plugins.md#replace-a-bundled-plugin) |
+| Connect a local external tool server | Stdio MCP | [MCP servers](mcp.md) |
 | Make a model request outside a conversation | `generateText` from `yuke:ai` | [Model requests](engine.md#tool-free-model-requests) |
 
 Named `apply(ctx)` runs once per runtime. Named `session(s)` runs once per open session. Both can return cleanup. Put model tools and engine hooks in `session`; they then work without the TUI. `ctx.get("tui")` returns `undefined` in headless modes.
@@ -40,7 +40,7 @@ The public modules separate each concern:
 - `yuke:tui`, `yuke:chat`, and `yuke:transcript`: terminal views and conversation presentation.
 - `yuke:test`: isolated hosts and runtime tests.
 
-Use [Types](types.md) for declaration setup and exact signatures. Use [Plugins](plugins.md) for lifetimes and services. Use [Profile](profile.md) and [Providers](providers.md) for configuration. Do not import `yuke:internal/*`.
+Use [Types](types.md) for declaration setup and exact signatures. Use [Plugins](plugins.md) for lifetimes and services. Use [Configuration](config.md) and [Providers](providers.md) for configuration. Do not import `yuke:internal/*`.
 
 ## Examples by task
 

@@ -46,7 +46,7 @@ yuke login openai-codex   # a ChatGPT account
 yuke login xai-grok      # a Grok account
 ```
 
-Open the URL that yuke prints. Confirm the code on that page. Wait for yuke to report a successful login. yuke stores the login in `auth.json` in the [data directory](profile.md#files). `yuke logout <provider>` removes the stored credential. It does not unset an environment variable or revoke a token at the provider.
+Open the URL that yuke prints. Confirm the code on that page. Wait for yuke to report a successful login. yuke stores the login in `auth.json` in the [data folder](config.md). `yuke logout <provider>` removes the stored credential. It does not unset an environment variable or revoke a token at the provider.
 
 ## Run your first task
 
@@ -67,7 +67,7 @@ Press **Enter**. If the pane has no saved model choice, yuke asks for a model an
 
 Read the answer and the tool results. Send a follow-up message to continue the task. **Esc** clears a selection or stops the active turn. **Ctrl+Q** exits yuke.
 
-yuke reads `AGENTS.md` and lists the available skills in the model instructions. Its tools run with your user rights. A task can read or change files and run commands. A request such as “Do not change files” is an instruction to the model, not a sandbox.
+yuke reads `AGENTS.md` and lists the available skills in the model instructions. See [AGENTS.md and skills](instructions.md). Its tools run with your user rights. A task can read or change files and run commands. A request such as “Do not change files” is an instruction to the model, not a sandbox.
 
 ## Continue a conversation
 
@@ -92,13 +92,7 @@ yuke -p 'Explain how to run the tests. Do not change files.' \
   --model anthropic/claude-sonnet-4-6 --reasoning default
 ```
 
-yuke prints the final answer and exits. Add `--json` to get one JSON object with `sessionId`, `end`, and `text`. To send a follow-up to the newest conversation in this directory:
-
-```sh
-yuke -c -p 'Which test should I run first?'
-```
-
-A continued session keeps its model and reasoning choice unless you replace them. If you pass `--model` on a continued session, also pass `--reasoning`.
+yuke prints the final answer and exits. See [One-shot tasks](one-shot.md) for JSON output, follow-ups, and plugins in this mode.
 
 ## If the task does not start
 
@@ -110,7 +104,10 @@ A continued session keeps its model and reasoning choice unless you replace them
 
 ## Next steps
 
-- Configure your profile: [Profile](profile.md).
+- Configure your profile: [Configuration](config.md).
 - Add a local server or change a provider route: [Providers](providers.md).
+- Give the model the rules of your project: [AGENTS.md and skills](instructions.md).
+- Connect a local MCP server: [MCP servers](mcp.md).
+- Run yuke in a script or a CI job: [One-shot tasks](one-shot.md).
 - Learn the terminal controls: [Terminal UI](ui.md).
 - Add a plugin after your first task works: [Your first plugin](first-plugin.md).
