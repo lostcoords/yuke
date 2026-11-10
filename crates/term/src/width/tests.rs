@@ -26,3 +26,18 @@ fn graphemes_take_the_cells_that_terminals_draw() {
         assert_eq!(grapheme_width(grapheme), cells, "{grapheme:?}");
     }
 }
+
+#[test]
+fn ascii_text_gives_the_graphemes_and_cells_of_the_unicode_rules() {
+    let characters: Vec<char> = (0..=127u8).map(char::from).collect();
+    for first in &characters {
+        for second in &characters {
+            let text = format!("{first}{second}a");
+            let unicode: Vec<(&str, usize)> = text
+                .graphemes(true)
+                .map(|grapheme| (grapheme, grapheme_width(grapheme)))
+                .collect();
+            assert_eq!(graphemes(&text).collect::<Vec<_>>(), unicode, "{text:?}");
+        }
+    }
+}
