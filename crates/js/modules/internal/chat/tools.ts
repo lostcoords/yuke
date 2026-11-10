@@ -14,7 +14,9 @@ import { Markdown, measure, type Segment, type TextItem, type TextRow, type Text
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 
-/** The rows of a folded call with the preview `head`, and of each failed call. A plain body wraps only that many lines. */
+/**
+ * The rows of a folded call with the preview `head`, and of each failed call. A plain body wraps only that many lines.
+ */
 const HEAD = 10;
 
 /** The rows of a folded call with the preview `tail`. A plain body wraps only that many lines. */
@@ -45,7 +47,8 @@ export function toolItem(entry: ToolEntry, open: boolean, duration: string | und
       render: (width) => {
         if (open) return body.rows(width);
         if (preview === "none") return [];
-        return body.plain ? plainPreview(body.text, width, preview) : previewRows(body.rows(width), preview);
+        if (!body.plain) return previewRows(body.rows(width), preview);
+        return plainPreview(body.text, width, preview, body.key === "output");
       },
     });
   }
@@ -221,8 +224,9 @@ function previewRows(rows: TextRow[], preview: "head" | "tail"): TextRow[] {
 /**
  * The rows of a folded plain `text` with the preview `preview`, and a row that counts the lines that it does not show
  * whole. Only the first `HEAD` or the last `TAIL` lines wrap, so a long live output costs no full wrap at each frame.
+ * A `live` output gives no count, because a count reads every line end of a long text at each frame.
  */
-function plainPreview(text: string, width: number, preview: "head" | "tail"): TextRow[] {
+function plainPreview(text: string, width: number, preview: "head" | "tail", live: boolean): TextRow[] {
   if (preview === "head") {
     let end = -1;
     for (let line = 0; line < HEAD && end < text.length; line += 1) {
@@ -232,18 +236,20 @@ function plainPreview(text: string, width: number, preview: "head" | "tail"): Te
     // The wrap reads "\r\n" as one line end, so the cut keeps no "\r" without its "\n".
     if (text[end] === "\n" && text[end - 1] === "\r") end -= 1;
     const rows = styledRows(text.slice(0, end), width, STYLE.toolOutput);
-    const hidden = lineEnds(rows.slice(HEAD)) + countLineEnds(text, end, text.length);
-    return hidden === 0 ? rows : [...rows.slice(0, HEAD), omitted(hidden, "lines")];
+    if (rows.length <= HEAD && end === text.length) return rows;
+    const hidden = live ? undefined : lineEnds(rows.slice(HEAD)) + countLineEnds(text, end, text.length);
+    return [...rows.slice(0, HEAD), omitted(hidden, "lines")];
   }
   let start = text.length;
   for (let line = 0; line < TAIL && start > 0; line += 1) start = text.lastIndexOf("\n", start - 1);
   const cut = start <= 0 ? 0 : start + 1;
   const rows = styledRows(text.slice(cut), width, STYLE.toolOutput).map((row) => shifted(row, cut));
   const dropped = rows.slice(0, -TAIL);
+  if (cut === 0 && dropped.length === 0) return rows;
   // The last dropped row of a line that goes on in the kept rows makes that line not whole.
   const partial = dropped.at(-1)?.join === "" ? 1 : 0;
-  const hidden = countLineEnds(text, 0, cut) + lineEnds(dropped) + partial;
-  return hidden === 0 ? rows : [omitted(hidden, "lines"), ...rows.slice(-TAIL)];
+  const hidden = live ? undefined : countLineEnds(text, 0, cut) + lineEnds(dropped) + partial;
+  return [omitted(hidden, "lines"), ...rows.slice(-TAIL)];
 }
 
 /** The number of `rows` that end a line. */
@@ -258,9 +264,10 @@ function countLineEnds(text: string, from: number, to: number): number {
   return count;
 }
 
-/** A row that says how many rows or lines a preview leaves out. It stays out of a copy. */
-function omitted(count: number, unit: "rows" | "lines"): TextRow {
-  const segment: Segment = { text: `… ${count} more ${unit}`, style: STYLE.toolOutput, copy: false };
+/** A row that says how many rows or lines a preview leaves out, or only that it leaves some out. A copy skips it. */
+function omitted(count: number | undefined, unit: "rows" | "lines"): TextRow {
+  const text = count === undefined ? `… more ${unit}` : `… ${count} more ${unit}`;
+  const segment: Segment = { text, style: STYLE.toolOutput, copy: false };
   return { segments: [{ text: " ", copy: false }, segment], join: "\n" };
 }
 

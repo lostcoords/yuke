@@ -461,6 +461,36 @@ test("a copy of live output gives its lines", async () => {
   equal(frame.copies, ["one\ntwo"]);
 });
 
+test("a folded call gives no count of the lines that its live output leaves out, and its result gives one", async () => {
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
+  const saved: StoredEvent[] = [
+    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    commit(2, [{ tool_call: call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    }),
+  ];
+  const sessions = fakeSessions(saved);
+  await loadChat(frame, sessions);
+  frame.start();
+  const execution = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "tool_started", execution, call });
+  sessions.push({ sessionUpdate: "tool_output", execution, text: lines("out", 8) });
+  frame.draw();
+  const live = transcriptRows(frame).slice(2, 8);
+  const result = { callId: "c0", content: lines("out", 8), isError: false };
+  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
+  frame.draw();
+  const tail = lines(" out", 8).split("\n").slice(3);
+  equal(
+    [live, transcriptRows(frame).slice(2, 8)],
+    [
+      [" … more lines", ...tail],
+      [" … 3 more lines", ...tail],
+    ],
+  );
+});
+
 test("a result with only media shows a label with the type, the number, and the size of each one", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const media = [
