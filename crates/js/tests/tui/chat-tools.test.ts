@@ -78,7 +78,7 @@ test("a folded call shows the head line and the preview of its hints, and an err
     "",
     " exec npm test",
     // The long line wraps at 28 cells, so its two rows count in the tail.
-    " … 1 more rows",
+    " … 1 more lines",
     " out 2",
     " out 3",
     " out 4",
@@ -87,13 +87,60 @@ test("a folded call shows the head line and the preview of its hints, and an err
     "",
     " Probe",
     ...lines(" row", 10).split("\n"),
-    " … 2 more rows",
+    " … 2 more lines",
     "",
     " fail · error",
     ...lines(" err", 10).split("\n"),
-    " … 1 more rows",
+    " … 1 more lines",
     "",
   ]);
+});
+
+test("a folded preview counts a line that it cuts as one more line", async () => {
+  using frame = createFrame({ width: 30, height: 40 }, undefined, { cwd: "/w", session: "s1" });
+  // At 28 cells, the line of 70 cells has 3 rows, and the line of 150 cells has 6 rows.
+  const long = "x".repeat(70);
+  const saved = calls(
+    { name: "probe", args: {}, hints: PROBE, result: ok(`${lines("row", 9)}\n${long}\n${lines("end", 2)}`) },
+    { name: "exec", args: { command: "make" }, hints: EXEC, result: ok(`start\n${"y".repeat(150)}`) },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  equal(transcriptRows(frame).slice(1, 21), [
+    " Probe",
+    ...lines(" row", 9).split("\n"),
+    ` ${"x".repeat(28)}`,
+    " … 3 more lines",
+    "",
+    " exec make",
+    // "start" and the cut line of 150 cells.
+    " … 2 more lines",
+    ...Array(4).fill(` ${"y".repeat(28)}`),
+    ` ${"y".repeat(10)}`,
+  ]);
+});
+
+test("a folded preview keeps a carriage return out of its last line, and a body that fits shows no count", async () => {
+  using frame = createFrame({ width: 30, height: 40 }, undefined, { cwd: "/w", session: "s1" });
+  const saved = calls(
+    { name: "probe", args: {}, hints: PROBE, result: ok(lines("row", 12).replaceAll("\n", "\r\n")) },
+    { name: "exec", args: { command: "make" }, hints: EXEC, result: ok(lines("out", 5)) },
+  );
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+  equal(transcriptRows(frame).slice(1, 21), [
+    " Probe",
+    ...lines(" row", 10).split("\n"),
+    " … 2 more lines",
+    "",
+    " exec make",
+    ...lines(" out", 5).split("\n"),
+    "",
+  ]);
+  frame.mouse(mouse(1, 11, "press"));
+  frame.mouse(mouse(20, 11, "drag"));
+  frame.mouse(mouse(20, 11, "release"));
+  equal(frame.copies, ["row 10"]);
 });
 
 test("a folded call clips its subject to one row and keeps its state, and an open call shows the whole subject", async () => {
@@ -556,8 +603,8 @@ test("a click on a body row, a preview row, or the count row toggles a call, and
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   const folded = transcriptRows(frame).slice(0, 26);
-  equal(folded.slice(11, 15), [" a 10", " … 2 more rows", "", " Probe"]);
-  equal(folded.slice(24, 26), [" b 10", " … 2 more rows"]);
+  equal(folded.slice(11, 15), [" a 10", " … 2 more lines", "", " Probe"]);
+  equal(folded.slice(24, 26), [" b 10", " … 2 more lines"]);
   // A click on the row that counts the rest opens the call.
   click(frame, 3, 12);
   equal(transcriptRows(frame).slice(12, 15), [" a 11", " a 12", ""]);
@@ -597,7 +644,7 @@ test("a call that opens at the tail stays on its rows, and the pane follows the 
   const folded = transcriptRows(frame).slice(0, 12);
   const view = chat.transcript();
   equal(view.scroll.state.following, true);
-  const more = folded.indexOf(" … 30 more rows");
+  const more = folded.indexOf(" … 30 more lines");
   click(frame, 3, more);
   // The rows above stay, and the next rows of the output take the place of the count.
   equal(transcriptRows(frame).slice(0, more), folded.slice(0, more));
@@ -704,7 +751,7 @@ test("a call that ended well shows a bold name, its subject in accent, dim outpu
   const output = themeStyle("chat.tool.output");
   const subject = themeStyle("chat.subject");
   assert(subject.fg !== undefined && subject.fg !== output.fg);
-  const omitted = transcriptRows(frame).findIndex((row) => row.includes("more rows"));
+  const omitted = transcriptRows(frame).findIndex((row) => row.includes("more lines"));
   equal(
     [
       cells[1]?.[1]?.style.bold,

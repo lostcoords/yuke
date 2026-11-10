@@ -14,10 +14,10 @@ import { Markdown, measure, type Segment, type TextItem, type TextRow, type Text
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 
-/** The rows of a folded call with the preview `head`, and of each failed call. */
+/** The rows of a folded call with the preview `head`, and of each failed call. A plain body wraps only that many lines. */
 const HEAD = 10;
 
-/** The rows of a folded call with the preview `tail`. */
+/** The rows of a folded call with the preview `tail`. A plain body wraps only that many lines. */
 const TAIL = 5;
 
 /** The most UTF-16 units of a subject in the head line. The open call shows the whole subject below the head line. */
@@ -44,7 +44,8 @@ export function toolItem(entry: ToolEntry, open: boolean, duration: string | und
       text: body.text,
       render: (width) => {
         if (open) return body.rows(width);
-        return preview === "none" ? [] : previewRows(body.rows(width), preview);
+        if (preview === "none") return [];
+        return body.plain ? plainPreview(body.text, width, preview) : previewRows(body.rows(width), preview);
       },
     });
   }
@@ -150,6 +151,8 @@ interface Block {
 /** One body: its section key, its source, and its rows at a width. */
 interface Body extends Block {
   readonly key: "output" | "result";
+  /** Each block is plain text, so a preview can wrap only the lines that it shows. */
+  readonly plain: boolean;
 }
 
 /** A block of plain `text` in the style of the output. */
@@ -194,6 +197,7 @@ function bodyOf(entry: ToolEntry): Body | undefined {
   }
   return {
     key: result === undefined ? "output" : "result",
+    plain: entry.display.length === 0,
     text,
     rows: (width) =>
       blocks.flatMap((block, at) => {
@@ -210,13 +214,53 @@ function bodyOf(entry: ToolEntry): Body | undefined {
 function previewRows(rows: TextRow[], preview: "head" | "tail"): TextRow[] {
   const keep = preview === "head" ? HEAD : TAIL;
   if (rows.length <= keep) return rows;
-  const more = omitted(rows.length - keep);
+  const more = omitted(rows.length - keep, "rows");
   return preview === "head" ? [...rows.slice(0, keep), more] : [more, ...rows.slice(-keep)];
 }
 
-/** A row that says how many rows a preview leaves out. It stays out of a copy. */
-function omitted(count: number): TextRow {
-  const segment: Segment = { text: `… ${count} more rows`, style: STYLE.toolOutput, copy: false };
+/**
+ * The rows of a folded plain `text` with the preview `preview`, and a row that counts the lines that it does not show
+ * whole. Only the first `HEAD` or the last `TAIL` lines wrap, so a long live output costs no full wrap at each frame.
+ */
+function plainPreview(text: string, width: number, preview: "head" | "tail"): TextRow[] {
+  if (preview === "head") {
+    let end = -1;
+    for (let line = 0; line < HEAD && end < text.length; line += 1) {
+      end = text.indexOf("\n", end + 1);
+      if (end === -1) end = text.length;
+    }
+    // The wrap reads "\r\n" as one line end, so the cut keeps no "\r" without its "\n".
+    if (text[end] === "\n" && text[end - 1] === "\r") end -= 1;
+    const rows = styledRows(text.slice(0, end), width, STYLE.toolOutput);
+    const hidden = lineEnds(rows.slice(HEAD)) + countLineEnds(text, end, text.length);
+    return hidden === 0 ? rows : [...rows.slice(0, HEAD), omitted(hidden, "lines")];
+  }
+  let start = text.length;
+  for (let line = 0; line < TAIL && start > 0; line += 1) start = text.lastIndexOf("\n", start - 1);
+  const cut = start <= 0 ? 0 : start + 1;
+  const rows = styledRows(text.slice(cut), width, STYLE.toolOutput).map((row) => shifted(row, cut));
+  const dropped = rows.slice(0, -TAIL);
+  // The last dropped row of a line that goes on in the kept rows makes that line not whole.
+  const partial = dropped.at(-1)?.join === "" ? 1 : 0;
+  const hidden = countLineEnds(text, 0, cut) + lineEnds(dropped) + partial;
+  return hidden === 0 ? rows : [omitted(hidden, "lines"), ...rows.slice(-TAIL)];
+}
+
+/** The number of `rows` that end a line. */
+function lineEnds(rows: readonly TextRow[]): number {
+  return rows.filter((row) => row.join === "\n").length;
+}
+
+/** The number of line ends in `text` from `from` to `to`. */
+function countLineEnds(text: string, from: number, to: number): number {
+  let count = 0;
+  for (let at = text.indexOf("\n", from); at !== -1 && at < to; at = text.indexOf("\n", at + 1)) count += 1;
+  return count;
+}
+
+/** A row that says how many rows or lines a preview leaves out. It stays out of a copy. */
+function omitted(count: number, unit: "rows" | "lines"): TextRow {
+  const segment: Segment = { text: `… ${count} more ${unit}`, style: STYLE.toolOutput, copy: false };
   return { segments: [{ text: " ", copy: false }, segment], join: "\n" };
 }
 
