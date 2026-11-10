@@ -381,7 +381,8 @@ function isEscaped(text: string, index: number): boolean {
 }
 
 const ESCAPABLE = "\\`*{}[]()#+-.!_>~|";
-const INLINE_MARKERS = new Set(["\\", "`", "[", "*", "_"]);
+/** The characters that start an inline rule. Each is ASCII, so a scan of UTF-16 units never meets one in a pair. */
+const INLINE_MARKER = /[\\`[*_]/g;
 
 /** The emphasis group for a bold and an italic depth. */
 function emphasisStyle(bold: boolean, italic: boolean): string | undefined {
@@ -419,11 +420,11 @@ interface Delimiter {
 }
 
 /** A run of `marker` at `i`: its length, and whether it opens or closes emphasis by the CommonMark flanking rules. */
-function scanDelimiters(cps: readonly string[], i: number, marker: string) {
+function scanDelimiters(text: string, i: number, marker: string) {
   let count = 0;
-  while (cps[i + count] === marker) count++;
-  const before = i === 0 ? " " : (cps[i - 1] as string);
-  const after = cps[i + count] ?? " ";
+  while (text[i + count] === marker) count++;
+  const before = i === 0 ? " " : codePointBefore(text, i);
+  const after = i + count < text.length ? String.fromCodePoint(text.codePointAt(i + count) as number) : " ";
   const beforeSpace = SPACE.test(before);
   const afterSpace = SPACE.test(after);
   const beforePunct = PUNCT.test(before);
@@ -435,28 +436,32 @@ function scanDelimiters(cps: readonly string[], i: number, marker: string) {
   return { count, canOpen: left, canClose: right };
 }
 
+/** The code point that ends at the UTF-16 offset `at` of `text`, as a string. */
+function codePointBefore(text: string, at: number): string {
+  const low = text.charCodeAt(at - 1);
+  const high = text.charCodeAt(at - 2);
+  const pair = low >= 0xdc_00 && low <= 0xdf_ff && high >= 0xd8_00 && high <= 0xdb_ff;
+  return text.slice(pair ? at - 2 : at - 1, at);
+}
+
 /** The closing backtick run of exactly `n`, so a shorter run inside stays literal. */
-function closeCodeSpan(cps: readonly string[], start: number, n: number): number {
-  let j = start;
-  while (j < cps.length) {
-    if (cps[j] !== "`") {
-      j++;
-      continue;
-    }
+function closeCodeSpan(text: string, start: number, n: number): number {
+  let j = text.indexOf("`", start);
+  while (j >= 0) {
     let m = 0;
-    while (cps[j + m] === "`") m++;
+    while (text[j + m] === "`") m++;
     if (m === n) return j;
-    j += m;
+    j = text.indexOf("`", j + m);
   }
   return -1;
 }
 
 /** A `[label](target)` at `open`: the index of `]` and of the last `)`, or `undefined`. A target holds no space. */
-function scanLink(cps: readonly string[], open: number): { close: number; end: number } | undefined {
+function scanLink(text: string, open: number): { close: number; end: number } | undefined {
   let depth = 0;
   let close = -1;
-  for (let j = open + 1; j < cps.length; j++) {
-    const c = cps[j];
+  for (let j = open + 1; j < text.length; j++) {
+    const c = text[j];
     if (c === "\\") {
       j++;
       continue;
@@ -470,10 +475,10 @@ function scanLink(cps: readonly string[], open: number): { close: number; end: n
       depth--;
     }
   }
-  if (close < 0 || cps[close + 1] !== "(") return undefined;
+  if (close < 0 || text[close + 1] !== "(") return undefined;
   let paren = 1;
-  for (let j = close + 2; j < cps.length; j++) {
-    const c = cps[j] as string;
+  for (let j = close + 2; j < text.length; j++) {
+    const c = text[j] as string;
     if (c === "\\") {
       j++;
       continue;
@@ -490,39 +495,27 @@ function scanLink(cps: readonly string[], open: number): { close: number; end: n
  * emphasis. A link keeps its brackets and its target as `link` pieces, and its label shows its own inline markup.
  */
 function parseInline(text: string, baseStyle: string = STYLE.text): Piece[] {
-  const cps = Array.from(text);
-  // The parser walks code points, but a piece range is UTF-16, so it keeps both indexes.
-  const units: number[] = [];
-  let unit = 0;
-  for (const cp of cps) {
-    units.push(unit);
-    unit += cp.length;
-  }
-  units.push(unit);
-  const at = (k: number): number => units[k] as number;
-  const span = (from: number, to: number): { at: number; len: number } => ({ at: at(from), len: at(to) - at(from) });
+  // A piece range is UTF-16, and each marker is ASCII, so the parser walks UTF-16 units.
+  const span = (from: number, to: number): { at: number; len: number } => ({ at: from, len: to - from });
   const nodes: InlineNode[] = [];
   const delimiters: number[] = [];
 
   let i = 0;
-  while (i < cps.length) {
-    const c = cps[i] as string;
-    if (c === "\\" && i + 1 < cps.length && ESCAPABLE.includes(cps[i + 1] as string)) {
-      nodes.push({ kind: "text", text: cps[i + 1] as string, ...span(i, i + 2) });
+  while (i < text.length) {
+    const c = text[i] as string;
+    if (c === "\\" && i + 1 < text.length && ESCAPABLE.includes(text[i + 1] as string)) {
+      nodes.push({ kind: "text", text: text[i + 1] as string, ...span(i, i + 2) });
       i += 2;
       continue;
     }
     if (c === "`") {
       let n = 1;
-      while (cps[i + n] === "`") n++;
-      const close = closeCodeSpan(cps, i + n, n);
+      while (text[i + n] === "`") n++;
+      const close = closeCodeSpan(text, i + n, n);
       if (close >= 0) {
         let from = i + n;
         let to = close;
-        let code = cps
-          .slice(from, to)
-          .join("")
-          .replace(/[\r\n]/g, " ");
+        let code = text.slice(from, to).replace(/[\r\n]/g, " ");
         if (code.length > 2 && code[0] === " " && code.at(-1) === " " && NOT_SPACE.test(code)) {
           code = code.slice(1, -1);
           from++;
@@ -537,38 +530,37 @@ function parseInline(text: string, baseStyle: string = STYLE.text): Piece[] {
       continue;
     }
     if (c === "[") {
-      const found = scanLink(cps, i);
+      const found = scanLink(text, i);
       if (found !== undefined) {
-        const link = cps.slice(found.close + 2, found.end).join("");
+        const link = text.slice(found.close + 2, found.end);
         nodes.push({ kind: "styled", text: "[", style: STYLE.link, link, ...span(i, i + 1) });
         // The label is a verbatim slice of the parent, so a range inside it shifts by the label offset.
-        const shift = at(i + 1);
-        for (const piece of parseInline(cps.slice(i + 1, found.close).join(""), baseStyle)) {
+        for (const piece of parseInline(text.slice(i + 1, found.close), baseStyle)) {
           if (piece.text === "") continue;
           // An unstyled piece stays text, so an emphasis around the link reaches it.
           if (piece.style === baseStyle)
-            nodes.push({ kind: "text", text: piece.text, at: shift + piece.at, len: piece.len, link });
+            nodes.push({ kind: "text", text: piece.text, at: i + 1 + piece.at, len: piece.len, link });
           else
             nodes.push({
               kind: "styled",
               text: piece.text,
               style: piece.style,
-              at: shift + piece.at,
+              at: i + 1 + piece.at,
               len: piece.len,
               link,
             });
         }
-        const target = cps.slice(found.close, found.end + 1).join("");
+        const target = text.slice(found.close, found.end + 1);
         nodes.push({ kind: "styled", text: target, style: STYLE.link, link, ...span(found.close, found.end + 1) });
         i = found.end + 1;
         continue;
       }
     }
     if (c === "*" || c === "_") {
-      const d = scanDelimiters(cps, i, c);
+      const d = scanDelimiters(text, i, c);
       nodes.push({
         kind: "delimiter",
-        at: at(i),
+        at: i,
         marker: c,
         count: d.count,
         canOpen: d.canOpen,
@@ -583,9 +575,9 @@ function parseInline(text: string, baseStyle: string = STYLE.text): Piece[] {
       continue;
     }
     // A run of plain characters is one node, because each rule above reads only its marker character.
-    let j = i + 1;
-    while (j < cps.length && !INLINE_MARKERS.has(cps[j] as string)) j++;
-    nodes.push({ kind: "text", text: cps.slice(i, j).join(""), ...span(i, j) });
+    INLINE_MARKER.lastIndex = i + 1;
+    const j = INLINE_MARKER.exec(text)?.index ?? text.length;
+    nodes.push({ kind: "text", text: text.slice(i, j), ...span(i, j) });
     i = j;
   }
 
