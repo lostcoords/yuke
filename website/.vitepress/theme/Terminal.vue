@@ -9,8 +9,8 @@ const props = defineProps({
   crop: { type: Object, default: null },
 });
 
-// The server render shows the last frame, so the page reads well without JavaScript.
-const index = ref(props.scene ? props.scene.frames.length - 1 : 0);
+// An animation starts on its first frame, so its end does not show before it plays. A still shows its last frame.
+const index = ref(props.play || !props.scene ? 0 : props.scene.frames.length - 1);
 const frame = computed(() => props.scene?.frames[index.value]);
 const area = computed(() => ({
   top: props.crop?.top ?? 0,
@@ -97,7 +97,11 @@ function toggle() {
 
 onMounted(() => {
   if (!props.play || !props.scene || props.scene.frames.length < 2) return;
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  // With reduced motion, the animation never plays, so it shows its end.
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    index.value = props.scene.frames.length - 1;
+    return;
+  }
   observer = new IntersectionObserver((entries) => {
     if (entries.some((entry) => entry.isIntersecting)) {
       observer.disconnect();
