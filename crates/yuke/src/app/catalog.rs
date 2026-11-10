@@ -6,13 +6,17 @@ use yuke_protocol::{
     Modality, ModelInfo, PriceBand, ProviderInfo, ProviderState, ReasoningChoice, ReasoningLevel as Level,
 };
 
-/// The info of `provider` in `state`.
+/// The info of `provider` in `state`. A provider that is not ready has no models.
 pub(super) fn provider_info(provider: &Provider, state: ProviderState) -> ProviderInfo {
+    let models = match state {
+        ProviderState::Ready { .. } => provider.models.iter().map(model_info).collect(),
+        ProviderState::NeedsApiKey { .. } | ProviderState::NeedsLogin => Vec::new(),
+    };
     ProviderInfo {
         id: provider.id.to_string(),
         name: provider.name.to_string(),
         state,
-        models: provider.models.iter().map(model_info).collect(),
+        models,
     }
 }
 

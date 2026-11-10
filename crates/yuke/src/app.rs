@@ -215,7 +215,8 @@ impl Shared {
         self.profile.borrow().session_idle
     }
 
-    /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
+    /// The providers of the profile with their models: every provider with `all`, else only the ready ones. Only a ready
+    /// provider has models.
     ///
     /// # Errors
     ///
@@ -726,7 +727,8 @@ impl App {
         self.shared.set_api_key(provider, api_key).await
     }
 
-    /// The providers of the profile with their models: every provider with `all`, else only the ready ones.
+    /// The providers of the profile with their models: every provider with `all`, else only the ready ones. Only a ready
+    /// provider has models.
     ///
     /// # Errors
     ///

@@ -226,7 +226,8 @@ pub trait Sessions {
     /// Returns why the request failed.
     async fn close(&self, id: SessionId) -> Result<(), SessionsError>;
 
-    /// The providers of the catalog with their models: every provider with `all`, else only the ready ones.
+    /// The providers of the catalog with their models: every provider with `all`, else only the ready ones. Only a ready
+    /// provider has models.
     ///
     /// # Errors
     ///

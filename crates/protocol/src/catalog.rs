@@ -33,7 +33,7 @@ pub struct ProviderInfo {
     pub name: String,
     /// Whether the provider can serve a request.
     pub state: ProviderState,
-    /// The models in catalog order.
+    /// The models in catalog order. Empty when the provider is not ready.
     pub models: Vec<ModelInfo>,
 }
 

@@ -186,19 +186,23 @@ test("a pane whose session does not open shows no saved pick", async () => {
   equal(shownItems(chat), []);
 });
 
-test("the bar of a session of a provider that was not ready at the start shows its level after a login", async () => {
+test("the bar of a session of a provider that was not ready at the start shows its level after the next turn", async () => {
   using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", session: "s1" });
-  const sessions = fakeSessions(SAVED);
-  // Without `all`, the catalog at the start holds no ready provider.
-  const catalog = {
-    list: async (options?: { all?: boolean }) => (options?.all === true ? CATALOG : { providers: [] }),
-  };
-  const chat = await loadChat(frame, sessions, catalog);
+  // The provider is not ready at the start, and a login makes it ready.
+  let ready = false;
+  const catalog = { list: async () => (ready ? CATALOG : { providers: [] }) };
+  const chat = await loadChat(frame, fakeSessions(SAVED), catalog);
   frame.start();
   await settled();
   frame.draw();
+  const model = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:model")?.text;
+  const before = model();
 
-  equal(chat.tui.status.list().find((item) => item.key === "chat:model")?.text, "m high");
+  ready = true;
+  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "state", state: "idle" } });
+  await settled();
+
+  equal([before, model()], ["m", "m high"]);
 });
 
 test("the bar hides a saved pick of a provider that is not ready, and a new pick after a login shows", async () => {
@@ -208,11 +212,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/launch" });
   let state: ProviderState = { kind: "needs_login" };
   const providers = (): ProviderInfo[] => CATALOG.providers.map((provider) => ({ ...provider, state })) as never;
-  const catalog = {
-    list: async (options?: { all?: boolean }) => ({
-      providers: options?.all === true || state.kind === "ready" ? providers() : [],
-    }),
-  };
+  const catalog = { list: async () => ({ providers: state.kind === "ready" ? providers() : [] }) };
   const chat = await loadChat(frame, fakeSessions(), catalog);
   frame.start();
   await settled();

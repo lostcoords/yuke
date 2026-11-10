@@ -259,27 +259,23 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
-  // A session can use a provider that is not ready now, so the list holds each provider.
+  // The models of the ready providers. A turn end reads them again when the shown model is missing.
   let models: Map<string, ModelInfo> | undefined;
-  let ready: ReadonlySet<string> = new Set();
   const readModels = (): Promise<void> =>
     ctx
       .get("catalog")
-      .list({ all: true })
+      .list()
       .then(
         (catalog) => {
-          const providers = catalog.providers;
           models = new Map(
-            providers.flatMap((provider) => provider.models.map((model) => [`${provider.id}/${model.id}`, model])),
-          );
-          ready = new Set(
-            providers.filter((provider) => provider.state.kind === "ready").map((provider) => provider.id),
+            catalog.providers.flatMap((provider) =>
+              provider.models.map((model) => [`${provider.id}/${model.id}`, model]),
+            ),
           );
         },
         // Without the catalog, the model item has no level, and the context item is a token count.
         () => {
           models = undefined;
-          ready = new Set();
         },
       );
   // Activation finishes the read before any pane can use the state.
@@ -295,8 +291,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     if (status === undefined || settings === undefined) {
       for (const key of ["context", "jobs"]) tui.status.delete(key);
       // A pane without a session shows the saved pick that its first send uses, while its provider is ready.
-      const saved = status === undefined || status.bound ? undefined : chat.choice.current;
-      const pick = saved !== undefined && ready.has(saved.model.provider) ? saved : undefined;
+      const pick = status === undefined || status.bound ? undefined : chat.choice.current;
       const level = models
         ?.get(`${pick?.model.provider}/${pick?.model.model}`)
         ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
@@ -329,6 +324,12 @@ export async function apply(ctx: PluginContext): Promise<void> {
     else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
   tui.onFocusChange(() => publish());
+  // A login does not tell the chat, so a turn end reads the ready providers again while the bar misses the model.
+  ctx.on("session.update", ({ update }) => {
+    if (update.sessionUpdate !== "state" || update.state === "running") return;
+    const model = active()?.status()?.settings?.model;
+    if (model !== undefined && models?.has(`${model.provider}/${model.model}`) !== true) chat.refreshModels();
+  });
   tui.guardQuit((quit) => {
     // Two panes on one session count once.
     const work = new Map(

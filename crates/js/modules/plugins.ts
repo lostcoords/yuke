@@ -236,7 +236,7 @@ export interface SessionHandle {
 
 /** The providers of the profile and their models. */
 export interface Catalog {
-  /** Every provider with `options.all`, else only the providers that are ready. */
+  /** Every provider with `options.all`, else only the providers that are ready. Only a ready provider has models. */
   readonly list: (options?: { readonly all?: boolean }) => Promise<ListCatalogResult>;
 }
 

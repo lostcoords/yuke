@@ -20,6 +20,6 @@ name: string,
  */
 state: ProviderState, 
 /**
- * The models in catalog order.
+ * The models in catalog order. Empty when the provider is not ready.
  */
 models: Array<ModelInfo>, };

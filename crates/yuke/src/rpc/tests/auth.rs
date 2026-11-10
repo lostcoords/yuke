@@ -194,6 +194,12 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     );
     assert_eq!(all_states["xai-grok"], json!({ "kind": "needs_login" }));
     assert_eq!(all_states["openai-codex"], ready_states["openai-codex"]);
+    let models_of = |id: &str| {
+        let providers = all["providers"].as_array().unwrap();
+        providers.iter().find(|provider| provider["id"] == id).unwrap()["models"].clone()
+    };
+    assert_eq!(models_of("anthropic"), json!([]));
+    assert_ne!(models_of("openai-codex"), json!([]));
     assert_eq!(refused.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
 
     let local = &all["providers"]
