@@ -5,7 +5,7 @@ import type { Block, Settings } from "yuke:protocol";
 import { createHost, equal, type ModelRequest, type Reply, rejects, reply, settled, test } from "yuke:test";
 
 /** The context of the round: an input, an answer, and a second input. */
-const context: Block[] = [{ user_text: "one" }, { assistant_text: "two" }, { user_text: "three" }];
+const context: Block[] = [{ user_text: "one" }, { assistant_text: { text: "two" } }, { user_text: "three" }];
 
 const settings: Settings = {
   maxOutputTokens: null,

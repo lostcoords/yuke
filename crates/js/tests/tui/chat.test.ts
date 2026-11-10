@@ -34,7 +34,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
   using frame = createFrame({ width: 10, height: 6 }, undefined, { cwd: "/w", session: "s1" });
-  const chat = await loadChat(frame, fakeSessions([commit(2, [{ assistant_text: "hello" }])]));
+  const chat = await loadChat(frame, fakeSessions([commit(2, [{ assistant_text: { text: "hello" } }])]));
   frame.start();
   // Row 0 is the gap before the reply, and column 0 is its indent.
   frame.mouse(mouse(1, 1, "press"));
@@ -99,7 +99,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
         blocks: [
           { user_text: "fix the test" },
           { reasoning: { text: "the test expects 3" } } as never,
-          { assistant_text: "**Found** it" },
+          { assistant_text: { text: "**Found** it" } },
           { tool_call: { callId: "c1", name: "exec", arguments: "{}" } },
         ],
         answer: null,
@@ -170,7 +170,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   }
   // A live event while the view shows the top asks for no page past the first event.
   const loaded = sessions.pages.length;
-  sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
+  sessions.push(commit(251, [{ assistant_text: { text: "reply 251" } }]));
   frame.draw();
   await settled();
   equal(sessions.pages.length, loaded);
@@ -191,7 +191,7 @@ test("a failed page shows its error below the transcript and loads no more pages
     frame.draw();
     await settled();
   }
-  sessions.push(commit(251, [{ assistant_text: "reply 251" }]));
+  sessions.push(commit(251, [{ assistant_text: { text: "reply 251" } }]));
   chat.transcript().scroll.scrollTo(0);
   frame.draw();
   await settled();
@@ -206,20 +206,20 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   const chat = await loadChat(frame, sessions);
   frame.start();
   chat.transcript().scroll.scrollBy(-4);
-  sessions.push(commit(31, [{ assistant_text: "reply 31" }]));
+  sessions.push(commit(31, [{ assistant_text: { text: "reply 31" } }]));
   frame.draw();
   equal(rows(frame.frame).at(-4), " new output ↓");
   chat.transcript().scroll.followTail();
   frame.draw();
   equal(rows(frame.frame).at(-4), "");
-  sessions.push(commit(32, [{ assistant_text: "reply 32" }]));
+  sessions.push(commit(32, [{ assistant_text: { text: "reply 32" } }]));
   frame.draw();
   equal(transcriptRows(frame).slice(-2), [" reply 32", ""]);
 });
 
 test("a reload keeps the folds and the scrolled place of a pane", async () => {
   const saved = replies(40);
-  saved[1] = commit(2, [{ reasoning: { text: "deep" } } as never, { assistant_text: "ok" }]);
+  saved[1] = commit(2, [{ reasoning: { text: "deep" } } as never, { assistant_text: { text: "ok" } }]);
   using before = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(before, fakeSessions(saved));
   before.start();
@@ -247,8 +247,8 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   frame.start();
   const first = chat.transcript().document.items[0];
   // The event 11 is saved, but the handle gets only the event 12.
-  saved.push(commit(11, [{ assistant_text: "reply 11" }]));
-  sessions.push(commit(12, [{ assistant_text: "reply 12" }]));
+  saved.push(commit(11, [{ assistant_text: { text: "reply 11" } }]));
+  sessions.push(commit(12, [{ assistant_text: { text: "reply 12" } }]));
   frame.draw();
   await settled();
   frame.draw();

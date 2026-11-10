@@ -484,7 +484,7 @@ pub fn answer_text(context: &[Block]) -> String {
     let texts: Vec<&str> = context[start..end]
         .iter()
         .filter_map(|block| match block {
-            Block::AssistantText(text) => Some(text.as_str()),
+            Block::AssistantText(text) => Some(text.text.as_str()),
             _ => None,
         })
         .collect();

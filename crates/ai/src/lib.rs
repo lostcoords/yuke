@@ -25,8 +25,8 @@ mod wyhash;
 mod testing;
 
 pub use block::{
-    Blob, BlobStore, Block, Digest, Media, Modality, Origin, OriginRef, Reasoning, ReasoningReplay, ReasoningReplayRef,
-    ReplayKind, Role, ToolCall, ToolCallRef, ToolResult,
+    AssistantText, Blob, BlobStore, Block, Digest, Media, Modality, Origin, OriginRef, Reasoning, ReasoningReplay,
+    ReasoningReplayRef, ReplayKind, Role, TextPhase, ToolCall, ToolCallRef, ToolResult,
 };
 pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};

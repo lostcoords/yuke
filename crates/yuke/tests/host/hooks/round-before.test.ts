@@ -9,7 +9,7 @@ const context: Block[] = [
   { user_text: "one" },
   { tool_call: { callId: "c1", name: "read", arguments: "{}" } },
   { tool_result: { callId: "c1", content: "done", isError: false } },
-  { assistant_text: "two" },
+  { assistant_text: { text: "two" } },
 ];
 
 const settings: Settings = {
@@ -55,7 +55,7 @@ test("a handler gets the window, the tokens, and the context, and no answer keep
   // Each call of `context` gives a new copy, so the change of the first copy is not in the second.
   equal(
     seen,
-    '{"window":200000,"inputTokens":1200,"blocks":4,"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":"two"}]}',
+    '{"window":200000,"inputTokens":1200,"blocks":4,"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":{"text":"two"}}]}',
   );
 });
 
@@ -82,7 +82,7 @@ test("a later handler gets the replaced context, and the plan combines the repla
   // The count of the newest answer describes the context before the replacement, so each block counts.
   equal(
     seen,
-    '{"contextTokens":3,"blocks":2,"tokens":[2,1],"context":[{"user_text":"summary"},{"assistant_text":"two"}]}',
+    '{"contextTokens":3,"blocks":2,"tokens":[2,1],"context":[{"user_text":"summary"},{"assistant_text":{"text":"two"}}]}',
   );
   // The second keeps the head of the first and the text, so the plan keeps 1 block of the context before the round.
   equal(planned.replace, { head: [{ user_text: "newer" }, { user_text: "summary" }], keep: 1 });

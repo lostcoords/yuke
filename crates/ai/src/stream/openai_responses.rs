@@ -10,7 +10,7 @@ use crate::json::{self, Text, Value};
 use crate::response::{BlockId, BlockKind, FinishReason};
 use crate::wire::json::JsonWriter;
 use crate::wyhash::Wyhash;
-use crate::{ReplayKind, SEARCH_TOOL_NAME};
+use crate::{ReplayKind, SEARCH_TOOL_NAME, TextPhase};
 
 use super::draft::{BlockState, DecodeError, Draft, OpenTools};
 
@@ -45,6 +45,8 @@ struct Output {
     blocks: [Option<BlockId>; 4],
     /// The `summary_index` of the last summary delta, so a new summary section starts on its own paragraph.
     last_summary_index: Option<i64>,
+    /// The phase that a message item names when it starts. Each text block of the item gets it.
+    phase: Option<TextPhase>,
 }
 
 impl Output {
@@ -147,6 +149,7 @@ impl Reducer {
             kind: ItemKind::Ignored,
             blocks: [None; 4],
             last_summary_index: None,
+            phase: None,
         };
         // An ignored item opens no block, so the items need their own bound. A repeated index replaces the earlier
         // item.
@@ -157,7 +160,12 @@ impl Reducer {
 
         match item_type {
             "message" => {
-                self.output_mut(index)?.kind = ItemKind::Message;
+                let output = self.output_mut(index)?;
+                output.kind = ItemKind::Message;
+                // An unknown phase counts as no phase, so a new provider phase does not fail the response.
+                output.phase = item
+                    .get_str("phase")
+                    .and_then(|name| crate::parse_name(name, "a text phase").ok());
                 return Ok(());
             }
             "reasoning" => {
@@ -204,7 +212,12 @@ impl Reducer {
             return Err(DecodeError::Protocol);
         }
         let id = self.draft.start(kind)?;
-        self.output_mut(output_index)?.blocks[slot(kind)] = Some(id);
+        let output = self.output_mut(output_index)?;
+        output.blocks[slot(kind)] = Some(id);
+        if kind == BlockKind::Text {
+            let phase = output.phase;
+            self.draft.open(id)?.phase = phase;
+        }
         Ok(())
     }
 
@@ -678,6 +691,33 @@ mod tests {
             r#"{"type":"response.content_part.added","output_index":0,"content_index":1,"part":{"type":"output_text"}}"#,
         ]);
         assert_eq!(overlapping, Err(DecodeError::Protocol));
+    }
+
+    // An unknown phase counts as no phase.
+    #[test]
+    fn the_phase_of_a_message_reaches_its_text() {
+        let mut h = Harness::new(PROTOCOL);
+        h.feed(&[
+            r#"{"type":"response.output_item.added","output_index":0,"item":{"type":"message","phase":"commentary"}}"#,
+            r#"{"type":"response.content_part.added","output_index":0,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"a"}"#,
+            r#"{"type":"response.output_text.done","output_index":0,"content_index":0}"#,
+            r#"{"type":"response.output_item.added","output_index":1,"item":{"type":"message","phase":"later"}}"#,
+            r#"{"type":"response.content_part.added","output_index":1,"content_index":0,"part":{"type":"output_text"}}"#,
+            r#"{"type":"response.output_text.delta","output_index":1,"content_index":0,"delta":"b"}"#,
+            r#"{"type":"response.output_text.done","output_index":1,"content_index":0}"#,
+            r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
+        ])
+        .unwrap();
+        h.expect_trace(
+            "start 0 text\n\
+             text_delta 0 \"a\"\n\
+             stop 0 text commentary\n\
+             start 1 text\n\
+             text_delta 1 \"b\"\n\
+             stop 1 text\n\
+             done stop \"completed\"",
+        );
     }
 
     #[test]

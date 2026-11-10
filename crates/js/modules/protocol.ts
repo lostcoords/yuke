@@ -67,6 +67,20 @@ export type ApplyPluginsResult = {
 written: boolean, };
 
 /**
+ * Assistant text, and the phase that the provider gave it.
+ */
+export type AssistantText = { 
+/**
+ * The text.
+ */
+text: string, 
+/**
+ * The phase of the text, or no phase when the provider sent none. The encoder sends the phase back to OpenAI
+ * Responses.
+ */
+phase?: TextPhase | null, };
+
+/**
  * Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
  * of a resumed context reads no blob that the encoder kept.
  */
@@ -84,7 +98,7 @@ len: number, };
  * One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
  * The serializer groups the blocks into the messages of each protocol.
  */
-export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": string } | { "reasoning": Reasoning } | { "tool_call": ToolCall };
+export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": AssistantText } | { "reasoning": Reasoning } | { "tool_call": ToolCall };
 
 /**
  * A block position within one session. A tool execution uses the position of its call, not its result.
@@ -1409,6 +1423,12 @@ source: PluginSource,
  * The full commit id in the lock.
  */
 commit: string, };
+
+/**
+ * The place of assistant text in its turn. The names come from OpenAI Responses, which asks each request to send
+ * the phase of each earlier output item back.
+ */
+export type TextPhase = "commentary" | "final_answer";
 
 /**
  * Whether and how the model thinks before it answers.

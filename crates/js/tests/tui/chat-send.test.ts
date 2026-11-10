@@ -362,7 +362,7 @@ test("up in an empty composer shows the older messages of the user, down past th
 test("ctrl+c clears the draft, then stops the turn, and esc drops the selection before it stops the turn", async () => {
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ assistant_text: "hello" }]),
+    commit(2, [{ assistant_text: { text: "hello" } }]),
   ];
   using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
@@ -386,7 +386,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
-  for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
+  for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ assistant_text: { text: `reply ${seq}` } }]));
   using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();

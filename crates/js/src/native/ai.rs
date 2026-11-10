@@ -120,7 +120,7 @@ const BYTES_PER_TOKEN: u64 = 4;
 pub(crate) fn block_tokens(block: &Block) -> u64 {
     match block {
         Block::Media(_) => MEDIA_TOKENS,
-        Block::UserText(text) | Block::AssistantText(text) => text_tokens(text.len()),
+        Block::UserText(text) | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text_tokens(text.len()),
         Block::ToolResult(result) => text_tokens(result.content.len()) + result.media.len() as u64 * MEDIA_TOKENS,
         Block::Reasoning(reasoning) => {
             let state = reasoning.replay.as_ref().map_or(0, |replay| replay.data.len());

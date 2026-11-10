@@ -92,7 +92,7 @@ const turn: SessionUpdate[] = [
   commit(3, {
     blocks: [
       { reasoning: { text: "the test expects 3" } },
-      { assistant_text: "I run the tests." },
+      { assistant_text: { text: "I run the tests." } },
       { tool_call: call },
     ],
     answer: answer("tool_calls"),
@@ -110,7 +110,7 @@ const turn: SessionUpdate[] = [
   model("d2", { kind: "block_started", block: 0, content: { kind: "text" } }),
   model("d2", { kind: "text_delta", block: 0, text: "Fixed." }),
   model("d2", { kind: "block_stopped", block: 0, call: null }),
-  commit(5, { blocks: [{ assistant_text: "Fixed." }], answer: answer("stop") }),
+  commit(5, { blocks: [{ assistant_text: { text: "Fixed." } }], answer: answer("stop") }),
   { sessionUpdate: "draft_committed", draftId: "d2", eventNumber: 5, blocks: [0] },
   commit(6, { end: { outcome: { completed: { finishReason: "stop" } } } }),
   { sessionUpdate: "state", state: "idle" },
@@ -295,7 +295,7 @@ test("a gap fill removes the inputs that its commits consume", () => {
 test("a cancel mid-draft keeps only what its commit saved", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 11),
-    commit(3, { blocks: [{ assistant_text: "I run " }], end: { outcome: "cancelled" } }),
+    commit(3, { blocks: [{ assistant_text: { text: "I run " } }], end: { outcome: "cancelled" } }),
     { sessionUpdate: "draft_discarded", draftId: "d1", reason: "failed" },
   ]);
   equal(transcript.entries, [
@@ -310,7 +310,7 @@ test("an end keeps the last saved answer before it, and the next end without an 
   const last = { ...answer("stop"), origin: { model: "last", baseUrl: "https://p" } };
   const transcript = opened([
     commit(1, { blocks: [{ tool_call: call }], answer: first }),
-    commit(2, { blocks: [{ assistant_text: "done" }], answer: last }),
+    commit(2, { blocks: [{ assistant_text: { text: "done" } }], answer: last }),
     commit(3, { end: { outcome: "cancelled" } }),
     commit(4, { end: { outcome: "cancelled" } }),
   ]);
@@ -322,7 +322,7 @@ test("an end keeps the last saved answer before it, and the next end without an 
 });
 
 test("an older page gives an end its answer, and an end without a change keeps its object", () => {
-  const saved = commit(1, { blocks: [{ assistant_text: "done" }], answer: answer("stop") });
+  const saved = commit(1, { blocks: [{ assistant_text: { text: "done" } }], answer: answer("stop") });
   const transcript = opened([
     commit(2, { end: { outcome: "cancelled" } }),
     commit(3, { end: { outcome: "cancelled" } }),

@@ -273,7 +273,7 @@ pub enum Block {
     /// The result of a tool call.
     ToolResult(ToolResult),
     /// Assistant text.
-    AssistantText(String),
+    AssistantText(AssistantText),
     /// Assistant reasoning.
     Reasoning(Reasoning),
     /// A tool call of the assistant.
@@ -286,9 +286,9 @@ impl Block {
         Block::UserText(text.into())
     }
 
-    /// A block of assistant text.
+    /// A block of assistant text with no phase.
     pub fn assistant_text(text: impl Into<String>) -> Self {
-        Block::AssistantText(text.into())
+        Block::AssistantText(AssistantText::new(text))
     }
 
     /// The role the kind fixes.
@@ -303,6 +303,53 @@ impl Block {
 impl From<ToolResult> for Block {
     fn from(result: ToolResult) -> Self {
         Block::ToolResult(result)
+    }
+}
+
+/// Assistant text, and the phase that the provider gave it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantText {
+    /// The text.
+    pub text: String,
+    /// The phase of the text, or no phase when the provider sent none. The encoder sends the phase back to OpenAI
+    /// Responses.
+    // ts-rs marks the field optional only with `default` beside `skip_serializing_if`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<TextPhase>,
+}
+
+impl AssistantText {
+    /// Assistant text with no phase.
+    pub fn new(text: impl Into<String>) -> Self {
+        AssistantText {
+            text: text.into(),
+            phase: None,
+        }
+    }
+}
+
+/// The place of assistant text in its turn. The names come from OpenAI Responses, which asks each request to send
+/// the phase of each earlier output item back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TextPhase {
+    /// A note while the model works, such as the text before a tool call.
+    Commentary,
+    /// The answer that closes the turn.
+    FinalAnswer,
+}
+
+impl TextPhase {
+    /// The wire name of the phase.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Commentary => "commentary",
+            Self::FinalAnswer => "final_answer",
+        }
     }
 }
 
@@ -533,7 +580,14 @@ mod tests {
         };
         let cases = [
             (Block::user_text("hi"), r#"{"user_text":"hi"}"#.to_owned()),
-            (Block::assistant_text("ok"), r#"{"assistant_text":"ok"}"#.to_owned()),
+            (Block::assistant_text("ok"), r#"{"assistant_text":{"text":"ok"}}"#.to_owned()),
+            (
+                Block::AssistantText(AssistantText {
+                    text: "ok".to_owned(),
+                    phase: Some(TextPhase::FinalAnswer),
+                }),
+                r#"{"assistant_text":{"text":"ok","phase":"final_answer"}}"#.to_owned(),
+            ),
             (
                 Block::Media(Media::new(blob, "image/png")),
                 format!(r#"{{"media":{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}}}"#),

@@ -4,7 +4,7 @@ use crate::block::read_blob;
 use crate::encoder::{EncodeError, Unsupported};
 use crate::{
     BlobStore, Block, Media, Modality, ReasoningSettings, Request, ResponsesDialect, ResponsesWire, SEARCH_TOOL_NAME,
-    Target, ToolChoice, ToolDefinition, ToolResult,
+    Target, TextPhase, ToolChoice, ToolDefinition, ToolResult,
 };
 
 use super::json::{JsonWriter, call_arguments};
@@ -82,17 +82,18 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ResponsesWire
     jw.begin_array();
 }
 
-/// One item holds each block, except that a message holds a run of text and media of one role.
+/// One item holds each block, except that a message holds a run of text and media of one role and one phase.
 fn group_end(target: &Target, blocks: &[Block], start: usize) -> usize {
     if !in_message(&blocks[start]) {
         return start + 1;
     }
     let role = blocks[start].role();
+    let phase = phase_of(&blocks[start]);
     let mut end = start + 1;
     while end < blocks.len() {
         let block = &blocks[end];
         // A reasoning block without encrypted content writes nothing, so it leaves the message open.
-        if (in_message(block) && block.role() == role) || !super::writes(target, block) {
+        if (in_message(block) && block.role() == role && phase_of(block) == phase) || !super::writes(target, block) {
             end += 1;
             continue;
         }
@@ -103,6 +104,14 @@ fn group_end(target: &Target, blocks: &[Block], start: usize) -> usize {
 
 fn in_message(block: &Block) -> bool {
     matches!(block, Block::UserText(_) | Block::AssistantText(_) | Block::Media(_))
+}
+
+/// The phase of assistant text. Any other block has none.
+fn phase_of(block: &Block) -> Option<TextPhase> {
+    match block {
+        Block::AssistantText(text) => text.phase,
+        _ => None,
+    }
 }
 
 /// Write the item of the group from `start`, and return its end. `marker` is the block that carries the explicit
@@ -122,6 +131,9 @@ pub(crate) fn write_group(
             jw.begin_object();
             jw.field_str("type", "message");
             jw.field_str("role", first.role().as_str());
+            if let Some(phase) = phase_of(first) {
+                jw.field_str("phase", phase.as_str());
+            }
             jw.key("content");
             jw.begin_array();
             for (index, block) in blocks.iter().enumerate().take(end).skip(start) {
@@ -141,7 +153,7 @@ pub(crate) fn write_group(
                     Block::AssistantText(text) => {
                         jw.begin_object();
                         jw.field_str("type", "output_text");
-                        jw.field_str("text", text);
+                        jw.field_str("text", &text.text);
                         jw.end_object();
                     }
                     Block::Media(media) => write_media(jw, request.blobs, media)?,
@@ -329,7 +341,7 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
 mod tests {
     use super::*;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
-    use crate::{Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolResult, Wire};
+    use crate::{AssistantText, Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolResult, Wire};
 
     fn responses() -> Wire {
         Wire::OpenaiResponses(ResponsesWire::default())
@@ -409,6 +421,29 @@ mod tests {
         ];
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
+            "gpt-5",
+            responses(),
+            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
+        );
+    }
+
+    // Each assistant message has one phase, so a change of the phase starts a new message.
+    #[test]
+    fn a_change_of_phase_starts_a_new_assistant_message() {
+        let phased = |text: &str, phase| {
+            Block::AssistantText(AssistantText {
+                text: text.to_owned(),
+                phase,
+            })
+        };
+        let blocks = [
+            phased("I run the tests.", Some(TextPhase::Commentary)),
+            phased("They pass.", Some(TextPhase::FinalAnswer)),
+            phased(" All of them.", Some(TextPhase::FinalAnswer)),
+            Block::assistant_text("Anything else?"),
+        ];
+        expect_json(
+            r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I run the tests."}]},{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"They pass."},{"type":"output_text","text":" All of them."}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Anything else?"}]}]}"#,
             "gpt-5",
             responses(),
             Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),

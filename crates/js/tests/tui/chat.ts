@@ -69,7 +69,7 @@ export function commit(seq: number, blocks: Block[], fields: Partial<Commit> = {
 /** A session with the settings event 1, then a reply `reply <seq>` in each event up to `last`. */
 export function replies(last: number): StoredEvent[] {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
-  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ assistant_text: `reply ${seq}` }]));
+  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ assistant_text: { text: `reply ${seq}` } }]));
   return saved;
 }
 

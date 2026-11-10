@@ -205,7 +205,7 @@ fn write_assistant_message(jw: &mut JsonWriter<'_>, target: &Target, replay: Rea
     // pi and the AI SDK join it the same way.
     if has_text {
         jw.string_parts(blocks.iter().filter_map(|block| match block {
-            Block::AssistantText(text) => Some(text.as_str()),
+            Block::AssistantText(text) => Some(text.text.as_str()),
             _ => None,
         }));
     } else {

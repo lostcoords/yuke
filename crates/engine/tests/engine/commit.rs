@@ -471,7 +471,7 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         let texts: Vec<&str> = context
             .iter()
             .map(|block| match block {
-                Block::UserText(text) | Block::AssistantText(text) => text.as_str(),
+                Block::UserText(text) | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text.as_str(),
                 other => panic!("unexpected block {other:?}"),
             })
             .collect();

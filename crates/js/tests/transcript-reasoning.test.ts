@@ -79,7 +79,7 @@ test("saved consecutive reasoning blocks group within a commit and stop at bound
   const firstBlocks: Block[] = [
     { reasoning: { text: "  first  ", replay } },
     { reasoning: { text: "second", replay: { ...replay, data: "second-provider-state" } } },
-    { assistant_text: "response" },
+    { assistant_text: { text: "response" } },
     { reasoning: { text: "" } },
     { reasoning: { text: "  after  " } },
     { tool_call: call },
@@ -166,7 +166,11 @@ test("interleaved reasoning deltas route back to their source group", () => {
 
 test("live grouped reasoning and replayed saved reasoning end equal", () => {
   const saved = commit(4, {
-    blocks: [{ reasoning: { text: "first" } }, { reasoning: { text: "second" } }, { assistant_text: "answer" }],
+    blocks: [
+      { reasoning: { text: "first" } },
+      { reasoning: { text: "second" } },
+      { assistant_text: { text: "answer" } },
+    ],
   });
   const updates: SessionUpdate[] = [
     { sessionUpdate: "draft_started", draftId: "d1" },
@@ -254,7 +258,7 @@ test("input, end, compaction, refusal, and tools keep reasoning runs apart", () 
       blocks: [
         { reasoning: { text: "turn" } },
         { reasoning: { text: "end" } },
-        { assistant_text: "no" },
+        { assistant_text: { text: "no" } },
         { reasoning: { text: "after refusal" } },
         { tool_call: call },
         { reasoning: { text: "after tool" } },
@@ -305,9 +309,9 @@ test("inserting older and gap events preserves a live group and tool state", () 
   const startedAt = savedTool.startedAt;
   assert(startedAt !== undefined, "the running tool has no start timestamp");
 
-  transcript.insert([commit(1, { blocks: [{ assistant_text: "older" }] })]);
+  transcript.insert([commit(1, { blocks: [{ assistant_text: { text: "older" } }] })]);
   equal(transcript.gap, { before: 3, limit: 1 });
-  transcript.insert([commit(2, { blocks: [{ assistant_text: "gap" }] })]);
+  transcript.insert([commit(2, { blocks: [{ assistant_text: { text: "gap" } }] })]);
   equal(transcript.gap, undefined);
 
   fed(transcript, [model("live", { kind: "reasoning_delta", block: 0, text: " late" })]);

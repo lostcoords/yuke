@@ -477,7 +477,7 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
     );
     assert_eq!(
         commits[3]["commit"]["blocks"],
-        json!([{ "assistant_text": "tests pass" }])
+        json!([{ "assistant_text": { "text": "tests pass" } }])
     );
     client.end().await;
 }

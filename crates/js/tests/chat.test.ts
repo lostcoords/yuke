@@ -24,7 +24,7 @@ test("a failed open keeps the shown session, and a later open shows its own tran
   });
   const kept = [chat.id, chat.transcript === first, chat.handle !== undefined];
   await chat.open("s2");
-  sessions.push(commit(3, [{ assistant_text: "in s2" }]), "s2");
+  sessions.push(commit(3, [{ assistant_text: { text: "in s2" } }]), "s2");
   equal(
     [failure, kept, chat.id, chat.transcript === first, texts(chat).at(-1)],
     ["Error: no session missing", ["s1", true, true], "s2", false, "in s2"],
@@ -295,7 +295,7 @@ test("the timer counts from observation, resets for another session, and stops w
   await chat.open("s2");
   const second = working.text()?.text;
   // An event that keeps the turn running changes no `active`.
-  sessions.push(commit(3, [{ assistant_text: "more" }]), "s2");
+  sessions.push(commit(3, [{ assistant_text: { text: "more" } }]), "s2");
   sessions.close("s2");
   equal(
     [first, second, working.text(), changes],

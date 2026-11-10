@@ -107,7 +107,8 @@ pub(crate) fn trace_line(event: &Event<'_>) -> String {
         Event::ReasoningSectionStarted(block) => format!("reasoning_section_started {block}"),
         Event::ToolInputDelta(delta) => format!("args {} {}", delta.block, quoted(delta.text)),
         Event::BlockStopped(stopped) => match stopped.result {
-            BlockResult::Text => format!("stop {} text", stopped.block),
+            BlockResult::Text(None) => format!("stop {} text", stopped.block),
+            BlockResult::Text(Some(phase)) => format!("stop {} text {}", stopped.block, phase.as_str()),
             BlockResult::Refusal => format!("stop {} refusal", stopped.block),
             BlockResult::Reasoning(None) => format!("stop {} reasoning", stopped.block),
             BlockResult::Reasoning(Some(replay)) => {

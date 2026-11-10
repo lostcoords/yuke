@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use yuke_ai::{Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage};
+use yuke_ai::{
+    AssistantText, Block, Completion, Content, FinishReason, Partial, Reasoning, ToolCall, ToolResult, Usage,
+};
 use yuke_testing::origin;
 
 use super::{
@@ -16,7 +18,7 @@ fn lines(context: &[Block]) -> Vec<String> {
         .iter()
         .map(|block| match block {
             Block::UserText(text) => format!("user {text}"),
-            Block::AssistantText(text) => format!("assistant {text}"),
+            Block::AssistantText(text) => format!("assistant {}", text.text),
             Block::Reasoning(reasoning) => format!("reasoning {}", reasoning.text),
             Block::ToolCall(call) => format!("call {}", call.call_id),
             Block::ToolResult(result) if result.is_error => format!("error {} {}", result.call_id, result.content),
@@ -44,7 +46,7 @@ fn called_names(action: Action<'_>) -> Vec<String> {
 
 fn answer(text: &str) -> Completion {
     Completion {
-        content: vec![Content::Text(text.to_owned())],
+        content: vec![Content::Text(AssistantText::new(text))],
         finish_reason: FinishReason::Stop,
         raw_finish_reason: "end_turn".to_owned(),
         usage: Usage::default(),
@@ -55,7 +57,7 @@ fn answer(text: &str) -> Completion {
 fn tool_answer(finish_reason: FinishReason) -> Completion {
     Completion {
         content: vec![
-            Content::Text("Let me check.".to_owned()),
+            Content::Text(AssistantText::new("Let me check.")),
             Content::Reasoning(Reasoning {
                 text: "Two files.".to_owned(),
                 replay: None,
@@ -65,7 +67,7 @@ fn tool_answer(finish_reason: FinishReason) -> Completion {
                 name: "read".to_owned(),
                 arguments: "{}".to_owned(),
             }),
-            Content::Text("And the other.".to_owned()),
+            Content::Text(AssistantText::new("And the other.")),
             Content::ToolCall(ToolCall {
                 call_id: "c2".to_owned(),
                 name: "write".to_owned(),
@@ -295,7 +297,7 @@ fn a_commit_reads_back_from_its_json() {
                 })),
                 display: CommitDisplay::default(),
             },
-            r#"{"replaced":{"head":[{"user_text":"summary"}],"keep":2},"blocks":[{"assistant_text":"a"}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"outcome":{"completed":{"finishReason":"tool_calls"}}}}"#,
+            r#"{"replaced":{"head":[{"user_text":"summary"}],"keep":2},"blocks":[{"assistant_text":{"text":"a"}}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"outcome":{"completed":{"finishReason":"tool_calls"}}}}"#,
         ),
         (
             Commit {

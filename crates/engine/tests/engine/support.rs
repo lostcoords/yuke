@@ -244,7 +244,7 @@ impl Hooks for Script {
     ) -> Result<RoundDecision, Box<dyn Error + Send + Sync>> {
         self.stop_at("after_round").await;
         let last = match context.last() {
-            Some(Block::AssistantText(text)) => text.as_str(),
+            Some(Block::AssistantText(text)) => text.text.as_str(),
             Some(Block::ToolResult(result)) => result.content.as_str(),
             _ => "",
         };

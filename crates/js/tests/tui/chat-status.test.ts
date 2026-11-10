@@ -14,7 +14,7 @@ const HIGH = {
 /** A session on `p/m` at the level high, with one answer that used 30,000 input and 2,000 output tokens. */
 const SAVED: StoredEvent[] = [
   { seq: 1, sessionUpdate: "settings", ...HIGH },
-  commit(2, [{ assistant_text: "hi" }], {
+  commit(2, [{ assistant_text: { text: "hi" } }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
       usage: { input: 30_000, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },
@@ -53,7 +53,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
   const items = (): string[][] => chat.tui.status.list().map((item) => [item.key, item.text]);
   const shown = items();
   sessions.push(
-    commit(3, [{ assistant_text: "more" }], {
+    commit(3, [{ assistant_text: { text: "more" } }], {
       answer: {
         origin: { model: "m", baseUrl: "https://p" },
         usage: { input: 60_000, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },
@@ -98,7 +98,7 @@ test("without a context window the context use is a token count", async () => {
 
 test("an answer without an input count shows no context item", async () => {
   const [settings] = SAVED;
-  const unknown = commit(2, [{ assistant_text: "hi" }], {
+  const unknown = commit(2, [{ assistant_text: { text: "hi" } }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
       usage: { input: null, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },

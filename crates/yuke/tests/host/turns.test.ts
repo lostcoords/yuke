@@ -243,7 +243,8 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           }
           const update = event.update;
           if (update.sessionUpdate === "commit") {
-            for (const block of update.commit.blocks) if ("assistant_text" in block) texts.push(block.assistant_text);
+            for (const block of update.commit.blocks)
+              if ("assistant_text" in block) texts.push(block.assistant_text.text);
           }
           if (!("state" in update)) return;
           states.push(update.state);

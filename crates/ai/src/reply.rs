@@ -8,7 +8,7 @@ use crate::response::{
 };
 use crate::stream::{ReplyOptions, Stream};
 use crate::transport::Transport;
-use crate::{Reasoning, ReasoningReplay};
+use crate::{AssistantText, Reasoning, ReasoningReplay};
 
 /// The events of one attempt, then its owned [`Response`].
 #[derive(Debug)]
@@ -116,7 +116,7 @@ fn keep(parts: &mut Vec<Part>, end: &mut End, event: &Event<'_>) {
                 // The session keeps each stopped block, so the spare capacity of the deltas would stay allocated.
                 text.shrink_to_fit();
                 *part = Part::Stopped(match stopped.result {
-                    BlockResult::Text => Content::Text(text),
+                    BlockResult::Text(phase) => Content::Text(AssistantText { text, phase }),
                     BlockResult::Refusal => Content::Refusal(text),
                     BlockResult::Reasoning(replay) => Content::Reasoning(Reasoning {
                         text,
@@ -161,7 +161,9 @@ fn partial(parts: Vec<Part>) -> impl Iterator<Item = PartialBlock> {
             }
             // A call cut off in its arguments does not exist.
             Part::Open(BlockKind::ToolCall, _) => return None,
-            Part::Open(BlockKind::Text, text) | Part::Stopped(Content::Text(text)) => (Partial::Text, text),
+            Part::Open(BlockKind::Text, text) | Part::Stopped(Content::Text(AssistantText { text, .. })) => {
+                (Partial::Text, text)
+            }
             Part::Open(BlockKind::Refusal, text) | Part::Stopped(Content::Refusal(text)) => (Partial::Refusal, text),
             Part::Open(BlockKind::Reasoning, text) | Part::Stopped(Content::Reasoning(Reasoning { text, .. })) => {
                 (Partial::Reasoning, text)
@@ -312,7 +314,7 @@ mod tests {
             r#"{"type":"response.output_item.added","output_index":3,"item":{"type":"message"}}"#,
             r#"{"type":"response.content_part.added","output_index":3,"content_index":0,"part":{"type":"refusal"}}"#,
             r#"{"type":"response.refusal.delta","output_index":3,"delta":"refused"}"#,
-            r#"{"type":"response.output_item.added","output_index":4,"item":{"type":"message"}}"#,
+            r#"{"type":"response.output_item.added","output_index":4,"item":{"type":"message","phase":"final_answer"}}"#,
             r#"{"type":"response.content_part.added","output_index":4,"content_index":0,"part":{"type":"output_text"}}"#,
             r#"{"type":"response.output_text.delta","output_index":4,"delta":"B"}"#,
             r#"{"type":"response.output_item.done","output_index":4,"item":{"type":"message"}}"#,
@@ -522,7 +524,7 @@ mod tests {
             }
         );
         assert_eq!(completion.content.len(), 5);
-        assert_eq!(completion.content[0], Content::Text("A".into()));
+        assert_eq!(completion.content[0], Content::Text(AssistantText::new("A")));
         let Content::Reasoning(Reasoning {
             text,
             replay: Some(replay),
@@ -547,7 +549,13 @@ mod tests {
             Block::assistant_text("refused")
         );
         assert_eq!(completion.text(), "AB");
-        assert_eq!(completion.content[4], Content::Text("B".into()));
+        assert_eq!(
+            completion.content[4],
+            Content::Text(AssistantText {
+                text: "B".to_owned(),
+                phase: Some(crate::TextPhase::FinalAnswer),
+            })
+        );
     }
 
     #[test]

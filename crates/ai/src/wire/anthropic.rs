@@ -2,7 +2,7 @@
 
 use crate::block::read_blob;
 use crate::encoder::{EncodeError, Unsupported};
-use crate::{AnthropicWire, BlobStore, Block, Media, Modality, ReplayKind, Request, Target, Thinking};
+use crate::{AnthropicWire, AssistantText, BlobStore, Block, Media, Modality, ReplayKind, Request, Target, Thinking};
 
 use super::json::{JsonWriter, call_arguments};
 
@@ -143,7 +143,7 @@ fn write_block(
     cache: bool,
 ) -> Result<(), EncodeError> {
     match block {
-        Block::UserText(text) | Block::AssistantText(text) => {
+        Block::UserText(text) | Block::AssistantText(AssistantText { text, .. }) => {
             jw.begin_object();
             jw.field_str("type", "text");
             jw.field_str("text", text);

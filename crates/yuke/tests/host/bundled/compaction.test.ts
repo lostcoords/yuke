@@ -20,7 +20,7 @@ const WINDOW = 100_000;
 const long = (letter: string, tokens: number): Block => ({ user_text: letter.repeat(tokens * 4) });
 
 /** Two inputs of about 12,000 tokens each, with an answer between them. */
-const twoInputs = (): Block[] => [long("a", 12_000), { assistant_text: "ok" }, long("b", 12_000)];
+const twoInputs = (): Block[] => [long("a", 12_000), { assistant_text: { text: "ok" } }, long("b", 12_000)];
 
 /** The text of a failed summary request: the server error of the fake model. */
 const FAILED = "the provider returned a server error: overloaded_error: Overloaded";

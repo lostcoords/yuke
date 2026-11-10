@@ -684,7 +684,7 @@ test("a link in a reply copies its target, and a relative target starts in the f
   const reply = "see [source](src/main.rs#L40-L52) or [docs](https://docs.rs)";
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ assistant_text: reply }]),
+    commit(2, [{ assistant_text: { text: reply } }]),
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();

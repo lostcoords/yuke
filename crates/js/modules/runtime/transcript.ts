@@ -334,7 +334,7 @@ export class Transcript {
       }
       flushReasoning();
       if ("assistant_text" in block)
-        this.#put({ kind: "text", key, text: block.assistant_text, refusal, draft: false });
+        this.#put({ kind: "text", key, text: block.assistant_text.text, refusal, draft: false });
       else if ("tool_call" in block) {
         if (!answer) this.#calls = [];
         answer = true;

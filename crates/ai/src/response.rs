@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::encoder::EncodeError;
 use crate::failure::{Failure, detail_text};
-use crate::{Block, ParseError, Reasoning, ReasoningReplayRef, ToolCall, ToolCallRef};
+use crate::{AssistantText, Block, ParseError, Reasoning, ReasoningReplayRef, TextPhase, ToolCall, ToolCallRef};
 
 /// Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
@@ -223,8 +223,8 @@ pub struct Done<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum BlockResult<'a> {
-    /// A text block.
-    Text,
+    /// A text block, and its phase when the provider gave one.
+    Text(Option<TextPhase>),
     /// A refusal block.
     Refusal,
     /// The provider state of a reasoning block, or `None` when it sent none. Its text came in the deltas.
@@ -237,8 +237,8 @@ pub enum BlockResult<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Content {
-    /// Answer text.
-    Text(String),
+    /// Answer text and its phase.
+    Text(AssistantText),
     /// The text of a model that declined the request. It replays as assistant text.
     Refusal(String),
     /// Reasoning text and the provider state that returns with it.
@@ -251,7 +251,8 @@ impl From<Content> for Block {
     /// The assistant block that replays this part in the next request.
     fn from(content: Content) -> Self {
         match content {
-            Content::Text(text) | Content::Refusal(text) => Block::AssistantText(text),
+            Content::Text(text) => Block::AssistantText(text),
+            Content::Refusal(text) => Block::assistant_text(text),
             Content::Reasoning(reasoning) => Block::Reasoning(reasoning),
             Content::ToolCall(call) => Block::ToolCall(call),
         }
@@ -287,7 +288,7 @@ impl From<Partial> for Block {
     /// The assistant block that replays this part in the next request.
     fn from(partial: Partial) -> Self {
         match partial {
-            Partial::Text(text) | Partial::Refusal(text) => Block::AssistantText(text),
+            Partial::Text(text) | Partial::Refusal(text) => Block::assistant_text(text),
             Partial::Reasoning(text) => Block::Reasoning(Reasoning { text, replay: None }),
             Partial::ToolCall(call) => Block::ToolCall(call),
         }
@@ -313,7 +314,7 @@ impl Completion {
         self.content
             .iter()
             .filter_map(|part| match part {
-                Content::Text(text) => Some(text.as_str()),
+                Content::Text(text) => Some(text.text.as_str()),
                 _ => None,
             })
             .collect()
@@ -493,13 +494,13 @@ mod tests {
         assert_eq!(completion(Vec::new()).text(), "");
         let several = completion(vec![
             Content::Refusal("no".into()),
-            Content::Text("A".into()),
+            Content::Text(AssistantText::new("A")),
             Content::Reasoning(Reasoning {
                 text: "r".into(),
                 replay: None,
             }),
-            Content::Text("B".into()),
-            Content::Text("C".into()),
+            Content::Text(AssistantText::new("B")),
+            Content::Text(AssistantText::new("C")),
         ]);
         assert_eq!(several.text(), "ABC");
     }

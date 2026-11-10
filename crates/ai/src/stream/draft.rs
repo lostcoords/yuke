@@ -8,7 +8,7 @@ use crate::response::{
     BlockId, BlockKind, BlockResult, BlockStarted, BlockStopped, Delta, Done, Event, FinishReason, ResponseLimits,
     StartedBlock, Usage,
 };
-use crate::{Origin, ReasoningReplayRef, ReplayKind, ToolCallRef};
+use crate::{Origin, ReasoningReplayRef, ReplayKind, TextPhase, ToolCallRef};
 
 /// A reducer fails on malformed or oversized input. A provider error is no decode error: the reducer names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,8 @@ pub(crate) struct Block {
     pub(crate) bytes: String,
     /// Which provider state a reasoning block carries in `bytes`, or `None` for none.
     pub(crate) replay: Option<ReplayKind>,
+    /// The phase of a text block, or `None` when the provider gave none.
+    pub(crate) phase: Option<TextPhase>,
 }
 
 /// Where the text of a pending delta lies.
@@ -176,7 +178,7 @@ impl Draft {
     fn result(&self, id: BlockId) -> BlockResult<'_> {
         let block = &self.blocks[id as usize];
         match block.kind {
-            BlockKind::Text => BlockResult::Text,
+            BlockKind::Text => BlockResult::Text(block.phase),
             BlockKind::Refusal => BlockResult::Refusal,
             BlockKind::Reasoning => BlockResult::Reasoning(block.replay.map(|kind| ReasoningReplayRef {
                 origin: self.origin.as_borrowed(),
@@ -205,6 +207,7 @@ impl Draft {
             name: String::new(),
             bytes: String::new(),
             replay: None,
+            phase: None,
         });
         self.events.push(Pending::Started(id));
         Ok(id)

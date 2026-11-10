@@ -78,7 +78,9 @@ function agents() {
           const events = await list.events(child, { limit: 2 });
           ended.abort();
           const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
-          const text = blocks.flatMap((block) => ("assistant_text" in block ? [block.assistant_text] : [])).join("");
+          const text = blocks
+            .flatMap((block) => ("assistant_text" in block ? [block.assistant_text.text] : []))
+            .join("");
           return { status: "completed", text };
         });
         return outcome.kind === "background" ? `${outcome.id} runs in the background.` : (outcome.report?.text ?? "");
