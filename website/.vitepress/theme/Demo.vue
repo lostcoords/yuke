@@ -5,7 +5,7 @@ import Terminal from './Terminal.vue';
 
 <template>
   <section class="demo yuke-section" aria-label="yuke at work">
-    <Terminal class="window" :scene="scene('task')" label="~/code/acme — yuke" play />
+    <Terminal class="window" :scene="scene('task')" label="~/code/yuke — yuke" play />
   </section>
 </template>
 
@@ -15,7 +15,7 @@ import Terminal from './Terminal.vue';
 }
 
 .window {
-  max-width: 920px;
+  max-width: 1040px;
   margin: 0 auto;
 }
 </style>
