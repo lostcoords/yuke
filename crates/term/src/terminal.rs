@@ -164,8 +164,7 @@ impl Terminal {
     pub fn suspend(&mut self) -> io::Result<()> {
         self.stop_reader()?;
         self.leave()?;
-        // The group stops, so a wrapper such as `mise exec` stops too, and the shell gets the terminal back.
-        rustix::process::kill_current_process_group(rustix::process::Signal::TSTP)?;
+        stop_process_group()?;
         self.enter()?;
         self.write_all(BACKGROUND_QUERY)
     }
@@ -246,6 +245,54 @@ impl Drop for Terminal {
             // The drop cannot report the failure, and a terminal that refuses the write or the settings stays raw.
         }
     }
+}
+
+/// Stop the process group with SIGTSTP, so a wrapper such as `mise exec` stops too and the shell gets the terminal
+/// back. Return after the process continues.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn stop_process_group() -> io::Result<()> {
+    // XNU, the kernel of macOS, stops the process before the call returns.
+    Ok(rustix::process::kill_current_process_group(
+        rustix::process::Signal::TSTP,
+    )?)
+}
+
+/// Stop the process group with SIGTSTP, so a wrapper such as `mise exec` stops too and the shell gets the terminal
+/// back. Return after the process continues.
+///
+/// Linux gives the signal of the group to any thread, and this thread runs on until that thread stops the process. So
+/// a second signal goes to this thread. A SIGCONT removes only the stop signals that came before it, so the mask holds
+/// the second signal until the signal of the group is out, and the process stops once.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[expect(
+    unsafe_code,
+    reason = "the calls write only the local signal sets and the mask of this thread"
+)]
+fn stop_process_group() -> io::Result<()> {
+    let check = |result: libc::c_int| match result {
+        0 => Ok(()),
+        error => Err(io::Error::from_raw_os_error(error)),
+    };
+    let mut stop = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    let mut previous = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    unsafe {
+        if libc::sigemptyset(stop.as_mut_ptr()) != 0 || libc::sigaddset(stop.as_mut_ptr(), libc::SIGTSTP) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        check(libc::pthread_sigmask(
+            libc::SIG_BLOCK,
+            stop.as_ptr(),
+            previous.as_mut_ptr(),
+        ))?;
+    }
+    let sent = check(unsafe { libc::pthread_kill(libc::pthread_self(), libc::SIGTSTP) }).and_then(|()| {
+        Ok(rustix::process::kill_current_process_group(
+            rustix::process::Signal::TSTP,
+        )?)
+    });
+    // The stop comes here at the latest.
+    let restored = check(unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, previous.as_ptr(), std::ptr::null_mut()) });
+    sent.and(restored)
 }
 
 /// Drop the input that waits, such as a late probe answer, and apply `settings` at once. A wait for the output to

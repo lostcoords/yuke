@@ -3422,6 +3422,7 @@ dependencies = [
 name = "yuke-term"
 version = "0.0.1-dev"
 dependencies = [
+ "libc",
  "rustix",
  "unicode-segmentation",
  "unicode-width",

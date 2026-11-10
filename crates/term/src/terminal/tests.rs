@@ -1,10 +1,13 @@
 use std::ffi::OsStr;
 use std::io::Read as _;
+use std::os::unix::process::CommandExt as _;
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
+use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, WaitOptions, kill_process, waitid, waitpid};
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::termios::{LocalModes, Winsize, tcsetwinsize};
 
@@ -286,7 +289,7 @@ fn a_child_process_does_not_keep_the_reader_from_its_stop() {
     let mut terminal = open(&mut controller, device, DEVICE_ATTRIBUTES);
     terminal.start_reader(|_| {}, || {}).unwrap();
     let spawn = SPAWN.lock().unwrap();
-    let mut child = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+    let mut child = Command::new("sleep").arg("5").spawn().unwrap();
     drop(spawn);
     let started = Instant::now();
     terminal.stop_reader().unwrap();
@@ -349,4 +352,60 @@ fn a_lone_escape_byte_of_the_probe_input_reaches_the_first_reader() {
         events.recv_timeout(Duration::from_secs(1)).unwrap(),
         Event::Key(Key::new(Code::Escape))
     );
+}
+
+/// The environment variable that makes the test binary the child of
+/// [`the_device_stays_canonical_while_a_suspend_stops_the_process`].
+const SUSPEND_CHILD: &str = "YUKE_TERM_SUSPEND_CHILD";
+
+/// The kernel gives a signal of the group to any thread, so a suspend from a thread other than the main thread can
+/// enter raw mode before the stop. Then the shell sees a raw device, and after `fg` nothing makes it raw again.
+#[test]
+fn the_device_stays_canonical_while_a_suspend_stops_the_process() {
+    if std::env::var_os(SUSPEND_CHILD).is_some() {
+        let device = File::from(io::stdin().as_fd().try_clone_to_owned().unwrap());
+        // The main thread waits for this thread, as the main thread of yuke waits for the thread of its runtime.
+        thread::spawn(move || Terminal::from_file(device).unwrap().suspend().unwrap())
+            .join()
+            .unwrap();
+        return;
+    }
+    // One run catches the race only sometimes.
+    for _ in 0..20 {
+        let (mut controller, device) = pty();
+        let spawn = SPAWN.lock().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "terminal::tests::the_device_stays_canonical_while_a_suspend_stops_the_process",
+            ])
+            .env(SUSPEND_CHILD, "1")
+            .stdin(device.try_clone().unwrap())
+            .stdout(Stdio::piped())
+            // The stop of the child group does not stop this test.
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        drop(spawn);
+        let pid = Pid::from_child(&child);
+        read_until(&mut controller, b"\x1b[c");
+        controller.write_all(DEVICE_ATTRIBUTES).unwrap();
+        let (_, status) = waitpid(Some(pid), WaitOptions::UNTRACED).unwrap().unwrap();
+        assert!(status.stopped());
+        assert!(canonical(&device));
+        kill_process(pid, Signal::CONT).unwrap();
+        // The options keep the exit for the wait of `child`.
+        let end = waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::STOPPED | WaitIdOptions::NOWAIT,
+        )
+        .unwrap()
+        .unwrap();
+        if end.stopped() {
+            child.kill().unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(!end.stopped(), "the process stopped a second time");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    }
 }

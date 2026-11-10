@@ -11,6 +11,10 @@ rustix = { version = "1.1", default-features = false, features = ["std", "event"
 unicode-segmentation = "1.13"
 unicode-width = { version = "0.2.2", default-features = false }
 
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+# The suspend sends a signal to one thread.
+libc = "0.2"
+
 [dev-dependencies]
 # The tests open a pseudo-terminal pair.
 rustix = { version = "1.1", default-features = false, features = ["pty"] }
