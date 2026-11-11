@@ -2,7 +2,7 @@
 
 import type { GenerateTextOptions, GenerateTextResult, ObjectOutput } from "yuke:ai";
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
-import { signalOf, underStop } from "yuke:internal/events";
+import { underStop } from "yuke:internal/events";
 import { aiComplete } from "yuke:internal/native";
 import { fieldsOf, jsonCopy, mediaOf } from "yuke:internal/values";
 import type { FinishReason, Usage } from "yuke:protocol";
@@ -72,23 +72,19 @@ export function generateText<T>(
 export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult<unknown>> {
   const fields = fieldsOf(options, "the options", OPTIONS);
-  const { model, instructions = "", prompt, attachments = [], abortSignal } = fields;
+  const { model, instructions = "", prompt, attachments = [], abortSignal } = fields as unknown as GenerateTextOptions;
   const output = fields.output as ObjectOutput<unknown> | undefined;
-  const { provider, model: id } = fieldsOf(model, "the option model", ["provider", "model"]);
-  if (typeof provider !== "string" || typeof id !== "string") {
-    throw new TypeError("the option model has no string provider and model");
-  }
-  if (typeof instructions !== "string") throw new TypeError("the option instructions is not a string");
+  const { provider, model: id } = fieldsOf(model, "the option model", ["provider", "model"]) as {
+    provider: string;
+    model: string;
+  };
   const blocks = typeof prompt === "string" ? [{ user_text: prompt }] : prompt;
-  if (!Array.isArray(blocks)) throw new TypeError("the option prompt is not a string or an array");
-  if (!Array.isArray(attachments)) throw new TypeError("the option attachments is not an array");
   const media = attachments.map((item: unknown, index) => mediaOf(item, `attachments[${index}]`));
   const settings: Record<string, unknown> = Object.fromEntries(SETTINGS.map((name) => [name, fields[name]]));
   if (output !== undefined) {
     // OpenAI strict mode needs each field required, so yuke sends no strict mode and checks the answer itself.
     settings.outputSchema = { name: output.name, schema: JSON.stringify(providerSchema(output.schema)), strict: false };
   }
-  const stop = signalOf(abortSignal);
   const request = {
     model: { provider, model: id },
     system: instructions,
@@ -97,7 +93,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     // The copy drops a missing setting. It refuses a number that is not finite, which JSON would make `null`.
     settings: jsonCopy(settings, "a setting"),
   };
-  const answer = await underStop(stop, () => aiComplete(request));
+  const answer = await underStop(abortSignal, () => aiComplete(request));
   return Object.freeze({ ...answer, output: output === undefined ? undefined : objectOf(output.schema, answer) });
 }
 

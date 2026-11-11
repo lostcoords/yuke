@@ -1130,7 +1130,6 @@ export class Markdown {
 
   /** Replace the source, and return `true` when it changed. A text that extends the old one keeps its first blocks. */
   setText(text: string): boolean {
-    if (typeof text !== "string") throw new TypeError("a Markdown text is a string");
     this.#carriageReturn = text.endsWith("\r");
     const source = normalized(text);
     if (source === this.#source) return false;
@@ -1143,7 +1142,6 @@ export class Markdown {
 
   /** Add `fragment` at the end of the source. A "\r\n" split between two fragments is one line break. */
   append(fragment: string): void {
-    if (typeof fragment !== "string") throw new TypeError("a Markdown fragment is a string");
     const raw = this.#carriageReturn && fragment.startsWith("\n") ? fragment.slice(1) : fragment;
     if (fragment !== "") this.#carriageReturn = raw.endsWith("\r");
     if (raw === "") return;

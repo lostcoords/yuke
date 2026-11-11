@@ -19,8 +19,8 @@ export function createMount(closed: () => void): Mount {
 }
 
 /**
- * The view that `create` makes for `mount`, or `undefined` when the factory throws, returns no view, or closes its own
- * mount. A throw or a bad value closes the mount and reports one fault as `owner`.
+ * The view that `create` makes for `mount`, or `undefined` when the factory throws or closes its own mount. A throw
+ * closes the mount and reports one fault as `owner`.
  */
 export function startView(
   owner: string,
@@ -28,14 +28,10 @@ export function startView(
   mount: Mount,
   report: (source: string, text: string) => void,
 ): View | undefined {
-  if (typeof create !== "function") throw new TypeError("a mount takes a function that makes its view");
   try {
-    const view: unknown = create(mount);
-    if (typeof view !== "object" || view === null || typeof (view as View).draw !== "function") {
-      throw new TypeError("the factory returned no view: a view is an object with a draw function");
-    }
+    const view = create(mount);
     // A factory that closed its own mount wants no view.
-    return mount.signal.aborted ? undefined : (view as View);
+    return mount.signal.aborted ? undefined : view;
   } catch (error) {
     report(owner, `a view did not start: ${failureOf(error)}`);
     mount.close();

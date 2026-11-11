@@ -181,15 +181,9 @@ impl Registry {
             last_open: Cell::default(),
         }
     }
-    /// Add a tool change. An invalid name, a reserved name, or a closed session fails with its error text.
+    /// Add a tool change. An invalid name or a reserved name fails with its error text.
     pub(crate) fn add(&self, owner: Option<ToolOwner>, change: ToolChange) -> Result<Registration, String> {
         check_tool_name(change.name()).map_err(|error| error.to_string())?;
-        if owner
-            .as_ref()
-            .is_some_and(|owner| !self.opens.borrow().contains(&owner.open))
-        {
-            return Err("the session is closed".to_owned());
-        }
         let mut tools = self.tools.borrow_mut();
         let replaced = if matches!(change, ToolChange::Define { .. }) {
             owner.as_ref().and_then(|owner| {

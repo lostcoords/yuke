@@ -4,7 +4,7 @@
  * no `FormData`, and no `clone`. `yuke:internal/web` installs the globals.
  */
 import { TextDecoder, TextEncoder } from "yuke:internal/encoding";
-import { AbortController, AbortSignal, addAbortStep, signalOf, underSignal } from "yuke:internal/events";
+import { AbortController, AbortSignal, addAbortStep, underSignal } from "yuke:internal/events";
 import { Headers, headerList, headersOf, isHeaders, isToken } from "yuke:internal/headers";
 import { type HttpBody, type HttpHead, httpClose, httpRead, httpSend } from "yuke:internal/native";
 import { isDisturbed, isReadableStream, ReadableStream } from "yuke:internal/streams";
@@ -197,7 +197,8 @@ export class Request {
           : new Headers(init.headers);
     const method = init.method === undefined ? (base?.method ?? "GET") : methodOf(init.method);
     const redirect = init.redirect === undefined ? (base?.redirect ?? "follow") : redirectOf(init.redirect);
-    const parent = init.signal === undefined ? base?.signal : init.signal === null ? undefined : signalOf(init.signal);
+    const parent =
+      init.signal === undefined ? base?.signal : init.signal === null ? undefined : (init.signal as AbortSignal);
 
     let url: string;
     if (input === undefined) url = (base as RequestState).url;
@@ -283,13 +284,6 @@ const NULL_BODY_STATUSES = [101, 103, 204, 205, 304];
 /** The statuses of `Response.redirect`. */
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 
-/** Convert `value` as a Web IDL `unsigned short`. A value out of range wraps, because it has no `EnforceRange`. */
-function unsignedShort(value: unknown): number {
-  const number = +(value as number);
-  if (!Number.isFinite(number)) return 0;
-  return ((Math.trunc(number) % 65_536) + 65_536) % 65_536;
-}
-
 /** A new `Response` with `state`, made without the constructor. */
 function responseOf(state: ResponseState): Response {
   const response = Object.create(Response.prototype) as Response;
@@ -302,9 +296,10 @@ function initialize(body: ExtractedBody | null, init: unknown): ResponseState {
   // Web IDL reads the members of a dictionary in the order of their names.
   const fields = dictionary(init, "the response init");
   const headers = fields.headers === undefined ? new Headers() : new Headers(fields.headers);
-  const status = fields.status === undefined ? 200 : unsignedShort(fields.status);
+  const status = fields.status === undefined ? 200 : Number(fields.status);
   const statusText = fields.statusText === undefined ? "" : byteString(fields.statusText, "the status text");
-  if (status < 200 || status > 599) throw new RangeError(`the status ${status} is not in the range 200 to 599`);
+  if (!Number.isInteger(status) || status < 200 || status > 599)
+    throw new RangeError(`the status ${status} is not in the range 200 to 599`);
   if (!/^[\t\x20-\x7e\x80-\xff]*$/.test(statusText)) throw new TypeError("the status text is not a reason phrase");
   if (body !== null) {
     if (NULL_BODY_STATUSES.includes(status)) throw new TypeError(`a response with the status ${status} has no body`);
@@ -343,7 +338,7 @@ export class Response {
   /** A redirect to `url` with `status`, which is 301, 302, 303, 307, or 308. */
   static redirect(url: string | URL, statusValue?: number): Response {
     const text = usvString(url);
-    const status = statusValue === undefined ? 302 : unsignedShort(statusValue);
+    const status = statusValue === undefined ? 302 : Number(statusValue);
     const parsed = URL.parse(text);
     if (parsed === null) throw new TypeError(`'${text}' is not a valid URL`);
     if (!REDIRECT_STATUSES.includes(status)) throw new RangeError(`the status ${status} is not a redirect status`);
@@ -522,17 +517,8 @@ function fetchedResponse(
  * Fetch `input` with `init`, as `new Request(input, init)` describes it. A network failure rejects with a `TypeError`
  * whose cause names the failure, and an abort rejects with the reason of the signal.
  */
-export function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  let state: RequestState;
-  try {
-    state = requestState(new Request(input, init));
-  } catch (error) {
-    return Promise.reject(error);
-  }
-  return run(state);
-}
-
-async function run(state: RequestState): Promise<Response> {
+export async function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const state = requestState(new Request(input, init));
   const signal = state.signal;
   signal.throwIfAborted();
   let { method, url } = state;

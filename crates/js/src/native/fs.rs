@@ -28,7 +28,7 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result
             "fsReadFile",
             Function::new(
                 ctx.clone(),
-                |ctx: Ctx<'js>, path: String, base: Option<String>, position: f64, length: Option<f64>| {
+                |ctx: Ctx<'js>, path: String, base: Option<String>, position: u64, length: Option<u64>| {
                     read_file(&ctx, &path, base.as_deref(), position, length)
                 },
             )?,
@@ -112,13 +112,10 @@ fn read_file<'js>(
     ctx: &Ctx<'js>,
     path: &str,
     base: Option<&str>,
-    position: f64,
-    length: Option<f64>,
+    position: u64,
+    length: Option<u64>,
 ) -> rquickjs::Result<Operation<'js>> {
     let path = resolve(ctx, path, base)?;
-    // `yuke:fs` checks that both numbers are whole and in range.
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a safe integer")]
-    let (position, length) = (position as u64, length.map(|length| length as u64));
     operation(ctx, move |stop| read(&path, position, length, stop).map(Bytes))
 }
 
@@ -164,8 +161,8 @@ enum Creation {
 }
 
 /// `fsWriteFile(path, baseDir, data, placement, creation, mode)`: write `data`, a `Uint8Array` or a string, to a file.
-/// `placement` is `replace`, `append`, or `atomic`; `creation` is `create`, `existing`, or `new`. `yuke:fs` sends
-/// `atomic` only with `create`.
+/// `placement` is `replace`, `append`, or `atomic`; `creation` is `create`, `existing`, or `new`. `yuke:fs` is the
+/// only caller, so any other text means `replace` and `create`. It sends `atomic` only with `create`.
 fn write_file<'js>(
     ctx: &Ctx<'js>,
     path: &str,
@@ -175,28 +172,14 @@ fn write_file<'js>(
     mode: Option<u32>,
 ) -> rquickjs::Result<Operation<'js>> {
     let placement = match placement {
-        "replace" => Placement::Replace,
-        "append" => Placement::Append,
         "atomic" => Placement::Atomic,
-        _ => {
-            return Err(throw(
-                ctx,
-                ErrorClass::TypeError,
-                "the placement is not replace, append, or atomic",
-            ));
-        }
+        "append" => Placement::Append,
+        _ => Placement::Replace,
     };
     let creation = match creation {
-        "create" => Creation::Create,
-        "existing" => Creation::Existing,
         "new" => Creation::New,
-        _ => {
-            return Err(throw(
-                ctx,
-                ErrorClass::TypeError,
-                "the creation is not create, existing, or new",
-            ));
-        }
+        "existing" => Creation::Existing,
+        _ => Creation::Create,
     };
     let path = resolve(ctx, path, base)?;
     // A copy at the call, so a later change of the bytes does not reach the file.

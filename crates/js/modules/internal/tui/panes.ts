@@ -128,7 +128,7 @@ export class PaneTree {
       node.kind === "leaf"
         ? save(node.view, node.owner)
         : { split: node.direction, first: walk(node.first), second: walk(node.second) };
-    return { tree: walk(this.#root), focus: Math.max(0, this.#leaves().indexOf(this.#active)) };
+    return { tree: walk(this.#root), focus: this.#leaves().indexOf(this.#active) };
   }
 
   /**
@@ -231,8 +231,7 @@ export class PaneTree {
       next = this.#defaultLeaf("new");
       this.#root = next;
     } else {
-      const parent = this.#parentOf(this.#root, leaf);
-      if (parent === undefined) return;
+      const parent = this.#parentOf(this.#root, leaf) as Split;
       const sibling = parent.first === leaf ? parent.second : parent.first;
       this.#replace(parent, sibling);
       next = firstLeaf(sibling);
@@ -254,8 +253,7 @@ export class PaneTree {
       this.#root = replacement;
       return;
     }
-    const parent = this.#parentOf(this.#root, node);
-    if (parent === undefined) return;
+    const parent = this.#parentOf(this.#root, node) as Split;
     if (parent.first === node) parent.first = replacement;
     else parent.second = replacement;
   }

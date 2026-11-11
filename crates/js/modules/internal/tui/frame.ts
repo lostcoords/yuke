@@ -5,7 +5,7 @@
 import { TestScreen } from "yuke:internal/native";
 import { ManualClock } from "yuke:internal/tui/clock";
 import { Core } from "yuke:internal/tui/core";
-import { parseKeys } from "yuke:internal/tui/keys";
+import { parseKeys, splitStroke } from "yuke:internal/tui/keys";
 import { createMount } from "yuke:internal/tui/mount";
 import { createSurface } from "yuke:internal/tui/surface";
 import type { Frame, FrameNotice, FrameTest, TestSurface } from "yuke:test";
@@ -123,9 +123,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
 
 /** The key event of one stroke of `parseKeys`, without the kitty fields `shifted` and `baseLayout`. */
 function eventOf(stroke: string): KeyEvent {
-  const cut = stroke.endsWith("+") ? stroke.length - 2 : stroke.lastIndexOf("+");
-  const modifiers = cut < 0 ? [] : stroke.slice(0, cut).split("+");
-  const name = stroke.slice(cut + 1);
+  const { modifiers, key: name } = splitStroke(stroke);
   const ctrl = modifiers.includes("ctrl");
   const alt = modifiers.includes("alt");
   const superKey = modifiers.includes("super");

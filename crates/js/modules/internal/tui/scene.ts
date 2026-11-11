@@ -101,7 +101,6 @@ export class Scene {
 
   /** Make a root with `create` around the current root. The close of the mount removes only this root. */
   wrapRoot(owner: string, create: RootFactory): Mount {
-    if (typeof create !== "function") throw new TypeError("a root takes a function that makes its view");
     let layer: Layer | undefined;
     const mount = createMount(() => {
       if (layer !== undefined) this.#roots.splice(this.#roots.indexOf(layer), 1);
@@ -129,7 +128,6 @@ export class Scene {
   /** Make an overlay with `create` above the root and the other overlays. A modal ends the mouse capture. */
   overlay(owner: string, create: ViewFactory, options: OverlayOptions = {}): Mount {
     const { modal = true, place } = options;
-    if (place !== undefined && typeof place !== "function") throw new TypeError("place is a function of the size");
     let layer: Overlay | undefined;
     const mount = createMount(() => {
       const at = layer === undefined ? -1 : this.#overlays.indexOf(layer);
@@ -149,10 +147,10 @@ export class Scene {
   layout(): void {
     const size = this.#host.size();
     const screen = { column: 0, row: 0, width: size.width, height: size.height };
-    this.#root.tree = this.#place(this.#root.view, undefined, screen, screen, undefined, new Set());
+    this.#root.tree = this.#place(this.#root.view, undefined, screen, screen, undefined);
     for (const layer of this.#overlays) {
-      const rect = layer.place === undefined ? screen : this.#placeOverlay(layer, size, screen);
-      layer.tree = this.#place(layer.view, undefined, rect, rect, undefined, new Set());
+      const rect = intersect(screen, layer.place?.(size) ?? screen);
+      layer.tree = this.#place(layer.view, undefined, rect, rect, undefined);
     }
     const hosted: PlacedView[] = [];
     const collect = (target: Target, layer: object): void => {
@@ -202,8 +200,8 @@ export class Scene {
   }
 
   /** Give a paste along the focus path of the input layer. */
-  paste(text: string): boolean {
-    return this.#bubble(this.#inputLayer(), (view) => view.paste, text);
+  paste(text: string): void {
+    this.#bubble(this.#inputLayer(), (view) => view.paste, text);
   }
 
   /**
@@ -255,11 +253,9 @@ export class Scene {
   }
 
   /** Close the top overlay when it is a modal, as for an Escape that nothing took. */
-  closeTopModal(): boolean {
+  closeTopModal(): void {
     const top = this.#overlays.at(-1);
-    if (top === undefined || !top.modal) return false;
-    top.mount.close();
-    return true;
+    if (top?.modal === true) top.mount.close();
   }
 
   /** Give the focus to `view` when it is placed and focusable. A view of the root keeps it beneath a modal. */
@@ -289,44 +285,26 @@ export class Scene {
   atoms(): string[] {
     const atoms = ["global", this.#inputLayer() === this.#root ? "root" : "overlay"];
     for (const target of this.#path) {
-      const contexts = target.view.contexts;
-      if (Array.isArray(contexts)) atoms.push(...contexts.filter((atom) => typeof atom === "string"));
+      if (target.view.contexts !== undefined) atoms.push(...target.view.contexts);
     }
     return atoms;
   }
 
-  #placeOverlay(layer: Overlay, size: Size, screen: Rect): Rect {
-    const rect = layer.place?.(size) ?? screen;
-    return isRect(rect) ? intersect(screen, rect) : screen;
-  }
-
-  /** The target of `view` at `rect`, cut to `clip`, with its placed children. A view placed twice keeps its first place. */
-  #place(
-    view: View,
-    pane: Pane | undefined,
-    rect: Rect,
-    clip: Rect,
-    parent: Target | undefined,
-    seen: Set<View>,
-  ): Target {
+  /** The target of `view` at `rect`, cut to `clip`, with its placed children. */
+  #place(view: View, pane: Pane | undefined, rect: Rect, clip: Rect, parent: Target | undefined): Target {
     const target: Target = { view, pane, parent, rect, clip, children: [] };
-    seen.add(view);
     if (view.layout === undefined) return target;
-    const placements = view.layout({ width: rect.width, height: rect.height });
-    if (!Array.isArray(placements)) return target;
-    for (const placement of placements) {
-      const child: unknown = placement?.view;
-      if (typeof child !== "object" || child === null || seen.has(child as View) || !isRect(placement.rect)) continue;
+    for (const placement of view.layout({ width: rect.width, height: rect.height })) {
       const childRect = {
         column: rect.column + placement.rect.column,
         row: rect.row + placement.rect.row,
-        width: Math.max(0, placement.rect.width),
-        height: Math.max(0, placement.rect.height),
+        width: placement.rect.width,
+        height: placement.rect.height,
       };
-      const leaf = this.#host.paneOf(child as View);
+      const leaf = this.#host.paneOf(placement.view);
       const childPane = leaf === undefined ? pane : leaf.pane;
       const childClip = intersect(clip, childRect);
-      target.children.push(this.#place(child as View, childPane, childRect, childClip, target, seen));
+      target.children.push(this.#place(placement.view, childPane, childRect, childClip, target));
     }
     return target;
   }
@@ -430,18 +408,14 @@ export class Scene {
     const viewsBefore = before.map((target) => target.view);
     const inputChanged = !sameViews(views, viewsBefore);
     if (inputChanged) {
-      for (const target of before) if (!views.includes(target.view)) this.#notifyFocus(target, false);
-      for (const target of path) if (!viewsBefore.includes(target.view)) this.#notifyFocus(target, true);
+      // A target of an earlier layout reaches a view that left the tree.
+      for (const target of before) if (!views.includes(target.view)) target.view.focusChanged?.(false);
+      for (const target of path) if (!viewsBefore.includes(target.view)) target.view.focusChanged?.(true);
     }
     const previous = before.at(-1)?.view;
     const change =
       deepest === previous ? undefined : Object.freeze({ previous, current: deepest, pane: path.at(-1)?.pane });
     if (inputChanged || !sameViews(rootPath, rootBefore)) this.#host.focusMoved(rootPath, change);
-  }
-
-  /** Tell the view of `target` its focus change. A target of an earlier layout reaches a view that left the tree. */
-  #notifyFocus(target: Target, focused: boolean): void {
-    target.view.focusChanged?.(focused);
   }
 
   #focusable(view: View): boolean {
@@ -475,7 +449,7 @@ export class Scene {
     const target = this.#focusTarget(this.#inputLayer());
     if (target === undefined || target.view.cursor === undefined) return undefined;
     const cursor = target.view.cursor();
-    if (cursor === undefined || !Number.isFinite(cursor.column) || !Number.isFinite(cursor.row)) return undefined;
+    if (cursor === undefined) return undefined;
     const screen = {
       column: target.rect.column + Math.floor(cursor.column),
       row: target.rect.row + Math.floor(cursor.row),
@@ -526,10 +500,4 @@ function inside(rect: Rect, point: Point): boolean {
 
 function local(event: MouseEvent, target: Target): MouseEvent {
   return { ...event, column: event.column - target.rect.column, row: event.row - target.rect.row };
-}
-
-function isRect(value: unknown): value is Rect {
-  if (typeof value !== "object" || value === null) return false;
-  const { column, row, width, height } = value as Rect;
-  return [column, row, width, height].every((number) => Number.isInteger(number));
 }

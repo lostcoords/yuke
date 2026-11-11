@@ -34,13 +34,10 @@ export function failureOf(
   subject: "connection" | "listener" = "connection",
 ): unknown {
   if (signal?.aborted === true) return signal.reason;
-  if (typeof error !== "object" || error === null) return error;
-  if ("cancelled" in error) return new ConnectionError(`the ${subject} is closed`, "ERR_CLOSED");
-  if ("message" in error) {
-    const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
-    return new ConnectionError(String(error.message), code);
-  }
-  return error;
+  // The natives reject with `{ cancelled }`, or with `{ code, message }`, as a conversion error does too.
+  const record = error as Readonly<Record<string, unknown>>;
+  if ("cancelled" in record) return new ConnectionError(`the ${subject} is closed`, "ERR_CLOSED");
+  return new ConnectionError(String(record.message), typeof record.code === "string" ? record.code : undefined);
 }
 
 export class Connection implements UnixConnection {

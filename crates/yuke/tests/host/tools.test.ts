@@ -166,12 +166,6 @@ for (const [name, definition, expected] of [
     { ...tool("bad", () => "x"), parameters: { type: "string" } },
     "parameters.type is not object",
   ],
-  ["an execute that is no function", { ...tool("bad", () => "x"), execute: "x" }, "execute is not a function"],
-  [
-    "a subject that names no string argument",
-    { ...tool("bad", () => "x"), hints: { subject: { argument: "path", kind: "file" } } },
-    "hints.subject.argument names no string argument",
-  ],
   [
     "a subject of an unknown kind",
     {
@@ -179,14 +173,13 @@ for (const [name, definition, expected] of [
       parameters: { type: "object", properties: { path: { type: "string" } } },
       hints: { subject: { argument: "path", kind: "folder" } },
     },
-    "hints.subject.kind is not 'text', 'file', or 'uri'",
+    "unknown variant `folder`, expected one of `text`, `file`, `uri`",
   ],
   [
     "an unknown preview",
     { ...tool("bad", () => "x"), hints: { preview: "all" } },
-    "hints.preview is not 'head', 'tail', or 'none'",
+    "unknown variant `all`, expected one of `head`, `tail`, `none`",
   ],
-  ["an unknown hint", { ...tool("bad", () => "x"), hints: { icon: "x" } }, "hints has the unknown field 'icon'"],
   // The check reads the copy that the model gets, so a `toJSON` cannot hide a keyword from it.
   [
     "a keyword behind toJSON",

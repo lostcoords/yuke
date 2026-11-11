@@ -313,7 +313,7 @@ declare module "yuke:chat" {
     readonly running: boolean;
   }
 
-  /** A view that says how many rows it wants at `width`. A `TextEditor` fits. Each layout calls it, so keep it cheap. */
+  /** A view that says how many whole rows it wants at `width`. A `TextEditor` fits. Each layout calls it, so keep it cheap. */
   export interface ComposerView extends View {
     readonly heightFor: (width: number) => number;
   }

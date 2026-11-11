@@ -106,8 +106,6 @@ test("a spec that names no key throws", () => {
   for (const spec of ["", "   ", "ctrl+", "hyper+a", "enterr", "+a", "a+", "shift+1", "shift++"]) {
     assert(throws(() => parseKeys(spec)) instanceof TypeError, `'${spec}' throws a TypeError`);
   }
-  // @ts-expect-error: a spec is a string.
-  assert(throws(() => parseKeys(5)) instanceof TypeError);
   equal(parseKeys("ctrl+a"), ["ctrl+a"]);
 });
 
@@ -248,17 +246,7 @@ test("commands check their names and run with args", () => {
   const keys = bench();
   const dispose = keys.add("notes:open", { description: "Open a note" });
   keys.add("off", { enabled: () => false });
-  const bad = [
-    () => keys.add("notes:open"),
-    () => keys.add("a b"),
-    () => keys.add(""),
-    // @ts-expect-error: a command has a run function.
-    () => keys.commands.add({ name: "x" }),
-    // @ts-expect-error: a description is a string.
-    () => keys.add("t", { description: 7 }),
-    // @ts-expect-error: an enabled check is a function.
-    () => keys.add("e", { enabled: true }),
-  ];
+  const bad = [() => keys.add("notes:open"), () => keys.add("a b"), () => keys.add("")];
   for (const call of bad) assert(throws(call) instanceof TypeError);
   // A later change of the object changes neither the name nor the description.
   const renamed = {
@@ -328,28 +316,6 @@ test("an async command lets keys go on and a failure names it", async () => {
     keys.faults.map((fault) => fault.split("\n")[0]),
     ["the command sync failed: Error: bad state", "the command broken failed: Error: no disk"],
   );
-});
-
-test("a throwing enabled check counts as disabled and faults once per registration", () => {
-  const keys = bench();
-  const flaky = {
-    enabled: () => {
-      throw new Error("no state");
-    },
-  };
-  const dispose = keys.add("flaky", flaky);
-  equal(keys.commands.run("flaky"), false);
-  keys.commands.list();
-  keys.commands.list();
-  keys.commands.run("flaky");
-  // A list of commands checks each command on each frame, so a broken check reports once until a new registration.
-  equal(keys.faults.length, 1);
-  dispose();
-  keys.add("flaky", flaky);
-  keys.commands.run("flaky");
-  equal(keys.ran, []);
-  equal(keys.faults.length, 2);
-  equal(keys.faults[0]?.split("\n")[0], "the enabled check of the command flaky failed: Error: no state");
 });
 
 test("the newest style layer wins per field and null deletes", () => {

@@ -86,8 +86,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn S
     add_calls(ctx, object, sessions)
 }
 
-/// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.on`. One watch runs at a time. A new watch ends
-/// the old one. The key of each fact names the watch that sent it.
+/// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.on`. One watch runs at a time, and the caller
+/// releases the old one first. The key of each fact names the watch that sent it.
 fn add_facts<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
     let watch: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::default();
     let (sessions, started) = (Rc::clone(sessions), Rc::clone(&watch));
@@ -100,8 +100,6 @@ fn add_facts<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessio
                     // The engine stopped, so it takes no more facts.
                 }
             });
-            // The old watch ends before the new one starts, so no fact of the old one follows the replay.
-            drop(started.borrow_mut().take());
             *started.borrow_mut() = Some(sessions.watch_facts(sink));
         })?,
     )?;

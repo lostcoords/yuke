@@ -9,14 +9,6 @@ import type { InteractionId, SessionId, SessionState } from "yuke:protocol";
 
 type Event = keyof HostEvents;
 
-const EVENTS: readonly string[] = [
-  "session.update",
-  "session.opened",
-  "session.closed",
-  "notice",
-  "theme.changed",
-] satisfies Event[];
-
 /** The event that starts in this runtime. Its listeners need no watch of the host. */
 const LOCAL: Event = "theme.changed";
 
@@ -100,8 +92,6 @@ export function on<K extends Event>(
   event: K,
   listener: (data: HostEvents[K]) => void,
 ): () => void {
-  if (!EVENTS.includes(event)) throw new TypeError(`on: '${String(event)}' is not an event`);
-  if (typeof listener !== "function") throw new TypeError("on: the listener is no function");
   if (signal.aborted) return () => {};
   const entry: Listener = { plugin, event, signal, call: listener as (data: never) => void };
   listeners.add(entry);

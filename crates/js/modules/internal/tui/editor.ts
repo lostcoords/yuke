@@ -5,7 +5,7 @@
  */
 import { strokeOf } from "yuke:internal/tui/keys";
 import { graphemes, measure, offsetAtColumn, wrap } from "yuke:internal/tui/text";
-import { checkAppearance, registerWidget, TextSupport } from "yuke:internal/tui/widgets";
+import { registerWidget, TextSupport } from "yuke:internal/tui/widgets";
 import type {
   Bias,
   Canvas,
@@ -113,23 +113,13 @@ export class TextEditor {
   #laidOut = 0;
 
   constructor(options: EditorOptions = {}) {
-    if (typeof options !== "object" || options === null) throw new TypeError("editor options are an object");
-    const role = options.role ?? "field";
-    if (role !== "composer" && role !== "field") throw new TypeError("an editor role is composer or field");
-    if (options.submit !== undefined && typeof options.submit !== "function") {
-      throw new TypeError("submit is a function");
-    }
-    if (options.placeholder !== undefined && typeof options.placeholder !== "string") {
-      throw new TypeError("a placeholder is a string");
-    }
-    if (options.mask !== undefined && typeof options.mask !== "boolean") throw new TypeError("mask is a boolean");
-    this.role = role;
+    this.role = options.role ?? "field";
     this.#multiline = options.multiline !== false;
     this.#mask = options.mask === true;
     this.#placeholder = options.placeholder ?? "";
     this.#submit = options.submit;
     this.#support = new TextSupport(options.group);
-    this.#appearance = options.appearance === undefined ? {} : checkAppearance(options.appearance);
+    this.#appearance = options.appearance === undefined ? {} : Object.freeze({ ...options.appearance });
     this.#state = this.#checked(options.state ?? { text: "", selection: { anchor: 0, head: 0 }, spans: [] });
     this.lines = this.#coordinates((layout) => layout.lines);
     this.rows = this.#coordinates((layout) => layout.rows);
@@ -153,7 +143,6 @@ export class TextEditor {
   }
 
   set selection(selection: Selection<number>) {
-    if (typeof selection !== "object" || selection === null) throw new TypeError("a selection is an object");
     const next = Object.freeze({
       anchor: this.#snap(this.#offset(selection.anchor)),
       head: this.#snap(this.#offset(selection.head)),
@@ -181,7 +170,6 @@ export class TextEditor {
     const start = this.#offset(from);
     const end = this.#offset(to);
     if (start > end) throw new RangeError(`a replaced range ends before it starts: ${start} to ${end}`);
-    if (typeof text !== "string") throw new TypeError("a replacement is a string");
     const inserted = this.#line(text);
     const insertedSpans = checkSpans(inserted, spans);
     const snapped = start === end ? this.#snap(start) : undefined;
@@ -428,9 +416,6 @@ export class TextEditor {
 
   /** A copy of `state` with whole offsets inside its text, frozen. */
   #checked(state: EditorState): EditorState {
-    if (typeof state !== "object" || state === null || typeof state.text !== "string") {
-      throw new TypeError("an editor state has a text");
-    }
     const text = this.#line(state.text);
     const spans = checkSpans(text, state.spans);
     const within = (value: number): number => {
@@ -439,9 +424,6 @@ export class TextEditor {
       }
       return snap(text, spans, value);
     };
-    if (typeof state.selection !== "object" || state.selection === null) {
-      throw new TypeError("an editor state has a selection");
-    }
     const selection = Object.freeze({ anchor: within(state.selection.anchor), head: within(state.selection.head) });
     return Object.freeze({ text, selection, spans });
   }
@@ -676,34 +658,23 @@ export class TextEditor {
  * An image span covers one U+FFFC and holds media with a blob.
  */
 function checkSpans(text: string, spans: readonly EditorSpan[]): readonly EditorSpan[] {
-  if (!Array.isArray(spans)) throw new TypeError("spans are an array");
   const edges = spans.length === 0 ? new Set<number>() : new Set(boundaries(text));
   let end = 0;
   return Object.freeze(
     spans.map((span: EditorSpan) => {
-      if (typeof span !== "object" || span === null) throw new TypeError("a span is an object");
       const { from, to, label } = span;
       if (!Number.isInteger(from) || !Number.isInteger(to) || from < end || to <= from || to > text.length) {
         throw new RangeError(`a span from ${from} to ${to} is not in order inside the text`);
       }
       if (!edges.has(from) || !edges.has(to)) throw new RangeError(`a span from ${from} to ${to} splits a grapheme`);
-      if (typeof label !== "string" || label === "" || /[\r\n]/.test(label)) {
+      if (label === "" || /[\r\n]/.test(label)) {
         throw new TypeError("a span label is one line that is not empty");
       }
       end = to;
       if (span.kind === "paste") return Object.freeze({ from, to, kind: "paste", label });
-      if (span.kind !== "image") throw new TypeError("a span kind is paste or image");
       if (text.slice(from, to) !== "￼") throw new RangeError("an image span covers one U+FFFC");
-      const media = span.media;
-      const blob = media?.blob;
-      const valid =
-        typeof media?.mime === "string" &&
-        (media.filename === undefined || typeof media.filename === "string") &&
-        typeof blob?.digest === "string" &&
-        Number.isInteger(blob.len) &&
-        blob.len >= 0;
-      if (!valid) throw new TypeError("an image span has media: a mime type and a blob with a digest and a length");
-      const copy = { blob: Object.freeze({ digest: blob.digest, len: blob.len }), mime: media.mime };
+      const { media } = span;
+      const copy = { blob: Object.freeze({ digest: media.blob.digest, len: media.blob.len }), mime: media.mime };
       return Object.freeze({
         from,
         to,

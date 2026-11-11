@@ -66,14 +66,6 @@ export class StatusItems {
 
   #change(): void {
     this.#changed();
-    for (const entry of [...this.#listeners]) {
-      try {
-        entry.listener();
-      } catch (error) {
-        // The fault comes back as a notice, and a notice can change an item, so a listener that stays could loop.
-        this.#listeners.delete(entry);
-        reportError(error);
-      }
-    }
+    for (const entry of [...this.#listeners]) entry.listener();
   }
 }

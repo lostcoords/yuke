@@ -1,6 +1,6 @@
 // The text functions of the terminal interface: cells, graphemes, fit, and wrap, in UTF-16 units. They need no display.
 
-import { assert, equal, test, throws } from "yuke:test";
+import { equal, test } from "yuke:test";
 import { fit, graphemes, measure, wrap } from "yuke:tui";
 
 test("text functions count utf16 units and cells", () => {
@@ -9,6 +9,4 @@ test("text functions count utf16 units and cells", () => {
   equal(graphemes(text), new Int32Array([0, 1, 1, 1, 1, 2, 2, 2, 1, 4, 2, 1]));
   equal(fit(text, 3), 2);
   equal(wrap("hello world", 5), new Int32Array([0, 6, 1, 6, 11, 0]));
-  assert(throws(() => wrap(text, 2, -1)) instanceof TypeError);
-  assert(throws(() => wrap(text, 2, 1.5)) instanceof TypeError);
 });

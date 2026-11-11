@@ -17,7 +17,5 @@ export function failureOf(error: unknown): string {
 
 /** The stack of the thrown `error`, or `undefined` for a value with no stack. */
 export function stackOf(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  const stack: unknown = error.stack;
-  return typeof stack === "string" ? stack : undefined;
+  return error instanceof Error ? error.stack : undefined;
 }

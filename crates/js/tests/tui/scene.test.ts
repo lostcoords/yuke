@@ -433,25 +433,6 @@ test("a throwing timer is reported under its plugin", () => {
   );
 });
 
-test("a throwing focus listener is reported under its plugin and removed", () => {
-  const core = new Core(fakeTerminal().driver);
-  const tui = createSurface(core, "watcher", new AbortController().signal);
-  let calls = 0;
-  tui.onFocusChange(() => {
-    calls += 1;
-    throw new Error("bad focus");
-  });
-  tui.panes.split(() => ({ draw() {} }));
-  core.draw();
-  tui.panes.split(() => ({ draw() {} }));
-  core.draw();
-  equal(calls, 1);
-  equal(
-    core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
-    [["watcher", "a focus listener failed: Error: bad focus"]],
-  );
-});
-
 /** A view that writes `text` on its first row. */
 function label(text: string): View {
   return {
@@ -680,8 +661,6 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
   tui.keys.bind("ctrl+n", "open");
   tui.views.register("note", () => ({ draw() {} }));
   assert(throws(() => tui.commands.add({ name: "other:x", run() {} })) instanceof TypeError);
-  // @ts-expect-error: a command is an object.
-  equal(String(throws(() => tui.commands.add(null))), "TypeError: a command is an object");
   assert(throws(() => tui.views.register("core:note", () => ({ draw() {} }))) instanceof TypeError);
   tui.commands.add({ name: "notes:close", run() {} });
   equal([tui.commands.run("open"), tui.commands.run("core:quit")], [true, true]);
@@ -869,10 +848,6 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   equal(earlier.signal.aborted, true);
   const fault = core.notices.list().at(-1);
   equal([fault?.source, fault?.text.split("\n")[0]], ["broken", "a view did not start: Error: old state"]);
-  core.restore("not json");
-  equal(core.notices.list().at(-1)?.text.split(":")[0], "the saved panes did not read");
-  // A snapshot that does not read gives the default layout: the restored note closes.
-  equal(terminal.screen(core)[0], "");
   // The stop of `notes` closes its restored pane too.
   notes.abort();
   equal(terminal.screen(core)[0], "");

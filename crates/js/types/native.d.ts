@@ -252,14 +252,11 @@ declare module "yuke:internal/native" {
   /** Send an entry of `console`, a notice from the source `console`. */
   export function writeConsole(level: NoticeLevel, text: string): void;
 
-  /** Send a notice of the plugin `source`. A `sessionId` that is not a session id throws a `TypeError`. */
-  export function notify(source: string, level: NoticeLevel, message: string, sessionId: string | undefined): void;
+  /** Send a notice of the plugin `source`. */
+  export function notify(source: string, level: NoticeLevel, message: string, sessionId: SessionId | undefined): void;
 
-  /**
-   * Send the event `event` of the plugin `extension` to the clients. `data` is the JSON text of the data. A `sessionId`
-   * that is not a session id throws a `TypeError`.
-   */
-  export function emit(extension: string, event: string, data: string, sessionId: string | undefined): void;
+  /** Send the event `event` of the plugin `extension` to the clients, with the JSON value `data`. */
+  export function emit(extension: string, event: string, data: unknown, sessionId: SessionId | undefined): void;
 
   /** Numbered lines, or an image. */
   export type Lines =
@@ -496,7 +493,7 @@ declare module "yuke:internal/native" {
     | { readonly event: "notice"; readonly data: NoticeParams };
   /** Deliver the facts of this runtime to `deliver` with each watch key. Call it once. */
   export function factsListen(deliver: (key: number, fact: Fact) => void): void;
-  /** Watch the facts as the watch `key`, in place of the watch before. The open sessions come first. */
+  /** Watch the facts as the watch `key`. No watch runs when it is called. The open sessions come first. */
   export function factsWatch(key: number): void;
   /** End the watch of the facts. */
   export function factsRelease(): void;

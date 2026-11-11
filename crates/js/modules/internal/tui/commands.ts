@@ -11,10 +11,8 @@ const NAME = /^[A-Za-z0-9:._-]+$/;
 interface Entry {
   readonly command: Command;
   readonly description: string | undefined;
-  /** True after a throw of `enabled` gave its one fault. */
   readonly slash: string | undefined;
   readonly argumentHint: string | undefined;
-  faulted: boolean;
 }
 
 export class Commands {
@@ -36,23 +34,14 @@ export class Commands {
    * plugin surface. A duplicate name throws a `TypeError`. A run is a method call, so a class command keeps its `this`.
    */
   add(command: Command, name: string = command.name): () => void {
-    const { description, run, enabled, slash, argumentHint } = command;
-    if (typeof name !== "string" || !NAME.test(name)) {
-      throw new TypeError(`'${String(name)}' is no command name: letters, digits, and : . _ -`);
-    }
-    if (typeof run !== "function") throw new TypeError(`the command ${name} has no run function`);
+    const { description, slash, argumentHint } = command;
+    if (!NAME.test(name)) throw new TypeError(`'${name}' is no command name: letters, digits, and : . _ -`);
     // The text after a space is the text of the command, so a word with a space never matches.
     if (slash !== undefined && !NAME.test(slash)) {
       throw new TypeError(`'${slash}' is no slash word: letters, digits, and : . _ -`);
     }
-    if (description !== undefined && typeof description !== "string") {
-      throw new TypeError(`the description of ${name} is a string`);
-    }
-    if (enabled !== undefined && typeof enabled !== "function") {
-      throw new TypeError(`the enabled check of ${name} is a function`);
-    }
     if (this.#commands.has(name)) throw new TypeError(`the command ${name} exists`);
-    const entry: Entry = { command, description, slash, argumentHint, faulted: false };
+    const entry: Entry = { command, description, slash, argumentHint };
     this.#commands.set(name, entry);
     this.#changed();
     return () => {
@@ -65,7 +54,7 @@ export class Commands {
   /** True when the command `name` exists and is enabled. */
   available(name: string): boolean {
     const entry = this.#commands.get(name);
-    return entry !== undefined && this.#enabled(name, entry);
+    return entry !== undefined && this.#enabled(entry);
   }
 
   /**
@@ -74,7 +63,7 @@ export class Commands {
    */
   run(name: string, args?: unknown): boolean {
     const entry = this.#commands.get(name);
-    if (entry === undefined || !this.#enabled(name, entry)) return false;
+    if (entry === undefined || !this.#enabled(entry)) return false;
     const failed = (error: unknown): void => {
       this.#fault(name, `the command ${name} failed: ${failureOf(error)}`);
       this.#changed();
@@ -111,26 +100,13 @@ export class Commands {
         ...(entry.description === undefined ? {} : { description: entry.description }),
         ...(slash === undefined ? {} : { slash }),
         ...(entry.argumentHint === undefined ? {} : { argumentHint: entry.argumentHint }),
-        enabled: this.#enabled(name, entry),
+        enabled: this.#enabled(entry),
       };
     });
   }
 
-  /**
-   * True when the command of `entry` can run. A throw of `enabled` counts as disabled and gives one fault per
-   * registration, because a list of commands checks each command on each frame.
-   */
-  #enabled(name: string, entry: Entry): boolean {
-    const { command } = entry;
-    if (command.enabled === undefined) return true;
-    try {
-      return command.enabled() === true;
-    } catch (error) {
-      if (!entry.faulted) {
-        entry.faulted = true;
-        this.#fault(name, `the enabled check of the command ${name} failed: ${failureOf(error)}`);
-      }
-      return false;
-    }
+  /** True when the command of `entry` can run. */
+  #enabled(entry: Entry): boolean {
+    return entry.command.enabled === undefined || entry.command.enabled() === true;
   }
 }

@@ -45,16 +45,6 @@ export class Picker<T extends object> {
   #reveal = true;
 
   constructor(options: PickerOptions<T>) {
-    if (typeof options !== "object" || options === null) throw new TypeError("picker options are an object");
-    for (const name of ["key", "label", "choose", "cancel"] as const) {
-      if (typeof options[name] !== "function") throw new TypeError(`a picker takes a ${name} function`);
-    }
-    for (const name of ["detail", "rank", "render", "onSelectionChange"] as const) {
-      if (options[name] !== undefined && typeof options[name] !== "function") {
-        throw new TypeError(`the picker option ${name} is a function`);
-      }
-    }
-    if (!Array.isArray(options.items)) throw new TypeError("picker items are an array");
     this.#options = options;
     this.#items = options.items;
     this.input = new TextEditor({ multiline: false });
@@ -95,20 +85,17 @@ export class Picker<T extends object> {
   }
 
   set query(text: string) {
-    if (typeof text !== "string") throw new TypeError("a picker query is a string");
     if (text === this.query) return;
     this.input.reset({ text, selection: { anchor: text.length, head: text.length }, spans: [] });
   }
 
   setItems(items: readonly T[]): void {
-    if (!Array.isArray(items)) throw new TypeError("picker items are an array");
     this.#items = items;
     this.#rank();
   }
 
   /** Move the selection by `rows` results. It stops at the first and the last result. */
   move(rows: number): void {
-    if (!Number.isInteger(rows)) throw new TypeError("a picker move is a whole number of results");
     if (this.#entries.length === 0) return;
     const at = this.#entries.findIndex((entry) => entry.key === this.#selected);
     const next = Math.max(0, Math.min(this.#entries.length - 1, at + rows));
@@ -178,7 +165,6 @@ export class Picker<T extends object> {
       this.#options.rank === undefined
         ? defaultRank(query, this.#items, this.#options.label)
         : this.#options.rank(query, this.#items);
-    if (!Array.isArray(matches)) throw new TypeError("a picker rank gives an array of matches");
     const keys = matches.map((match) => this.#options.key(match.item));
     const selected = !top && this.#selected !== undefined && keys.includes(this.#selected) ? this.#selected : keys[0];
     const moved = selected !== this.#selected;

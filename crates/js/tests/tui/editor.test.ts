@@ -242,7 +242,6 @@ test("a masked editor shows one dot for each grapheme and each span, and its car
     ],
     ["••••    ", "••••", 5, 3, 6, text],
   );
-  assert(throws(() => new TextEditor({ mask: 1 as unknown as boolean })) instanceof TypeError);
 });
 
 test("a mask covers a span at the start, a span at the end, two spans side by side, and an empty text", () => {
@@ -388,18 +387,14 @@ test("reset and restore report one edit over the whole text", () => {
   );
 });
 
-test("the editor checks its appearance, its spans, and its media at the boundary", () => {
+test("the editor checks the grapheme edges of its spans and copies its media", () => {
   const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
-  throws(() => new TextEditor({ appearance: { cursorShape: "beam" as "bar" } }));
   // The astronaut is one grapheme of 5 units, so a span that ends inside it splits it.
   throws(() => new TextEditor({ state: state("👩‍💻", 0, [{ from: 0, to: 2, kind: "paste", label: "[p]" }]) }));
   const image = (value: unknown) =>
     new TextEditor({
       state: state("￼", 0, [{ from: 0, to: 1, kind: "image", label: "[i]", media: value as typeof media }]),
     });
-  throws(() => image({ mime: "image/png" }));
-  throws(() => image({ mime: "image/png", blob: { digest: "abc" } }));
-  throws(() => image({ mime: "image/png", blob: { len: 3 } }));
   equal(image(media).state.spans[0], { from: 0, to: 1, kind: "image", label: "[i]", media });
 });
 

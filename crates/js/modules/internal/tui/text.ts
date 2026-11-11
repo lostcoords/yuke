@@ -3,19 +3,19 @@ import { termFit, termGraphemes, termMeasure, termWrap } from "yuke:internal/nat
 import type { Bias, ColumnUnit } from "yuke:tui";
 
 export function measure(text: string): number {
-  return termMeasure(String(text).toWellFormed());
+  return termMeasure(text.toWellFormed());
 }
 
 export function graphemes(text: string): Int32Array {
-  return termGraphemes(String(text).toWellFormed());
+  return termGraphemes(text.toWellFormed());
 }
 
 export function fit(text: string, cells: number): number {
-  return termFit(String(text).toWellFormed(), cells);
+  return termFit(text.toWellFormed(), cells);
 }
 
 export function wrap(text: string, width: number, head = 0): Int32Array {
-  return termWrap(String(text).toWellFormed(), width, head);
+  return termWrap(text.toWellFormed(), width, head);
 }
 
 /**

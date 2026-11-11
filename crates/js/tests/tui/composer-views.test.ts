@@ -190,27 +190,18 @@ test("a view that closes its mount stays closed in the pane, and its factory run
   equal([before, calls, rows(frame.frame).includes("shown")], ["shown", 1, false]);
 });
 
-test("a view above sits directly above the working row, and a place with a fractional height uses whole rows", async () => {
+test("a view above sits directly above the working row", async () => {
   using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   chat.chat.addComposerView("above", plain("view row"));
-  chat.chat.addComposerView("below", () => ({
-    heightFor: () => 1.5,
-    draw: (canvas) => {
-      canvas.text(0, 0, "whole");
-    },
-  }));
   frame.start();
   await settled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
   const shown = rows(frame.frame);
   const at = shown.indexOf("view row");
-  equal(
-    [at >= 0, shown[at + 1]?.includes("Working"), shown.at(-1), shown.includes("Message…")],
-    [true, true, "whole", true],
-  );
+  equal([at >= 0, shown[at + 1]?.includes("Working"), shown.includes("Message…")], [true, true, true]);
 });
 
 test("a factory that throws gives one notice and runs once, and the pane still draws", async () => {
@@ -303,24 +294,6 @@ test("a pane without plugin views shows a rule below the composer, in the look o
   frame.draw();
   const rule = "─".repeat(24);
   equal([rows(frame.frame), frame.frame.cells[5]?.[23]?.style], [["", "", "", rule, "Message…", rule], { dim: true }]);
-});
-
-test("a pane with two free rows has no rule below the composer, and a pane with three free rows has both rules", async () => {
-  using frame = createFrame({ width: 24, height: 2 }, undefined, { cwd: "/w", session: "s1" });
-  await loadChat(frame, fakeSessions());
-  frame.start();
-  await settled();
-  frame.draw();
-  const two = rows(frame.frame);
-  frame.resize({ width: 24, height: 3 });
-  const rule = "─".repeat(24);
-  equal(
-    [two, rows(frame.frame)],
-    [
-      [rule, "Message…"],
-      [rule, "Message…", rule],
-    ],
-  );
 });
 
 test("a view below takes a free row from the rule below the composer", async () => {

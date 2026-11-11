@@ -66,14 +66,8 @@ impl Resolver for NameResolver {
             ));
         };
 
-        match normal(&path).into_os_string().into_string() {
-            Ok(text) => Ok(text),
-            Err(path) => Err(throw(
-                ctx,
-                ErrorClass::TypeError,
-                &format!("the module path {} is not UTF-8", path.display()),
-            )),
-        }
+        // The input is `&str`, and `normal` only moves its components, so the path is UTF-8.
+        Ok(normal(&path).to_string_lossy().into_owned())
     }
 }
 

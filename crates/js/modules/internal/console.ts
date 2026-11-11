@@ -25,12 +25,12 @@ function format(args: readonly unknown[]): string {
         const value = rest.shift();
         switch (directive) {
           case "%s":
-            return guard(() => String(value));
+            return String(value);
           case "%d":
           case "%i":
-            return typeof value === "symbol" ? "NaN" : guard(() => `${Number.parseInt(value as string, 10)}`);
+            return typeof value === "symbol" ? "NaN" : `${Number.parseInt(value as string, 10)}`;
           case "%f":
-            return typeof value === "symbol" ? "NaN" : guard(() => `${Number.parseFloat(value as string)}`);
+            return typeof value === "symbol" ? "NaN" : `${Number.parseFloat(value as string)}`;
           case "%c":
             return "";
           default:
@@ -43,18 +43,9 @@ function format(args: readonly unknown[]): string {
   return parts.join(" ");
 }
 
-/** The text of `read()`, or `[unreadable]` when it throws, so a call of `console` never throws. */
-function guard(read: () => string): string {
-  try {
-    return read();
-  } catch {
-    return "[unreadable]";
-  }
-}
-
 /** The object view of `value`. */
 function view(value: unknown): string {
-  return guard(() => inspect(value, new Set(), 0));
+  return inspect(value, new Set(), 0);
 }
 
 /** A readable text of `value` with a bounded depth. A cycle shows as `[Circular]`, and an accessor as `[Getter]`. */
@@ -114,9 +105,6 @@ function inspect(value: unknown, seen: Set<object>, depth: number): string {
   }
 }
 
-/** The engine clock, so a plugin that replaces `performance` changes no timer. */
-const now = globalThis.performance.now.bind(globalThis.performance);
-
 /** The number of open groups. */
 let depth = 0;
 /** The calls of `count` by label. */
@@ -137,7 +125,7 @@ function method(level: NoticeLevel): (...data: unknown[]) => void {
 
 /** The label of a counter or a timer. */
 function labelOf(label: unknown): string {
-  return label === undefined ? "default" : guard(() => String(label));
+  return label === undefined ? "default" : String(label);
 }
 
 /** The time of the timer `label` since its start, or a warning when it does not exist. */
@@ -147,7 +135,7 @@ function timeLog(label: string, data: readonly unknown[]): void {
     write("warn", `Timer '${label}' does not exist`);
     return;
   }
-  const elapsed = `${label}: ${(now() - start).toFixed(3)}ms`;
+  const elapsed = `${label}: ${(performance.now() - start).toFixed(3)}ms`;
   write("info", data.length === 0 ? elapsed : `${elapsed} ${format(data)}`);
 }
 
@@ -163,28 +151,25 @@ function table(data: unknown, properties?: readonly string[]): void {
     write("debug", format([data]));
     return;
   }
-  const rows = guard(() => {
-    const items = Object.entries(data);
-    const columns: string[] = [];
-    let values = false;
-    for (const [, item] of items) {
-      if (typeof item === "object" && item !== null) {
-        for (const key of Object.keys(item)) if (!columns.includes(key)) columns.push(key);
-      } else {
-        values = true;
-      }
+  const items = Object.entries(data);
+  const columns: string[] = [];
+  let values = false;
+  for (const [, item] of items) {
+    if (typeof item === "object" && item !== null) {
+      for (const key of Object.keys(item)) if (!columns.includes(key)) columns.push(key);
+    } else {
+      values = true;
     }
-    const shown = properties === undefined ? columns : [...properties];
-    const header = ["(index)", ...shown, ...(values && properties === undefined ? ["Values"] : [])];
-    const body = items.map((row) => {
-      const [index, item] = row;
-      const record = typeof item === "object" && item !== null ? (item as Record<string, unknown>) : undefined;
-      const cells = shown.map((key) => (record !== undefined && Object.hasOwn(record, key) ? view(record[key]) : ""));
-      return [index, ...cells, ...(header.length > shown.length + 1 ? [record === undefined ? view(item) : ""] : [])];
-    });
-    return renderTable(header, body);
+  }
+  const shown = properties === undefined ? columns : [...properties];
+  const header = ["(index)", ...shown, ...(values && properties === undefined ? ["Values"] : [])];
+  const body = items.map((row) => {
+    const [index, item] = row;
+    const record = typeof item === "object" && item !== null ? (item as Record<string, unknown>) : undefined;
+    const cells = shown.map((key) => (record !== undefined && Object.hasOwn(record, key) ? view(record[key]) : ""));
+    return [index, ...cells, ...(header.length > shown.length + 1 ? [record === undefined ? view(item) : ""] : [])];
   });
-  write("debug", rows);
+  write("debug", renderTable(header, body));
 }
 
 /** Render `header` and `body` as a box table. */
@@ -244,7 +229,7 @@ export const console = {
       write("warn", `Timer '${name}' already exists`);
       return;
     }
-    timers.set(name, now());
+    timers.set(name, performance.now());
   },
   timeLog(label?: string, ...data: unknown[]): void {
     timeLog(labelOf(label), data);
@@ -257,7 +242,7 @@ export const console = {
   trace(...data: unknown[]): void {
     // The first frame is this method.
     const error = new Error();
-    const frames = guard(() => String(error.stack ?? ""))
+    const frames = String(error.stack ?? "")
       .split("\n")
       .slice(1)
       .join("\n")

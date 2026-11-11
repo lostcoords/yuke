@@ -246,14 +246,11 @@ test("enqueue counts the size of each chunk against the high water mark", () => 
   equal(failing.controller.desiredSize, null);
 });
 
-test("the constructors refuse byte streams, a bad high water mark, a throwing start, and a locked stream", () => {
+test("a throwing start throws from the constructor, and a locked stream refuses a reader", () => {
   const locked = new ReadableStream();
   locked.getReader();
   equal(
     thrownNames([
-      // @ts-expect-error: yuke has no byte streams.
-      () => new ReadableStream({ type: "bytes" }),
-      () => new ReadableStream({}, { highWaterMark: -1 }),
       () =>
         new ReadableStream({
           start() {
@@ -262,6 +259,6 @@ test("the constructors refuse byte streams, a bad high water mark, a throwing st
         }),
       () => locked.getReader(),
     ]),
-    ["TypeError", "RangeError", "SyntaxError", "TypeError"],
+    ["SyntaxError", "TypeError"],
   );
 });

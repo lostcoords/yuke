@@ -67,42 +67,15 @@ function closedPromise(): PromiseWithResolvers<undefined> {
   return closed;
 }
 
-/** A method of `source` named `name`, or `undefined`. A value that is not a function throws a `TypeError`. */
-function methodOf(
-  source: Readonly<Record<string, unknown>>,
-  name: string,
-): ((...args: unknown[]) => unknown) | undefined {
-  const method = source[name];
-  if (method === undefined) return undefined;
-  if (typeof method !== "function") throw new TypeError(`the ${name} of the underlying source is not a function`);
-  return method as (...args: unknown[]) => unknown;
-}
-
 export class ReadableStream<R = unknown> {
   constructor(underlyingSource?: unknown, strategy?: unknown) {
-    // Web IDL converts the strategy argument first, and it reads the members of a dictionary in the order of their
-    // names. The checks of the values come after the conversions.
     const fields = dictionary(strategy, "the strategy");
     const highWaterMark = fields.highWaterMark === undefined ? 1 : +(fields.highWaterMark as number);
     const size = fields.size;
-    if (size !== undefined && typeof size !== "function")
-      throw new TypeError("the size of the strategy is not a function");
-    if ((typeof underlyingSource !== "object" && typeof underlyingSource !== "function") || underlyingSource === null) {
-      if (underlyingSource !== undefined) throw new TypeError("the underlying source is not an object");
-    }
-    const source = dictionary(underlyingSource, "the underlying source");
-    const cancel = methodOf(source, "cancel");
-    const pull = methodOf(source, "pull");
-    const start = methodOf(source, "start");
-    if (source.type !== undefined) {
-      const type = `${source.type as string}`;
-      throw new TypeError(
-        type === "bytes" ? "yuke has no byte streams. Leave out the type." : `the stream type '${type}' is not valid`,
-      );
-    }
-    if (Number.isNaN(highWaterMark) || highWaterMark < 0) {
-      throw new RangeError("the high water mark is not a number of zero or more");
-    }
+    const source = dictionary(underlyingSource, "the underlying source") as Partial<
+      Record<"cancel" | "pull" | "start", (...args: unknown[]) => unknown>
+    >;
+    const { cancel, pull, start } = source;
 
     const stream: StreamState = {
       state: "readable",
@@ -131,7 +104,7 @@ export class ReadableStream<R = unknown> {
     state.pull = pull === undefined ? undefined : () => Promise.try(() => pull.call(underlyingSource, controller));
     state.cancel =
       cancel === undefined ? undefined : (reason) => Promise.try(() => cancel.call(underlyingSource, reason));
-    const started = start === undefined ? undefined : start.call(underlyingSource, controller);
+    const started = start?.call(underlyingSource, controller);
     Promise.resolve(started).then(
       () => {
         state.started = true;
@@ -148,26 +121,13 @@ export class ReadableStream<R = unknown> {
 
   /** Cancel the stream with `reason`. A locked stream rejects with a `TypeError`. */
   cancel(reason?: unknown): Promise<undefined> {
-    let state: StreamState;
-    try {
-      state = streamState(this);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const state = streamState(this);
     if (state.reader !== undefined) return Promise.reject(new TypeError("a reader holds the stream"));
     return cancelStream(state, reason);
   }
 
-  /** A default reader that holds the stream. A `mode` throws a `TypeError`, as yuke has no byte streams. */
-  getReader(options?: { readonly mode?: undefined }): ReadableStreamDefaultReader<R> {
-    streamState(this);
-    const mode = dictionary(options, "the options").mode;
-    if (mode !== undefined) {
-      const text = `${mode as string}`;
-      throw new TypeError(
-        text === "byob" ? "yuke has no byte streams, so no BYOB reader" : `the reader mode '${text}' is not valid`,
-      );
-    }
+  /** A default reader that holds the stream. A locked stream throws a `TypeError`. */
+  getReader(): ReadableStreamDefaultReader<R> {
     return new ReadableStreamDefaultReader<R>(this);
   }
 
@@ -272,21 +232,12 @@ export class ReadableStreamDefaultReader<R = unknown> {
 
   /** A promise that fulfills when the stream closes, and rejects when it errors or the reader releases it. */
   get closed(): Promise<undefined> {
-    try {
-      return readerState(this).closed.promise;
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    return readerState(this).closed.promise;
   }
 
   /** The next chunk, or `done` after the last chunk. */
   read(): Promise<ReadableStreamReadResult<R>> {
-    let state: ReaderState;
-    try {
-      state = readerState(this);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const state = readerState(this);
     const stream = state.stream;
     if (stream === undefined) return Promise.reject(new TypeError("the reader has no stream"));
     const request = Promise.withResolvers<ReadableStreamReadResult<unknown>>();
@@ -317,12 +268,7 @@ export class ReadableStreamDefaultReader<R = unknown> {
 
   /** Cancel the stream with `reason`. */
   cancel(reason?: unknown): Promise<undefined> {
-    let state: ReaderState;
-    try {
-      state = readerState(this);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+    const state = readerState(this);
     if (state.stream === undefined) return Promise.reject(new TypeError("the reader has no stream"));
     return cancelStream(state.stream, reason);
   }

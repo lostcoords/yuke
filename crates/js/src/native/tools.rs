@@ -91,22 +91,13 @@ fn add_reports<'js>(
         "emit",
         Function::new(
             ctx.clone(),
-            move |ctx: Ctx<'js>,
-                  extension: String,
+            move |extension: String,
                   event: String,
-                  data: String,
-                  session_id: Option<String>|
+                  Json(data): Json<serde_json::Value>,
+                  session_id: Option<Json<SessionId>>|
                   -> rquickjs::Result<()> {
-                let session_id = session_of(&ctx, "emit", session_id)?;
-                let data = serde_json::from_str(&data).map_err(|error| {
-                    throw(
-                        &ctx,
-                        ErrorClass::TypeError,
-                        &format!("emit: the data is not JSON: {error}"),
-                    )
-                })?;
                 let event = ExtensionEventParams {
-                    session_id,
+                    session_id: session_id.map(|Json(id)| id),
                     extension,
                     event,
                     data,
@@ -126,7 +117,7 @@ fn add_reports<'js>(
                   source: String,
                   level: String,
                   message: String,
-                  session_id: Option<String>|
+                  session_id: Option<Json<SessionId>>|
                   -> rquickjs::Result<()> {
                 let Some(level) = super::notice_level(&level) else {
                     return Err(throw(
@@ -135,9 +126,8 @@ fn add_reports<'js>(
                         &format!("notify: '{level}' is not debug, info, warn, or error"),
                     ));
                 };
-                let session_id = session_of(&ctx, "notify", session_id)?;
                 let notice = NoticeParams {
-                    session_id,
+                    session_id: session_id.map(|Json(id)| id),
                     level,
                     source,
                     message,
@@ -150,18 +140,4 @@ fn add_reports<'js>(
         )?,
     )?;
     Ok(())
-}
-
-/// Read the session id in `text` for the native `function`. A text that is not a session id throws a `TypeError`.
-fn session_of(ctx: &Ctx<'_>, function: &str, text: Option<String>) -> rquickjs::Result<Option<SessionId>> {
-    text.map(|text| {
-        text.parse::<SessionId>().map_err(|_| {
-            throw(
-                ctx,
-                ErrorClass::TypeError,
-                &format!("{function}: '{text}' is not a session id"),
-            )
-        })
-    })
-    .transpose()
 }

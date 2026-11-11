@@ -4,11 +4,12 @@ import type { ChatSessionOptions, ComposerRow, ComposerView } from "yuke:chat";
 import { ChatCommands } from "yuke:internal/chat/commands";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
-import { callEach } from "yuke:internal/chat/listeners";
 import { ChatQuestions } from "yuke:internal/chat/questions";
 import { clipped } from "yuke:internal/chat/rows";
 import { ChatWorking } from "yuke:internal/chat/working";
 import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
+import type { SessionId, SessionSettings } from "yuke:protocol";
+import { Transcript } from "yuke:transcript";
 
 export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking };
 
@@ -22,9 +23,6 @@ export function composerRows(source: (width: number) => readonly ComposerRow[]):
     },
   };
 }
-
-import type { SessionId, SessionSettings } from "yuke:protocol";
-import { Transcript } from "yuke:transcript";
 
 /** The count of saved events that an open gets. Older events come in pages. */
 const TAIL = 200;
@@ -105,15 +103,7 @@ export class ChatSession {
           onEvent: (event) => {
             if (!current) {
               current = true;
-              const old = this.#release;
-              this.#id = id;
-              this.#handle = undefined;
-              this.#transcript = transcript;
-              this.#release = release;
-              this.#loading = false;
-              this.#complete = false;
-              this.#historyError = undefined;
-              old?.abort();
+              this.#show(id, transcript, release);
             }
             transcript.apply(event);
             this.#changed();
@@ -209,8 +199,21 @@ export class ChatSession {
     return () => this.#listeners.delete(listener);
   }
 
+  /** Switch to `id` and its transcript, and end the hold of the session before. */
+  #show(id: SessionId | undefined, transcript: Transcript, release: AbortController | undefined): void {
+    const old = this.#release;
+    this.#id = id;
+    this.#handle = undefined;
+    this.#transcript = transcript;
+    this.#release = release;
+    this.#loading = false;
+    this.#complete = false;
+    this.#historyError = undefined;
+    old?.abort();
+  }
+
   #changed(): void {
-    callEach(this.#listeners);
+    for (const listener of this.#listeners) listener();
   }
 }
 

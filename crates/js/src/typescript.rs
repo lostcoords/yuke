@@ -13,45 +13,31 @@ use oxc_transformer::{TransformOptions, Transformer};
 /// Remove the types of the TypeScript module `source`, and return the JavaScript. The output keeps modern syntax. The
 /// code generator writes new code, so a line of the output can differ from the line of the source.
 pub(crate) fn strip(path: &Path, source: &str) -> Result<String, String> {
+    // A macro, because the type of `diagnostics` is in `oxc_diagnostics`, which is no direct dependency.
+    macro_rules! fail_on_errors {
+        ($stage:expr) => {
+            if $stage.diagnostics.has_errors() {
+                let errors = $stage
+                    .diagnostics
+                    .errors()
+                    .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message));
+                return Err(describe(path, source, errors));
+            }
+        };
+    }
+
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::ts().with_module(true)).parse();
-    if parsed.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            parsed
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
+    fail_on_errors!(parsed);
 
     let mut program = parsed.program;
     let built = SemanticBuilder::new_compiler().build(&program);
-    if built.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            built
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
+    fail_on_errors!(built);
     let scoping = built.semantic.into_scoping();
 
     let transformed =
         Transformer::new(&allocator, path, &TransformOptions::default()).build_with_scoping(scoping, &mut program);
-    if transformed.diagnostics.has_errors() {
-        return Err(describe(
-            path,
-            source,
-            transformed
-                .diagnostics
-                .errors()
-                .map(|error| (error.labels.first().map(LabeledSpan::offset), &*error.message)),
-        ));
-    }
+    fail_on_errors!(transformed);
 
     Ok(Codegen::new().build(&program).code)
 }

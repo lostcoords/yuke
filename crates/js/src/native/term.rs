@@ -314,10 +314,10 @@ fn add_text<'js>(ctx: &Ctx<'js>, object: &Object<'js>) -> rquickjs::Result<()> {
         Function::new(
             ctx.clone(),
             |ctx: Ctx<'js>, text: String, width: f64, head: f64| -> rquickjs::Result<_> {
-                let Some(head) = count(head) else {
-                    return Err(throw(&ctx, ErrorClass::TypeError, "head is an integer from 0"));
-                };
-                TypedArray::<i32>::new(ctx, wrap(&text, whole(width).filter(|&width| width > 0), head))
+                TypedArray::<i32>::new(
+                    ctx,
+                    wrap(&text, whole(width).filter(|&width| width > 0), whole(head).unwrap_or(0)),
+                )
             },
         )?,
     )
@@ -616,13 +616,6 @@ fn whole(value: f64) -> Option<usize> {
 /// A cell coordinate or a size: a finite number from 0 to `u16::MAX`, cut to an integer. Others draw nothing.
 fn cell(value: f64) -> Option<u16> {
     whole(value).and_then(|value| u16::try_from(value).ok())
-}
-
-/// An integer count from 0 to `i32::MAX`.
-fn count(value: f64) -> Option<usize> {
-    (value.fract() == 0.0 && value <= f64::from(i32::MAX))
-        .then(|| whole(value))
-        .flatten()
 }
 
 /// A small number for an `Int32Array`. The callers count UTF-16 units and cells of one string.

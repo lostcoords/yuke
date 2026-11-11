@@ -4,8 +4,7 @@
  * without options is a one-line field, and it masks a secret.
  */
 
-import type { ChatQuestionsOptions, ChatSession } from "yuke:chat";
-import { callEach } from "yuke:internal/chat/listeners";
+import type { ChatQuestion, ChatQuestionsOptions, ChatSession } from "yuke:chat";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
 import { sourceName } from "yuke:internal/source-name";
 import type { Frozen } from "yuke:plugins";
@@ -34,12 +33,6 @@ const OTHER = "Type your own answer…";
 /** The keys that move between rows and pages. A field gets each other key. */
 const PAGE_KEYS = new Set(["shift+tab", "up", "down", "enter"]);
 
-/** The view of one request, and the most rows that it needs. The view takes the keys. */
-interface Asked {
-  readonly view: View;
-  readonly rows: number;
-}
-
 /** One question of a request and its draft answer. */
 interface Page {
   readonly question: Frozen<Question>;
@@ -53,7 +46,11 @@ interface Page {
 }
 
 /** The view of `interaction`. `count` gives the open requests of the session now, and `answer` gets the response. */
-function ask(interaction: Interaction, count: () => number, answer: (response: InteractionResponse) => void): Asked {
+function ask(
+  interaction: Interaction,
+  count: () => number,
+  answer: (response: InteractionResponse) => void,
+): ChatQuestion {
   const pages: Page[] = interaction.request.questions.map((question) => ({
     question,
     cursor: 0,
@@ -239,7 +236,7 @@ export class ChatQuestions {
   readonly #options: ChatQuestionsOptions;
   readonly #listeners = new Set<() => void>();
   // The first open request and its view. The other requests wait in order. A sent answer waits for the close.
-  #current: { readonly id: InteractionId; readonly asked: Asked; answered: boolean } | undefined;
+  #current: { readonly id: InteractionId; readonly asked: ChatQuestion; answered: boolean } | undefined;
 
   constructor(chat: ChatSession, options: ChatQuestionsOptions) {
     this.#chat = chat;
@@ -249,7 +246,7 @@ export class ChatQuestions {
     this.#sync();
   }
 
-  get current(): Asked | undefined {
+  get current(): ChatQuestion | undefined {
     return this.#current?.asked;
   }
 
@@ -293,6 +290,6 @@ export class ChatQuestions {
             ),
             answered: false,
           };
-    callEach(this.#listeners);
+    for (const listener of this.#listeners) listener();
   }
 }

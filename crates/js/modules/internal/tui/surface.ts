@@ -95,7 +95,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
   const prefix = `${owner}:`;
   /** The qualified form of `name`: a bare name gets the prefix of this plugin. */
   const lookup = (name: string): string => {
-    if (typeof name !== "string") throw new TypeError("a name is a string");
     return name.includes(":") ? name : `${prefix}${name}`;
   };
   /** The qualified form of a name to register: a qualified name must have the prefix of this plugin. */
@@ -131,7 +130,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     focus: live((direction: FocusDirection): boolean => core.panes.focus(direction)),
     focusNext: live((): void => core.panes.focusNext()),
     setDefault: live((create: DefaultPane): (() => void) => {
-      if (typeof create !== "function") throw new TypeError("a default pane is a function that makes its view");
       return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
     }),
   });
@@ -218,7 +216,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
     onFocusChange: live((listener: (change: FocusChange) => void): (() => void) =>
-      scope.own(core.onFocusChange(owner, listener)),
+      scope.own(core.onFocusChange(listener)),
     ),
     now: live((): number => core.driver.now()),
     after: live((delay: number, callback: () => void): (() => void) => {
@@ -240,7 +238,6 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     select,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {
-        if (typeof command !== "object" || command === null) throw new TypeError("a command is an object");
         return scope.own(core.commands.add(command, own(command.name)));
       }),
       run: live((name: string, args?: unknown): boolean => core.commands.run(lookup(name), args)),
@@ -281,12 +278,11 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
     views: Object.freeze({
       register: live((type: string, restore: RestoreView): (() => void) => {
-        if (typeof restore !== "function") throw new TypeError("a view type takes a function that restores its view");
         return scope.own(core.views.register(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
       }),
     }),
     requestFrame: live((delay?: number): void => core.driver.requestFrame(delay)),
-    copy: live((text: string): void => core.driver.copy(String(text))),
+    copy: live((text: string): void => core.driver.copy(text)),
     readImage: live((): Promise<ClipboardImage | undefined> => core.driver.readImage()),
   });
 }

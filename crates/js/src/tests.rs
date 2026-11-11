@@ -1,5 +1,4 @@
 mod ai;
-mod chat;
 mod exec;
 mod fs;
 mod globals;
@@ -11,7 +10,6 @@ mod session_api;
 mod sessions;
 mod term;
 mod tools;
-mod tui;
 mod typescript;
 mod web;
 

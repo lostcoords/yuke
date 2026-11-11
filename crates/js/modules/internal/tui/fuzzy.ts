@@ -35,7 +35,6 @@ let ending = new Float64Array(0);
 let best = new Float64Array(0);
 
 export function fuzzyMatch(query: string, text: string): FuzzyMatch | undefined {
-  if (typeof query !== "string" || typeof text !== "string") throw new TypeError("a fuzzy match takes two strings");
   if (query === "") return { score: 0, ranges: [] };
   // Without surrogates and with a lower case of the same length, each UTF-16 unit is one point.
   if (!SURROGATE.test(query) && !SURROGATE.test(text)) {

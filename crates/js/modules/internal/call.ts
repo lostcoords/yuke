@@ -11,7 +11,5 @@ export function bindCall(context: ToolContext, host: CallHost): void {
 
 /** The host of the call of `context`. */
 export function callOf(context: ToolContext): CallHost {
-  const host = calls.get(context);
-  if (host === undefined) throw new Error("the context belongs to no call");
-  return host;
+  return calls.get(context) as CallHost;
 }

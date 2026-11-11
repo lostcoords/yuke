@@ -44,8 +44,6 @@ import {
 import type { Auth, Catalog, OpenOptions, PluginManager, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
 import type { LoginOutcome, SessionId } from "yuke:protocol";
 
-const { reportError } = globalThis;
-
 /** Where the events of one view go: its snapshot once, then each update, then the close of its session. */
 interface Route {
   readonly event: (event: ViewEvent) => void;
@@ -65,11 +63,7 @@ function deliver(key: number, event: NativeViewEvent): void {
     route.closed();
     return;
   }
-  try {
-    route.event(event);
-  } catch (error) {
-    reportError(error);
-  }
+  route.event(event);
 }
 
 /** Open session `id` for the plugin `plugin`, whose signal also ends the handle. */

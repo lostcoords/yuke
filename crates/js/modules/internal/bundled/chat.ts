@@ -153,8 +153,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   };
   // One entry per call of `addComposerView`, so each disposer removes its own.
   const composerViews = new Set<ComposerViewEntry>();
-  const panes = new WeakMap<View, PaneActions>();
-  const open = new Set<PaneActions>();
+  const panes = new Map<View, PaneActions>();
   let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   // One entry per call of `addReadOnly`, so each disposer removes its own.
   const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
@@ -240,7 +239,6 @@ export async function apply(ctx: PluginContext): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
-    open,
     presenter: () => presenter,
     frame: () => frame,
     readOnly: (session) => {
@@ -280,9 +278,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
       );
   // Activation finishes the read before any pane can use the state.
   await readModels();
-  /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
   /** The open question before a quit. */
   let asked: Mount | undefined;
+  /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
@@ -333,7 +331,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
   tui.guardQuit((quit) => {
     // Two panes on one session count once.
     const work = new Map(
-      [...open].flatMap((pane) => {
+      [...panes.values()].flatMap((pane) => {
         const entry = pane.work();
         return entry === undefined ? [] : [[entry.session, entry] as const];
       }),

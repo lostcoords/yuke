@@ -73,7 +73,7 @@ export class Core {
   #defaultPane: DefaultPaneSlot | undefined;
   /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
   #startWaits = false;
-  readonly #focusListeners = new Set<{ readonly owner: string; readonly listener: (change: FocusChange) => void }>();
+  readonly #focusListeners = new Set<{ readonly listener: (change: FocusChange) => void }>();
 
   constructor(driver: Driver) {
     this.driver = driver;
@@ -107,7 +107,6 @@ export class Core {
         requestFrame: frame,
         // A key sequence belongs to the contexts where it started.
         contextsChanged: () => this.keymap.cancel(),
-        report: (text) => report(CORE, text),
         copy: (text) => driver.copy(text),
       },
       report,
@@ -147,9 +146,9 @@ export class Core {
     this.#addCommands();
   }
 
-  /** Give each later change of `tui.focused` to `listener` of the plugin `owner`. A throw reports and removes it. */
-  onFocusChange(owner: string, listener: (change: FocusChange) => void): () => void {
-    const entry = { owner, listener };
+  /** Give each later change of `tui.focused` to `listener`. */
+  onFocusChange(listener: (change: FocusChange) => void): () => void {
+    const entry = { listener };
     this.#focusListeners.add(entry);
     return () => {
       this.#focusListeners.delete(entry);
@@ -233,16 +232,9 @@ export class Core {
     return JSON.stringify(this.panes.snapshot((view, owner) => this.#save(view, owner)));
   }
 
-  /** Rebuild the panes of a snapshot. A snapshot that does not read gives the default layout and one notice. */
+  /** Rebuild the panes of a snapshot that `snapshot` gave. */
   restore(text: string): void {
-    let saved: SavedPanes;
-    try {
-      saved = JSON.parse(text) as SavedPanes;
-    } catch (error) {
-      this.notices.add("error", CORE, `the saved panes did not read: ${failureOf(error)}`);
-      saved = { tree: null, focus: 0 };
-    }
-    this.panes.restore(saved, (type) => this.views.get(type));
+    this.panes.restore(JSON.parse(text) as SavedPanes, (type) => this.views.get(type));
   }
 
   /** Lay out and draw each view. */
@@ -263,14 +255,7 @@ export class Core {
   }
 
   #focusChanged(change: FocusChange): void {
-    for (const entry of [...this.#focusListeners]) {
-      try {
-        entry.listener(change);
-      } catch (error) {
-        this.#focusListeners.delete(entry);
-        this.notices.add("error", entry.owner, `a focus listener failed: ${failureOf(error)}`);
-      }
-    }
+    for (const entry of [...this.#focusListeners]) entry.listener(change);
   }
 
   /** The function that decides on a quit. Without one, a quit goes on at once. */

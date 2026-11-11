@@ -34,11 +34,9 @@ export function apply(ctx: PluginContext): undefined {
   if (tui === undefined) return undefined;
   const toasts: Toast[] = [];
 
-  const remove = (toast: Toast | undefined): void => {
-    const at = toast === undefined ? -1 : toasts.indexOf(toast);
-    if (at < 0) return;
-    toasts.splice(at, 1);
-    toast?.cancel?.();
+  const remove = (toast: Toast): void => {
+    toasts.splice(toasts.indexOf(toast), 1);
+    toast.cancel?.();
   };
 
   const show = (notice: Notice): void => {
@@ -52,7 +50,7 @@ export function apply(ctx: PluginContext): undefined {
     );
     if (toast !== undefined) toast.count += 1;
     else {
-      if (toasts.length === MOST) remove(toasts.find((shown) => shown.notice.level === "info") ?? toasts[0]);
+      if (toasts.length === MOST) remove(toasts.find((shown) => shown.notice.level === "info") ?? (toasts[0] as Toast));
       // A notice from the history before the load can count repeats already.
       toast = { notice, count: notice.count, cancel: undefined };
       toasts.push(toast);
@@ -80,7 +78,7 @@ export function apply(ctx: PluginContext): undefined {
       body.push(text.slice(spans[at], spans[at + 1]));
     }
     const last = body.length - 1;
-    if (spans.length > BODY_ROWS * 3 && last >= 0) {
+    if (spans.length > BODY_ROWS * 3) {
       const row = body[last] ?? "";
       body[last] = `${row.slice(0, fit(row, room - 1))}…`;
     }

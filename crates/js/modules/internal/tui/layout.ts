@@ -12,16 +12,7 @@ export function bottom(size: Size, rows: number): Rect {
  * remain; `fill` children share the rest, and the last one gets the cells of the rounding.
  */
 export function stack(direction: Direction, children: readonly StackChild[]): View {
-  if (direction !== "row" && direction !== "column") throw new TypeError("a stack direction is row or column");
   const items = [...children];
-  for (const { view, size } of items) {
-    if (typeof view !== "object" || view === null) throw new TypeError("a stack child has a view");
-    const valid =
-      size === "fill" ||
-      typeof size === "function" ||
-      (typeof size === "number" && Number.isInteger(size) && size >= 0);
-    if (!valid) throw new TypeError("a stack size is a count of cells, fill, or a function of the stack size");
-  }
   return Object.freeze({
     layout(size: Size): readonly Placement[] {
       const along = direction === "row" ? size.width : size.height;

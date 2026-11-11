@@ -140,15 +140,16 @@ fn delay_of<'js>(ctx: &Ctx<'js>, delay: Option<Value<'js>>) -> rquickjs::Result<
     Ok(Duration::from_millis(milliseconds))
 }
 
-/// The id of a `clearTimeout` argument. A value that is no timer id clears nothing.
+/// The id of a `clearTimeout` argument. A value that is no number clears nothing. The cast saturates, and no timer has
+/// the id 0, so a negative number or NaN clears nothing too.
 fn id_of(value: Option<Value<'_>>) -> Option<u64> {
     let number = value?.as_number()?;
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "the value is a whole number ≥ 1"
+        reason = "the cast saturates, and no timer has the id 0"
     )]
-    (number >= 1.0 && number.fract() == 0.0 && number <= 2f64.powi(53)).then_some(number as u64)
+    Some(number as u64)
 }
 
 /// Add the timer globals to `ctx`, and start the future that fires the timers. A throw of a callback goes to

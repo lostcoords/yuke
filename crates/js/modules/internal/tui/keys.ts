@@ -27,7 +27,6 @@ const NAMED = new Set([
 
 /** The strokes of `spec`. A spec that names no key throws a `TypeError`. */
 export function parseKeys(spec: string): readonly string[] {
-  if (typeof spec !== "string") throw new TypeError("a key spec is a string");
   const strokes = spec.split(/\s+/).filter((stroke) => stroke !== "");
   if (strokes.length === 0) throw new TypeError(`'${spec}' names no key`);
   return strokes.map((stroke) => parseStroke(spec, stroke));
@@ -60,11 +59,15 @@ export function strokeOf(event: KeyEvent): string {
   return join(ctrl, alt, superKey, shift, key);
 }
 
-function parseStroke(spec: string, stroke: string): string {
-  // The text after the last `+` is the key, so `ctrl++` is ctrl and `+`.
+/** The modifier words and the key of `stroke`. The text after the last `+` is the key, so `ctrl++` is ctrl and `+`. */
+export function splitStroke(stroke: string): { readonly modifiers: string[]; readonly key: string } {
   const cut = stroke.endsWith("+") ? stroke.length - 2 : stroke.lastIndexOf("+");
-  let key = stroke.slice(cut + 1);
-  const modifiers = cut < 0 ? [] : stroke.slice(0, cut).split("+");
+  return { modifiers: cut < 0 ? [] : stroke.slice(0, cut).split("+"), key: stroke.slice(cut + 1) };
+}
+
+function parseStroke(spec: string, stroke: string): string {
+  const { modifiers, key: word } = splitStroke(stroke);
+  let key = word;
   let ctrl = false;
   let alt = false;
   let superKey = false;

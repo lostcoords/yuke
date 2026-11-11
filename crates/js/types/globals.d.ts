@@ -110,7 +110,7 @@ declare var performance: {
 
 /**
  * The entries of a script, each a notice from the source `console`. A notice that names the plugin comes from `notify`
- * of a context. Each call formats `data` with `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`, and `%%`, and it never throws.
+ * of a context. Each call formats `data` with `%s`, `%d`, `%i`, `%f`, `%o`, `%O`, `%c`, and `%%`.
  */
 declare var console: {
   /** A debug entry, as `debug`. */
@@ -259,7 +259,7 @@ interface UnderlyingDefaultSource<R = unknown> {
   pull?: (controller: ReadableStreamDefaultController<R>) => unknown;
   /** Run when the consumer cancels a stream that is not closed or errored. */
   cancel?: (reason: unknown) => unknown;
-  /** yuke has no byte streams, so a type throws a `TypeError`. */
+  /** yuke has no byte streams, so leave out the type. */
   type?: undefined;
 }
 
@@ -290,8 +290,8 @@ declare class ReadableStream<R = unknown> {
   readonly locked: boolean;
   /** Cancel the stream with `reason`. A locked stream rejects with a `TypeError`. */
   cancel(reason?: unknown): Promise<undefined>;
-  /** A reader that holds the stream until `releaseLock`. A locked stream or a `mode` throws a `TypeError`. */
-  getReader(options?: { mode?: undefined }): ReadableStreamDefaultReader<R>;
+  /** A reader that holds the stream until `releaseLock`. A locked stream throws a `TypeError`. */
+  getReader(): ReadableStreamDefaultReader<R>;
   /**
    * An async iterator of chunks. Iteration holds the stream.
    * An early loop exit cancels the stream unless `preventCancel` is true.

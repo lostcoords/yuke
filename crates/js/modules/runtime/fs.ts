@@ -21,7 +21,7 @@ import {
   fsWriteFile,
   type Operation,
 } from "yuke:internal/native";
-import { checkUint8Array, domString, usvString } from "yuke:internal/webidl";
+import { usvString } from "yuke:internal/webidl";
 
 export class FileSystemError extends Error {
   readonly code: string;
@@ -39,22 +39,6 @@ export class FileSystemError extends Error {
   }
 }
 FileSystemError.prototype.name = "FileSystemError";
-
-/** `value` as a whole number in 0..2^53-1, or `fallback` when it is missing. Another value throws a `TypeError`. */
-function wholeNumber<T>(value: number | undefined, name: string, fallback: T): number | T {
-  if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new TypeError(`the option ${name} is not a whole number in 0..2^53-1`);
-  }
-  return value;
-}
-
-/** `value` as permission bits in 0..0o7777, or `undefined` when it is missing. */
-function modeOf(value: number | undefined): number | undefined {
-  const mode = wholeNumber(value, "mode", undefined);
-  if (mode !== undefined && mode > 0o7777) throw new TypeError("the option mode is not in 0..0o7777");
-  return mode;
-}
 
 /**
  * Run the operation of `start` under `signal`. An aborted signal rejects before the start, and an abort during the
@@ -83,35 +67,28 @@ function failureOf(error: unknown, signal: AbortSignal | undefined): unknown {
 }
 
 export async function readFile(path: string, options: ReadFileOptions = {}): Promise<Uint8Array> {
-  const { baseDir, signal } = options;
-  const position = wholeNumber(options.position, "position", 0);
-  const length = wholeNumber(options.length, "length", undefined);
-  const text = domString(path);
-  return await run(signal, () => fsReadFile(text, baseDir, position, length));
+  const { baseDir, signal, position = 0, length } = options;
+  return await run(signal, () => fsReadFile(path, baseDir, position, length));
 }
 
 export async function readTextFile(path: string, options: ReadTextFileOptions = {}): Promise<string> {
   const { baseDir, signal, fatal = false } = options;
-  const text = domString(path);
-  return await run(signal, () => fsReadTextFile(text, baseDir, fatal));
+  return await run(signal, () => fsReadTextFile(path, baseDir, fatal));
 }
 
 /** The write of `data`, bytes or text, with the options of a write. */
 async function writeData(path: string, data: Uint8Array | string, options: WriteFileOptions = {}): Promise<void> {
-  const { baseDir, signal, append = false, atomic = false, create = true, createNew = false } = options;
-  const mode = modeOf(options.mode);
+  const { baseDir, signal, append = false, atomic = false, create = true, createNew = false, mode } = options;
   // A rename replaces the whole file, and it cannot check that the path is new or that it exists.
   if (atomic && append) throw new TypeError("the options atomic and append exclude each other");
   if (atomic && createNew) throw new TypeError("the options atomic and createNew exclude each other");
   if (atomic && !create) throw new TypeError("an atomic write needs create");
   const placement = atomic ? "atomic" : append ? "append" : "replace";
   const creation = createNew ? "new" : create ? "create" : "existing";
-  const text = domString(path);
-  await run(signal, () => fsWriteFile(text, baseDir, data, placement, creation, mode));
+  await run(signal, () => fsWriteFile(path, baseDir, data, placement, creation, mode));
 }
 
 export async function writeFile(path: string, data: Uint8Array, options?: WriteFileOptions): Promise<void> {
-  checkUint8Array(data, "the data");
   await writeData(path, data, options);
 }
 
@@ -121,16 +98,14 @@ export async function writeTextFile(path: string, text: string, options?: WriteF
 
 export async function readDir(path: string, options: FileOptions = {}): Promise<DirEntry[]> {
   const { baseDir, signal } = options;
-  const text = domString(path);
-  const entries = await run(signal, () => fsReadDir(text, baseDir));
+  const entries = await run(signal, () => fsReadDir(path, baseDir));
   return entries.sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0));
 }
 
 /** The facts of `path`, through or without a follow of a symbolic link. */
 async function info(path: string, options: FileOptions, follow: boolean) {
   const { baseDir, signal } = options;
-  const text = domString(path);
-  const facts = await run(signal, () => fsStat(text, baseDir, follow));
+  const facts = await run(signal, () => fsStat(path, baseDir, follow));
   return {
     isFile: facts.isFile,
     isDirectory: facts.isDirectory,
@@ -149,23 +124,18 @@ export async function lstat(path: string, options: FileOptions = {}) {
 }
 
 export async function mkdir(path: string, options: MkdirOptions = {}): Promise<void> {
-  const { baseDir, signal, recursive = false } = options;
-  const mode = modeOf(options.mode);
-  const text = domString(path);
-  await run(signal, () => fsMkdir(text, baseDir, recursive, mode));
+  const { baseDir, signal, recursive = false, mode } = options;
+  await run(signal, () => fsMkdir(path, baseDir, recursive, mode));
 }
 
 export async function remove(path: string, options: RemoveOptions = {}): Promise<void> {
   const { baseDir, signal, recursive = false, force = false } = options;
-  const text = domString(path);
-  await run(signal, () => fsRemove(text, baseDir, recursive, force));
+  await run(signal, () => fsRemove(path, baseDir, recursive, force));
 }
 
 export async function rename(source: string, destination: string, options: FileOptions = {}): Promise<void> {
   const { baseDir, signal } = options;
-  const from = domString(source);
-  const to = domString(destination);
-  await run(signal, () => fsRename(from, to, baseDir));
+  await run(signal, () => fsRename(source, destination, baseDir));
 }
 
 // The check against `types/fs.d.ts` keeps this code and the declarations of the authors in step.

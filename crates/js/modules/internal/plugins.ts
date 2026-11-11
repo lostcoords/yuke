@@ -136,10 +136,10 @@ export async function load(spec: PluginSpec): Promise<void> {
         return services.get(name) as ServiceOf<K>;
       },
       notify(level: NoticeLevel, message: string): void {
-        notify(spec.name, level, String(message), undefined);
+        notify(spec.name, level, message, undefined);
       },
       sendClientEvent(event: string, data?: unknown): void {
-        emit(spec.name, String(event), JSON.stringify(data) ?? "null", undefined);
+        emit(spec.name, event, data ?? null, undefined);
       },
       on<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
         return on(spec.name, signal, event, listener);

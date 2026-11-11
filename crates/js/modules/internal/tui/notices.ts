@@ -35,15 +35,7 @@ export class Notices {
       this.#entries.push(notice);
       if (this.#entries.length > HISTORY) this.#entries.shift();
     }
-    for (const entry of [...this.#listeners]) {
-      try {
-        entry.listener(notice);
-      } catch (error) {
-        // The fault comes back as a notice, so a listener that stays would throw on it again and again.
-        this.#listeners.delete(entry);
-        reportError(error);
-      }
-    }
+    for (const entry of [...this.#listeners]) entry.listener(notice);
   }
 
   /** The kept notices, the oldest first. */

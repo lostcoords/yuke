@@ -1,7 +1,4 @@
-/**
- * The view types of the plugins and the saved panes of a reload. The old runtime saves the pane tree at
- * `core:reload`; the new one rebuilds it through the factory of each view type after its plugins load.
- */
+/** The view types of the plugins, and the form of the saved panes that a reload gives back to them. */
 import type { Direction, JsonValue, Mount, RestoreView } from "yuke:tui";
 
 /** A factory of a view type, the plugin that owns it, and the hand-over of a restored pane to that plugin. */

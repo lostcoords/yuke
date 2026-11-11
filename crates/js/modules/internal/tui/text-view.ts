@@ -6,7 +6,7 @@
 import { layered } from "yuke:internal/tui/canvas";
 import { ScrollList } from "yuke:internal/tui/scroll";
 import { graphemes, measure, offsetAtColumn, wrap } from "yuke:internal/tui/text";
-import { attachHost, checkAppearance, registerWidget, TextSupport } from "yuke:internal/tui/widgets";
+import { attachHost, registerWidget, TextSupport } from "yuke:internal/tui/widgets";
 import type {
   Bias,
   Canvas,
@@ -90,14 +90,8 @@ export class TextView {
   #quiet = false;
 
   constructor(options: TextViewOptions) {
-    if (typeof options !== "object" || options === null) throw new TypeError("text view options are an object");
-    const role = options.role ?? "text";
-    if (role !== "transcript" && role !== "text") throw new TypeError("a text view role is transcript or text");
-    if (options.activate !== undefined && typeof options.activate !== "function") {
-      throw new TypeError("activate is a function");
-    }
-    this.role = role;
-    this.#appearance = options.appearance === undefined ? {} : checkAppearance(options.appearance);
+    this.role = options.role ?? "text";
+    this.#appearance = options.appearance === undefined ? {} : Object.freeze({ ...options.appearance });
     this.#copyOnRelease = options.copyOnRelease !== false;
     this.#activate = options.activate;
     this.#support = new TextSupport(options.group);
@@ -173,7 +167,6 @@ export class TextView {
       this.#emit("selection");
       return;
     }
-    if (typeof selection !== "object" || selection === null) throw new TypeError("a selection is an object");
     const next = Object.freeze({ anchor: this.#position(selection.anchor), head: this.#position(selection.head) });
     const now = this.#selection;
     if (now !== undefined && samePosition(now.anchor, next.anchor) && samePosition(now.head, next.head)) return;
@@ -229,7 +222,6 @@ export class TextView {
   text(range: TextRange, format: "display" | "source" = "display"): string {
     const [from, to] = this.#ordered(this.#position(range.from), this.#position(range.to));
     if (format === "source") return this.#sourceText(from, to);
-    if (format !== "display") throw new TypeError("a text format is display or source");
     const start = this.#place(from, "after");
     const end = this.#place(to, "before");
     if (start === undefined || end === undefined || start.row > end.row) return "";
@@ -413,7 +405,6 @@ export class TextView {
 
   /** A checked copy of `position`: its item and section exist, and its offset is from 0 to the section length. */
   #position(position: TextPosition): TextPosition {
-    if (typeof position !== "object" || position === null) throw new TypeError("a text position is an object");
     if (!this.#valid(position)) {
       throw new RangeError(
         `the position ${position.item}/${position.section}:${position.offset} is not in the document`,
@@ -625,7 +616,6 @@ function renderItem(item: TextItem, width: number): ViewRow[] {
   const rows: ViewRow[] = [];
   for (const section of item.sections) {
     const own = section.render === undefined ? plainRows(section.text, width) : section.render(width);
-    if (!Array.isArray(own)) throw new TypeError(`the section ${section.key} renders an array of rows`);
     if (own.length === 0) continue;
     // A copy puts one line end between two sections, also between two items.
     if (rows.length > 0) {
@@ -683,29 +673,13 @@ interface ItemOrder {
 
 type Order = Map<string, ItemOrder>;
 
-/** Check `document`, and return its order. A document that is not valid throws a `TypeError`. */
+/** The order of the items and of the sections of `document`. A repeated section key throws a `TypeError`. */
 function checkDocument(document: TextDocument): Order {
-  if (typeof document !== "object" || document === null || typeof document.key !== "string") {
-    throw new TypeError("a text document has a key");
-  }
-  if (!Array.isArray(document.items)) throw new TypeError("a text document has items");
   const order: Order = new Map();
   for (const [at, item] of document.items.entries()) {
-    if (typeof item !== "object" || item === null || typeof item.key !== "string" || !Array.isArray(item.sections)) {
-      throw new TypeError("a text item has a key and sections");
-    }
-    if (order.has(item.key)) throw new TypeError(`two text items have the key ${item.key}`);
     const sections = new Map<string, number>();
     order.set(item.key, { at, sections });
     for (const [index, section] of item.sections.entries()) {
-      const valid =
-        typeof section === "object" &&
-        section !== null &&
-        typeof section.key === "string" &&
-        (section.kind === "text" || section.kind === "label") &&
-        typeof section.text === "string" &&
-        (section.render === undefined || typeof section.render === "function");
-      if (!valid) throw new TypeError(`a section of the item ${item.key} has a key, a kind, a text, and a render`);
       if (sections.has(section.key)) throw new TypeError(`the item ${item.key} has two sections ${section.key}`);
       sections.set(section.key, index);
     }

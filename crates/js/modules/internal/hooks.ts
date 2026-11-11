@@ -1,7 +1,7 @@
 // The part of each plugin in each open session: its scope, its tools and hooks, and the runs of the hook points.
 
 import { defineTool } from "yuke:internal/define";
-import { hostOperation, hostSignal, signalOf, underSignal, underStop } from "yuke:internal/events";
+import { hostOperation, hostSignal, underSignal, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
 import { emit, notify, type Operation, type RoundNatives, removeTool, unregister } from "yuke:internal/native";
 import { type Options, sessionExports } from "yuke:internal/plugins";
@@ -95,10 +95,10 @@ type Ask = (
 ) => Operation<QuestionAnswer[] | undefined>;
 
 /**
- * Send the request `request` of the plugin `source` with the JSON text `data` to the client. The promise gives the
+ * Send the request `request` of the plugin `source` with the JSON value `data` to the client. The promise gives the
  * result. A failure rejects with a record `{ code?, message, data? }`. A cancel rejects with `{ cancelled: true }`.
  */
-type SendRequest = (source: string, request: string, data: string) => Operation<unknown>;
+type SendRequest = (source: string, request: string, data: unknown) => Operation<unknown>;
 
 /** Answers the requests of the plugins in place of the client: the `respond` of `createHost` in a test. */
 let responder: ((request: ExtensionRequestParams) => Operation<unknown>) | undefined;
@@ -600,7 +600,7 @@ function requestFailureOf(error: unknown, signal: AbortSignal): unknown {
   if (typeof error !== "object" || error === null || error instanceof Error) return error;
   const record = error as Readonly<Record<string, unknown>>;
   if (record.cancelled === true) return signal.reason;
-  const message = String(record.message);
+  const message = record.message as string;
   if (typeof record.code !== "number") return new Error(message);
   return new ExtensionRequestError(message, { code: record.code, data: record.data });
 }
@@ -621,8 +621,7 @@ function start(
   const { signal, abort } = hostSignal();
   // The end of the scope and an abort of `stop` end a wait of the plugin.
   const endedBy = (stop: AbortSignal | undefined): AbortSignal => {
-    const caller = signalOf(stop);
-    return caller === undefined ? signal : AbortSignal.any([signal, caller]);
+    return stop === undefined ? signal : AbortSignal.any([signal, stop]);
   };
   const report = (message: string): void => notify(plugin, "error", message, sessionId);
   const clean = async (cleanup: Cleanup): Promise<void> => {
@@ -656,8 +655,8 @@ function start(
    */
   const runJob = async (job: JobOptions, work: JobWork, call: AbortSignal | undefined): Promise<JobOutcome> => {
     if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
-    const id = String(job.id);
-    const native = startJob(plugin, id, String(job.label), call !== undefined);
+    const id = job.id;
+    const native = startJob(plugin, id, job.label, call !== undefined);
     const stopped = new AbortController();
     const stop = (): void => stopped.abort(new Error("the job stopped"));
     // The end of a call aborts its signal, so a cancel counts only while the call waits.
@@ -752,20 +751,20 @@ function start(
       };
     },
     notify(level: NoticeLevel, message: string): void {
-      notify(plugin, level, String(message), sessionId);
+      notify(plugin, level, message, sessionId);
     },
     sendClientEvent(event: string, data?: unknown): void {
-      emit(plugin, String(event), JSON.stringify(data) ?? "null", sessionId);
+      emit(plugin, event, data ?? null, sessionId);
     },
     async request(request: string, data?: unknown, options?: RequestOptions): Promise<unknown> {
-      const text = JSON.stringify(data) ?? "null";
       const ended = endedBy(options?.signal);
       ended.throwIfAborted();
       const start = (): Operation<unknown> =>
         responder === undefined
-          ? send(plugin, String(request), text)
+          ? send(plugin, request, data ?? null)
           : responder(
-              Object.freeze({ sessionId, extension: plugin, request: String(request), data: JSON.parse(text) }),
+              // A copy, so the responder cannot change the data of the plugin.
+              Object.freeze({ sessionId, extension: plugin, request, data: JSON.parse(JSON.stringify(data ?? null)) }),
             );
       try {
         return await underSignal(ended, start);

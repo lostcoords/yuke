@@ -5,10 +5,6 @@
 import type { Operation } from "yuke:internal/native";
 import { dictionary, domString, webClass } from "yuke:internal/webidl";
 
-// The classes keep the globals of the runtime start, so a plugin that replaces a global does not change them.
-const { DOMException, reportError, setTimeout } = globalThis;
-const now = globalThis.performance.now.bind(globalThis.performance);
-
 /** The longest delay of one timer. A longer timeout uses a chain of timers with this delay. */
 const LONGEST_DELAY = 2 ** 31 - 1;
 
@@ -117,7 +113,7 @@ export class Event {
       bubbles: Boolean(init.bubbles),
       cancelable: Boolean(init.cancelable),
       composed: Boolean(init.composed),
-      timeStamp: now(),
+      timeStamp: performance.now(),
       target: null,
       currentTarget: null,
       dispatching: false,
@@ -466,12 +462,6 @@ export class AbortController {
   abort(reason?: unknown): void {
     signalAbort(this.#signal, reason);
   }
-}
-
-/** `value` as an `AbortSignal`, or `undefined` when it is missing. Another value throws a `TypeError`. */
-export function signalOf(value: unknown): AbortSignal | undefined {
-  if (value !== undefined) signalState(value);
-  return value as AbortSignal | undefined;
 }
 
 /**

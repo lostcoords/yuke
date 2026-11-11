@@ -135,8 +135,8 @@ export interface ComposerViewEntry {
 export interface Chat {
   readonly ctx: PluginContext;
   readonly tui: Tui;
-  /** The actions of each pane, by its view. */
-  readonly panes: WeakMap<View, PaneActions>;
+  /** The actions of each open pane, by its view. A pane leaves the map when its mount closes. */
+  readonly panes: Map<View, PaneActions>;
   /** Show the status items of the focused pane again. A pane calls it after each change of its session or transcript. */
   readonly refresh: () => void;
   /** Read the catalog again, then show the status items. A provider can be ready since the last read. */
@@ -145,8 +145,6 @@ export interface Chat {
   readonly choice: SavedChoice;
   /** The first answer of the read-only sources of the `chat` service for `session`. */
   readonly readOnly: (session: SessionId) => ChatReadOnly | undefined;
-  /** The panes that are open. */
-  readonly open: Set<PaneActions>;
   /** The factory of the `chat` service for the look of the transcript. Without one, a pane uses `ChatDocument`. */
   readonly presenter: () => ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
   /** The views of the `chat` service at `place`, in add order. */
@@ -184,7 +182,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     const signal = AbortSignal.any([mount.signal, scope.signal]);
     return presenter?.({ key, folds, signal, requestUpdate: changed }) ?? new ChatDocument(key, folds);
   };
-  let document = create(`session:${bound ?? "new"}`, state.folds);
+  /** The key of the document of the shown session. */
+  const keyOf = (): string => `session:${chatSession.id ?? "new"}`;
+  let document = create(keyOf(), state.folds);
   // The saved place waits until its item loads.
   let restore = state.viewport;
   // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
@@ -216,7 +216,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   chatSession.onChange(() => {
     if (chatSession.id !== bound) {
       // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
-      document = create(`session:${chatSession.id}`, bound === undefined ? document.folds : undefined);
+      document = create(keyOf(), bound === undefined ? document.folds : undefined);
       if (bound !== undefined) {
         restore = undefined;
         view.scroll.followTail();
@@ -437,13 +437,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     onError: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
 
+  /** Whether a send, model choice, image paste, or show of this pane runs now. */
+  const occupied = (): boolean => busy || chatComposer.busy;
+
   /** Whether the pane can open its rename dialog without taking a competing pane action. */
   const canRename = (): boolean =>
-    chatSession.id !== undefined &&
-    questions.current === undefined &&
-    locked() === undefined &&
-    !busy &&
-    !chatComposer.busy;
+    chatSession.id !== undefined && questions.current === undefined && locked() === undefined && !occupied();
 
   /** Rename the session in a single-line dialog. The pane stays busy until the dialog closes. */
   const rename = async (): Promise<void> => {
@@ -471,8 +470,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         submit: (state) => {
           if (pending || dialog?.signal.aborted === true) return;
           pending = true;
-          void Promise.resolve()
-            .then(() => ctx.get("sessions").rename(id, state.text))
+          void ctx
+            .get("sessions")
+            .rename(id, state.text)
             .then(
               () => dialog?.close(),
               (reason: unknown) => {
@@ -512,7 +512,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         },
         { once: true },
       );
-      if (dialog.signal.aborted) busy = false;
     } catch (error) {
       busy = false;
       if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not load: ${String(error)}`);
@@ -582,7 +581,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         composerViews.set(entry, created as ComposerView | undefined);
       }
       const shown = composerViews.get(entry);
-      const height = shown === undefined ? 0 : Math.min(Math.floor(shown.heightFor(width)) || 0, left);
+      const height = shown === undefined ? 0 : Math.min(shown.heightFor(width), left);
       if (shown === undefined || height <= 0) return [];
       left -= height;
       return [{ view: shown, height }];
@@ -617,7 +616,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // A plugin can load after the start pane mounts.
       if (presenter !== chat.presenter()) {
         presenter = chat.presenter();
-        document = create(`session:${bound ?? "new"}`, document.folds);
+        document = create(keyOf(), document.folds);
         dirty = true;
       }
       if (dirty) {
@@ -736,8 +735,17 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       };
     },
   };
+  /** Keep the draft of the session `before` for the return to it, and restore the draft of the session `after`. */
+  const swapDraft = (before: SessionId | undefined, after: SessionId): void => {
+    // A pane without a session has no images in its draft, so the draft goes with the pane.
+    if (before === undefined) return;
+    const draft = composer.state;
+    if (draft.text !== "") drafts.set(before, draft);
+    chatComposer.setDraft(drafts.get(after) ?? EMPTY);
+    drafts.delete(after);
+  };
   const show = async (id: SessionId): Promise<void> => {
-    if (busy || chatComposer.busy) throw new Error("the pane is busy");
+    if (occupied()) throw new Error("the pane is busy");
     const before = chatSession.id;
     busy = true;
     try {
@@ -747,13 +755,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
     // A show of the shown session only opens it again after the end of its handle.
     if (mount.signal.aborted || id === before) return;
-    // The draft of a session waits for the return to it. A pane without a session has no images in its draft, so the
-    // draft goes with the pane.
-    if (before === undefined) return;
-    const draft = composer.state;
-    if (draft.text !== "") drafts.set(before, draft);
-    chatComposer.setDraft(drafts.get(id) ?? EMPTY);
-    drafts.delete(id);
+    swapDraft(before, id);
   };
   const actions: PaneActions = {
     session: () => chatSession.id,
@@ -815,7 +817,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     cancelQuestion: () => questions.cancel(),
   };
   chat.panes.set(pane, actions);
-  chat.open.add(actions);
-  mount.signal.addEventListener("abort", () => chat.open.delete(actions), { once: true });
+  mount.signal.addEventListener("abort", () => chat.panes.delete(pane), { once: true });
   return pane;
 }

@@ -19,7 +19,7 @@ import { createFrame, type FrameTest, folder } from "yuke:test";
 import { type MouseEvent, TextView } from "yuke:tui";
 import { rows } from "./rows.ts";
 
-export const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
+const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
 
 export function mouse(column: number, row: number, action: MouseEvent["action"]): MouseEvent {
   return { type: "mouse", column, row, button: "left", action, modifiers: MODIFIERS };

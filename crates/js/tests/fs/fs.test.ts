@@ -52,14 +52,12 @@ test("a bad path or option throws a type error", async () => {
     rejects(fs.readTextFile("")),
     rejects(fs.readTextFile("a\0b", { baseDir: base })),
     rejects(fs.readFile("x", { baseDir: base, position: -1 })),
-    rejects(fs.readFile("x", { baseDir: base, length: 1.5 })),
     // @ts-expect-error: the data is an array, not bytes.
     rejects(fs.writeFile("x", [1], { baseDir: base })),
-    rejects(fs.mkdir("x", { baseDir: base, mode: 0o1_0000 })),
   ]);
   equal(
     errors.map((error) => (error instanceof Error ? error.name : error)),
-    Array(8).fill("TypeError"),
+    Array(6).fill("TypeError"),
   );
 });
 

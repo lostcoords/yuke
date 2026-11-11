@@ -53,13 +53,6 @@ export class ScrollList<T extends object> {
   #olderPending = false;
 
   constructor(options: ScrollListOptions<T>) {
-    if (typeof options !== "object" || options === null) throw new TypeError("scroll list options are an object");
-    if (typeof options.key !== "function" || typeof options.render !== "function") {
-      throw new TypeError("a scroll list takes a key function and a render function");
-    }
-    if (options.onTopReached !== undefined && typeof options.onTopReached !== "function") {
-      throw new TypeError("onTopReached is a function");
-    }
     this.#key = options.key;
     this.#render = options.render;
     this.#onTopReached = options.onTopReached;
@@ -92,12 +85,9 @@ export class ScrollList<T extends object> {
    * not follow the tail sets `changedBelow`.
    */
   setItems(items: readonly T[]): void {
-    if (!Array.isArray(items)) throw new TypeError("scroll list items are an array");
     const keys = new Set<string>();
     const keyed = items.map((item) => {
-      if (typeof item !== "object" || item === null) throw new TypeError("a scroll list item is an object");
       const key = this.#key(item);
-      if (typeof key !== "string") throw new TypeError("a scroll list key is a string");
       if (keys.has(key)) throw new TypeError(`two scroll list items have the key ${key}`);
       keys.add(key);
       return { item, key };
@@ -118,12 +108,10 @@ export class ScrollList<T extends object> {
   }
 
   scrollBy(rows: number): void {
-    if (!Number.isInteger(rows)) throw new TypeError("a scroll step is a whole number of rows");
     this.#moveTo(this.#top + rows);
   }
 
   scrollTo(row: number): void {
-    if (!Number.isInteger(row)) throw new TypeError("a scroll row is a whole number");
     this.#moveTo(row);
   }
 
@@ -178,7 +166,6 @@ export class ScrollList<T extends object> {
 
   /** Give each later change of the state to `listener`, until the remover runs. */
   onChange(listener: (state: ScrollState) => void): () => void {
-    if (typeof listener !== "function") throw new TypeError("a scroll listener is a function");
     // A wrapper makes each registration its own, so a remover removes only its own one.
     const registered = (state: ScrollState): void => listener(state);
     this.#listeners.add(registered);
@@ -244,7 +231,6 @@ export class ScrollList<T extends object> {
         return { item: entry.item, key: entry.key, height: known.height };
       }
       const rows = width > 0 ? this.#render(entry.item, width) : [];
-      if (!Array.isArray(rows)) throw new TypeError("a scroll list render gives an array of rows");
       if (width > 0) {
         this.#heights.set(entry.item, { width, height: rows.length });
         this.#keep(entry.item, entry.key, rows);
@@ -390,13 +376,6 @@ export class ScrollList<T extends object> {
 
   #emit(): void {
     const state = this.state;
-    for (const listener of [...this.#listeners]) {
-      try {
-        listener(state);
-      } catch (error) {
-        this.#listeners.delete(listener);
-        reportError(error);
-      }
-    }
+    for (const listener of [...this.#listeners]) listener(state);
   }
 }

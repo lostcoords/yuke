@@ -5,7 +5,6 @@
  */
 import { failureOf } from "yuke:internal/failure";
 import type {
-  CursorShape,
   Decoration,
   KeyEvent,
   MouseEvent,
@@ -23,16 +22,11 @@ export interface WidgetHost {
   readonly requestFrame: () => void;
   /** The context atoms of an extension changed, so a pending key sequence ends. */
   readonly contextsChanged: () => void;
-  /** Report a fault of an extension. */
-  readonly report: (text: string) => void;
   /** Send `text` to the clipboard of the terminal. */
   readonly copy: (text: string) => void;
 }
 
 type KeyPhase = "beforeDefault" | "beforeKeymap";
-
-const SHAPES: readonly unknown[] = ["block", "underline", "bar"] satisfies CursorShape[];
-const PHASES: readonly unknown[] = ["beforeDefault", "beforeKeymap"] satisfies KeyPhase[];
 
 /** The part of one extension, and its dispose. */
 interface Part<P> {
@@ -69,9 +63,6 @@ export class TextSupport<P, E> {
 
   /** Without `group` the widget gets a group of its own. */
   constructor(group: object | undefined) {
-    if (group !== undefined && (typeof group !== "object" || group === null)) {
-      throw new TypeError("a widget group is an object");
-    }
     this.group = group ?? {};
   }
 
@@ -106,8 +97,7 @@ export class TextSupport<P, E> {
       this.#parts.push(part);
       signal.addEventListener("abort", part.dispose, { once: true });
     }
-    const add = <T>(list: Handler<P, T>[], handle: T, kind: string): (() => void) => {
-      if (typeof handle !== "function") throw new TypeError(`a ${kind} handler is a function`);
+    const add = <T>(list: Handler<P, T>[], handle: T): (() => void) => {
       if (part.disposed) return () => {};
       const handler = { part, handle };
       list.push(handler);
@@ -115,39 +105,27 @@ export class TextSupport<P, E> {
     };
     return Object.freeze({
       setContexts: (atoms: readonly string[]): void => {
-        if (!Array.isArray(atoms) || !atoms.every((atom) => typeof atom === "string" && atom !== "")) {
-          throw new TypeError("contexts are strings that are not empty");
-        }
         if (part.disposed) return;
         part.contexts = Object.freeze([...atoms]);
         this.#host?.contextsChanged();
         this.#host?.requestFrame();
       },
       setAppearance: (appearance: TextAppearance): void => {
-        const checked = checkAppearance(appearance);
         if (part.disposed) return;
-        part.appearance = checked;
+        part.appearance = Object.freeze({ ...appearance });
         this.#host?.requestFrame();
       },
       setDecorations: (decorations: readonly Decoration<P>[]): void => {
-        const valid =
-          Array.isArray(decorations) &&
-          decorations.every(
-            (decoration) =>
-              typeof decoration?.range === "object" && decoration.range !== null && isStyle(decoration.style, false),
-          );
-        if (!valid) throw new TypeError("a decoration has a range and a style");
         if (part.disposed) return;
         part.decorations = Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration })));
         this.#host?.requestFrame();
       },
       onKey: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): (() => void) => {
-        if (!PHASES.includes(phase)) throw new TypeError(`a key phase is beforeDefault or beforeKeymap, not ${phase}`);
-        return add(this.#keys[phase], handler, "key");
+        return add(this.#keys[phase], handler);
       },
-      onMouse: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler, "mouse"),
-      onPaste: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler, "paste"),
-      onChange: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener, "change"),
+      onMouse: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
+      onPaste: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler),
+      onChange: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
       dispose: part.dispose,
     });
   }
@@ -192,27 +170,12 @@ export class TextSupport<P, E> {
 
   /** Give a change to each listener, the oldest first. */
   emit(event: E): void {
-    for (const listener of [...this.#listeners]) this.#guard(listener.part, () => listener.handle(event));
+    for (const listener of [...this.#listeners]) if (!listener.part.disposed) listener.handle(event);
   }
 
+  /** A handler of an extension that an earlier handler disposed does not run. */
   #offer<T>(list: Handler<P, (value: T) => boolean>[], value: T): boolean {
-    return list
-      .toReversed()
-      .some((handler) => this.#guard(handler.part, () => handler.handle(value) === true) === true);
-  }
-
-  /** Run a callback of the extension of `part`. When it throws, report the fault and remove the extension. */
-  #guard<T>(part: Part<P>, f: () => T): T | undefined {
-    if (part.disposed) return undefined;
-    try {
-      return f();
-    } catch (error) {
-      const text = `a text widget extension failed and was removed: ${failureOf(error)}`;
-      if (this.#host === undefined) reportError(new Error(text));
-      else this.#host.report(text);
-      part.dispose();
-      return undefined;
-    }
+    return list.toReversed().some((handler) => !handler.part.disposed && handler.handle(value) === true);
   }
 }
 
@@ -339,7 +302,6 @@ export class WidgetMounts {
 
   /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
   watch(owner: string, attach: (mount: WidgetMount) => (() => void) | undefined): () => void {
-    if (typeof attach !== "function") throw new TypeError("a widget watch takes a function");
     const watch: Watch = { owner, attach, cleanups: new Map() };
     this.#watches.add(watch);
     for (const mount of this.list()) this.#visit(watch, mount);
@@ -369,24 +331,6 @@ export class WidgetMounts {
       this.#report(owner, `a widget cleanup failed: ${failureOf(error)}`);
     }
   }
-}
-
-/** A frozen copy of `appearance`, with its fields checked. */
-export function checkAppearance(appearance: TextAppearance): TextAppearance {
-  if (typeof appearance !== "object" || appearance === null) throw new TypeError("an appearance is an object");
-  if (appearance.cursorShape !== undefined && !SHAPES.includes(appearance.cursorShape)) {
-    throw new TypeError(`a cursor shape is block, underline, or bar, not ${String(appearance.cursorShape)}`);
-  }
-  if (appearance.prompt !== undefined && typeof appearance.prompt !== "string") {
-    throw new TypeError("a prompt is a string");
-  }
-  if (!isStyle(appearance.promptStyle, true)) throw new TypeError("a prompt style is a style name or a style");
-  return Object.freeze({ ...appearance });
-}
-
-function isStyle(value: unknown, optional: boolean): boolean {
-  if (value === undefined) return optional;
-  return typeof value === "string" || (typeof value === "object" && value !== null);
 }
 
 function removeWhere<T>(list: T[], matches: (item: T) => boolean): void {

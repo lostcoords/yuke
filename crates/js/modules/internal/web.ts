@@ -16,7 +16,6 @@ const {
 // property key names the constructor, and the prototype of the engine stays, so a registry keeps its standard shape.
 const ReportingFinalizationRegistry = {
   FinalizationRegistry: function (cleanup: unknown): object {
-    if (new.target === undefined) throw new TypeError("FinalizationRegistry: the constructor needs new");
     if (typeof cleanup !== "function") throw new TypeError("FinalizationRegistry: the cleanup is no function");
     const report = (heldValue: unknown): void => {
       try {

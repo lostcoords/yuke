@@ -177,7 +177,7 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
   equal(atoms(core).at(-1), "other-mode");
 });
 
-test("a contexts change ends a pending sequence and a throwing extension goes", () => {
+test("a contexts change ends a pending sequence", () => {
   const core = new Core(fakeTerminal().driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const editor = new TextEditor();
@@ -190,16 +190,8 @@ test("a contexts change ends a pending sequence and a throwing extension goes", 
   equal(core.keymap.pending(), "ctrl+k");
   extension.setContexts(["vim-insert"]);
   equal(core.keymap.pending(), "");
-  extension.onPaste(() => {
-    throw new Error("bad paste");
-  });
-  core.event({ type: "paste", text: "one" });
-  core.event({ type: "paste", text: "two" });
-  equal(editor.state.text, "onetwo");
-  equal(
-    core.notices.list().map((notice) => [notice.text.split("\n")[0], notice.count]),
-    [["a text widget extension failed and was removed: Error: bad paste", 1]],
-  );
+  equal(atoms(core).at(-1), "vim-insert");
+  extension.dispose();
   equal(atoms(core).at(-1), "field");
   // The abort of its signal removes an extension as its dispose does.
   const controller = new AbortController();

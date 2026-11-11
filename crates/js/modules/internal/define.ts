@@ -2,8 +2,7 @@ import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
 import { type Answer, type Registration, register, type ToolOwner } from "yuke:internal/native";
-import { displayOf, fieldsOf, hintsOf, mediaOf } from "yuke:internal/values";
-import type { Infer, ObjectSchema, Tool, ToolContext, ToolHints, ToolMedia } from "yuke:tools";
+import type { Infer, ObjectSchema, Tool, ToolContext, ToolResult } from "yuke:tools";
 
 /** The jobs of a built-in tool, which uses none of them. */
 const NO_JOBS: ToolContext["jobs"] = {
@@ -20,12 +19,16 @@ export function defineTool<const S extends ObjectSchema>(
   jobsOf: (signal: AbortSignal) => ToolContext["jobs"] = () => NO_JOBS,
 ): Registration {
   const execute = tool.execute;
-  if (typeof execute !== "function") throw new TypeError("execute is not a function");
   // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
   const text = JSON.stringify(tool.parameters) as string | undefined;
   const parameters: unknown = text === undefined ? undefined : JSON.parse(text);
   checkParameters(parameters);
-  const hints = hintsOf(tool.hints as ToolHints | undefined, parameters as ObjectSchema);
+  // Rust validates the hints. The default of `preview` is here because the stored form requires it.
+  const hints = {
+    title: tool.hints?.title ?? null,
+    subject: tool.hints?.subject ?? null,
+    preview: tool.hints?.preview ?? "head",
+  } as const;
   const description = {
     name: tool.name,
     description: tool.description,
@@ -49,22 +52,16 @@ export function defineTool<const S extends ObjectSchema>(
   );
 }
 
-/** The fields of a result object. */
-const RESULT_FIELDS = ["text", "media", "isError", "display"];
-
-/** The checked result of `execute`. A value of another shape throws a `TypeError`. */
-function answerOf(result: unknown): Answer {
+/** The result of `execute` with its defaults filled. Rust validates the fields. */
+function answerOf(result: ToolResult): Answer {
   if (typeof result === "string") return { text: result, isError: false, media: [], display: [] };
-  const fields = fieldsOf(result, "the result", RESULT_FIELDS);
-  if (typeof fields.text !== "string") throw new TypeError("the result text is not a string");
-  if (fields.isError !== undefined && typeof fields.isError !== "boolean") {
-    throw new TypeError("the result isError is not a boolean");
-  }
-  const list = fields.media === undefined ? [] : fields.media;
-  if (!Array.isArray(list)) throw new TypeError("the result media is not an array");
-  // An index loop, so a hole of a sparse array fails as a value that is not an object.
-  const media: ToolMedia[] = [];
-  for (let index = 0; index < list.length; index += 1) media.push(mediaOf(list[index], `the result media[${index}]`));
-  const display = fields.display === undefined ? [] : displayOf(fields.display, "the result display");
-  return { text: fields.text, isError: fields.isError === true, media, display };
+  return {
+    text: result.text,
+    isError: result.isError ?? false,
+    // A copy of the bytes now: Rust reads the answer after the abort of the call, and a listener can change the bytes.
+    media: (result.media ?? []).map((item) =>
+      item.bytes === undefined ? item : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) },
+    ),
+    display: result.display ?? [],
+  };
 }

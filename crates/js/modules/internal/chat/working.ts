@@ -4,7 +4,6 @@
  */
 
 import type { ChatSession, ChatWorkingOptions, ChatWorkingTextOptions } from "yuke:chat";
-import { callEach } from "yuke:internal/chat/listeners";
 import { clipped } from "yuke:internal/chat/rows";
 import type { Transcript, TurnFailure } from "yuke:transcript";
 import { measure } from "yuke:tui";
@@ -113,6 +112,6 @@ export class ChatWorking {
     if (status !== this.#status && status?.kind === "retry_scheduled") this.#retryAt = this.#now() + status.afterMs;
     this.#status = status;
     if (this.active === active) return;
-    callEach(this.#listeners);
+    for (const listener of this.#listeners) listener();
   }
 }

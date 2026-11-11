@@ -2,6 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/toasts";
 import { assert, createFrame, equal, type FrameNotice, type FrameTest, test } from "yuke:test";
+import { mouse } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 /** Load the toasts into `frame`. */
@@ -90,15 +91,7 @@ test("a click dismisses its toast and ctrl+l dismisses all", () => {
   loadToasts(frame);
   frame.notice(notice("warn", "first", "a"));
   frame.notice(notice("warn", "second", "b"));
-  const press = (button: "left" | "right"): void =>
-    frame.mouse({
-      type: "mouse",
-      button,
-      action: "press",
-      column: 30,
-      row: 4,
-      modifiers: { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false },
-    });
+  const press = (button: "left" | "right"): void => frame.mouse({ ...mouse(30, 4, "press"), button });
   press("right");
   const right = stack(frame).length;
   press("left");

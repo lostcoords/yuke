@@ -21,7 +21,7 @@ export function createCanvas(screen: Screen, rect: Rect, clip: Rect, base?: Canv
     width: rect.width,
     height: rect.height,
     text(column: number, row: number, text: string, style?: CanvasStyle): number {
-      const value = String(text).toWellFormed();
+      const value = text.toWellFormed();
       const cell = screen.resolve(layered(base, style));
       return writeText(screen, clip, rect.column + column, rect.row + row, value, cell) - rect.column;
     },
