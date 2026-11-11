@@ -7,7 +7,7 @@ mod lock;
 pub(crate) mod manager;
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -128,9 +128,7 @@ pub(crate) fn plugins(config_folder: &Path, config: &Config, data: &Path) -> Res
 pub(crate) fn bundled(config_folder: &Path, config: &Config, data: &Path) -> Result<Vec<Plugin>, String> {
     let config = Config {
         plugins: Vec::new(),
-        disable: config.disable.clone(),
-        bundled: config.bundled.clone(),
-        session_idle_minutes: config.session_idle_minutes,
+        ..config.clone()
     };
     plugins(config_folder, &config, data)
 }
@@ -304,15 +302,6 @@ pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Val
         None => None,
         Some(entry) => {
             let path = Path::new(&entry);
-            // Agent Plugins keeps each package path inside the plugin folder.
-            if !path
-                .components()
-                .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
-            {
-                return Err(format!(
-                    "entry: '{entry}' is not a relative path inside the plugin folder"
-                ));
-            }
             // The loader reads a module by these two extensions.
             if !path
                 .extension()
@@ -323,20 +312,6 @@ pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Val
             Some(root.join(path))
         }
     };
-    for (field, names) in [("uses", &fields.uses), ("provides", &fields.provides)] {
-        let mut seen = HashSet::new();
-        for name in names {
-            if name.is_empty() {
-                return Err(format!("{field}: a service name is empty"));
-            }
-            if !seen.insert(name) {
-                return Err(format!("{field}: '{name}' is in the list twice"));
-            }
-        }
-    }
-    if let Some(name) = fields.uses.iter().find(|name| fields.provides.contains(name)) {
-        return Err(format!("'{name}' is in uses and in provides"));
-    }
     if entry.is_none() && !fields.provides.is_empty() {
         return Err("provides: a plugin without an entry cannot provide a service".to_owned());
     }

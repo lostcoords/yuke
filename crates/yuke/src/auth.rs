@@ -32,9 +32,6 @@ pub(crate) const LOCK_LIMIT: Duration = Duration::from_secs(30);
 /// The wait between two tries of the lock.
 const LOCK_RETRY: Duration = Duration::from_millis(100);
 
-/// The longest login. No flow names one, so the login ends after this time without an approval.
-const LOGIN_LIMIT: Duration = Duration::from_mins(15);
-
 /// RFC 8628 section 3.5 adds this much to the interval after a `slow_down` answer.
 const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
 
@@ -535,7 +532,7 @@ impl CredentialSource for LoginSource {
 }
 
 /// Log in to `provider` with `flow`, and save the login in the data folder `folder`. `show` gets the code and the
-/// page of the approval. The polls stop after [`LOGIN_LIMIT`] without an approval.
+/// page of the approval.
 ///
 /// # Errors
 ///
@@ -547,10 +544,9 @@ pub(crate) async fn login(
     exchange: &dyn Exchange,
     show: impl FnOnce(&PendingLogin),
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let started = tokio::time::Instant::now();
     let pending = start_login(flow, exchange).await?;
     show(&pending);
-    let grant = poll_login(&pending, started, exchange).await?;
+    let grant = poll_login(&pending, exchange).await?;
     save_login(provider, grant, folder).await
 }
 
@@ -568,26 +564,21 @@ pub(crate) async fn start_login(
         .map_err(|error| format!("the login did not start: {}", chain_text(&error)).into())
 }
 
-/// Poll the provider until the user approves `pending`, and give the grant. Before each wait, the function checks
-/// [`LOGIN_LIMIT`] from `started`, the time before the start of the login.
+/// Poll the provider until the user approves `pending`, and give the grant. The polls end when the provider refuses or
+/// expires the login, or when the caller drops the future.
 ///
 /// # Errors
 ///
 /// Returns an error when the provider refuses or the login expires.
 pub(crate) async fn poll_login(
     pending: &PendingLogin,
-    started: tokio::time::Instant,
     exchange: &dyn Exchange,
 ) -> Result<Grant, Box<dyn Error + Send + Sync>> {
-    // The check counts the waits and the polls before it, so a slow provider cannot outlast the limit by much.
     let mut interval = pending.interval.max(MIN_INTERVAL);
     let mut backoff = Duration::ZERO;
     // RFC 8628 section 3.5 asks for one whole interval before the first poll.
     let mut delay = interval;
     loop {
-        if started.elapsed() + delay > LOGIN_LIMIT {
-            return Err("the login expired before its approval".into());
-        }
         tokio::time::sleep(delay).await;
         match pending.poll(exchange, SystemTime::now()).await {
             Ok(Poll::Approved(grant)) => return Ok(grant),

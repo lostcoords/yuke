@@ -42,7 +42,7 @@ impl Lock {
     ///
     /// # Errors
     ///
-    /// Returns a text that names the file for an unreadable file, a bad source, or a commit that is not a full commit id.
+    /// Returns a text that names the file for an unreadable file or a commit that is not a full commit id.
     pub(crate) fn read(config_folder: &Path) -> Result<Self, String> {
         let path = config_folder.join(LOCK);
         let Some(file) = read_json::<FileText>(&path)? else {
@@ -55,7 +55,7 @@ impl Lock {
             if !is_commit(&entry.commit) {
                 return Err(fail(format!("'{}' is not a full commit id", entry.commit)));
             }
-            let source = git_source(entry.git, entry.folder.as_deref(), entry.reference).map_err(fail)?;
+            let source = git_source(entry.git, entry.folder.as_deref(), entry.reference);
             commits.insert(source, entry.commit);
         }
         Ok(Self { commits })

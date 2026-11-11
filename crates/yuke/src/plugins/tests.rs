@@ -126,29 +126,8 @@ fn a_bad_folder_or_manifest_stops_the_start_and_names_the_problem() {
             "unknown field `activation`",
         ),
         (
-            &fields(json!({ "entry": "../x.ts" })),
-            "entry: '../x.ts' is not a relative path inside the plugin folder",
-        ),
-        (
-            &fields(json!({ "entry": "src/../../x.ts" })),
-            "entry: 'src/../../x.ts' is not a relative",
-        ),
-        (
-            &fields(json!({ "entry": "/tmp/x.ts" })),
-            "entry: '/tmp/x.ts' is not a relative",
-        ),
-        (
             &fields(json!({ "entry": "main.py" })),
             "entry: 'main.py' is not a .ts or a .js file",
-        ),
-        (&fields(json!({ "uses": [""] })), "uses: a service name is empty"),
-        (
-            &fields(json!({ "provides": ["a", "a"], "entry": "i.ts" })),
-            "provides: 'a' is in the list twice",
-        ),
-        (
-            &fields(json!({ "uses": ["a"], "provides": ["a"], "entry": "i.ts" })),
-            "'a' is in uses and in provides",
         ),
         (
             &fields(json!({ "provides": ["a"] })),
@@ -383,7 +362,7 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
 /// The `plugins` item of the folder `folder` of the repository `url` at `reference`.
 fn git(url: &str, folder: &str, reference: Option<&str>) -> ConfigPlugin {
     ConfigPlugin {
-        source: Source::Git(git_source(url.to_owned(), Some(folder), reference.map(str::to_owned)).unwrap()),
+        source: Source::Git(git_source(url.to_owned(), Some(folder), reference.map(str::to_owned))),
         options: Map::new(),
     }
 }

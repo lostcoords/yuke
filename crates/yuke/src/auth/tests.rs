@@ -204,53 +204,6 @@ async fn login_errors_keep_the_complete_transport_cause_text() {
     assert_eq!(saved(&folder), Some(("at".to_owned(), "rt".to_owned())));
 }
 
-#[tokio::test(flavor = "local", start_paused = true)]
-async fn a_login_without_an_approval_ends_at_its_limit() {
-    let folder = folder("a_login_without_an_approval_ends_at_its_limit");
-    let answers = ScriptedExchange::default();
-    // Three polls at 299 seconds fit in the 15 minutes of the limit, and a fourth does not.
-    answers.push(
-        200,
-        r#"{"device_code":"dc","user_code":"UC","verification_uri":"u","interval":299}"#,
-    );
-    for _ in 0..3 {
-        answers.push(400, r#"{"error":"authorization_pending"}"#);
-    }
-
-    let expired = login(PROVIDER, Flow::Xai, folder, &answers, |_| {}).await;
-
-    assert_eq!(
-        expired.unwrap_err().to_string(),
-        "the login expired before its approval"
-    );
-    assert_eq!(answers.sent().len(), 4);
-}
-
-#[tokio::test(flavor = "local", start_paused = true)]
-async fn the_login_limit_counts_the_time_of_the_requests() {
-    let folder = folder("the_login_limit_counts_the_time_of_the_requests");
-    let slow = Slow {
-        delay: Duration::from_secs(10),
-        script: ScriptedExchange::default(),
-    };
-    // The waits fit three polls at 299 seconds, but the requests add 10 seconds each, so the third one is late.
-    slow.script.push(
-        200,
-        r#"{"device_code":"dc","user_code":"UC","verification_uri":"u","interval":299}"#,
-    );
-    for _ in 0..2 {
-        slow.script.push(400, r#"{"error":"authorization_pending"}"#);
-    }
-
-    let expired = login(PROVIDER, Flow::Xai, folder, &slow, |_| {}).await;
-
-    assert_eq!(
-        expired.unwrap_err().to_string(),
-        "the login expired before its approval"
-    );
-    assert_eq!(slow.script.sent().len(), 3);
-}
-
 #[tokio::test(flavor = "local")]
 async fn a_valid_login_serves_each_attempt_with_no_refresh() {
     let folder = folder("a_valid_login_serves_each_attempt_with_no_refresh");

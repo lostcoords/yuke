@@ -63,7 +63,7 @@ pub(crate) async fn add(
     options: Map<String, Value>,
 ) -> Result<AddPluginResult, String> {
     let _held = hold(&paths.data).await?;
-    let source = git_source(source.git, source.folder.as_deref(), source.reference)?;
+    let source = git_source(source.git, source.folder.as_deref(), source.reference);
     let fail = |message: String| format!("plugin {source}: {message}");
     let config = read_config(paths)?;
     if git_sources(&config).contains(&&source) {
@@ -258,17 +258,17 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
 ///
 /// # Errors
 ///
-/// Returns a text for a bad source or commit of a change, or when the file does not read or write.
+/// Returns a text for a bad commit of a change, or when the file does not read or write.
 pub(crate) async fn apply(paths: &Paths, changes: &[PluginChange]) -> Result<bool, String> {
     let _held = hold(&paths.data).await?;
     let mut lock = Lock::read(&paths.config)?;
     for change in changes {
-        // A change can come from a client, so its source and commit get the checks of a lock entry.
+        // A change can come from a client, so its commit gets the check of a lock entry.
         let source = git_source(
             change.source.git.clone(),
             change.source.folder.as_deref(),
             change.source.reference.clone(),
-        )?;
+        );
         if !git::is_commit(&change.new) {
             return Err(format!("plugin {source}: '{}' is not a full commit id", change.new));
         }

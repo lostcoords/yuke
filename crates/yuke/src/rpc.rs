@@ -402,20 +402,20 @@ impl Server {
             }
             ClientRequest::ListSessions(params) => result(&app.sessions().list(params).await?),
             ClientRequest::GetSession(params) => result(&app.sessions().get(params.session_id).await?),
-            ClientRequest::Login(params) => result(&app.login(params.provider).await?),
+            ClientRequest::Login(params) => result(&app.shared().login(params.provider).await?.0),
             ClientRequest::CancelLogin(params) => {
-                app.cancel_login(params.login_id)?;
+                app.shared().cancel_login(params.login_id)?;
                 result(&EmptyResult {})
             }
             ClientRequest::Logout(params) => {
-                app.logout(&params.provider).await?;
+                app.shared().logout(&params.provider).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::SetApiKey(params) => {
-                app.set_api_key(&params.provider, params.api_key).await?;
+                app.shared().set_api_key(&params.provider, params.api_key).await?;
                 result(&EmptyResult {})
             }
-            ClientRequest::ListCatalog(params) => result(&app.catalog(params.all.unwrap_or(false)).await?),
+            ClientRequest::ListCatalog(params) => result(&app.shared().catalog(params.all.unwrap_or(false)).await?),
             ClientRequest::RemoveSession(params) => {
                 app.sessions().remove(params.session_id).await?;
                 result(&EmptyResult {})
@@ -458,13 +458,13 @@ impl Server {
                 app.update_credential(params)?;
                 result(&EmptyResult {})
             }
-            ClientRequest::ListPlugins(EmptyParams {}) => result(&app.list_plugins()?),
-            ClientRequest::SyncPlugins(params) => result(&app.sync_plugins(params).await?),
-            ClientRequest::CheckPlugins(params) => result(&app.check_plugins(params).await?),
-            ClientRequest::ApplyPlugins(params) => result(&app.apply_plugins(params).await?),
-            ClientRequest::AddPlugin(params) => result(&app.add_plugin(params).await?),
+            ClientRequest::ListPlugins(EmptyParams {}) => result(&app.shared().list_plugins()?),
+            ClientRequest::SyncPlugins(params) => result(&app.shared().sync_plugins(params).await?),
+            ClientRequest::CheckPlugins(params) => result(&app.shared().check_plugins(params).await?),
+            ClientRequest::ApplyPlugins(params) => result(&app.shared().apply_plugins(params).await?),
+            ClientRequest::AddPlugin(params) => result(&app.shared().add_plugin(params).await?),
             ClientRequest::RemovePlugin(params) => {
-                app.remove_plugin(params).await?;
+                app.shared().remove_plugin(params).await?;
                 result(&EmptyResult {})
             }
             ClientRequest::ReloadProfile(EmptyParams {}) => {

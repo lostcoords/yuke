@@ -44,7 +44,7 @@ fn write_config(paths: &Paths, plugins: &Value) {
 /// The source of the clock plugin of `root/remote` at `reference`.
 fn clock(root: &Path, reference: Option<&str>) -> PluginSource {
     let url = root.join("remote").to_string_lossy().into_owned();
-    git_source(url, Some("plugins/clock"), reference.map(str::to_owned)).unwrap()
+    git_source(url, Some("plugins/clock"), reference.map(str::to_owned))
 }
 
 #[tokio::test(flavor = "local")]

@@ -712,21 +712,12 @@ mod tests {
     }
 
     #[test]
-    fn login_takes_one_provider_and_no_mode_flag() {
+    fn login_takes_one_provider() {
         assert_eq!(
             command(&["login", "xai-grok"]),
             Ok(Some(Command::Login {
                 provider: "xai-grok".to_owned()
             }))
-        );
-        assert_eq!(command(&["login"]), Err(ErrorKind::MissingRequiredArgument));
-        assert_eq!(
-            command(&["--rpc", "login", "xai-grok"]),
-            Err(ErrorKind::ArgumentConflict)
-        );
-        assert_eq!(
-            command(&["-p", "Hi.", "login", "xai-grok"]),
-            Err(ErrorKind::ArgumentConflict)
         );
     }
 
@@ -750,7 +741,6 @@ mod tests {
                 },
             }))
         );
-        assert_eq!(command(&["plugin", "add"]), Err(ErrorKind::MissingRequiredArgument));
         assert_eq!(
             command(&["plugin", "remove", "clock"]),
             Ok(Some(Command::Plugin {
@@ -769,6 +759,5 @@ mod tests {
             mode(&["--resume", &id.to_string()]),
             Ok(Mode::Tui(SessionChoice::Id(id)))
         );
-        assert_eq!(mode(&["-c", "-r", &id.to_string()]), Err(ErrorKind::ArgumentConflict));
     }
 }

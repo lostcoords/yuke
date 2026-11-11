@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use yuke_protocol::PluginSource;
 
 /// The settings of `config.json`. A missing key keeps its default, and an unknown key is an error.
-#[derive(Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Config {
     /// The plugins of the profile, in load order. A provider loads before the plugins that use it.
@@ -48,26 +48,16 @@ pub(crate) enum Source {
 
 /// The source of the Git plugin `url`, `folder`, and `reference`, in the form that keys `plugins.lock`. The folders `./a/`
 /// and `a` are the same, and `.` is the root.
-///
-/// # Errors
-///
-/// Returns a text when `folder` is absolute or has a `..` part.
-pub(crate) fn git_source(url: String, folder: Option<&str>, reference: Option<String>) -> Result<PluginSource, String> {
-    let folder = match folder {
-        None => None,
-        Some(text) => {
-            let parts: Vec<&str> = text.split('/').filter(|part| !matches!(*part, "" | ".")).collect();
-            if text.starts_with('/') || parts.contains(&"..") {
-                return Err(format!("folder: '{text}' is not a relative path inside the repository"));
-            }
-            (!parts.is_empty()).then(|| parts.join("/"))
-        }
-    };
-    Ok(PluginSource {
+pub(crate) fn git_source(url: String, folder: Option<&str>, reference: Option<String>) -> PluginSource {
+    let folder = folder.and_then(|text| {
+        let parts: Vec<&str> = text.split('/').filter(|part| !matches!(*part, "" | ".")).collect();
+        (!parts.is_empty()).then(|| parts.join("/"))
+    });
+    PluginSource {
         git: url,
         folder,
         reference,
-    })
+    }
 }
 
 impl<'de> Deserialize<'de> for ConfigPlugin {
@@ -100,9 +90,7 @@ impl<'de> Deserialize<'de> for ConfigPlugin {
                         ));
                     }
                     (Some(path), None) => Source::Folder(path),
-                    (None, Some(url)) => {
-                        Source::Git(git_source(url, full.folder.as_deref(), full.reference).map_err(D::Error::custom)?)
-                    }
+                    (None, Some(url)) => Source::Git(git_source(url, full.folder.as_deref(), full.reference)),
                 };
                 Ok(Self {
                     source,
@@ -451,12 +439,6 @@ mod tests {
             error(json!({ "path": "./a", "ref": "main" })),
             "\"folder\" and \"ref\" go with \"git\", not with \"path\""
         );
-        for folder in ["../up", "a/../../up", "/abs"] {
-            assert_eq!(
-                error(json!({ "git": "https://host/repo", "folder": folder })),
-                format!("folder: '{folder}' is not a relative path inside the repository")
-            );
-        }
     }
 
     #[test]

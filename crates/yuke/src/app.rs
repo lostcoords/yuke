@@ -110,7 +110,7 @@ pub(crate) trait Observer {
 pub(crate) type Answer = Result<serde_json::Value, ResponseError>;
 
 /// The parts of the app that each open session uses.
-struct Shared {
+pub(crate) struct Shared {
     machine: Machine,
     /// The parts of the profile that a reload replaces.
     profile: RefCell<Profile>,
@@ -221,7 +221,7 @@ impl Shared {
     /// # Errors
     ///
     /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
-    async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
+    pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
         let stored = crate::auth::stored_kinds(self.machine.paths.data.clone())
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
@@ -277,7 +277,7 @@ impl Shared {
     ///
     /// Returns [`AppError::Invalid`] for a provider without a login flow, and [`AppError::Internal`] when the provider
     /// does not start the login.
-    async fn login(
+    pub(crate) async fn login(
         self: &Rc<Self>,
         provider: String,
     ) -> Result<(LoginResult, oneshot::Receiver<LoginOutcome>), AppError> {
@@ -285,7 +285,6 @@ impl Shared {
         if let Some(earlier) = self.pending_logins.borrow_mut().remove(&provider) {
             earlier.stop.cancel();
         }
-        let started = tokio::time::Instant::now();
         let pending = crate::auth::start_login(flow, &*self.machine.exchange)
             .await
             .map_err(|error| AppError::Internal(error.to_string()))?;
@@ -306,7 +305,7 @@ impl Shared {
             let exchange = Arc::clone(&shared.machine.exchange);
             // Only the polls stop at a cancel. A save that started ends, so the outcome tells what `auth.json` holds.
             let polled = tokio::select! {
-                polled = crate::auth::poll_login(&pending, started, &*exchange) => Some(polled),
+                polled = crate::auth::poll_login(&pending, &*exchange) => Some(polled),
                 () = stop.cancelled() => None,
             };
             let outcome = match polled {
@@ -359,7 +358,7 @@ impl Shared {
     /// # Errors
     ///
     /// Returns [`AppError::NoLogin`] when no login with this id is in progress.
-    fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
+    pub(crate) fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
         let pending = self.pending_logins.borrow();
         let in_progress = pending
             .values()
@@ -376,7 +375,7 @@ impl Shared {
     ///
     /// Returns [`AppError::Invalid`] for an unknown provider, and [`AppError::Internal`] when yuke cannot update
     /// `auth.json`.
-    async fn logout(&self, provider: &str) -> Result<(), AppError> {
+    pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
         self.providers().get(provider).map_err(AppError::Invalid)?;
         let earlier = self.pending_logins.borrow_mut().remove(provider);
         if let Some(earlier) = earlier {
@@ -402,7 +401,7 @@ impl Shared {
     ///
     /// Returns [`AppError::Invalid`] for an unknown provider, a provider without an API key variable, or a bad key, and
     /// [`AppError::Internal`] when yuke cannot update `auth.json`.
-    async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
+    pub(crate) async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
         match &self.providers().get(provider).map_err(AppError::Invalid)?.auth {
             Auth::ApiKey(Some(_)) => {}
             Auth::ApiKey(None) => return Err(AppError::Invalid(format!("{provider} takes no API key"))),
@@ -425,14 +424,14 @@ impl Shared {
     }
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
-    fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
+    pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
         let loaded = Rc::clone(&self.profile.borrow().loaded);
         let plugins = plugins::manager::list(&self.machine.paths, &loaded).map_err(AppError::Invalid)?;
         Ok(ListPluginsResult { plugins })
     }
 
     /// Install the locked commits and lock the new Git plugins, for `plugin/sync`.
-    async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
+    pub(crate) async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
         let locked = params.locked.unwrap_or(false);
         plugins::manager::sync(&self.machine.paths, locked)
             .await
@@ -440,7 +439,7 @@ impl Shared {
     }
 
     /// The new commits of the Git plugins of the target, for `plugin/check`.
-    async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
+    pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
         let changes = plugins::manager::check(&self.machine.paths, &params.target)
             .await
             .map_err(AppError::Invalid)?;
@@ -448,7 +447,7 @@ impl Shared {
     }
 
     /// Write the new commits of changes into `plugins.lock`, for `plugin/apply`.
-    async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
+    pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
         let written = plugins::manager::apply(&self.machine.paths, &params.changes)
             .await
             .map_err(AppError::Invalid)?;
@@ -456,7 +455,7 @@ impl Shared {
     }
 
     /// Add a Git plugin to `config.json`, and install and lock it, for `plugin/add`.
-    async fn add_plugin(
+    pub(crate) async fn add_plugin(
         &self,
         params: yuke_protocol::AddPluginParams,
     ) -> Result<yuke_protocol::AddPluginResult, AppError> {
@@ -467,7 +466,7 @@ impl Shared {
     }
 
     /// Remove a plugin from `config.json` and `plugins.lock`, for `plugin/remove`.
-    async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
+    pub(crate) async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
         plugins::manager::remove(&self.machine.paths, &params.name)
             .await
             .map_err(AppError::Invalid)
@@ -623,8 +622,8 @@ impl App {
     }
 
     /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open. Its
-    /// process jobs go on, and its plugin jobs stop. Its next turn takes the tools and hooks of the new plugins. A new session scans the skill folders
-    /// of the new plugin list.
+    /// process jobs go on, and its plugin jobs stop. Its next turn takes the tools and hooks of the new plugins. A new
+    /// session scans the skill folders of the new plugin list.
     ///
     /// # Errors
     ///
@@ -707,91 +706,9 @@ impl App {
         self.shared.providers()
     }
 
-    /// Start a device login of `provider`, as `Shared::login` does. A client learns the end from the notification.
-    pub(crate) async fn login(&self, provider: String) -> Result<LoginResult, AppError> {
-        Ok(self.shared.login(provider).await?.0)
-    }
-
-    /// Ask the login `id` in progress to stop, as `Shared::cancel_login` does.
-    pub(crate) fn cancel_login(&self, id: LoginId) -> Result<(), AppError> {
-        self.shared.cancel_login(id)
-    }
-
-    /// Remove what yuke stored for `provider`, as `Shared::logout` does.
-    pub(crate) async fn logout(&self, provider: &str) -> Result<(), AppError> {
-        self.shared.logout(provider).await
-    }
-
-    /// Store `api_key` as the API key of `provider`, as `Shared::set_api_key` does.
-    pub(crate) async fn set_api_key(&self, provider: &str, api_key: String) -> Result<(), AppError> {
-        self.shared.set_api_key(provider, api_key).await
-    }
-
-    /// The providers of the profile with their models: every provider with `all`, else only the ready ones. Only a ready
-    /// provider has models.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Internal`] when `auth.json` does not read or holds no valid content.
-    pub(crate) async fn catalog(&self, all: bool) -> Result<ListCatalogResult, AppError> {
-        self.shared.catalog(all).await
-    }
-
-    /// The plugins of `config.json` with their state. It uses no network.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad `config.json` or `plugins.lock`.
-    pub(crate) fn list_plugins(&self) -> Result<ListPluginsResult, AppError> {
-        self.shared.list_plugins()
-    }
-
-    /// Install the locked commits of the Git plugins, and lock the new ones.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad file, a lock that does not match with `locked`, or a failed install.
-    pub(crate) async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
-        self.shared.sync_plugins(params).await
-    }
-
-    /// The new commits of the Git plugins of the target. Each new commit is installed, and the lock stays.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad file, an unknown name, or a failed fetch or install.
-    pub(crate) async fn check_plugins(&self, params: CheckPluginsParams) -> Result<CheckPluginsResult, AppError> {
-        self.shared.check_plugins(params).await
-    }
-
-    /// Write the new commits of changes into `plugins.lock`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad change, or when the lock does not read or write.
-    pub(crate) async fn apply_plugins(&self, params: ApplyPluginsParams) -> Result<ApplyPluginsResult, AppError> {
-        self.shared.apply_plugins(params).await
-    }
-
-    /// Add a Git plugin to `config.json`, install it, and lock it. The comments of `config.json` stay.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad file, a plugin that `config.json` has already, or a failed install.
-    pub(crate) async fn add_plugin(
-        &self,
-        params: yuke_protocol::AddPluginParams,
-    ) -> Result<yuke_protocol::AddPluginResult, AppError> {
-        self.shared.add_plugin(params).await
-    }
-
-    /// Remove a plugin from `config.json` and `plugins.lock` by its name.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AppError::Invalid`] for a bad file or an unknown name.
-    pub(crate) async fn remove_plugin(&self, params: yuke_protocol::RemovePluginParams) -> Result<(), AppError> {
-        self.shared.remove_plugin(params).await
+    /// The parts that the open sessions share: the logins, the credentials, and the plugin manager calls.
+    pub(crate) fn shared(&self) -> &Rc<Shared> {
+        &self.shared
     }
 
     /// Use the token of `params` for each model request of its provider from the next attempt on, in place of the

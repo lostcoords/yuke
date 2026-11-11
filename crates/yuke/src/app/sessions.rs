@@ -145,10 +145,7 @@ pub(super) struct Reload<'a> {
 
 impl Drop for Reload<'_> {
     fn drop(&mut self) {
-        let mut registry = self.service.registry.borrow_mut();
-        if registry.phase == Phase::Reloading {
-            registry.phase = Phase::Ready;
-        }
+        self.service.registry.borrow_mut().phase = Phase::Ready;
     }
 }
 
@@ -298,12 +295,12 @@ impl SessionService {
         watch
     }
 
-    /// Open the plugins of each later session with `runtime`.
     /// The handle of the plugins of the runtime now, or `None` before the first runtime starts.
     pub(super) fn plugins(&self) -> Option<Handle> {
         self.runtime.borrow().clone()
     }
 
+    /// Open the plugins of each later session with `runtime`.
     pub(super) fn set_runtime(&self, runtime: Handle) {
         *self.runtime.borrow_mut() = Some(runtime);
     }
