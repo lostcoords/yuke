@@ -16,6 +16,7 @@ import {
 } from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
 import type { PluginContext } from "yuke:plugins";
+import { env } from "yuke:process";
 import type { ModelInfo, SessionId } from "yuke:protocol";
 import type { Mount, View } from "yuke:tui";
 
@@ -281,12 +282,27 @@ export async function apply(ctx: PluginContext): Promise<void> {
   await readModels();
   /** The open question before a quit. */
   let asked: Mount | undefined;
+  const home = env.get("HOME");
+  /** Show the folder item with `folder`, the home folder as `~`, or no folder item. */
+  const setFolder = (folder: string | undefined): void => {
+    if (folder === undefined) {
+      tui.status.delete("folder");
+      return;
+    }
+    const inHome = home !== undefined && (folder === home || folder.startsWith(`${home}/`));
+    const text = inHome ? `~${folder.slice(home.length)}` : folder;
+    // The folder gives way first in a narrow bar.
+    tui.status.set("folder", { text, side: "left", order: -10, priority: -1 });
+  };
   /** Show the model item with `text`, or no model item. */
   const setModel = (text: string | undefined): void => {
     if (text === undefined) tui.status.delete("model");
     else tui.status.set("model", { text, side: "right", order: 10 });
   };
-  /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
+  /**
+   * Show the folder, the model, the token share of the last answer, and the process jobs of the focused chat pane, or
+   * nothing.
+   */
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
@@ -294,7 +310,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const settings = status?.settings;
     if (status === undefined || settings === undefined) {
       for (const key of ["context", "jobs"]) tui.status.delete(key);
-      // A pane without a session shows the saved pick that its first send uses, while its provider is ready.
+      // A pane without a session shows the folder and the saved pick that its first send uses, while its provider is
+      // ready.
+      setFolder(status === undefined || status.bound ? undefined : tui.startup.cwd);
       const pick = status === undefined || status.bound ? undefined : chat.choice.current;
       const level = models
         ?.get(`${pick?.model.provider}/${pick?.model.model}`)
@@ -302,6 +320,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
       setModel(pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`);
       return;
     }
+    setFolder(settings.cwd);
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
     const { thinking, effort } = settings.settings.reasoning;
     const level = model?.reasoning.find(

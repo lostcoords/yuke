@@ -1,10 +1,18 @@
-// The status items of the bundled chat: the model, the token share of the last answer, and the jobs of the focused pane.
+// The status items of the bundled chat: the folder, the model, the token share of the last answer, and the jobs of the
+// focused pane.
 
 import { writeTextFile } from "yuke:fs";
+import { env } from "yuke:process";
 import type { Job, ProviderInfo, ProviderState, StoredEvent } from "yuke:protocol";
 import { createFrame, equal, folder, settled, test } from "yuke:test";
+import type { StatusItem } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
+
+/** The status items of the chat, without the folder, which a test of its own covers. */
+function listed(chat: Awaited<ReturnType<typeof loadChat>>): readonly StatusItem[] {
+  return chat.tui.status.list().filter((item) => item.key !== "chat:folder");
+}
 
 const HIGH = {
   ...SETTINGS,
@@ -50,7 +58,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
   });
   frame.start();
   await settled();
-  const items = (): string[][] => chat.tui.status.list().map((item) => [item.key, item.text]);
+  const items = (): string[][] => listed(chat).map((item) => [item.key, item.text]);
   const shown = items();
   sessions.push(
     commit(3, [{ assistant_text: { text: "more" } }], {
@@ -88,7 +96,7 @@ test("without a context window the context use is a token count", async () => {
   frame.start();
   await settled();
   equal(
-    chat.tui.status.list().map((item) => [item.key, item.text]),
+    listed(chat).map((item) => [item.key, item.text]),
     [
       ["chat:model", "m high"],
       ["chat:context", "32.0k tokens"],
@@ -110,7 +118,7 @@ test("an answer without an input count shows no context item", async () => {
   frame.start();
   await settled();
   equal(
-    chat.tui.status.list().map((item) => item.key),
+    listed(chat).map((item) => item.key),
     ["chat:model"],
   );
 });
@@ -130,14 +138,14 @@ test("the first send of a new pane shows the jobs of its session once the handle
   await settled();
   equal(sessions.inputs.length, 1);
   equal(
-    chat.tui.status.list().map((item) => item.key),
+    listed(chat).map((item) => item.key),
     ["chat:model", "chat:jobs"],
   );
 });
 
 /** The keys of the status items of `chat` and their texts. */
 function shownItems(chat: Awaited<ReturnType<typeof loadChat>>): string[][] {
-  return chat.tui.status.list().map((item) => [item.key, item.text]);
+  return listed(chat).map((item) => [item.key, item.text]);
 }
 
 test("a pane without a session shows the saved pick, and a new pick replaces it", async () => {
@@ -195,7 +203,7 @@ test("the bar of a session of a provider that was not ready at the start shows i
   frame.start();
   await settled();
   frame.draw();
-  const model = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:model")?.text;
+  const model = (): string | undefined => listed(chat).find((item) => item.key === "chat:model")?.text;
   const before = model();
 
   ready = true;
@@ -217,7 +225,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   frame.start();
   await settled();
   frame.draw();
-  const model = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:model")?.text;
+  const model = (): string | undefined => listed(chat).find((item) => item.key === "chat:model")?.text;
   const before = model();
 
   state = { kind: "ready", credential: { kind: "stored_api_key" } };
@@ -231,4 +239,19 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   await settled();
 
   equal([before, model()], [undefined, "m high"]);
+});
+
+test("the folder item shows the folder of the session, and a pane without one shows the start folder with ~ for home", async () => {
+  const home = env.get("HOME") ?? "/home";
+  using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: `${home}/launch` });
+  const chat = await loadChat(frame, fakeSessions(SAVED));
+  frame.start();
+  await settled();
+  const shown = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:folder")?.text;
+  const before = shown();
+
+  await chat.chat.show("s1");
+  await settled();
+
+  equal([before, shown()], ["~/launch", "/w"]);
 });
