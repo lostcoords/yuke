@@ -152,7 +152,7 @@ export const optionsSchema = {
   properties: {
     emptyView: {
       type: "boolean",
-      description: "Show the icon, the version, and the way to start in an empty chat pane. The default is true.",
+      description: "Show the header in an empty chat pane. Terminal.app omits the icon. The default is true.",
     },
   },
 } as const;
@@ -393,6 +393,8 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             target: () => targetOf(pane.session !== undefined, pane.transcript.settings),
             // Without the catalog, the header keeps the usual hint.
             ready: () => models === undefined || models.size > 0,
+            // Terminal.app finds no font with sextant glyphs and draws boxes.
+            icon: env.get("TERM_PROGRAM") !== "Apple_Terminal",
           });
   // A plugin can set its view before the default exists.
   emptyView ??= defaultEmptyView;

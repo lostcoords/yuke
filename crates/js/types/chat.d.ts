@@ -454,7 +454,8 @@ declare module "yuke:chat" {
      * without history, while no message waits and no turn runs. The view draws over the transcript area, and it reads
      * its size from the canvas. `create` runs once per pane, when the pane first shows the view. The last call wins. A
      * disposer restores the default only if its view is current. The default shows the icon, the version, the model,
-     * the folder, and the way to start; the option `emptyView: false` of the chat turns it off.
+     * the folder, and the way to start. Terminal.app shows the lines without the icon. The option `emptyView: false` of
+     * the chat turns the header off.
      *
      * ```ts
      * chat.setEmptyView(() => ({ draw: (canvas) => canvas.text(1, 1, "Ask me anything.") }));

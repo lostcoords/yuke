@@ -2,14 +2,20 @@
 // to start.
 
 import { writeTextFile } from "yuke:fs";
+import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import { env } from "yuke:process";
 import type { Block, SessionUpdate } from "yuke:protocol";
 import { createFrame, equal, folder, settled, test } from "yuke:test";
 import { CATALOG, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
-/** The first cell row of the icon: the pixel rows of the antenna tips. */
-const ICON_TOP = " ▀▀▄▄▄      ▄▄▄▀▀";
+/** The first cell row of the icon: the antennae. */
+const ICON_TOP = " 🬂🬀🬋🬱  🬵🬋🬁🬂";
+
+/** The cells `from` up to `to` of `row`. A sextant is two UTF-16 units, so the cut counts code points. */
+function cells(row: string | undefined, from: number, to?: number): string {
+  return [...(row ?? "")].slice(from, to).join("");
+}
 
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
@@ -36,7 +42,7 @@ test("a pane without a session shows the icon and, beside it, the version, the m
   const shown = rows(frame.frame);
 
   equal(
-    [shown[1]?.slice(2, 20), shown[2]?.slice(22), shown[3]?.slice(22), shown[4]?.slice(22)],
+    [cells(shown[1], 2, 13), cells(shown[1], 16), cells(shown[2], 16), cells(shown[3], 16)],
     [ICON_TOP, "yuke 1.2.3", "m high · /w", "Type / for commands"],
   );
 });
@@ -82,21 +88,21 @@ test("a narrow pane puts the lines below the icon and cuts a long line", async (
   const shown = rows(frame.frame);
 
   equal(
-    [shown[1]?.slice(2), shown[8], shown[9], shown[10]],
+    [cells(shown[1], 2), shown[6], shown[7], shown[8]],
     [ICON_TOP, "  yuke 1.2.3", "  m high · /a/very/long/fold…", "  Type / for commands"],
   );
 });
 
 test("a pane too short for the whole header shows none of it", async () => {
   await savedPick();
-  using frame = createFrame({ width: 80, height: 10 }, undefined, { cwd: "/w" });
+  using frame = createFrame({ width: 80, height: 8 }, undefined, { cwd: "/w" });
   await loadChat(frame);
   frame.start();
   await settled();
   frame.draw();
 
   equal(
-    rows(frame.frame).some((row) => row.includes("yuke") || row.includes("▀")),
+    rows(frame.frame).some((row) => row.includes("yuke") || row.includes("🬂")),
     false,
   );
 });
@@ -110,8 +116,8 @@ test("without a ready provider the header names /login, and a catalog change bri
   await settled();
   frame.draw();
   const before = rows(frame.frame)
-    .slice(2, 5)
-    .map((row) => row.slice(22));
+    .slice(1, 4)
+    .map((row) => cells(row, 16));
 
   ready = true;
   chat.fact("catalog.changed", undefined);
@@ -122,8 +128,8 @@ test("without a ready provider the header names /login, and a catalog change bri
     [
       before,
       rows(frame.frame)
-        .slice(2, 5)
-        .map((row) => row.slice(22)),
+        .slice(1, 4)
+        .map((row) => cells(row, 16)),
     ],
     [
       ["yuke 0.0.0", "/w", "Type /login to connect a provider"],
@@ -142,7 +148,7 @@ test("the header names the model and the folder of the bar, with the home folder
   frame.draw();
   const bar = ["chat:model", "chat:folder"].map((key) => chat.tui.status.list().find((item) => item.key === key)?.text);
 
-  equal([rows(frame.frame)[3]?.slice(22), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
+  equal([cells(rows(frame.frame)[2], 16), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
 });
 
 test("setEmptyView replaces the header in each pane, and its disposer brings the default back", async () => {
@@ -157,7 +163,7 @@ test("setEmptyView replaces the header in each pane, and its disposer brings the
   dispose();
   frame.draw();
 
-  equal([replaced, rows(frame.frame)[1]?.slice(2, 20)], [" Ask me anything.", ICON_TOP]);
+  equal([replaced, cells(rows(frame.frame)[1], 2, 13)], [" Ask me anything.", ICON_TOP]);
 });
 
 test("the option emptyView false shows nothing in an empty pane", async () => {
@@ -173,4 +179,18 @@ test("the option emptyView false shows nothing in an empty pane", async () => {
       .every((row) => row === ""),
     true,
   );
+});
+
+test("a header without the icon shows the lines alone at the top left", () => {
+  const header = emptyHeader({
+    version: "1.2.3",
+    target: () => ({ model: "m high", folder: "/w" }),
+    ready: () => true,
+    icon: false,
+  });
+  using frame = createFrame({ width: 40, height: 6 }, () => header);
+  frame.start();
+  frame.draw();
+
+  equal(rows(frame.frame).slice(0, 5), ["", "  yuke 1.2.3", "  m high · /w", "  Type / for commands", ""]);
 });
