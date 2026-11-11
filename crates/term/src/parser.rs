@@ -312,7 +312,6 @@ fn parse_csi(input: &[u8]) -> Step {
         return legacy_key(code, params, n);
     }
     match input[last] {
-        b'M' if params.is_empty() => parse_x10_mouse(input),
         b'Z' => {
             let mut key = Key::new(Code::Tab);
             key.modifiers = Modifiers::SHIFT;
@@ -499,22 +498,11 @@ fn sgr_mouse(body: &[u8], release: bool, n: usize) -> Step {
     ) else {
         return Step::Skip(n);
     };
-    mouse(mask, column, row, Some(release)).map_or(Step::Skip(n), |mouse| Step::Event(Event::Mouse(mouse), n))
+    mouse(mask, column, row, release).map_or(Step::Skip(n), |mouse| Step::Event(Event::Mouse(mouse), n))
 }
 
-/// `CSI M` and three bytes, each offset by 32, from a terminal without SGR reports.
-fn parse_x10_mouse(input: &[u8]) -> Step {
-    let [_, _, _, mask, column, row, ..] = *input else {
-        return Step::Incomplete;
-    };
-    let offset = |byte: u8| u32::from(byte.saturating_sub(32));
-    mouse(offset(mask), offset(column), offset(row), None)
-        .map_or(Step::Skip(6), |mouse| Step::Event(Event::Mouse(mouse), 6))
-}
-
-/// A mouse report from its button mask and one-based place. `release` is `None` for an X10 report, which has no
-/// release flag.
-fn mouse(mask: u32, column: u32, row: u32, release: Option<bool>) -> Option<Mouse> {
+/// A mouse report from its button mask and one-based place.
+fn mouse(mask: u32, column: u32, row: u32, release: bool) -> Option<Mouse> {
     // Only pixel reports set the leave bit, and yuke asks for none.
     if mask & 0x100 != 0 {
         return None;
@@ -535,7 +523,7 @@ fn mouse(mask: u32, column: u32, row: u32, release: Option<bool>) -> Option<Mous
     let kind = match (motion, button, release) {
         (true, Button::None, _) => MouseKind::Motion,
         (true, _, _) => MouseKind::Drag,
-        (false, _, Some(true)) | (false, Button::None, None) => MouseKind::Release,
+        (false, _, true) => MouseKind::Release,
         _ => MouseKind::Press,
     };
     // The shift, alt, and ctrl bits of the mask are the first three modifier bits, moved left by 2.

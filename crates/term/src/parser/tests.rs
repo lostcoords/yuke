@@ -93,8 +93,6 @@ fn sequences() -> Vec<(&'static [u8], Vec<Event>)> {
             b"\x1b[<128;1;1M",
             vec![mouse(0, 0, Button::Extra(8), MouseKind::Press, none)],
         ),
-        (b"\x1b[M !!", vec![mouse(0, 0, Button::Left, MouseKind::Press, none)]),
-        (b"\x1b[M#!!", vec![mouse(0, 0, Button::None, MouseKind::Release, none)]),
         (
             b"\x1b]11;rgb:1e1e/1e1e/2e2e\x07",
             vec![Event::Background(rgb(0x1e, 0x1e, 0x2e))],
@@ -185,7 +183,7 @@ fn typed_text_reads_one_code_point_per_key() {
 fn a_flush_reads_the_kept_bytes_as_keys() {
     let none = Modifiers::NONE;
     let alt = Modifiers::ALT;
-    let cases: [(&[u8], Vec<Event>); 10] = [
+    let cases: [(&[u8], Vec<Event>); 9] = [
         (b"\x1b", vec![key(Code::Escape, none, "")]),
         // A legacy alt+[ and alt+O start a CSI and an SS3 sequence.
         (b"\x1b[", vec![key(Code::Char('['), alt, "")]),
@@ -198,16 +196,6 @@ fn a_flush_reads_the_kept_bytes_as_keys() {
         // Alt+] and 1 start the header of a background answer, but only the whole header waits for the end.
         (b"\x1b]1", vec![key(Code::Char(']'), alt, ""), char_key('1')]),
         (b"\x1bPq", vec![key(Code::Char('P'), alt, ""), char_key('q')]),
-        // A cut X10 mouse report.
-        (
-            b"\x1b[M a",
-            vec![
-                key(Code::Char('['), alt, ""),
-                char_key('M'),
-                char_key(' '),
-                char_key('a'),
-            ],
-        ),
         (b"\x1b\xc3", vec![]),
         (b"\xe4\xb8", vec![]),
     ];
