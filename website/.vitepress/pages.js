@@ -12,7 +12,7 @@ export const groups = [
     ],
   },
   {
-    text: 'Headless',
+    text: 'Run headless',
     pages: [
       ['one-shot', 'One-shot tasks'],
       ['rpc', 'Embed with RPC'],
