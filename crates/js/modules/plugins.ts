@@ -357,10 +357,15 @@ export interface PluginContext<O = Record<string, never>> {
 export interface HostEvents {
   /** An update of an open session, as a handle of `sessions.open` gets it. */
   readonly "session.update": { readonly sessionId: SessionId; readonly update: Frozen<SessionUpdate> };
-  /** A session is open, with its state and its open questions, oldest first. */
+  /**
+   * A session is open, with its state now. `parent` is the session that it works for, as a subagent does. The running
+   * jobs and the open questions come oldest first. A later job change comes as a `job` update.
+   */
   readonly "session.opened": {
     readonly sessionId: SessionId;
+    readonly parent: SessionId | null;
     readonly state: SessionState;
+    readonly jobs: readonly Frozen<Job>[];
     readonly questions: readonly InteractionId[];
   };
   /** A session closed. No update of it follows. A later open gives a new `session.opened`. */

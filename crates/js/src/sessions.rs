@@ -46,13 +46,17 @@ pub enum Fact {
         /// The update.
         update: Box<SessionUpdate>,
     },
-    /// The session `session_id` is open, with its state and its open questions now.
+    /// The session `session_id` is open, with its parent, its state, its running jobs, and its open questions now.
     #[serde(rename = "session.opened", rename_all = "camelCase")]
     Opened {
         /// The session that is open.
         session_id: SessionId,
+        /// The session that this session works for, as a subagent does.
+        parent: Option<SessionId>,
         /// Whether a turn runs now.
         state: SessionState,
+        /// The running jobs now, oldest first.
+        jobs: Vec<Job>,
         /// The open questions now, oldest first.
         questions: Vec<InteractionId>,
     },

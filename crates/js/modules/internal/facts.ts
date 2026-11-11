@@ -5,7 +5,7 @@ import { failureOf } from "yuke:internal/failure";
 import { type Fact, factsListen, factsRelease, factsWatch, notify } from "yuke:internal/native";
 import { frozen } from "yuke:internal/values";
 import type { HostEvents } from "yuke:plugins";
-import type { InteractionId, SessionId, SessionState } from "yuke:protocol";
+import type { InteractionId, Job, SessionId, SessionState } from "yuke:protocol";
 
 type Event = keyof HostEvents;
 
@@ -20,8 +20,11 @@ interface Listener {
 }
 
 const listeners = new Set<Listener>();
-/** The open sessions of the watch, so a later listener of `session.opened` gets them too. */
-const open = new Map<SessionId, { state: SessionState; questions: InteractionId[] }>();
+/** The open sessions of the watch, so a later listener of `session.opened` gets them as they are now. */
+const open = new Map<
+  SessionId,
+  { readonly parent: SessionId | null; state: SessionState; jobs: Job[]; questions: InteractionId[] }
+>();
 /** The key of the watch now, or 0 without a watch. A fact of an older watch counts for nothing. */
 let key = 0;
 let lastKey = 0;
@@ -30,7 +33,13 @@ let listening = false;
 /** Keep the open sessions of the watch in step with `fact`. */
 function track(fact: Fact): void {
   if (fact.event === "session.opened") {
-    open.set(fact.data.sessionId, { state: fact.data.state, questions: [...fact.data.questions] });
+    const data = fact.data;
+    open.set(data.sessionId, {
+      parent: data.parent,
+      state: data.state,
+      jobs: [...data.jobs],
+      questions: [...data.questions],
+    });
   } else if (fact.event === "session.closed") {
     open.delete(fact.data.sessionId);
   } else if (fact.event === "session.update") {
@@ -38,7 +47,13 @@ function track(fact: Fact): void {
     const update = fact.data.update;
     if (session === undefined) return;
     if (update.sessionUpdate === "state") session.state = update.state;
-    else if (update.sessionUpdate === "interaction_requested") session.questions.push(update.interactionId);
+    else if (update.sessionUpdate === "job") {
+      const job = update.job;
+      const known = session.jobs.some((entry) => entry.id === job.id);
+      if (job.state !== "running") session.jobs = session.jobs.filter((entry) => entry.id !== job.id);
+      else if (known) session.jobs = session.jobs.map((entry) => (entry.id === job.id ? job : entry));
+      else session.jobs.push(job);
+    } else if (update.sessionUpdate === "interaction_requested") session.questions.push(update.interactionId);
     else if (update.sessionUpdate === "interaction_closed") {
       session.questions = session.questions.filter((id) => id !== update.interactionId);
     }
@@ -115,7 +130,7 @@ export function on<K extends Event>(
   if (event === "session.opened") {
     for (const [sessionId, session] of open) {
       if (listeners.has(entry)) {
-        call(entry, frozen({ sessionId, state: session.state, questions: [...session.questions] }));
+        call(entry, frozen({ sessionId, ...session, jobs: [...session.jobs], questions: [...session.questions] }));
       }
     }
   }

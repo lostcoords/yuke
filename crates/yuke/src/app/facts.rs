@@ -8,7 +8,9 @@ use std::rc::{Rc, Weak};
 
 use tokio::sync::oneshot;
 use yuke_js::{Fact, FactSink};
-use yuke_protocol::{ExtensionRequestParams, InteractionId, NoticeParams, ServerNotification, SessionId, SessionState};
+use yuke_protocol::{
+    ExtensionRequestParams, InteractionId, Job, NoticeParams, ServerNotification, SessionId, SessionState,
+};
 
 use super::{Answer, Observer};
 
@@ -45,12 +47,14 @@ impl Facts {
         }
     }
 
-    /// Tell each watch, or only the watch `only`, that `session` is open with `state` and `questions`. A watch that
-    /// knows the session already gets nothing.
+    /// Tell each watch, or only the watch `only`, that `session` is open with `parent`, `state`, `jobs`, and
+    /// `questions`. A watch that knows the session already gets nothing.
     pub(super) fn opened(
         &self,
         session: SessionId,
+        parent: Option<SessionId>,
         state: SessionState,
+        jobs: &[Job],
         questions: &[InteractionId],
         only: Option<u64>,
     ) {
@@ -69,7 +73,9 @@ impl Facts {
         for sink in sinks {
             sink(Fact::Opened {
                 session_id: session,
+                parent,
                 state,
+                jobs: jobs.to_vec(),
                 questions: questions.to_vec(),
             });
         }
@@ -181,8 +187,8 @@ mod tests {
             message: "ready".to_owned(),
         };
         facts.update(session, &update);
-        facts.opened(session, SessionState::Idle, &[], Some(watch.id));
-        facts.opened(session, SessionState::Idle, &[], None);
+        facts.opened(session, None, SessionState::Idle, &[], &[], Some(watch.id));
+        facts.opened(session, None, SessionState::Idle, &[], &[], None);
         facts.update(session, &update);
         facts.closed(session);
         facts.update(session, &update);
@@ -195,7 +201,9 @@ mod tests {
             [
                 Fact::Opened {
                     session_id: session,
+                    parent: None,
                     state: SessionState::Idle,
+                    jobs: Vec::new(),
                     questions: Vec::new()
                 },
                 Fact::Update {

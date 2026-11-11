@@ -1,6 +1,6 @@
 // The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
 
-import type { HostEvents, PluginContext, PluginSession, QuestionAnswer } from "yuke:plugins";
+import type { HostEvents, PluginContext, PluginSession, QuestionAnswer, SessionContext } from "yuke:plugins";
 import { createHost, equal, reply, settled, test } from "yuke:test";
 
 /** A plugin that keeps its context for the test. */
@@ -127,6 +127,52 @@ test("a listener that comes during a question of a running watch gets the open a
   await turn;
 
   equal([first, later], [["idle 0"], ["running 1"]]);
+});
+
+test("an open gives the parent and the running jobs, and a later listener gets the jobs as the updates left them", async () => {
+  const plugin = watcher();
+  const contexts = new Map<string, SessionContext>();
+  await using host = await createHost({
+    plugins: [
+      {
+        name: "watcher",
+        apply: plugin.apply,
+        session: (s) => {
+          contexts.set(s.sessionId, s);
+        },
+      },
+    ],
+  });
+  const parent = await host.openSession();
+  const ctx = plugin.ctx();
+  const child = await ctx.get("sessions").create(parent.settings, { parent: parent.id });
+  const end = Promise.withResolvers<undefined>();
+  await contexts.get(parent.id)?.jobs.run({ id: "explorer", label: "one" }, () => end.promise);
+  /** The opens that a new listener gets: the session, its parent, and the ids of its running jobs. */
+  const opens = (): string[] => {
+    const got: string[] = [];
+    ctx.on("session.opened", (data) => {
+      const name = data.sessionId === child ? "child" : "parent";
+      const of = data.parent === parent.id ? "of parent" : "top";
+      got.push(`${name} ${of} [${data.jobs.map((job) => job.id).join()}]`);
+    });
+    return got;
+  };
+  // The first listener starts the watch, so the host gives each open as the session is now.
+  const during = opens();
+  await settled();
+  end.resolve(undefined);
+  await settled();
+  // The watch runs already, so this listener gets each open as the job updates left it.
+  const after = opens();
+
+  equal(
+    [during.toSorted(), after.toSorted()],
+    [
+      ["child of parent []", "parent top [explorer]"],
+      ["child of parent []", "parent top []"],
+    ],
+  );
 });
 
 test("a listener that throws is removed with one notice, and the other listeners stay", async () => {

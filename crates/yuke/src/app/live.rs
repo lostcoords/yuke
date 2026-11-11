@@ -168,7 +168,10 @@ impl LiveSession {
 
     /// Tell the watches of the facts, or only the watch `only`, that the session is open.
     pub(super) fn announce(&self, only: Option<u64>) {
-        self.parts.host.output.announce(only);
+        self.parts
+            .host
+            .output
+            .announce(self.parts.host.parent, &self.jobs(), only);
     }
 
     /// Whether a turn runs.
@@ -593,8 +596,8 @@ impl Output {
         }
     }
 
-    /// Tell the watches of the facts, or only the watch `only`, that the session is open.
-    fn announce(&self, only: Option<u64>) {
+    /// Tell the watches of the facts, or only the watch `only`, that the session is open with `parent` and `jobs`.
+    fn announce(&self, parent: Option<SessionId>, jobs: &[Job], only: Option<u64>) {
         let (state, questions) = {
             let sent = self.sent.borrow();
             if sent.ended {
@@ -607,7 +610,7 @@ impl Output {
             };
             (state, sent.questions.keys().copied().collect::<Vec<_>>())
         };
-        self.facts.opened(self.session, state, &questions, only);
+        self.facts.opened(self.session, parent, state, jobs, &questions, only);
     }
 
     /// Open the question `request` of `source`, and return its id and the receiver of its answer.

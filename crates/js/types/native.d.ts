@@ -485,7 +485,9 @@ declare module "yuke:internal/native" {
         readonly event: "session.opened";
         readonly data: {
           readonly sessionId: SessionId;
+          readonly parent: SessionId | null;
           readonly state: SessionState;
+          readonly jobs: Job[];
           readonly questions: InteractionId[];
         };
       }
