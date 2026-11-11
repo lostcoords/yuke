@@ -1,5 +1,5 @@
 ---
-description: Connect cloud providers and local model servers with API keys or account logins.
+description: Connect a provider with an API key, an account login, or a local model server.
 ---
 
 # Providers

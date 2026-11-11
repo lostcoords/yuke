@@ -89,6 +89,18 @@ assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 630], 'the
 const icon = readFileSync(join(output, 'apple-touch-icon.png'));
 assert.deepEqual([icon.readUInt32BE(16), icon.readUInt32BE(20)], [180, 180], 'the home-screen icon is 180x180');
 assert.equal(readFileSync(join(output, 'CNAME'), 'utf8').trim(), new URL(site).host, 'CNAME names the site domain');
-assert.ok(readFileSync(join(output, 'sitemap.xml'), 'utf8').includes(`<loc>${site}/docs/get-started</loc>`), 'the sitemap lists the guides');
+const sitemap = readFileSync(join(output, 'sitemap.xml'), 'utf8');
+assert.ok(sitemap.includes(`<loc>${site}/docs/get-started</loc>`), 'the sitemap lists the guides');
+const entries = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/g)];
+assert.ok(entries.length > 0, 'the sitemap lists pages');
+for (const [, entry] of entries) {
+  const loc = entry.match(/<loc>([^<]*)<\/loc>/)?.[1] ?? entry;
+  assert.match(entry, /<lastmod>\d{4}-\d{2}-\d{2}/, `${loc} has a lastmod`);
+}
+assert.equal(
+  readFileSync(join(output, 'robots.txt'), 'utf8'),
+  `User-agent: *\nSitemap: ${site}/sitemap.xml\n`,
+  'robots.txt points at the sitemap',
+);
 
 console.log(`site check passed: ${pages.length} pages, ${links} internal links, ${Object.keys(moved).length} redirects`);

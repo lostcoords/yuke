@@ -1,5 +1,5 @@
 ---
-description: Configure yuke folders, profiles, and plugins.
+description: Set the folders and profiles for config, credentials, sessions, and plugins.
 ---
 
 # Configuration

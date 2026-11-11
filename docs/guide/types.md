@@ -1,5 +1,5 @@
 ---
-description: Use the installed public modules and declarations to type-check yuke plugins.
+description: Type-check a plugin against the public modules that yuke installs.
 ---
 
 # Public types

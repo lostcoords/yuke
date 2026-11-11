@@ -1,10 +1,10 @@
 ---
-description: Install yuke, connect a model, and run your first task.
+description: Install yuke on macOS, Linux, or Windows (WSL), then connect a model.
 ---
 
 # Quick start
 
-yuke runs in your terminal on macOS and Linux. One binary holds the agent and the terminal UI. You need no plugin to run a task.
+yuke runs in your terminal on macOS, Linux, and Windows (WSL). One binary holds the agent and the terminal UI. You need no plugin to run a task.
 
 ## Install yuke
 
