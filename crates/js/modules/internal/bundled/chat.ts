@@ -1,8 +1,8 @@
 /**
  * The bundled plugin `chat`: the default pane of the terminal interface. Each pane has its own transcript, composer,
- * folds, and handle of its session. The start pane shows the session of `tui.startup`. A reload keeps the session,
- * the draft, the folds, and the scroll place of each pane. Each command acts on the active pane. The service `chat`
- * shows a session in a pane for other plugins.
+ * folds, and handle of its session. The start pane shows the session of `tui.startup`, and `/new` empties a pane. A
+ * reload keeps the session, the draft, the folds, the scroll place, and the folder of the next session of each pane.
+ * Each command acts on the active pane. The service `chat` shows a session in a pane for other plugins.
  */
 
 import type { ChatPane, ChatPresentation, ChatPresentationOptions, ChatReadOnly, ComposerFrame } from "yuke:chat";
@@ -16,9 +16,9 @@ import {
   type PaneState,
 } from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
-import type { Frozen, PluginContext } from "yuke:plugins";
+import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
-import type { ModelInfo, SessionId, SessionSettings } from "yuke:protocol";
+import type { ModelInfo, SessionId } from "yuke:protocol";
 import type { Infer } from "yuke:tools";
 import type { Mount, View } from "yuke:tui";
 
@@ -90,6 +90,15 @@ const COMMANDS: readonly {
     in: "chat",
     run: (pane) => pane.chooseModel(),
     enabled: (pane) => !pane.asking(),
+  },
+  {
+    name: "new",
+    slash: "new",
+    description: "Start a new session in the pane",
+    keys: ["ctrl+k n"],
+    in: "chat",
+    run: (pane) => pane.newSession(),
+    enabled: (pane) => !pane.asking() && pane.session() !== undefined,
   },
   {
     name: "rename",
@@ -314,14 +323,15 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const shownFolder = (folder: string): string =>
     home !== undefined && (folder === home || folder.startsWith(`${home}/`)) ? `~${folder.slice(home.length)}` : folder;
   /**
-   * The model with its level, and the folder, of the next message of a pane. A pane without a session uses the saved
-   * pick, while its provider is ready, and the start folder. A session without its settings yet gives nothing.
+   * The model with its level, and the folder, of the next message of the pane with `status`. A pane without a session
+   * uses the saved pick, while its provider is ready, and the folder of its next session. A session without its
+   * settings yet gives nothing.
    */
   const targetOf = (
-    bound: boolean,
-    settings: Frozen<SessionSettings> | undefined,
+    status: ReturnType<PaneActions["status"]>,
   ): { readonly model?: string | undefined; readonly folder?: string | undefined } => {
-    if (bound) {
+    const settings = status.settings;
+    if (status.bound) {
       if (settings === undefined) return {};
       const { thinking, effort } = settings.settings.reasoning;
       const level = models
@@ -338,7 +348,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       ?.get(`${pick?.model.provider}/${pick?.model.model}`)
       ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
     const model = pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`;
-    return { model, folder: shownFolder(tui.startup.cwd) };
+    return { model, folder: shownFolder(status.nextFolder) };
   };
   /** Show the folder item with `text`, or no folder item. */
   const setFolder = (text: string | undefined): void => {
@@ -359,7 +369,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
     const status = active()?.status();
-    const target = status === undefined ? {} : targetOf(status.bound, status.settings);
+    const target = status === undefined ? {} : targetOf(status);
     setFolder(target.folder);
     setModel(target.model);
     const settings = status?.settings;
@@ -390,7 +400,10 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       : (_mount, pane) =>
           emptyHeader({
             version: tui.startup.version,
-            target: () => targetOf(pane.session !== undefined, pane.transcript.settings),
+            target: () => {
+              const status = panes.get(pane.view)?.status();
+              return status === undefined ? {} : targetOf(status);
+            },
             // Without the catalog, the header keeps the usual hint.
             ready: () => models === undefined || models.size > 0,
             // Terminal.app finds no font with sextant glyphs and draws boxes.

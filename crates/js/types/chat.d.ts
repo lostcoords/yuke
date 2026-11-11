@@ -42,7 +42,7 @@ declare module "yuke:chat" {
     get id(): SessionId | undefined;
     /** The handle of the shown session, until its end, as by a close of another client. */
     get handle(): SessionHandle | undefined;
-    /** The transcript of the shown session. Each open gives a new one. */
+    /** The transcript of the shown session. Each open and each `leave` gives a new one. */
     get transcript(): Transcript;
     /** The transcript holds the first saved event. */
     get historyComplete(): boolean;
@@ -60,6 +60,11 @@ declare module "yuke:chat" {
      * the result of the first call. It rejects with the failure of a running open.
      */
     ensure(settings: () => Promise<SessionSettings | undefined>): Promise<SessionHandle | undefined>;
+    /**
+     * Show no session: end the hold of the shown session and start an empty transcript. The session itself goes on, and
+     * a turn of it keeps running. The next `ensure` creates a session. Without a shown session, it does nothing.
+     */
+    leave(): void;
     /**
      * Load one page of history: the missing events of a gap first, else the page before the first held event. It does
      * not reject. A failure goes in `historyError`, and no later page loads until the next open.
@@ -394,7 +399,7 @@ declare module "yuke:chat" {
     /** The session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
     readonly session: (view: View) => SessionId | undefined;
     /**
-     * Call `listener` after a chat pane moves to another session. It gets no call for a pane that starts on a session,
+     * Call `listener` after a chat pane moves to another session or to no session. It gets no call for a pane that starts on a session,
      * or for a close.
      */
     readonly onChange: (listener: (view: View) => void) => () => void;

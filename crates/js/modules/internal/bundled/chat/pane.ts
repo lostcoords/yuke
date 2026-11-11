@@ -1,6 +1,7 @@
 /**
  * One chat pane: its transcript, its composer, its folds, and the `ChatSession` of its session.
- * An unbound pane creates its session at the first send or image paste.
+ * An unbound pane creates its session at the first send or image paste. `/new` unbinds a pane, and its next session
+ * starts in the folder of the session that it left.
  * The model and the reasoning come from `choice.json`, else from a picker.
  */
 
@@ -60,11 +61,12 @@ interface Viewport {
 }
 
 /**
- * The saved state of a pane: the session that it shows, the draft of its composer, its fold choices, and the place of
- * a transcript that does not follow the tail.
+ * The saved state of a pane: the session that it shows, the draft of its composer, its fold choices, the place of a
+ * transcript that does not follow the tail, and the folder of the next session of a pane without a session.
  */
 export interface PaneState {
   readonly session?: SessionId | undefined;
+  readonly nextFolder?: string | undefined;
   readonly draft?: EditorState | undefined;
   readonly folds?: readonly (readonly [string, boolean])[] | undefined;
   readonly viewport?: Viewport | undefined;
@@ -113,9 +115,18 @@ export interface PaneActions {
    * open fails or a send, a model choice, an image paste, or a recall runs.
    */
   readonly show: (id: SessionId) => Promise<void>;
-  /** What the status bar shows of the session of the pane. `bound` is true when the pane has a session. */
+  /**
+   * Show no session, with an empty composer. The next message creates a session in the folder of the session before.
+   * The session before keeps its work. A busy pane does nothing.
+   */
+  readonly newSession: () => void;
+  /**
+   * What the status bar shows of the session of the pane. `bound` is true when the pane has a session. `nextFolder`
+   * is the folder of a session that the pane creates.
+   */
   readonly status: () => {
     readonly bound: boolean;
+    readonly nextFolder: string;
     readonly settings: Frozen<SessionSettings> | undefined;
     readonly usage: Frozen<Usage> | undefined;
     readonly jobs: number;
@@ -165,6 +176,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // The draft of each session that this pane left by `show`, for the return to it.
   const drafts = new Map<SessionId, EditorState>();
   let bound = chatSession.id;
+  // The folder that `/new` left keeps the next session there, also after a reload.
+  let nextFolder = state.nextFolder;
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
   const changed = (): void => {
@@ -186,8 +199,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let document = create(keyOf(), state.folds);
   // The saved place waits until its item loads.
   let restore = state.viewport;
-  // One send, model choice, image paste, or show at a time. Another send, model choice, or image paste does nothing
-  // until it ends, also while a picker is open, and a show rejects.
+  // One send, model choice, image paste, show, or rename at a time. Another send, model choice, image paste, or `/new`
+  // does nothing until it ends, also while a picker is open, and a show rejects.
   let busy = false;
   const working = new ChatWorking(chatSession, { signal: mount.signal, now: () => tui.now() });
   // The cancel of the next frame of the spinner, so a turn that ends stops its loop.
@@ -320,7 +333,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         toolChoice: "auto",
         outputSchema: null,
       },
-      cwd: tui.startup.cwd,
+      cwd: nextFolder ?? tui.startup.cwd,
     };
   };
 
@@ -436,7 +449,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     onError: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
   });
 
-  /** Whether a send, model choice, image paste, or show of this pane runs now. */
+  /** The pane is busy: a send, a model choice, an image paste, a recall, a show, or a rename runs. */
   const occupied = (): boolean => busy || chatComposer.busy;
 
   /** Whether the pane can open its rename dialog without taking a competing pane action. */
@@ -763,7 +776,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return {
         type: "pane",
         state: {
-          ...(chatSession.id === undefined ? {} : { session: chatSession.id }),
+          ...(chatSession.id !== undefined
+            ? { session: chatSession.id }
+            : nextFolder !== undefined
+              ? { nextFolder }
+              : {}),
           draft: composer.state as unknown as JsonValue,
           folds: document.folds,
           ...(viewport === undefined ? {} : { viewport: { key: viewport.key, row: viewport.row } }),
@@ -773,8 +790,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
   /** Keep the draft of the session `before` for the return to it, and restore the draft of the session `after`. */
   const swapDraft = (before: SessionId | undefined, after: SessionId): void => {
-    // A pane without a session has no images in its draft, so the draft goes with the pane.
-    if (before === undefined) return;
+    // A pane without a session has no images in its draft, so the draft goes with the pane, and an older draft of
+    // `after` would come back later.
+    if (before === undefined) {
+      drafts.delete(after);
+      return;
+    }
     const draft = composer.state;
     if (draft.text !== "") drafts.set(before, draft);
     chatComposer.setDraft(drafts.get(after) ?? EMPTY);
@@ -793,11 +814,22 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (mount.signal.aborted || id === before) return;
     swapDraft(before, id);
   };
+  const newSession = (): void => {
+    if (occupied()) return;
+    // The server keeps a session with a turn or a job open after the pane lets go of it.
+    const running = working.active || (chatSession.handle?.jobs().length ?? 0) > 0;
+    nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
+    chatComposer.setDraft(EMPTY);
+    chatSession.leave();
+    if (running) ctx.notify("info", "the work goes on: /sessions shows it");
+  };
   const actions: PaneActions = {
     session: () => chatSession.id,
     show,
+    newSession,
     status: () => ({
       bound: chatSession.id !== undefined,
+      nextFolder: nextFolder ?? tui.startup.cwd,
       settings: chatSession.transcript.settings,
       usage: chatSession.transcript.usage,
       // A plugin shows its own jobs, as a subagent list does, so the bar counts only the commands.

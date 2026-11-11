@@ -163,6 +163,12 @@ export class ChatSession {
     return next;
   }
 
+  leave(): void {
+    if (this.#id === undefined) return;
+    this.#show(undefined, new Transcript(), undefined);
+    this.#changed();
+  }
+
   async loadOlderHistory(): Promise<void> {
     const id = this.#id;
     // Before a snapshot, the transcript has no first event and no gap, so no page loads.
@@ -199,7 +205,7 @@ export class ChatSession {
     return () => this.#listeners.delete(listener);
   }
 
-  /** Switch to `id` and its transcript, and end the hold of the session before. */
+  /** Switch to `id`, or to no session, and its transcript, and end the hold of the session before. */
   #show(id: SessionId | undefined, transcript: Transcript, release: AbortController | undefined): void {
     const old = this.#release;
     this.#id = id;
