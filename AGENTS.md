@@ -2,6 +2,8 @@
 
 The Rust workspace of the yuke coding agent.
 
+The codebase is yours: what it's for and how it's built are your call, and you'll keep building on it.
+
 Write in ASD-STE100: one meaning per word, active voice, simple tense, one instruction per sentence.
 Look up APIs on the internet and in this tree. Do not guess.
 
