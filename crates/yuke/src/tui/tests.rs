@@ -118,7 +118,7 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
     let startup = Startup {
         cwd: "/work".to_owned(),
         session,
-        version: env!("CARGO_PKG_VERSION").to_owned(),
+        version: env!("YUKE_VERSION").to_owned(),
     };
     let machine = crate::app::Machine {
         interface: Some(Interface {
@@ -328,7 +328,7 @@ async fn the_startup_gives_the_folder_the_session_and_the_version_of_the_start()
     let id = saved_session(&place).await;
     let (display, output) = display();
     let app = started_on(&place, &display, Some(id)).await;
-    let version = env!("CARGO_PKG_VERSION");
+    let version = env!("YUKE_VERSION");
     output
         .shows(&format!(r#"{{"cwd":"/work","session":"{id}","version":"{version}"}}"#))
         .await;
