@@ -294,20 +294,3 @@ fn a_search_uses_its_round_target_mode_after_a_hook_changes_the_target() {
         }
     }
 }
-
-#[test]
-fn a_search_limit_outside_one_to_twenty_gets_an_error_result() {
-    let transport = ScriptedTransport::new([
-        tool_reply(&[("c1", "tool_search", r#"{"query": "issue", "limit": 0}"#)]),
-        text_reply("done"),
-    ]);
-    let model = model();
-    let mut toolset = Toolset::new();
-    toolset.add(create_issue_definition(), Recorder::default()).unwrap();
-    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset);
-
-    assert_eq!(
-        results_in_context(driver),
-        [ToolResult::error("c1", "The limit must be 1 to 20.")]
-    );
-}

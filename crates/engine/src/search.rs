@@ -169,16 +169,11 @@ fn singular(mut word: String) -> String {
     word
 }
 
-/// The default and the maximum count of matches of one search.
-const DEFAULT_LIMIT: usize = 5;
-const MAX_LIMIT: usize = 20;
+/// The count of matches of one search. The model searches again with other words for more.
+const LIMIT: usize = 5;
 
 /// The arguments of both search tools.
-fn search_schema() -> String {
-    format!(
-        r#"{{"type":"object","properties":{{"query":{{"type":"string","description":"Keywords that describe the tool."}},"limit":{{"type":"integer","minimum":1,"maximum":{MAX_LIMIT},"description":"The most matches. The default is {DEFAULT_LIMIT}."}}}},"required":["query"],"additionalProperties":false}}"#
-    )
-}
+const SEARCH_SCHEMA: &str = r#"{"type":"object","properties":{"query":{"type":"string","description":"Keywords that describe the tool."}},"required":["query"],"additionalProperties":false}"#;
 
 /// The arguments of [`TOOL_CALL_NAME`].
 const CALL_SCHEMA: &str = r#"{"type":"object","properties":{"name":{"type":"string","description":"The name of the tool."},"arguments":{"type":"object","description":"The arguments of the tool, as its input schema says."}},"required":["name","arguments"],"additionalProperties":false}"#;
@@ -189,7 +184,7 @@ static NATIVE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition
     description: "Load deferred tools. The deferred_tools section of the system prompt names them. Search by \
          keywords or by a tool name. Each match becomes callable by its name."
         .to_owned(),
-    input_schema: search_schema(),
+    input_schema: SEARCH_SCHEMA.into(),
     defer_loading: false,
 });
 
@@ -199,7 +194,7 @@ static BRIDGE_SEARCH: LazyLock<ToolDefinition> = LazyLock::new(|| ToolDefinition
     description: "Find deferred tools. The deferred_tools section of the system prompt names them. Search by \
          keywords or by a tool name. The result shows each match with its input schema. Call a match with tool_call."
         .to_owned(),
-    input_schema: search_schema(),
+    input_schema: SEARCH_SCHEMA.into(),
     defer_loading: false,
 });
 
@@ -259,7 +254,6 @@ impl<'a> Declared<'a> {
 #[derive(serde::Deserialize)]
 struct SearchArguments {
     query: String,
-    limit: Option<usize>,
 }
 
 /// Run the search `call` over the deferred tools of `toolset`. On a `native` target, the result loads the matches.
@@ -269,12 +263,8 @@ pub(crate) fn search(toolset: &Toolset, call: &ToolCall, native: bool) -> ToolRe
         Ok(arguments) => arguments,
         Err(error) => return ToolResult::error(&call.call_id, error),
     };
-    let limit = arguments.limit.unwrap_or(DEFAULT_LIMIT);
-    if !(1..=MAX_LIMIT).contains(&limit) {
-        return ToolResult::error(&call.call_id, format!("The limit must be 1 to {MAX_LIMIT}."));
-    }
     let deferred: Vec<&ToolDefinition> = toolset.deferred().collect();
-    let found = bm25(&arguments.query, &deferred, limit);
+    let found = bm25(&arguments.query, &deferred, LIMIT);
     if found.is_empty() {
         return ToolResult::success(
             &call.call_id,
