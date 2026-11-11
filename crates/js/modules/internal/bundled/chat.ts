@@ -237,9 +237,6 @@ export async function apply(ctx: PluginContext): Promise<void> {
     tui,
     panes,
     refresh: () => publish(),
-    refreshModels: () => {
-      void readModels().then(publish);
-    },
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
@@ -261,7 +258,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);
   };
-  // The models of the ready providers. A turn end reads them again when the shown model is missing.
+  // The models of the ready providers. A change of the providers reads them again.
   let models: Map<string, ModelInfo> | undefined;
   const readModels = (): Promise<void> =>
     ctx
@@ -284,6 +281,11 @@ export async function apply(ctx: PluginContext): Promise<void> {
   await readModels();
   /** The open question before a quit. */
   let asked: Mount | undefined;
+  /** Show the model item with `text`, or no model item. */
+  const setModel = (text: string | undefined): void => {
+    if (text === undefined) tui.status.delete("model");
+    else tui.status.set("model", { text, side: "right", order: 10 });
+  };
   /** Show the model, the token share of the last answer, and the process jobs of the focused chat pane, or nothing. */
   const publish = (): void => {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
@@ -297,8 +299,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
       const level = models
         ?.get(`${pick?.model.provider}/${pick?.model.model}`)
         ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
-      if (pick === undefined || level === undefined) tui.status.delete("model");
-      else tui.status.set("model", { text: `${pick.model.model} ${level}`, side: "right", order: 10 });
+      setModel(pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`);
       return;
     }
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
@@ -307,8 +308,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
       (choice) =>
         choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
     )?.level;
-    const name = level === undefined ? settings.model.model : `${settings.model.model} ${level}`;
-    tui.status.set("model", { text: name, side: "right", order: 10 });
+    setModel(level === undefined ? settings.model.model : `${settings.model.model} ${level}`);
     const usage = status.usage;
     // A count that the provider did not send is unknown, not zero.
     if (usage === undefined || usage.input === null) tui.status.delete("context");
@@ -326,11 +326,8 @@ export async function apply(ctx: PluginContext): Promise<void> {
     else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
   tui.onFocusChange(() => publish());
-  // A login does not tell the chat, so a turn end reads the ready providers again while the bar misses the model.
-  ctx.on("session.update", ({ update }) => {
-    if (update.sessionUpdate !== "state" || update.state === "running") return;
-    const model = active()?.status()?.settings?.model;
-    if (model !== undefined && models?.has(`${model.provider}/${model.model}`) !== true) chat.refreshModels();
+  ctx.on("catalog.changed", () => {
+    void readModels().then(publish);
   });
   tui.guardQuit((quit) => {
     // The resume text names each shown session, and each session whose work the quit stops.

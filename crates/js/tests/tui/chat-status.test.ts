@@ -186,7 +186,7 @@ test("a pane whose session does not open shows no saved pick", async () => {
   equal(shownItems(chat), []);
 });
 
-test("the bar of a session of a provider that was not ready at the start shows its level after the next turn", async () => {
+test("the bar of a session of a provider that was not ready at the start shows its level after a catalog change", async () => {
   using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: "/launch", session: "s1" });
   // The provider is not ready at the start, and a login makes it ready.
   let ready = false;
@@ -199,7 +199,7 @@ test("the bar of a session of a provider that was not ready at the start shows i
   const before = model();
 
   ready = true;
-  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "state", state: "idle" } });
+  chat.fact("catalog.changed", undefined);
   await settled();
 
   equal([before, model()], ["m", "m high"]);
@@ -221,6 +221,8 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   const before = model();
 
   state = { kind: "ready", credential: { kind: "stored_api_key" } };
+  // As the host does after a login.
+  chat.fact("catalog.changed", undefined);
   chat.tui.commands.run("chat:model");
   await settled();
   frame.key("enter");
