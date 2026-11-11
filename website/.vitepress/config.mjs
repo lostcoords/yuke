@@ -71,6 +71,7 @@ export default defineConfig({
     ['link', { rel: 'icon', href: `${base}logo.svg` }],
     ['link', { rel: 'apple-touch-icon', href: `${base}apple-touch-icon.png` }],
     ['meta', { name: 'theme-color', content: '#0c0d0c' }],
+    ['meta', { name: 'msvalidate.01', content: '9D4695D7762BCF14C9D7263762C8EECB' }],
   ],
   transformHead({ pageData, title, description }) {
     if (pageData.isNotFound) return [['meta', { name: 'robots', content: 'noindex' }]];
