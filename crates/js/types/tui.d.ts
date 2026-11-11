@@ -1062,7 +1062,7 @@ declare module "yuke:tui" {
       readonly delete: (key: string) => void;
       /** Each item of each plugin. */
       readonly list: () => readonly StatusItem[];
-      /** Call `listener` after each later change of the items. A throw removes the listener and reports the error. */
+      /** Call `listener` after each later change of the items. A throw of `listener` goes to the call that changed them. */
       readonly onChange: (listener: () => void) => () => void;
     };
     readonly widgets: WidgetRegistry;
