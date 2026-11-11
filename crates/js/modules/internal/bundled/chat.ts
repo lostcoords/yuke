@@ -292,7 +292,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     const inHome = home !== undefined && (folder === home || folder.startsWith(`${home}/`));
     const text = inHome ? `~${folder.slice(home.length)}` : folder;
     // The folder gives way first in a narrow bar.
-    tui.status.set("folder", { text, side: "left", order: -10, priority: -1 });
+    tui.status.set("folder", { text, side: "left", order: 10, priority: -1 });
   };
   /** Show the model item with `text`, or no model item. */
   const setModel = (text: string | undefined): void => {
