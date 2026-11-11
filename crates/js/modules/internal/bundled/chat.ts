@@ -218,16 +218,20 @@ export async function apply(ctx: PluginContext): Promise<void> {
     },
   });
   if (tui === undefined) return undefined;
-  const runningSessions = new Set<SessionId>();
-  ctx.on("session.opened", ({ sessionId, state }) => {
-    if (state === "running") runningSessions.add(sessionId);
+  // The work of each open session that a quit stops, also of a session that no pane shows.
+  const work = new Map<SessionId, { readonly parent: SessionId | null; turn: boolean; readonly jobs: Set<string> }>();
+  ctx.on("session.opened", (data) => {
+    const jobs = new Set(data.jobs.map((job) => job.id));
+    work.set(data.sessionId, { parent: data.parent, turn: data.state === "running", jobs });
   });
   ctx.on("session.update", ({ sessionId, update }) => {
-    if (update.sessionUpdate !== "state") return;
-    if (update.state === "running") runningSessions.add(sessionId);
-    else runningSessions.delete(sessionId);
+    const entry = work.get(sessionId);
+    if (entry === undefined) return;
+    if (update.sessionUpdate === "state") entry.turn = update.state === "running";
+    else if (update.sessionUpdate === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
+    else if (update.sessionUpdate === "job") entry.jobs.delete(update.job.id);
   });
-  ctx.on("session.closed", ({ sessionId }) => runningSessions.delete(sessionId));
+  ctx.on("session.closed", ({ sessionId }) => work.delete(sessionId));
   const chat: Chat = {
     ctx,
     tui,
@@ -329,19 +333,18 @@ export async function apply(ctx: PluginContext): Promise<void> {
     if (model !== undefined && models?.has(`${model.provider}/${model.model}`) !== true) chat.refreshModels();
   });
   tui.guardQuit((quit) => {
-    // Two panes on one session count once.
-    const work = new Map(
-      [...panes.values()].flatMap((pane) => {
-        const entry = pane.work();
-        return entry === undefined ? [] : [[entry.session, entry] as const];
-      }),
-    );
-    // A read-only pane resumes at its parent, and the parent can have no pane, so its turn counts here.
-    const resumed = new Set([...work.values()].map((entry) => entry.resume));
-    const running = new Set([...work.values()].filter((entry) => entry.turn).map((entry) => entry.session));
-    for (const session of resumed) if (runningSessions.has(session)) running.add(session);
-    const turns = running.size;
-    const jobs = [...work.values()].reduce((count, entry) => count + entry.jobs, 0);
+    // The resume text names each shown session, and each session whose work the quit stops.
+    const resumed = new Set([...panes.values()].flatMap((pane) => pane.resumeSession() ?? []));
+    let turns = 0;
+    let jobs = 0;
+    for (const [session, entry] of work) {
+      // A subagent runs as a job of its parent, so the turn of a child session does not count again.
+      const turn = entry.turn && entry.parent === null;
+      turns += turn ? 1 : 0;
+      jobs += entry.jobs.size;
+      // A child session resumes at its parent.
+      if (turn || entry.jobs.size > 0) resumed.add(entry.parent ?? session);
+    }
     // The host writes this text after it restores the terminal, so the user can open each session again.
     const resume = [...resumed].map((session) => `To resume this session, run: yuke -r ${session}`).join("\n");
     const leave = (): void => quit(resume === "" ? undefined : resume);

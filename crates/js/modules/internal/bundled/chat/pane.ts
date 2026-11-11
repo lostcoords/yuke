@@ -102,10 +102,8 @@ export interface PaneActions {
   readonly canRename: () => boolean;
   /** Rename the session in a dialog. */
   readonly rename: () => Promise<void>;
-  /** The work of the session of the pane that a quit stops, and the session to resume: the parent of a read-only one. */
-  readonly work: () =>
-    | { readonly session: SessionId; readonly resume: SessionId; readonly turn: boolean; readonly jobs: number }
-    | undefined;
+  /** The session that a quit names to resume: the session of the pane, or the parent of a read-only one. */
+  readonly resumeSession: () => SessionId | undefined;
   /** Answer the shown question with a cancel. */
   readonly cancelQuestion: () => void;
   /** The session of the pane. */
@@ -805,15 +803,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     locked: () => locked() !== undefined,
     canRename,
     rename,
-    work: () =>
-      chatSession.id === undefined
-        ? undefined
-        : {
-            session: chatSession.id,
-            resume: locked()?.back ?? chatSession.id,
-            turn: working.active,
-            jobs: chatSession.handle?.jobs().length ?? 0,
-          },
+    resumeSession: () => (chatSession.id === undefined ? undefined : (locked()?.back ?? chatSession.id)),
     cancelQuestion: () => questions.cancel(),
   };
   chat.panes.set(pane, actions);

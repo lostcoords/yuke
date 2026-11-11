@@ -14,14 +14,25 @@ const RESUME = "To resume this session, run: yuke -r s1";
 async function opened(jobs: readonly Job[] = []) {
   const frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(replies(3));
-  sessions.state.jobs = jobs;
   const chat = await loadChat(frame, sessions);
   // A frame test has no default keys.
   chat.tui.keys.bind("ctrl+q", "core:quit");
   frame.start();
   await settled();
+  // As the host does, the open of the pane gives the open of its session to each listener.
+  open(chat, "s1", { jobs });
   frame.draw();
   return { frame, sessions, chat };
+}
+
+/** Give the chat the open of the session `id`, which no pane needs to show. */
+function open(
+  chat: Awaited<ReturnType<typeof loadChat>>,
+  id: string,
+  facts: { readonly parent?: string; readonly state?: "idle" | "running"; readonly jobs?: readonly Job[] } = {},
+): void {
+  const data = { sessionId: id, parent: facts.parent ?? null, state: facts.state ?? "idle", jobs: facts.jobs ?? [] };
+  chat.fact("session.opened", { ...data, questions: [] });
 }
 
 const screen = (frame: ReturnType<typeof createFrame>): string[] => {
@@ -68,10 +79,9 @@ test("a quit with jobs asks, and it names the keys and what runs", async () => {
 });
 
 test("a quit during a turn asks, and the count names the turn and the job", async () => {
-  const { frame, sessions } = await opened([JOB]);
+  const { frame, chat } = await opened([JOB]);
   using _frame = frame;
-  sessions.push(RUNNING);
-  await settled();
+  chat.fact("session.update", { sessionId: "s1", update: RUNNING });
 
   frame.key("ctrl+q");
 
@@ -137,9 +147,10 @@ test("two panes on one session count its work once", async () => {
 });
 
 test("a read-only session warns about its own job, and a quit names its parent to resume", async () => {
-  const { frame, chat } = await opened([JOB]);
+  const { frame, chat } = await opened();
   using _frame = frame;
   chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
+  open(chat, "s1", { parent: "p1", jobs: [JOB] });
   frame.draw();
 
   frame.key("ctrl+q");
@@ -153,7 +164,7 @@ test("an idle read-only session warns while its parent runs a turn, and not afte
   const { frame, chat } = await opened();
   using _frame = frame;
   chat.chat.addReadOnly((session) => (session === "s1" ? { text: "A child", back: "p1" } : undefined));
-  chat.fact("session.opened", { sessionId: "p1", state: "running", questions: [] });
+  open(chat, "p1", { state: "running" });
   frame.draw();
 
   frame.key("ctrl+q");
@@ -166,17 +177,58 @@ test("an idle read-only session warns while its parent runs a turn, and not afte
 });
 
 test("two read-only children of one parent count each job, and a quit resumes the parent once", async () => {
-  const { frame, chat } = await opened([JOB]);
+  const { frame, chat } = await opened();
   using _frame = frame;
   chat.chat.addReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
   chat.tui.commands.run("core:split-right");
   await settled();
   await chat.chat.show("s2");
   await settled();
+  open(chat, "s1", { parent: "p1", jobs: [JOB] });
+  open(chat, "s2", { parent: "p1", jobs: [{ ...JOB, id: "j3" }] });
   frame.draw();
 
   frame.key("ctrl+q");
   equal(screen(frame).join("\n").includes("2 jobs are running."), true);
   frame.key("ctrl+q");
   equal(frame.quits, ["To resume this session, run: yuke -r p1"]);
+});
+
+test("a turn and a job of a session that no pane shows ask, and the quit names that session to resume", async () => {
+  const { frame, chat } = await opened();
+  using _frame = frame;
+  open(chat, "s9", { state: "running", jobs: [JOB] });
+
+  frame.key("ctrl+q");
+  const asked = screen(frame).at(-2);
+  frame.key("enter");
+
+  equal(
+    [asked, frame.quits],
+    [" 1 turn and 1 job are running.", [`${RESUME}\nTo resume this session, run: yuke -r s9`]],
+  );
+});
+
+test("a subagent counts as one job of its parent, and its own turn does not count again", async () => {
+  const { frame, chat } = await opened([SUBAGENT]);
+  using _frame = frame;
+  open(chat, "c1", { parent: "s1", state: "running" });
+
+  frame.key("ctrl+q");
+  const asked = screen(frame).at(-2);
+  frame.key("enter");
+
+  equal([asked, frame.quits], [" 1 job is running.", [RESUME]]);
+});
+
+test("a job that ends and a turn that ends no longer count", async () => {
+  const { frame, chat } = await opened([JOB]);
+  using _frame = frame;
+  chat.fact("session.update", { sessionId: "s1", update: RUNNING });
+  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "job", job: { ...JOB, state: "ended" } } });
+  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "state", state: "idle" } });
+
+  frame.key("ctrl+q");
+
+  equal(frame.quits, [RESUME]);
 });
