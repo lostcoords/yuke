@@ -315,7 +315,10 @@ impl Shared {
                 },
                 Some(Ok(grant)) => {
                     match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
-                        Ok(()) => LoginOutcome::Succeeded,
+                        Ok(()) => {
+                            shared.facts.catalog_changed();
+                            LoginOutcome::Succeeded
+                        }
                         Err(error) => LoginOutcome::Failed {
                             message: error.to_string(),
                         },
@@ -391,7 +394,9 @@ impl Shared {
         }
         crate::auth::logout(provider, self.machine.paths.data.clone())
             .await
-            .map_err(|error| AppError::Internal(error.to_string()))
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.facts.catalog_changed();
+        Ok(())
     }
 
     /// Store `api_key` in `auth.json` as the API key of `provider`. The new key replaces the stored key and wins over
@@ -420,7 +425,9 @@ impl Shared {
         }
         crate::auth::set_api_key(provider, api_key, self.machine.paths.data.clone())
             .await
-            .map_err(|error| AppError::Internal(error.to_string()))
+            .map_err(|error| AppError::Internal(error.to_string()))?;
+        self.facts.catalog_changed();
+        Ok(())
     }
 
     /// The plugins of `config.json` with their state, for `plugin/list`.
@@ -728,6 +735,7 @@ impl App {
         };
         let source = login_source(&self.shared, &provider.id, flow);
         source.push(Pushed::new(params, flow, SystemTime::now()).map_err(AppError::Invalid)?);
+        self.shared.facts.catalog_changed();
         Ok(())
     }
 

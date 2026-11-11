@@ -492,7 +492,8 @@ declare module "yuke:internal/native" {
         };
       }
     | { readonly event: "session.closed"; readonly data: { readonly sessionId: SessionId } }
-    | { readonly event: "notice"; readonly data: NoticeParams };
+    | { readonly event: "notice"; readonly data: NoticeParams }
+    | { readonly event: "catalog.changed"; readonly data?: undefined };
   /** Deliver the facts of this runtime to `deliver` with each watch key. Call it once. */
   export function factsListen(deliver: (key: number, fact: Fact) => void): void;
   /** Watch the facts as the watch `key`. No watch runs when it is called. The open sessions come first. */

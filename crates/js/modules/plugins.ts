@@ -376,6 +376,11 @@ export interface HostEvents {
    */
   readonly notice: Frozen<NoticeParams>;
   /**
+   * A login, a logout, or a credential changed the providers that are ready, so `catalog.list` can give other models.
+   * A reload of the profile restarts the plugins, so it gives no such event.
+   */
+  readonly "catalog.changed": undefined;
+  /**
    * The active theme or its look changed: another name, a change of that theme, or another background of the terminal.
    * Only the terminal interface sends it. A listener gets nothing for the theme from before it, so read
    * `tui.styles.theme` at its start.

@@ -69,6 +69,9 @@ pub enum Fact {
     /// A notice of the consumer or of a plugin.
     #[serde(rename = "notice")]
     Notice(NoticeParams),
+    /// A login, a logout, or a credential changed the providers that are ready, so the catalog can list other models.
+    #[serde(rename = "catalog.changed")]
+    CatalogChanged,
 }
 
 /// Receives the facts of one watch after the host state borrow ends. A call must not block.

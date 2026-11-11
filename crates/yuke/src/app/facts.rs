@@ -107,6 +107,19 @@ impl Facts {
         }
     }
 
+    /// Tell each watch that the catalog can list other models.
+    pub(super) fn catalog_changed(&self) {
+        let sinks: Vec<_> = self
+            .watchers
+            .borrow()
+            .iter()
+            .map(|watcher| Rc::clone(&watcher.sink))
+            .collect();
+        for sink in sinks {
+            sink(Fact::CatalogChanged);
+        }
+    }
+
     /// Start a watch with `sink`. It knows no session yet; the caller gives it the open ones.
     pub(super) fn watch(self: &Rc<Self>, sink: FactSink) -> Watch {
         let id = self.last.get() + 1;

@@ -175,6 +175,23 @@ test("an open gives the parent and the running jobs, and a later listener gets t
   );
 });
 
+test("a stored API key and a logout each tell the listeners that the catalog changed", async () => {
+  const plugin = watcher();
+  await using _host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
+  const ctx = plugin.ctx();
+  let changes = 0;
+  ctx.on("catalog.changed", () => {
+    changes += 1;
+  });
+  await settled();
+
+  await ctx.get("auth").setApiKey("anthropic", "sk-test");
+  await ctx.get("auth").logout("anthropic");
+  await settled();
+
+  equal(changes, 2);
+});
+
 test("a listener that throws gives a notice for each throw, and it and the other listeners stay", async () => {
   const plugin = watcher();
   await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
