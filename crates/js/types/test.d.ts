@@ -122,9 +122,13 @@ declare module "yuke:test" {
 
   /**
    * A frame test of `size`. `create` makes the root view. Without it, the root is the pane tree. `startup` is the
-   * `tui.startup` of each surface. The default is `{ cwd: "/" }`.
+   * `tui.startup` of each surface. The default is `{ cwd: "/" }`, and a missing `version` is `0.0.0`.
    */
-  export function createFrame(size: Size, create?: ViewFactory, startup?: Startup): FrameTest;
+  export function createFrame(
+    size: Size,
+    create?: ViewFactory,
+    startup?: Omit<Startup, "version"> & { readonly version?: string | undefined },
+  ): FrameTest;
 
   /** Add the test `name`. The runner awaits the promise of `fn`. */
   export function test(name: string, fn: () => void | Promise<void>): void;

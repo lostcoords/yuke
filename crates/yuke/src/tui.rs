@@ -76,7 +76,11 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
         resizes,
         ended: Arc::new(Notify::new()),
     };
-    let startup = Startup { cwd, session };
+    let startup = Startup {
+        cwd,
+        session,
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    };
     let ended = serve(&mut host, machine, store, startup, &shutdown).await;
     drop(host);
     for notice in display.take_notices() {

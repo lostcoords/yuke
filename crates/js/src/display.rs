@@ -30,6 +30,8 @@ pub struct Startup {
     /// The session of `--continue` or `--resume`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionId>,
+    /// The version of yuke.
+    pub version: String,
 }
 
 /// What the host gives the display.

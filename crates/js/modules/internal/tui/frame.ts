@@ -13,7 +13,12 @@ import type { ClipboardImage, KeyCode, KeyEvent, MouseEvent, Size, Startup, View
 
 const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false });
 
-export function createFrame(size: Size, create?: ViewFactory, startup: Startup = { cwd: "/" }): FrameTest {
+export function createFrame(
+  size: Size,
+  create?: ViewFactory,
+  startup: Omit<Startup, "version"> & { readonly version?: string | undefined } = { cwd: "/" },
+): FrameTest {
+  const shown: Startup = { ...startup, version: startup.version ?? "0.0.0" };
   let width = size.width;
   let height = size.height;
   const screen = new TestScreen(width, height);
@@ -43,7 +48,7 @@ export function createFrame(size: Size, create?: ViewFactory, startup: Startup =
     },
     suspend: () => {},
     reload: () => {},
-    startup: () => startup,
+    startup: () => shown,
   });
   const root = create === undefined ? undefined : core.scene.wrapRoot("test", create);
   let frame: Frame;

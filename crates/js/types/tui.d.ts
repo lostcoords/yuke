@@ -971,6 +971,8 @@ declare module "yuke:tui" {
     readonly cwd: string;
     /** The session of `--continue` or `--resume`. The start pane shows it. A restored pane keeps its saved session. */
     readonly session?: SessionId | undefined;
+    /** The version of yuke, such as `0.1.0`. */
+    readonly version: string;
   }
 
   /** The surface of one plugin: `ctx.get("tui")`. Each registration and mount belongs to the plugin. */
