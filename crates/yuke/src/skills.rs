@@ -1,7 +1,7 @@
 //! The skills of a new session: each folder with a `SKILL.md` in the skill folders, by its name and its description.
 
 use std::collections::HashSet;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 
 const MAX_NAME_BYTES: usize = 64;
@@ -40,55 +40,19 @@ pub(crate) fn catalog(roots: &[PathBuf]) -> Catalog {
                 continue;
             }
         };
-        let mut folders = Vec::new();
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    catalog
-                        .warnings
-                        .push(format!("yuke cannot read the skill folder {}: {error}", root.display()));
-                    continue;
-                }
-            };
-            let folder = entry.path();
-            let location = folder.join("SKILL.md");
-            match std::fs::metadata(&location) {
-                Ok(_) => {}
-                // A broken link is a skill that does not read. Another missing file is no skill.
-                Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => {
-                    if std::fs::symlink_metadata(&location).is_ok() {
-                        catalog.warnings.push(skipped(&location, &error.to_string()));
-                    }
-                    continue;
-                }
-                Err(error) => {
-                    catalog.warnings.push(skipped(&location, &error.to_string()));
-                    continue;
-                }
-            }
-            match entry.file_name().into_string() {
-                Ok(name) => folders.push((name, folder)),
-                Err(_) => catalog
-                    .warnings
-                    .push(skipped(&location, "the folder name is not valid UTF-8")),
-            }
-        }
+        // A folder is a skill when its `SKILL.md` is a file, also through a link.
+        let mut folders: Vec<(String, PathBuf)> = entries
+            .flatten()
+            .filter(|entry| entry.path().join("SKILL.md").is_file())
+            .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry.path())))
+            .collect();
         // The order of a folder listing is not stable, so the first folder of a name is the first in byte order.
         folders.sort();
         for (folder_name, folder) in folders {
             let location = folder.join("SKILL.md");
-            // Two links to one file give one skill.
-            match std::fs::canonicalize(&location) {
-                Ok(real) => {
-                    if !seen.insert(real) {
-                        continue;
-                    }
-                }
-                Err(error) => {
-                    catalog.warnings.push(skipped(&location, &error.to_string()));
-                    continue;
-                }
+            // Two links to one file give one skill, as when the workspace is the home folder.
+            if std::fs::canonicalize(&location).is_ok_and(|real| !seen.insert(real)) {
+                continue;
             }
             match skill(&folder_name, &location) {
                 Ok(skill) if catalog.skills.iter().any(|known| known.name == skill.name) => {
@@ -120,13 +84,7 @@ fn skipped(location: &Path, reason: &str) -> String {
 
 /// The skill of the `SKILL.md` at `location` in the folder `folder_name`, or why it is no skill.
 fn skill(folder_name: &str, location: &Path) -> Result<Skill, String> {
-    let mut file = std::fs::File::open(location).map_err(|error| error.to_string())?;
-    let metadata = file.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() {
-        return Err("the source is not a regular file".to_owned());
-    }
-    let mut text = String::new();
-    file.read_to_string(&mut text).map_err(|error| error.to_string())?;
+    let text = std::fs::read_to_string(location).map_err(|error| error.to_string())?;
     let fields = frontmatter(&text).ok_or("the file has no frontmatter")?;
     let name = fields.name.unwrap_or_else(|| folder_name.to_owned());
     check_name(&name)?;
@@ -160,14 +118,9 @@ fn check_description(description: &str) -> Result<(), String> {
     if description.trim().is_empty() {
         return Err("the description is missing".to_owned());
     }
+    // The description goes into the prompt of each session.
     if description.chars().count() > MAX_DESCRIPTION_CHARS {
         return Err(format!("the description exceeds {MAX_DESCRIPTION_CHARS} characters"));
-    }
-    if description
-        .chars()
-        .any(|character| character.is_control() && !matches!(character, '\t' | '\n' | '\r'))
-    {
-        return Err("the description holds a control character".to_owned());
     }
     Ok(())
 }

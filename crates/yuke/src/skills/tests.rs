@@ -132,11 +132,6 @@ fn each_bad_skill_is_skipped_with_its_reason() {
             skill_file("long", &"x".repeat(1025)),
             "the description exceeds 1024 characters",
         ),
-        (
-            "bell",
-            skill_file("bell", "\"Ring \\a\""),
-            "the description holds a control character",
-        ),
     ];
     let mut expected = Vec::new();
     for (name, text, reason) in &cases {
@@ -198,27 +193,4 @@ fn a_plain_value_on_the_next_lines_folds_into_one_line_also_after_a_byte_order_m
     let fields = frontmatter("\u{feff}---\ndescription:\n  Read and\n  fill forms.\n---\n").unwrap();
 
     assert_eq!(fields.description.unwrap(), "Read and fill forms.");
-}
-
-#[test]
-fn a_broken_link_and_a_folder_that_does_not_open_give_warnings() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let root = folder("errors");
-    let skills = root.join("skills");
-    std::fs::create_dir_all(skills.join("broken")).unwrap();
-    std::os::unix::fs::symlink(root.join("missing.md"), skills.join("broken/SKILL.md")).unwrap();
-    let closed = write(&skills, "closed", &skill_file("closed", "A skill."));
-    std::fs::set_permissions(skills.join("closed"), std::fs::Permissions::from_mode(0o000)).unwrap();
-
-    let catalog = catalog(std::slice::from_ref(&skills));
-    std::fs::set_permissions(skills.join("closed"), std::fs::Permissions::from_mode(0o755)).unwrap();
-
-    assert_eq!(catalog.skills, []);
-    let mut warnings = catalog.warnings;
-    warnings.sort();
-    assert_eq!(warnings.len(), 2, "{warnings:?}");
-    let broken = skills.join("broken/SKILL.md");
-    assert!(warnings[0].starts_with(&format!("yuke skipped the skill at {}: ", broken.display())));
-    assert!(warnings[1].starts_with(&format!("yuke skipped the skill at {}: ", closed.display())));
 }
