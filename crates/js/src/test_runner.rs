@@ -104,8 +104,9 @@ impl From<Error> for TestFileError {
 
 /// Run each test of the file `path`, an absolute path, in its own runtime from `start`. For each test, the runner makes
 /// a new folder below `folder`, gives it to `start`, and gives its `scratch` subfolder to the test as `folder()`. A
-/// folder of a test that exists already fails the run. The first import gives the names of the tests. The import, each
-/// test, and the end of each test have the time limit `limit`. A longer run stops the runtime of the test.
+/// folder of a test that exists already fails the run. The first import gives the names of the tests. With a `limit`,
+/// the import, each test, and the end of each test have that time limit, and a longer run stops the runtime of the test.
+/// Without one, a test runs until it ends.
 ///
 /// # Errors
 ///
@@ -114,7 +115,7 @@ impl From<Error> for TestFileError {
 pub async fn run_test_file<T: TestRuntime>(
     path: &str,
     folder: &Path,
-    limit: Duration,
+    limit: Option<Duration>,
     mut start: impl AsyncFnMut(&Path) -> Result<(T, mpsc::UnboundedReceiver<Report>), TestError>,
 ) -> Result<Vec<TestOutcome>, TestFileError> {
     let mut names: Option<Vec<String>> = None;
@@ -141,15 +142,23 @@ pub async fn run_test_file<T: TestRuntime>(
             }) | Err(TestFileError::ImportTimedOut(_))
         );
         // A cleanup that never settles would hold the run, so the end of a test has the time limit too.
-        owner.runtime().set_deadline(Some(Instant::now() + limit));
-        let stopped = tokio::time::timeout(limit, owner.shutdown(timed_out)).await;
+        let stopped = match limit {
+            Some(limit) => {
+                owner.runtime().set_deadline(Some(Instant::now() + limit));
+                tokio::time::timeout(limit, owner.shutdown(timed_out))
+                    .await
+                    .map_err(|_| limit)
+            }
+            None => Ok(owner.shutdown(timed_out).await),
+        };
         let mut ran = ran?;
-        let ended = match stopped {
+        // The limit that the end of the test passed.
+        let late = match stopped {
             Ok(stopped) => {
                 stopped.map_err(TestFileError::Runtime)?;
-                true
+                None
             }
-            Err(_) => false,
+            Err(limit) => Some(limit),
         };
         // The sender ends with the runtime, so this drain also holds the reports of the shutdown.
         ran.reports.extend(drain(&mut reports));
@@ -161,7 +170,9 @@ pub async fn run_test_file<T: TestRuntime>(
         {
             ran.status = TestStatus::Failed(fault);
         }
-        if !ended && matches!(ran.status, TestStatus::Passed) {
+        if let Some(limit) = late
+            && matches!(ran.status, TestStatus::Passed)
+        {
             ran.status = TestStatus::Failed(ScriptError {
                 name: Some("Error".to_owned()),
                 message: format!("the end of the test ran longer than {limit:?}: a cleanup did not settle"),
@@ -222,13 +233,13 @@ pub fn find_test_files(folder: &Path) -> io::Result<Vec<PathBuf>> {
 type FileRun = Result<Vec<TestOutcome>, String>;
 
 /// Run each test of `files` in its own runtime from `start`. Place the folders below `work`, and apply the time limit
-/// `limit`. The files run on at most [`std::thread::available_parallelism`] worker threads. Each worker runs its files
+/// `limit`, when there is one. The files run on at most [`std::thread::available_parallelism`] worker threads. Each worker runs its files
 /// on one local tokio runtime. The call blocks until each file ran. The summary keeps the order of `files`. See
 /// [`run_test_file`].
 pub fn run_test_files<T: TestRuntime>(
     files: &[PathBuf],
     work: &Path,
-    limit: Duration,
+    limit: Option<Duration>,
     start: impl AsyncFn(&Path) -> Result<(T, mpsc::UnboundedReceiver<Report>), TestError> + Sync,
 ) -> TestSummary {
     let parallel = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
@@ -335,7 +346,7 @@ async fn run_test(
     scratch: &Path,
     index: usize,
     expected: Option<&str>,
-    limit: Duration,
+    limit: Option<Duration>,
 ) -> Result<Ran, TestFileError> {
     let scratch = scratch
         .to_str()
@@ -350,10 +361,10 @@ async fn run_test(
         .await?;
     limited(runtime, limit, runtime.import(path))
         .await
-        .ok_or(TestFileError::ImportTimedOut(limit))??;
+        .map_err(TestFileError::ImportTimedOut)??;
     limited(runtime, limit, crate::settled())
         .await
-        .ok_or(TestFileError::ImportTimedOut(limit))?;
+        .map_err(TestFileError::ImportTimedOut)?;
     if let Some(fault) = drain(reports).into_iter().find_map(|report| match report {
         Report::Fault(error) => Some(error),
         _ => None,
@@ -392,13 +403,13 @@ async fn run_test(
         })
     });
     let mut status = match limited(runtime, limit, call).await {
-        None => TestStatus::TimedOut,
-        Some(Ok(None)) => TestStatus::Passed,
-        Some(Ok(Some(error))) => TestStatus::Failed(error),
-        Some(Err(error)) => return Err(error.into()),
+        Err(_) => TestStatus::TimedOut,
+        Ok(Ok(None)) => TestStatus::Passed,
+        Ok(Ok(Some(error))) => TestStatus::Failed(error),
+        Ok(Err(error)) => return Err(error.into()),
     };
     // A timer of the test can still keep the runtime busy, so the settled wait has the time limit too.
-    if !matches!(status, TestStatus::TimedOut) && limited(runtime, limit, crate::settled()).await.is_none() {
+    if !matches!(status, TestStatus::TimedOut) && limited(runtime, limit, crate::settled()).await.is_err() {
         status = TestStatus::TimedOut;
     }
     Ok(Ran {
@@ -414,15 +425,18 @@ async fn registry<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     caught(ctx, promise.into_future().await)
 }
 
-/// Run `future` with the time limit `limit`, or give `None` past it. The engine stops a busy loop at the limit, because
-/// no timer of the thread runs during the loop.
-async fn limited<F: Future>(runtime: &Runtime, limit: Duration, future: F) -> Option<F::Output> {
+/// Run `future` with the time limit `limit`, or give the limit back past it. Without a limit, `future` runs to its end.
+/// The engine stops a busy loop at the limit, because no timer of the thread runs during the loop.
+async fn limited<F: Future>(runtime: &Runtime, limit: Option<Duration>, future: F) -> Result<F::Output, Duration> {
+    let Some(limit) = limit else {
+        return Ok(future.await);
+    };
     // The engine deadline uses wall time. The timeout uses tokio time, which a paused clock moves alone.
     let deadline = Instant::now() + limit;
     runtime.set_deadline(Some(deadline));
     let output = tokio::time::timeout(limit, future).await.ok();
     runtime.set_deadline(None);
-    output.filter(|_| Instant::now() < deadline)
+    output.filter(|_| Instant::now() < deadline).ok_or(limit)
 }
 
 /// The reports that wait in `reports`.

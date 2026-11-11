@@ -3,10 +3,13 @@ use std::time::Duration;
 
 use yuke_js::TestSummary;
 
-use super::{TIME_LIMIT, collect, run};
+use super::{collect, run};
+
+/// The time limit of an import, of a test, and of the end of a test.
+const TIME_LIMIT: Option<Duration> = Some(Duration::from_secs(5));
 
 /// The time limit of a test that must run out of time.
-const SHORT_LIMIT: Duration = Duration::from_secs(1);
+const SHORT_LIMIT: Option<Duration> = Some(Duration::from_secs(1));
 
 #[test]
 fn the_typescript_tests_of_the_app_pass() {
@@ -21,7 +24,7 @@ fn the_typescript_tests_of_the_app_pass() {
 }
 
 /// Run the test file `source` with the time limit `limit` in a new folder of the test `name`, and return the summary.
-fn ran(name: &str, source: &str, limit: Duration) -> TestSummary {
+fn ran(name: &str, source: &str, limit: Option<Duration>) -> TestSummary {
     let place = yuke_testing::folder("app-runner", name);
     let file = place.join("a.test.ts");
     std::fs::write(&file, source).unwrap();

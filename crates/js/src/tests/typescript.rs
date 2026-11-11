@@ -14,10 +14,10 @@ use crate::{
 };
 
 /// The time limit of an import, of a test, and of the end of a test.
-const TIME_LIMIT: Duration = Duration::from_secs(5);
+const TIME_LIMIT: Option<Duration> = Some(Duration::from_secs(5));
 
 /// The time limit of a test that must run out of time.
-const SHORT_LIMIT: Duration = Duration::from_secs(1);
+const SHORT_LIMIT: Option<Duration> = Some(Duration::from_secs(1));
 
 /// Start a bare runtime in `place` with the TypeScript cache `cache`.
 async fn start(place: &Path, cache: &Path) -> Result<(Runtime, mpsc::UnboundedReceiver<Report>), TestError> {
@@ -51,7 +51,7 @@ async fn run_file(
     file: &Path,
     folder: &Path,
     cache: &Path,
-    limit: Duration,
+    limit: Option<Duration>,
 ) -> Result<Vec<TestOutcome>, TestFileError> {
     run_test_file(file.to_str().unwrap(), folder, limit, async |place: &Path| {
         start(place, cache).await
@@ -60,7 +60,7 @@ async fn run_file(
 }
 
 /// Write `source` to a test file in a new folder for the test `name`, and run it with the time limit `limit`.
-async fn ran(name: &str, source: &str, limit: Duration) -> Result<Vec<TestOutcome>, TestFileError> {
+async fn ran(name: &str, source: &str, limit: Option<Duration>) -> Result<Vec<TestOutcome>, TestFileError> {
     let place = folder(&format!("runner/{name}"));
     let file = place.join("a.test.ts");
     std::fs::write(&file, source).unwrap();
