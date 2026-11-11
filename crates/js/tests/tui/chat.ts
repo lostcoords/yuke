@@ -183,8 +183,8 @@ export function fakeSessions(saved: StoredEvent[] = []) {
       open.onEvent({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
       return Promise.resolve({
         signal: end.signal,
-        async sendMessage(content: readonly Block[]) {
-          inputs.push(content);
+        async sendMessage(message: { readonly content: readonly Block[] }) {
+          inputs.push(message.content);
           await state.accept;
           return inputs.length;
         },
@@ -253,7 +253,7 @@ export async function loadChat(
   await apply({
     get: (name: string) => services[name],
     provide: (name: string, value: unknown) => provided.set(name, value),
-    on: (event: string, listener: (data: unknown) => void) => {
+    addListener: (event: string, listener: (data: unknown) => void) => {
       const listeners = facts.get(event) ?? new Set();
       facts.set(event, listeners.add(listener));
       return () => listeners.delete(listener);

@@ -7,7 +7,7 @@ import { rows } from "./rows.ts";
 /** A text view with the lines `count` lines. */
 function lines(count: number): TextView {
   const text = Array.from({ length: count }, (_, index) => `line ${index}`).join("\n");
-  return new TextView({ document: { key: "d", items: [{ key: "i", sections: [{ key: "s", kind: "text", text }] }] } });
+  return new TextView({ document: { id: "d", items: [{ id: "i", sections: [{ id: "s", kind: "text", text }] }] } });
 }
 
 /** A focusable body that takes the key `taken` and draws `text`. */
@@ -15,7 +15,7 @@ function body(text: string, taken: string): View {
   return {
     focusable: true,
     draw: (canvas) => canvas.text(0, 0, text),
-    key: (event: KeyEvent) => strokeOf(event) === taken,
+    onKey: (event: KeyEvent) => strokeOf(event) === taken,
   };
 }
 
@@ -114,6 +114,20 @@ test("a select gives the chosen item, and it shows the title", async () => {
   equal(shows(frame, "Pick one"), false);
 });
 
+test("a select of two items with one label gives the chosen one", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const items = [
+    { name: "twin", at: 1 },
+    { name: "twin", at: 2 },
+  ];
+  const answer = frame.surface("test").tui.select({ items, label: (item) => item.name });
+  frame.draw();
+  frame.key("down");
+  frame.key("enter");
+
+  equal(await answer, { name: "twin", at: 2 });
+});
+
 test("a select gives undefined for esc, an abort, and a stop, and a call after the stop throws", async () => {
   using frame = createFrame({ width: 60, height: 10 });
   const options = { items: [{ name: "only" }], label: (item: { name: string }) => item.name };
@@ -168,9 +182,9 @@ test("two keys in a row with one label share one footer entry, and a key on esc 
 test("a guard decides on a quit, and its disposer ends it", () => {
   using frame = createFrame({ width: 60, height: 10 });
   const tui = frame.surface("test").tui;
-  tui.keys.bind("ctrl+q", "core:quit");
+  tui.keys.add("ctrl+q", "core:quit");
   let held: ((text?: string) => void) | undefined;
-  const end = tui.guardQuit((quit) => {
+  const end = tui.setQuitGuard((quit) => {
     held = quit;
   });
 
@@ -200,10 +214,10 @@ test("a picker body gets the focus of its search field, so typed text filters it
   using frame = createFrame({ width: 60, height: 10 });
   const picker = new Picker<{ readonly name: string }>({
     items: [{ name: "clock" }, { name: "tools" }],
-    key: (item) => item.name,
+    id: (item) => item.name,
     label: (item) => item.name,
-    choose: () => {},
-    cancel: () => {},
+    onChoose: () => {},
+    onCancel: () => {},
   });
   frame.surface("test").tui.dialog({ body: picker });
 
@@ -225,7 +239,7 @@ test("the title and the keys of a dialog have a default look that a plugin chang
     return [cells[title]?.[1]?.style, cells[keys]?.[1]?.style];
   };
   const before = looks();
-  tui.styles.set({ "dialog.title": { fg: 1, dim: null }, "dialog.keys": { fg: 2, dim: null } });
+  tui.styles.add({ "dialog.title": { fg: 1, dim: null }, "dialog.keys": { fg: 2, dim: null } });
   equal(
     [before, looks()],
     [

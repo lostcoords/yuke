@@ -86,7 +86,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - Notifications: `session/cancel` and `session/background` from a client. `session/background` moves each tool call of the
   session that waits for a job, such as a running command, to the background, and the turn goes on. `session/update`, `notice`, `extension/event`, `extension/cancel`,
   and `auth/login_finished` from the server.
-- `notice` is a message for the user, for the whole process or one session. It is not part of session history.
+- `notice` is text for the user, for the whole process or one session. It is not part of session history.
 - `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
   host gives the plugin. The plugin chooses `event` and `data`, and it puts a version in `data` when the shape
   changes. A client ignores an extension that it does not know. The event is not part of session history, and
@@ -134,7 +134,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   the block count of each input. It gives the content that the user saw only when that content differs.
 - Questions: a plugin or yuke asks the user with an `interaction_requested` live update: a `questions` request with
   its `source`. Each question has options, `other` for a typed answer, or both. The client answers all questions at
-  once with `interaction/respond`, or cancels the whole request with `canceled`. An answer that does not fit its
+  once with `interaction/respond`, or cancels the whole request with `cancelled`. An answer that does not fit its
   questions, or an unknown id, fails the request. An `interaction_closed` update ends each request: an answer, an
   abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers each request with no
   answer.

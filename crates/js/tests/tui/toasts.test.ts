@@ -146,7 +146,7 @@ test("a toast has a default look per level that a plugin changes", () => {
     );
   };
   const before = looks();
-  frame.surface("theme").tui.styles.set({
+  frame.surface("theme").tui.styles.add({
     "toast.body": { fg: 1, bg: 2 },
     "toast.error": { fg: 3 },
     "toast.warn": { fg: 4 },

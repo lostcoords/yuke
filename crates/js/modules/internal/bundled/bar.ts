@@ -40,9 +40,9 @@ export function apply(ctx: PluginContext<Options>): undefined {
     draw: (canvas) => {
       const items = tui.status
         .list()
-        .filter((item) => item.text !== "" && !hide.has(item.key))
+        .filter((item) => item.text !== "" && !hide.has(item.id))
         .map((item) => {
-          const at = order.indexOf(item.key);
+          const at = order.indexOf(item.id);
           return at < 0 ? item : { ...item, order: at };
         });
       draw(canvas, fitted(items, canvas.width));
@@ -81,7 +81,7 @@ function fitted(items: readonly StatusItem[], width: number): StatusItem[] {
 
 /** Draw `items` on the row of `canvas`: the left side from the start, the right side to the end. */
 function draw(canvas: Canvas, items: readonly StatusItem[]): void {
-  const byOrder = (a: StatusItem, b: StatusItem): number => a.order - b.order || (a.key < b.key ? -1 : 1);
+  const byOrder = (a: StatusItem, b: StatusItem): number => a.order - b.order || (a.id < b.id ? -1 : 1);
   const left = items.filter((item) => item.side === "left").toSorted(byOrder);
   const right = items.filter((item) => item.side === "right").toSorted(byOrder);
   let column = 0;

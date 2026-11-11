@@ -65,11 +65,11 @@ test("a plugin supports a theme for now, and the theme wins once it names the gr
   using frame = createFrame({ width: 10, height: 2 });
   const tui = frame.surface("b").tui;
   const stop = new AbortController();
-  tui.styles.set({ "b.title": { fg: 9, bold: true } });
+  tui.styles.add({ "b.title": { fg: 9, bold: true } });
   let undo = (): void => {};
   const look = (): void => {
     undo();
-    undo = tui.styles.theme === "nord" ? tui.styles.set({ "b.title": { fg: 3 } }) : () => {};
+    undo = tui.styles.theme === "nord" ? tui.styles.add({ "b.title": { fg: 3 } }) : () => {};
   };
   on("b", stop.signal, "theme.changed", look);
   const color = (): unknown => {

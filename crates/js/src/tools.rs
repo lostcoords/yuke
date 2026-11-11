@@ -52,7 +52,7 @@ pub trait SessionHost: MediaStore {
     async fn accept_input(&self, input: yuke_protocol::Input);
 
     /// Ask the user `request` for `source`, a plugin name, and wait for the answer. A cancel of `cancel`, the close of
-    /// the session, and a run without a client answer [`yuke_protocol::InteractionResponse::Canceled`].
+    /// the session, and a run without a client answer [`yuke_protocol::InteractionResponse::Cancelled`].
     async fn ask(
         &self,
         source: &str,

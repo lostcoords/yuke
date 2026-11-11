@@ -10,26 +10,26 @@ const typed = (text: string) => ({ source: { kind: "user" }, kind: "message", bl
 const answering =
   (answer: InputBeforeAnswer | undefined): PluginSession =>
   (s) => {
-    s.hook("input.before", () => answer);
+    s.addHook("input.before", () => answer);
   };
 
 test("an input without an answer stays as it is", async () => {
   await using host = await createHost({ plugins: [{ name: "quiet", session: answering(undefined) }] });
   const session = await host.openSession();
 
-  equal(await session.run("input.before", typed("hi")), "keep");
+  equal(await session.runHook("input.before", typed("hi")), "keep");
 });
 
 test("a replace feeds the next handler, and the decision holds the last blocks", async () => {
   const seen: unknown[] = [];
   const first: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       seen.push(JSON.stringify({ source: event.source, kind: event.kind, blocks: event.blocks }));
       return { replace: { blocks: [{ user_text: "expanded" }] } };
     });
   };
   const second: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       seen.push(JSON.stringify(event.blocks));
       return undefined;
     });
@@ -42,7 +42,7 @@ test("a replace feeds the next handler, and the decision holds the last blocks",
   });
   const session = await host.openSession();
 
-  const decision = await session.run("input.before", typed("/skill:pdf"));
+  const decision = await session.runHook("input.before", typed("/skill:pdf"));
 
   equal(decision, { replace: { blocks: [{ user_text: "expanded" }] } });
   equal(seen, [
@@ -51,11 +51,11 @@ test("a replace feeds the next handler, and the decision holds the last blocks",
   ]);
 });
 
-test("a block removes the input with a notice, and the later handlers do not run", async () => {
+test("a denial removes the input with a notice, and the later handlers do not run", async () => {
   let later = false;
-  const guard = answering({ block: "it names a secret" });
+  const guard = answering({ deny: "it names a secret" });
   const after: PluginSession = (s) => {
-    s.hook("input.before", () => {
+    s.addHook("input.before", () => {
       later = true;
       return undefined;
     });
@@ -68,12 +68,12 @@ test("a block removes the input with a notice, and the later handlers do not run
   });
   const session = await host.openSession();
 
-  const decision = await session.run("input.before", typed("my key is 123"));
+  const decision = await session.runHook("input.before", typed("my key is 123"));
 
   equal(decision, "remove");
   equal(
-    host.notices.map((notice) => [notice.source, notice.level, notice.message]),
-    [["guard", "warn", "the plugin blocked the input: it names a secret"]],
+    host.notices.map((notice) => [notice.source, notice.level, notice.text]),
+    [["guard", "warn", "the plugin denied the input: it names a secret"]],
   );
   equal(later, false);
 });
@@ -82,23 +82,23 @@ test("handled removes the input with no notice", async () => {
   await using host = await createHost({ plugins: [{ name: "commands", session: answering({ handled: true }) }] });
   const session = await host.openSession();
 
-  equal(await session.run("input.before", typed("/compact")), "remove");
+  equal(await session.runHook("input.before", typed("/compact")), "remove");
   equal(host.notices, []);
 });
 
 test("a throw removes the input, and an error notice names the plugin", async () => {
   const check: PluginSession = (s) => {
-    s.hook("input.before", () => {
+    s.addHook("input.before", () => {
       throw new Error("boom");
     });
   };
   await using host = await createHost({ plugins: [{ name: "check", session: check }] });
   const session = await host.openSession();
 
-  const decision = await session.run("input.before", typed("hi"));
+  const decision = await session.runHook("input.before", typed("hi"));
 
   equal(
-    [decision, host.notices.map((notice) => [notice.source, notice.level, notice.message])],
+    [decision, host.notices.map((notice) => [notice.source, notice.level, notice.text])],
     ["remove", [["host:plugins", "error", "input.before of plugin check failed: Error: boom"]]],
   );
 });
@@ -106,7 +106,7 @@ test("a throw removes the input, and an error notice names the plugin", async ()
 test("a replace keeps blocks in order and stores media from bytes and a path", async () => {
   let size = 0;
   const media: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       const added = { mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) };
       return {
         replace: {
@@ -114,7 +114,7 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
         },
       } as InputBeforeAnswer;
     });
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       const added = event.blocks[1];
       size = added !== undefined && "bytes" in added && added.bytes !== undefined ? added.bytes.length : -1;
       return undefined;
@@ -124,7 +124,7 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
   const session = await host.openSession();
   await writeFile(`${folder()}/added.png`, new Uint8Array([4, 5]));
 
-  const decision = await session.run("input.before", {
+  const decision = await session.runHook("input.before", {
     source: { kind: "user" },
     kind: "message",
     blocks: [{ mimeType: "image/jpeg", bytes: new Uint8Array([9, 9, 9, 9]) }],
@@ -141,7 +141,7 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
 test("the event gives the blocks in order, and a media block can name a file", async () => {
   const kinds: string[] = [];
   const look: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       kinds.push(...event.blocks.map((block) => Object.keys(block)[0] ?? ""));
       return undefined;
     });
@@ -150,7 +150,7 @@ test("the event gives the blocks in order, and a media block can name a file", a
   const session = await host.openSession();
   await writeFile(`${folder()}/c.png`, new Uint8Array([2, 3]));
 
-  const decision = await session.run("input.before", {
+  const decision = await session.runHook("input.before", {
     source: { kind: "user" },
     kind: "message",
     blocks: [
@@ -166,7 +166,7 @@ test("the event gives the blocks in order, and a media block can name a file", a
 test("a notification shows its plugin source and its kind", async () => {
   const seen: string[] = [];
   const watch: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       seen.push(`${event.source.kind} ${"name" in event.source ? event.source.name : ""} ${event.kind}`);
       return undefined;
     });
@@ -174,7 +174,7 @@ test("a notification shows its plugin source and its kind", async () => {
   await using host = await createHost({ plugins: [{ name: "watch", session: watch }] });
   const session = await host.openSession();
 
-  await session.run("input.before", {
+  await session.runHook("input.before", {
     source: { kind: "plugin", name: "host:jobs" },
     kind: "notification",
     blocks: [{ user_text: "the job ended" }],

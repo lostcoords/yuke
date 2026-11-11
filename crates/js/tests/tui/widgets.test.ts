@@ -27,14 +27,14 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
     signals.push(mount.signal);
     return () => log.push(`${name} cleanup`);
   };
-  core.widgets.watch("early", watcher("early"));
+  core.widgets.addWatcher("early", watcher("early"));
   const pane = panes.split(() => holder(editor));
   terminal.screen(core);
   terminal.screen(core);
   // A modal covers the widget but does not unmount it.
   const modal = core.scene.overlay("test", () => ({ draw() {} }));
   terminal.screen(core);
-  core.widgets.watch("late", watcher("late"));
+  core.widgets.addWatcher("late", watcher("late"));
   modal.close();
   terminal.screen(core);
   pane.close();
@@ -70,9 +70,9 @@ test("a watch that starts inside an attach sees each mount once", () => {
   }));
   const log: string[] = [];
   const name = (mount: WidgetMount): string => (mount.widget === first ? "first" : "second");
-  core.widgets.watch("outer", () => {
+  core.widgets.addWatcher("outer", () => {
     if (log.length === 0) {
-      core.widgets.watch("inner", (mount) => {
+      core.widgets.addWatcher("inner", (mount) => {
         log.push(`inner ${name(mount)}`);
         return () => log.push(`inner cleanup ${name(mount)}`);
       });
@@ -98,13 +98,13 @@ test("an early handler takes a continuation before the keymap and enter alone re
     },
   });
   tui.commands.add({ name: "none", run() {} });
-  tui.keys.bind("enter", "submit", { in: "field" });
-  tui.keys.bind("ctrl+k x", "none", { in: "field" });
+  tui.keys.add("enter", "submit", { in: "field" });
+  tui.keys.add("ctrl+k x", "none", { in: "field" });
   const replaced: string[] = [];
   let pending = false;
-  core.widgets.watch("vim", (mount) => {
+  core.widgets.addWatcher("vim", (mount) => {
     const extension = mount.widget.extend(mount.signal);
-    extension.onKey((event) => {
+    extension.addKeyHandler((event) => {
       if (pending) {
         pending = false;
         replaced.push(event.code === "character" ? event.character : event.code);
@@ -133,7 +133,7 @@ test("a wrap and a close of a root keep the mount of a widget in a pane", () => 
   const core = new Core(terminal.driver);
   const tui = createSurface(core, "chat", new AbortController().signal);
   const log: string[] = [];
-  core.widgets.watch("watcher", () => {
+  core.widgets.addWatcher("watcher", () => {
     log.push("attach");
     return () => log.push("cleanup");
   });
@@ -156,14 +156,14 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
     const extension = mount.widget.extend(mount.signal);
     extension.setContexts([`${name}-mode`]);
     extension.setAppearance({ cursorShape: shape, prompt: `${name}> ` });
-    extension.onKey((event) => {
+    extension.addKeyHandler((event) => {
       typed.push(`${name} ${event.character}`);
       return false;
     });
     return () => extension.dispose();
   };
-  core.widgets.watch("other", (mount) => extend(mount, "other", "bar"));
-  const stopVim = core.widgets.watch("vim", (mount) => extend(mount, "vim", "block"));
+  core.widgets.addWatcher("other", (mount) => extend(mount, "other", "bar"));
+  const stopVim = core.widgets.addWatcher("vim", (mount) => extend(mount, "vim", "block"));
   equal(terminal.screen(core)[0], "vim>");
   core.event(key("a"));
   equal(atoms(core), ["global", "root", "field", "other-mode", "vim-mode"]);
@@ -183,7 +183,7 @@ test("a contexts change ends a pending sequence", () => {
   const editor = new TextEditor();
   tui.panes.split(() => holder(editor));
   tui.commands.add({ name: "none", run() {} });
-  tui.keys.bind("ctrl+k x", "none");
+  tui.keys.add("ctrl+k x", "none");
   core.draw();
   const extension = editor.extend(new AbortController().signal);
   core.event(key("k", { ctrl: true }));

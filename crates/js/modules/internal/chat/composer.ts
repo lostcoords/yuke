@@ -94,12 +94,12 @@ export class ChatComposer {
     this.#options = options;
     const extension = editor.extend(options.signal);
     // An edit of the shown message ends the browse, so the edited text stays. An edit or a caret move ends a recall.
-    extension.onChange((change) => {
+    extension.addChangeListener((change) => {
       if (change.kind === "edit") this.#browse = undefined;
       if (change.kind === "edit" || change.kind === "selection") this.#recalled = undefined;
     });
     // The label covers the text on the screen only, so a send takes the whole text.
-    extension.onPaste((text) => {
+    extension.addPasteHandler((text) => {
       if (text.length <= PASTE_SPAN) return false;
       const selection = editor.selection;
       editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), text, [
@@ -140,7 +140,7 @@ export class ChatComposer {
       const blocks = blocksOf(draft);
       if (blocks.length === 0) return;
       this.setDraft(EMPTY);
-      await target.sendMessage(blocks);
+      await target.sendMessage({ content: blocks });
     } catch (error) {
       if (draft !== undefined) this.setDraft(joined(draft, this.#editor.state));
       throw error;
@@ -221,7 +221,7 @@ export class ChatComposer {
       (entry): entry is Extract<Entry, { kind: "input" }> =>
         entry.kind === "input" && entry.source.kind === "user" && entry.inputKind === "message",
     );
-    const at = this.#browse === undefined ? list.length : list.findIndex((entry) => entry.key === this.#browse);
+    const at = this.#browse === undefined ? list.length : list.findIndex((entry) => entry.id === this.#browse);
     const next = list[at + step];
     if (next === undefined) {
       if (step === 1 && this.#browse !== undefined) this.setDraft(EMPTY);
@@ -229,6 +229,6 @@ export class ChatComposer {
       return;
     }
     this.#editor.reset(draftOf(next.content));
-    this.#browse = next.key;
+    this.#browse = next.id;
   }
 }

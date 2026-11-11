@@ -13,7 +13,7 @@ const DEFAULT = "default";
 /** The name of the saved theme, or the default theme without one. A file that does not read gives a notice too. */
 async function saved(ctx: PluginContext): Promise<string> {
   try {
-    const value: unknown = JSON.parse(await readTextFile(FILE, { baseDir: ctx.dataDir, fatal: true }));
+    const value: unknown = JSON.parse(await readTextFile(FILE, { cwd: ctx.dataDir, fatal: true }));
     const name = (value as { name?: unknown } | null)?.name;
     return typeof name === "string" && name !== "" ? name : DEFAULT;
   } catch (error) {
@@ -31,19 +31,19 @@ function open(ctx: PluginContext, tui: Tui): void {
   const items = names.map((name) => ({ name }));
   const picker = new Picker({
     items,
-    key: (item) => item.name,
+    id: (item) => item.name,
     label: (item) => item.name,
     onSelectionChange: (item) => {
       if (item !== undefined) tui.styles.setTheme(item.name);
     },
-    choose: (item) => {
+    onChoose: (item) => {
       dialog.close();
       tui.styles.setTheme(item.name);
-      writeTextFile(FILE, JSON.stringify({ name: item.name }), { baseDir: ctx.dataDir, atomic: true }).catch(
+      writeTextFile(FILE, JSON.stringify({ name: item.name }), { cwd: ctx.dataDir, atomic: true }).catch(
         (error: unknown) => ctx.notify("error", `the theme did not save: ${String(error)}`),
       );
     },
-    cancel: () => {
+    onCancel: () => {
       dialog.close();
       tui.styles.setTheme(before);
     },

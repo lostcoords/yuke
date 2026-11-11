@@ -16,7 +16,7 @@ async function opened(jobs: readonly Job[] = []) {
   const sessions = fakeSessions(replies(3));
   const chat = await loadChat(frame, sessions);
   // A frame test has no default keys.
-  chat.tui.keys.bind("ctrl+q", "core:quit");
+  chat.tui.keys.add("ctrl+q", "core:quit");
   frame.start();
   await waitForSettled();
   // As the host does, the open of the pane gives the open of its session to each listener.
@@ -31,8 +31,8 @@ function open(
   id: string,
   facts: { readonly parent?: string; readonly state?: "idle" | "running"; readonly jobs?: readonly Job[] } = {},
 ): void {
-  const data = { sessionId: id, parent: facts.parent ?? null, state: facts.state ?? "idle", jobs: facts.jobs ?? [] };
-  chat.fact("session.opened", { ...data, questions: [] });
+  const data = { sessionId: id, parent: facts.parent, state: facts.state ?? "idle", jobs: facts.jobs ?? [] };
+  chat.fact("session.opened", { ...data, interactions: [] });
 }
 
 const screen = (frame: ReturnType<typeof createFrame>): string[] => {

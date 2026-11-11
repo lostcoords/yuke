@@ -23,6 +23,7 @@ import type {
   RestoreView,
   RootFactory,
   SelectOptions,
+  Size,
   Startup,
   StatusEntry,
   StatusItem,
@@ -134,7 +135,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
   });
 
-  const guardQuit = live((guard: (quit: (text?: string) => void) => void): (() => void) => {
+  const setQuitGuard = live((guard: (quit: (text?: string) => void) => void): (() => void) => {
     core.quitGuard = guard;
     return scope.own(() => {
       if (core.quitGuard === guard) core.quitGuard = undefined;
@@ -167,14 +168,15 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         let picked: T | undefined;
         const picker = new Picker<T>({
           items: options.items,
-          key: options.label,
+          // Two items can have one label, so the place of an item is its id.
+          id: (item) => String(options.items.indexOf(item)),
           label: options.label,
           detail: options.detail,
-          choose: (item) => {
+          onChoose: (item) => {
             picked = item;
             mount.close();
           },
-          cancel: () => mount.close(),
+          onCancel: () => mount.close(),
         });
         const title = options.title;
         const mount = dialog({
@@ -189,13 +191,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
   ) as Tui["select"];
 
   return Object.freeze({
-    get width(): number {
+    get size(): Size {
       scope.check();
-      return core.driver.width();
-    },
-    get height(): number {
-      scope.check();
-      return core.driver.height();
+      return Object.freeze({ width: core.driver.width(), height: core.driver.height() });
     },
     get background(): "dark" | "light" {
       scope.check();
@@ -215,14 +213,14 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       return core.scene.focused;
     },
     focus: live((view: View): boolean => core.scene.focus(view)),
-    onFocusChange: live((listener: (change: FocusChange) => void): (() => void) =>
-      scope.own(core.onFocusChange(listener)),
+    addFocusListener: live((listener: (change: FocusChange) => void): (() => void) =>
+      scope.own(core.addFocusListener(listener)),
     ),
     now: live((): number => core.driver.now()),
-    after: live((delay: number, callback: () => void): (() => void) => {
-      // A fired timer leaves the scope, so a callback that calls `after` again leaves no old disposer.
+    addTimer: live((delay: number, callback: () => void): (() => void) => {
+      // A fired timer leaves the scope, so a callback that calls `addTimer` again leaves no old disposer.
       const cancel: () => void = scope.own(
-        core.after(owner, delay, () => {
+        core.addTimer(owner, delay, () => {
           cancel();
           callback();
         }),
@@ -234,7 +232,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
     dialog,
-    guardQuit,
+    setQuitGuard,
     select,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {
@@ -244,14 +242,14 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       list: live((): readonly CommandItem[] => core.commands.list()),
     }),
     keys: Object.freeze({
-      bind: live((spec: string, command: string, options?: { readonly in?: string | undefined }): (() => void) =>
-        scope.own(core.keymap.bind(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
+      add: live((spec: string, command: string, options?: { readonly in?: string | undefined }): (() => void) =>
+        scope.own(core.keymap.add(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
       ),
       pending: live((): string => core.keymap.pending()),
       keysOf: live((name: string): readonly string[] => core.keymap.keysOf(lookup(name))),
     }),
     styles: Object.freeze({
-      set: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.set(groups))),
+      add: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.add(groups))),
       addTheme: live((name: string, theme: Theme): (() => void) => scope.own(core.styles.addTheme(name, theme))),
       themes: live((): readonly string[] => core.styles.themes()),
       get theme(): string {
@@ -261,28 +259,34 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       setTheme: live((name: string): void => core.styles.setTheme(name)),
     }),
     status: Object.freeze({
-      set: live((key: string, entry: StatusEntry): void => core.status.set(own(key), entry)),
-      delete: live((key: string): void => core.status.delete(own(key))),
+      set: live((id: string, entry: StatusEntry): (() => void) => core.status.set(own(id), entry)),
+      delete: live((id: string): void => core.status.delete(own(id))),
       list: live((): readonly StatusItem[] => core.status.list()),
-      onChange: live((listener: () => void): (() => void) => scope.own(core.status.onChange(listener))),
+      addChangeListener: live((listener: () => void): (() => void) =>
+        scope.own(core.status.addChangeListener(listener)),
+      ),
     }),
     notices: Object.freeze({
       list: live((): readonly Notice[] => core.notices.list()),
-      on: live((listener: (notice: Notice) => void): (() => void) => scope.own(core.notices.on(listener))),
+      addListener: live((listener: (notice: Notice) => void): (() => void) =>
+        scope.own(core.notices.addListener(listener)),
+      ),
     }),
     widgets: Object.freeze({
       list: live((): readonly WidgetMount[] => core.widgets.list()),
-      watch: live((attach: (mount: WidgetMount) => (() => void) | undefined): (() => void) =>
-        scope.own(core.widgets.watch(owner, attach)),
+      addWatcher: live((attach: (mount: WidgetMount) => (() => void) | undefined): (() => void) =>
+        scope.own(core.widgets.addWatcher(owner, attach)),
       ),
     }),
     views: Object.freeze({
-      register: live((type: string, restore: RestoreView): (() => void) => {
-        return scope.own(core.views.register(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
+      add: live((type: string, restore: RestoreView): (() => void) => {
+        return scope.own(core.views.add(own(type), { owner, restore, adopt: (mount) => scope.ownMount(mount) }));
       }),
     }),
     requestFrame: live((delay?: number): void => core.driver.requestFrame(delay)),
-    copy: live((text: string): void => core.driver.copy(text)),
-    readImage: live((): Promise<ClipboardImage | undefined> => core.driver.readImage()),
+    clipboard: Object.freeze({
+      writeText: live((text: string): void => core.driver.copy(text)),
+      readImage: live((): Promise<ClipboardImage | undefined> => core.driver.readImage()),
+    }),
   });
 }

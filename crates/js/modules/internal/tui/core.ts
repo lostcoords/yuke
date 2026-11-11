@@ -84,7 +84,7 @@ export class Core {
       announce("theme.changed", { name: this.styles.theme, background: driver.background() });
     this.styles = new Styles(driver.truecolor, driver.background, frame, themeChanged);
     // A notice changes what a listener, such as the toasts, draws.
-    this.notices.on(frame);
+    this.notices.addListener(frame);
     // A command name starts with the plugin that owns it, so its fault names that plugin.
     this.commands = new Commands(
       (name, text) => report(name.includes(":") ? name.slice(0, name.indexOf(":")) : CORE, text),
@@ -147,7 +147,7 @@ export class Core {
   }
 
   /** Give each later change of `tui.focused` to `listener`. */
-  onFocusChange(listener: (change: FocusChange) => void): () => void {
+  addFocusListener(listener: (change: FocusChange) => void): () => void {
     const entry = { listener };
     this.#focusListeners.add(entry);
     return () => {
@@ -156,7 +156,7 @@ export class Core {
   }
 
   /** Call `callback` of the plugin `owner` once after `delay` milliseconds, then draw a frame. A throw is a notice. */
-  after(owner: string, delay: number, callback: () => void): () => void {
+  addTimer(owner: string, delay: number, callback: () => void): () => void {
     return this.driver.after(delay, () => {
       try {
         callback();

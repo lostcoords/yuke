@@ -34,7 +34,7 @@ declare module "yuke:transcript" {
   /** A message of the user or a notification of a plugin, from the commit that consumed it. */
   export type InputEntry = Frozen<{
     kind: "input";
-    key: string;
+    id: string;
     inputId: InputId;
     source: InputSource;
     inputKind: InputKind;
@@ -43,15 +43,15 @@ declare module "yuke:transcript" {
   }>;
 
   /** Text of the model. `draft` is true while it streams. */
-  export type TextEntry = Frozen<{ kind: "text"; key: string; text: string; refusal: boolean; draft: boolean }>;
+  export type TextEntry = Frozen<{ kind: "text"; id: string; text: string; refusal: boolean; draft: boolean }>;
 
   /**
    * One run of consecutive reasoning blocks in one model response. Readable block texts keep their content, with a
    * blank line between them. Empty or whitespace-only blocks add no text. An empty live run stays until its response
-   * ends; an empty saved run has no entry. `draft` is true until the response saves. The key anchors the first source
-   * block, also when that block has no text. A saved response replaces its draft with saved keys.
+   * ends; an empty saved run has no entry. `draft` is true until the response saves. The id anchors the first source
+   * block, also when that block has no text. A saved response replaces its draft with saved ids.
    */
-  export type ReasoningEntry = Frozen<{ kind: "reasoning"; key: string; text: string; draft: boolean }>;
+  export type ReasoningEntry = Frozen<{ kind: "reasoning"; id: string; text: string; draft: boolean }>;
 
   /**
    * A tool call of the model.
@@ -62,7 +62,7 @@ declare module "yuke:transcript" {
    * - `done`: `result` holds the result. The saved result replaces the live result. It also clears `output`.
    *
    * `hints` tell how to show the call. A streamed call has the default hints, and the saved answer gives the hints of
-   * its tool before the call starts. `folder` is the folder where the call ran, the start of a relative path of the
+   * its tool before the call starts. `cwd` is the folder where the call ran, the start of a relative path of the
    * call. `display` is what to show in place of the result text, and it is empty for a result without one. The model
    * sees neither.
    *
@@ -72,12 +72,12 @@ declare module "yuke:transcript" {
    */
   export type ToolEntry = Frozen<{
     kind: "tool";
-    key: string;
+    id: string;
     name: string;
     arguments: string;
     status: "streaming" | "waiting" | "running" | "done";
     hints: ToolHints;
-    folder: string | undefined;
+    cwd: string | undefined;
     startedAt: number | undefined;
     durationMs: number | undefined;
     output: string;
@@ -86,16 +86,16 @@ declare module "yuke:transcript" {
   }>;
 
   /** The model context was replaced here, for example by a compaction. The entries before it stay. */
-  export type CompactionEntry = Frozen<{ kind: "compaction"; key: string }>;
+  export type CompactionEntry = Frozen<{ kind: "compaction"; id: string }>;
 
   /**
    * The end of a turn. `answer` is the last saved answer of the turn: the model that gave it, its usage, and its finish
    * reason. The usage is of that answer, not of the whole turn. `answer` is `undefined` for a turn without an answer, or
    * until an older page adds the answer.
    */
-  export type EndEntry = Frozen<{ kind: "end"; key: string; end: TurnEnd; answer: Answer | undefined }>;
+  export type EndEntry = Frozen<{ kind: "end"; id: string; end: TurnEnd; answer: Answer | undefined }>;
 
-  /** One entry of the conversation. `key` is unique in the transcript and has no meaning beyond that. */
+  /** One entry of the conversation. `id` is unique in the transcript and has no meaning beyond that. */
   export type Entry = InputEntry | TextEntry | ReasoningEntry | ToolEntry | CompactionEntry | EndEntry;
 
   /** An open request to the user: who asks, and the questions. */
@@ -117,8 +117,8 @@ declare module "yuke:transcript" {
     readonly entries: readonly Entry[];
     /** The inputs that wait for a turn, by id: the queue of the session. */
     readonly pending: ReadonlyMap<InputId, Frozen<Input>>;
-    /** The open questions, by id. */
-    readonly questions: ReadonlyMap<InteractionId, Interaction>;
+    /** The open interactions, by id. */
+    readonly interactions: ReadonlyMap<InteractionId, Interaction>;
     get state(): SessionState;
     get settings(): Frozen<SessionSettings> | undefined;
     /** The last failure of the running turn, until its next draft or its end. */

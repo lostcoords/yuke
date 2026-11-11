@@ -9,4 +9,4 @@ export type InteractionResponse = { "kind": "questions",
 /**
  * One answer per question, each with a value or `other`.
  */
-answers: Array<QuestionAnswer>, } | { "kind": "canceled" };
+answers: Array<QuestionAnswer>, } | { "kind": "cancelled" };

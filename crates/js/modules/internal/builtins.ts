@@ -40,7 +40,7 @@ defineTool({
   concurrency: "parallel",
   hints: { subject: { argument: "path", kind: "file" }, preview: "none" },
   async execute(args, context) {
-    const read = await readLines(args.path, context.folder, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
+    const read = await readLines(args.path, context.cwd, args.offset ?? 1, args.limit ?? LAST_LINE, OUTPUT_BYTES);
     if ("image" in read) return { text: "The tool read the image.", media: [read.image] };
 
     // The native read ends each line with a line feed. The result drops the last one.
@@ -65,7 +65,7 @@ defineTool({
   concurrency: "serial",
   hints: { subject: { argument: "path", kind: "file" } },
   async execute(args, context) {
-    const options = { baseDir: context.folder, signal: context.signal };
+    const options = { cwd: context.cwd, signal: context.signal };
     // The tool makes the missing parent folders, so the model can write a new file in a new folder.
     const slash = args.path.lastIndexOf("/");
     if (slash > 0) await mkdir(args.path.slice(0, slash), { ...options, recursive: true });
@@ -94,7 +94,7 @@ defineTool({
     if (oldString.length === 0) throw new Error("Set old_string to a nonempty string.");
     if (oldString === newString) throw new Error("Set new_string to a value that differs from old_string.");
 
-    const options = { baseDir: context.folder, signal: context.signal };
+    const options = { cwd: context.cwd, signal: context.signal };
     // A replaced byte would reach the file at the write, so the read is fatal.
     const parts = (await readTextFile(path, { ...options, fatal: true })).split(oldString);
     const count = parts.length - 1;

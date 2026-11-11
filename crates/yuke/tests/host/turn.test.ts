@@ -6,7 +6,7 @@ import type { Entry } from "yuke:transcript";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
-  s.tools.define({
+  s.tools.add({
     name: "greet",
     description: "Greet someone.",
     concurrency: "serial",
@@ -27,7 +27,7 @@ test("a turn sends the message to the fake model and shows its answer", async ()
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     session.transcript.entries.map((entry) => entry.kind),
@@ -43,7 +43,7 @@ test("an overloaded answer gets a retry without a wait", async () => {
   const session = await host.openSession();
   const start = Date.now();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(host.requests.length, 2);
   assert(Date.now() - start < 1000, "the retry waited");
@@ -54,7 +54,7 @@ test("a cut answer does not run its calls, and the model gets an error result", 
   await using host = await createHost({ plugins: [{ name: "greeter", session: greeter }], replies });
   const session = await host.openSession();
 
-  await session.send("Greet Ada.");
+  await session.sendMessage("Greet Ada.");
 
   const call = tool(session.transcript.entries, 1);
   equal([call.name, call.result?.isError, call.result?.content.includes("output token limit")], ["greet", true, true]);
@@ -66,7 +66,7 @@ test("an answer that fails after its first text ends the turn without a retry", 
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const end = session.transcript.entries.at(-1);
   assert(end?.kind === "end" && "failed" in end.end, "the turn did not fail");
@@ -78,7 +78,7 @@ test("an abort of the signal cancels a turn that waits for the replies, and send
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sent = rejects(session.send("Hi.", { signal: stop.signal }));
+  const sent = rejects(session.sendMessage("Hi.", { signal: stop.signal }));
   await waitForSettled();
   equal(host.requests.length, 1);
   stop.abort(new Error("stop"));
@@ -94,7 +94,7 @@ test("send with an aborted signal rejects and sends nothing", async () => {
   await using host = await createHost({ plugins: [] });
   const session = await host.openSession();
 
-  const error = await rejects(session.send("Hi.", { signal: AbortSignal.abort(new Error("early")) }));
+  const error = await rejects(session.sendMessage("Hi.", { signal: AbortSignal.abort(new Error("early")) }));
 
   equal(error instanceof Error ? error.message : error, "early");
   equal(session.transcript.entries, []);
@@ -105,7 +105,7 @@ test("a session without settings uses the test model in the folder of the test",
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const request = host.requests[0];
   assert(request !== undefined, "no request");
@@ -126,7 +126,7 @@ for (const model of [
     await using host = await createHost({ plugins: [{ name: "greeter", session: greeter }], replies });
     const session = await host.openSession({ model });
 
-    await session.send("Greet Ada.");
+    await session.sendMessage("Greet Ada.");
 
     equal(
       session.transcript.entries.map((entry) => entry.kind),

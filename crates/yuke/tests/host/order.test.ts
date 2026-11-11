@@ -8,7 +8,7 @@ test("send returns after the transcript got each update of the turn", async () =
   const calls = Array.from({ length: 300 }, (_item, index) => ({ name: "noop", args: { index } }));
   const replies = [reply.toolCalls(calls), reply.text("Done.")];
   const noop: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "noop",
       description: "Do nothing.",
       concurrency: "parallel",
@@ -19,7 +19,7 @@ test("send returns after the transcript got each update of the turn", async () =
   await using host = await createHost({ plugins: [{ name: "noop", session: noop }], replies });
   const session = await host.openSession();
 
-  await session.send("Run them.");
+  await session.sendMessage("Run them.");
 
   const done = session.transcript.entries.flatMap((entry) =>
     entry.kind === "tool" && entry.status === "done" ? [entry.arguments] : [],

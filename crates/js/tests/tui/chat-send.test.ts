@@ -32,7 +32,7 @@ function draft(state: EditorState): [string, [number, number, string][]] {
 
 test("a saved choice skips the picker on the first send and sends the draft", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
   const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 6 }, undefined, startup);
@@ -62,7 +62,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
   );
   frame.draw();
   equal(JSON.parse(frame.snapshot()).tree.state.session, "s-new");
-  equal(chat.transcript().document.key, "session:s-new");
+  equal(chat.transcript().document.id, "session:s-new");
 });
 
 test("without a saved choice the first send asks for the model and level, and a cancel keeps the draft", async () => {
@@ -98,7 +98,7 @@ test("without a saved choice the first send asks for the model and level, and a 
     [sessions.created.map((settings) => settings.settings.reasoning), sessions.inputs],
     [[{ thinking: null, effort: "high" }], [[{ user_text: "hi" }]]],
   );
-  equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+  equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
     model: { provider: "p", model: "m" },
     reasoning: "high",
   });
@@ -111,7 +111,7 @@ for (const choice of [
   { reasoning: "high" },
 ]) {
   test(`a stale choice ${JSON.stringify(choice)} opens the picker without a notice`, async () => {
-    await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: folder() });
+    await writeTextFile("choice.json", JSON.stringify(choice), { cwd: folder() });
     using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
     const sessions = fakeSessions();
     const chat = await loadChat(frame, sessions);
@@ -137,7 +137,7 @@ for (const choice of [
         [[{ user_text: "hi" }]],
       ],
     );
-    equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+    equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
       model: { provider: "p", model: "m" },
       reasoning: "default",
     });
@@ -146,8 +146,8 @@ for (const choice of [
 
 for (const failure of ["read", "parse"]) {
   test(`a choice file ${failure} failure gives one notice and opens the picker`, async () => {
-    if (failure === "read") await mkdir("choice.json", { baseDir: folder() });
-    else await writeTextFile("choice.json", "{", { baseDir: folder() });
+    if (failure === "read") await mkdir("choice.json", { cwd: folder() });
+    else await writeTextFile("choice.json", "{", { cwd: folder() });
     using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
     const chat = await loadChat(frame);
     frame.start();
@@ -167,7 +167,7 @@ for (const failure of ["read", "parse"]) {
 }
 
 test("a choice that does not save gives a notice and the send goes on", async () => {
-  await mkdir("choice.json", { baseDir: folder() });
+  await mkdir("choice.json", { cwd: folder() });
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/launch" });
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
@@ -188,7 +188,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
     [
       chat.notices.map((notice) => notice.split(":")[0]),
       sessions.inputs,
-      chat.tui.status.list().some((item) => item.key === "chat:model"),
+      chat.tui.status.list().some((item) => item.id === "chat:model"),
     ],
     [["error the model choice did not load", "error the model choice did not save"], [[{ user_text: "hi" }]], false],
   );
@@ -430,7 +430,7 @@ test("a refusal while the user browses the messages ends the browse, so down kee
 });
 
 test("ctrl+k m in a new pane saves a new choice for the first send", async () => {
-  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', { baseDir: folder() });
+  await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', { cwd: folder() });
   const startup = { cwd: "/launch" };
   using frame = createFrame({ width: 30, height: 14 }, undefined, startup);
   const sessions = fakeSessions();
@@ -451,11 +451,11 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   frame.key("enter");
   await waitForSettled();
   equal(
-    chat.tui.status.list().some((item) => item.key === "chat:model" && item.text === "n low"),
+    chat.tui.status.list().some((item) => item.id === "chat:model" && item.text === "n low"),
     true,
   );
   equal(sessions.created, []);
-  equal(JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), {
+  equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
     model: { provider: "p", model: "n" },
     reasoning: "low",
   });
@@ -830,7 +830,7 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
 
 test("ctrl+v without an image gives a notice, a failed store gives a notice, and a new pane creates its session first", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
   const startup = { cwd: "/w" };
   using frame = createFrame({ width: 40, height: 6 }, undefined, startup);
@@ -893,7 +893,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
 
 test("text typed while the first send sets up the session goes with the message", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
   const startup = { cwd: "/w" };
   using frame = createFrame({ width: 40, height: 6 }, undefined, startup);

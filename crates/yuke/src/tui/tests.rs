@@ -177,7 +177,7 @@ const NOTES: &str = "export function apply(ctx) {
   if (tui === undefined) return;
   // One surface per plugin: a second call gives the same one.
   if (ctx.get('tui') !== tui) throw new Error('two surfaces');
-  tui.views.register('note', (state) => ({
+  tui.views.add('note', (state) => ({
     draw: (canvas) => { canvas.text(0, 0, `note ${state.id}`); },
     snapshot: () => ({ type: 'note', state }),
   }));
@@ -302,7 +302,7 @@ async fn the_start_pane_opens_the_session_of_the_startup() {
     let id = saved_session(&place).await;
     place.plugin(
         "opened",
-        "export function apply(ctx) { ctx.on('session.opened', (data) => console.info(`opened ${data.sessionId}`)); }",
+        "export function apply(ctx) { ctx.addListener('session.opened', (data) => console.info(`opened ${data.sessionId}`)); }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["opened"] }"#).unwrap();
     let (display, output) = display();
@@ -341,11 +341,7 @@ async fn a_reload_while_the_first_plugins_load_gives_a_notice() {
 
     reload(None, &display, "{}".to_owned()).await;
 
-    let messages: Vec<String> = display
-        .take_notices()
-        .into_iter()
-        .map(|notice| notice.message)
-        .collect();
+    let messages: Vec<String> = display.take_notices().into_iter().map(|notice| notice.text).collect();
     assert_eq!(messages, ["the reload failed: yuke is still loading the plugins"]);
 }
 

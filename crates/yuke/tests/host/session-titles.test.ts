@@ -16,10 +16,10 @@ test("a title starts from the first message, renames independently of context, a
   const session = await host.openSession();
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
 
-  await session.send("  Fix\n the\tlogin tests  ");
+  await session.sendMessage("  Fix\n the\tlogin tests  ");
   equal((await sessions.get(session.id)).session.title, "Fix the login tests");
   await sessions.rename(session.id, "  Private\n navigation label  ");
-  await session.send("Check token refresh too.");
+  await session.sendMessage("Check token refresh too.");
   const fork = await sessions.fork(session.id);
 
   equal(
@@ -46,7 +46,7 @@ test("a title set before the first message survives it and invalid renames prese
   const session = await host.openSession();
   if (sessions === undefined) throw new Error("the plugin got no sessions service");
   await sessions.rename(session.id, "User-chosen title");
-  await session.send("A different first message.");
+  await session.sendMessage("A different first message.");
 
   const empty = await rejects(sessions.rename(session.id, " \n\t "));
   const long = await rejects(sessions.rename(session.id, "é".repeat(201)));

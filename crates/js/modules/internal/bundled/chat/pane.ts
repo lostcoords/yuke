@@ -56,7 +56,7 @@ const RULES: ComposerFrame = {
 
 /** The item at the top of a scrolled transcript, and its row there. */
 interface Viewport {
-  readonly key: string;
+  readonly id: string;
   readonly row: number;
 }
 
@@ -192,7 +192,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     scope.abort();
     scope = new AbortController();
     const signal = AbortSignal.any([mount.signal, scope.signal]);
-    return presenter?.({ key, folds, signal, requestUpdate: changed }) ?? new ChatDocument(key, folds);
+    return presenter?.({ id: key, folds, signal, requestUpdate: changed }) ?? new ChatDocument(key, folds);
   };
   /** The key of the document of the shown session. */
   const keyOf = (): string => `session:${chatSession.id ?? "new"}`;
@@ -217,15 +217,15 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = true;
       }
     }
-    stopTick = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
+    stopTick = working.active && !mount.signal.aborted ? tui.addTimer(working.frameMs, tick) : undefined;
   };
-  working.onChange(() => {
+  working.addChangeListener(() => {
     stopTick?.();
     tick();
   });
 
   // The pane follows each change of its session: the folds, the place, and the next layout.
-  chatSession.onChange(() => {
+  chatSession.addChangeListener(() => {
     if (chatSession.id !== bound) {
       // The first session of a pane keeps its folds. Another session starts without folds, at the tail.
       document = create(keyOf(), bound === undefined ? document.folds : undefined);
@@ -245,7 +245,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     role: "transcript",
     group,
     followTail: true,
-    activate: (position, link) => {
+    onActivate: (position, link) => {
       const transcript = chatSession.transcript;
       if (link === undefined) {
         if (position.section === "gap" || !document.toggle(transcript, position.item)) return;
@@ -254,18 +254,18 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         const projected = document.project(transcript);
         view.setDocument(projected);
         view.scroll.scrollTo(top);
-        const sections = projected.items.find((item) => item.key === position.item)?.sections;
+        const sections = projected.items.find((item) => item.id === position.item)?.sections;
         const head = sections?.find((section) => section.kind === "label");
-        if (head !== undefined) view.ensureVisible({ item: position.item, section: head.key, offset: 0 });
+        if (head !== undefined) view.ensureVisible({ item: position.item, section: head.id, offset: 0 });
         changed();
         return;
       }
       // A relative target starts in the folder of its tool call, else in the folder of the session, else at the start.
-      const entry = transcript.entries.find((candidate) => candidate.key === position.item);
-      const folder = (entry?.kind === "tool" ? entry.folder : undefined) ?? transcript.settings?.cwd ?? tui.startup.cwd;
+      const entry = transcript.entries.find((candidate) => candidate.id === position.item);
+      const folder = (entry?.kind === "tool" ? entry.cwd : undefined) ?? transcript.settings?.cwd ?? tui.startup.cwd;
       const absolute = /^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("/");
       const target = absolute ? link : `${folder.replace(/\/$/, "")}/${link}`;
-      tui.copy(target);
+      tui.clipboard.writeText(target);
       ctx.notify("info", `copied ${target}`);
     },
     onTopReached: () => chatSession.loadOlderHistory(),
@@ -413,7 +413,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (busy) return;
     busy = true;
     try {
-      const image = await tui.readImage();
+      const image = await tui.clipboard.readImage();
       if (mount.signal.aborted) return;
       if (image === undefined) {
         ctx.notify("info", "the clipboard holds no image");
@@ -479,7 +479,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
           selection: { anchor: title.length, head: title.length },
           spans: [],
         },
-        submit: (state) => {
+        onSubmit: (state) => {
           if (pending || dialog?.signal.aborted === true) return;
           pending = true;
           void ctx
@@ -725,8 +725,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // The view has rows only after its own first layout. The saved place waits for a height, then for its item or
       // the end of the history.
       if (restore !== undefined && chatSession.handle !== undefined && view.scroll.state.height > 0) {
-        const key = restore.key;
-        if (view.document.items.some((item) => item.key === key)) {
+        const key = restore.id;
+        if (view.document.items.some((item) => item.id === key)) {
           // A row past the end of a changed item gives its first row.
           if (!view.scroll.scrollToItem(key, restore.row)) view.scroll.scrollToItem(key);
           restore = undefined;
@@ -783,7 +783,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
               : {}),
           draft: composer.state as unknown as JsonValue,
           folds: document.folds,
-          ...(viewport === undefined ? {} : { viewport: { key: viewport.key, row: viewport.row } }),
+          ...(viewport === undefined ? {} : { viewport: { id: viewport.id, row: viewport.row } }),
         },
       };
     },

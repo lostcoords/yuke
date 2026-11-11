@@ -113,10 +113,10 @@ test("the deepest active atom wins then the newest binding", () => {
   const keys = bench();
   for (const name of ["older", "newer", "list", "global"]) keys.add(name);
   // The deepest binding is the oldest, so only its depth makes it win.
-  keys.keymap.bind("ctrl+k", "list", { in: "list" });
-  keys.keymap.bind("ctrl+k", "older");
-  keys.keymap.bind("ctrl+k", "newer");
-  keys.keymap.bind("ctrl+g", "global", { in: "global" });
+  keys.keymap.add("ctrl+k", "list", { in: "list" });
+  keys.keymap.add("ctrl+k", "older");
+  keys.keymap.add("ctrl+k", "newer");
+  keys.keymap.add("ctrl+g", "global", { in: "global" });
   const taken = [
     keys.keymap.key(key("k", { ctrl: true }), ROOT),
     keys.keymap.key(key("k", { ctrl: true }), [...ROOT, "list"]),
@@ -131,10 +131,10 @@ test("a disabled command passes its key on and at last to the view", () => {
   const keys = bench();
   keys.add("open");
   keys.add("closed", { enabled: () => false });
-  keys.keymap.bind("x", "open");
-  keys.keymap.bind("x", "closed");
-  keys.keymap.bind("y", "closed");
-  keys.keymap.bind("z", "missing");
+  keys.keymap.add("x", "open");
+  keys.keymap.add("x", "closed");
+  keys.keymap.add("y", "closed");
+  keys.keymap.add("z", "missing");
   const taken = ["x", "y", "z"].map((character) => keys.keymap.key(key(character), ROOT));
   equal(keys.ran, ["open"]);
   equal(taken, [true, false, false]);
@@ -143,7 +143,7 @@ test("a disabled command passes its key on and at last to the view", () => {
 test("a sequence waits for its next stroke", () => {
   const keys = bench();
   keys.add("save");
-  keys.keymap.bind("ctrl+x ctrl+s", "save");
+  keys.keymap.add("ctrl+x ctrl+s", "save");
   equal(keys.keymap.key(key("x", { ctrl: true }), ROOT), true);
   equal(keys.keymap.pending(), "ctrl+x");
   equal(keys.ran, []);
@@ -156,8 +156,8 @@ test("a sequence prefix runs alone after the wait", () => {
   const keys = bench();
   keys.add("one");
   keys.add("top");
-  keys.keymap.bind("g", "one");
-  keys.keymap.bind("g g", "top");
+  keys.keymap.add("g", "one");
+  keys.keymap.add("g g", "top");
   keys.keymap.key(key("g"), ROOT);
   keys.clock.advance(WAIT_MS - 1);
   equal([keys.ran, keys.keymap.pending()], [[], "g"]);
@@ -170,9 +170,9 @@ test("escape cancels a sequence and an unmatched stroke goes on as a new key", (
   keys.add("save");
   keys.add("alpha");
   keys.add("prefix");
-  keys.keymap.bind("ctrl+x ctrl+s", "save");
-  keys.keymap.bind("ctrl+x", "prefix");
-  keys.keymap.bind("a", "alpha");
+  keys.keymap.add("ctrl+x ctrl+s", "save");
+  keys.keymap.add("ctrl+x", "prefix");
+  keys.keymap.add("a", "alpha");
   keys.keymap.key(key("x", { ctrl: true }), ROOT);
   const escaped = keys.keymap.key(named("esc"), ROOT);
   keys.keymap.key(key("x", { ctrl: true }), ROOT);
@@ -192,8 +192,8 @@ test("a binding outside the active atoms neither runs nor starts a sequence", ()
   const keys = bench();
   keys.add("save");
   keys.add("quit");
-  keys.keymap.bind("ctrl+x ctrl+s", "save", { in: "editor" });
-  keys.keymap.bind("ctrl+x", "quit");
+  keys.keymap.add("ctrl+x ctrl+s", "save", { in: "editor" });
+  keys.keymap.add("ctrl+x", "quit");
   equal(keys.keymap.key(key("x", { ctrl: true }), ROOT), true);
   equal(keys.ran, ["quit"]);
   equal(keys.keymap.pending(), "");
@@ -204,10 +204,10 @@ test("a deeper single key runs before a shallower sequence and a disabled sequen
   keys.add("top");
   keys.add("down");
   keys.add("closed", { enabled: () => false });
-  keys.keymap.bind("g g", "top");
-  keys.keymap.bind("g", "down", { in: "list" });
-  keys.keymap.bind("z z", "closed");
-  keys.keymap.bind("q q", "missing");
+  keys.keymap.add("g g", "top");
+  keys.keymap.add("g", "down", { in: "list" });
+  keys.keymap.add("z z", "closed");
+  keys.keymap.add("q q", "missing");
   equal(keys.keymap.key(key("g"), [...ROOT, "list"]), true);
   equal(keys.keymap.pending(), "");
   equal(keys.ran, ["down"]);
@@ -221,7 +221,7 @@ test("a deeper single key runs before a shallower sequence and a disabled sequen
 test("a disposer during a wait cancels the wait", () => {
   const keys = bench();
   keys.add("save");
-  const dispose = keys.keymap.bind("ctrl+x ctrl+s", "save");
+  const dispose = keys.keymap.add("ctrl+x ctrl+s", "save");
   keys.keymap.key(key("x", { ctrl: true }), ROOT);
   equal(keys.keymap.pending(), "ctrl+x");
   dispose();
@@ -230,10 +230,10 @@ test("a disposer during a wait cancels the wait", () => {
 
 test("keys of a command and each disposer remove only their own binding", () => {
   const keymap = bench().keymap;
-  const first = keymap.bind("ctrl+o", "open");
-  const second = keymap.bind("ctrl+o", "open");
-  keymap.bind("alt+x  o", "open");
-  keymap.bind("ctrl+q", "quit");
+  const first = keymap.add("ctrl+o", "open");
+  const second = keymap.add("ctrl+o", "open");
+  keymap.add("alt+x  o", "open");
+  keymap.add("ctrl+q", "quit");
   equal(keymap.keysOf("open"), ["alt+x o", "ctrl+o"]);
   first();
   first();
@@ -301,8 +301,8 @@ test("an async command lets keys go on and a failure names it", async () => {
     },
   });
   keys.add("next");
-  keys.keymap.bind("d", "dialog");
-  keys.keymap.bind("n", "next");
+  keys.keymap.add("d", "dialog");
+  keys.keymap.add("n", "next");
   keys.keymap.key(key("d"), ROOT);
   keys.keymap.key(key("n"), ROOT);
   equal(keys.ran, ["next"]);
@@ -324,8 +324,8 @@ test("the newest style layer wins per field and null deletes", () => {
     () => "dark",
     () => {},
   );
-  styles.set({ title: { fg: 3, bold: true } });
-  const newer = styles.set({ title: { fg: "#102030", bold: null, italic: true } });
+  styles.add({ title: { fg: 3, bold: true } });
+  const newer = styles.add({ title: { fg: "#102030", bold: null, italic: true } });
   equal(styles.resolve("title"), { fg: "#102030", italic: true });
   newer();
   newer();
@@ -339,8 +339,8 @@ test("a link fills the missing fields and a cycle stops", () => {
     () => "dark",
     () => {},
   );
-  styles.set({ base: { fg: 1, bg: 2, underline: true } });
-  styles.set({ title: { inherits: "base", fg: 5 } });
+  styles.add({ base: { fg: 1, bg: 2, underline: true } });
+  styles.add({ title: { inherits: "base", fg: 5 } });
   equal(styles.resolve("title"), { fg: 5, bg: 2, underline: true });
   equal(styles.resolve({ inherits: "title", bg: "reset" }), { fg: 5, bg: "reset", underline: true });
   // Each order of the first resolves gives the same result in a cycle.
@@ -353,8 +353,8 @@ test("a link fills the missing fields and a cycle stops", () => {
       () => "dark",
       () => {},
     );
-    own.set({ a: { inherits: "b", bold: true } });
-    own.set({ b: { inherits: "a", dim: true } });
+    own.add({ a: { inherits: "b", bold: true } });
+    own.add({ b: { inherits: "a", dim: true } });
     for (const name of order) own.resolve(name);
     equal(own.resolve("a"), { bold: true, dim: true });
     equal(own.resolve("b"), { bold: true, dim: true });
@@ -369,7 +369,7 @@ test("a palette color follows the depth and the background", () => {
     () => background,
     () => {},
   );
-  styles.set({ accent: { fg: "accent", bg: "reset" } });
+  styles.add({ accent: { fg: "accent", bg: "reset" } });
   const dark = styles.resolve("accent").fg;
   background = "light";
   const light = styles.resolve("accent").fg;
@@ -385,7 +385,7 @@ test("a palette color follows the depth and the background", () => {
 test("notices keep the last hundred and count a repeat", () => {
   const notices = new Notices();
   const seen: [string, number][] = [];
-  const dispose = notices.on((notice) => seen.push([notice.text, notice.count]));
+  const dispose = notices.addListener((notice) => seen.push([notice.text, notice.count]));
   notices.add("error", "notes", "broken");
   notices.add("error", "notes", "broken");
   notices.add("warn", "notes", "broken");
@@ -430,8 +430,8 @@ test("each registration and its disposer ask for a frame", () => {
     () => "dark",
     ask,
   );
-  const unbind = keymap.bind("x", "test:x");
-  const unset = styles.set({ title: { bold: true } });
+  const unbind = keymap.add("x", "test:x");
+  const unset = styles.add({ title: { bold: true } });
   equal(asked, 2);
   unbind();
   unset();
@@ -441,7 +441,7 @@ test("each registration and its disposer ask for a frame", () => {
   equal(asked, 4);
 });
 
-test("one set changes many groups with one frame and one disposer", () => {
+test("one add of many groups asks for one frame and gives one disposer", () => {
   let asked = 0;
   const styles = new Styles(
     () => true,
@@ -450,11 +450,11 @@ test("one set changes many groups with one frame and one disposer", () => {
       asked += 1;
     },
   );
-  const undo = styles.set({ a: { fg: 1 }, b: { fg: 2 } });
+  const undo = styles.add({ a: { fg: 1 }, b: { fg: 2 } });
   const both = [styles.resolve("a"), styles.resolve("b")];
-  const framesOfSet = asked;
+  const framesOfAdd = asked;
   undo();
-  equal([both, framesOfSet, styles.resolve("a"), styles.resolve("b"), asked], [[{ fg: 1 }, { fg: 2 }], 1, {}, {}, 2]);
+  equal([both, framesOfAdd, styles.resolve("a"), styles.resolve("b"), asked], [[{ fg: 1 }, { fg: 2 }], 1, {}, {}, 2]);
 });
 
 /** Styles on a dark 24-bit terminal, with the background and the depth that a test can change. */
@@ -471,14 +471,14 @@ function themed() {
   return { state, styles };
 }
 
-test("a theme changes nothing until it is active, and its groups win over each set per field", () => {
+test("a theme changes nothing until it is active, and its groups win over each style layer per field", () => {
   const { styles } = themed();
-  styles.set({ title: { fg: 1, bold: true } });
+  styles.add({ title: { fg: 1, bold: true } });
   styles.addTheme("nord", { dark: { groups: { title: { fg: 2, underline: true } } } });
   const before = styles.resolve("title");
   styles.setTheme("nord");
   const active = styles.resolve("title");
-  styles.set({ title: { fg: 3, italic: true } });
+  styles.add({ title: { fg: 3, italic: true } });
   const later = styles.resolve("title");
   styles.setTheme("default");
   equal(
@@ -494,7 +494,7 @@ test("a theme changes nothing until it is active, and its groups win over each s
 
 test("a group that a theme does not name follows the palette of the theme, also through a link", () => {
   const { styles } = themed();
-  styles.set({
+  styles.add({
     "b.title": { fg: "accent", bold: true },
     "b.link": { inherits: "b.title" },
     "b.fixed": { fg: "#ff0000" },
@@ -509,7 +509,7 @@ test("a group that a theme does not name follows the palette of the theme, also 
 
 test("a theme gives the look of the background, and one look serves both", () => {
   const { state, styles } = themed();
-  styles.set({ title: { fg: "accent" } });
+  styles.add({ title: { fg: "accent" } });
   styles.addTheme("two", { dark: { palette: { accent: 1 } }, light: { palette: { accent: 2 } } });
   styles.addTheme("one", { light: { palette: { accent: 3 } } });
   styles.setTheme("two");
@@ -532,7 +532,7 @@ test("a theme inherits by name in any order, wins per field, and a cycle stops",
   styles.addTheme("nord", {
     dark: { palette: { accent: 5, danger: 6 }, groups: { title: { fg: 1, bold: true, underline: true } } },
   });
-  styles.set({ a: { fg: "accent" }, d: { fg: "danger" } });
+  styles.add({ a: { fg: "accent" }, d: { fg: "danger" } });
   equal([styles.resolve("title"), styles.resolve("a").fg, styles.resolve("d").fg], [{ fg: 2, underline: true }, 5, 7]);
   styles.addTheme("nord", { inherits: "mine", dark: { palette: { accent: 8 } } });
   equal(styles.resolve("a").fg, 8);
@@ -540,7 +540,7 @@ test("a theme inherits by name in any order, wins per field, and a cycle stops",
 
 test("the newest theme of a name wins, and its remover gives the older one back", () => {
   const { state, styles } = themed();
-  styles.set({ a: { fg: "accent" } });
+  styles.add({ a: { fg: "accent" } });
   styles.setTheme("nord");
   const first = state.changes;
   styles.addTheme("nord", { dark: { palette: { accent: 1 } } });
@@ -576,9 +576,9 @@ test("the default theme name is reserved", () => {
   equal(styles.themes(), ["default"]);
 });
 
-test("the palette color fg reaches each cell without a color, and it wins over no color that a style sets", () => {
+test("the palette color fg reaches each cell without a color, and it wins over no color that a style adds", () => {
   const { state, styles } = themed();
-  styles.set({
+  styles.add({
     plain: { bold: true },
     colored: { fg: 1 },
     band: { bg: 2 },
@@ -620,7 +620,7 @@ test("the palette color fg reaches each cell without a color, and it wins over n
 
 test("the palette color bg reaches each cell without a background, and fg stays apart from it", () => {
   const { state, styles } = themed();
-  styles.set({
+  styles.add({
     plain: { bold: true },
     band: { bg: 2 },
     colored: { fg: 1 },
@@ -661,7 +661,7 @@ test("the palette color bg reaches each cell without a background, and fg stays 
 test("a terminal without 24-bit color gets the nearest index for each hex color", () => {
   const { state, styles } = themed();
   state.truecolor = false;
-  styles.set({
+  styles.add({
     red: { fg: "#ff0000" },
     white: { fg: "#ffffff" },
     gray: { bg: "#808080" },
@@ -686,11 +686,11 @@ test("a terminal without 24-bit color gets the nearest index for each hex color"
   );
 });
 
-test("the default theme sits below each set and each other theme, and a name that it holds keeps its other fields", () => {
+test("the default theme sits below each style layer and each other theme, and a name that it holds keeps its other fields", () => {
   const { styles } = themed();
   const defaultColor = styles.resolve("chat.error").fg;
   equal([styles.theme, typeof defaultColor, styles.resolve("chat.error").bold], ["default", "string", true]);
-  const undo = styles.set({ "chat.error": { fg: 1 } });
+  const undo = styles.add({ "chat.error": { fg: 1 } });
   equal(styles.resolve("chat.error"), { fg: 1, bold: true });
   styles.addTheme("nord", { dark: { groups: { "chat.error": { fg: 2 } } } });
   styles.setTheme("nord");
@@ -702,7 +702,7 @@ test("the default theme sits below each set and each other theme, and a name tha
 
 test("a theme with a 256-color palette uses it only without 24-bit color, and inherits the rest", () => {
   const { state, styles } = themed();
-  styles.set({ a: { fg: "accent" }, d: { fg: "danger" }, w: { fg: "warn" } });
+  styles.add({ a: { fg: "accent" }, d: { fg: "danger" }, w: { fg: "warn" } });
   styles.addTheme("base", { dark: { palette: { warn: 7 } } });
   styles.addTheme("nord", {
     inherits: "base",

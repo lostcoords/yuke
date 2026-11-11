@@ -45,16 +45,16 @@ fn after_tool_replaces_a_result_and_the_replacement_keeps_its_call_id() {
 }
 
 #[test]
-fn after_tool_does_not_run_for_a_blocked_call() {
+fn after_tool_does_not_run_for_a_denied_call() {
     let transport = ScriptedTransport::new([tool_reply(&[("c1", "print", "{}")]), text_reply("done")]);
     let model = model();
     let toolset = printer();
-    let hooks = Script::default().blocks("print");
+    let hooks = Script::default().denies("print");
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
 
     let results = results_in_context(driver);
 
-    assert_eq!(results, [ToolResult::error("c1", "The user blocked this call.")]);
+    assert_eq!(results, [ToolResult::error("c1", "The user denied this call.")]);
     assert_eq!(hooks.tools(), ["before print {}"]);
 }
 

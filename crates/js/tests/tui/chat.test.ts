@@ -177,7 +177,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   const starts = sessions.pages.map((page) => page.before);
   // Each page asks for events before the page that came before it.
   assert(starts.every((start, at) => at === 0 || (start ?? 0) < (starts[at - 1] ?? 0)));
-  equal(chat.transcript().document.items[0]?.key, "2:0");
+  equal(chat.transcript().document.items[0]?.id, "2:0");
 });
 
 test("a failed page shows its error below the transcript and loads no more pages", async () => {
@@ -257,7 +257,7 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
     chat
       .transcript()
       .document.items.slice(-3)
-      .map((item) => item.key),
+      .map((item) => item.id),
     ["10:0", "11:0", "12:0"],
   );
   equal(chat.transcript().document.items[0] === first, true);

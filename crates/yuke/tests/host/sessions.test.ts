@@ -20,7 +20,7 @@ test("the close of a session ends each handle on it", async () => {
   equal([first.signal.aborted, second.signal.aborted], [true, true]);
   const reason = first.signal.reason;
   equal(reason instanceof Error ? reason.message : reason, `the session ${session.id} closed`);
-  const refused = await rejects(second.sendMessage([{ user_text: "late" }]));
+  const refused = await rejects(second.sendMessage({ content: [{ user_text: "late" }] }));
   equal(refused instanceof Error ? refused.message : refused, `the handle of the session ${session.id} has ended`);
   const blob = await rejects(second.putBlob(new Uint8Array([1])));
   equal(blob instanceof Error ? blob.message : blob, `the handle of the session ${session.id} has ended`);
@@ -35,7 +35,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
   // The hook holds the input, so it waits and no turn takes it.
   const { promise: held, resolve: release } = Promise.withResolvers<void>();
   const hold: PluginSession = (s) => {
-    s.hook("input.before", async () => {
+    s.addHook("input.before", async () => {
       await held;
       return undefined;
     });
@@ -51,7 +51,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
     },
   });
 
-  const input = await handle.sendMessage([{ user_text: "hi" }]);
+  const input = await handle.sendMessage({ content: [{ user_text: "hi" }] });
   await waitForSettled();
   const first = await handle.removeInput(input);
   const second = await handle.removeInput(input);
@@ -73,7 +73,7 @@ test("a blob that a plugin saves reaches the model as the image of an input", as
   const handle = await sessions.open(session.id, { tail: 0, onEvent: () => undefined });
 
   const blob = await handle.putBlob(new Uint8Array([1, 2, 3]));
-  await handle.sendMessage([{ user_text: "see" }, { media: { blob, mime: "image/png" } }]);
+  await handle.sendMessage({ content: [{ user_text: "see" }, { media: { blob, mime: "image/png" } }] });
   await handle.waitForIdle();
 
   // "AQID" is the base64 of the bytes 1, 2, 3.

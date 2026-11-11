@@ -33,10 +33,10 @@ async fn mkdir_makes_parents_only_when_recursive_and_refuses_a_folder_that_exist
         |_| {},
         "const codes = [];
          const attempt = async (work) => { try { await work(); codes.push('ok'); } catch (error) { codes.push(error.code); } };
-         await attempt(() => fs.mkdir('a/b', { baseDir: base }));
-         await attempt(() => fs.mkdir('a/b', { baseDir: base, recursive: true, mode: 0o700 }));
-         await attempt(() => fs.mkdir('a/b', { baseDir: base, recursive: true }));
-         await attempt(() => fs.mkdir('a/b', { baseDir: base }));
+         await attempt(() => fs.mkdir('a/b', { cwd: base }));
+         await attempt(() => fs.mkdir('a/b', { cwd: base, recursive: true, mode: 0o700 }));
+         await attempt(() => fs.mkdir('a/b', { cwd: base, recursive: true }));
+         await attempt(() => fs.mkdir('a/b', { cwd: base }));
          return codes.join(' ');",
     )
     .await;
@@ -51,9 +51,9 @@ async fn a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_
     let (_text, folder) = run_fs(
         "a_write_sets_the_mode_of_a_new_file_and_an_atomic_write_keeps_the_mode_that_it_replaces",
         |_| {},
-        "await fs.writeTextFile('secret.json', 'one', { baseDir: base, mode: 0o600 });
-         await fs.writeTextFile('secret.json', 'two', { baseDir: base, atomic: true });
-         await fs.writeTextFile('open.json', 'x', { baseDir: base, atomic: true, mode: 0o600 });
+        "await fs.writeTextFile('secret.json', 'one', { cwd: base, mode: 0o600 });
+         await fs.writeTextFile('secret.json', 'two', { cwd: base, atomic: true });
+         await fs.writeTextFile('open.json', 'x', { cwd: base, atomic: true, mode: 0o600 });
          return '';",
     )
     .await;
@@ -82,10 +82,10 @@ async fn the_mode_of_a_write_holds_for_a_file_that_exists_and_the_umask_does_not
                 std::fs::set_permissions(folder.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
             }
         },
-        "await fs.writeTextFile('plain', 'two', { baseDir: base, mode: 0o600 });
-         await fs.writeTextFile('append', 'two', { baseDir: base, append: true, mode: 0o600 });
-         await fs.writeTextFile('atomic', 'two', { baseDir: base, atomic: true, mode: 0o600 });
-         await fs.writeTextFile('shared', 'x', { baseDir: base, mode: 0o666 });
+        "await fs.writeTextFile('plain', 'two', { cwd: base, mode: 0o600 });
+         await fs.writeTextFile('append', 'two', { cwd: base, append: true, mode: 0o600 });
+         await fs.writeTextFile('atomic', 'two', { cwd: base, atomic: true, mode: 0o600 });
+         await fs.writeTextFile('shared', 'x', { cwd: base, mode: 0o666 });
          return '';",
     )
     .await;
@@ -105,7 +105,7 @@ async fn an_atomic_write_keeps_a_mode_that_the_umask_would_cut() {
             std::fs::write(folder.join("shared.txt"), "one").unwrap();
             std::fs::set_permissions(folder.join("shared.txt"), std::fs::Permissions::from_mode(0o666)).unwrap();
         },
-        "await fs.writeTextFile('shared.txt', 'two', { baseDir: base, atomic: true });
+        "await fs.writeTextFile('shared.txt', 'two', { cwd: base, atomic: true });
          return '';",
     )
     .await;

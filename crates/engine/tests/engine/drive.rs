@@ -392,7 +392,7 @@ fn input_follows_the_error_results_of_a_cut_answer() {
 }
 
 #[test]
-fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
+fn denied_call_runs_no_tool_and_its_reason_reaches_the_model() {
     let transport = ScriptedTransport::new([
         tool_reply(&[("c1", "write", "{}"), ("c2", "echo", "{}")]),
         text_reply("done"),
@@ -403,7 +403,7 @@ fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     let mut toolset = Toolset::new();
     toolset.add(definition("write"), write.clone()).unwrap();
     toolset.add(definition("echo"), echo.clone()).unwrap();
-    let hooks = Script::default().blocks("write");
+    let hooks = Script::default().denies("write");
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     let mut context = Vec::new();
 
@@ -418,7 +418,7 @@ fn blocked_call_runs_no_tool_and_its_reason_reaches_the_model() {
     assert_eq!(write.calls(), Vec::<String>::new());
     assert_eq!(echo.calls(), ["{}"]);
     let requests = transport.requests();
-    assert_in_order(&requests[1], &["c1", "c2", "The user blocked this call.", "result 1"]);
+    assert_in_order(&requests[1], &["c1", "c2", "The user denied this call.", "result 1"]);
     assert_eq!(requests[1].matches(r#""is_error":true"#).count(), 1, "{}", requests[1]);
 }
 

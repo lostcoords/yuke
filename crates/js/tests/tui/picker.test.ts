@@ -16,10 +16,10 @@ function picker(
 ): Picker<Command> {
   return new Picker<Command>({
     items: names.map((name) => ({ name })),
-    key: (command) => command.name,
+    id: (command) => command.name,
     label: (command) => command.name,
-    choose: (command) => log.push(`choose ${command.name}`),
-    cancel: () => log.push("cancel"),
+    onChoose: (command) => log.push(`choose ${command.name}`),
+    onCancel: () => log.push("cancel"),
     ...options,
   });
 }
@@ -162,7 +162,7 @@ test("the rows of a picker have a default look that a plugin changes", () => {
     return [cells[1]?.[0], cells[1]?.[1], cells[1]?.[7], cells[1]?.[11], cells[2]?.[6]].map((cell) => cell?.style);
   };
   const before = looks();
-  frame.surface("theme").tui.styles.set({
+  frame.surface("theme").tui.styles.add({
     "picker.match": { fg: 1, bold: null },
     "picker.detail": { fg: 3, dim: null },
     "picker.selected": { bg: 2, fg: null },

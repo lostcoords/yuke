@@ -102,10 +102,10 @@ If two plugins add a theme with the same name, yuke uses the newest theme. You c
 
 ## Plugins and themes
 
-Use `styles.set` to set the style of the groups of your plugin. Use palette names or `inherits`. Your plugin then follows each theme:
+Use `styles.add` to set the style of the groups of your plugin. Use palette names or `inherits`. Your plugin then follows each theme:
 
 ```ts
-ctx.get("tui")?.styles.set({
+ctx.get("tui")?.styles.add({
   "notes.title": { inherits: "chat.title" },
   "notes.count": { fg: "accent" },
 });
@@ -113,7 +113,7 @@ ctx.get("tui")?.styles.set({
 
 A hex value does not change with the theme or the background.
 
-A theme has priority over `styles.set`. `styles.set` has priority over `default`.
+A theme has priority over `styles.add`. `styles.add` has priority over `default`.
 
 To set a style for one theme, read `styles.theme` at startup and on the event `theme.changed`. yuke also sends this event when the background of the terminal changes.
 
@@ -126,10 +126,10 @@ export function apply(ctx: PluginContext): void {
   let undo = (): void => {};
   const look = (): void => {
     undo();
-    undo = tui.styles.theme === "nord" ? tui.styles.set({ "notes.title": { fg: "#ebcb8b" } }) : () => {};
+    undo = tui.styles.theme === "nord" ? tui.styles.add({ "notes.title": { fg: "#ebcb8b" } }) : () => {};
   };
   look();
-  ctx.on("theme.changed", look);
+  ctx.addListener("theme.changed", look);
 }
 ```
 

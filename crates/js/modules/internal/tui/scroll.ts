@@ -4,7 +4,7 @@
  * row offset stay across a prepend, an update, and a resize. A list that follows the tail stays at the bottom.
  */
 import { registerHost, type WidgetHost } from "yuke:internal/tui/widgets";
-import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow } from "yuke:tui";
+import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow, View } from "yuke:tui";
 
 /** A wheel step moves this many rows. */
 const WHEEL_ROWS = 3;
@@ -25,11 +25,11 @@ interface Rendered {
 
 /** The first visible item and the row of it at the top of the view. */
 interface Anchor {
-  readonly key: string;
+  readonly id: string;
   readonly row: number;
 }
 
-export class ScrollList<T extends object> {
+export class ScrollList<T extends object> implements View {
   readonly #key: (item: T) => string;
   readonly #render: (item: T, width: number) => readonly TextRow[];
   readonly #onTopReached: (() => void | Promise<void>) | undefined;
@@ -53,7 +53,7 @@ export class ScrollList<T extends object> {
   #olderPending = false;
 
   constructor(options: ScrollListOptions<T>) {
-    this.#key = options.key;
+    this.#key = options.id;
     this.#render = options.render;
     this.#onTopReached = options.onTopReached;
     this.#following = options.followTail === true;
@@ -88,7 +88,7 @@ export class ScrollList<T extends object> {
     const keys = new Set<string>();
     const keyed = items.map((item) => {
       const key = this.#key(item);
-      if (keys.has(key)) throw new TypeError(`two scroll list items have the key ${key}`);
+      if (keys.has(key)) throw new TypeError(`two scroll list items have the id ${key}`);
       keys.add(key);
       return { item, key };
     });
@@ -120,18 +120,18 @@ export class ScrollList<T extends object> {
     this.#moveTo(this.#last());
   }
 
-  /** Put row `row` of the item `key` at the top, as far as the rows below allow. `false` when the item has no such row. */
-  scrollToItem(key: string, row = 0): boolean {
-    const at = this.#index.get(key);
+  /** Put row `row` of the item `id` at the top, as far as the rows below allow. `false` when the item has no such row. */
+  scrollToItem(id: string, row = 0): boolean {
+    const at = this.#index.get(id);
     if (at === undefined || !Number.isInteger(row) || row < 0) return false;
     if (row >= (this.#entries[at] as Entry<T>).height) return false;
     this.#moveTo((this.#prefix[at] as number) + row);
     return true;
   }
 
-  /** Scroll the least to show row `row` of the item `key`. `false` when it cannot show. */
-  ensureVisible(key: string, row = 0): boolean {
-    const at = this.#index.get(key);
+  /** Scroll the least to show row `row` of the item `id`. `false` when it cannot show. */
+  ensureVisible(id: string, row = 0): boolean {
+    const at = this.#index.get(id);
     if (at === undefined || this.#size.height <= 0) return false;
     const height = (this.#entries[at] as Entry<T>).height;
     if (!Number.isInteger(row) || row < 0 || row >= height) return false;
@@ -155,17 +155,17 @@ export class ScrollList<T extends object> {
   }
 
   /**
-   * The first absolute display row and the rows of the item `key`.
-   * Return `undefined` when the key is absent.
+   * The first absolute display row and the rows of the item `id`.
+   * Return `undefined` when the id is absent.
    */
-  rowsOf(key: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined {
-    const at = this.#index.get(key);
+  rowsOf(id: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined {
+    const at = this.#index.get(id);
     if (at === undefined) return undefined;
     return { start: this.#prefix[at] as number, rows: this.#rowsOf(this.#entries[at] as Entry<T>) };
   }
 
   /** Give each later change of the state to `listener`, until the remover runs. */
-  onChange(listener: (state: ScrollState) => void): () => void {
+  addChangeListener(listener: (state: ScrollState) => void): () => void {
     // A wrapper makes each registration its own, so a remover removes only its own one.
     const registered = (state: ScrollState): void => listener(state);
     this.#listeners.add(registered);
@@ -210,7 +210,7 @@ export class ScrollList<T extends object> {
     }
   }
 
-  mouse(event: MouseEvent): boolean {
+  onMouse(event: MouseEvent): boolean {
     if (event.button !== "wheel_up" && event.button !== "wheel_down") return false;
     this.scrollBy(event.button === "wheel_up" ? -WHEEL_ROWS : WHEEL_ROWS);
     return true;
@@ -294,7 +294,7 @@ export class ScrollList<T extends object> {
   #anchor(): Anchor | undefined {
     const at = this.#entryAt(this.#top);
     if (at < 0 || this.#size.height <= 0) return undefined;
-    return { key: (this.#entries[at] as Entry<T>).key, row: this.#top - (this.#prefix[at] as number) };
+    return { id: (this.#entries[at] as Entry<T>).key, row: this.#top - (this.#prefix[at] as number) };
   }
 
   /** The top row for `anchor` in the new entries. `order` holds the keys before the change. */
@@ -307,8 +307,8 @@ export class ScrollList<T extends object> {
       if (height === 0) return undefined;
       return (this.#prefix[at] as number) + Math.min(row, height - 1);
     };
-    const old = order.indexOf(anchor.key);
-    let top = rowOf(anchor.key, anchor.row);
+    const old = order.indexOf(anchor.id);
+    let top = rowOf(anchor.id, anchor.row);
     for (let at = old + 1; top === undefined && at < order.length; at += 1) top = rowOf(order[at] as string, 0);
     for (let at = old - 1; top === undefined && at >= 0; at -= 1)
       top = rowOf(order[at] as string, Number.MAX_SAFE_INTEGER);

@@ -28,7 +28,13 @@ async function round(
 ): Promise<readonly ModelRequest[]> {
   await using host = await createHost({ plugins, replies });
   const session = await host.openSession();
-  await session.run("round.before", { context, window: 1000, system: "Be brief.", tools: [echo], settings });
+  await session.runHook("round.before", {
+    blocks: context,
+    contextWindow: 1000,
+    system: "Be brief.",
+    tools: [echo],
+    settings,
+  });
   return host.requests;
 }
 
@@ -41,10 +47,10 @@ function only(requests: readonly ModelRequest[]): ModelRequest {
 test("a side request repeats the round with the context that the handler sees, then the prompt", async () => {
   let answer: unknown;
   const first: PluginSession = (s) => {
-    s.hook("round.before", () => ({ replace: { head: [{ user_text: "summary" }], keep: 1 } }));
+    s.addHook("round.before", () => ({ replace: { head: [{ user_text: "summary" }], keep: 1 } }));
   };
   const second: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
+    s.addHook("round.before", async (event) => {
       const answered = await event.sideRequest({ prompt: "Summarize.", maxOutputTokens: 100 });
       answer = [answered.text, answered.finishReason, answered.usage.input, Object.isFrozen(answered)];
       return undefined;
@@ -67,10 +73,10 @@ test("a side request repeats the round with the context that the handler sees, t
   equal(request.messages, [{ role: "user", text: "summary\nthree\nSummarize." }]);
 });
 
-test("the blocks option sends only the oldest blocks of the context", async () => {
+test("the blockCount option sends only the oldest blocks of the context", async () => {
   const compact: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
-      await event.sideRequest({ prompt: "Summarize.", blocks: 2 });
+    s.addHook("round.before", async (event) => {
+      await event.sideRequest({ prompt: "Summarize.", blockCount: 2 });
       return undefined;
     });
   };
@@ -92,7 +98,7 @@ test("an abort stops the request and rejects with the reason of the signal", asy
   let rejected = "";
   const controller = new AbortController();
   const compact: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
+    s.addHook("round.before", async (event) => {
       const request = event.sideRequest({ prompt: "Summarize.", signal: controller.signal });
       try {
         await request;
@@ -107,7 +113,13 @@ test("an abort stops the request and rejects with the reason of the signal", asy
     replies: [reply.stall("Half")],
   });
   const session = await host.openSession();
-  const pending = session.run("round.before", { context, window: 1000, system: "Be brief.", tools: [echo], settings });
+  const pending = session.runHook("round.before", {
+    blocks: context,
+    contextWindow: 1000,
+    system: "Be brief.",
+    tools: [echo],
+    settings,
+  });
   await waitForSettled();
   equal(host.requests.length, 1);
   controller.abort(new Error("too slow"));
@@ -118,7 +130,7 @@ test("an abort stops the request and rejects with the reason of the signal", asy
 
 test("a failed request rejects with its text", async () => {
   const compact: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
+    s.addHook("round.before", async (event) => {
       await event.sideRequest({ prompt: "Summarize." });
       return undefined;
     });

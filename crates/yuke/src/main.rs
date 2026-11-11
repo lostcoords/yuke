@@ -523,6 +523,7 @@ fn machine() -> Result<Machine, String> {
         exchange: http,
         fetch: Arc::new(fetch),
         interface: None,
+        internal_imports: false,
         test: None,
     })
 }

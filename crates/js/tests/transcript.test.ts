@@ -129,7 +129,7 @@ function fed(transcript: Transcript, updates: readonly SessionUpdate[]): Transcr
 }
 
 function keys(transcript: Transcript): string[] {
-  return transcript.entries.map((entry) => entry.key);
+  return transcript.entries.map((entry) => entry.id);
 }
 
 /** The tool entry at `index`. */
@@ -141,7 +141,7 @@ function tool(transcript: Transcript, index: number): Extract<Entry, { kind: "to
 
 const input: Entry = {
   kind: "input",
-  key: "2:0",
+  id: "2:0",
   inputId: 1,
   source: { kind: "user" },
   inputKind: "message",
@@ -151,26 +151,26 @@ const input: Entry = {
 /** The entries of `turn` after its end. */
 const turnEntries: Entry[] = [
   input,
-  { kind: "reasoning", key: "3:0", text: "the test expects 3", draft: false },
-  { kind: "text", key: "3:1", text: "I run the tests.", refusal: false, draft: false },
+  { kind: "reasoning", id: "3:0", text: "the test expects 3", draft: false },
+  { kind: "text", id: "3:1", text: "I run the tests.", refusal: false, draft: false },
   {
     kind: "tool",
-    key: "3:2",
+    id: "3:2",
     name: "bash",
     arguments: '{"command":"cargo test"}',
     status: "done",
     hints,
-    folder: "/w",
+    cwd: "/w",
     startedAt: undefined,
     durationMs: 40_000,
     output: "",
     result,
     display: shown,
   },
-  { kind: "text", key: "5:0", text: "Fixed.", refusal: false, draft: false },
+  { kind: "text", id: "5:0", text: "Fixed.", refusal: false, draft: false },
   {
     kind: "end",
-    key: "6:end",
+    id: "6:end",
     end: { outcome: { completed: { finishReason: "stop" } } },
     answer: answer("stop"),
   },
@@ -185,17 +185,17 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
   const transcript = fed(opened(), turn.slice(0, 16));
   equal(transcript.entries, [
     input,
-    { kind: "reasoning", key: "draft:d1:0", text: "the test expects 3", draft: true },
-    { kind: "text", key: "draft:d1:1", text: "I run the tests.", refusal: false, draft: true },
+    { kind: "reasoning", id: "draft:d1:0", text: "the test expects 3", draft: true },
+    { kind: "text", id: "draft:d1:1", text: "I run the tests.", refusal: false, draft: true },
     {
       kind: "tool",
-      key: "draft:d1:2",
+      id: "draft:d1:2",
       name: "bash",
       arguments: '{"command":"cargo test"}',
       status: "waiting",
       // The host has not handled the call yet, so it has the default hints.
       hints: { title: null, subject: null, preview: "head" },
-      folder: undefined,
+      cwd: undefined,
       startedAt: undefined,
       durationMs: undefined,
       output: "",
@@ -230,7 +230,7 @@ test("tool updates reach their call by position when call ids repeat", () => {
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
   equal(
-    tools.map((entry) => [entry.key, entry.name, entry.status, entry.output, entry.result?.content]),
+    tools.map((entry) => [entry.id, entry.name, entry.status, entry.output, entry.result?.content]),
     [
       ["3:2", "bash", "done", "", "1 failed"],
       ["5:0", "read", "running", "lib.rs", undefined],
@@ -252,7 +252,7 @@ test("saved results pair with the calls of their answer in the same or a later c
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
   equal(
-    tools.map((entry) => [entry.key, entry.status, entry.result?.content]),
+    tools.map((entry) => [entry.id, entry.status, entry.result?.content]),
     [
       ["1:0", "done", "cut 1"],
       ["1:1", "done", "cut 2"],
@@ -300,8 +300,8 @@ test("a cancel mid-draft keeps only what its commit saved", () => {
   ]);
   equal(transcript.entries, [
     input,
-    { kind: "text", key: "3:0", text: "I run ", refusal: false, draft: false },
-    { kind: "end", key: "3:end", end: { outcome: "cancelled" }, answer: undefined },
+    { kind: "text", id: "3:0", text: "I run ", refusal: false, draft: false },
+    { kind: "end", id: "3:end", end: { outcome: "cancelled" }, answer: undefined },
   ]);
 });
 
@@ -422,7 +422,7 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
   const facts = () => [
     transcript.state,
     [...transcript.pending.keys()],
-    [...transcript.questions.keys()],
+    [...transcript.interactions.keys()],
     transcript.failure,
     transcript.settings?.model.model,
   ];

@@ -1,6 +1,8 @@
-// The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
+// The facts of `ctx.addListener`: the opens, the updates, and the closes of the sessions, and the notices.
 
-import type { HostEvents, PluginContext, PluginSession, QuestionAnswer, SessionContext } from "yuke:plugins";
+import { auth } from "yuke:internal/sessions";
+import type { HostEvents, PluginContext, PluginSession, SessionContext } from "yuke:plugins";
+import type { QuestionAnswer } from "yuke:protocol";
 import { createHost, equal, reply, test, waitForSettled } from "yuke:test";
 
 /** A plugin that keeps its context for the test. */
@@ -20,7 +22,7 @@ function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonl
 
 /** A plugin whose tool `ask` asks the user a yes or no question. */
 const asker: PluginSession = (s) => {
-  s.tools.define({
+  s.tools.add({
     name: "ask",
     description: "Ask the user.",
     concurrency: "serial",
@@ -43,23 +45,23 @@ test("a listener gets each open session first, then the states of a turn, a late
   const first = await host.openSession();
   const seen: string[] = [];
   const ctx = plugin.ctx();
-  ctx.on("session.opened", (data) =>
+  ctx.addListener("session.opened", (data) =>
     seen.push(`opened ${data.sessionId === first.id ? "first" : "second"} ${data.state}`),
   );
   let frozen = true;
   // Each session starts with its open, so no update of a session comes before it.
   const opened = new Set<string>();
   let early = false;
-  ctx.on("session.opened", (data) => opened.add(data.sessionId));
-  ctx.on("session.update", (data) => {
+  ctx.addListener("session.opened", (data) => opened.add(data.sessionId));
+  ctx.addListener("session.update", (data) => {
     early ||= !opened.has(data.sessionId);
     frozen &&= Object.isFrozen(data) && Object.isFrozen(data.update);
     if (data.update.sessionUpdate === "state") seen.push(`state ${data.update.state}`);
   });
-  ctx.on("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
+  ctx.addListener("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
   await waitForSettled();
 
-  await first.send("Hi.");
+  await first.sendMessage("Hi.");
   await host.openSession();
   await ctx.get("sessions").closeForAll(first.id);
 
@@ -69,7 +71,7 @@ test("a listener gets each open session first, then the states of a turn, a late
   );
 });
 
-test("an open during a turn gives its state and questions, and a later listener gets them as the facts left them", async () => {
+test("an open during a turn gives its state and interactions, and a later listener gets them as the facts left them", async () => {
   const plugin = watcher();
   const answered = Promise.withResolvers<QuestionAnswer[]>();
   await using host = await createHost({
@@ -82,13 +84,13 @@ test("an open during a turn gives its state and questions, and a later listener 
   });
   const session = await host.openSession();
   const ctx = plugin.ctx();
-  /** The state and the count of questions of each open that a new listener gets. */
+  /** The state and the count of interactions of each open that a new listener gets. */
   const opens = (): string[] => {
     const got: string[] = [];
-    ctx.on("session.opened", (data) => got.push(`${data.state} ${data.questions.length}`));
+    ctx.addListener("session.opened", (data) => got.push(`${data.state} ${data.interactions.length}`));
     return got;
   };
-  const turn = session.send("Ask me.");
+  const turn = session.sendMessage("Ask me.");
   await waitForSettled();
   equal(host.questions.length, 1);
   // The first listener starts the watch, so the host gives the open as the session is now.
@@ -116,13 +118,13 @@ test("a listener that comes during a question of a running watch gets the open a
   const session = await host.openSession();
   const ctx = plugin.ctx();
   const first: string[] = [];
-  ctx.on("session.opened", (data) => first.push(`${data.state} ${data.questions.length}`));
+  ctx.addListener("session.opened", (data) => first.push(`${data.state} ${data.interactions.length}`));
   await waitForSettled();
-  const turn = session.send("Ask me.");
+  const turn = session.sendMessage("Ask me.");
   await waitForSettled();
   equal(host.questions.length, 1);
   const later: string[] = [];
-  ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
+  ctx.addListener("session.opened", (data) => later.push(`${data.state} ${data.interactions.length}`));
   answered.resolve(yes);
   await turn;
 
@@ -147,13 +149,13 @@ test("an open gives the parent and the running jobs, and a later listener gets t
   const ctx = plugin.ctx();
   const child = await ctx.get("sessions").create(parent.settings, { parent: parent.id });
   const end = Promise.withResolvers<undefined>();
-  await contexts.get(parent.id)?.jobs.run({ id: "explorer", label: "one" }, () => end.promise);
+  await contexts.get(parent.id)?.jobs.start({ id: "explorer", label: "one" }, () => end.promise);
   /** The opens that a new listener gets: the session, its parent, and the ids of its running jobs. */
   const opens = (): string[] => {
     const got: string[] = [];
-    ctx.on("session.opened", (data) => {
+    ctx.addListener("session.opened", (data) => {
       const name = data.sessionId === child ? "child" : "parent";
-      const of = data.parent === parent.id ? "of parent" : "top";
+      const of = data.parent === undefined ? "top" : data.parent === parent.id ? "of parent" : "of another";
       got.push(`${name} ${of} [${data.jobs.map((job) => job.id).join()}]`);
     });
     return got;
@@ -180,13 +182,13 @@ test("a stored API key and a logout each tell the listeners that the catalog cha
   await using _host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
   const ctx = plugin.ctx();
   let changes = 0;
-  ctx.on("catalog.changed", () => {
+  ctx.addListener("catalog.changed", () => {
     changes += 1;
   });
   await waitForSettled();
 
-  await ctx.get("auth").setApiKey("anthropic", "sk-test");
-  await ctx.get("auth").logout("anthropic");
+  await auth.setApiKey("anthropic", "sk-test");
+  await auth.logout("anthropic");
   await waitForSettled();
 
   equal(changes, 2);
@@ -199,11 +201,11 @@ test("a listener that throws gives a notice for each throw, and it and the other
   const ctx = plugin.ctx();
   let throws = 0;
   let others = 0;
-  ctx.on("session.opened", () => {
+  ctx.addListener("session.opened", () => {
     throws += 1;
     throw new Error("broken");
   });
-  ctx.on("session.opened", () => {
+  ctx.addListener("session.opened", () => {
     others += 1;
   });
   await waitForSettled();
@@ -213,7 +215,7 @@ test("a listener that throws gives a notice for each throw, and it and the other
     [
       throws,
       others,
-      host.notices.filter((notice) => notice.source === "watcher").map((notice) => notice.message.split("\n")[0]),
+      host.notices.filter((notice) => notice.source === "watcher").map((notice) => notice.text.split("\n")[0]),
     ],
     [
       2,
@@ -233,9 +235,9 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
     ],
   });
   const got: HostEvents["notice"][] = [];
-  const remove = plugin.ctx().on("notice", (data) => got.push(data));
+  const remove = plugin.ctx().addListener("notice", (data) => got.push(data));
   const delivered: string[] = [];
-  plugin.ctx().on("notice", (data) => delivered.push(data.message));
+  plugin.ctx().addListener("notice", (data) => delivered.push(data.text));
   sender.ctx().notify("info", "first");
   await waitForSettled();
   remove();
@@ -243,7 +245,7 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
   await waitForSettled();
 
   equal(
-    [got.map((notice) => [notice.source, notice.level, notice.message]), delivered],
+    [got.map((notice) => [notice.source, notice.level, notice.text]), delivered],
     [[["sender", "info", "first"]], ["first", "second"]],
   );
 });
@@ -254,11 +256,11 @@ test("the last removal ends the watch, and a new listener gets the open sessions
   await host.openSession();
   const ctx = plugin.ctx();
   const first: string[] = [];
-  const remove = ctx.on("session.opened", (data) => first.push(data.sessionId));
+  const remove = ctx.addListener("session.opened", (data) => first.push(data.sessionId));
   await waitForSettled();
   remove();
   const again: string[] = [];
-  ctx.on("session.opened", (data) => again.push(data.sessionId));
+  ctx.addListener("session.opened", (data) => again.push(data.sessionId));
   await waitForSettled();
 
   equal(first.length, 1);

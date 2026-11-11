@@ -350,13 +350,15 @@ impl Sessions for Scripted {
     }
 }
 
-/// A runtime of the test `name` on `scripted` with the plugin `test`, whose `apply` puts `ctx.get("sessions")` and
-/// `ctx.get("catalog")` on the global object.
+/// A runtime of the test `name` on `scripted` with the plugin `test`, whose `apply` puts `ctx.get("sessions")`,
+/// `ctx.get("catalog")`, and the credentials and the plugin manager of `yuke:internal/sessions` on the global object.
 async fn started(name: &str, scripted: &Rc<Scripted>) -> Runtime {
     let folder = folder(name);
     let processes = Rc::new(Processes::new(folder.join("processes")));
     let (runtime, _reports) = Runtime::start(crate::Options {
         sessions: Rc::clone(scripted) as Rc<dyn Sessions>,
+        // The plugin of the test reaches the credentials and the plugin manager, as the bundled plugins do.
+        internal_imports: true,
         ..options(&folder, processes)
     })
     .await
@@ -365,12 +367,13 @@ async fn started(name: &str, scripted: &Rc<Scripted>) -> Runtime {
         &folder,
         &[(
             "index.ts",
-            "export function apply(ctx) {
+            "import { auth, plugins } from 'yuke:internal/sessions';
+             export function apply(ctx) {
                globalThis.context = ctx;
                globalThis.sessions = ctx.get('sessions');
                globalThis.catalog = ctx.get('catalog');
-               globalThis.auth = ctx.get('auth');
-               globalThis.plugins = ctx.get('plugins');
+               globalThis.auth = auth;
+               globalThis.plugins = plugins;
                globalThis.seen = [];
              }
              export function session(s) { globalThis.session = s; }",
@@ -430,7 +433,7 @@ async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
         &runtime,
         &format!(
             "const delivered = [];
-             context.on('session.update', data => delivered.push(`fact ${{data.update.state}}`));
+             context.addListener('session.update', data => delivered.push(`fact ${{data.update.state}}`));
              const handle = await sessions.open('{}', {{ tail: 5, onEvent(event) {{
                if ('update' in event) delivered.push(`view ${{event.update.state}}`);
              }} }});
@@ -515,7 +518,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     assert_eq!(evaluate::<usize>(&runtime, "return later.length;").await.unwrap(), 2);
     let input = evaluate::<String>(
         &runtime,
-        "try { await handle.sendMessage([]); return 'sent'; } catch (error) { return error.message; }",
+        "try { await handle.sendMessage({ content: [] }); return 'sent'; } catch (error) { return error.message; }",
     )
     .await
     .unwrap();
@@ -586,7 +589,7 @@ async fn the_close_of_the_session_ends_each_handle_on_it() {
         .unwrap();
     let input = evaluate::<String>(
         &runtime,
-        "try { await other.sendMessage([]); return 'sent'; } catch (error) { return error.message; }",
+        "try { await other.sendMessage({ content: [] }); return 'sent'; } catch (error) { return error.message; }",
     )
     .await
     .unwrap();
@@ -610,10 +613,10 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &runtime,
         &format!(
             "const id = '{}';
-             const input = await handle.sendMessage([{{ user_text: 'hi' }}]);
+             const input = await handle.sendMessage({{ content: [{{ user_text: 'hi' }}] }});
              const removed = await handle.removeInput(input);
-             await handle.sendMessage([{{ user_text: 'Review @main.rs' }}], [{{ user_text: 'Review main.rs.' }}]);
-             await handle.notifyModel('shown', 'told');
+             await handle.sendMessage({{ content: [{{ user_text: 'Review @main.rs' }}], modelContent: [{{ user_text: 'Review main.rs.' }}] }});
+             await handle.notifyModel({{ display: 'shown', text: 'told' }});
              handle.cancel();
              handle.moveJobsToBackground();
              await sessions.rename(id, '  renamed   session ');
@@ -819,7 +822,7 @@ async fn a_failed_request_rejects_with_the_text_of_its_failure() {
         &runtime,
         "const failures = [];
          try { await sessions.get(handle.id); } catch (error) { failures.push(error.message); }
-         try { handle.respond(4, { kind: 'canceled' }); } catch (error) { failures.push(error.message); }
+         try { handle.respond(4, { kind: 'cancelled' }); } catch (error) { failures.push(error.message); }
          return JSON.stringify(failures);",
     )
     .await
@@ -844,7 +847,7 @@ async fn ask_delivers_host_events_before_its_reply() {
 
     let delivered = evaluate::<Vec<String>>(
         &runtime,
-        "context.on('session.update', data => seen.push(data.update.sessionUpdate));
+        "context.addListener('session.update', data => seen.push(data.update.sessionUpdate));
          const answer = await session.ask({ questions: [{ id: 'choice', header: 'Choice', question: 'Which?', options: [] }] });
          seen.push(`reply ${answer.length}`);
          return seen;",
@@ -886,7 +889,7 @@ async fn start_job_delivers_host_events_before_its_reply() {
 
     let delivered = evaluate::<Vec<String>>(
         &runtime,
-        "context.on('session.update', data => {
+        "context.addListener('session.update', data => {
            if (data.update.sessionUpdate !== 'job' || data.update.job.state === 'running') {
              seen.push(data.update.sessionUpdate);
            }
@@ -932,7 +935,7 @@ async fn stop_job_delivers_host_events_before_its_reply() {
     let delivered = evaluate::<Vec<String>>(
         &runtime,
         "let recording = false;
-         context.on('session.update', data => {
+         context.addListener('session.update', data => {
            if (recording && (data.update.sessionUpdate !== 'job' || data.update.job.state === 'stopped')) {
              seen.push(data.update.sessionUpdate);
            }

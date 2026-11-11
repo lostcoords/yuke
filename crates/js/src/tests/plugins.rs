@@ -57,7 +57,7 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
                await null;
                throw new Error('broken');
              }}
-             export function session(s) {{ s.tools.define({}); }}",
+             export function session(s) {{ s.tools.add({}); }}",
             tool("dropped")
         )),
         &[],
@@ -67,7 +67,7 @@ async fn a_failed_apply_aborts_its_signal_and_its_session_never_runs() {
         &folder,
         "good",
         Some(&format!(
-            "export function session(s) {{ s.tools.define({}); }}",
+            "export function session(s) {{ s.tools.add({}); }}",
             tool("kept")
         )),
         &[],
@@ -152,7 +152,7 @@ async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
             "bundled.ts",
             &format!(
                 "export function apply(ctx) {{ globalThis.seen = [ctx.name, String('root' in ctx), ctx.dataDir]; }}
-                 export function session(s) {{ s.tools.define({}); }}",
+                 export function session(s) {{ s.tools.add({}); }}",
                 tool("bundled_tool")
             ),
         )],

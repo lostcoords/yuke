@@ -35,7 +35,7 @@ export class SavedChoice {
   static async load(dataDir: string, report: (error: unknown) => void): Promise<SavedChoice> {
     let choice: Choice | undefined;
     try {
-      choice = choiceOf(JSON.parse(await readTextFile("choice.json", { baseDir: dataDir, fatal: true })));
+      choice = choiceOf(JSON.parse(await readTextFile("choice.json", { cwd: dataDir, fatal: true })));
     } catch (error) {
       if (!(error instanceof FileSystemError && error.code === "ENOENT")) report(error);
     }
@@ -48,7 +48,7 @@ export class SavedChoice {
 
   /** Save `choice`. A failed write keeps the old pick. */
   async save(choice: Choice): Promise<void> {
-    await writeTextFile("choice.json", JSON.stringify(choice), { baseDir: this.#dataDir, atomic: true });
+    await writeTextFile("choice.json", JSON.stringify(choice), { cwd: this.#dataDir, atomic: true });
     this.#choice = choice;
   }
 }

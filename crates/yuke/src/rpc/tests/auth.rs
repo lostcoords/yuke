@@ -521,8 +521,8 @@ async fn a_plugin_login_gives_each_waiter_its_end_and_a_plugin_stores_and_remove
     );
     place.plugin(
         "wizard",
-        "export function apply(ctx) {
-           const auth = ctx.get('auth');
+        "import { auth } from 'yuke:internal/sessions';
+         export function apply(ctx) {
            void (async () => {
              const first = await auth.login('xai-grok');
              const second = await auth.login('xai-grok');

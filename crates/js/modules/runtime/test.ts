@@ -13,7 +13,7 @@ export async function waitForSettled(): Promise<void> {
   await testWaitForSettled();
 }
 
-export function listen(): UnixListener {
+export function listenOnTemporarySocket(): UnixListener {
   return new Listener(testSocketPath(), undefined);
 }
 
@@ -149,7 +149,7 @@ const declared = {
   rejects,
   waitForSettled,
   folder,
-  listen,
+  listenOnTemporarySocket,
   createHost,
   reply,
   createFrame,

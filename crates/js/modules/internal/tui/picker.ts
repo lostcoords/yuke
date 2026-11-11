@@ -1,6 +1,6 @@
 /**
  * `Picker` of `yuke:tui`: a search field over a list of items. A rank gives the shown items in their final order, and
- * the picker never sorts them again. The selection follows its key. Up and Down move it, Enter chooses, and Esc
+ * the picker never sorts them again. The selection follows its id. Up and Down move it, Enter chooses, and Esc
  * cancels.
  */
 import { TextEditor } from "yuke:internal/tui/editor";
@@ -34,7 +34,7 @@ interface Entry<T> {
   readonly selected: boolean;
 }
 
-export class Picker<T extends object> {
+export class Picker<T extends object> implements View {
   readonly input: TextEditor;
   readonly #options: PickerOptions<T>;
   readonly #list: ScrollList<Entry<T>>;
@@ -49,13 +49,13 @@ export class Picker<T extends object> {
     this.#items = options.items;
     this.input = new TextEditor({ multiline: false });
     const extension = this.input.extend(new AbortController().signal);
-    extension.onKey((event) => this.key(event));
-    extension.onChange((change) => {
+    extension.addKeyHandler((event) => this.onKey(event));
+    extension.addChangeListener((change) => {
       // A new query selects its best result, as the user expects at the top.
       if (change.before.text !== change.after.text) this.#rank(true);
     });
     this.#list = new ScrollList<Entry<T>>({
-      key: (entry) => entry.key,
+      id: (entry) => entry.key,
       render: (entry, width) =>
         this.#options.render === undefined
           ? [this.#row(entry, width)]
@@ -102,16 +102,16 @@ export class Picker<T extends object> {
     this.#select((this.#entries[next] as Entry<T>).key);
   }
 
-  /** Give the selected item to `choose`. `false` without a selected item. */
+  /** Give the selected item to `onChoose`. `false` without a selected item. */
   choose(): boolean {
     const item = this.selected;
     if (item === undefined) return false;
-    this.#options.choose(item);
+    this.#options.onChoose(item);
     return true;
   }
 
   cancel(): void {
-    this.#options.cancel();
+    this.#options.onCancel();
   }
 
   layout(size: Size): readonly Placement[] {
@@ -126,7 +126,7 @@ export class Picker<T extends object> {
   }
 
   /** Up, Down, Enter, and Esc. Enter stays here also when nothing is selected. */
-  key(event: KeyEvent): boolean {
+  onKey(event: KeyEvent): boolean {
     switch (strokeOf(event)) {
       case "up":
         this.move(-1);
@@ -146,10 +146,10 @@ export class Picker<T extends object> {
   }
 
   /** The wheel scrolls the results, and a press on a result chooses it. */
-  mouse(event: MouseEvent): boolean {
+  onMouse(event: MouseEvent): boolean {
     // The search field takes the first row.
     const local = { ...event, row: event.row - 1 };
-    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.mouse(local);
+    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.onMouse(local);
     if (event.button !== "left" || event.action !== "press" || local.row < 0) return false;
     const found = this.#list.rowAt(this.#list.state.top + local.row);
     if (found === undefined) return false;
@@ -165,7 +165,7 @@ export class Picker<T extends object> {
       this.#options.rank === undefined
         ? defaultRank(query, this.#items, this.#options.label)
         : this.#options.rank(query, this.#items);
-    const keys = matches.map((match) => this.#options.key(match.item));
+    const keys = matches.map((match) => this.#options.id(match.item));
     const selected = !top && this.#selected !== undefined && keys.includes(this.#selected) ? this.#selected : keys[0];
     const moved = selected !== this.#selected;
     this.#selected = selected;

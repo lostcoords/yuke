@@ -34,10 +34,10 @@ export class ChatDocument implements ChatPresentation {
   #status: { readonly status: TurnFailure; readonly item: TextItem } | undefined;
   #document: TextDocument;
 
-  /** The document `key` with the fold choices `folds`. */
-  constructor(key: string, folds: Iterable<readonly [string, boolean]> = []) {
+  /** The document `id` with the fold choices `folds`. */
+  constructor(id: string, folds: Iterable<readonly [string, boolean]> = []) {
     this.#folds = new Map(folds);
-    this.#document = Object.freeze({ key, items: [] });
+    this.#document = Object.freeze({ id, items: [] });
   }
 
   /** The fold choices, for the snapshot of the pane. */
@@ -45,13 +45,13 @@ export class ChatDocument implements ChatPresentation {
     return [...this.#folds];
   }
 
-  /** Open or fold the entry `key`, a tool or a thought with text to show. Return `false` when that entry has no fold. */
-  toggle(transcript: Transcript, key: string): boolean {
-    const entry = transcript.entries.find((candidate) => candidate.key === key);
+  /** Open or fold the entry `id`, a tool or a thought with text to show. Return `false` when that entry has no fold. */
+  toggle(transcript: Transcript, id: string): boolean {
+    const entry = transcript.entries.find((candidate) => candidate.id === id);
     if (entry === undefined || !(entry.kind === "tool" || (entry.kind === "reasoning" && hasText(entry)))) {
       return false;
     }
-    this.#folds.set(key, !this.#open(entry));
+    this.#folds.set(id, !this.#open(entry));
     return true;
   }
 
@@ -59,7 +59,7 @@ export class ChatDocument implements ChatPresentation {
   toggleTools(transcript: Transcript): void {
     const tools = transcript.entries.filter((entry) => entry.kind === "tool" && shown(entry));
     const open = tools.some((entry) => !this.#open(entry));
-    for (const entry of tools) this.#folds.set(entry.key, open);
+    for (const entry of tools) this.#folds.set(entry.id, open);
   }
 
   /** The document of `transcript`. The same document object comes back while no item changed. */
@@ -71,13 +71,13 @@ export class ChatDocument implements ChatPresentation {
       if (!shown(entry)) continue;
       const open = this.#open(entry);
       const duration = entry.kind === "tool" ? shownDuration(entry, now) : undefined;
-      let cached = this.#cache.get(entry.key);
+      let cached = this.#cache.get(entry.id);
       if (cached?.entry !== entry || cached.open !== open || cached.duration !== duration) {
         const markdown = entry.kind === "text" ? (cached?.markdown ?? new Markdown()) : undefined;
         if (entry.kind === "text" && cached?.entry !== entry) markdown?.setText(entry.text);
         cached = { entry, open, duration, item: itemOf(entry, open, markdown, duration), markdown };
       }
-      cache.set(entry.key, cached);
+      cache.set(entry.id, cached);
       items.push(cached.item);
     }
     const status = transcript.failure;
@@ -88,14 +88,14 @@ export class ChatDocument implements ChatPresentation {
     this.#cache = cache;
     const before = this.#document.items;
     if (before.length !== items.length || before.some((item, at) => item !== items[at])) {
-      this.#document = Object.freeze({ key: this.#document.key, items });
+      this.#document = Object.freeze({ id: this.#document.id, items });
     }
     return this.#document;
   }
 
   /** The fold of `entry`: its choice. Without a choice, a thought and a tool are folded, and the rest is open. */
   #open(entry: Entry): boolean {
-    return this.#folds.get(entry.key) ?? (entry.kind !== "reasoning" && entry.kind !== "tool");
+    return this.#folds.get(entry.id) ?? (entry.kind !== "reasoning" && entry.kind !== "tool");
   }
 }
 
@@ -113,41 +113,41 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
     case "input": {
       const text = inputText(entry.content);
       if (entry.source.kind === "user" && entry.inputKind === "message") {
-        return item(entry.key, { key: "text", kind: "text", text, render: (width) => filledRows(text, width) });
+        return item(entry.id, { id: "text", kind: "text", text, render: (width) => filledRows(text, width) });
       }
       const sender = entry.source.kind === "plugin" ? sourceName(entry.source.name) : "you";
       const title = entry.inputKind === "notification" ? `notification · ${sender}` : `message · ${sender}`;
-      return item(entry.key, label(title, STYLE.meta), plain("text", text, undefined));
+      return item(entry.id, label(title, STYLE.meta), plain("text", text, undefined));
     }
     case "text": {
       const parser = markdown as Markdown;
       const body: TextSection = {
-        key: "text",
+        id: "text",
         kind: "text",
         text: parser.source(),
         render: (width) => parser.rows(Math.max(1, width - 2)).map(indented),
       };
-      return entry.refusal ? item(entry.key, label("refused", STYLE.error), body) : item(entry.key, body);
+      return entry.refusal ? item(entry.id, label("refused", STYLE.error), body) : item(entry.id, body);
     }
     case "reasoning": {
       // An encrypted thought streams no text. The working row still shows the reasoning phase.
-      if (!hasText(entry)) return { key: entry.key, sections: [] };
+      if (!hasText(entry)) return { id: entry.id, sections: [] };
       const title = label(entry.draft ? "thinking" : "thought", STYLE.title);
       const body = plain("text", entry.text, STYLE.thought);
-      return item(entry.key, title, open ? body : { ...body, render: () => [] });
+      return item(entry.id, title, open ? body : { ...body, render: () => [] });
     }
     case "tool":
       return toolItem(entry, open, duration);
     case "compaction":
-      return item(entry.key, label("context replaced", STYLE.meta));
+      return item(entry.id, label("context replaced", STYLE.meta));
     case "end": {
       const end = entry.end;
-      if ("failed" in end) return item(entry.key, label(`failed: ${end.failed}`, STYLE.error));
+      if ("failed" in end) return item(entry.id, label(`failed: ${end.failed}`, STYLE.error));
       if (end.outcome === "stopped" || end.outcome === "cancelled") {
-        return item(entry.key, label(end.outcome, STYLE.meta));
+        return item(entry.id, label(end.outcome, STYLE.meta));
       }
       // A completed turn shows no row.
-      return { key: entry.key, sections: [] };
+      return { id: entry.id, sections: [] };
     }
   }
 }

@@ -28,7 +28,6 @@ use crate::plugins::{create_data_folders, load_order, manifest_plugin, valid_nam
 /// of the tests of yuke. It also holds the test host of the runtime and the sender of the raw reports to the runner.
 pub(crate) struct TestSetup {
     pub(super) cache: PathBuf,
-    pub(super) internal_imports: bool,
     /// The folder of the outputs and the logs of the commands, in the place of the test. The end of a test can skip
     /// the shutdown, and the removal of the place of the test then removes the folder.
     pub(super) processes: PathBuf,
@@ -431,9 +430,9 @@ impl TestPlace {
             exchange: Arc::clone(&fetch) as _,
             fetch,
             interface: None,
+            internal_imports,
             test: Some(TestSetup {
                 cache: cache.to_owned(),
-                internal_imports,
                 processes: place.join("processes"),
                 host: Rc::clone(&host),
                 reports,

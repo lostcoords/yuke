@@ -2,7 +2,7 @@
 // a check, its apply, its stop, and the sync.
 
 import { apply } from "yuke:internal/bundled/plugins";
-import type { PluginManager } from "yuke:plugins";
+import type { PluginManager } from "yuke:internal/sessions";
 import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import { assert, createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
@@ -79,12 +79,15 @@ function manager(changes: readonly PluginChange[], hold = false, fail?: string) 
 function load(frame: FrameTest, plugins: PluginManager): string[] {
   const tui = frame.surface("plugins").tui;
   const notices: string[] = [];
-  const services: Record<string, unknown> = { tui, plugins };
-  apply({
-    get: (name: string) => services[name],
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-    signal: new AbortController().signal,
-  } as never);
+  const services: Record<string, unknown> = { tui };
+  apply(
+    {
+      get: (name: string) => services[name],
+      notify: (level: string, text: string) => notices.push(`${level} ${text}`),
+      signal: new AbortController().signal,
+    } as never,
+    plugins,
+  );
   frame.start();
   return notices;
 }
@@ -347,7 +350,7 @@ test("the dashboard has a default look that a plugin changes", async () => {
     ];
   };
   const before = looks();
-  frame.surface("theme").tui.styles.set({
+  frame.surface("theme").tui.styles.add({
     "plugins.title": { fg: 1, bold: null },
     "plugins.detail": { fg: 2, dim: null },
     "picker.selected": { fg: 3, bg: null },
@@ -360,7 +363,7 @@ test("the dashboard has a default look that a plugin changes", async () => {
 test("the line of an empty dashboard uses the look of the details", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   load(frame, { ...manager([]).plugins, list: async () => ({ plugins: [] }) });
-  frame.surface("theme").tui.styles.set({ "plugins.detail": { fg: 2, dim: null } });
+  frame.surface("theme").tui.styles.add({ "plugins.detail": { fg: 2, dim: null } });
   const shown = await run(frame, "plugins:open");
   const row = shown.findIndex((line) => line.includes("config.json has no plugins"));
   const column = shown[row]?.indexOf("config.json") ?? 0;

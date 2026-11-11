@@ -3,7 +3,7 @@
  * the source `console`. `yuke:internal/web` installs the object.
  */
 import { writeConsole } from "yuke:internal/native";
-import type { NoticeLevel } from "yuke:plugins";
+import type { NoticeLevel } from "yuke:protocol";
 
 /** The depth of nested objects that a line shows. A deeper object shows as `[Object]`. */
 const DEPTH = 4;

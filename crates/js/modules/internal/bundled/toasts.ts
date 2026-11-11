@@ -59,7 +59,7 @@ export function apply(ctx: PluginContext): undefined {
       // A repeat starts the wait again.
       const shown = toast;
       shown.cancel?.();
-      shown.cancel = tui.after(INFO_MS, () => remove(shown));
+      shown.cancel = tui.addTimer(INFO_MS, () => remove(shown));
     }
   };
 
@@ -103,11 +103,11 @@ export function apply(ctx: PluginContext): undefined {
       }
     },
     // A left press on a toast dismisses it.
-    mouse: (event) => {
+    onMouse: (event) => {
       if (event.action !== "press" || event.button !== "left") return false;
       let top = 0;
       for (const toast of toasts) {
-        const height = rowsOf(toast, widthOf({ width: tui.width, height: tui.height })).length;
+        const height = rowsOf(toast, widthOf(tui.size)).length;
         if (event.row >= top && event.row < top + height) {
           remove(toast);
           return true;
@@ -133,7 +133,7 @@ export function apply(ctx: PluginContext): undefined {
       tui.requestFrame();
     },
   });
-  tui.keys.bind("ctrl+l", "dismiss");
+  tui.keys.add("ctrl+l", "dismiss");
   tui.commands.add({
     name: "history",
     slash: "messages",
@@ -144,12 +144,12 @@ export function apply(ctx: PluginContext): undefined {
         () =>
           new Picker<Notice>({
             items: notices,
-            key: (notice) => String(notices.indexOf(notice)),
+            id: (notice) => String(notices.indexOf(notice)),
             label: (notice) =>
               `${notice.level} ${sourceName(notice.source)}${notice.count > 1 ? ` ×${notice.count}` : ""}: ${notice.text.split("\n")[0]}`,
             detail: (notice) => notice.sessionId ?? "",
-            choose: () => mount.close(),
-            cancel: () => mount.close(),
+            onChoose: () => mount.close(),
+            onCancel: () => mount.close(),
           }),
         {
           place: (size) => bottom(size, HISTORY_ROWS),
@@ -160,6 +160,6 @@ export function apply(ctx: PluginContext): undefined {
 
   // The warnings and errors of the history show too, such as a fault of a plugin that loaded earlier.
   for (const notice of tui.notices.list()) if (notice.level === "warn" || notice.level === "error") show(notice);
-  tui.notices.on(show);
+  tui.notices.addListener(show);
   return undefined;
 }

@@ -120,12 +120,12 @@ export class TextSupport<P, E> {
         part.decorations = Object.freeze(decorations.map((decoration) => Object.freeze({ ...decoration })));
         this.#host?.requestFrame();
       },
-      onKey: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): (() => void) => {
+      addKeyHandler: (handler: (event: KeyEvent) => boolean, phase: KeyPhase = "beforeDefault"): (() => void) => {
         return add(this.#keys[phase], handler);
       },
-      onMouse: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
-      onPaste: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler),
-      onChange: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
+      addMouseHandler: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
+      addPasteHandler: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler),
+      addChangeListener: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
       dispose: part.dispose,
     });
   }
@@ -301,7 +301,7 @@ export class WidgetMounts {
   }
 
   /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
-  watch(owner: string, attach: (mount: WidgetMount) => (() => void) | undefined): () => void {
+  addWatcher(owner: string, attach: (mount: WidgetMount) => (() => void) | undefined): () => void {
     const watch: Watch = { owner, attach, cleanups: new Map() };
     this.#watches.add(watch);
     for (const mount of this.list()) this.#visit(watch, mount);

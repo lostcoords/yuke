@@ -192,6 +192,7 @@ impl Handle {
                     options: Json(plugin.options),
                     given: matches!(plugin.origin, Origin::Given),
                     entry,
+                    provides: plugin.provides,
                 };
                 let promise: Promise<'_> = caught(&ctx, load.call((spec,)))?;
                 caught(&ctx, promise.into_future::<()>().await)
@@ -210,6 +211,8 @@ struct PluginSpec {
     entry: Option<String>,
     /// The runtime holds the exports, given with the name of the plugin.
     given: bool,
+    /// The services that the plugin may publish.
+    provides: Vec<String>,
 }
 
 /// The internal module that loads the plugins.

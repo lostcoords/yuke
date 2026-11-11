@@ -137,13 +137,13 @@ export async function createHost(options: HostOptions): Promise<Host> {
           sessionRespond([
             id,
             update.interactionId,
-            answers === undefined ? { kind: "canceled" } : { kind: "questions", answers: [...answers] },
+            answers === undefined ? { kind: "cancelled" } : { kind: "questions", answers: [...answers] },
           ]);
         }
       } catch (error) {
         if (!open()) return;
         // The cancel ends the operation that asked.
-        sessionRespond([id, update.interactionId, { kind: "canceled" }]);
+        sessionRespond([id, update.interactionId, { kind: "cancelled" }]);
         throw error;
       }
     })();
@@ -177,21 +177,21 @@ export async function createHost(options: HostOptions): Promise<Host> {
     return Object.freeze({
       id,
       transcript,
-      async send(text: string, operation?: OperationOptions): Promise<void> {
+      async sendMessage(text: string, operation?: OperationOptions): Promise<void> {
         operation?.signal?.throwIfAborted();
         const cancel = (): void => handle.cancel();
         operation?.signal?.addEventListener("abort", cancel, { once: true });
         try {
-          await handle.sendMessage([{ user_text: text }]);
+          await handle.sendMessage({ content: [{ user_text: text }] });
           await handle.waitForIdle();
         } finally {
           operation?.signal?.removeEventListener("abort", cancel);
         }
         await testWaitForSettled();
-        // A cancel ends the turn early, and `send` rejects as `run` and `call` do.
+        // A cancel ends the turn early, and `sendMessage` rejects as `runHook` and `call` do.
         operation?.signal?.throwIfAborted();
       },
-      async run<K extends keyof HookEvents>(
+      async runHook<K extends keyof HookEvents>(
         point: K,
         event: HookEvents[K],
         operation?: OperationOptions,

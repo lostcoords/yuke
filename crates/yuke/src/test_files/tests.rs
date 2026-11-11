@@ -79,7 +79,7 @@ fn a_request_after_the_last_reply_fails_the_test() {
            test("unscripted", async () => {
              await using host = await createHost({ plugins: [], replies: [] });
              const session = await host.openSession();
-             await session.send("Hi.");
+             await session.sendMessage("Hi.");
            });"#,
         TIME_LIMIT,
     );
@@ -144,7 +144,7 @@ fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
                plugins: [{
                  name: "ask",
                  session: (s) => {
-                   s.tools.define({
+                   s.tools.add({
                      name: "ask",
                      description: "Ask the user.",
                      concurrency: "serial",
@@ -186,7 +186,7 @@ fn a_respond_that_throws_another_error_fails_the_test() {
                plugins: [{
                  name: "reader",
                  session: (s) => {
-                   s.tools.define({
+                   s.tools.add({
                      name: "read_session",
                      description: "Read a session.",
                      concurrency: "serial",

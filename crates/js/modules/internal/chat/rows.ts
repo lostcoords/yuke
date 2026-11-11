@@ -32,7 +32,7 @@ const INDENT: Segment = Object.freeze({ text: " ", copy: false });
 
 /** One empty row before each item, so two items do not touch. It has no source. */
 const GAP: TextSection = Object.freeze({
-  key: "gap",
+  id: "gap",
   kind: "text",
   text: "",
   render: () => [{ segments: [], join: "\n" }],
@@ -52,18 +52,18 @@ export function clipped(text: string, width: number): string {
 }
 
 /** An item of `sections` after the gap row. */
-export function item(key: string, ...sections: TextSection[]): TextItem {
-  return Object.freeze({ key, sections: [GAP, ...sections] });
+export function item(id: string, ...sections: TextSection[]): TextItem {
+  return Object.freeze({ id, sections: [GAP, ...sections] });
 }
 
 /** A title line, such as the heading of a thought. */
 export function label(text: string, style: string): TextSection {
-  return { key: "title", kind: "label", text, render: (width) => styledRows(text, width, style) };
+  return { id: "title", kind: "label", text, render: (width) => styledRows(text, width, style) };
 }
 
 /** A section of plain `text` in `style`. */
-export function plain(key: string, text: string, style: string | undefined): TextSection {
-  return { key, kind: "text", text, render: (width) => styledRows(text, width, style) };
+export function plain(id: string, text: string, style: string | undefined): TextSection {
+  return { id, kind: "text", text, render: (width) => styledRows(text, width, style) };
 }
 
 /** The rows of `text` at `width`, indented, each segment in `style`. */

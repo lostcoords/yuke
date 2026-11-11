@@ -84,7 +84,7 @@ pub(crate) async fn run(machine: Machine, choice: SessionChoice, shutdown: Cance
     let ended = serve(&mut host, machine, store, startup, &shutdown).await;
     drop(host);
     for notice in display.take_notices() {
-        warn(&format!("{}: {}", notice.source, notice.message));
+        warn(&format!("{}: {}", notice.source, notice.text));
     }
     if let Some(text) = ended? {
         writeln!(io::stdout(), "{text}").map_err(failed("the output did not write"))?;
@@ -222,7 +222,7 @@ async fn reload(app: Option<&mut App>, display: &Display, snapshot: String) {
         session_id: None,
         level: NoticeLevel::Error,
         source: SOURCE.to_owned(),
-        message: format!("the reload failed: {failure}"),
+        text: format!("the reload failed: {failure}"),
     }));
 }
 

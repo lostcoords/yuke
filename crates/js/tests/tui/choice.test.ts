@@ -6,7 +6,7 @@ import { equal, folder, test } from "yuke:test";
 
 test("load returns the saved pick and save updates the file and current pick", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
   const errors: unknown[] = [];
   const saved = await SavedChoice.load(folder(), (error) => errors.push(error));
@@ -15,7 +15,7 @@ test("load returns the saved pick and save updates the file and current pick", a
   await saved.save({ model: { provider: "p", model: "n" }, reasoning: "low" });
 
   equal(
-    [saved.current, JSON.parse(await readTextFile("choice.json", { baseDir: folder() })), errors],
+    [saved.current, JSON.parse(await readTextFile("choice.json", { cwd: folder() })), errors],
     [
       { model: { provider: "p", model: "n" }, reasoning: "low" },
       { model: { provider: "p", model: "n" }, reasoning: "low" },

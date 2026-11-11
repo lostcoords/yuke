@@ -3,7 +3,8 @@
  * takes an API key. A dialog shows the page and the code of a device login. `/logout` removes what yuke stored.
  */
 
-import type { LoginInProgress, PluginContext } from "yuke:plugins";
+import { type Auth, auth as credentials, type LoginInProgress } from "yuke:internal/sessions";
+import type { PluginContext } from "yuke:plugins";
 import { Command } from "yuke:process";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
 import { type Canvas, type Mount, TextEditor, type Tui, type View } from "yuke:tui";
@@ -59,7 +60,7 @@ async function chosen(
 }
 
 /** Take an API key for `provider` in a masked field. A refused key stays in the field with its error. */
-function openKeyDialog(ctx: PluginContext, tui: Tui, provider: ProviderInfo): void {
+function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): void {
   let errorText: string | undefined;
   let pending = false;
   const editor = new TextEditor({
@@ -67,25 +68,22 @@ function openKeyDialog(ctx: PluginContext, tui: Tui, provider: ProviderInfo): vo
     mask: true,
     role: "field",
     placeholder: "API key",
-    submit: (state) => {
+    onSubmit: (state) => {
       const key = state.text.trim();
       if (key === "" || pending) return;
       pending = true;
       errorText = undefined;
-      ctx
-        .get("auth")
-        .setApiKey(provider.id, key)
-        .then(
-          () => {
-            dialog.close();
-            ctx.notify("info", `key saved · ${provider.id}`);
-          },
-          (reason: unknown) => {
-            errorText = String(reason);
-            pending = false;
-            tui.requestFrame();
-          },
-        );
+      auth.setApiKey(provider.id, key).then(
+        () => {
+          dialog.close();
+          ctx.notify("info", `key saved · ${provider.id}`);
+        },
+        (reason: unknown) => {
+          errorText = String(reason);
+          pending = false;
+          tui.requestFrame();
+        },
+      );
     },
   });
   const body: View = {
@@ -113,7 +111,7 @@ async function openBrowser(url: string, cwd: string): Promise<boolean> {
 }
 
 /** Run a device login of `provider` in a dialog. The close of the dialog cancels the login. */
-async function openLoginDialog(ctx: PluginContext, tui: Tui, provider: ProviderInfo): Promise<void> {
+async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): Promise<void> {
   let login: LoginInProgress | undefined;
   const running = (): boolean => login !== undefined;
   const body: View = {
@@ -149,7 +147,7 @@ async function openLoginDialog(ctx: PluginContext, tui: Tui, provider: ProviderI
         when: running,
         run: () => {
           if (login === undefined) return;
-          tui.copy(login.userCode);
+          tui.clipboard.writeText(login.userCode);
           ctx.notify("info", "code copied");
         },
       },
@@ -159,7 +157,7 @@ async function openLoginDialog(ctx: PluginContext, tui: Tui, provider: ProviderI
         when: running,
         run: () => {
           if (login === undefined) return;
-          tui.copy(login.verificationUrl);
+          tui.clipboard.writeText(login.verificationUrl);
           ctx.notify("info", "URL copied");
         },
       },
@@ -167,7 +165,7 @@ async function openLoginDialog(ctx: PluginContext, tui: Tui, provider: ProviderI
   });
   let outcome: LoginOutcome;
   try {
-    login = await ctx.get("auth").login(provider.id, { signal: dialog.signal });
+    login = await auth.login(provider.id, { signal: dialog.signal });
     tui.requestFrame();
     outcome = await login.waitForEnd();
   } catch (error) {
@@ -183,15 +181,15 @@ async function openLoginDialog(ctx: PluginContext, tui: Tui, provider: ProviderI
 }
 
 /** Run `/login`. `args` is the text after the command. */
-async function runLogin(ctx: PluginContext, tui: Tui, args: unknown): Promise<void> {
+async function runLogin(ctx: PluginContext, auth: Auth, tui: Tui, args: unknown): Promise<void> {
   const provider = await chosen(ctx, tui, "Log in", await providersOf(ctx), args);
   if (provider === undefined) return;
-  if (takesLogin(provider.state)) void openLoginDialog(ctx, tui, provider);
-  else openKeyDialog(ctx, tui, provider);
+  if (takesLogin(provider.state)) void openLoginDialog(ctx, auth, tui, provider);
+  else openKeyDialog(ctx, auth, tui, provider);
 }
 
 /** Run `/logout`. `args` is the text after the command. */
-async function runLogout(ctx: PluginContext, tui: Tui, args: unknown): Promise<void> {
+async function runLogout(ctx: PluginContext, auth: Auth, tui: Tui, args: unknown): Promise<void> {
   const providers = await providersOf(ctx);
   const stored = providers.filter((candidate) => isStored(candidate.state));
   if (args === undefined && stored.length === 0) {
@@ -202,14 +200,15 @@ async function runLogout(ctx: PluginContext, tui: Tui, args: unknown): Promise<v
   if (provider === undefined) return;
   const state = provider.state;
   if (isStored(state)) {
-    await ctx.get("auth").logout(provider.id);
+    await auth.logout(provider.id);
     ctx.notify("info", `logged out · ${provider.id}`);
   } else if (state.kind === "ready" && state.credential.kind === "variable") {
     ctx.notify("info", `${provider.id} has its key in $${state.credential.name}: unset the variable`);
   } else ctx.notify("info", `yuke stores no credential for ${provider.id}`);
 }
 
-export function apply(ctx: PluginContext): undefined {
+/** A test gives fake credentials as `auth`. */
+export function apply(ctx: PluginContext, auth: Auth = credentials): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
   const failed = (error: unknown): void => ctx.notify("error", String(error));
@@ -218,14 +217,14 @@ export function apply(ctx: PluginContext): undefined {
     slash: "login",
     argumentHint: "[provider]",
     description: "Connect a provider with an API key or a login",
-    run: (args) => runLogin(ctx, tui, args).catch(failed),
+    run: (args) => runLogin(ctx, auth, tui, args).catch(failed),
   });
   tui.commands.add({
     name: "logout",
     slash: "logout",
     argumentHint: "[provider]",
     description: "Remove what yuke stored for a provider",
-    run: (args) => runLogout(ctx, tui, args).catch(failed),
+    run: (args) => runLogout(ctx, auth, tui, args).catch(failed),
   });
   return undefined;
 }

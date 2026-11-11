@@ -475,7 +475,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
         Input::Notice(notice) => kind(ctx, "notice").and_then(|object| {
             object.set("level", Json(notice.level))?;
             object.set("source", notice.source)?;
-            object.set("text", notice.message)?;
+            object.set("text", notice.text)?;
             if let Some(session) = notice.session_id {
                 object.set("sessionId", Json(session))?;
             }

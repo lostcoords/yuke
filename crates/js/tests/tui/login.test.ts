@@ -32,13 +32,15 @@ function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) 
   let startFailure: string | undefined;
   let end: (outcome: LoginOutcome) => void = () => {};
   const auth = {
-    login: async (id: string, options: { signal: AbortSignal }) => {
+    login: async (id: string, options?: { readonly signal?: AbortSignal }) => {
       calls.push(`login ${id}`);
       if (startFailure !== undefined) throw new Error(startFailure);
-      signals.push(options.signal);
+      const signal = options?.signal;
+      if (signal === undefined) throw new Error("the plugin starts a login without a signal");
+      signals.push(signal);
       const ended = new Promise<LoginOutcome>((resolve) => {
         end = resolve;
-        options.signal.addEventListener("abort", () => resolve({ kind: "cancelled" }));
+        signal.addEventListener("abort", () => resolve({ kind: "cancelled" }));
       });
       return { verificationUrl: URL, userCode: CODE, waitForEnd: () => ended };
     },
@@ -52,12 +54,15 @@ function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) 
   };
   const catalog = { list: async (options: { all?: boolean }) => ({ providers, all: options.all }) };
   const surface = frame.surface("login");
-  const services: Record<string, unknown> = { tui: surface.tui, auth, catalog };
-  apply({
-    get: (name: string) => services[name],
-    dataDir: folder(),
-    notify: (level: string, text: string) => notices.push(`${level} ${text}`),
-  } as never);
+  const services: Record<string, unknown> = { tui: surface.tui, catalog };
+  apply(
+    {
+      get: (name: string) => services[name],
+      dataDir: folder(),
+      notify: (level: string, text: string) => notices.push(`${level} ${text}`),
+    } as never,
+    auth,
+  );
   frame.start();
   return {
     notices,

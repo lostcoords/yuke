@@ -1,7 +1,5 @@
-import type { JobOptions, JobOutcome, JobWork } from "yuke:plugins";
-import type { DisplayBlock, Preview } from "yuke:protocol";
-
-export type { DisplayBlock, Preview };
+import type { CallJobOptions, JobOutcome, JobWork } from "yuke:plugins";
+import type { DisplayBlock, Preview, SessionId } from "yuke:protocol";
 
 /**
  * A JSON schema of a value, in the subset that yuke checks:
@@ -149,14 +147,14 @@ export interface ToolHints<S extends ObjectSchema = ObjectSchema> {
 /** What a call gives its tool besides the arguments. */
 export interface ToolContext {
   /** The id of the session of the call. */
-  readonly sessionId: string;
+  readonly sessionId: SessionId;
   /** The id of the call. It is unique in its session only. */
   readonly callId: string;
   /**
    * The workspace folder of the call: the folder of the session at the start of the call. Relative paths and commands
    * start here.
    */
-  readonly folder: string;
+  readonly cwd: string;
   /**
    * Aborts when the turn cancels the call, and when the call ends. The reason is a `DOMException` named `AbortError`.
    * After a cancel, the host still waits until `execute` settles. Its result goes into the context of the session, and
@@ -174,7 +172,7 @@ export interface ToolContext {
      * the call aborts it. Use the signal of `work`. The start rejects for an id that still runs in this session, after
      * the close of the session, and with `job.background` in `yuke -p`.
      */
-    readonly run: (this: void, job: JobOptions, work: JobWork) => Promise<JobOutcome>;
+    readonly run: (this: void, job: CallJobOptions, work: JobWork) => Promise<JobOutcome>;
   };
 }
 

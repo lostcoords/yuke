@@ -294,7 +294,7 @@ fn a_call_that_ran_reports_and_saves_its_duration() {
 /// Hooks that decide about each call before it starts.
 enum Before {
     Allow,
-    Block,
+    Deny,
     Cancel(CancellationToken),
 }
 
@@ -303,7 +303,7 @@ impl Hooks for Before {
     async fn before_tool(&self, _call: &ToolCall) -> ToolDecision {
         match self {
             Before::Allow => ToolDecision::Run,
-            Before::Block => ToolDecision::Block("no".to_owned()),
+            Before::Deny => ToolDecision::Deny("no".to_owned()),
             Before::Cancel(token) => {
                 token.cancel();
                 ToolDecision::Run
@@ -342,8 +342,8 @@ fn assert_no_duration(name: &str, hooks: &Before, token: CancellationToken) {
 }
 
 #[test]
-fn a_blocked_call_has_no_duration() {
-    assert_no_duration("slow", &Before::Block, CancellationToken::new());
+fn a_denied_call_has_no_duration() {
+    assert_no_duration("slow", &Before::Deny, CancellationToken::new());
 }
 
 #[test]

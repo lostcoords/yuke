@@ -117,7 +117,7 @@ async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_c
     std::fs::write(
         plugin.join("index.ts"),
         "export function session(s) {
-           s.hook('round.before', ({ window }) => ({ replace: { head: [{ user_text: `window ${window}` }], keep: 1 } }));
+           s.addHook('round.before', (event) => ({ replace: { head: [{ user_text: `window ${event.contextWindow}` }], keep: 1 } }));
          }",
     )
     .unwrap();
@@ -286,7 +286,7 @@ async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_rou
     place.plugin(
         "shrink",
         "export function session(s) {
-           s.hook('round.retry', ({ failure, retries }) => {
+           s.addHook('round.retry', ({ failure, retries }) => {
              if (failure.kind !== 'context_overflow' || retries > 0) return undefined;
              return { replace: { head: [{ user_text: 'Shorter.' }], keep: 0 } };
            });
@@ -426,7 +426,7 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     let place = Place::new("print", "input_before_handled");
     place.plugin(
         "commands",
-        "export function session(s) { s.hook('input.before', () => ({ handled: true })); }",
+        "export function session(s) { s.addHook('input.before', () => ({ handled: true })); }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["commands"] }"#).unwrap();
 
@@ -624,7 +624,7 @@ async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
         "let name;
          export function apply(ctx) { name = ctx.name; }
          export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'greet', description: 'Greet.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              execute: () => `hello from ${name}`,
@@ -651,7 +651,7 @@ async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
     place.plugin(
         "asker",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'ask', description: 'Ask.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              async execute() {
@@ -694,7 +694,7 @@ async fn a_job_in_a_call_runs_and_answers_in_print() {
     place.plugin(
         "agents",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'work', description: 'work', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              execute: async (args, context) => {
@@ -723,11 +723,11 @@ async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
     place.plugin(
         "agents",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'work', description: 'work', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              execute: async () => {
-               await s.jobs.run({ id: 'explorer', label: 'explore' }, () => undefined);
+               await s.jobs.start({ id: 'explorer', label: 'explore' }, () => undefined);
                return 'started';
              },
            });
@@ -855,7 +855,7 @@ fn only_an_error_notice_of_yuke_fails_the_run() {
             session_id: Some(id),
             level: NoticeLevel::Error,
             source: source.to_owned(),
-            message: format!("from {source}"),
+            text: format!("from {source}"),
         })
     };
 

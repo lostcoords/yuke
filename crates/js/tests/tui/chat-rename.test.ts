@@ -32,7 +32,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   const chat = await loadChat(frame, sessions);
   frame.start();
   const composer = chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
-  composer.paste("draft");
+  composer.onPaste("draft");
   equal(chat.tui.commands.run("chat:rename"), true);
   await waitForSettled();
   frame.draw();

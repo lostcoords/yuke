@@ -135,7 +135,7 @@ test("tab writes the selected word without a run, with a space when the command 
 test("the word of a draft that runs a command has the command style", () => {
   using frame = createFrame({ width: 30, height: 2 });
   const surface = frame.surface("look");
-  surface.tui.styles.set({ "chat.command": { fg: 5 } });
+  surface.tui.styles.add({ "chat.command": { fg: 5 } });
   const list = mountList(frame, 1, {
     list: () => [
       { name: "demo:model", slash: "model", enabled: true },
@@ -164,6 +164,6 @@ test("the selected row has a default look that a plugin changes", () => {
   // The band reaches the last cell of the row.
   const before = [row()?.[1]?.style.bg, row()?.[29]?.style.bg];
   assert(before[0] !== undefined);
-  tui.styles.set({ "picker.selected": { fg: 1, bg: null } });
+  tui.styles.add({ "picker.selected": { fg: 1, bg: null } });
   equal([before[1], row()?.[1]?.style], [before[0], { fg: 1 }]);
 });

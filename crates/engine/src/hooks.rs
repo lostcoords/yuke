@@ -12,7 +12,7 @@ use crate::turn_state::Replaced;
 
 /// The decisions of a caller at the boundaries of a turn. Each method has a default that changes nothing, so a
 /// caller implements only the hooks that it needs. A round hook can fail, and its error ends the turn as
-/// [`RoundError::Hook`]. A tool hook cannot fail, so a caller answers a failed check with a block or an error result.
+/// [`RoundError::Hook`]. A tool hook cannot fail, so a caller answers a failed check with a denial or an error result.
 #[async_trait(?Send)]
 pub trait Hooks {
     /// Prepare the request of a round. The driver asks before the first attempt of each round, not before a retry.
@@ -113,7 +113,7 @@ pub enum ToolDecision {
     /// Run the call.
     Run,
     /// Do not run the call. The reason reaches the model as an error result, and the turn continues.
-    Block(String),
+    Deny(String),
 }
 
 /// The answer of [`Hooks::after_round`].

@@ -229,7 +229,7 @@ test("a press on a view reaches it and leaves the focus on the composer", async 
   chat.chat.addComposerView("below", () => ({
     heightFor: () => 1,
     draw() {},
-    mouse: (event) => {
+    onMouse: (event) => {
       if (event.action === "press") pressed.push(event.row);
       return true;
     },
@@ -282,7 +282,7 @@ test("the rule above the composer has a default look that a plugin changes", asy
     return cells[rows(frame.frame).findIndex((line) => line.startsWith("──"))]?.[0]?.style;
   };
   const before = look();
-  frame.surface("theme").tui.styles.set({ "chat.rule": { fg: 1, dim: null } });
+  frame.surface("theme").tui.styles.add({ "chat.rule": { fg: 1, dim: null } });
   equal([before, look()], [{ dim: true }, { fg: 1 }]);
 });
 

@@ -17,8 +17,8 @@ class Grouped implements ChatPresentation {
   label = "tools";
 
   constructor(options: ChatPresentationOptions) {
-    this.#key = options.key;
-    this.#inner = new ChatDocument(options.key);
+    this.#key = options.id;
+    this.#inner = new ChatDocument(options.id);
     this.#folds = new Map(options.folds);
   }
 
@@ -37,13 +37,13 @@ class Grouped implements ChatPresentation {
   }
 
   project(transcript: Transcript): TextDocument {
-    const tools = new Set(transcript.entries.filter((entry) => entry.kind === "tool").map((entry) => entry.key));
+    const tools = new Set(transcript.entries.filter((entry) => entry.kind === "tool").map((entry) => entry.id));
     const items = this.#inner.project(transcript).items;
     // The section has no title, so an open or a fold must not depend on that name.
     const text = `● ${this.label}: ${tools.size}`;
-    const row = { key: GROUP, sections: [{ key: "summary", kind: "label" as const, text }] };
-    const open = this.#folds.get(GROUP) === true ? items.filter((item) => tools.has(item.key)) : [];
-    return { key: this.#key, items: [...items.filter((item) => !tools.has(item.key)), row, ...open] };
+    const row = { id: GROUP, sections: [{ id: "summary", kind: "label" as const, text }] };
+    const open = this.#folds.get(GROUP) === true ? items.filter((item) => tools.has(item.id)) : [];
+    return { id: this.#key, items: [...items.filter((item) => !tools.has(item.id)), row, ...open] };
   }
 }
 
@@ -119,7 +119,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   const chat = await loadChat(frame, sessions);
   let projections = 0;
   chat.chat.setPresentation((options) => {
-    const inner = new ChatDocument(options.key);
+    const inner = new ChatDocument(options.id);
     return {
       folds: [],
       toggle: (transcript, key) => inner.toggle(transcript, key),
@@ -217,7 +217,7 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
   frame.draw();
   equal(
     [
-      options.map((given) => given.key),
+      options.map((given) => given.id),
       afterShow,
       afterFactory,
       options[3]?.signal.aborted,

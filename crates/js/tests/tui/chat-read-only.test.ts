@@ -103,8 +103,8 @@ test("a selection in the transcript goes first, and the next key goes back", asy
   using _frame = frame;
   const view = chat.transcript();
   const item = view.document.items.find((entry) => entry.sections.some((section) => section.text.length > 1));
-  const section = item?.sections.find((entry) => entry.text.length > 1)?.key ?? "";
-  const place = { item: item?.key ?? "", section };
+  const section = item?.sections.find((entry) => entry.text.length > 1)?.id ?? "";
+  const place = { item: item?.id ?? "", section };
   view.selection = { anchor: { ...place, offset: 0 }, head: { ...place, offset: 1 } };
 
   frame.key("esc");

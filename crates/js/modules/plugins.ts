@@ -13,12 +13,9 @@
  */
 import type { ChatService } from "yuke:chat";
 import type {
-  AddPluginParams,
-  AddPluginResult,
-  ApplyPluginsResult,
   Blob,
   Block,
-  CheckPluginsResult,
+  DisplayBlock,
   EventNumber,
   FinishReason,
   InputId,
@@ -28,16 +25,12 @@ import type {
   InteractionResponse,
   Job,
   ListCatalogResult,
-  ListPluginsResult,
   ListSessionsParams,
   ListSessionsResult,
-  LoginOutcome,
   McpServer,
   ModelReference,
   NoticeLevel,
   NoticeParams,
-  PluginChange,
-  PluginTarget,
   Question,
   QuestionAnswer,
   SessionId,
@@ -48,64 +41,20 @@ import type {
   SessionUpdate,
   Settings,
   StoredEvent,
-  SyncPluginsResult,
   Usage,
 } from "yuke:protocol";
-import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 import type { Tui } from "yuke:tui";
-
-export type {
-  AddPluginParams,
-  AddPluginResult,
-  ApplyPluginsResult,
-  Blob,
-  Block,
-  CheckPluginsResult,
-  EventNumber,
-  FinishReason,
-  InputId,
-  InputKind,
-  InputSource,
-  InteractionId,
-  InteractionResponse,
-  Job,
-  ListCatalogResult,
-  ListPluginsResult,
-  ListSessionsParams,
-  ListSessionsResult,
-  LoginOutcome,
-  McpServer,
-  ModelReference,
-  NoticeLevel,
-  NoticeParams,
-  PluginChange,
-  PluginTarget,
-  Question,
-  QuestionAnswer,
-  QuestionOption,
-  SessionId,
-  SessionRow,
-  SessionSettings,
-  SessionSnapshot,
-  SessionState,
-  SessionUpdate,
-  Settings,
-  StoredEvent,
-  SyncPluginsResult,
-  Usage,
-} from "yuke:protocol";
 
 /**
  * The services of the plugins, by name. A provider ships a declaration file that adds its service to this interface:
  * `declare module "yuke:plugins" { interface Services { "acme.notes.v1": Notes } }`. Each plugin that uses the service
- * includes that file. A name without a declaration fails the type check. Five services belong to yuke itself and
+ * includes that file. A name without a declaration fails the type check. Three services belong to yuke itself and
  * need no `uses` entry:
  * - `tui`: the terminal interface, or `undefined` in `yuke --rpc` and `yuke -p`.
  * - `sessions`: the sessions, in each mode.
  * - `catalog`: the providers and their models, in each mode.
- * - `auth`: the credentials of the providers, in each mode.
- * - `plugins`: the plugin manager of `config.json` and `plugins.lock`, in each mode.
  *
  * The bundled chat provides `chat`, the chat panes of the terminal interface. A plugin that uses it needs a `uses`
  * entry.
@@ -114,8 +63,6 @@ export interface Services {
   readonly tui: Tui | undefined;
   readonly sessions: Sessions;
   readonly catalog: Catalog;
-  readonly auth: Auth;
-  readonly plugins: PluginManager;
   readonly chat: ChatService;
 }
 
@@ -187,22 +134,30 @@ export interface EventsPage {
 
 /**
  * An open session that a plugin holds. After the end of the handle, each async request rejects and each sync request
- * throws.
+ * throws. `using` closes it.
  */
-export interface SessionHandle {
+export interface SessionHandle extends Disposable {
   readonly id: SessionId;
   /**
-   * Aborts at the end of the handle: by the signal of the open, by the stop of the plugin, or by the close of the
-   * session. Its reason tells which.
+   * Aborts at the end of the handle: by the signal of the open, by `close`, by the stop of the plugin, or by the close
+   * of the session. Its reason tells which.
    */
   readonly signal: AbortSignal;
   /**
    * Send `content` as a message of the user. The model reads `modelContent` in place of `content` when it is set. A
    * turn starts when the session is idle.
    */
-  readonly sendMessage: (content: readonly Block[], modelContent?: readonly Block[]) => Promise<InputId>;
+  readonly sendMessage: (message: {
+    readonly content: readonly Block[];
+    readonly modelContent?: readonly Block[] | undefined;
+  }) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
-  readonly notifyModel: (display: string, text: string) => Promise<InputId>;
+  readonly notifyModel: (notification: { readonly display: string; readonly text: string }) => Promise<InputId>;
+  /**
+   * End the handle: `onEvent` gets no more calls, and the hold ends. The session stays open for its other holders. A
+   * second close does nothing.
+   */
+  readonly close: () => void;
   /** Cancel the running turn. A session without a turn has nothing to cancel. */
   readonly cancel: () => void;
   /** Move each tool call that waits for a job, such as a running command, to the background. The turn goes on. */
@@ -240,55 +195,6 @@ export interface Catalog {
   readonly list: (options?: { readonly all?: boolean }) => Promise<ListCatalogResult>;
 }
 
-/** A device login that has started. The user opens the URL and enters the code. */
-export interface LoginInProgress {
-  readonly verificationUrl: string;
-  readonly userCode: string;
-  /** Wait for the end of the login, and give its outcome. A login that has ended gives its outcome too. */
-  readonly waitForEnd: () => Promise<LoginOutcome>;
-}
-
-/** The credentials of the providers, as the requests `auth/login`, `auth/set_api_key`, and `auth/logout` do. */
-export interface Auth {
-  /**
-   * Start a device login of `provider`. A new login of the provider ends the login before it as `cancelled`.
-   * `options.signal` cancels the login. The stored login stays in `auth.json` until the new login saves.
-   */
-  readonly login: (provider: string, options?: { readonly signal?: AbortSignal }) => Promise<LoginInProgress>;
-  /** Store `apiKey` in `auth.json`. The new key replaces the stored key and wins over the variable of the provider. */
-  readonly setApiKey: (provider: string, apiKey: string) => Promise<void>;
-  /** Remove what yuke stored for `provider`. yuke revokes nothing at the provider. */
-  readonly logout: (provider: string) => Promise<void>;
-}
-
-/**
- * The plugin manager of the profile, as the requests `plugin/list`, `plugin/sync`, `plugin/check`, `plugin/apply`,
- * `plugin/add`, and `plugin/remove` give it. No call runs plugin code, and a new commit loads at the next reload. Git asks for no password.
- */
-export interface PluginManager {
-  /** The plugins of `config.json` with their state on disk, and whether each one runs. It uses no network. */
-  readonly list: () => Promise<ListPluginsResult>;
-  /**
-   * Install the locked commit of each Git plugin, and lock each new one at the commit of its ref. With
-   * `options.locked`, the lock must match `config.json`, and it stays as it is. `options.signal` stops the work.
-   */
-  readonly sync: (options?: { readonly locked?: boolean; readonly signal?: AbortSignal }) => Promise<SyncPluginsResult>;
-  /**
-   * The new commit of each Git plugin of `target` whose ref moved, with the log of the move. Each new commit is
-   * installed, and `plugins.lock` stays as it is until `apply`. `options.signal` stops the work.
-   */
-  readonly check: (target: PluginTarget, options?: { readonly signal?: AbortSignal }) => Promise<CheckPluginsResult>;
-  /** Write the new commit of each change of `check` into `plugins.lock`. */
-  readonly apply: (changes: readonly PluginChange[]) => Promise<ApplyPluginsResult>;
-  /**
-   * Add the Git plugin `plugin` to `config.json`, install it, and lock it at the commit of its ref. The comments of
-   * `config.json` stay. `options.signal` stops the work.
-   */
-  readonly add: (plugin: AddPluginParams, options?: { readonly signal?: AbortSignal }) => Promise<AddPluginResult>;
-  /** Remove the plugin `name` from `config.json` and `plugins.lock`. Its install stays on disk. */
-  readonly remove: (name: string) => Promise<void>;
-}
-
 /** The value of `ctx.get(name)`. A service in `uses` is present, because its provider loads first. `tui` can be `undefined`. */
 export type ServiceOf<K extends keyof Services> = K extends "tui" ? Services[K] : NonNullable<Services[K]>;
 
@@ -321,10 +227,10 @@ export interface PluginContext<O = Record<string, never>> {
    */
   readonly signal: AbortSignal;
   /**
-   * Publish the service `name` during `apply`. Declare `name` in `provides` of the manifest, so the plugins that use
-   * the service load after this plugin.
+   * Publish the service `name` during `apply`. `name` is one of `provides` of the manifest, so the plugins that use the
+   * service load after this plugin. Another name throws a `TypeError`.
    */
-  readonly provide: <K extends Exclude<keyof Services & string, "tui">>(
+  readonly provide: <K extends Exclude<keyof Services & string, "tui" | "sessions" | "catalog">>(
     name: K,
     value: NonNullable<Services[NoInfer<K>]>,
   ) => void;
@@ -345,28 +251,28 @@ export interface PluginContext<O = Record<string, never>> {
    * - A throw gives a notice, and the listener stays. The abort of `ctx.signal` removes it.
    *
    * ```ts
-   * ctx.on("session.update", ({ sessionId, update }) => {
+   * ctx.addListener("session.update", ({ sessionId, update }) => {
    *   if (update.sessionUpdate === "state") report(sessionId, update.state);
    * });
    * ```
    */
-  readonly on: <K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void) => () => void;
+  readonly addListener: <K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void) => () => void;
 }
 
-/** The facts of `ctx.on`, by event. */
+/** The facts of `ctx.addListener`, by event. */
 export interface HostEvents {
   /** An update of an open session, as a handle of `sessions.open` gets it. */
   readonly "session.update": { readonly sessionId: SessionId; readonly update: Frozen<SessionUpdate> };
   /**
    * A session is open, with its state now. `parent` is the session that it works for, as a subagent does. The running
-   * jobs and the open questions come oldest first. A later job change comes as a `job` update.
+   * jobs and the open interactions come oldest first. A later job change comes as a `job` update.
    */
   readonly "session.opened": {
     readonly sessionId: SessionId;
-    readonly parent: SessionId | null;
+    readonly parent?: SessionId;
     readonly state: SessionState;
     readonly jobs: readonly Frozen<Job>[];
-    readonly questions: readonly InteractionId[];
+    readonly interactions: readonly InteractionId[];
   };
   /** A session closed. No update of it follows. A later open gives a new `session.opened`. */
   readonly "session.closed": { readonly sessionId: SessionId };
@@ -480,7 +386,7 @@ export interface ToolBeforeEvent {
 /** The answer of a `tool.before` handler that stops the call. */
 export interface ToolBeforeAnswer {
   /** Why the call does not run. The model gets this text as the error result of the call. */
-  readonly block: string;
+  readonly deny: string;
 }
 
 /** What a `tool.after` handler gets. */
@@ -513,8 +419,8 @@ export interface ToolAfterAnswer {
 
 /** What a `round.before` handler gets. */
 export interface RoundBeforeEvent {
-  /** The context window of the model of the session in tokens, or `null` when the catalog names none. */
-  readonly window: number | null;
+  /** The context window of the model of the round in tokens, or `null` when the catalog names none. */
+  readonly contextWindow: number | null;
   /**
    * The input tokens of the newest answer of the session. It is `null` before an answer, without a provider count, or
    * after a newer replacement.
@@ -523,23 +429,23 @@ export interface RoundBeforeEvent {
   /**
    * The estimated input tokens of the context that this handler sees. It adds the estimate of the newest assistant run
    * and each later block to `inputTokens`. Without `inputTokens`, or after an earlier replacement, it sums
-   * `blockTokens()`. It needs no copy of the context, so read it in place of a count over `context()`.
+   * `blockTokens()`. It needs no copy of the context, so read it in place of a count over `blocks()`.
    */
   readonly contextTokens: number;
   /** The number of blocks of the context, after the replacements of the earlier handlers of this round. */
-  readonly blocks: number;
+  readonly blockCount: number;
   /**
-   * The estimated tokens of each block of `context()`, in the same order. Text bytes divide by 4 and round up. A tool
+   * The estimated tokens of each block of `blocks()`, in the same order. Text bytes divide by 4 and round up. A tool
    * call counts its name and its arguments. Reasoning counts the larger of its text and its provider state. Each media
    * item adds 1600.
    */
   readonly blockTokens: () => number[];
   /** The blocks of the context, oldest first, after the replacements of the earlier handlers. Each call gives a copy. */
-  readonly context: () => Block[];
+  readonly blocks: () => Block[];
   /**
    * Send the request of this round with other blocks, and wait for the first answer.
    * - The request has the model, the system prompt, the tools, and the settings of the round.
-   * - Its blocks are the first `blocks` blocks of `context()`, then `prompt` as a user block.
+   * - Its blocks are the first `blockCount` blocks of `blocks()`, then `prompt` as a user block.
    * - It repeats the bytes and the cache marker of the round, so it can reuse the prompt cache of the earlier rounds.
    * - No tool runs, and the session keeps nothing of the request.
    * - A failed request rejects with an `Error`.
@@ -556,8 +462,8 @@ export interface RoundBeforeEvent {
 export interface SideRequestOptions {
   /** The text of the last user block. The request offers the tools of the round, so tell the model to call none. */
   readonly prompt: string;
-  /** The number of the oldest blocks of `context()` to send, from 0 to `event.blocks`. The default sends each block. */
-  readonly blocks?: number | undefined;
+  /** The number of the oldest blocks of `blocks()` to send, from 0 to `event.blockCount`. The default sends each block. */
+  readonly blockCount?: number | undefined;
   /** The output limit of the request in tokens. Without it, the request has the limit of the round. */
   readonly maxOutputTokens?: number | undefined;
   /** An abort stops the request, and the promise rejects with the reason of the signal. */
@@ -618,13 +524,11 @@ export type RoundFailureKind =
 export interface RoundFailure {
   readonly kind: RoundFailureKind;
   /** The text of the failure, as the user sees it. */
-  readonly message: string;
+  readonly text: string;
 }
 
 /** What a `round.retry` handler gets: the facts of `round.before` for the failed round, and the failure. */
 export interface RoundRetryEvent extends RoundBeforeEvent {
-  /** The context window of the model of the failed round in tokens, or `null` when the catalog names none. */
-  readonly window: number | null;
   readonly failure: RoundFailure;
   /** The `round.retry` answers that sent this round again. The host sets no limit, so guard a loop here. */
   readonly retries: number;
@@ -647,19 +551,19 @@ export interface InputBeforeEvent {
 
 /**
  * The answer of an `input.before` handler. It has exactly one field.
- * - `block` removes the input. A notice shows the reason to the user.
+ * - `deny` removes the input. A notice shows the reason to the user.
  * - `replace` gives the model these blocks in place of the input. The user still sees the sent input. The list has at
  *   least one item. A `ToolMedia` adds a media item, and its relative path starts in the workspace folder of the session.
  * - `handled` removes the input with no notice, because the plugin acted on it.
  */
 export type InputBeforeAnswer =
-  | { readonly block: string; readonly replace?: never; readonly handled?: never }
+  | { readonly deny: string; readonly replace?: never; readonly handled?: never }
   | {
       readonly replace: { readonly blocks: readonly [Block | ToolMedia, ...(Block | ToolMedia)[]] };
-      readonly block?: never;
+      readonly deny?: never;
       readonly handled?: never;
     }
-  | { readonly handled: true; readonly block?: never; readonly replace?: never };
+  | { readonly handled: true; readonly deny?: never; readonly replace?: never };
 
 /** What a `round.after` handler gets. */
 export interface RoundAfterEvent {
@@ -703,7 +607,7 @@ export interface SessionHooks {
    * - The store saves the input first.
    * - The handlers run when a turn takes the input. A turn takes it at its start, or after a round.
    * - Each handler gets the blocks after the replacements of the handlers before it.
-   * - `block` and `handled` end the run. A removed input starts no turn.
+   * - `deny` and `handled` end the run. A removed input starts no turn.
    * - A failed handler removes the input, and a notice names the plugin.
    */
   "input.before": (event: InputBeforeEvent) => undefined | InputBeforeAnswer | Promise<undefined | InputBeforeAnswer>;
@@ -795,13 +699,17 @@ export interface AskRequest {
   readonly questions: readonly Frozen<Question>[];
 }
 
-/** What `s.jobs.run` takes. */
+/** What `s.jobs.start` takes. */
 export interface JobOptions {
   /** The id of the job, unique among the running jobs of the session. It can stay the same across restarts of the work. */
   readonly id: string;
   /** A short text for display. yuke keeps the first line, at most 60 characters. */
   readonly label: string;
-  /** For `context.jobs.run`: run without the call from the start. */
+}
+
+/** What `context.jobs.run` of a tool takes. */
+export interface CallJobOptions extends JobOptions {
+  /** Run without the call from the start. */
   readonly background?: boolean | undefined;
 }
 
@@ -830,11 +738,11 @@ export type JobOutcome =
 /** What `session` of a plugin gets for one session. `O` is the type of the options, as in `PluginContext`. */
 export interface SessionContext<O = Record<string, never>> {
   /** The id of the session. */
-  readonly sessionId: string;
+  readonly sessionId: SessionId;
   /** The parent session. A fork has no parent. */
-  readonly parent: string | undefined;
+  readonly parent: SessionId | undefined;
   /** The workspace folder of the session at its open. A tool reads the folder of each call from its context. */
-  readonly folder: string;
+  readonly cwd: string;
   /** A frozen copy of the settings of the session now. Each read gives a new copy. */
   readonly settings: Frozen<SessionSettings>;
   /** The options of the plugin. They are the same object as `options` of `PluginContext`. */
@@ -852,13 +760,14 @@ export interface SessionContext<O = Record<string, never>> {
      * - A replacement of another plugin's tool sends an info notice. A built-in or same-plugin replacement sends none.
      * - The next turn uses the new tool list. A change can invalidate the provider's prompt cache.
      */
-    readonly define: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
+    readonly add: <const S extends ObjectSchema>(tool: Tool<S>) => () => void;
     /**
      * Remove `name` from this session's tool list. A later definition restores it. An unknown name does not fail.
+     * - The returned function ends only this removal and reveals the previous definition or name removal.
      * - The removal ends when this plugin's session scope ends. It does not affect other sessions.
      * - An invalid or reserved name throws a `TypeError`.
      */
-    readonly remove: (name: string) => void;
+    readonly remove: (name: string) => () => void;
   };
   /** The background jobs of the plugin in this session. */
   readonly jobs: {
@@ -870,14 +779,14 @@ export interface SessionContext<O = Record<string, never>> {
      * - A close of the session and a reload abort the signal too, and they wait for `work` to end.
      * - During a reload the old job still runs while the new `session` starts, so start the same id later.
      */
-    readonly run: (job: Omit<JobOptions, "background">, work: JobWork) => Promise<void>;
+    readonly start: (job: JobOptions, work: JobWork) => Promise<void>;
   };
   /**
    * Add `handler` to the hook `point` of this session. The handlers of a point run in plugin order, then in the order
    * of their addition. The returned function removes the handler. An addition or a removal during a run of the point
    * changes the next run.
    */
-  readonly hook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
+  readonly addHook: <K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]) => () => void;
   /** Send a notice of this session with this plugin as its source. */
   readonly notify: (level: NoticeLevel, text: string) => void;
   /** Send an event of this session to the client. See {@link SendClientEvent}. */

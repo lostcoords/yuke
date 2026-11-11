@@ -193,8 +193,8 @@ impl Drop for ScriptSession {
     }
 }
 
-/// The engine hooks of one turn of a session. The `s.hook` handlers of the plugins answer them. While the engine task
-/// runs, each hook that they do not handle keeps its default.
+/// The engine hooks of one turn of a session. The `s.addHook` handlers of the plugins answer them. While the engine
+/// task runs, each hook that they do not handle keeps its default.
 pub struct ScriptHooks {
     access: EngineAccess,
     host: Rc<dyn SessionHost>,
@@ -269,7 +269,7 @@ impl Hooks for ScriptHooks {
             open: self.open,
             failure: RoundFailure {
                 kind,
-                message: chain_text(failure),
+                text: chain_text(failure),
             },
             retries: self.retries.get(),
             window: round.model.context_window,
@@ -326,11 +326,11 @@ impl Hooks for ScriptHooks {
         let answer: Result<Option<String>, Error> =
             run_hook(&self.access, "startToolBefore", request, self.token.clone()).await;
         match answer {
-            Ok(Some(reason)) => ToolDecision::Block(reason),
+            Ok(Some(reason)) => ToolDecision::Deny(reason),
             // A cancel stops the turn, so the driver does not start the call.
             Ok(None) => ToolDecision::Run,
             // A failed check never lets a call run.
-            Err(error) => ToolDecision::Block(failure_text("tool.before", &error)),
+            Err(error) => ToolDecision::Deny(failure_text("tool.before", &error)),
         }
     }
 
@@ -566,7 +566,7 @@ fn ask_function<'js>(ctx: &Ctx<'js>, host: Rc<dyn SessionHost>) -> rquickjs::Res
                     async move { host.ask(&source, request, stop).await },
                     |ctx, result| match result.map_err(|error| throw(ctx, ErrorClass::Error, &error.to_string()))? {
                         InteractionResponse::Questions { answers } => Json(answers).into_js(ctx),
-                        InteractionResponse::Canceled => Ok(Value::new_undefined(ctx.clone())),
+                        InteractionResponse::Cancelled => Ok(Value::new_undefined(ctx.clone())),
                     },
                 )?;
                 promise.into_future::<Value>().await
@@ -710,7 +710,7 @@ struct RoundRetryRequest {
 #[derive(IntoJs)]
 struct RoundFailure {
     kind: &'static str,
-    message: String,
+    text: String,
 }
 
 /// The `kind` of `failure` for `round.retry`. `None` for a failure of yuke itself, or for a model failure that has no

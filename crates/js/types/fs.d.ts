@@ -2,11 +2,11 @@
 
 /**
  * Files and directories. Each function gives a promise.
- * - A path is absolute, or relative to the absolute `baseDir` of the options.
- * - No function uses a working folder of its own: a tool passes `context.folder`, and a plugin passes `ctx.dataDir`.
+ * - A path is absolute, or relative to the absolute `cwd` of the options.
+ * - No function uses a working folder of its own: a tool passes `context.cwd`, and a plugin passes `ctx.dataDir`.
  * - A failure rejects with a `FileSystemError`.
  * - A misuse rejects with a `TypeError`.
- * - A relative path without `baseDir` is a misuse.
+ * - A relative path without `cwd` is a misuse.
  * - An option that is `undefined` is missing.
  * - An abort of the `signal` stops the operation at its next check: before each chunk of 1 MiB, and before the rename
  *   of an atomic write. A stopped operation rejects with the reason of the signal.
@@ -18,7 +18,7 @@ declare module "yuke:fs" {
   /** The options of each function. */
   export interface FileOptions {
     /** The absolute folder that a relative path starts in. */
-    baseDir?: string | undefined;
+    cwd?: string | undefined;
     /** A signal that stops the operation at its next check. */
     signal?: AbortSignal | undefined;
   }
@@ -134,6 +134,6 @@ declare module "yuke:fs" {
   export function mkdir(path: string, options?: MkdirOptions): Promise<void>;
   /** Remove a file, a symbolic link (not its target), or a directory. */
   export function remove(path: string, options?: RemoveOptions): Promise<void>;
-  /** Move `source` to `destination`, and replace a file there. A relative path of either starts in `baseDir`. */
+  /** Move `source` to `destination`, and replace a file there. A relative path of either starts in `cwd`. */
   export function rename(source: string, destination: string, options?: FileOptions): Promise<void>;
 }

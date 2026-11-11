@@ -5,7 +5,8 @@
  * update shows a review of the new commits first, and a new commit loads at the next reload.
  */
 
-import type { PluginContext, PluginManager } from "yuke:plugins";
+import { plugins as manager, type PluginManager } from "yuke:internal/sessions";
+import type { PluginContext } from "yuke:plugins";
 import type { AddPluginParams, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
 import {
   type Canvas,
@@ -22,10 +23,10 @@ const TITLE = "plugins.title";
 const DETAIL = "plugins.detail";
 const SELECTED = "picker.selected";
 
-export function apply(ctx: PluginContext): undefined {
+/** A test gives a fake manager as `plugins`. */
+export function apply(ctx: PluginContext, plugins: PluginManager = manager): undefined {
   const tui = ctx.get("tui");
   if (tui === undefined) return undefined;
-  const plugins = ctx.get("plugins");
   const report = (what: string) => (error: unknown) => ctx.notify("error", `${what}: ${String(error)}`);
   tui.commands.add({
     name: "open",
@@ -164,7 +165,7 @@ class PluginList implements View {
     }
   }
 
-  key(event: KeyEvent): boolean {
+  onKey(event: KeyEvent): boolean {
     const stroke = strokeOf(event);
     const move = MOVES[stroke];
     if (move !== undefined) {
@@ -197,7 +198,7 @@ function addOf(line: string): AddPluginParams {
 
 /** A text document of the one paragraph `text`. */
 function paragraph(text: string): TextDocument {
-  return { key: "paragraph", items: [{ key: "text", sections: [{ key: "text", kind: "text", text }] }] };
+  return { id: "paragraph", items: [{ id: "text", sections: [{ id: "text", kind: "text", text }] }] };
 }
 
 /** Open the dashboard. The title shows the count of the plugins and the state of the last action. */
@@ -283,7 +284,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     const field = new TextEditor({
       multiline: false,
       placeholder: "URL [--folder FOLDER] [--ref REF]",
-      submit: (state) => {
+      onSubmit: (state) => {
         let params: AddPluginParams;
         try {
           params = addOf(state.text);
@@ -349,12 +350,12 @@ async function sync(ctx: PluginContext, plugins: PluginManager): Promise<void> {
 /** A document of one text item for each entry of `items`: a label and its lines. */
 function documentOf(items: readonly { readonly label: string; readonly lines: readonly string[] }[]): TextDocument {
   return {
-    key: "plugins-review",
+    id: "plugins-review",
     items: items.map((item, index) => ({
-      key: String(index),
+      id: String(index),
       sections: [
-        { key: "label", kind: "label", text: item.label },
-        ...(item.lines.length === 0 ? [] : [{ key: "log", kind: "text" as const, text: item.lines.join("\n") }]),
+        { id: "label", kind: "label", text: item.label },
+        ...(item.lines.length === 0 ? [] : [{ id: "log", kind: "text" as const, text: item.lines.join("\n") }]),
       ],
     })),
   };

@@ -10,14 +10,14 @@ const saved = { base: "You are yuke.", environment: "workspace: /work" };
 async function build(plugins: readonly { name: string; session: PluginSession }[]): Promise<[string, string][]> {
   await using host = await createHost({ plugins });
   const session = await host.openSession();
-  return Object.entries((await session.run("prompt.build", { sections: saved })).sections);
+  return Object.entries((await session.runHook("prompt.build", { sections: saved })).sections);
 }
 
 /** A plugin whose `prompt.build` handler runs `body`. */
 const answering =
   (body: SessionHooks["prompt.build"]): PluginSession =>
   (s) => {
-    s.hook("prompt.build", body);
+    s.addHook("prompt.build", body);
   };
 
 test("a session without a hook keeps its sections", async () => {
@@ -27,15 +27,15 @@ test("a session without a hook keeps its sections", async () => {
 // An answer replaces the sections, and `undefined` keeps them.
 test("the handlers run in plugin order, then in addition order, and each gets the answer before it", async () => {
   const first: PluginSession = (s) => {
-    s.hook("prompt.build", (event) => ({ sections: { ...event.sections, rules: "one" } }));
-    s.hook("prompt.build", async (event) => {
+    s.addHook("prompt.build", (event) => ({ sections: { ...event.sections, rules: "one" } }));
+    s.addHook("prompt.build", async (event) => {
       await null;
       return { sections: { ...event.sections, base: "Be brief.", rules: `${event.sections.rules} two` } };
     });
-    s.hook("prompt.build", () => undefined);
+    s.addHook("prompt.build", () => undefined);
   };
   const second: PluginSession = (s) => {
-    s.hook("prompt.build", (event) => {
+    s.addHook("prompt.build", (event) => {
       const { environment: _environment, ...rest } = event.sections;
       return { sections: { ...rest, seen: event.sections.rules ?? "" } };
     });
@@ -61,7 +61,7 @@ test("the order of the sections reaches the system prompt of a request", async (
   await using host = await createHost({ plugins: [{ name: "order", session: order }], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const system = host.requests[0]?.system ?? "";
   equal(system.startsWith("<first>\nFIRST SECTION\n</first>\n\nYou are yuke"), true);
@@ -77,8 +77,8 @@ test("each build starts from the sections of the caller", async () => {
   await using host = await createHost({ plugins: [{ name: "count", session: counter }] });
   const session = await host.openSession();
 
-  await session.run("prompt.build", { sections: saved });
-  const second = await session.run("prompt.build", { sections: saved });
+  await session.runHook("prompt.build", { sections: saved });
+  const second = await session.runHook("prompt.build", { sections: saved });
 
   equal(second.sections.base, "You are yuke. 2");
 });
@@ -87,13 +87,13 @@ test("the first build waits for the setup of the session", async () => {
   const setup = Promise.withResolvers<void>();
   const late: PluginSession = async (s) => {
     await setup.promise;
-    s.hook("prompt.build", (event) => ({ sections: { ...event.sections, late: "here" } }));
+    s.addHook("prompt.build", (event) => ({ sections: { ...event.sections, late: "here" } }));
   };
 
   await using host = await createHost({ plugins: [{ name: "late", session: late }] });
   const session = await host.openSession();
   let built = false;
-  const pending = session.run("prompt.build", { sections: saved }).then((result) => {
+  const pending = session.runHook("prompt.build", { sections: saved }).then((result) => {
     built = true;
     return result;
   });
@@ -124,7 +124,7 @@ test("a build that fails after a cancel sends no fault", async () => {
   await using host = await createHost({ plugins: [{ name: "late", session: late }] });
   const session = await host.openSession();
   const stop = new AbortController();
-  const built = session.run("prompt.build", { sections: saved }, { signal: stop.signal });
+  const built = session.runHook("prompt.build", { sections: saved }, { signal: stop.signal });
   await waitForSettled();
   stop.abort(new Error("stop"));
 
@@ -139,13 +139,13 @@ test("a remover removes one entry once, and the handler of a failed session does
     const count = (event: { sections: Readonly<Record<string, string>> }) => ({
       sections: { ...event.sections, count: `${Number(event.sections.count ?? 0) + 1}` },
     });
-    s.hook("prompt.build", count);
-    const remove = s.hook("prompt.build", count);
+    s.addHook("prompt.build", count);
+    const remove = s.addHook("prompt.build", count);
     remove();
     remove();
   };
   const failed: PluginSession = async (s) => {
-    s.hook("prompt.build", (event) => ({ sections: { ...event.sections, failed: "x" } }));
+    s.addHook("prompt.build", (event) => ({ sections: { ...event.sections, failed: "x" } }));
     await null;
     throw new Error("broken");
   };
@@ -170,7 +170,7 @@ test("a closed session refuses a new hook", async () => {
   await session.close();
   let refusal = "";
   try {
-    kept?.hook("prompt.build", () => undefined);
+    kept?.addHook("prompt.build", () => undefined);
   } catch (error) {
     refusal = error instanceof Error ? error.message : String(error);
   }

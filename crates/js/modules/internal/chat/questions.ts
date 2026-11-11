@@ -110,7 +110,7 @@ function ask(
     const shown = page();
     const stroke = strokeOf(event);
     const field = typing();
-    if (field !== undefined && !PAGE_KEYS.has(stroke)) return field.key(event);
+    if (field !== undefined && !PAGE_KEYS.has(stroke)) return field.onKey(event);
     switch (stroke) {
       case "left":
       case "shift+tab":
@@ -180,7 +180,7 @@ function ask(
       fieldRow = row + at;
       return [{ view: field, rect: { column: INDENT, row: fieldRow, width: size.width - INDENT, height: 1 } }];
     },
-    paste: (text: string): boolean => typing()?.paste(text) ?? false,
+    onPaste: (text: string): boolean => typing()?.onPaste(text) ?? false,
     cursor(): Cursor | undefined {
       const at = fieldRow === undefined ? undefined : typing()?.cursor();
       return at === undefined || fieldRow === undefined
@@ -225,7 +225,7 @@ function ask(
         }
       }
     },
-    key,
+    onKey: key,
   };
   const rows = Math.max(...pages.map((each) => 2 + lines(each).length + Math.min(listRows(each), LIST_ROWS)));
   return { view, rows };
@@ -241,7 +241,7 @@ export class ChatQuestions {
   constructor(chat: ChatSession, options: ChatQuestionsOptions) {
     this.#chat = chat;
     this.#options = options;
-    const stop = chat.onChange(() => this.#sync());
+    const stop = chat.addChangeListener(() => this.#sync());
     options.signal.addEventListener("abort", stop, { once: true });
     this.#sync();
   }
@@ -251,10 +251,10 @@ export class ChatQuestions {
   }
 
   cancel(): void {
-    this.#answer({ kind: "canceled" });
+    this.#answer({ kind: "cancelled" });
   }
 
-  onChange(listener: () => void): () => void {
+  addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
@@ -276,7 +276,7 @@ export class ChatQuestions {
   /** Take the first open request. The requests of an ended handle show again after the next open. */
   #sync(): void {
     const transcript = this.#chat.transcript;
-    const head = this.#chat.handle === undefined ? undefined : transcript.questions.entries().next().value;
+    const head = this.#chat.handle === undefined ? undefined : transcript.interactions.entries().next().value;
     if (head?.[0] === this.#current?.id) return;
     this.#current =
       head === undefined
@@ -285,7 +285,7 @@ export class ChatQuestions {
             id: head[0],
             asked: ask(
               head[1],
-              () => transcript.questions.size,
+              () => transcript.interactions.size,
               (response) => this.#answer(response),
             ),
             answered: false,

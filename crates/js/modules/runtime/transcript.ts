@@ -40,7 +40,7 @@ const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
 /** The fields of a tool entry before the host handles the call. */
 const UNHANDLED = {
   hints: NO_HINTS,
-  folder: undefined,
+  cwd: undefined,
   startedAt: undefined,
   durationMs: undefined,
   output: "",
@@ -66,7 +66,7 @@ function called(call: Frozen<ToolCall>): { name: string; arguments: string } {
 export class Transcript {
   readonly entries: Entry[] = [];
   readonly pending = new Map<InputId, Frozen<Input>>();
-  readonly questions = new Map<InteractionId, Interaction>();
+  readonly interactions = new Map<InteractionId, Interaction>();
   #state: SessionState = "idle";
   #settings: Frozen<SessionSettings> | undefined;
   #status: TurnFailure | undefined;
@@ -116,7 +116,7 @@ export class Transcript {
     }
     this.entries.length = 0;
     this.pending.clear();
-    this.questions.clear();
+    this.interactions.clear();
     this.#state = "idle";
     this.#settings = event.snapshot.settings;
     this.#status = undefined;
@@ -147,7 +147,7 @@ export class Transcript {
       }
     }
     const draft = this.#draft === undefined ? [] : this.entries.slice(this.#draft.start);
-    this.#previous = new Map(this.entries.map((entry) => [entry.key, entry]));
+    this.#previous = new Map(this.entries.map((entry) => [entry.id, entry]));
     this.entries.length = 0;
     this.#index.clear();
     this.#calls = [];
@@ -155,7 +155,7 @@ export class Transcript {
     for (const event of this.#saved) this.#fold(event);
     this.#previous = undefined;
     if (this.#draft !== undefined) this.#draft.start = this.entries.length;
-    for (const entry of draft) this.#index.set(entry.key, this.entries.push(entry) - 1);
+    for (const entry of draft) this.#index.set(entry.id, this.entries.push(entry) - 1);
   }
 
   #update(update: Frozen<SessionUpdate>): void {
@@ -187,10 +187,10 @@ export class Transcript {
         this.pending.delete(update.inputId);
         break;
       case "interaction_requested":
-        this.questions.set(update.interactionId, { source: update.source, request: update.request });
+        this.interactions.set(update.interactionId, { source: update.source, request: update.request });
         break;
       case "interaction_closed":
-        this.questions.delete(update.interactionId);
+        this.interactions.delete(update.interactionId);
         break;
       case "retry_scheduled":
         this.#status = { kind: "retry_scheduled", afterMs: update.afterMs, error: update.error };
@@ -241,7 +241,7 @@ export class Transcript {
             if (parts === undefined) {
               parts = new Map();
               draft.reasoning.set(group, parts);
-              this.#put({ kind: "reasoning", key: group, text: "", draft: true });
+              this.#put({ kind: "reasoning", id: group, text: "", draft: true });
             }
             parts.set(model.block, "");
             draft.keys.set(model.block, group);
@@ -251,8 +251,9 @@ export class Transcript {
             draft.keys.set(model.block, key);
             if (model.content.kind === "tool_call") {
               const name = model.content.name;
-              this.#put({ kind: "tool", key, name, arguments: "", status: "streaming", ...UNHANDLED });
-            } else this.#put({ kind: "text", key, text: "", refusal: model.content.kind === "refusal", draft: true });
+              this.#put({ kind: "tool", id: key, name, arguments: "", status: "streaming", ...UNHANDLED });
+            } else
+              this.#put({ kind: "text", id: key, text: "", refusal: model.content.kind === "refusal", draft: true });
           }
           break;
         }
@@ -266,7 +267,7 @@ export class Transcript {
             this.#set({ ...entry, ...called(model.call), status: "waiting" });
         } else if (entry.kind === "reasoning") {
           // A later block can start before an earlier block sends its last delta.
-          const parts = draft.reasoning.get(entry.key) as Map<number, string>;
+          const parts = draft.reasoning.get(entry.id) as Map<number, string>;
           parts.set(model.block, (parts.get(model.block) as string) + model.text);
           const text = [...parts.values()].filter((part) => part.trim() !== "").join("\n\n");
           if (text !== entry.text) this.#set({ ...entry, text });
@@ -302,12 +303,12 @@ export class Transcript {
       this.#usage = commit.answer.usage;
       this.#turnAnswer = commit.answer;
     }
-    if (commit.replaced !== null) this.#put({ kind: "compaction", key: `${event.seq}:replaced` });
+    if (commit.replaced !== null) this.#put({ kind: "compaction", id: `${event.seq}:replaced` });
     let offset = 0;
     for (const input of event.consumed) {
       this.#put({
         kind: "input",
-        key: `${event.seq}:${offset}`,
+        id: `${event.seq}:${offset}`,
         inputId: input.id,
         source: input.source,
         inputKind: input.kind,
@@ -321,7 +322,7 @@ export class Transcript {
     const flushReasoning = (): void => {
       if (reasoning === undefined) return;
       const text = reasoning.parts.join("\n\n");
-      if (text !== "") this.#put({ kind: "reasoning", key: reasoning.key, text, draft: false });
+      if (text !== "") this.#put({ kind: "reasoning", id: reasoning.key, text, draft: false });
       reasoning = undefined;
     };
     for (const [index, block] of commit.blocks.entries()) {
@@ -334,7 +335,7 @@ export class Transcript {
       }
       flushReasoning();
       if ("assistant_text" in block)
-        this.#put({ kind: "text", key, text: block.assistant_text.text, refusal, draft: false });
+        this.#put({ kind: "text", id: key, text: block.assistant_text.text, refusal, draft: false });
       else if ("tool_call" in block) {
         if (!answer) this.#calls = [];
         answer = true;
@@ -342,11 +343,11 @@ export class Transcript {
         const shown = commit.display?.calls.find((call) => call.blockIndex === index);
         this.#put({
           kind: "tool",
-          key,
+          id: key,
           ...called(block.tool_call),
           status: "waiting",
           ...UNHANDLED,
-          ...(shown === undefined ? {} : { hints: shown.hints, folder: shown.folder ?? undefined }),
+          ...(shown === undefined ? {} : { hints: shown.hints, cwd: shown.folder ?? undefined }),
         });
       } else if ("tool_result" in block) {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.
@@ -362,7 +363,7 @@ export class Transcript {
     }
     flushReasoning();
     if (commit.end !== null) {
-      this.#put({ kind: "end", key: `${event.seq}:end`, end: commit.end, answer: this.#turnAnswer });
+      this.#put({ kind: "end", id: `${event.seq}:end`, end: commit.end, answer: this.#turnAnswer });
       this.#turnAnswer = undefined;
     }
   }
@@ -374,12 +375,12 @@ export class Transcript {
 
   /** Add `entry` at the end. */
   #put(entry: Entry): void {
-    this.#index.set(entry.key, this.entries.push(this.#kept(entry)) - 1);
+    this.#index.set(entry.id, this.entries.push(this.#kept(entry)) - 1);
   }
 
   /** Put `entry` in the place of the entry with its key. */
   #set(entry: Entry): void {
-    const position = this.#index.get(entry.key);
+    const position = this.#index.get(entry.id);
     if (position !== undefined) this.entries[position] = this.#kept(entry);
   }
 
@@ -388,7 +389,7 @@ export class Transcript {
    * hold. Only its own saved event gives an entry, except the result of a tool. A waiting tool keeps its live state.
    */
   #kept(entry: Entry): Entry {
-    const previous = this.#previous?.get(entry.key);
+    const previous = this.#previous?.get(entry.id);
     if (entry.kind === "reasoning" && previous?.kind === "reasoning")
       return previous.text === entry.text && previous.draft === entry.draft ? previous : entry;
     // An older page can bring the answer of an end.
@@ -406,7 +407,7 @@ export class Transcript {
   #dropDraft(): void {
     const draft = this.#draft;
     if (draft === undefined) return;
-    for (const entry of this.entries.slice(draft.start)) this.#index.delete(entry.key);
+    for (const entry of this.entries.slice(draft.start)) this.#index.delete(entry.id);
     this.entries.length = draft.start;
     this.#draft = undefined;
   }

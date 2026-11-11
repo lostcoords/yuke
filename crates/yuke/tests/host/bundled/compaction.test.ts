@@ -41,8 +41,8 @@ async function compacting(replies: readonly Reply[]) {
 async function before(round: TestRound, replies: readonly Reply[]) {
   const { host, session } = await compacting(replies);
   await using _host = host;
-  const plan = await session.run("round.before", round);
-  return { plan, requests: host.requests, notices: host.notices.map((notice) => [notice.level, notice.message]) };
+  const plan = await session.runHook("round.before", round);
+  return { plan, requests: host.requests, notices: host.notices.map((notice) => [notice.level, notice.text]) };
 }
 
 /** The head and the keep of the replacement of `plan`. */
@@ -60,7 +60,7 @@ function sent(requests: readonly ModelRequest[]): string[] {
 test("a context near the window becomes a summary and its newest part", async () => {
   const context = twoInputs();
   // The count is 75,000 and about 12,000 for the answer and the input: above the threshold, below the window.
-  const { plan, requests, notices } = await before({ context, inputTokens: 75_000, window: WINDOW }, [
+  const { plan, requests, notices } = await before({ blocks: context, inputTokens: 75_000, contextWindow: WINDOW }, [
     reply.text("## Goal\nThe work."),
   ]);
 
@@ -81,7 +81,7 @@ for (const [name, inputTokens, window] of [
   ["without a window", 900_000, null],
 ] as const) {
   test(`a context ${name} stays`, async () => {
-    const { plan, requests } = await before({ context: twoInputs(), inputTokens, window }, []);
+    const { plan, requests } = await before({ blocks: twoInputs(), inputTokens, contextWindow: window }, []);
 
     equal([plan.replace, requests.length], [undefined, 0]);
   });
@@ -94,7 +94,9 @@ test("the cut never starts at a tool result, and the newest input stays exact", 
     { tool_result: { callId: "c1", content: "r".repeat(48_000), isError: false } },
   ];
 
-  const { plan } = await before({ context, inputTokens: 90_000, window: WINDOW }, [reply.text("summary")]);
+  const { plan } = await before({ blocks: context, inputTokens: 90_000, contextWindow: WINDOW }, [
+    reply.text("summary"),
+  ]);
 
   const [head, keep] = replaced(plan);
   equal([keep, head.slice(1)], [2, [{ user_text: "start" }]]);
@@ -102,7 +104,7 @@ test("the cut never starts at a tool result, and the newest input stays exact", 
 
 test("a second compaction merges the old summary", async () => {
   const { plan, requests } = await before(
-    { context: [OLD_SUMMARY, ...twoInputs()], inputTokens: 90_000, window: WINDOW },
+    { blocks: [OLD_SUMMARY, ...twoInputs()], inputTokens: 90_000, contextWindow: WINDOW },
     [reply.text("summary")],
   );
 
@@ -115,7 +117,7 @@ test("a second compaction merges the old summary", async () => {
 
 test("a cut that covers only the old summary compacts nothing", async () => {
   const { plan, requests } = await before(
-    { context: [OLD_SUMMARY, long("b", 12_000)], inputTokens: 90_000, window: WINDOW },
+    { blocks: [OLD_SUMMARY, long("b", 12_000)], inputTokens: 90_000, contextWindow: WINDOW },
     [],
   );
 
@@ -128,8 +130,12 @@ test("without a count the estimate of each block decides", async () => {
   const { host, session } = await compacting([reply.text("summary")]);
   await using _host = host;
 
-  const below = await session.run("round.before", { context: twoInputs(), inputTokens: null, window: WINDOW });
-  const above = await session.run("round.before", { context: large, inputTokens: null, window: WINDOW });
+  const below = await session.runHook("round.before", {
+    blocks: twoInputs(),
+    inputTokens: null,
+    contextWindow: WINDOW,
+  });
+  const above = await session.runHook("round.before", { blocks: large, inputTokens: null, contextWindow: WINDOW });
 
   equal([below.replace, above.replace !== undefined, host.requests.length], [undefined, true, 1]);
 });
@@ -138,7 +144,9 @@ test("the old summary never counts as the newest input", async () => {
   // The first request after a compaction failed, and a new input followed: only user blocks after the summary.
   const context = [OLD_SUMMARY, long("a", 12_000), long("b", 12_000)];
 
-  const { plan } = await before({ context, inputTokens: 90_000, window: WINDOW }, [reply.text("summary")]);
+  const { plan } = await before({ blocks: context, inputTokens: 90_000, contextWindow: WINDOW }, [
+    reply.text("summary"),
+  ]);
 
   const [head, keep] = replaced(plan);
   equal([keep, head.slice(1)], [1, [long("a", 12_000)]]);
@@ -150,7 +158,9 @@ for (const [name, answer, reason] of [
   ["an empty summary", reply.text(" \n"), "the summary is empty"],
 ] as const) {
   test(`${name} sends a warning, and the round keeps its context`, async () => {
-    const { plan, notices } = await before({ context: twoInputs(), inputTokens: 90_000, window: WINDOW }, [answer]);
+    const { plan, notices } = await before({ blocks: twoInputs(), inputTokens: 90_000, contextWindow: WINDOW }, [
+      answer,
+    ]);
 
     equal([plan.replace, notices.at(-1)], [undefined, ["warn", `the compaction failed: ${reason}`]]);
   });
@@ -159,13 +169,13 @@ for (const [name, answer, reason] of [
 test("an overflow sends only the part before the cut, and the plugin stops after two retries", async () => {
   const { host, session } = await compacting([reply.text("summary"), reply.text("summary")]);
   await using _host = host;
-  const round = { context: twoInputs(), inputTokens: 120_000, window: WINDOW };
+  const round = { blocks: twoInputs(), inputTokens: 120_000, contextWindow: WINDOW };
   const overflow = { kind: "context_overflow" } as const;
 
-  const first = await session.run("round.retry", { ...round, failure: overflow, retries: 0 });
-  await session.run("round.retry", { ...round, failure: overflow, retries: 1 });
-  const third = await session.run("round.retry", { ...round, failure: overflow, retries: 2 });
-  const other = await session.run("round.retry", { ...round, failure: { kind: "transport" }, retries: 0 });
+  const first = await session.runHook("round.retry", { ...round, failure: overflow, retries: 0 });
+  await session.runHook("round.retry", { ...round, failure: overflow, retries: 1 });
+  const third = await session.runHook("round.retry", { ...round, failure: overflow, retries: 2 });
+  const other = await session.runHook("round.retry", { ...round, failure: { kind: "transport" }, retries: 0 });
 
   equal([first === undefined ? -1 : replaced(first)[1], third, other], [1, undefined, undefined]);
   // The cut keeps the newest input, so the first request holds the blocks before it, then the prompt.

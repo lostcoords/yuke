@@ -76,6 +76,8 @@ pub(crate) struct Machine {
     /// The terminal interface, or `None` with no view.
     /// Each runtime of a reload draws on its display.
     pub(crate) interface: Option<yuke_js::Interface>,
+    /// Every module can import the `yuke:internal/` modules, as in the tests of yuke. It is `false` in production.
+    pub(crate) internal_imports: bool,
     /// What the app of a test needs beyond production, or `None` outside a test.
     pub(crate) test: Option<TestSetup>,
 }
@@ -201,7 +203,7 @@ impl Shared {
             session_id: None,
             level: NoticeLevel::Warn,
             source: SOURCE.to_owned(),
-            message: text.to_owned(),
+            text: text.to_owned(),
         }));
     }
 
@@ -573,7 +575,7 @@ impl App {
                 session_id: None,
                 level: NoticeLevel::Error,
                 source: SOURCE.to_owned(),
-                message: format!("only the bundled plugins run, because the plugin list did not load: {error}"),
+                text: format!("only the bundled plugins run, because the plugin list did not load: {error}"),
             }));
         }
         let sessions = SessionService::new(Rc::clone(&shared));
@@ -623,7 +625,7 @@ impl App {
                 session_id: None,
                 level: NoticeLevel::Error,
                 source: SOURCE.to_owned(),
-                message: chain_text(&failure),
+                text: chain_text(&failure),
             }));
         }
     }
@@ -845,7 +847,7 @@ async fn start_runtime(
         }),
         http: Arc::clone(&shared.machine.fetch),
         interface: shared.machine.interface.clone(),
-        internal_imports: test.is_some_and(|test| test.internal_imports),
+        internal_imports: shared.machine.internal_imports,
         test_host: test.map(|test| Rc::clone(&test.host) as Rc<dyn yuke_js::TestHost>),
     })
     .await?;
@@ -1035,7 +1037,7 @@ async fn report(
                 session_id: None,
                 level: NoticeLevel::Warn,
                 source: SOURCE.to_owned(),
-                message: format!("a script failed: {fault}"),
+                text: format!("a script failed: {fault}"),
             }),
             Report::Notice(notice) => ServerNotification::Notice(notice),
             Report::Event(event) => ServerNotification::ExtensionEvent(event),
@@ -1043,7 +1045,7 @@ async fn report(
                 session_id: None,
                 level,
                 source: "console".to_owned(),
-                message: text,
+                text,
             }),
         };
         observer.notify(notification);
@@ -1118,7 +1120,7 @@ mod tests {
             .borrow_mut()
             .iter()
             .map(|notification| match notification {
-                ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.message.clone()),
+                ServerNotification::Notice(notice) => (notice.level, notice.source.clone(), notice.text.clone()),
                 other @ (ServerNotification::SessionUpdate(_)
                 | ServerNotification::ExtensionEvent(_)
                 | ServerNotification::ExtensionCancel(_)

@@ -5,7 +5,7 @@ import type { PluginApply, PluginSession } from "yuke:plugins";
 import { assert, createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
 
 const echo: PluginSession = (s) => {
-  s.tools.define({
+  s.tools.add({
     name: "echo",
     description: "Echo the text.",
     concurrency: "serial",
@@ -29,7 +29,7 @@ test("call runs a tool and gives its live texts in order", async () => {
 
 test("the notices and the events of a plugin are in the records after the operation", async () => {
   const loud: PluginSession = (s) => {
-    s.hook("tool.before", () => {
+    s.addHook("tool.before", () => {
       s.notify("warn", "careful");
       s.sendClientEvent("seen", { n: 1 });
       return undefined;
@@ -38,10 +38,10 @@ test("the notices and the events of a plugin are in the records after the operat
   await using host = await createHost({ plugins: [{ name: "loud", session: loud }] });
   const session = await host.openSession();
 
-  await session.run("tool.before", { call: { callId: "c", name: "x", arguments: {} } });
+  await session.runHook("tool.before", { call: { callId: "c", name: "x", arguments: {} } });
 
   equal(
-    host.notices.map((notice) => [notice.source, notice.level, notice.message]),
+    host.notices.map((notice) => [notice.source, notice.level, notice.text]),
     [["loud", "warn", "careful"]],
   );
   equal(
@@ -74,7 +74,7 @@ test("a given plugin name follows the rule of a manifest name", async () => {
 
 test("each call gets its own call id", async () => {
   const ids: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "id",
       description: "Give the call id.",
       concurrency: "serial",
@@ -101,14 +101,14 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
       });
     });
   const waiter: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "wait",
       description: "Wait for the cancel.",
       concurrency: "serial",
       parameters: { type: "object", properties: {} },
       execute: (_args, context) => waits(context.signal, "tool"),
     });
-    s.hook("tool.before", async (event) => {
+    s.addHook("tool.before", async (event) => {
       await waits(event.signal, "hook");
       return undefined;
     });
@@ -122,7 +122,7 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
   const callError = await called;
   const hookStop = new AbortController();
   const ran = rejects(
-    session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
+    session.runHook("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
   );
   await waitForSettled();
   hookStop.abort(new Error("stop"));
@@ -136,12 +136,12 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
 
 test("setSettings changes the folder and the model of an open session", async () => {
   const where: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "where",
       description: "Give the folder.",
       concurrency: "serial",
       parameters: { type: "object", properties: {} },
-      execute: (_args, context) => context.folder,
+      execute: (_args, context) => context.cwd,
     });
   };
   const replies = [reply.text("Done.")];
@@ -154,7 +154,7 @@ test("setSettings changes the folder and the model of an open session", async ()
     cwd: `${folder()}/other`,
     model: { provider: "openai", model: "gpt-4.1" },
   });
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal((await session.call("where", {})).text, `${folder()}/other`);
   equal(
@@ -168,7 +168,7 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sending = rejects(session.send("Wait.", { signal: stop.signal }));
+  const sending = rejects(session.sendMessage("Wait.", { signal: stop.signal }));
   await waitForSettled();
   equal(host.requests.length, 1);
 
@@ -176,7 +176,7 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   stop.abort(new Error("stop"));
   await sending;
   await session.setSettings({ ...session.settings, cwd: folder() });
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     host.requests.map((request) => (request.body as { model: string }).model),

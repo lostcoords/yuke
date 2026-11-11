@@ -86,7 +86,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   let loadedAt = Date.now();
   const picker = new Picker<SessionRow>({
     items: [],
-    key: (row) => row.session.sessionId,
+    id: (row) => row.session.sessionId,
     label: labelOf,
     detail: (row) => {
       const session = row.session;
@@ -94,12 +94,12 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
       return `${age(session.updatedAt, loadedAt)} · ${session.model.model}${place}`;
     },
     rank,
-    choose: (row) => {
+    onChoose: (row) => {
       dialog.close();
       const id = row.session.sessionId;
       chat.show(id).catch((error: unknown) => ctx.notify("error", `the session ${id} did not show: ${String(error)}`));
     },
-    cancel: () => dialog.close(),
+    onCancel: () => dialog.close(),
   });
   const scope = (): void => {
     all = !all;

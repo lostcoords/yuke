@@ -78,12 +78,12 @@ test("a key goes to the keymap first then up the focus path", () => {
       log.push("command");
     },
   });
-  core.keymap.bind("b", "test:bound");
+  core.keymap.add("b", "test:bound");
   const child: View = {
     focusable: true,
     contexts: ["editor"],
     draw() {},
-    key: (event) => {
+    onKey: (event) => {
       log.push(`child ${event.character}`);
       return event.character === "c";
     },
@@ -91,7 +91,7 @@ test("a key goes to the keymap first then up the focus path", () => {
   core.scene.wrapRoot("test", () => ({
     layout: () => [{ view: child, rect: { column: 0, row: 0, width: 5, height: 1 } }],
     draw() {},
-    key: (event) => {
+    onKey: (event) => {
       log.push(`parent ${event.character}`);
       return true;
     },
@@ -111,7 +111,7 @@ test("escape closes the top modal when nothing takes it", () => {
     mount.signal.addEventListener("abort", () => log.push("keeps closed"));
     return {
       draw() {},
-      key: (event) => {
+      onKey: (event) => {
         if (event.code === "esc" && query !== "") {
           query = "";
           return true;
@@ -137,11 +137,11 @@ test("a modal takes all input below it and a float takes only what it handles", 
   core.scene.wrapRoot("test", () => ({
     focusable: true,
     draw() {},
-    key: () => {
+    onKey: () => {
       log.push("root key");
       return true;
     },
-    mouse: (event) => {
+    onMouse: (event) => {
       log.push(`root mouse ${event.action}`);
       return true;
     },
@@ -150,11 +150,11 @@ test("a modal takes all input below it and a float takes only what it handles", 
     "test",
     () => ({
       draw() {},
-      key: (event) => {
+      onKey: (event) => {
         log.push("float key");
         return event.character === "f";
       },
-      mouse: () => {
+      onMouse: () => {
         log.push("float mouse");
         return true;
       },
@@ -167,7 +167,7 @@ test("a modal takes all input below it and a float takes only what it handles", 
   core.event(click(10, 3));
   equal(log.splice(0), ["float key", "float key", "root key", "float mouse", "root mouse press"]);
   float.close();
-  core.scene.overlay("test", () => ({ draw() {}, key: () => false, mouse: () => false }));
+  core.scene.overlay("test", () => ({ draw() {}, onKey: () => false, onMouse: () => false }));
   core.event(key("x"));
   core.event(click(10, 3));
   equal(log, ["root mouse cancel"]);
@@ -181,8 +181,8 @@ test("a press focuses and captures and a modal cancels the capture", () => {
     log.push([name, event.action, event.column, event.row]);
     return true;
   };
-  const a: View = { focusable: true, draw() {}, mouse: record("a") };
-  const b: View = { focusable: true, draw() {}, mouse: record("b") };
+  const a: View = { focusable: true, draw() {}, onMouse: record("a") };
+  const b: View = { focusable: true, draw() {}, onMouse: record("b") };
   core.scene.wrapRoot("test", () => ({
     layout: () => [
       { view: a, rect: { column: 0, row: 0, width: 5, height: 2 } },
@@ -217,7 +217,7 @@ test("a press on a view without focusOnPress reaches it and focuses its parent, 
     focusable: true,
     focusOnPress: false,
     draw() {},
-    mouse: (event) => {
+    onMouse: (event) => {
       presses.push(event.action);
       return true;
     },
@@ -296,11 +296,11 @@ test("panes split focus and close and the last close gives an empty pane without
 test("a pane gets its inner focus back and focus changes reach the path", () => {
   const core = new Core(fakeTerminal().driver);
   const log: string[] = [];
-  const composer: View = { focusable: true, draw() {}, focusChanged: (focused) => log.push(`composer ${focused}`) };
+  const composer: View = { focusable: true, draw() {}, onFocusChange: (focused) => log.push(`composer ${focused}`) };
   const transcript: View = { focusable: true, draw() {} };
   const chat: View = {
     draw() {},
-    focusChanged: (focused) => log.push(`chat ${focused}`),
+    onFocusChange: (focused) => log.push(`chat ${focused}`),
     layout: (size) => [
       { view: transcript, rect: { column: 0, row: 0, width: size.width, height: size.height - 1 } },
       { view: composer, rect: { column: 0, row: size.height - 1, width: size.width, height: 1 } },
@@ -311,7 +311,7 @@ test("a pane gets its inner focus back and focus changes reach the path", () => 
   core.scene.layout();
   core.scene.focus(composer);
   core.commands.add({ name: "test:none", run() {} });
-  core.keymap.bind("ctrl+k x", "test:none");
+  core.keymap.add("ctrl+k x", "test:none");
   core.commands.run("core:focus-left");
   core.scene.layout();
   core.event(key("k", { ctrl: true }));
@@ -344,7 +344,7 @@ test("a pane starts at its initial focus and each focus change names the view an
   };
   const names = new Map<View | undefined, string>();
   const changes: string[] = [];
-  tui.onFocusChange((change) => {
+  tui.addFocusListener((change) => {
     const pane = change.pane === undefined ? "no pane" : change.pane === a ? "pane a" : "pane b";
     changes.push(`${names.get(change.previous) ?? "none"} -> ${names.get(change.current) ?? "?"} in ${pane}`);
   });
@@ -387,9 +387,9 @@ test("a timer runs once in time order, asks for a frame, and its disposer or the
   const stop = new AbortController();
   const tui = createSurface(core, "timers", stop.signal);
   const ran: string[] = [];
-  tui.after(100, () => ran.push("late"));
-  const cancel = tui.after(100, () => ran.push("cancelled"));
-  tui.after(50, () => ran.push("early"));
+  tui.addTimer(100, () => ran.push("late"));
+  const cancel = tui.addTimer(100, () => ran.push("cancelled"));
+  tui.addTimer(50, () => ran.push("early"));
   cancel();
   const requests = terminal.requests();
   terminal.clock.advance(99);
@@ -398,7 +398,7 @@ test("a timer runs once in time order, asks for a frame, and its disposer or the
   equal([before, ran, terminal.requests() - requests], [[["early"], 1], ["early", "late"], 2]);
   terminal.clock.advance(1000);
   equal(ran, ["early", "late"]);
-  tui.after(10, () => ran.push("stopped"));
+  tui.addTimer(10, () => ran.push("stopped"));
   stop.abort();
   terminal.clock.advance(10);
   equal(ran, ["early", "late"]);
@@ -408,12 +408,12 @@ test("one advance runs due timers in time order with the oldest timer first at t
   const terminal = fakeTerminal();
   const tui = createSurface(new Core(terminal.driver), "timers", new AbortController().signal);
   const ran: string[] = [];
-  tui.after(30, () => ran.push("30"));
-  tui.after(20, () => ran.push("20"));
-  tui.after(20, () => ran.push("20 again"));
-  tui.after(10, () => {
+  tui.addTimer(30, () => ran.push("30"));
+  tui.addTimer(20, () => ran.push("20"));
+  tui.addTimer(20, () => ran.push("20 again"));
+  tui.addTimer(10, () => {
     ran.push("10");
-    tui.after(5, () => ran.push("15"));
+    tui.addTimer(5, () => ran.push("15"));
   });
   terminal.clock.advance(30);
   equal(ran, ["10", "15", "20", "20 again", "30"]);
@@ -423,7 +423,7 @@ test("a throwing timer is reported under its plugin", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const tui = createSurface(core, "timers", new AbortController().signal);
-  tui.after(0, () => {
+  tui.addTimer(0, () => {
     throw new Error("bad timer");
   });
   terminal.clock.advance(0);
@@ -497,7 +497,7 @@ test("a view beside the panes gets the mouse and leaves the focus on the active 
   const pressed: string[] = [];
   const side: View = {
     ...label("side"),
-    mouse: (event) => {
+    onMouse: (event) => {
       pressed.push(event.action);
       return true;
     },
@@ -606,8 +606,8 @@ test("a view that leaves the tree gets its focus loss and its capture cancel", (
   const child: View = {
     focusable: true,
     draw() {},
-    focusChanged: (focused) => log.push(`focus ${focused}`),
-    mouse: (event) => {
+    onFocusChange: (focused) => log.push(`focus ${focused}`),
+    onMouse: (event) => {
       log.push(`mouse ${event.action}`);
       return true;
     },
@@ -631,9 +631,9 @@ test("a press that opens a modal captures nothing", () => {
   const opener: View = {
     focusable: true,
     draw() {},
-    mouse: (event) => {
+    onMouse: (event) => {
       log.push(`opener ${event.action}`);
-      if (event.action === "press") core.scene.overlay("test", () => ({ draw() {}, mouse: () => true }));
+      if (event.action === "press") core.scene.overlay("test", () => ({ draw() {}, onMouse: () => true }));
       return true;
     },
   };
@@ -658,10 +658,10 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
       log.push("open");
     },
   });
-  tui.keys.bind("ctrl+n", "open");
-  tui.views.register("note", () => ({ draw() {} }));
+  tui.keys.add("ctrl+n", "open");
+  tui.views.add("note", () => ({ draw() {} }));
   assert(throws(() => tui.commands.add({ name: "other:x", run() {} })) instanceof TypeError);
-  assert(throws(() => tui.views.register("core:note", () => ({ draw() {} }))) instanceof TypeError);
+  assert(throws(() => tui.views.add("core:note", () => ({ draw() {} }))) instanceof TypeError);
   tui.commands.add({ name: "notes:close", run() {} });
   equal([tui.commands.run("open"), tui.commands.run("core:quit")], [true, true]);
   equal(log, ["open"]);
@@ -691,10 +691,10 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
   const once = tui.commands.add({ name: "open", run() {} });
   once();
   tui.commands.add({ name: "open", run() {} });
-  tui.keys.bind("ctrl+n", "open");
-  tui.styles.set({ "notes.title": { bold: true } });
-  tui.notices.on((notice) => heard.push(notice));
-  tui.views.register("note", () => ({ draw() {} }));
+  tui.keys.add("ctrl+n", "open");
+  tui.styles.add({ "notes.title": { bold: true } });
+  tui.notices.addListener((notice) => heard.push(notice));
+  tui.views.add("note", () => ({ draw() {} }));
   const pane = tui.panes.split(() => ({
     draw: (canvas) => {
       canvas.text(0, 0, "pane");
@@ -776,7 +776,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
   const terminal = fakeTerminal();
   const core = new Core(terminal.driver);
   const tui = createSurface(core, "notes", new AbortController().signal);
-  tui.views.register("note", restoreNote);
+  tui.views.add("note", restoreNote);
   const one = tui.panes.split(() => note({ id: 1 }));
   tui.panes.split(() => note({ id: 2 }), { direction: "column" });
   tui.panes.split(() => ({ draw() {} }));
@@ -785,7 +785,7 @@ test("the panes of a snapshot come back with their views and focus", () => {
   const before = terminal.screen(core);
   const snapshot = core.snapshot();
   const restored = new Core(terminal.driver);
-  createSurface(restored, "notes", new AbortController().signal).views.register("note", restoreNote);
+  createSurface(restored, "notes", new AbortController().signal).views.add("note", restoreNote);
   restored.restore(snapshot);
   // The empty pane and the view without `snapshot()` save as `null`; the focus is the index of note 1.
   equal(JSON.parse(snapshot), {
@@ -828,9 +828,9 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   const core = new Core(terminal.driver);
   const notes = new AbortController();
   const tui = createSurface(core, "notes", notes.signal);
-  tui.views.register("note", restoreNote);
+  tui.views.add("note", restoreNote);
   const earlier = tui.panes.split(() => note({ id: 9 }));
-  createSurface(core, "broken", new AbortController().signal).views.register("view", () => {
+  createSurface(core, "broken", new AbortController().signal).views.add("view", () => {
     throw new Error("old state");
   });
   const split = (first: unknown, second: unknown) => ({ split: "row", first, second });

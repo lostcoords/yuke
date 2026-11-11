@@ -32,7 +32,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   const vim = frame.surface("vim");
   const watcher = frame.surface("watcher");
   let changes = 0;
-  watcher.tui.status.onChange(() => {
+  watcher.tui.status.addChangeListener(() => {
     changes += 1;
   });
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });
@@ -40,7 +40,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   equal(throws(() => vim.tui.status.set("chat:model", item("m", "right", 0)))?.constructor, TypeError);
   vim.tui.status.set("vim:count", item("3", "left", 1));
   equal(
-    watcher.tui.status.list().map((entry) => [entry.key, entry.text, entry.priority]),
+    watcher.tui.status.list().map((entry) => [entry.id, entry.text, entry.priority]),
     [
       ["vim:mode", "NORMAL", 0],
       ["vim:count", "3", 0],
@@ -55,11 +55,23 @@ test("the pending keys of a sequence are the item core:keys until the wait ends"
   using frame = createFrame({ width: 20, height: 2 });
   const surface = frame.surface("demo");
   surface.tui.commands.add({ name: "top", run: () => {} });
-  surface.tui.keys.bind("g g", "top");
+  surface.tui.keys.add("g g", "top");
   frame.key("g");
-  const waiting = surface.tui.status.list().map((entry) => [entry.key, entry.text, entry.side]);
+  const waiting = surface.tui.status.list().map((entry) => [entry.id, entry.text, entry.side]);
   frame.advance(1000);
   equal([waiting, surface.tui.status.list()], [[["core:keys", "g", "right"]], []]);
+});
+
+test("the remover of a set deletes its item, and an older remover leaves a newer entry", () => {
+  using frame = createFrame({ width: 24, height: 3 });
+  const tui = frame.surface("vim").tui;
+  const removeFirst = tui.status.set("mode", item("NORMAL", "left", 0));
+  const removeSecond = tui.status.set("mode", item("INSERT", "left", 0));
+  removeFirst();
+  const afterOld = tui.status.list().map((entry) => entry.text);
+  removeSecond();
+
+  equal([afterOld, tui.status.list()], [["INSERT"], []]);
 });
 
 test("the bar takes the last row: the left side from the start and the right side to the end", () => {

@@ -25,14 +25,16 @@
  */
 declare module "yuke:test" {
   import type { UnixListener } from "yuke:net";
-  import type { NoticeLevel, PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
+  import type { PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
   import type {
     Block,
+    DisplayBlock,
     ExtensionEventParams,
     ExtensionRequestParams,
     FinishReason,
     InputKind,
     InputSource,
+    NoticeLevel,
     NoticeParams,
     QuestionAnswer,
     SessionId,
@@ -40,7 +42,7 @@ declare module "yuke:test" {
     Settings,
     ToolDefinition,
   } from "yuke:protocol";
-  import type { DisplayBlock, ObjectSchema, ToolMedia } from "yuke:tools";
+  import type { ObjectSchema, ToolMedia } from "yuke:tools";
   import type { Interaction, Transcript } from "yuke:transcript";
   import type { ClipboardImage, Cursor, KeyEvent, Mount, MouseEvent, Size, Startup, Tui, ViewFactory } from "yuke:tui";
 
@@ -94,9 +96,9 @@ declare module "yuke:test" {
     readonly frame: Frame;
     /** The text of each quit that reached the driver, the oldest first. A quit without text gives `undefined`. */
     readonly quits: readonly (string | undefined)[];
-    /** The texts that `tui.copy` sent, the oldest first. */
+    /** The texts that `tui.clipboard.writeText` sent, the oldest first. */
     readonly copies: readonly string[];
-    /** The image that `tui.readImage` gives. The default is none. */
+    /** The image that `tui.clipboard.readImage` gives. The default is none. */
     clipboard: ClipboardImage | undefined;
     /** A new surface for the plugin `name`. */
     surface: (name: string) => TestSurface;
@@ -114,7 +116,7 @@ declare module "yuke:test" {
     /** Send a notice of the host or of a plugin, as the terminal does. */
     notice: (notice: FrameNotice) => void;
     /**
-     * Move the clock of the frame by `ms` milliseconds. Each due `tui.after` callback and key sequence timeout runs in
+     * Move the clock of the frame by `ms` milliseconds. Each due `tui.addTimer` callback and key sequence timeout runs in
      * time order. Then the frame draws. Other timers run on real time.
      */
     advance: (ms: number) => void;
@@ -170,7 +172,7 @@ declare module "yuke:test" {
    * A listener for tests of `yuke:net`, at a new socket path in the folder for temporary files. A failure throws a
    * `ConnectionError`.
    */
-  export function listen(): UnixListener;
+  export function listenOnTemporarySocket(): UnixListener;
   // The host of plugins under test: an app with a scripted model, in the runtime of the test.
 
   /**
@@ -329,19 +331,19 @@ declare module "yuke:test" {
    * model of the round is the model of the session, as in a turn.
    */
   export interface TestRound {
-    readonly context: readonly Block[];
+    readonly blocks: readonly Block[];
     /**
      * The context window of the round. `null` gives a round with no known window. Without it, the round has the
      * window of the model of the session.
      */
-    readonly window?: number | null;
+    readonly contextWindow?: number | null;
     readonly inputTokens?: number | null;
     readonly system?: string;
     readonly tools?: readonly ToolDefinition[];
     readonly settings?: Settings;
   }
 
-  /** The event of each hook point for `run`, as plain data. */
+  /** The event of each hook point for `runHook`, as plain data. */
   export interface HookEvents {
     readonly "tool.before": { readonly call: ToolCall };
     readonly "tool.after": {
@@ -383,7 +385,7 @@ declare module "yuke:test" {
 
   /** The decision of the host at each hook point, after each handler ran. */
   export interface HookResults {
-    readonly "tool.before": "run" | { readonly block: string };
+    readonly "tool.before": "run" | { readonly deny: string };
     readonly "tool.after": ToolOutcome;
     readonly "round.before": RoundPlan;
     readonly "round.retry": RoundPlan | undefined;
@@ -428,12 +430,12 @@ declare module "yuke:test" {
     /** The conversation of the session. Each operation returns after the transcript got each update before its end. */
     readonly transcript: Transcript;
     /** Send `text` as a message of the user, and wait until the session is idle again. */
-    readonly send: (text: string, options?: OperationOptions) => Promise<void>;
+    readonly sendMessage: (text: string, options?: OperationOptions) => Promise<void>;
     /**
      * Run the hook point `point` with `event`, as a turn does, and return the decision of the host. A handler sees the
      * same event as in a turn. A `continue` answer of `round.after` adds its input to the session.
      */
-    readonly run: <K extends keyof HookEvents>(
+    readonly runHook: <K extends keyof HookEvents>(
       point: K,
       event: HookEvents[K],
       options?: OperationOptions,

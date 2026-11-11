@@ -12,7 +12,7 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
     place.plugin(
         "deploy",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'deploy', description: 'Deploy.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
@@ -75,7 +75,7 @@ async fn a_load_sends_an_open_question_again() {
     place.plugin(
         "keeper",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
@@ -132,7 +132,7 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
     place.plugin(
         "keeper",
         "export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              async execute(_args, { signal }) {

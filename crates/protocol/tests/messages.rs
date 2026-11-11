@@ -536,13 +536,13 @@ fn a_notice_notification_reads_and_writes_its_json() {
 
     assert_json(
         &json!({ "jsonrpc": "2.0", "method": "notice", "params": {
-            "level": "warn", "source": "host:jobs", "message": "job-1 stopped"
+            "level": "warn", "source": "host:jobs", "text": "job-1 stopped"
         } }),
         &notification(ServerNotification::Notice(NoticeParams {
             session_id: None,
             level: NoticeLevel::Warn,
             source: "host:jobs".to_owned(),
-            message: "job-1 stopped".to_owned(),
+            text: "job-1 stopped".to_owned(),
         })),
     );
 }

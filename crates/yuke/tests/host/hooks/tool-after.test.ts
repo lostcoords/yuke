@@ -32,7 +32,7 @@ function outcome(result: ToolOutcome): unknown {
 async function after(plugins: readonly { name: string; session: PluginSession }[]): Promise<unknown> {
   await using host = await createHost({ plugins });
   const session = await host.openSession();
-  return outcome(await session.run("tool.after", { call, result: original }));
+  return outcome(await session.runHook("tool.after", { call, result: original }));
 }
 
 /** The error outcome with `text`, as the host gives it for a failed handler. */
@@ -42,7 +42,7 @@ function failed(text: string): unknown {
 
 test("the result stays when no handler answers", async () => {
   const quiet: PluginSession = (s) => {
-    s.hook("tool.after", () => undefined);
+    s.addHook("tool.after", () => undefined);
   };
 
   equal(await after([{ name: "quiet", session: quiet }]), {
@@ -58,7 +58,7 @@ test("the result stays when no handler answers", async () => {
 // An answer replaces only its own fields, so the media of the result stay.
 test("each handler gets the call and the result after the answers before it", async () => {
   const redact: PluginSession = (s) => {
-    s.hook("tool.after", (event) => {
+    s.addHook("tool.after", (event) => {
       const path = (event.call.arguments as { path: string }).path;
       return {
         text: `${event.call.callId} ${event.call.name} ${path}: ${event.result.text.replace("hunter2", "***")}`,
@@ -66,7 +66,7 @@ test("each handler gets the call and the result after the answers before it", as
     });
   };
   const flag: PluginSession = (s) => {
-    s.hook("tool.after", (event) => ({ text: `${event.result.text} (${event.result.isError})`, isError: true }));
+    s.addHook("tool.after", (event) => ({ text: `${event.result.text} (${event.result.isError})`, isError: true }));
   };
 
   equal(
@@ -88,7 +88,7 @@ test("each handler gets the call and the result after the answers before it", as
 // The id of a result item names that item. The item, a copy of the item, and its id alone each keep the item.
 test("an answer keeps, reorders, removes, and adds media", async () => {
   const pics: PluginSession = (s) => {
-    s.hook("tool.after", (event) => {
+    s.addHook("tool.after", (event) => {
       const [first, second] = event.result.media;
       if (first === undefined || second === undefined || !("id" in first) || !("id" in second)) return undefined;
       return {
@@ -123,7 +123,7 @@ test("an answer keeps, reorders, removes, and adds media", async () => {
 // Two items can hold the same bytes, so each item has its own id.
 test("an answer keeps the second of two items with the same bytes", async () => {
   const pick: PluginSession = (s) => {
-    s.hook("tool.after", (event) => {
+    s.addHook("tool.after", (event) => {
       const second = event.result.media[1];
       return second !== undefined && "id" in second ? { media: [{ id: second.id }] } : undefined;
     });
@@ -131,7 +131,7 @@ test("an answer keeps the second of two items with the same bytes", async () => 
   await using host = await createHost({ plugins: [{ name: "pick", session: pick }] });
   const session = await host.openSession();
 
-  const result = await session.run("tool.after", {
+  const result = await session.runHook("tool.after", {
     call,
     result: {
       ...original,
@@ -148,7 +148,7 @@ test("an answer keeps the second of two items with the same bytes", async () => 
 test("a media item of the event can name a file, and the handler sees the size of each item", async () => {
   const sizes: unknown[] = [];
   const measure: PluginSession = (s) => {
-    s.hook("tool.after", (event) => {
+    s.addHook("tool.after", (event) => {
       sizes.push(...event.result.media.map((item) => ("id" in item ? [item.mimeType, item.size] : item)));
       return undefined;
     });
@@ -157,7 +157,7 @@ test("a media item of the event can name a file, and the handler sees the size o
   const session = await host.openSession();
   await writeFile(`${folder()}/b.png`, new Uint8Array([4, 5]));
 
-  const result = await session.run("tool.after", {
+  const result = await session.runHook("tool.after", {
     call,
     result: {
       ...original,
@@ -182,16 +182,16 @@ test("a media item of the event can name a file, and the handler sees the size o
 test("a change of the handlers during a run changes only the next run", async () => {
   let swap = (): void => {};
   const first: PluginSession = (s) => {
-    s.hook("tool.after", () => {
+    s.addHook("tool.after", () => {
       swap();
       return undefined;
     });
   };
   const second: PluginSession = (s) => {
-    let remove = s.hook("tool.after", (event) => ({ text: `${event.result.text} old` }));
+    let remove = s.addHook("tool.after", (event) => ({ text: `${event.result.text} old` }));
     swap = () => {
       remove();
-      remove = s.hook("tool.after", (event) => ({ text: `${event.result.text} new` }));
+      remove = s.addHook("tool.after", (event) => ({ text: `${event.result.text} new` }));
     };
   };
   await using host = await createHost({
@@ -203,8 +203,8 @@ test("a change of the handlers during a run changes only the next run", async ()
   const session = await host.openSession();
 
   const runs = [
-    await session.run("tool.after", { call, result: original }),
-    await session.run("tool.after", { call, result: original }),
+    await session.runHook("tool.after", { call, result: original }),
+    await session.runHook("tool.after", { call, result: original }),
   ];
 
   equal(
@@ -217,14 +217,14 @@ test("a change of the handlers during a run changes only the next run", async ()
 test("each of two overlapping calls gets its own answer", async () => {
   const first = Promise.withResolvers<void>();
   const slow: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "echo",
       description: "Echo the text.",
       concurrency: "parallel",
       parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
       execute: (args) => args.text,
     });
-    s.hook("tool.after", async (event) => {
+    s.addHook("tool.after", async (event) => {
       if (event.result.text === "first") await first.promise;
       else first.resolve();
       return { text: `${event.call.callId}: ${event.result.text}` };
@@ -235,7 +235,7 @@ test("each of two overlapping calls gets its own answer", async () => {
   await using host = await createHost({ plugins: [{ name: "slow", session: slow }], replies });
   const session = await host.openSession();
 
-  await session.send("Echo.");
+  await session.sendMessage("Echo.");
 
   const results = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.result] : []));
   equal(
@@ -246,7 +246,7 @@ test("each of two overlapping calls gets its own answer", async () => {
 
 test("a throw gives an error result that names the plugin", async () => {
   const check: PluginSession = (s) => {
-    s.hook("tool.after", () => {
+    s.addHook("tool.after", () => {
       throw new Error("no redaction today");
     });
   };
@@ -259,7 +259,7 @@ test("a throw gives an error result that names the plugin", async () => {
 
 test("a new media item that cannot be read gives an error result", async () => {
   const pics: PluginSession = (s) => {
-    s.hook("tool.after", () => ({ media: [{ mimeType: "image/png", path: "missing.png" }] }));
+    s.addHook("tool.after", () => ({ media: [{ mimeType: "image/png", path: "missing.png" }] }));
   };
 
   const result = (await after([{ name: "pics", session: pics }])) as {
@@ -288,12 +288,12 @@ for (const [name, answer, expected] of [
 ] as const) {
   test(`a handler that ${name}`, async () => {
     const redact: PluginSession = (s) => {
-      s.hook("tool.after", () => answer);
+      s.addHook("tool.after", () => answer);
     };
     await using host = await createHost({ plugins: [{ name: "redact", session: redact }], answer: () => undefined });
     const session = await host.openSession();
 
-    const result = await session.run("tool.after", { call, result: { ...original, display: [diff] } });
+    const result = await session.runHook("tool.after", { call, result: { ...original, display: [diff] } });
 
     equal(result.display, expected);
   });

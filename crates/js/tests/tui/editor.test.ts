@@ -29,7 +29,7 @@ test("an edit inside a grapheme or a span takes the whole of it", () => {
   // The astronaut is 5 UTF-16 units: a woman, a zero-width joiner, and a laptop.
   const editor = new TextEditor({ state: state("A👩‍💻B") });
   const changes: EditorChange[] = [];
-  editor.extend(new AbortController().signal).onChange((change) => changes.push(change));
+  editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   editor.replace(2, 3, "");
   equal([editor.state.text, editor.caret], ["AB", 1]);
   equal(changes[0]?.changes, [{ from: 1, to: 6, text: "", spans: [] }]);
@@ -53,9 +53,9 @@ test("a restore brings back an image with its media and a change keeps its state
   });
   const saved = editor.state;
   const changes: EditorChange[] = [];
-  editor.extend(new AbortController().signal).onChange((change) => changes.push(change));
+  editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   editor.caret = 2;
-  editor.key({
+  editor.onKey({
     type: "key",
     code: "backspace",
     character: "",
@@ -128,7 +128,7 @@ test("a frame shows the prompt, the text, a label, the selection, and the cursor
   });
   using frame = createFrame({ width: 12, height: 3 }, () => root(editor, 10, 2));
   const surface = frame.surface("vim");
-  surface.tui.widgets.watch((mount) => {
+  surface.tui.widgets.addWatcher((mount) => {
     const extension = mount.widget.extend(mount.signal);
     extension.setAppearance({ cursorShape: "block" });
     return () => extension.dispose();
@@ -146,7 +146,7 @@ test("a frame shows the prompt, the text, a label, the selection, and the cursor
 
 test("the keys type, select, delete, add a line, and submit without a clear", () => {
   const submitted: string[] = [];
-  const editor = new TextEditor({ submit: (draft) => submitted.push(draft.text) });
+  const editor = new TextEditor({ onSubmit: (draft) => submitted.push(draft.text) });
   using frame = createFrame({ width: 12, height: 3 }, () => root(editor, 10, 2));
   frame.key("h i");
   frame.key("shift+left");
@@ -203,7 +203,7 @@ test("the line keys reach the ends of a line past its wraps, and a delete at a l
   const editor = new TextEditor({ state: state("ab cd efgh\nxy", 7) });
   using frame = createFrame({ width: 6, height: 5 }, () => root(editor, 4, 4));
   const changes: EditorChange[] = [];
-  editor.extend(new AbortController().signal).onChange((change) => changes.push(change));
+  editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   frame.key("ctrl+a");
   const start = editor.caret;
   frame.key("ctrl+e");
@@ -378,7 +378,7 @@ test("a whole-row decoration styles its rows from edge to edge and stops at a so
 test("reset and restore report one edit over the whole text", () => {
   const editor = new TextEditor({ state: state("old") });
   const changes: EditorChange[] = [];
-  editor.extend(new AbortController().signal).onChange((change) => changes.push(change));
+  editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   editor.reset(state("new text"));
   editor.restore(state("old"));
   equal(
@@ -444,7 +444,7 @@ test("the selection, a label, and the placeholder have a default look that a plu
     return [cells?.[1]?.style, cells?.[4]?.style, frame.draw().cells[1]?.[1]?.style];
   };
   const before = looks();
-  tui.styles.set({
+  tui.styles.add({
     "editor.selection": { fg: 1, reverse: null },
     "editor.label": { fg: 2 },
     "editor.placeholder": { fg: 3, dim: null },

@@ -55,7 +55,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
   open();
   frame.key("n o r d enter");
   await waitForSettled();
-  equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"nord"}');
+  equal(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"nord"}');
   equal(
     [
       ["default", "nord", "dawn"].every((name) => listed.includes(name)),
@@ -72,7 +72,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
 test("a saved theme applies at the load, also when its plugin comes later, and default clears it", async () => {
   using frame = createFrame({ width: 40, height: 10 });
   const dataDir = folder();
-  await writeTextFile("theme.json", JSON.stringify({ name: "nord" }), { baseDir: dataDir });
+  await writeTextFile("theme.json", JSON.stringify({ name: "nord" }), { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
   const active = tui.styles.theme;
   tui.styles.addTheme("nord", NORD);
@@ -82,14 +82,14 @@ test("a saved theme applies at the load, also when its plugin comes later, and d
   frame.draw();
   frame.key("d e f enter");
   await waitForSettled();
-  equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"default"}');
+  equal(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"default"}');
   equal([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
 });
 
 test("a saved file without a name gives the default theme and no notice", async () => {
   using frame = createFrame({ width: 40, height: 10 });
   const dataDir = folder();
-  await writeTextFile("theme.json", "{}", { baseDir: dataDir });
+  await writeTextFile("theme.json", "{}", { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
   equal([tui.styles.theme, notices], ["default", []]);
 });
@@ -107,7 +107,7 @@ test("the picker opens on the active theme, so its first selection changes nothi
 test("a bad saved file is a notice, and yuke starts on the default theme", async () => {
   using frame = createFrame({ width: 40, height: 10 });
   const dataDir = folder();
-  await writeTextFile("theme.json", "{", { baseDir: dataDir });
+  await writeTextFile("theme.json", "{", { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
   equal([tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")], ["default", 1, true]);
 });

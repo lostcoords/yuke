@@ -23,7 +23,7 @@ const listeners = new Set<Listener>();
 /** The open sessions of the watch, so a later listener of `session.opened` gets them as they are now. */
 const open = new Map<
   SessionId,
-  { readonly parent: SessionId | null; state: SessionState; jobs: Job[]; questions: InteractionId[] }
+  { readonly parent: SessionId | undefined; state: SessionState; jobs: Job[]; interactions: InteractionId[] }
 >();
 /** The key of the watch now, or 0 without a watch. A fact of an older watch counts for nothing. */
 let key = 0;
@@ -38,7 +38,7 @@ function track(fact: Fact): void {
       parent: data.parent,
       state: data.state,
       jobs: [...data.jobs],
-      questions: [...data.questions],
+      interactions: [...data.interactions],
     });
   } else if (fact.event === "session.closed") {
     open.delete(fact.data.sessionId);
@@ -53,9 +53,9 @@ function track(fact: Fact): void {
       if (job.state !== "running") session.jobs = session.jobs.filter((entry) => entry.id !== job.id);
       else if (known) session.jobs = session.jobs.map((entry) => (entry.id === job.id ? job : entry));
       else session.jobs.push(job);
-    } else if (update.sessionUpdate === "interaction_requested") session.questions.push(update.interactionId);
+    } else if (update.sessionUpdate === "interaction_requested") session.interactions.push(update.interactionId);
     else if (update.sessionUpdate === "interaction_closed") {
-      session.questions = session.questions.filter((id) => id !== update.interactionId);
+      session.interactions = session.interactions.filter((id) => id !== update.interactionId);
     }
   }
 }
@@ -129,7 +129,10 @@ export function on<K extends Event>(
   if (event === "session.opened") {
     for (const [sessionId, session] of open) {
       if (listeners.has(entry)) {
-        call(entry, frozen({ sessionId, ...session, jobs: [...session.jobs], questions: [...session.questions] }));
+        call(
+          entry,
+          frozen({ sessionId, ...session, jobs: [...session.jobs], interactions: [...session.interactions] }),
+        );
       }
     }
   }

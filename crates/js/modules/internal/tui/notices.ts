@@ -2,8 +2,7 @@
  * The notices of the host and the faults of the plugins. The core draws none: a listener, such as the toasts, shows
  * them. The history serves a listener that starts late.
  */
-import type { NoticeLevel } from "yuke:plugins";
-import type { SessionId } from "yuke:protocol";
+import type { NoticeLevel, SessionId } from "yuke:protocol";
 import type { Notice } from "yuke:tui";
 
 /** The notices that the history keeps. */
@@ -44,7 +43,7 @@ export class Notices {
   }
 
   /** Give each later notice to `listener`, and return the disposer. */
-  on(listener: (notice: Notice) => void): () => void {
+  addListener(listener: (notice: Notice) => void): () => void {
     const entry = { listener };
     this.#listeners.add(entry);
     return () => {

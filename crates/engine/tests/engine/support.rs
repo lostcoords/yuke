@@ -103,7 +103,7 @@ pub(crate) struct Script {
     decisions: Mutex<Option<VecDeque<RoundDecision>>>,
     calls: Mutex<Vec<String>>,
     /// The name of the tool whose calls `before_tool` blocks.
-    blocked: Option<&'static str>,
+    denied: Option<&'static str>,
     tools: Mutex<Vec<String>>,
     rounds: Mutex<Vec<String>>,
     /// The hook that cancels the turn and then waits forever.
@@ -135,10 +135,10 @@ impl Script {
         }
     }
 
-    /// Block each call of the tool `name`.
-    pub(crate) fn blocks(self, name: &'static str) -> Self {
+    /// Deny each call of the tool `name`.
+    pub(crate) fn denies(self, name: &'static str) -> Self {
         Script {
-            blocked: Some(name),
+            denied: Some(name),
             ..self
         }
     }
@@ -225,8 +225,8 @@ impl Hooks for Script {
         self.stop_at("before_tool").await;
         let line = format!("before {} {}", call.name, call.arguments);
         self.tools.lock().unwrap().push(line);
-        if self.blocked == Some(call.name.as_str()) {
-            return ToolDecision::Block("The user blocked this call.".to_owned());
+        if self.denied == Some(call.name.as_str()) {
+            return ToolDecision::Deny("The user denied this call.".to_owned());
         }
         ToolDecision::Run
     }

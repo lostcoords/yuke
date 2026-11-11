@@ -11,7 +11,7 @@ const empty = { type: "object", properties: {} } as const;
 const defining =
   (...tools: Tool[]): PluginSession =>
   (s) => {
-    for (const tool of tools) s.tools.define(tool);
+    for (const tool of tools) s.tools.add(tool);
   };
 
 /** A tool `name` with no parameters that runs `execute`. */
@@ -34,7 +34,7 @@ test("a change of a tool after its definition changes neither its schema nor its
     execute: (args: { n: number }) => `n=${args.n}`,
   } as unknown as Tool & { parameters: { required: string[] }; execute: unknown };
   const changer: PluginSession = (s) => {
-    s.tools.define(fixed);
+    s.tools.add(fixed);
     fixed.parameters.required = [];
     fixed.execute = () => "changed";
   };
@@ -63,7 +63,7 @@ test("a deferred tool waits for the tool search of the replies, and the other to
   });
   const session = await host.openSession({ model: { provider: "anthropic", model: "claude-fable-5" } });
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const body = host.requests[0]?.body as { tools: { name?: string; defer_loading?: boolean }[] } | undefined;
   const tools = body?.tools ?? [];
@@ -88,7 +88,7 @@ test("the system prompt names each deferred tool after the saved sections", asyn
     replies: [reply.text("Done.")],
   });
 
-  await (await host.openSession()).send("Hi.");
+  await (await host.openSession()).sendMessage("Hi.");
 
   const system = host.requests[0]?.system ?? "";
   equal((system.split("<deferred_tools>")[1] ?? "").includes("- rare"), true);
@@ -102,7 +102,7 @@ test("a session without a deferred tool has no deferred_tools section", async ()
     replies: [reply.text("Done.")],
   });
 
-  await (await host.openSession()).send("Hi.");
+  await (await host.openSession()).sendMessage("Hi.");
 
   equal(host.requests[0]?.system.includes("<deferred_tools>"), false);
 });
@@ -198,10 +198,7 @@ for (const [name, definition, expected] of [
 
     const [notice] = host.notices;
     const prefix = "the session setup failed, and its tools and hooks are gone: TypeError: ";
-    equal(
-      [host.notices.length, notice?.message.startsWith(prefix), notice?.message.includes(expected)],
-      [1, true, true],
-    );
+    equal([host.notices.length, notice?.text.startsWith(prefix), notice?.text.includes(expected)], [1, true, true]);
     equal(missing instanceof Error && missing.message, `the session has no tool ${definition.name}`);
   });
 }
@@ -322,7 +319,7 @@ test("the signal aborts when the call ends, and the context names the folder", a
   const { host, session } = await opened(
     tool("keep", (_args, context) => {
       kept = context.signal;
-      return context.folder;
+      return context.cwd;
     }),
   );
   await using _host = host;
@@ -336,7 +333,7 @@ test("a call gets the id of its session, its call id, and its folder", async () 
   const seen: string[][] = [];
   const { host, session } = await opened(
     tool("facts", (_args, context) => {
-      seen.push([context.sessionId, context.callId, context.folder]);
+      seen.push([context.sessionId, context.callId, context.cwd]);
       return "x";
     }),
   );
@@ -425,10 +422,10 @@ test("a call in a turn shows the hints of its tool, the folder of the session, a
   });
   const session = await host.openSession();
 
-  await session.send("show it");
+  await session.sendMessage("show it");
 
   const entry = session.transcript.entries.find((item) => item.kind === "tool");
-  equal(entry?.kind === "tool" && [entry.hints, entry.folder, entry.result?.content, entry.display], [
+  equal(entry?.kind === "tool" && [entry.hints, entry.cwd, entry.result?.content, entry.display], [
     { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
     folder(),
     "ok",

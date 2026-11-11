@@ -6,7 +6,7 @@ import { createHost, equal, rejects, reply, test } from "yuke:test";
 // After a round of calls, the turn goes on, so the reason is `null`, and the text is the text before the calls.
 test("a handler gets the text, the reason, and the count of each round of a turn", async () => {
   const greeter: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "greet",
       description: "Greet someone.",
       concurrency: "serial",
@@ -16,7 +16,7 @@ test("a handler gets the text, the reason, and the count of each round of a turn
   };
   const seen: unknown[] = [];
   const watch: PluginSession = (s) => {
-    s.hook("round.after", (event) => {
+    s.addHook("round.after", (event) => {
       seen.push([event.text, event.finishReason, event.continues]);
       return undefined;
     });
@@ -31,7 +31,7 @@ test("a handler gets the text, the reason, and the count of each round of a turn
   });
   const session = await host.openSession();
 
-  await session.send("Greet Ada.");
+  await session.sendMessage("Greet Ada.");
 
   equal(seen, [
     ["checking", null, 0],
@@ -47,10 +47,10 @@ test("a handler gets the text, the reason, and the count of each round of a turn
 test("the first answer decides, and a continue is a counted notification of its plugin", async () => {
   let second = 0;
   const guard: PluginSession = (s) => {
-    s.hook("round.after", (event) => (event.continues === 0 ? { continue: "Run the tests." } : undefined));
+    s.addHook("round.after", (event) => (event.continues === 0 ? { continue: "Run the tests." } : undefined));
   };
   const stopper: PluginSession = (s) => {
-    s.hook("round.after", () => {
+    s.addHook("round.after", () => {
       second += 1;
       return { stop: true };
     });
@@ -65,8 +65,8 @@ test("the first answer decides, and a continue is a counted notification of its 
   });
   const session = await host.openSession();
 
-  await session.send("Work.");
-  await session.send("More.");
+  await session.sendMessage("Work.");
+  await session.sendMessage("More.");
 
   const notice = '<system_notification plugin="tests-guard">Run the tests.</system_notification>';
   equal(
@@ -89,13 +89,13 @@ test("the first answer decides, and a continue is a counted notification of its 
 test("round.after stops the turn, and a continue answer adds its input to the session", async () => {
   const after: PluginSession = (s) => {
     // Only the round "more" continues, so the turn that its input starts stops after one round.
-    s.hook("round.after", (event) => (event.text === "more" ? { continue: "go on" } : { stop: true }));
+    s.addHook("round.after", (event) => (event.text === "more" ? { continue: "go on" } : { stop: true }));
   };
   await using host = await createHost({ plugins: [{ name: "after", session: after }], replies: [reply.text("Done.")] });
   const session = await host.openSession();
 
-  equal(await session.run("round.after", { text: "stop", finishReason: "stop" }), "stop");
-  equal(await session.run("round.after", { text: "more", continues: 2 }), "proceed");
+  equal(await session.runHook("round.after", { text: "stop", finishReason: "stop" }), "stop");
+  equal(await session.runHook("round.after", { text: "more", continues: 2 }), "proceed");
   // The input of the continue answer starts a turn in the idle session, and the turn takes it.
   equal(
     session.transcript.entries.some((entry) => entry.kind === "end"),
@@ -109,14 +109,14 @@ test("round.after stops the turn, and a continue answer adds its input to the se
 
 test("a throw fails the turn and names the plugin", async () => {
   const judge: PluginSession = (s) => {
-    s.hook("round.after", () => {
+    s.addHook("round.after", () => {
       throw new Error("no verdict");
     });
   };
   await using host = await createHost({ plugins: [{ name: "judge", session: judge }] });
   const session = await host.openSession();
 
-  const failure = await rejects(session.run("round.after", { text: "first part", finishReason: "stop" }));
+  const failure = await rejects(session.runHook("round.after", { text: "first part", finishReason: "stop" }));
 
   equal(failure instanceof Error ? failure.message : failure, "round.after of plugin judge failed: Error: no verdict");
 });

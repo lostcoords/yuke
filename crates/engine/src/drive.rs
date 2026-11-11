@@ -46,7 +46,7 @@ pub enum TurnEvent<'a> {
     /// One event of a model reply, in source order.
     Model(yuke_ai::Event<'a>),
 
-    /// The driver handles this call. This event comes before [`Hooks::before_tool`], so a blocked call also has it.
+    /// The driver handles this call. This event comes before [`Hooks::before_tool`], so a denied call also has it.
     ToolStarted {
         /// The zero-based block index of the call in its answer commit.
         block_index: usize,
@@ -747,7 +747,7 @@ impl TurnParts<'_> {
             if result.is_none() {
                 *result = match race(self.driver.hooks.before_tool(call), self.cancellation_token.cancelled()).await {
                     Raced::Done(ToolDecision::Run) => None,
-                    Raced::Done(ToolDecision::Block(reason)) => Some(ToolResult::error(&call.call_id, reason)),
+                    Raced::Done(ToolDecision::Deny(reason)) => Some(ToolResult::error(&call.call_id, reason)),
                     Raced::Cancelled => Some(not_executed(call, CANCELLED_REASON)),
                 };
             }
@@ -829,7 +829,7 @@ struct Resolved<'c> {
     call: Cow<'c, ToolCall>,
 
     /// The result of a call that the bridge refuses.
-    /// After [`Hooks::before_tool`], it is also the result of a call that the hooks block or that a cancel stops.
+    /// After [`Hooks::before_tool`], it is also the result of a call that the hooks deny or that a cancel stops.
     result: Option<ToolResult>,
 }
 

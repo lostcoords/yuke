@@ -28,8 +28,8 @@ test("each session has its own tools, also with one name", async () => {
   let count = 0;
   const counter: PluginSession = (s) => {
     count += 1;
-    s.tools.define(tool(`t${count}`));
-    s.tools.define(tool("who", `session ${count}`));
+    s.tools.add(tool(`t${count}`));
+    s.tools.add(tool("who", `session ${count}`));
   };
   await using host = await createHost({ plugins: [{ name: "counter", session: counter }] });
   const first = await host.openSession();
@@ -48,11 +48,11 @@ test("every session setup starts before any of them settles", async () => {
     await new Promise<void>((resolve) => {
       release = resolve;
     });
-    s.tools.define(tool("shared", "waiting"));
+    s.tools.add(tool("shared", "waiting"));
   };
   const releasing: PluginSession = (s) => {
     release();
-    s.tools.define(tool("shared", "releasing"));
+    s.tools.add(tool("shared", "releasing"));
   };
   const replies = [reply.text("Done.")];
   await using host = await createHost({
@@ -64,14 +64,14 @@ test("every session setup starts before any of them settles", async () => {
   });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     [host.requests[0]?.tools.filter((name) => name === "shared"), (await session.call("shared", {})).text],
     [["shared"], "waiting"],
   );
   equal(
-    host.notices.map((notice) => [notice.source, notice.message]),
+    host.notices.map((notice) => [notice.source, notice.text]),
     [["waiting", 'Tool "shared" from "releasing" was replaced by "waiting".']],
   );
 });
@@ -79,12 +79,12 @@ test("every session setup starts before any of them settles", async () => {
 test("a later plugin replaces a tool and names both owners in an info notice", async () => {
   await using host = await createHost({
     plugins: [
-      { name: "first", session: (s) => void s.tools.define(tool("screenshot", "first image")) },
+      { name: "first", session: (s) => void s.tools.add(tool("screenshot", "first image")) },
       {
         name: "second",
         session: (s) => {
-          s.tools.define(tool("own", "kept"));
-          s.tools.define(tool("screenshot", "second image"));
+          s.tools.add(tool("own", "kept"));
+          s.tools.add(tool("screenshot", "second image"));
         },
       },
     ],
@@ -92,7 +92,7 @@ test("a later plugin replaces a tool and names both owners in an info notice", a
   });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     [
@@ -107,7 +107,7 @@ test("a later plugin replaces a tool and names both owners in an info notice", a
       sessionId: session.id,
       source: "second",
       level: "info",
-      message: 'Tool "screenshot" from "first" was replaced by "second".',
+      text: 'Tool "screenshot" from "first" was replaced by "second".',
     },
   ]);
 });
@@ -118,8 +118,8 @@ test("a plugin replaces built-ins and its own definitions without a notice", asy
       {
         name: "reader",
         session: (s) => {
-          s.tools.define(tool("read", "first"));
-          s.tools.define(tool("read", "second"));
+          s.tools.add(tool("read", "first"));
+          s.tools.add(tool("read", "second"));
         },
       },
     ],
@@ -127,7 +127,7 @@ test("a plugin replaces built-ins and its own definitions without a notice", asy
   });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     [(await session.call("read", {})).text, host.requests[0]?.tools.filter((name) => name === "read"), host.notices],
@@ -141,8 +141,8 @@ test("name removal omits built-ins and plugin tools from the model request", asy
       {
         name: "screenshots",
         session: (s) => {
-          s.tools.define(tool("screenshot", "image"));
-          s.tools.define(tool("kept", "still here"));
+          s.tools.add(tool("screenshot", "image"));
+          s.tools.add(tool("kept", "still here"));
         },
       },
       {
@@ -156,7 +156,7 @@ test("name removal omits built-ins and plugin tools from the model request", asy
   });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   equal(
     [host.requests[0]?.tools, (await session.call("kept", {})).text, host.notices],
@@ -177,8 +177,8 @@ test("a later definition restores a removed name and its disposer reveals the re
         name: "reader",
         session: (s) => {
           s.tools.remove("read");
-          removeDefinition = s.tools.define(tool("read", "replacement"));
-          defineAgain = () => void s.tools.define(tool("read", "restored"));
+          removeDefinition = s.tools.add(tool("read", "replacement"));
+          defineAgain = () => void s.tools.add(tool("read", "restored"));
         },
       },
     ],
@@ -186,13 +186,13 @@ test("a later definition restores a removed name and its disposer reveals the re
   });
   const session = await host.openSession();
 
-  await session.send("First.");
+  await session.sendMessage("First.");
   equal((await session.call("read", {})).text, "replacement");
   removeDefinition();
-  await session.send("Second.");
+  await session.sendMessage("Second.");
   equal(await refusal(session.call("read", {})), "the session has no tool read");
   defineAgain();
-  await session.send("Third.");
+  await session.sendMessage("Third.");
 
   equal(
     [
@@ -213,14 +213,14 @@ test("disposers restore earlier definitions and never remove a newer registratio
       {
         name: "first",
         session: (s) => {
-          removeFirst = s.tools.define(tool("read", "first"));
+          removeFirst = s.tools.add(tool("read", "first"));
         },
       },
       {
         name: "second",
         session: (s) => {
           defineSecond = () => {
-            removeSecond = s.tools.define(tool("read", "second"));
+            removeSecond = s.tools.add(tool("read", "second"));
           };
           defineSecond();
         },
@@ -244,13 +244,13 @@ test("disposers restore earlier definitions and never remove a newer registratio
 test("failed setup withdraws its overrides and name removals", async () => {
   await using host = await createHost({
     plugins: [
-      { name: "first", session: (s) => void s.tools.define(tool("read", "first")) },
+      { name: "first", session: (s) => void s.tools.add(tool("read", "first")) },
       {
         name: "broken",
         session: async (s) => {
           s.tools.remove("read");
           s.tools.remove("write");
-          s.tools.define(tool("read", "broken"));
+          s.tools.add(tool("read", "broken"));
           await null;
           throw new Error("broken");
         },
@@ -264,7 +264,7 @@ test("failed setup withdraws its overrides and name removals", async () => {
     ["first", "The tool wrote 4 bytes."],
   );
   equal(
-    host.notices.map((notice) => [notice.source, notice.level, notice.message.split("\n")[0]]),
+    host.notices.map((notice) => [notice.source, notice.level, notice.text.split("\n")[0]]),
     [["broken", "error", `${SETUP_FAILED}Error: broken`]],
   );
 });
@@ -279,7 +279,7 @@ test("overrides and name removals stay within their session", async () => {
         session: (s) => {
           count += 1;
           if (count === 1) {
-            s.tools.define(tool("read", "first session"));
+            s.tools.add(tool("read", "first session"));
             s.tools.remove("write");
           }
         },
@@ -305,8 +305,8 @@ test("an invalid replacement or removal leaves the current tool unchanged", asyn
       {
         name: "reader",
         session: (s) => {
-          s.tools.define(tool("read", "kept"));
-          errors.push(throws(() => s.tools.define({ ...tool("read", "broken"), concurrency: "wrong" } as never)));
+          s.tools.add(tool("read", "kept"));
+          errors.push(throws(() => s.tools.add({ ...tool("read", "broken"), concurrency: "wrong" } as never)));
           errors.push(throws(() => s.tools.remove("bad name")));
           errors.push(throws(() => s.tools.remove("tool_call")));
         },
@@ -334,9 +334,9 @@ test("an invalid replacement or removal leaves the current tool unchanged", asyn
 
 test("the folder of a session stays while a call reads the folder of its start", async () => {
   const where: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       ...tool("where"),
-      execute: (_args, context) => `${s.folder} ${context.folder}`,
+      execute: (_args, context) => `${s.cwd} ${context.cwd}`,
     } as Tool);
   };
   await using host = await createHost({ plugins: [{ name: "where", session: where }] });
@@ -351,8 +351,8 @@ test("the folder of a session stays while a call reads the folder of its start",
 test("a tool that the session defines after its setup reaches the next calls", async () => {
   let defineLater = (): void => {};
   const later: PluginSession = (s) => {
-    s.tools.define(tool("first"));
-    defineLater = () => void s.tools.define(tool("later", "late"));
+    s.tools.add(tool("first"));
+    defineLater = () => void s.tools.add(tool("later", "late"));
   };
   await using host = await createHost({ plugins: [{ name: "later", session: later }] });
   const session = await host.openSession();
@@ -367,14 +367,14 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   let bad: SessionContext | undefined;
   const failing: PluginSession = async (s) => {
     bad = s;
-    s.tools.define(tool("dropped"));
+    s.tools.add(tool("dropped"));
     await null;
     throw new Error("broken");
   };
   await using host = await createHost({
     plugins: [
       { name: "bad", session: failing },
-      { name: "good", session: (s) => void s.tools.define(tool("kept")) },
+      { name: "good", session: (s) => void s.tools.add(tool("kept")) },
     ],
   });
   const session = await host.openSession();
@@ -384,12 +384,12 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   const [notice, ...others] = host.notices;
   equal([notice?.sessionId, notice?.level, notice?.source, others], [session.id, "error", "bad", []]);
   // The message ends with a stack frame, so the author finds the line.
-  const [message, frame] = notice?.message.split("\n") ?? [];
+  const [message, frame] = notice?.text.split("\n") ?? [];
   equal(message, `${SETUP_FAILED}Error: broken`);
   equal(frame?.trim().startsWith("at "), true);
   let after = "";
   try {
-    bad?.tools.define(tool("again"));
+    bad?.tools.add(tool("again"));
   } catch (error) {
     after = `${bad?.signal.aborted} ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -400,7 +400,7 @@ test("a notice of a session names its session", async () => {
   await using host = await createHost({ plugins: [{ name: "loud", session: (s) => void s.notify("info", "opened") }] });
   const session = await host.openSession();
 
-  equal(host.notices, [{ sessionId: session.id, level: "info", source: "loud", message: "opened" }]);
+  equal(host.notices, [{ sessionId: session.id, level: "info", source: "loud", text: "opened" }]);
 });
 
 test("a close refuses definitions from the abort on, and awaits every cleanup", async () => {
@@ -413,12 +413,12 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
   const kept: PluginSession = (s) => {
     s.signal.addEventListener("abort", () => {
       try {
-        s.tools.define(tool("late"));
+        s.tools.add(tool("late"));
       } catch (error) {
         refused = error instanceof Error ? error.message : String(error);
       }
     });
-    s.tools.define(tool("kept"));
+    s.tools.add(tool("kept"));
     return async () => {
       await cleanup.promise;
       cleaned += 1;
@@ -443,10 +443,10 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
 
   equal([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
   equal(
-    host.notices.map((notice) => notice.message.split("\n")[0]),
+    host.notices.map((notice) => notice.text.split("\n")[0]),
     ["the cleanup of the session failed: Error: broken cleanup"],
   );
-  equal(/\n\s+at /.test(host.notices[0]?.message ?? ""), true);
+  equal(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });
 
 test("a close during the setup ends it, and runs the late cleanup once", async () => {

@@ -20,9 +20,9 @@ async function writePlugin(name: string, fields: Record<string, unknown>, source
   await mkdir(root);
   const entry = source === undefined ? {} : { entry: "index.ts" };
   await writeTextFile("plugin.json", JSON.stringify({ name, extensions: { "sh.yuke": { ...entry, ...fields } } }), {
-    baseDir: root,
+    cwd: root,
   });
-  if (source !== undefined) await writeTextFile("index.ts", source, { baseDir: root });
+  if (source !== undefined) await writeTextFile("index.ts", source, { cwd: root });
   return root;
 }
 
@@ -37,7 +37,7 @@ test("a folder plugin loads through its manifest, and its options pass its schem
   await using host = await createHost({ plugins: [{ folder: root, options: { word: "loaded" } }] });
 
   equal(
-    host.notices.map((notice) => notice.message),
+    host.notices.map((notice) => notice.text),
     ["loaded"],
   );
 });
@@ -65,7 +65,7 @@ test("a given plugin uses a service from an earlier folder plugin", async () => 
   });
 
   equal(
-    host.notices.map((notice) => [notice.source, notice.message]),
+    host.notices.map((notice) => [notice.source, notice.text]),
     [["reader", "shared"]],
   );
 });
@@ -94,7 +94,7 @@ test("a given plugin before its folder provider loads after it and gets the serv
   });
 
   equal(
-    host.notices.map((notice) => [notice.source, notice.message]),
+    host.notices.map((notice) => [notice.source, notice.text]),
     [["reader", "later"]],
   );
 });
@@ -105,16 +105,16 @@ test("a folder plugin reads a file beside its module through import.meta", async
     {},
     `import { readTextFile } from "yuke:fs";
      export const session = (s) => {
-       s.tools.define({
+       s.tools.add({
          name: "prompt",
          description: "Read the prompt.",
          concurrency: "serial",
          parameters: { type: "object", properties: {} },
-         execute: () => readTextFile("prompt.md", { baseDir: import.meta.dirname }),
+         execute: () => readTextFile("prompt.md", { cwd: import.meta.dirname }),
        });
      };`,
   );
-  await writeTextFile("prompt.md", "Be brief.", { baseDir: root });
+  await writeTextFile("prompt.md", "Be brief.", { cwd: root });
   await using host = await createHost({ plugins: [{ folder: root }] });
   const session = await host.openSession();
 
@@ -144,8 +144,8 @@ test("apply runs once with its context, and session runs for each session", asyn
   };
   globalThis.applyOfOne = apply;
   globalThis.sessionOfOne = (s: Parameters<PluginSession>[0]) => {
-    sessions.push(s.folder);
-    s.tools.define({
+    sessions.push(s.cwd);
+    s.tools.add({
       name: "hello",
       description: "Say hello.",
       concurrency: "serial",
@@ -222,10 +222,10 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
 
   equal(events, ["three", "two true,true,true", "one"]);
   equal(
-    host.notices.map((notice) => [notice.source, notice.level, notice.message.split("\n")[0]]),
+    host.notices.map((notice) => [notice.source, notice.level, notice.text.split("\n")[0]]),
     [["three", "error", "the cleanup of the plugin failed: Error: broken cleanup"]],
   );
-  equal(/\n\s+at /.test(host.notices[0]?.message ?? ""), true);
+  equal(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });
 
 test("a service passes to a later plugin, and a failed provider stops its users before they run", async () => {
@@ -282,6 +282,33 @@ test("a service passes to a later plugin, and a failed provider stops its users 
     "plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
   ]);
   equal([count, ran], [3, false]);
+});
+
+test("a plugin that provides a service of yuke rejects the host", async () => {
+  const error = await rejects(createHost({ plugins: [{ name: "catalogs", provides: ["catalog"] }] }));
+
+  equal(
+    error instanceof Error ? error.message : error,
+    "plugin catalogs: 'catalog' is a service of yuke, and no plugin provides it",
+  );
+});
+
+test("a provide of a service that the manifest does not name fails the load of the plugin", async () => {
+  const host = createHost({
+    plugins: [
+      {
+        name: "words",
+        apply: (ctx) => {
+          ctx.provide("test.words.v1", { word: "unnamed" });
+          return undefined;
+        },
+      },
+    ],
+  });
+
+  equal(await failures(host), [
+    "plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
+  ]);
 });
 
 test("sendClientEvent sends an event with the plugin as its extension and its data as JSON", async () => {

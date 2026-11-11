@@ -131,12 +131,12 @@ async fn started(name: &str) -> Started {
     (runtime, reports, display, output, requests)
 }
 
-fn notice(level: NoticeLevel, source: &str, message: &str) -> Input {
+fn notice(level: NoticeLevel, source: &str, text: &str) -> Input {
     Input::Notice(NoticeParams {
         session_id: None,
         level,
         source: source.to_owned(),
-        message: message.to_owned(),
+        text: text.to_owned(),
     })
 }
 
@@ -238,7 +238,7 @@ async fn a_notice_of_a_session_keeps_its_session_id() {
         session_id: Some(session),
         level: NoticeLevel::Error,
         source: "host:session".to_owned(),
-        message: "the turn failed".to_owned(),
+        text: "the turn failed".to_owned(),
     }));
     crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
@@ -262,11 +262,7 @@ async fn take_notices_gives_the_waiting_notices_and_drops_the_other_inputs() {
     display.send(Input::Resize(Size { columns: 30, rows: 4 }));
     display.send(notice(NoticeLevel::Debug, "console", "second"));
 
-    let messages: Vec<String> = display
-        .take_notices()
-        .into_iter()
-        .map(|notice| notice.message)
-        .collect();
+    let messages: Vec<String> = display.take_notices().into_iter().map(|notice| notice.text).collect();
     assert_eq!(messages, ["first", "second"]);
     assert_eq!(display.take_notices(), []);
 }

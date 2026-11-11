@@ -79,6 +79,7 @@ impl Place {
                 .unwrap(),
             ),
             interface: None,
+            internal_imports: false,
             test: None,
         }
     }

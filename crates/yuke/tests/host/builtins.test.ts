@@ -252,7 +252,7 @@ test("the built-in tools show their path or command as the subject, and read and
   });
   const session = await host.openSession();
 
-  await session.send("go");
+  await session.sendMessage("go");
 
   const hints = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.hints] : []));
   equal(hints, [

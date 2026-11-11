@@ -48,14 +48,14 @@ impl Facts {
     }
 
     /// Tell each watch, or only the watch `only`, that `session` is open with `parent`, `state`, `jobs`, and
-    /// `questions`. A watch that knows the session already gets nothing.
+    /// `interactions`. A watch that knows the session already gets nothing.
     pub(super) fn opened(
         &self,
         session: SessionId,
         parent: Option<SessionId>,
         state: SessionState,
         jobs: &[Job],
-        questions: &[InteractionId],
+        interactions: &[InteractionId],
         only: Option<u64>,
     ) {
         let sinks: Vec<_> = self
@@ -76,7 +76,7 @@ impl Facts {
                 parent,
                 state,
                 jobs: jobs.to_vec(),
-                questions: questions.to_vec(),
+                interactions: interactions.to_vec(),
             });
         }
     }
@@ -197,7 +197,7 @@ mod tests {
             session_id: None,
             level: NoticeLevel::Info,
             source: "test".to_owned(),
-            message: "ready".to_owned(),
+            text: "ready".to_owned(),
         };
         facts.update(session, &update);
         facts.opened(session, None, SessionState::Idle, &[], &[], Some(watch.id));
@@ -217,7 +217,7 @@ mod tests {
                     parent: None,
                     state: SessionState::Idle,
                     jobs: Vec::new(),
-                    questions: Vec::new()
+                    interactions: Vec::new()
                 },
                 Fact::Update {
                     session_id: session,

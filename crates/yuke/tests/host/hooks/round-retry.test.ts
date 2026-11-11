@@ -6,7 +6,7 @@ import { createHost, equal, reply, test } from "yuke:test";
 // The count belongs to one round, so the round after a call counts from zero again.
 test("an answer sends the round again, and each round counts its retries from zero", async () => {
   const greeter: PluginSession = (s) => {
-    s.tools.define({
+    s.tools.add({
       name: "greet",
       description: "Greet someone.",
       concurrency: "serial",
@@ -16,8 +16,8 @@ test("an answer sends the round again, and each round counts its retries from ze
   };
   const seen: string[] = [];
   const compact: PluginSession = (s) => {
-    s.hook("round.retry", (event) => {
-      seen.push(`${event.failure.kind} ${event.retries} ${event.failure.message.includes("prompt is too long")}`);
+    s.addHook("round.retry", (event) => {
+      seen.push(`${event.failure.kind} ${event.retries} ${event.failure.text.includes("prompt is too long")}`);
       return { replace: { head: [{ user_text: "summary" }], keep: 0 } };
     });
   };
@@ -37,7 +37,7 @@ test("an answer sends the round again, and each round counts its retries from ze
   });
   const session = await host.openSession();
 
-  await session.send("Greet Ada.");
+  await session.sendMessage("Greet Ada.");
 
   equal(seen, ["context_overflow 0 true", "context_overflow 1 true", "context_overflow 0 true"]);
   equal(
@@ -49,23 +49,23 @@ test("an answer sends the round again, and each round counts its retries from ze
 
 test("without an answer the round does not run again, and the turn fails", async () => {
   const quiet: PluginSession = (s) => {
-    s.hook("round.retry", () => undefined);
+    s.addHook("round.retry", () => undefined);
   };
   const replies = [reply.overflow()];
   await using host = await createHost({ plugins: [{ name: "quiet", session: quiet }], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const end = session.transcript.entries.at(-1);
   equal([end?.kind, end?.kind === "end" && "failed" in end.end, host.requests.length], ["end", true, 1]);
 });
 
-test("a handler gets the window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {
+test("a handler gets the context window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {
   const seen: string[] = [];
   const compact: PluginSession = (s) => {
-    s.hook("round.retry", (event) => {
-      const fields = [event.retries, event.window, event.inputTokens, event.contextTokens, event.blocks];
+    s.addHook("round.retry", (event) => {
+      const fields = [event.retries, event.contextWindow, event.inputTokens, event.contextTokens, event.blockCount];
       seen.push(`${event.failure.kind} ${fields.join(" ")} ${event.blockTokens()}`);
       return { replace: { head: [{ user_text: "summary" }], keep: 0 } };
     });
@@ -73,9 +73,9 @@ test("a handler gets the window, the tokens, and the blocks of the failed round,
   await using host = await createHost({ plugins: [{ name: "compact", session: compact }] });
   const session = await host.openSession();
 
-  const plan = await session.run("round.retry", {
-    context: [{ user_text: "one" }],
-    window: 1000,
+  const plan = await session.runHook("round.retry", {
+    blocks: [{ user_text: "one" }],
+    contextWindow: 1000,
     inputTokens: 900,
     failure: { kind: "context_overflow" },
   });
@@ -87,8 +87,8 @@ test("a handler gets the window, the tokens, and the blocks of the failed round,
 test("the failure names its kind and its text", async () => {
   const seen: [string, boolean][] = [];
   const watch: PluginSession = (s) => {
-    s.hook("round.retry", (event) => {
-      seen.push([event.failure.kind, event.failure.message.length > 0]);
+    s.addHook("round.retry", (event) => {
+      seen.push([event.failure.kind, event.failure.text.length > 0]);
       return undefined;
     });
   };
@@ -96,7 +96,7 @@ test("the failure names its kind and its text", async () => {
   const session = await host.openSession();
 
   for (const kind of ["rate_limited", "transport", "incomplete_stream", "credential"] as const) {
-    await session.run("round.retry", { context: [], failure: { kind } });
+    await session.runHook("round.retry", { blocks: [], failure: { kind } });
   }
 
   equal(seen, [

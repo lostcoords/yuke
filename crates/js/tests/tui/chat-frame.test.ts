@@ -166,7 +166,7 @@ test("a disposer of the chat service runs after the chat plugin stops", async ()
   const chat = await loadChat(frame);
   const disposers = [
     chat.chat.setComposerFrame({ inset: () => ({}), draw() {} }),
-    chat.chat.setPresentation((options) => new ChatDocument(options.key, options.folds)),
+    chat.chat.setPresentation((options) => new ChatDocument(options.id, options.folds)),
     chat.chat.addReadOnly(() => undefined),
     chat.chat.addComposerView("below", () => composerRows(() => [])),
   ];

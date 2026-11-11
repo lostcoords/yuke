@@ -369,7 +369,7 @@ impl SessionService {
                 session_id: Some(id),
                 level: NoticeLevel::Warn,
                 source: SOURCE.to_owned(),
-                message: warning,
+                text: warning,
             }));
         }
         Ok(id)

@@ -1,6 +1,6 @@
 //! The sessions, the model catalog, the credentials, and the plugin manager of the consumer, for
-//! `ctx.get("sessions")`, `ctx.get("catalog")`, `ctx.get("auth")`, and `ctx.get("plugins")` of the plugins. The methods
-//! mirror the requests of the protocol.
+//! `ctx.get("sessions")` and `ctx.get("catalog")` of the plugins, and for `yuke:internal/sessions` of the bundled
+//! plugins. The methods mirror the requests of the protocol.
 
 use std::any::Any;
 use std::error::Error;
@@ -46,19 +46,20 @@ pub enum Fact {
         /// The update.
         update: Box<SessionUpdate>,
     },
-    /// The session `session_id` is open, with its parent, its state, its running jobs, and its open questions now.
+    /// The session `session_id` is open, with its parent, its state, its running jobs, and its open interactions now.
     #[serde(rename = "session.opened", rename_all = "camelCase")]
     Opened {
         /// The session that is open.
         session_id: SessionId,
-        /// The session that this session works for, as a subagent does.
+        /// The session that this session works for, as a subagent does. A session without one has no field.
+        #[serde(skip_serializing_if = "Option::is_none")]
         parent: Option<SessionId>,
         /// Whether a turn runs now.
         state: SessionState,
         /// The running jobs now, oldest first.
         jobs: Vec<Job>,
-        /// The open questions now, oldest first.
-        questions: Vec<InteractionId>,
+        /// The open interactions now, oldest first.
+        interactions: Vec<InteractionId>,
     },
     /// The session `session_id` closed. A later open of it starts with a new [`Fact::Opened`].
     #[serde(rename = "session.closed", rename_all = "camelCase")]

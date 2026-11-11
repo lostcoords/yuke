@@ -246,8 +246,8 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
     [sessions.responses, sessions.state.cancels, composerOf(chat).state.text],
     [
       [
-        [4, { kind: "canceled" }],
-        [5, { kind: "canceled" }],
+        [4, { kind: "cancelled" }],
+        [5, { kind: "cancelled" }],
       ],
       0,
       "draft",

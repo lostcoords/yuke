@@ -6,7 +6,7 @@ use super::*;
 /// failure.
 const READER: &str = "import { ExtensionRequestError } from 'yuke:plugins';
    export function session(s) {
-     s.tools.define({
+     s.tools.add({
        name: 'read_session', description: 'Read a session.', concurrency: 'serial',
        parameters: { type: 'object', properties: {} },
        async execute(_args, { signal }) {

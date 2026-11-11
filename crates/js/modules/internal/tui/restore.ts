@@ -27,7 +27,7 @@ export class ViewTypes {
   readonly #types = new Map<string, ViewType>();
 
   /** Add the factory of the qualified view type `type`. A type with a factory already throws a `TypeError`. */
-  register(type: string, entry: ViewType): () => void {
+  add(type: string, entry: ViewType): () => void {
     if (this.#types.has(type)) throw new TypeError(`the view type ${type} exists`);
     this.#types.set(type, entry);
     return () => {

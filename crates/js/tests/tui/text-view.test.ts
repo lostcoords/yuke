@@ -22,11 +22,11 @@ function mouse(column: number, row: number, action: MouseEvent["action"]): Mouse
 
 /** An item of plain text sections, each `[key, text]`. */
 function item(key: string, ...sections: [string, string][]): TextItem {
-  return { key, sections: sections.map(([section, text]) => ({ key: section, kind: "text", text })) };
+  return { id: key, sections: sections.map(([section, text]) => ({ id: section, kind: "text", text })) };
 }
 
 function document(key: string, ...items: TextItem[]): TextDocument {
-  return { key, items };
+  return { id: key, items };
 }
 
 function at(item: string, section: string, offset: number): TextPosition {
@@ -80,8 +80,8 @@ test("a copy puts a line end between two sections and between two items, in disp
 test("a Markdown row maps each cell to its source across a paragraph line break", () => {
   const text = "one\ntwo";
   const markdown = new Markdown(text);
-  const section = { key: "s", kind: "text" as const, text, render: (width: number) => markdown.rows(width) };
-  const view = new TextView({ document: document("d", { key: "i", sections: [section] }) });
+  const section = { id: "s", kind: "text" as const, text, render: (width: number) => markdown.rows(width) };
+  const view = new TextView({ document: document("d", { id: "i", sections: [section] }) });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
   frame.draw();
   equal(
@@ -95,8 +95,8 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
   const markdown = new Markdown(text);
   const view = new TextView({
     document: {
-      key: "d",
-      items: [{ key: "i", sections: [{ key: "s", kind: "text", text, render: (width) => markdown.rows(width) }] }],
+      id: "d",
+      items: [{ id: "i", sections: [{ id: "s", kind: "text", text, render: (width) => markdown.rows(width) }] }],
     },
   });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
@@ -116,13 +116,13 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
 test("a hidden section has no place, and the caret on it shows no cursor", () => {
   const view = new TextView({
     document: {
-      key: "d",
+      id: "d",
       items: [
         {
-          key: "i",
+          id: "i",
           sections: [
-            { key: "shown", kind: "label", text: "Tool" },
-            { key: "body", kind: "text", text: "output", render: () => [] },
+            { id: "shown", kind: "label", text: "Tool" },
+            { id: "body", kind: "text", text: "output", render: () => [] },
           ],
         },
       ],
@@ -140,7 +140,7 @@ test("a press on an item that the document drops activates nothing at the releas
   const activated: TextPosition[] = [];
   const view = new TextView({
     document: document("d", item("draft", ["s", "abc"]), item("next", ["s", "def"])),
-    activate: (position) => activated.push(position),
+    onActivate: (position) => activated.push(position),
   });
   using frame = createFrame({ width: 10, height: 2 }, () => view);
   const notices = frame.surface("watch").tui.notices;
@@ -163,10 +163,10 @@ test("a click gives activate the link of the segment under it, or none", () => {
   };
   const view = new TextView({
     document: document("d", {
-      key: "i",
-      sections: [{ key: "s", kind: "text", text: "see docs", render: () => [linked] }],
+      id: "i",
+      sections: [{ id: "s", kind: "text", text: "see docs", render: () => [linked] }],
     }),
-    activate: (position, link) => activated.push([`${position.item}:${position.offset}`, link]),
+    onActivate: (position, link) => activated.push([`${position.item}:${position.offset}`, link]),
   });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
   for (const column of [5, 1]) {
@@ -183,7 +183,7 @@ test("a click without a drag activates its position and copies nothing", () => {
   const activated: TextPosition[] = [];
   const view = new TextView({
     document: document("d", item("i", ["s", "abc"])),
-    activate: (position) => activated.push(position),
+    onActivate: (position) => activated.push(position),
   });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
   frame.mouse(mouse(2, 0, "press"));
@@ -191,11 +191,11 @@ test("a click without a drag activates its position and copies nothing", () => {
   equal([activated, frame.copies], [[at("i", "s", 2)], []]);
 });
 
-test("a watch gets the view, and an extension draws its decoration and its cursor shape", () => {
+test("a widget watcher gets the view, and an extension draws its decoration and its cursor shape", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "abcdef"])) });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
   const surface = frame.surface("vim");
-  surface.tui.widgets.watch((mount) => {
+  surface.tui.widgets.addWatcher((mount) => {
     if (mount.widget.kind !== "textView") return undefined;
     const extension = mount.widget.extend(mount.signal);
     extension.setAppearance({ cursorShape: "block" });
@@ -213,11 +213,11 @@ test("a watch gets the view, and an extension draws its decoration and its curso
 test("a plugin sees a motion with no button and marks the row under the mouse, and the view keeps its selection", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "abcdef"])) });
   using frame = createFrame({ width: 10, height: 1 }, () => view);
-  frame.surface("hover").tui.widgets.watch((mount) => {
+  frame.surface("hover").tui.widgets.addWatcher((mount) => {
     if (mount.widget.kind !== "textView") return undefined;
     const widget = mount.widget;
     const extension = widget.extend(mount.signal);
-    extension.onMouse((event) => {
+    extension.addMouseHandler((event) => {
       const head = event.action === "motion" ? widget.hitTest(event) : undefined;
       if (head !== undefined) {
         const anchor = { ...head, offset: 0 };
@@ -245,7 +245,7 @@ test("a new document key clears the caret, a failed render keeps the document, a
   const kinds: string[] = [];
   view
     .extend(new AbortController().signal)
-    .onChange((change: TextViewChange) => kinds.push(`${change.kind} ${change.revision}`));
+    .addChangeListener((change: TextViewChange) => kinds.push(`${change.kind} ${change.revision}`));
   const start = view.revision;
   view.caret = at("i", "s", 1);
   view.setDocument(document("other", item("i", ["s", "abc"])));
@@ -253,13 +253,13 @@ test("a new document key clears the caret, a failed render keeps the document, a
   const before = view.document;
   throws(() =>
     view.setDocument({
-      key: "other",
+      id: "other",
       items: [
         {
-          key: "x",
+          id: "x",
           sections: [
             {
-              key: "s",
+              id: "s",
               kind: "text",
               text: "x",
               render: () => {
@@ -298,13 +298,13 @@ test("a copy over Markdown leaves out the quote bar and ends the section with a 
   const quote = new Markdown("> one two");
   const view = new TextView({
     document: {
-      key: "d",
+      id: "d",
       items: [
         {
-          key: "i",
+          id: "i",
           sections: [
-            { key: "quote", kind: "text", text: "> one two", render: (width) => quote.rows(width) },
-            { key: "after", kind: "text", text: "next" },
+            { id: "quote", kind: "text", text: "> one two", render: (width) => quote.rows(width) },
+            { id: "after", kind: "text", text: "next" },
           ],
         },
       ],
@@ -332,7 +332,7 @@ test("a scroll of the view gives a scroll change", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "a\nb\nc\nd"])) });
   using frame = createFrame({ width: 5, height: 2 }, () => view);
   const kinds: string[] = [];
-  view.extend(new AbortController().signal).onChange((change) => kinds.push(change.kind));
+  view.extend(new AbortController().signal).addChangeListener((change) => kinds.push(change.kind));
   view.scroll.scrollBy(1);
   equal(kinds, ["scroll"]);
   void frame;
@@ -347,10 +347,8 @@ test("a drag from a wide grapheme or inside a list mark keeps the whole of it", 
   const list = new Markdown("- item");
   const marked = new TextView({
     document: {
-      key: "d",
-      items: [
-        { key: "i", sections: [{ key: "s", kind: "text", text: "- item", render: (width) => list.rows(width) }] },
-      ],
+      id: "d",
+      items: [{ id: "i", sections: [{ id: "s", kind: "text", text: "- item", render: (width) => list.rows(width) }] }],
     },
   });
   using second = createFrame({ width: 20, height: 1 }, () => marked);
@@ -365,8 +363,8 @@ test("a blank row between two Markdown blocks maps to the source next to it", ()
   const markdown = new Markdown(text);
   const view = new TextView({
     document: {
-      key: "d",
-      items: [{ key: "i", sections: [{ key: "s", kind: "text", text, render: (width) => markdown.rows(width) }] }],
+      id: "d",
+      items: [{ id: "i", sections: [{ id: "s", kind: "text", text, render: (width) => markdown.rows(width) }] }],
     },
   });
   using frame = createFrame({ width: 5, height: 3 }, () => view);
@@ -396,7 +394,7 @@ test("the selection has a default look that a plugin changes", () => {
   const before = frame.draw().cells[0];
   // The default look marks the selected cell and leaves the next cell plain.
   equal([before?.[1]?.style.bg !== undefined, before?.[2]?.style], [true, {}]);
-  frame.surface("theme").tui.styles.set({ "textView.selection": { fg: 1, bg: null } });
+  frame.surface("theme").tui.styles.add({ "textView.selection": { fg: 1, bg: null } });
   const cells = frame.draw().cells[0];
   equal([cells?.[1]?.style, cells?.[2]?.style], [{ fg: 1 }, {}]);
 });

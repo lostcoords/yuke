@@ -589,7 +589,7 @@ impl Observer for ActiveClient {
                 jsonrpc: JsonRpc::V2,
                 message: notification,
             }),
-            (None, ServerNotification::Notice(notice)) => warn(&format!("{}: {}", notice.source, notice.message)),
+            (None, ServerNotification::Notice(notice)) => warn(&format!("{}: {}", notice.source, notice.text)),
             (
                 None,
                 ServerNotification::SessionUpdate(_)

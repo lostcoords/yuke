@@ -218,7 +218,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
     place.plugin(
         "loud",
         "export function apply(ctx) { ctx.notify('info', 'hello'); }
-         export function session(s) { s.notify('info', `opened in ${s.folder}`); }",
+         export function session(s) { s.notify('info', `opened in ${s.cwd}`); }",
     );
     std::fs::write(
         place.paths.config.join("config.json"),
@@ -254,7 +254,7 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
         json!({
             "level": "info",
             "source": "loud",
-            "message": "hello",
+            "text": "hello",
         })
     );
     assert_eq!(
@@ -263,12 +263,12 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
             "sessionId": session,
             "level": "info",
             "source": "loud",
-            "message": format!("opened in {}", std::fs::canonicalize(&place.work).unwrap().display()),
+            "text": format!("opened in {}", std::fs::canonicalize(&place.work).unwrap().display()),
         })
     );
     assert_eq!(notice["params"]["level"], "error");
     assert_eq!(notice["params"]["source"], "host:yuke");
-    let message = notice["params"]["message"].as_str().unwrap();
+    let message = notice["params"]["text"].as_str().unwrap();
     assert!(
         message.starts_with("plugin broken did not load: Error: no luck"),
         "{message}"
@@ -401,7 +401,7 @@ async fn the_prompt_hook_leaves_the_saved_prompt_of_the_session() {
         "counted",
         "let count = 0;
          export function session(s) {
-           s.hook('prompt.build', ({ sections }) => { count += 1; return { sections: { ...sections, turn: `number ${count}` } }; });
+           s.addHook('prompt.build', ({ sections }) => { count += 1; return { sections: { ...sections, turn: `number ${count}` } }; });
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["counted"] }"#).unwrap();
@@ -431,7 +431,7 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
     place.plugin(
         "guard",
         "export function session(s) {
-           s.hook('round.after', ({ finishReason, continues }) =>
+           s.addHook('round.after', ({ finishReason, continues }) =>
              finishReason === 'stop' && continues === 0 ? { continue: 'Run the tests.' } : undefined);
          }",
     );
@@ -501,7 +501,7 @@ async fn a_skipped_skill_reaches_the_client_as_a_warning_of_the_new_session() {
     assert_eq!(&notice["sessionId"], session);
     assert_eq!(notice["level"], "warn");
     assert_eq!(
-        notice["message"],
+        notice["text"],
         format!(
             "yuke skipped the skill at {}: the file has no frontmatter",
             skill.join("SKILL.md").display()

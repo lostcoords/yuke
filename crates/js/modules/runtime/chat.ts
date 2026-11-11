@@ -200,7 +200,7 @@ export class ChatSession {
     this.#changed();
   }
 
-  onChange(listener: () => void): () => void {
+  addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }

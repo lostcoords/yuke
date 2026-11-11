@@ -74,7 +74,7 @@ assert<Equal<typeof got, Tui | undefined>>();
 // @ts-expect-error `tui` is a service of yuke: a plugin cannot provide it.
 ctx.provide("tui", tui);
 // A watch takes an inline callback that returns no cleanup.
-const watched = tui.widgets.watch((mount) => {
+const watched = tui.widgets.addWatcher((mount) => {
   if (mount.widget.kind === "editor") mount.widget.caret = 0;
 });
 void [patch, style, color, command, container, Clock, handler, root, got, watched];

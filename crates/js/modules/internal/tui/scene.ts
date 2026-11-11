@@ -194,14 +194,14 @@ export class Scene {
   /** Give `event` to the floats above the input layer, then along the focus path from the deepest view up. */
   key(event: KeyEvent): boolean {
     for (const layer of this.#floatsOnTop()) {
-      if (this.#bubble(layer, (view) => view.key, event)) return true;
+      if (this.#bubble(layer, (view) => view.onKey, event)) return true;
     }
-    return this.#bubble(this.#inputLayer(), (view) => view.key, event);
+    return this.#bubble(this.#inputLayer(), (view) => view.onKey, event);
   }
 
   /** Give a paste along the focus path of the input layer. */
   paste(text: string): void {
-    this.#bubble(this.#inputLayer(), (view) => view.paste, text);
+    this.#bubble(this.#inputLayer(), (view) => view.onPaste, text);
   }
 
   /**
@@ -218,7 +218,7 @@ export class Scene {
         return;
       }
       capture.point = { column: event.column, row: event.row };
-      target.view.mouse?.(local(event, target));
+      target.view.onMouse?.(local(event, target));
       if (event.action === "release") this.#capture = undefined;
       return;
     }
@@ -249,7 +249,7 @@ export class Scene {
       modifiers: { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false },
     };
     const delivered = target === undefined ? event : local(event, target);
-    capture.view.mouse?.(delivered);
+    capture.view.onMouse?.(delivered);
   }
 
   /** Close the top overlay when it is a modal, as for an Escape that nothing took. */
@@ -347,7 +347,7 @@ export class Scene {
     for (let target: Target | undefined = hit; target !== undefined; target = target.parent) {
       const current = target;
       const { view } = current;
-      if (view.mouse?.(local(event, current)) === true) {
+      if (view.onMouse?.(local(event, current)) === true) {
         // A handler that opened a modal gave the input away, so it gets no capture.
         if (event.action === "press" && event.button === "left" && this.#inputLayer() === input) {
           const point = { column: event.column, row: event.row };
@@ -392,7 +392,7 @@ export class Scene {
   }
 
   /**
-   * Compare the focus paths with the last ones: each view that leaves or enters the input path gets `focusChanged`,
+   * Compare the focus paths with the last ones: each view that leaves or enters the input path gets `onFocusChange`,
    * and a change of either path reaches the host, as a focus change of the root beneath a modal.
    */
   #syncFocus(): void {
@@ -409,8 +409,8 @@ export class Scene {
     const inputChanged = !sameViews(views, viewsBefore);
     if (inputChanged) {
       // A target of an earlier layout reaches a view that left the tree.
-      for (const target of before) if (!views.includes(target.view)) target.view.focusChanged?.(false);
-      for (const target of path) if (!viewsBefore.includes(target.view)) target.view.focusChanged?.(true);
+      for (const target of before) if (!views.includes(target.view)) target.view.onFocusChange?.(false);
+      for (const target of path) if (!viewsBefore.includes(target.view)) target.view.onFocusChange?.(true);
     }
     const previous = before.at(-1)?.view;
     const change =

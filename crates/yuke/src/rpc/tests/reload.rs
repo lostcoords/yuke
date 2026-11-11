@@ -6,7 +6,7 @@ use super::*;
 fn tool_plugin(name: &str) -> String {
     format!(
         "export function session(s) {{
-           s.tools.define({{
+           s.tools.add({{
              name: '{name}', description: 'A tool.', concurrency: 'serial',
              parameters: {{ type: 'object', properties: {{}} }},
              execute: async () => 'done',
@@ -51,7 +51,7 @@ async fn a_plugin_gets_the_options_of_its_config_item_and_a_reload_reads_them_ag
            type: 'object', properties: { name: { type: 'string' } }, required: ['name'],
          };
          export function session(s) {
-           s.tools.define({
+           s.tools.add({
              name: s.options.name, description: 'A tool.', concurrency: 'serial',
              parameters: { type: 'object', properties: {} },
              execute: async () => 'done',

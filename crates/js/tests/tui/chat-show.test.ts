@@ -21,7 +21,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   await waitForSettled();
   const view = chat.tui.panes.active?.view as View;
   const moves: (string | undefined)[] = [];
-  chat.chat.onChange((moved) => moves.push(chat.chat.session(moved)));
+  chat.chat.addChangeListener((moved) => moves.push(chat.chat.session(moved)));
   frame.paste("draft of s1");
   await chat.chat.show("s2");
   sessions.push(commit(3, [{ assistant_text: { text: "only in s2" } }]), "s2");

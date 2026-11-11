@@ -241,7 +241,7 @@ pub struct NoticeParams {
     /// The plugin or the part of yuke that sent the notice.
     pub source: String,
     /// The text for the user.
-    pub message: String,
+    pub text: String,
 }
 
 /// The severity of a notice.

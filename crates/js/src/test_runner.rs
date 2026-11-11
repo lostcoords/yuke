@@ -313,7 +313,7 @@ pub fn run_test_files<T: TestRuntime>(
             for report in outcome.reports {
                 let line = match report {
                     Report::Console { text, .. } => text,
-                    Report::Notice(notice) => format!("{}: {}", notice.source, notice.message),
+                    Report::Notice(notice) => format!("{}: {}", notice.source, notice.text),
                     Report::Fault(error) => error.to_string(),
                     Report::Event(event) => format!("event {}", event.event),
                 };

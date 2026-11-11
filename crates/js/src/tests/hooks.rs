@@ -30,11 +30,7 @@ enum Decision {
 /// at once.
 fn cancelled() -> [(&'static str, &'static str, Decision); 5] {
     [
-        (
-            "tool.before",
-            "{ block: 'too late' }",
-            Decision::Tool(ToolDecision::Run),
-        ),
+        ("tool.before", "{ deny: 'too late' }", Decision::Tool(ToolDecision::Run)),
         ("tool.after", "{ text: 'too late' }", Decision::ToolReplaced(None)),
         (
             "round.before",
@@ -158,7 +154,7 @@ async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once()
                 "slow",
                 &format!(
                     "export function session(s) {{
-                       s.hook('{point}', ({{ signal }}) => new Promise((resolve) => {{
+                       s.addHook('{point}', ({{ signal }}) => new Promise((resolve) => {{
                          globalThis.started = true;
                          signal.addEventListener('abort', () => {{
                            globalThis.aborted = signal.reason.name;
@@ -199,7 +195,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
         &[(
             "slow",
             "export function session(s) {
-               s.hook('tool.before', ({ signal }) => {
+               s.addHook('tool.before', ({ signal }) => {
                  globalThis.started = true;
                  signal.addEventListener('abort', () => { globalThis.aborted = signal.reason.name; });
                  return new Promise(() => {});
@@ -244,11 +240,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
 #[tokio::test(flavor = "local")]
 async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
     for (point, answer, expected) in [
-        (
-            "tool.before",
-            "{ block: 'too late' }",
-            Decision::Tool(ToolDecision::Run),
-        ),
+        ("tool.before", "{ deny: 'too late' }", Decision::Tool(ToolDecision::Run)),
         ("tool.after", "{ text: 'too late' }", Decision::ToolReplaced(None)),
     ] {
         let (runtime, session, _reports) = opened(
@@ -257,7 +249,7 @@ async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
                 "late",
                 &format!(
                     "export function session(s) {{
-                       s.hook('{point}', () => new Promise((resolve) => {{ globalThis.release = () => resolve({answer}); }}));
+                       s.addHook('{point}', () => new Promise((resolve) => {{ globalThis.release = () => resolve({answer}); }}));
                      }}"
                 ),
             )],
@@ -299,7 +291,7 @@ async fn tool_before_blocks_and_tool_after_gives_an_error_when_the_engine_task_h
 
     assert_eq!(
         before,
-        ToolDecision::Block("the tool.before hooks failed: the JavaScript runtime has ended".to_owned())
+        ToolDecision::Deny("the tool.before hooks failed: the JavaScript runtime has ended".to_owned())
     );
     let failed = ToolResult {
         content: "the tool.after hooks failed: the JavaScript runtime has ended".to_owned(),
@@ -320,7 +312,7 @@ async fn an_answer_keeps_the_media_the_display_and_the_loaded_tools_of_the_resul
         &[(
             "redact",
             "export function session(s) {
-               s.hook('tool.after', ({ result }) => ({ text: result.text.replace('hunter2', '***'), isError: true }));
+               s.addHook('tool.after', ({ result }) => ({ text: result.text.replace('hunter2', '***'), isError: true }));
              }",
         )],
     )
@@ -350,7 +342,7 @@ async fn round_after_joins_the_texts_of_the_answer_with_newlines() {
         &[(
             "watch",
             "export function session(s) {
-               s.hook('round.after', ({ text, finishReason }) => { globalThis.seen = `${text}|${finishReason}`; });
+               s.addHook('round.after', ({ text, finishReason }) => { globalThis.seen = `${text}|${finishReason}`; });
              }",
         )],
     )

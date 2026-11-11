@@ -1,7 +1,7 @@
-//! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`,
-//! `ctx.get("auth")`, and `ctx.get("plugins")`. The queue delivers host view events and host facts and resolves the
-//! asynchronous request promises. Synchronous natives read the current host state directly. Facts that start in
-//! JavaScript go to listeners at once.
+//! The session functions of the native module: the requests of `ctx.get("sessions")`, `ctx.get("catalog")`, and the
+//! credentials and the plugin manager of `yuke:internal/sessions`. The queue delivers host view events and host facts
+//! and resolves the asynchronous request promises. Synchronous natives read the current host state directly. Facts that
+//! start in JavaScript go to listeners at once.
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -86,8 +86,8 @@ pub(super) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn S
     add_calls(ctx, object, sessions)
 }
 
-/// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.on`. One watch runs at a time, and the caller
-/// releases the old one first. The key of each fact names the watch that sent it.
+/// Add `factsWatch(key)` and `factsRelease()` for the facts of `ctx.addListener`. One watch runs at a time, and the
+/// caller releases the old one first. The key of each fact names the watch that sent it.
 fn add_facts<'js>(ctx: &Ctx<'js>, object: &Object<'js>, sessions: &Rc<dyn Sessions>) -> rquickjs::Result<()> {
     let watch: Rc<RefCell<Option<Box<dyn Any>>>> = Rc::default();
     let (sessions, started) = (Rc::clone(sessions), Rc::clone(&watch));
@@ -210,7 +210,8 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     add_plugin_requests(&request, object)
 }
 
-/// Add the requests of `ctx.get("plugins")`. A sync, a check, and an add fetch, so each one answers an operation.
+/// Add the requests of the plugin manager of `yuke:internal/sessions`. A sync, a check, and an add fetch, so each one
+/// answers an operation.
 fn add_plugin_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(object, "pluginsList", |sessions, (): ()| async move {
         sessions.list_plugins().await

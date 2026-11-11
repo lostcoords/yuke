@@ -21,7 +21,7 @@ function list(
   const renders: string[] = [];
   const scroll = new ScrollList<Item>({
     items,
-    key: (entry) => entry.key,
+    id: (entry) => entry.key,
     render: (entry, width): TextRow[] => {
       renders.push(entry.key);
       const rows: TextRow[] = [];
@@ -59,11 +59,11 @@ test("the anchor names the top item and row, and scrollToItem puts that row at t
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   scroll.scrollTo(4);
   frame.draw();
-  equal(scroll.state.anchor, { key: "b", row: 1 });
+  equal(scroll.state.anchor, { id: "b", row: 1 });
   // The rows below end the list, so the top stops at the last full view.
   equal(
     [scroll.scrollToItem("a", 1), scroll.scrollToItem("c", 2), scroll.state.anchor],
-    [true, true, { key: "c", row: 1 }],
+    [true, true, { id: "c", row: 1 }],
   );
   equal([scroll.scrollToItem("b", 3), scroll.scrollToItem("x"), scroll.state.top], [false, false, 7]);
   equal(scroll.scrollToItem("a", 1), true);
@@ -221,7 +221,7 @@ test("items with no rows take no rows, and a render that throws changes nothing"
   equal([rows(frame.draw()), scroll.state.total], [["a0", "b0"], 2]);
   const broken = new ScrollList<Item>({
     items: [{ key: "a", text: "a0" }],
-    key: (entry) => entry.key,
+    id: (entry) => entry.key,
     render: (entry) => {
       if (entry.key === "bad") throw new Error("bad render");
       return [{ segments: [{ text: entry.text }], join: "" }];
@@ -248,8 +248,8 @@ test("a listener gets each later state until its remover runs, and a remover rem
   const listener = (state: { readonly top: number }): void => {
     tops.push(state.top);
   };
-  const first = scroll.onChange(listener);
-  scroll.onChange(listener);
+  const first = scroll.addChangeListener(listener);
+  scroll.addChangeListener(listener);
   scroll.scrollTo(1);
   first();
   first();

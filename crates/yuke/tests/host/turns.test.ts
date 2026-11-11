@@ -39,7 +39,7 @@ test("a create, a reopen, and a fork each run the session of a plugin once, and 
   await sessions.open(fork, watch);
 
   equal(
-    host.notices.map((notice) => notice.message),
+    host.notices.map((notice) => notice.text),
     ["open 1", "open 2", "open 3"],
   );
 });
@@ -50,7 +50,7 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
   await using host = await createHost({ plugins: [{ name: "slow", session: slow }] });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sent = rejects(session.send("hi", { signal: stop.signal }));
+  const sent = rejects(session.sendMessage("hi", { signal: stop.signal }));
   // The turn runs before the cancel, so the cancel reaches a turn that waits for the plugins.
   await waitForSettled();
   equal(session.transcript.state, "running");
@@ -58,7 +58,7 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
 
   await sent;
   const cancelled = session.transcript.entries.at(-1);
-  const again = session.send("again");
+  const again = session.sendMessage("again");
   await waitForSettled();
   equal(session.transcript.state, "running");
   await session.close();
@@ -71,7 +71,7 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
 test("the prompt hook edits the request of each turn from the saved sections", async () => {
   let count = 0;
   const counted: PluginSession = (s) => {
-    s.hook("prompt.build", (event) => {
+    s.addHook("prompt.build", (event) => {
       count += 1;
       return { sections: { ...event.sections, turn: `number ${count}` } };
     });
@@ -80,8 +80,8 @@ test("the prompt hook edits the request of each turn from the saved sections", a
   await using host = await createHost({ plugins: [{ name: "counted", session: counted }], replies });
   const session = await host.openSession();
 
-  await session.send("first");
-  await session.send("second");
+  await session.sendMessage("first");
+  await session.sendMessage("second");
 
   const [first, second] = host.requests.map((request) => request.system);
   equal(
@@ -96,28 +96,28 @@ test("the prompt hook edits the request of each turn from the saved sections", a
 
 test("a failed prompt hook sends a notice, starts no request, and leaves the input pending", async () => {
   const broken: PluginSession = (s) => {
-    s.hook("prompt.build", () => {
+    s.addHook("prompt.build", () => {
       throw new Error("no prompt");
     });
   };
   await using host = await createHost({ plugins: [{ name: "broken", session: broken }] });
   const session = await host.openSession();
 
-  await session.send("hi");
+  await session.sendMessage("hi");
 
   const [notice] = host.notices;
-  equal(notice?.message.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
+  equal(notice?.text.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
   equal([host.requests.length, session.transcript.pending.size], [0, 1]);
 });
 
-// The model gets the reason of a block as the error result of that call, and the turn goes on.
-test("a plugin blocks one of two tool calls in an answer, and the other tool call runs", async () => {
+// The model gets the reason of a denial as the error result of that call, and the turn goes on.
+test("a plugin denies one of two tool calls in an answer, and the other tool call runs", async () => {
   await writeTextFile(`${folder()}/notes.txt`, "the notes");
   await writeTextFile(`${folder()}/secret.txt`, "the secret");
   const guard: PluginSession = (s) => {
-    s.hook("tool.before", (event) => {
+    s.addHook("tool.before", (event) => {
       const path = (event.call.arguments as { path?: string }).path;
-      return event.call.name === "read" && path === "secret.txt" ? { block: "secret.txt is private" } : undefined;
+      return event.call.name === "read" && path === "secret.txt" ? { deny: "secret.txt is private" } : undefined;
     });
   };
   const reads = ["notes.txt", "secret.txt"].map((path) => ({ name: "read", args: { path } }));
@@ -125,17 +125,17 @@ test("a plugin blocks one of two tool calls in an answer, and the other tool cal
   await using host = await createHost({ plugins: [{ name: "guard", session: guard }], replies });
   const session = await host.openSession();
 
-  await session.send("read both");
+  await session.sendMessage("read both");
 
   const results = host.requests[1]?.messages.map((message) => message.text).join("\n") ?? "";
   equal(
     [results.includes("the notes"), results.includes("secret.txt is private"), results.includes("the secret")],
     [true, true, false],
   );
-  const blocked = session.transcript.entries.find(
+  const denied = session.transcript.entries.find(
     (entry) => entry.kind === "tool" && entry.result?.content.includes("secret.txt is private") === true,
   );
-  equal(blocked?.kind === "tool" && blocked.result?.isError, true);
+  equal(denied?.kind === "tool" && denied.result?.isError, true);
   const end = session.transcript.entries.at(-1);
   equal(end?.kind === "end" && end.end, { outcome: { completed: { finishReason: "stop" } } });
 });
@@ -145,7 +145,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
   await writeTextFile(`${folder()}/notes.txt`, "password: hunter2");
   let sessions: Sessions | undefined;
   const redact: PluginSession = (s) => {
-    s.hook("tool.after", (event) => ({ text: event.result.text.replaceAll("hunter2", "***") }));
+    s.addHook("tool.after", (event) => ({ text: event.result.text.replaceAll("hunter2", "***") }));
   };
   const holder: PluginApply = (ctx) => {
     sessions = ctx.get("sessions");
@@ -161,7 +161,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
   });
   const session = await host.openSession();
 
-  await session.send("read the notes");
+  await session.sendMessage("read the notes");
   await session.close();
   // A view of a closed session starts with the saved events, so the snapshot shows what the store holds.
   let saved = "";
@@ -186,7 +186,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
 // The hook runs in the session, so the host reads the answer while the hook waits.
 test("an input.before handler asks the user, and a refusal removes the input", async () => {
   const guard: PluginSession = (s) => {
-    s.hook("input.before", async (event) => {
+    s.addHook("input.before", async (event) => {
       const question = {
         id: "send",
         header: "Send",
@@ -194,7 +194,7 @@ test("an input.before handler asks the user, and a refusal removes the input", a
         options: [{ label: "Yes" }, { label: "No" }],
       };
       const answers = await s.ask({ questions: [question] }, { signal: event.signal });
-      return answers?.[0]?.values[0] === "Yes" ? undefined : { block: "the user refused" };
+      return answers?.[0]?.values[0] === "Yes" ? undefined : { deny: "the user refused" };
     });
   };
   await using host = await createHost({
@@ -203,7 +203,7 @@ test("an input.before handler asks the user, and a refusal removes the input", a
   });
   const session = await host.openSession();
 
-  await session.send("rm -rf");
+  await session.sendMessage("rm -rf");
 
   equal([host.requests.length, session.transcript.pending.size], [0, 0]);
   equal(
@@ -250,7 +250,7 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           states.push(update.state);
         },
       });
-      await handle.sendMessage([{ user_text: "hi" }]);
+      await handle.sendMessage({ content: [{ user_text: "hi" }] });
       await handle.waitForIdle();
       ctx.sendClientEvent("turn", { states, texts, used, jobs: handle.jobs().length });
     };
@@ -270,13 +270,13 @@ test("a plugin creates a session, sends input, and sees the turn of that session
 test("a plugin summarizes the context with the model of the session and replaces the context", async () => {
   const { generateText } = await import("yuke:ai");
   const summary: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
-      if (event.blocks < 3) return undefined;
+    s.addHook("round.before", async (event) => {
+      if (event.blockCount < 3) return undefined;
       const instructions = "Summarize the conversation.";
       const answer = await generateText({
         model: s.settings.model,
         instructions,
-        prompt: event.context(),
+        prompt: event.blocks(),
         signal: event.signal,
       });
       return { replace: { head: [{ user_text: `Summary: ${answer.text}` }], keep: 0 } };
@@ -286,7 +286,7 @@ test("a plugin summarizes the context with the model of the session and replaces
   await using host = await createHost({ plugins: [{ name: "summary", session: summary }], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
   equal(finalText(session), "Done.");
 
   const [, side, last] = host.requests;
@@ -297,7 +297,7 @@ test("a plugin summarizes the context with the model of the session and replaces
 test("a side request repeats the body of the request of the round with one more block", async () => {
   let asked = false;
   const aside: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
+    s.addHook("round.before", async (event) => {
       if (asked) return undefined;
       asked = true;
       await event.sideRequest({ prompt: "Summarize." });
@@ -308,7 +308,7 @@ test("a side request repeats the body of the request of the round with one more 
   await using host = await createHost({ plugins: [{ name: "aside", session: aside }], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
   equal(finalText(session), "Done.");
 
   const [side, round] = host.requests.map((request) => request.body as { messages: { content: unknown[] }[] });
@@ -319,7 +319,7 @@ test("a side request repeats the body of the request of the round with one more 
 
 test("an input that a plugin replaces reaches the model as the new blocks", async () => {
   const skills: PluginSession = (s) => {
-    s.hook("input.before", (event) => {
+    s.addHook("input.before", (event) => {
       const first = event.blocks[0];
       if (first === undefined || !("user_text" in first) || first.user_text !== "/skill:pdf") return undefined;
       return { replace: { blocks: [{ user_text: "Read PDF files with care." }] } };
@@ -329,7 +329,7 @@ test("an input that a plugin replaces reaches the model as the new blocks", asyn
   await using host = await createHost({ plugins: [{ name: "skills", session: skills }], replies });
   const session = await host.openSession();
 
-  await session.send("/skill:pdf");
+  await session.sendMessage("/skill:pdf");
   equal(finalText(session), "Done.");
 
   equal(host.requests[0]?.messages, [{ role: "user", text: "Read PDF files with care." }]);
@@ -337,12 +337,12 @@ test("an input that a plugin replaces reaches the model as the new blocks", asyn
 
 test("an input that a plugin handles starts no turn", async () => {
   const commands: PluginSession = (s) => {
-    s.hook("input.before", () => ({ handled: true }));
+    s.addHook("input.before", () => ({ handled: true }));
   };
   await using host = await createHost({ plugins: [{ name: "commands", session: commands }] });
   const session = await host.openSession();
 
-  await session.send("/compact");
+  await session.sendMessage("/compact");
 
   equal([host.requests.length, session.transcript.pending.size], [0, 0]);
 });
@@ -358,7 +358,7 @@ test("the skills of a plugin folder come before the skills of the workspace in t
   await using host = await createHost({ plugins: [{ folder: root }], replies });
   const session = await host.openSession();
 
-  await session.send("Hi.");
+  await session.sendMessage("Hi.");
 
   const system = host.requests[0]?.system ?? "";
   const at = (text: string): number => system.indexOf(text);

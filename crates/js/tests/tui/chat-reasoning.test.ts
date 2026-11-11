@@ -24,7 +24,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
     item.sections.some((section) => section.text === "first thought\n\nsecond thought"),
   );
   assert(thought !== undefined);
-  const from = { item: thought.key, section: "text", offset: 0 };
+  const from = { item: thought.id, section: "text", offset: 0 };
   const to = { ...from, offset: "first thought\n\nsecond thought".length };
   equal(view.text({ from, to }), "first thought\n\nsecond thought");
   const snapshot = frame.snapshot();

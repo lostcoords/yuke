@@ -1,5 +1,5 @@
-//! The sessions, the catalog, the credentials, and the plugin manager of the app for the plugins: `ctx.get("sessions")`,
-//! `ctx.get("catalog")`, `ctx.get("auth")`, and `ctx.get("plugins")`.
+//! The sessions and the catalog of the app for the plugins, `ctx.get("sessions")` and `ctx.get("catalog")`, and the
+//! credentials and the plugin manager for the bundled plugins `login` and `plugins`.
 
 use std::any::Any;
 use std::cell::RefCell;

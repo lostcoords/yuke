@@ -2,7 +2,7 @@
 // writes, the close, the aborts, and a missing socket.
 
 import { ConnectionError, connect, type UnixConnection } from "yuke:net";
-import { assert, equal, listen, rejects, test } from "yuke:test";
+import { assert, equal, listenOnTemporarySocket, rejects, test } from "yuke:test";
 
 /** The bytes of `text` as UTF-8. */
 function bytes(text: string): Uint8Array {
@@ -18,7 +18,7 @@ async function readAll(connection: UnixConnection): Promise<string> {
 }
 
 test("a request and its reply cross the socket, the writes keep their order, and the end of the peer ends the stream", async () => {
-  using server = listen();
+  using server = listenOnTemporarySocket();
   const path = server.path;
   const accepted = server.accept();
   using client = await connect({ path });
@@ -41,7 +41,7 @@ test("a request and its reply cross the socket, the writes keep their order, and
 });
 
 test("a close ends the stream, rejects each later write, breaks the pipe of the peer, and a second close does nothing", async () => {
-  using server = listen();
+  using server = listenOnTemporarySocket();
   const path = server.path;
   const accepted = server.accept();
   const client = await connect({ path });
@@ -62,7 +62,7 @@ test("a close ends the stream, rejects each later write, breaks the pipe of the 
 });
 
 test("an abort stops an open read and an open write with its reason, and closes the connection", async () => {
-  using server = listen();
+  using server = listenOnTemporarySocket();
   const path = server.path;
   const accepted = server.accept();
   const controller = new AbortController();
@@ -82,7 +82,7 @@ test("an abort stops an open read and an open write with its reason, and closes 
 });
 
 test("an aborted signal stops the connect, and an option that is not valid throws a TypeError", async () => {
-  using server = listen();
+  using server = listenOnTemporarySocket();
   const path = server.path;
   const reason = new Error("before");
   equal(await rejects(connect({ path, signal: AbortSignal.abort(reason) })), reason);
@@ -91,7 +91,7 @@ test("an aborted signal stops the connect, and an option that is not valid throw
 });
 
 test("a connect to a removed socket fails with ENOENT and names its path", async () => {
-  const server = listen();
+  const server = listenOnTemporarySocket();
   server.close();
   const error = await rejects(connect({ path: server.path }));
   assert(error instanceof ConnectionError);

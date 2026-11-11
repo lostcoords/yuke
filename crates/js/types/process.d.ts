@@ -5,7 +5,7 @@
  *
  * Programs, in the shape of `Deno.Command`: a program and its arguments, without a shell.
  * - Each program runs in its own process group, and it gets no input.
- * - `cwd` is required: a tool passes `context.folder`, and a session passes `s.folder`.
+ * - `cwd` is required: a tool passes `context.cwd`, and a session passes `s.cwd`.
  * - An abort of the `signal` stops the group: SIGTERM, then SIGKILL after 2 seconds. The run then fulfills with the
  *   end of the program, as in Deno: a program that the signal ended has code 143 and the signal `"SIGTERM"`. A signal
  *   that aborted before the start rejects with its reason, and nothing runs.

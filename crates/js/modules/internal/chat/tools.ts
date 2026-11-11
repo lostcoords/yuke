@@ -41,21 +41,21 @@ export function toolItem(entry: ToolEntry, open: boolean, duration: string | und
   if (body !== undefined) {
     const preview = entry.result?.isError === true ? "head" : entry.hints.preview;
     sections.push({
-      key: body.key,
+      id: body.id,
       kind: "text",
       text: body.text,
       render: (width) => {
         if (open) return body.rows(width);
         if (preview === "none") return [];
         if (!body.plain) return previewRows(body.rows(width), preview);
-        return plainPreview(body.text, width, preview, body.key === "output");
+        return plainPreview(body.text, width, preview, body.id === "output");
       },
     });
   }
   const band = bandOf(entry);
-  if (band === undefined) return item(entry.key, ...sections);
+  if (band === undefined) return item(entry.id, ...sections);
   return item(
-    entry.key,
+    entry.id,
     ...sections.map((section) => ({
       ...section,
       render: (width: number) => bandedRows(section.render?.(width) ?? [], width, band),
@@ -86,7 +86,7 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
   // The room excludes the indent and the right margin of each row.
   const shownAt = (width: number) => clipped(head, Math.max(1, width - 2 - measure(end)));
   const title: TextSection = {
-    key: "title",
+    id: "title",
     kind: "label",
     text: source + end,
     render: (width) => {
@@ -112,7 +112,7 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
   };
   if (!open || value === undefined) return [title];
   const subject: TextSection = {
-    key: "subject",
+    id: "subject",
     kind: "text",
     text: value,
     render: (width) => (shownAt(width) === source ? [] : styledRows(value, width, STYLE.subject)),
@@ -151,9 +151,9 @@ interface Block {
   readonly rows: (width: number) => TextRow[];
 }
 
-/** One body: its section key, its source, and its rows at a width. */
+/** One body: its section id, its source, and its rows at a width. */
 interface Body extends Block {
-  readonly key: "output" | "result";
+  readonly id: "output" | "result";
   /** Each block is plain text, so a preview can wrap only the lines that it shows. */
   readonly plain: boolean;
 }
@@ -199,7 +199,7 @@ function bodyOf(entry: ToolEntry): Body | undefined {
     text += block.text;
   }
   return {
-    key: result === undefined ? "output" : "result",
+    id: result === undefined ? "output" : "result",
     plain: entry.display.length === 0,
     text,
     rows: (width) =>

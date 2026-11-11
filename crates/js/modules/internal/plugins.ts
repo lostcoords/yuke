@@ -3,13 +3,12 @@ import { hostSignal } from "yuke:internal/events";
 import { on } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import { emit, notify } from "yuke:internal/native";
-import { auth, catalog, plugins, sessionsOf } from "yuke:internal/sessions";
+import { catalog, sessionsOf } from "yuke:internal/sessions";
 import { surfaceOf } from "yuke:internal/tui/host";
 import { frozen } from "yuke:internal/values";
 import type {
   Cleanup,
   HostEvents,
-  NoticeLevel,
   PluginApply,
   PluginContext,
   PluginSession,
@@ -17,6 +16,7 @@ import type {
   Services,
   Sessions,
 } from "yuke:plugins";
+import type { NoticeLevel } from "yuke:protocol";
 import type { Tui } from "yuke:tui";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -29,6 +29,8 @@ interface PluginSpec {
   readonly entry: string | undefined;
   /** The exports are the ones that `give` keeps for this name, not the ones of an entry module. */
   readonly given: boolean;
+  /** The services of `provides` of the manifest. The host checked that none of them is a service of yuke. */
+  readonly provides: readonly string[];
 }
 
 /** The type of the options in the loader. */
@@ -119,6 +121,9 @@ export async function load(spec: PluginSpec): Promise<void> {
       options,
       signal,
       provide(name: string, value: unknown): void {
+        if (!spec.provides.includes(name)) {
+          throw new TypeError(`plugin ${spec.name} provides '${name}', and its manifest does not name it in provides`);
+        }
         pending.set(name, value);
       },
       get<K extends keyof Services & string>(name: K): ServiceOf<K> {
@@ -131,8 +136,6 @@ export async function load(spec: PluginSpec): Promise<void> {
           return sessions as ServiceOf<K>;
         }
         if (name === "catalog") return catalog as ServiceOf<K>;
-        if (name === "auth") return auth as ServiceOf<K>;
-        if (name === "plugins") return plugins as ServiceOf<K>;
         return services.get(name) as ServiceOf<K>;
       },
       notify(level: NoticeLevel, message: string): void {
@@ -141,7 +144,7 @@ export async function load(spec: PluginSpec): Promise<void> {
       sendClientEvent(event: string, data?: unknown): void {
         emit(spec.name, event, data ?? null, undefined);
       },
-      on<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
+      addListener<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
         return on(spec.name, signal, event, listener);
       },
     });

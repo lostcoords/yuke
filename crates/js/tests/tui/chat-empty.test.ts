@@ -20,7 +20,7 @@ function cells(row: string | undefined, from: number, to?: number): string {
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
 }
 
@@ -146,7 +146,7 @@ test("the header names the model and the folder of the bar, with the home folder
   frame.start();
   await waitForSettled();
   frame.draw();
-  const bar = ["chat:model", "chat:folder"].map((key) => chat.tui.status.list().find((item) => item.key === key)?.text);
+  const bar = ["chat:model", "chat:folder"].map((key) => chat.tui.status.list().find((item) => item.id === key)?.text);
 
   equal([cells(rows(frame.frame)[2], 16), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
 });

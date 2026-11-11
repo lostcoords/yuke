@@ -27,7 +27,7 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
         &format!(
             "export async function session(s) {{
                await new Promise((resolve) => {{ globalThis.release = resolve; }});
-               s.tools.define({});
+               s.tools.add({});
              }}",
             tool("late")
         ),
@@ -65,8 +65,8 @@ async fn a_held_tool_that_its_plugin_removed_answers_an_error() {
         "a_held_tool_that_its_plugin_removed_answers_an_error",
         &format!(
             "export function session(s) {{
-               const remove = s.tools.define({});
-               globalThis.replace = () => {{ remove(); s.tools.define({}); }};
+               const remove = s.tools.add({});
+               globalThis.replace = () => {{ remove(); s.tools.add({}); }};
              }}",
             tool("gone"),
             tool("gone")
@@ -85,9 +85,9 @@ async fn a_replacement_changes_new_snapshots_but_keeps_existing_handles() {
     let (folder, runtime, _reports) = loaded(
         "a_replacement_changes_new_snapshots_but_keeps_existing_handles",
         "export function session(s) {
-           s.tools.define({ name: 'held', description: 'original', concurrency: 'serial',
+           s.tools.add({ name: 'held', description: 'original', concurrency: 'serial',
              parameters: { type: 'object', properties: {} }, execute: () => 'old' });
-           globalThis.replace = () => s.tools.define({
+           globalThis.replace = () => s.tools.add({
              name: 'held', description: 'replacement', concurrency: 'parallel',
              hints: { preview: 'tail' }, deferLoading: true,
              parameters: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] },
@@ -200,7 +200,7 @@ async fn a_shutdown_ends_while_a_session_waits_for_its_setup() {
 async fn sessions_and_tools_do_not_keep_the_engine_alive_after_shutdown() {
     let (folder, runtime, _reports) = loaded(
         "sessions_and_tools_do_not_keep_the_engine_alive_after_shutdown",
-        &format!("export function session(s) {{ s.tools.define({}); }}", tool("held")),
+        &format!("export function session(s) {{ s.tools.add({}); }}", tool("held")),
     )
     .await;
     let access = runtime.access();

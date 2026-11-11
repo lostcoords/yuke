@@ -3,7 +3,7 @@
 
 import * as fs from "yuke:fs";
 import { ConnectionError, connect, listen, type UnixConnection } from "yuke:net";
-import { assert, equal, rejects, test, listen as testServer, throws, waitForSettled } from "yuke:test";
+import { assert, equal, rejects, test, listenOnTemporarySocket as testServer, throws, waitForSettled } from "yuke:test";
 
 /** A new short socket path with no file. The scratch folder of a test can be too long for a socket. */
 function freePath(): string {

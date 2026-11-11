@@ -43,8 +43,8 @@ export class ChatCommands {
     this.#options = options;
     const extension = editor.extend(options.signal);
     // The keys of the list come before the keymap of the chat, and a draft with no match stays a message.
-    extension.onKey((event) => this.#key(strokeOf(event)), "beforeKeymap");
-    extension.onChange((change) => {
+    extension.addKeyHandler((event) => this.#key(strokeOf(event)), "beforeKeymap");
+    extension.addChangeListener((change) => {
       if (change.kind !== "selection") {
         this.#selected = 0;
         this.#mark(extension);

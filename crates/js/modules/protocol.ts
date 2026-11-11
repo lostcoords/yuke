@@ -364,7 +364,7 @@ export type InteractionResponse = { "kind": "questions",
 /**
  * One answer per question, each with a value or `other`.
  */
-answers: Array<QuestionAnswer>, } | { "kind": "canceled" };
+answers: Array<QuestionAnswer>, } | { "kind": "cancelled" };
 
 /**
  * A background job.
@@ -844,7 +844,7 @@ source: string,
 /**
  * The text for the user.
  */
-message: string, };
+text: string, };
 
 /**
  * The model and host that answered a request. Provider state returns only to the same model at the same host.

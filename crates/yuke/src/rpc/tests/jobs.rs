@@ -284,11 +284,11 @@ async fn a_process_job_of_an_open_session_still_runs_after_a_reload() {
 fn job_plugin(place: &Place, wait_ms: u32) {
     let source = format!(
         "export function session(s) {{
-           s.tools.define({{
+           s.tools.add({{
              name: 'work', description: 'work', concurrency: 'serial',
              parameters: {{ type: 'object', properties: {{}} }},
              async execute() {{
-               await s.jobs.run({{ id: 'explorer', label: 'explore' }}, (signal) => new Promise((resolve) =>
+               await s.jobs.start({{ id: 'explorer', label: 'explore' }}, (signal) => new Promise((resolve) =>
                  signal.addEventListener('abort', () => setTimeout(resolve, {wait_ms}))));
                return 'started';
              }},

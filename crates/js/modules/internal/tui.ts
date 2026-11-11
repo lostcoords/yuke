@@ -49,7 +49,7 @@ const bindings: readonly (readonly [string, string])[] = [
   [`${LEADER} up`, "focus-up"],
   [`${LEADER} right`, "focus-right"],
 ];
-for (const [spec, command] of bindings) core.keymap.bind(spec, `${CORE}:${command}`);
+for (const [spec, command] of bindings) core.keymap.add(spec, `${CORE}:${command}`);
 setSurfaces((owner, signal) => createSurface(core, owner, signal));
 
 term.run({

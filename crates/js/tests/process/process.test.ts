@@ -13,7 +13,7 @@ function text(bytes: Uint8Array): string {
 /** The process id in `file` in `cwd`, after the program writes its line. */
 async function pidOf(cwd: string, file: string): Promise<string> {
   for (;;) {
-    const line = await fs.readTextFile(file, { baseDir: cwd }).catch(() => "");
+    const line = await fs.readTextFile(file, { cwd: cwd }).catch(() => "");
     if (line.endsWith("\n")) return line.trim();
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

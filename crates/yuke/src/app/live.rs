@@ -666,12 +666,12 @@ impl Output {
     }
 
     /// Tell the observer about the session.
-    fn notice(&self, level: NoticeLevel, message: &str) {
+    fn notice(&self, level: NoticeLevel, text: &str) {
         self.observer.notify(ServerNotification::Notice(NoticeParams {
             session_id: Some(self.session),
             level,
             source: SOURCE.to_owned(),
-            message: message.to_owned(),
+            text: text.to_owned(),
         }));
     }
 }
@@ -1105,15 +1105,15 @@ impl SessionHost for Host {
                     headers.collect::<Vec<_>>().join(", ")
                 ),
             );
-            return InteractionResponse::Canceled;
+            return InteractionResponse::Cancelled;
         }
         let (id, answered) = output.open_question(source, request);
         // A dropped wait closes the question too, so an open question always has a waiter.
         let open = OpenQuestion { output, id };
         let response = tokio::select! {
-            answered = answered => answered.unwrap_or(InteractionResponse::Canceled),
-            () = cancel.cancelled() => InteractionResponse::Canceled,
-            () = self.closed.cancelled() => InteractionResponse::Canceled,
+            answered = answered => answered.unwrap_or(InteractionResponse::Cancelled),
+            () = cancel.cancelled() => InteractionResponse::Cancelled,
+            () = self.closed.cancelled() => InteractionResponse::Cancelled,
         };
         drop(open);
         response
@@ -1278,7 +1278,7 @@ mod tests {
                 event
             {
                 output
-                    .answer_question(interaction_id, InteractionResponse::Canceled)
+                    .answer_question(interaction_id, InteractionResponse::Cancelled)
                     .unwrap();
             }
         }));
@@ -1294,7 +1294,7 @@ mod tests {
         let (id, mut answered) = output.open_question("guard", confirm());
         output.end_views();
 
-        assert_eq!(answered.try_recv(), Ok(InteractionResponse::Canceled));
+        assert_eq!(answered.try_recv(), Ok(InteractionResponse::Cancelled));
         assert_eq!(
             *events.borrow(),
             [
@@ -1566,7 +1566,7 @@ mod tests {
 
         let (id, _answered) = output.open_question("guard", confirm());
         drop(OpenQuestion { output: &output, id });
-        let late = output.answer_question(id, InteractionResponse::Canceled);
+        let late = output.answer_question(id, InteractionResponse::Cancelled);
 
         assert!(matches!(late, Err(AppError::NoInteraction(_))), "{late:?}");
         assert_eq!(*recorder.0.borrow_mut(), [requested(1, confirm()), closed(1)]);

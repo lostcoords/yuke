@@ -5,7 +5,7 @@
  *
  * ```ts
  * const chat = new ChatSession(ctx.get("sessions"), { signal: mount.signal, id: saved });
- * chat.onChange(() => tui.requestFrame());
+ * chat.addChangeListener(() => tui.requestFrame());
  * if (chat.id !== undefined) chat.open(chat.id).catch((error) => ctx.notify("error", String(error)));
  * ```
  */
@@ -73,7 +73,7 @@ declare module "yuke:chat" {
     /**
      * Call `listener` after each change: an open, an event, the end of the handle, or a page.
      */
-    onChange(listener: () => void): () => void;
+    addChangeListener(listener: () => void): () => void;
   }
 
   export interface ChatComposerOptions {
@@ -143,14 +143,14 @@ declare module "yuke:chat" {
   /**
    * The first open request of a plugin in a chat session, as a view with one page per question. Up and Down move,
    * Space ticks, Enter answers and goes to the next page, and the last Enter sends. Left or Shift+Tab goes back. A
-   * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key to `cancel`. A caller places the view, as the chat does in the place of
-   * the composer. A view answers once, and a refused answer can come again. The others wait in order. A request of an
+   * question without options and with `other` is a field, and `secret` masks that field. The owner binds the cancel key to `cancel()`. A caller places
+   * the view, as the chat does in the place of the composer. A view answers once, and a refused answer can come again. The others wait in order. A request of an
    * ended handle shows after the next open.
    *
    * ```ts
    * const questions = new ChatQuestions(chat, { signal: mount.signal, onError: (error) => ctx.notify("error", String(error)) });
    * place(questions.current); // a request that is open already
-   * questions.onChange(() => place(questions.current));
+   * questions.addChangeListener(() => place(questions.current));
    * ```
    */
   export class ChatQuestions {
@@ -160,7 +160,7 @@ declare module "yuke:chat" {
     /** Answer the shown request with a cancel. */
     cancel(): void;
     /** Call `listener` after each change of `current`. */
-    onChange(listener: () => void): () => void;
+    addChangeListener(listener: () => void): () => void;
   }
 
   export interface ChatCommandsOptions {
@@ -225,9 +225,9 @@ declare module "yuke:chat" {
    * let stop: (() => void) | undefined;
    * const tick = () => {
    *   stop?.();
-   *   stop = working.active && !mount.signal.aborted ? tui.after(working.frameMs, tick) : undefined;
+   *   stop = working.active && !mount.signal.aborted ? tui.addTimer(working.frameMs, tick) : undefined;
    * };
-   * working.onChange(tick);
+   * working.addChangeListener(tick);
    * tick();
    * const row = working.text({ cancelKey: "esc" }); // in draw
    * if (row !== undefined) canvas.text(0, 0, `${row.spinner} ${row.text}`);
@@ -242,28 +242,28 @@ declare module "yuke:chat" {
     /** The spinner and the text now, or `undefined` while no turn runs. */
     text(options?: ChatWorkingTextOptions): { readonly spinner: string; readonly text: string } | undefined;
     /** Call `listener` after each change of `active`. */
-    onChange(listener: () => void): () => void;
+    addChangeListener(listener: () => void): () => void;
   }
 
   /**
    * The default look of a conversation, as a text document for a `TextView`: user messages, Markdown answers, thoughts
    * and tool calls that fold, diffs, and the failure of a running turn. Thoughts and tools start folded. The head line
    * of a running tool shows its duration at the last `project` call. One document serves one session: fold choices go by
-   * entry key, so make a new document when the session changes.
+   * entry id, so make a new document when the session changes.
    *
    * ```ts
    * const document = new ChatDocument(`session:${id}`);
    * const view = new TextView({ document: document.project(chat.transcript) });
-   * chat.onChange(() => view.setDocument(document.project(chat.transcript)));
+   * chat.addChangeListener(() => view.setDocument(document.project(chat.transcript)));
    * ```
    */
   export class ChatDocument {
-    /** The document `key` with the fold choices `folds`: `true` is open. */
-    constructor(key: string, folds?: Iterable<readonly [string, boolean]>);
+    /** The document `id` with the fold choices `folds`: `true` is open. */
+    constructor(id: string, folds?: Iterable<readonly [string, boolean]>);
     /** The fold choices, for a saved state. */
     get folds(): [string, boolean][];
-    /** Open or fold the entry `key`, a tool or a thought with text. `false` when that entry has no fold. */
-    toggle(transcript: Transcript, key: string): boolean;
+    /** Open or fold the entry `id`, a tool or a thought with text. `false` when that entry has no fold. */
+    toggle(transcript: Transcript, id: string): boolean;
     /** Open each loaded tool when one of them is folded. Otherwise, fold each one. A later tool starts folded. */
     toggleTools(transcript: Transcript): void;
     /** The document of `transcript`. The same document object comes back while no item changed. */
@@ -275,14 +275,14 @@ declare module "yuke:chat" {
     /** The fold choices that the pane saves. `true` is open. */
     readonly folds: readonly (readonly [string, boolean])[];
     /**
-     * Open or fold the item `key`, which can be a group of this presentation. Give `false` when that item has no fold.
+     * Open or fold the item `id`, which can be a group of this presentation. Give `false` when that item has no fold.
      * After `true`, the pane shows the first `label` section of the item, if the item has one.
      */
-    readonly toggle: (transcript: Transcript, key: string) => boolean;
+    readonly toggle: (transcript: Transcript, id: string) => boolean;
     /** Open or fold all tools. */
     readonly toggleTools: (transcript: Transcript) => void;
     /**
-     * The document of `transcript`. Keep each item key across updates. Keep the object of each unchanged item.
+     * The document of `transcript`. Keep each item id across updates. Keep the object of each unchanged item.
      * The pane also calls this function once a second while a tool runs, so a duration can advance.
      */
     readonly project: (transcript: Transcript) => TextDocument;
@@ -290,8 +290,8 @@ declare module "yuke:chat" {
 
   /** What a chat pane gives the factory of `setPresentation`. */
   export interface ChatPresentationOptions {
-    /** The key of the document. Pass it on, and do not read a meaning from it. */
-    readonly key: string;
+    /** The id of the document. Pass it on, and do not read a meaning from it. */
+    readonly id: string;
     /** The saved fold choices. */
     readonly folds: readonly (readonly [string, boolean])[] | undefined;
     /** This signal aborts when the pane shows another session, replaces the presentation, or closes. */
@@ -402,7 +402,7 @@ declare module "yuke:chat" {
      * Call `listener` after a chat pane moves to another session or to no session. It gets no call for a pane that starts on a session,
      * or for a close.
      */
-    readonly onChange: (listener: (view: View) => void) => () => void;
+    readonly addChangeListener: (listener: (view: View) => void) => () => void;
     /**
      * Add a view on one side of the composer of each chat pane. `create` runs once per pane, at a layout. A close of the
      * pane or the returned function ends `mount`. A view that closes `mount` stays closed in that pane. After a change of
@@ -450,7 +450,7 @@ declare module "yuke:chat" {
      * current.
      *
      * ```ts
-     * chat.setPresentation((options) => new GroupedTools(options.key, options.folds));
+     * chat.setPresentation((options) => new GroupedTools(options.id, options.folds));
      * ```
      */
     readonly setPresentation: (factory: (options: ChatPresentationOptions) => ChatPresentation) => () => void;

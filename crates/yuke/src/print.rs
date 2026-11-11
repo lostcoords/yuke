@@ -156,7 +156,7 @@ async fn run_turn(
         (Some(end), _) => end,
         (None, Some(failure)) => TurnEnd::Failed(failure),
         (None, None) if cancellation_token.is_cancelled() => TurnEnd::Outcome(Outcome::Cancelled),
-        // A plugin blocked or handled the input, so no turn ran.
+        // A plugin denied or handled the input, so no turn ran.
         (None, None) if watched.removed => TurnEnd::Outcome(Outcome::Stopped),
         (None, None) => TurnEnd::Failed("the turn saved no end".to_owned()),
     };
@@ -317,15 +317,15 @@ impl Observer for Watcher {
                 session_id: Some(session_id),
                 level: NoticeLevel::Error,
                 source,
-                message,
+                text,
             }) if source == SOURCE => {
                 self.change(session_id, |watched| {
-                    watched.failure = Some(message);
+                    watched.failure = Some(text);
                     watched.ended = true;
                 });
                 self.ended.notify_one();
             }
-            ServerNotification::Notice(notice) => warn(&format!("{}: {}", notice.source, notice.message)),
+            ServerNotification::Notice(notice) => warn(&format!("{}: {}", notice.source, notice.text)),
             // A run has no client for the events of plugins, and it starts no login of `auth/login`.
             ServerNotification::ExtensionEvent(_)
             | ServerNotification::ExtensionCancel(_)

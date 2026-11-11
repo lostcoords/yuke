@@ -133,7 +133,7 @@ impl SessionHost for TestHost {
     // A question waits for its cancel, as with a client that never answers.
     async fn ask(&self, _source: &str, _request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
         cancel.cancelled().await;
-        InteractionResponse::Canceled
+        InteractionResponse::Cancelled
     }
 
     async fn request(
@@ -254,10 +254,10 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
         &[(
             "tools.ts",
             "export function session(s) {
-        s.tools.define({ name: 'image', description: 'd', concurrency: 'serial',
+        s.tools.add({ name: 'image', description: 'd', concurrency: 'serial',
             parameters: { type: 'object', properties: {} },
             execute() { return { text: 'image', media: [{ bytes: new Uint8Array([1]), mimeType: 'image/png' }] }; } });
-        s.hook('round.before', () => ({ model: { provider: 'test', model: 'other-model' } }));
+        s.addHook('round.before', () => ({ model: { provider: 'test', model: 'other-model' } }));
     }",
         )],
     );
@@ -399,8 +399,8 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
         &folder,
         &[(
             "tools.ts",
-            "export function session({ tools: { define } }) {\n\
-             define({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
+            "export function session({ tools: { add } }) {\n\
+             add({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
                  context.signal.addEventListener('abort', () => { throw new Error('the listener broke'); });\n\
                  context.signal.addEventListener('abort', () => { (globalThis as Record<string, unknown>).second = true; });\n\

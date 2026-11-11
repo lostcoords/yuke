@@ -21,4 +21,4 @@ source: string,
 /**
  * The text for the user.
  */
-message: string, };
+text: string, };

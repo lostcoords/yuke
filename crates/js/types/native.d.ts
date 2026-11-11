@@ -1,7 +1,6 @@
 // The native module: Rust functions for the built-in modules (crates/js/src/native).
 
 declare module "yuke:internal/native" {
-  import type { NoticeLevel } from "yuke:plugins";
   import type {
     AddPluginParams,
     AddPluginResult,
@@ -26,6 +25,7 @@ declare module "yuke:internal/native" {
     LoginOutcome,
     LoginResult,
     McpServer,
+    NoticeLevel,
     NoticeParams,
     RemovePluginParams,
     SessionId,
@@ -324,7 +324,7 @@ declare module "yuke:internal/native" {
    * - `context` gives a new copy of the blocks of the context before the round.
    * - `tokens` gives the estimated tokens of each block of the view: `head`, then the last `kept` blocks of the
    *   context. A head that is not a list of blocks throws a `TypeError`.
-   * - `sideRequest` sends the request of the round with the oldest `blocks` blocks of the view, then `prompt`. The view
+   * - `sideRequest` sends the request of the round with the oldest `blockCount` blocks of the view, then `prompt`. The view
    *   is `head`, then the last `kept` blocks of the context. A head that is not a list of blocks throws a `TypeError`. A failed request
    *   rejects with an `Error`, and a stop with `{ cancelled: true }`.
    */
@@ -354,44 +354,44 @@ declare module "yuke:internal/native" {
   }
 
   /**
-   * The file operations of `yuke:fs`. A relative path needs the absolute `baseDir`; a bad path throws a `TypeError`. A
+   * The file operations of `yuke:fs`. A relative path needs the absolute `cwd`; a bad path throws a `TypeError`. A
    * failure rejects with `{ code, message, path, destination }`, and a stop with `{ cancelled: true }`.
    */
   export function fsReadFile(
     path: string,
-    baseDir: string | undefined,
+    cwd: string | undefined,
     position: number,
     length: number | undefined,
   ): Operation<Uint8Array>;
-  export function fsReadTextFile(path: string, baseDir: string | undefined, fatal: boolean): Operation<string>;
+  export function fsReadTextFile(path: string, cwd: string | undefined, fatal: boolean): Operation<string>;
   /** `atomic` comes only with `create`. */
   export function fsWriteFile(
     path: string,
-    baseDir: string | undefined,
+    cwd: string | undefined,
     data: Uint8Array | string,
     placement: "replace" | "append" | "atomic",
     creation: "create" | "existing" | "new",
     mode: number | undefined,
   ): Operation<undefined>;
-  export function fsReadDir(path: string, baseDir: string | undefined): Operation<(Kind & { readonly name: string })[]>;
+  export function fsReadDir(path: string, cwd: string | undefined): Operation<(Kind & { readonly name: string })[]>;
   export function fsStat(
     path: string,
-    baseDir: string | undefined,
+    cwd: string | undefined,
     follow: boolean,
   ): Operation<Kind & { readonly size: number; readonly mtime: number | undefined }>;
   export function fsMkdir(
     path: string,
-    baseDir: string | undefined,
+    cwd: string | undefined,
     recursive: boolean,
     mode: number | undefined,
   ): Operation<undefined>;
   export function fsRemove(
     path: string,
-    baseDir: string | undefined,
+    cwd: string | undefined,
     recursive: boolean,
     force: boolean,
   ): Operation<undefined>;
-  export function fsRename(source: string, destination: string, baseDir: string | undefined): Operation<undefined>;
+  export function fsRename(source: string, destination: string, cwd: string | undefined): Operation<undefined>;
 
   /** At most `limit` lines from line `offset`, while they fit in `maxBytes`. */
   export function readLines(
@@ -475,7 +475,7 @@ declare module "yuke:internal/native" {
   export function sessionsOpen(request: readonly [key: number, id: SessionId, tail: number]): Promise<void>;
   /** End the hold and the view `key`. */
   export function sessionsRelease(key: number): void;
-  /** One fact of `ctx.on`: its event and its data. */
+  /** One fact of `ctx.addListener`: its event and its data. */
   export type Fact =
     | {
         readonly event: "session.update";
@@ -485,10 +485,10 @@ declare module "yuke:internal/native" {
         readonly event: "session.opened";
         readonly data: {
           readonly sessionId: SessionId;
-          readonly parent: SessionId | null;
+          readonly parent?: SessionId;
           readonly state: SessionState;
           readonly jobs: Job[];
-          readonly questions: InteractionId[];
+          readonly interactions: InteractionId[];
         };
       }
     | { readonly event: "session.closed"; readonly data: { readonly sessionId: SessionId } }

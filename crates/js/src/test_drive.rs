@@ -63,13 +63,13 @@ struct EventResult {
 
 /// The round of a `round.before` or a `round.retry` event, as plain data.
 struct EventRound {
-    context: Vec<Block>,
+    blocks: Vec<Block>,
     /// `Some` when the event names a window, also `null`. It then replaces the window of the model of the session.
     #[expect(
         clippy::option_option,
         reason = "a missing window keeps the window of the model, and null removes it"
     )]
-    window: Option<Option<u64>>,
+    context_window: Option<Option<u64>>,
     input_tokens: Option<u64>,
     system: Option<String>,
     tools: Option<Vec<ToolDefinition>>,
@@ -80,9 +80,9 @@ impl<'js> FromJs<'js> for EventRound {
     fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let event = Object::from_value(value)?;
         Ok(EventRound {
-            context: field::<Json<_>>(&event, "context")?.0,
-            window: if event.contains_key("window")? {
-                Some(field(&event, "window")?)
+            blocks: field::<Json<_>>(&event, "blocks")?.0,
+            context_window: if event.contains_key("contextWindow")? {
+                Some(field(&event, "contextWindow")?)
             } else {
                 None
             },
@@ -304,11 +304,11 @@ impl OwnedRound {
     /// The round of `event`. The model of the round is the model of the session of `script`, as in a turn.
     fn of(script: &ScriptSession, event: EventRound) -> Result<Self, TestError> {
         let mut model = script.host.model(&script.host.settings().model)?;
-        if let Some(window) = event.window {
+        if let Some(window) = event.context_window {
             model.context_window = window;
         }
         Ok(OwnedRound {
-            context: event.context,
+            context: event.blocks,
             model,
             settings: event.settings.unwrap_or_default(),
             system: event.system.unwrap_or_default(),
@@ -396,7 +396,7 @@ pub(crate) async fn run_point(
     Ok(match request.point {
         Point::ToolBefore(call) => Decision::Json(match hooks.before_tool(&call).await {
             ToolDecision::Run => json!("run"),
-            ToolDecision::Block(reason) => json!({ "block": reason }),
+            ToolDecision::Deny(reason) => json!({ "deny": reason }),
         }),
         Point::ToolAfter(call, result) => {
             let outcome = ToolOutcome {

@@ -51,7 +51,7 @@ export class ChatWorking {
   constructor(chat: ChatSession, options: ChatWorkingOptions) {
     this.#chat = chat;
     this.#now = options.now;
-    const stop = chat.onChange(() => this.#sync());
+    const stop = chat.addChangeListener(() => this.#sync());
     options.signal.addEventListener("abort", stop, { once: true });
     this.#sync();
   }
@@ -89,7 +89,7 @@ export class ChatWorking {
     return { spinner, text: `${clipped(head, Math.max(0, width - measure(tail()) - 1))} ${tail()}` };
   }
 
-  onChange(listener: () => void): () => void {
+  addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }

@@ -156,7 +156,7 @@ pub enum LiveUpdate {
         /// Why the draft has no confirmed replacement.
         reason: DraftDiscardReason,
     },
-    /// The driver handles a saved call. A blocked call also has this event.
+    /// The driver handles a saved call. A denied call also has this event.
     ToolStarted {
         /// The position of the saved call, even when the provider repeats its call id.
         execution: BlockPosition,

@@ -9,26 +9,26 @@ const call = { callId: "c1", name: "read", arguments: { path: ["src", "main.rs"]
 const answering =
   (body: SessionHooks["tool.before"]): PluginSession =>
   (s) => {
-    s.hook("tool.before", body);
+    s.addHook("tool.before", body);
   };
 
 // The first block ends the chain, so a later handler never sees the call.
-test("the first block in plugin order, then in addition order, stops the call", async () => {
+test("the first denial in plugin order, then in addition order, stops the call", async () => {
   const seen: string[] = [];
   const first: PluginSession = (s) => {
-    s.hook("tool.before", () => {
+    s.addHook("tool.before", () => {
       seen.push("first one");
       return undefined;
     });
-    s.hook("tool.before", () => {
+    s.addHook("tool.before", () => {
       seen.push("first two");
-      return { block: "first says no" };
+      return { deny: "first says no" };
     });
   };
   const second: PluginSession = (s) => {
-    s.hook("tool.before", () => {
+    s.addHook("tool.before", () => {
       seen.push("second");
-      return { block: "second says no" };
+      return { deny: "second says no" };
     });
   };
   await using host = await createHost({
@@ -39,28 +39,28 @@ test("the first block in plugin order, then in addition order, stops the call", 
   });
   const session = await host.openSession();
 
-  equal(await session.run("tool.before", { call }), { block: "first says no" });
+  equal(await session.runHook("tool.before", { call }), { deny: "first says no" });
   equal(seen, ["first one", "first two"]);
 });
 
-test("the decision is run when no handler blocks the call", async () => {
+test("the decision is run when no handler denies the call", async () => {
   await using host = await createHost({ plugins: [{ name: "quiet", session: answering(() => undefined) }] });
   const session = await host.openSession();
 
-  equal(await session.run("tool.before", { call }), "run");
+  equal(await session.runHook("tool.before", { call }), "run");
 });
 
 test("a handler gets the id, the name, and the parsed arguments of the call", async () => {
   const reader: PluginSession = (s) => {
-    s.hook("tool.before", (event) => {
+    s.addHook("tool.before", (event) => {
       const path = (event.call.arguments as { path: string[] }).path;
-      return { block: `${event.call.callId} ${event.call.name} ${path.join("/")}` };
+      return { deny: `${event.call.callId} ${event.call.name} ${path.join("/")}` };
     });
   };
   await using host = await createHost({ plugins: [{ name: "reader", session: reader }] });
   const session = await host.openSession();
 
-  equal(await session.run("tool.before", { call }), { block: "c1 read src/main.rs" });
+  equal(await session.runHook("tool.before", { call }), { deny: "c1 read src/main.rs" });
 });
 
 test("a throw stops the call and names the plugin", async () => {
@@ -70,7 +70,7 @@ test("a throw stops the call and names the plugin", async () => {
   await using host = await createHost({ plugins: [{ name: "check", session: check }] });
   const session = await host.openSession();
 
-  equal(await session.run("tool.before", { call }), {
-    block: "tool.before of plugin check failed: Error: no check today",
+  equal(await session.runHook("tool.before", { call }), {
+    deny: "tool.before of plugin check failed: Error: no check today",
   });
 });

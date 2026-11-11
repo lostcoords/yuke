@@ -25,27 +25,32 @@ const settings: Settings = {
 async function plan(plugins: readonly { name: string; session: PluginSession }[]): Promise<RoundPlan> {
   await using host = await createHost({ plugins });
   const session = await host.openSession();
-  return await session.run("round.before", { context, window: 200_000, inputTokens: 1200, settings });
+  return await session.runHook("round.before", {
+    blocks: context,
+    contextWindow: 200_000,
+    inputTokens: 1200,
+    settings,
+  });
 }
 
 /** A plugin whose `round.before` handler gives `answer`. */
 const answering =
   (answer: SessionHooks["round.before"]): PluginSession =>
   (s) => {
-    s.hook("round.before", answer);
+    s.addHook("round.before", answer);
   };
 
-test("a handler gets the window, the tokens, and the context, and no answer keeps the round", async () => {
+test("a handler gets the context window, the tokens, and the blocks, and no answer keeps the round", async () => {
   let seen = "";
   const watch: PluginSession = (s) => {
-    s.hook("round.before", (event) => {
-      const first = event.context();
+    s.addHook("round.before", (event) => {
+      const first = event.blocks();
       (first[0] as { user_text: string }).user_text = "changed";
       seen = JSON.stringify({
-        window: event.window,
+        contextWindow: event.contextWindow,
         inputTokens: event.inputTokens,
-        blocks: event.blocks,
-        context: event.context(),
+        blockCount: event.blockCount,
+        blocks: event.blocks(),
       });
       return undefined;
     });
@@ -55,7 +60,7 @@ test("a handler gets the window, the tokens, and the context, and no answer keep
   // Each call of `context` gives a new copy, so the change of the first copy is not in the second.
   equal(
     seen,
-    '{"window":200000,"inputTokens":1200,"blocks":4,"context":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":{"text":"two"}}]}',
+    '{"contextWindow":200000,"inputTokens":1200,"blockCount":4,"blocks":[{"user_text":"one"},{"tool_call":{"callId":"c1","name":"read","arguments":"{}"}},{"tool_result":{"callId":"c1","content":"done","isError":false}},{"assistant_text":{"text":"two"}}]}',
   );
 });
 
@@ -63,12 +68,12 @@ test("a later handler gets the replaced context, and the plan combines the repla
   let seen = "";
   const first = answering(() => ({ replace: { head: [{ user_text: "summary" }], keep: 1 } }));
   const second: PluginSession = (s) => {
-    s.hook("round.before", (event) => {
+    s.addHook("round.before", (event) => {
       seen = JSON.stringify({
         contextTokens: event.contextTokens,
-        blocks: event.blocks,
+        blockCount: event.blockCount,
         tokens: event.blockTokens(),
-        context: event.context(),
+        blocks: event.blocks(),
       });
       return { replace: { head: [{ user_text: "newer" }], keep: 2 } };
     });
@@ -82,7 +87,7 @@ test("a later handler gets the replaced context, and the plan combines the repla
   // The count of the newest answer describes the context before the replacement, so each block counts.
   equal(
     seen,
-    '{"contextTokens":3,"blocks":2,"tokens":[2,1],"context":[{"user_text":"summary"},{"assistant_text":{"text":"two"}}]}',
+    '{"contextTokens":3,"blockCount":2,"tokens":[2,1],"blocks":[{"user_text":"summary"},{"assistant_text":{"text":"two"}}]}',
   );
   // The second keeps the head of the first and the text, so the plan keeps 1 block of the context before the round.
   equal(planned.replace, { head: [{ user_text: "newer" }, { user_text: "summary" }], keep: 1 });
@@ -166,8 +171,8 @@ for (const [name, answer, expected] of [
 test("a round of run has the model of the session, and its window unless the event names one", async () => {
   const windows: (number | null)[] = [];
   const side: PluginSession = (s) => {
-    s.hook("round.before", async (event) => {
-      windows.push(event.window);
+    s.addHook("round.before", async (event) => {
+      windows.push(event.contextWindow);
       await event.sideRequest({ prompt: "Summarize." });
       return undefined;
     });
@@ -176,9 +181,9 @@ test("a round of run has the model of the session, and its window unless the eve
   await using host = await createHost({ plugins: [{ name: "side", session: side }], replies });
   const session = await host.openSession({ model: { provider: "openai", model: "gpt-4.1" } });
 
-  await session.run("round.before", { context: [{ user_text: "one" }] });
-  await session.run("round.before", { context: [{ user_text: "one" }], window: 1000 });
-  await session.send("A turn.");
+  await session.runHook("round.before", { blocks: [{ user_text: "one" }] });
+  await session.runHook("round.before", { blocks: [{ user_text: "one" }], contextWindow: 1000 });
+  await session.sendMessage("A turn.");
 
   const [run, named, turn] = windows;
   equal([run === turn, named, typeof turn], [true, 1000, "number"]);

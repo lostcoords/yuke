@@ -218,6 +218,9 @@ pub(crate) fn create_data_folders(plugins: &[Plugin]) -> Result<(), String> {
     Ok(())
 }
 
+/// The services of yuke itself, as `HostService` of `yuke:plugins` names them.
+const HOST_SERVICES: [&str; 3] = ["tui", "sessions", "catalog"];
+
 /// Check `plugins` and give their load order: each provider before each plugin that uses it, else the order of the
 /// list. Each name comes once, and each service has one provider.
 ///
@@ -242,6 +245,11 @@ pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
             None => {}
         }
         for service in &plugin.provides {
+            if HOST_SERVICES.contains(&service.as_str()) {
+                return Err(fail(format!(
+                    "'{service}' is a service of yuke, and no plugin provides it"
+                )));
+            }
             if let Some(provider) = providers.insert(service, &plugin.name) {
                 return Err(fail(format!("plugin {provider} provides '{service}' already")));
             }

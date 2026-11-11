@@ -672,7 +672,7 @@ mod tests {
             request(&run),
         );
 
-        // A canceled turn ends on the result, so the next user text takes the image instead of a second user message.
+        // A cancelled turn ends on the result, so the next user text takes the image instead of a second user message.
         let merged = [
             call("call_1", "read", "{}"),
             Block::ToolResult(ToolResult::success("call_1", "PNG image").with_media(image.to_vec())),

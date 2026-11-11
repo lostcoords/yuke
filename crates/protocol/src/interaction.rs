@@ -80,7 +80,7 @@ pub enum InteractionResponse {
         answers: Vec<QuestionAnswer>,
     },
     /// The user closed the request without an answer.
-    Canceled,
+    Cancelled,
 }
 
 /// The params of `interaction/respond`: the answer of the user to an open question.

@@ -10,13 +10,13 @@ import { rows } from "./rows.ts";
 /** Save the pick `p/m` at the level high, so a send needs no picker. */
 async function savedPick(): Promise<void> {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
 }
 
 /** The status items of `chat` as key and text. */
 function items(chat: Awaited<ReturnType<typeof loadChat>>): string[][] {
-  return chat.tui.status.list().map((item) => [item.key, item.text]);
+  return chat.tui.status.list().map((item) => [item.id, item.text]);
 }
 
 /** A session in `/w` with one answer, so the bar shows a context item. */

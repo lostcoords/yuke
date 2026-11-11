@@ -146,7 +146,7 @@ export class Styles {
   }
 
   /** Change `groups`, and return the disposer of the change. */
-  set(groups: Readonly<Record<string, StylePatch>>): () => void {
+  add(groups: Readonly<Record<string, StylePatch>>): () => void {
     const layer = new Map<string, StylePatch>();
     for (const [name, patch] of Object.entries(groups)) {
       layer.set(name, { ...patch });

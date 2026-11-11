@@ -116,7 +116,7 @@ fn add_reports<'js>(
             move |ctx: Ctx<'js>,
                   source: String,
                   level: String,
-                  message: String,
+                  text: String,
                   session_id: Option<Json<SessionId>>|
                   -> rquickjs::Result<()> {
                 let Some(level) = super::notice_level(&level) else {
@@ -130,7 +130,7 @@ fn add_reports<'js>(
                     session_id: session_id.map(|Json(id)| id),
                     level,
                     source,
-                    message,
+                    text,
                 };
                 if reports.send(Report::Notice(notice)).is_err() {
                     // The owner dropped the receiver, so it ignores notices.

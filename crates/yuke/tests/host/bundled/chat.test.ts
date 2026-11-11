@@ -9,7 +9,7 @@ import { assert, createFrame, createHost, equal, type FrameTest, folder, reply, 
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
-  s.tools.define({
+  s.tools.add({
     name: "greet",
     description: "Greet someone.",
     concurrency: "serial",
@@ -29,7 +29,7 @@ async function chatFrame(sessions: Sessions, id: string): Promise<FrameTest> {
   };
   await chat({
     get: (name: string) => services[name],
-    on: () => () => {},
+    addListener: () => () => {},
     provide() {},
     options: {},
     signal: surface.signal,
@@ -67,7 +67,7 @@ test("a pane draws the same transcript live and after a reload", async () => {
   const session = await host.openSession();
   const service = sessions as Sessions;
   using live = await chatFrame(service, session.id);
-  await session.send("Greet Ada.");
+  await session.sendMessage("Greet Ada.");
   await waitForSettled();
   live.draw();
   using reloaded = await chatFrame(service, session.id);
@@ -97,7 +97,7 @@ test("the first send of a pane with a saved choice creates its session and gets 
     replies: [reply.text("Hi there.")],
   });
   await writeTextFile("choice.json", '{"model":{"provider":"minimax","model":"MiniMax-M3"},"reasoning":"high"}', {
-    baseDir: folder(),
+    cwd: folder(),
   });
   const startup = { cwd: folder() };
   using frame = createFrame({ width: 30, height: 10 }, undefined, startup);
@@ -106,7 +106,7 @@ test("the first send of a pane with a saved choice creates its session and gets 
   const get = (name: string) => (name === "tui" ? surface.tui : name === "catalog" ? known.catalog : known.sessions);
   await chat({
     get,
-    on: () => () => {},
+    addListener: () => () => {},
     provide() {},
     options: {},
     signal: surface.signal,
@@ -144,7 +144,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   const list = sessions as unknown as Sessions;
   const child = await list.create(settings as unknown as SessionSettings, { parent: parent.id });
   const held = await list.open(child, { tail: 0, onEvent() {} });
-  await held.sendMessage([{ user_text: "Read the store." }]);
+  await held.sendMessage({ content: [{ user_text: "Read the store." }] });
   await held.waitForIdle();
 
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });
@@ -157,7 +157,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   let shown: ChatService | undefined;
   await chat({
     get: (name: string) => services[name],
-    on: () => () => {},
+    addListener: () => () => {},
     provide: (_name: string, service: ChatService) => {
       shown = service;
     },

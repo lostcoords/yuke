@@ -93,7 +93,7 @@ test("a view style fills its rect and is the base of each style of the view and 
       { view: outside, rect: { column: 0, row: 3, width: 4, height: 1 } },
     ],
   }));
-  frame.surface("demo").tui.styles.set({ "demo:inner": { fg: 4 } });
+  frame.surface("demo").tui.styles.add({ "demo:inner": { fg: 4 } });
   const cells = frame.draw().cells;
   equal(cells[0]?.[0]?.style, { bg: 2 });
   equal(cells[0]?.[1]?.style, { fg: 1, bg: 2 });
@@ -110,7 +110,7 @@ test("a view style fills its rect and is the base of each style of the view and 
 test("a list of styles merges per field and a later style wins", () => {
   using frame = createFrame({ width: 4, height: 1 });
   const surface = frame.surface("demo");
-  surface.tui.styles.set({ "demo:mark": { fg: 1, bold: true } });
+  surface.tui.styles.add({ "demo:mark": { fg: 1, bold: true } });
   surface.tui.wrapRoot(() => ({
     draw: (canvas) => {
       canvas.text(0, 0, "a", ["demo:mark", { bold: false, bg: 2 }]);
@@ -126,7 +126,7 @@ test("a dispose closes the root, so the mounts of its widgets end", () => {
     layout: () => [{ view: editor, rect: { column: 0, row: 0, width: 4, height: 1 } }],
   }));
   const signals: AbortSignal[] = [];
-  frame.surface("demo").tui.widgets.watch((mount) => {
+  frame.surface("demo").tui.widgets.addWatcher((mount) => {
     signals.push(mount.signal);
     return undefined;
   });
@@ -171,7 +171,7 @@ test("the pane dividers have a default look that a plugin changes", () => {
           .find((cell) => cell.text === line)?.style,
     );
   const before = looks();
-  tui.styles.set({ "panes.divider": { fg: 1, dim: null } });
+  tui.styles.add({ "panes.divider": { fg: 1, dim: null } });
   equal(
     [before, looks()],
     [

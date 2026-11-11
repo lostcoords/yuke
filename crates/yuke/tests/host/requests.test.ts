@@ -6,7 +6,7 @@ import { createHost, equal, rejects, test, waitForSettled } from "yuke:test";
 
 /** A plugin whose tool `read_session` sends a request. It gives the result, the error, or an event of a failure. */
 const requester: PluginSession = (s) => {
-  s.tools.define({
+  s.tools.add({
     name: "read_session",
     description: "Read a session.",
     concurrency: "serial",

@@ -60,7 +60,7 @@ export function dialogView(options: DialogOptions): View {
       if (!shown.some((entry) => entry.stroke === "esc")) hints.push({ keys: "esc", label: "close" });
       canvas.text(1, canvas.height - 1, hints.map((hint) => `${hint.keys}: ${hint.label}`).join(" · "), KEYS);
     },
-    key: (event) => {
+    onKey: (event) => {
       const stroke = strokeOf(event);
       const entry = active().find((candidate) => candidate.stroke === stroke);
       if (entry !== undefined) {

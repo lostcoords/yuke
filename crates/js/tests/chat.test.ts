@@ -53,7 +53,7 @@ test("ensure opens the session again after the end of its handle", async () => {
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
   await chat.open("s1");
   const changes: (boolean | undefined)[] = [];
-  chat.onChange(() => changes.push(chat.handle !== undefined));
+  chat.addChangeListener(() => changes.push(chat.handle !== undefined));
   sessions.close("s1");
   const handle = await chat.ensure(async () => undefined);
   equal([changes.slice(0, 1), handle === chat.handle, sessions.opened.length], [[false], true, 2]);
@@ -147,14 +147,14 @@ test("a composer makes one span of a long paste, and a paste handler added later
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   const editor = new TextEditor();
   new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
-  editor.paste("a".repeat(301));
+  editor.onPaste("a".repeat(301));
   const spanCount = editor.state.spans.length;
   editor.reset({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
-  editor.extend(owner.signal).onPaste((text) => {
+  editor.extend(owner.signal).addPasteHandler((text) => {
     editor.replace(0, 0, "claimed");
     return text.length > 0;
   });
-  editor.paste("b".repeat(301));
+  editor.onPaste("b".repeat(301));
   equal([spanCount, editor.state.text, editor.state.spans], [1, "claimed", []]);
 });
 
@@ -232,7 +232,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   const failures: string[] = [];
   const questions = new ChatQuestions(chat, { signal: owner.signal, onError: (error) => failures.push(String(error)) });
   let changes = 0;
-  questions.onChange(() => {
+  questions.addChangeListener(() => {
     changes += 1;
   });
   const ask = (id: number) =>
@@ -258,7 +258,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   questions.cancel();
   equal(
     [first !== undefined, second !== undefined && second !== first, sessions.responses, failures, changes],
-    [true, true, [[7, { kind: "canceled" }]], ["Error: no open question 8", "Error: no open question 8"], 2],
+    [true, true, [[7, { kind: "cancelled" }]], ["Error: no open question 8", "Error: no open question 8"], 2],
   );
 });
 
@@ -289,7 +289,7 @@ test("the timer counts from observation, resets for another session, and stops w
   let now = 10_000;
   const working = new ChatWorking(chat, { signal: owner.signal, now: () => now });
   const changes: boolean[] = [];
-  working.onChange(() => changes.push(working.active));
+  working.addChangeListener(() => changes.push(working.active));
   now = 71_000;
   const first = working.text({ cancelKey: "esc" })?.text;
   await chat.open("s2");

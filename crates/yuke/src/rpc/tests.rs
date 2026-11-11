@@ -70,6 +70,8 @@ impl Client {
         let (server_output, output) = tokio::io::duplex(1 << 16);
         let machine = Machine {
             exchange: Arc::new(exchange),
+            // A plugin of a test reaches the credentials through `yuke:internal/sessions`, as the bundled `login` does.
+            internal_imports: true,
             ..place.machine(Box::new(with_key), transport)
         };
         let server = tokio::task::spawn_local(serve(

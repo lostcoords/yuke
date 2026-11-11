@@ -9,16 +9,13 @@ import { frozen, jsonCopy } from "yuke:internal/values";
 import type {
   AskOptions,
   AskRequest,
+  CallJobOptions,
   Cleanup,
-  FinishReason,
-  InputKind,
-  InputSource,
   JobOptions,
   JobOutcome,
   JobReport,
   JobWork,
   KeptMedia,
-  NoticeLevel,
   RequestOptions,
   ResultMedia,
   RoundAfterAnswer,
@@ -34,8 +31,18 @@ import type {
   ToolCallResult,
 } from "yuke:plugins";
 import { ExtensionRequestError } from "yuke:plugins";
-import type { Block, ExtensionRequestParams, QuestionAnswer, SessionSettings } from "yuke:protocol";
-import type { DisplayBlock, ObjectSchema, Tool, ToolMedia } from "yuke:tools";
+import type {
+  Block,
+  DisplayBlock,
+  ExtensionRequestParams,
+  FinishReason,
+  InputKind,
+  InputSource,
+  NoticeLevel,
+  QuestionAnswer,
+  SessionSettings,
+} from "yuke:protocol";
+import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
 /** The handlers of each hook point, in the order of their addition. Each point of `SessionHooks` is a key. */
 type HookLists = { readonly [K in keyof SessionHooks]: SessionHooks[K][] };
@@ -191,8 +198,8 @@ interface ToolBeforeRequest {
 }
 
 /**
- * Start the `tool.before` handlers of the open session `open` on `call`. The answer is the reason of the first block,
- * or `undefined` when the call runs. A closed session blocks nothing. A failed handler throws. `cancel` aborts the
+ * Start the `tool.before` handlers of the open session `open` on `call`. The answer is the reason of the first denial,
+ * or `undefined` when the call runs. A closed session denies nothing. A failed handler throws. `cancel` aborts the
  * signal of the call.
  */
 export function startToolBefore(request: ToolBeforeRequest): Operation<string | undefined> {
@@ -205,7 +212,7 @@ export function startToolBefore(request: ToolBeforeRequest): Operation<string | 
       "tool.before",
       (handler) => handler(event),
       (answer) => {
-        reason = answer.block;
+        reason = answer.deny;
         return true;
       },
     );
@@ -241,8 +248,8 @@ export function startInputBefore(
         "input.before",
         (handler) => handler(Object.freeze({ source: frozen(source), kind, blocks: frozen(current), signal })),
         (answer, plugin) => {
-          if (answer.block !== undefined) {
-            notify(plugin, "warn", `the plugin blocked the input: ${answer.block}`, sessionId);
+          if (answer.deny !== undefined) {
+            notify(plugin, "warn", `the plugin denied the input: ${answer.deny}`, sessionId);
             removed = true;
             return true;
           }
@@ -310,7 +317,7 @@ async function sideRequest(
   kept: number,
   options: SideRequestOptions,
 ): Promise<SideRequestResult> {
-  const { prompt, blocks = head.length + kept, maxOutputTokens, signal } = options;
+  const { prompt, blockCount: blocks = head.length + kept, maxOutputTokens, signal } = options;
   const request = { head: jsonCopy(head, "the answer"), kept, blocks, prompt, maxOutputTokens };
   return Object.freeze(await underStop(signal, () => round.sideRequest(request)));
 }
@@ -354,12 +361,12 @@ function startRoundPlan<K extends RoundPoint>(
         const replaced = seen.head.length > 0 || seen.kept !== blocks;
         const event = Object.freeze({
           ...facts,
-          window: window ?? null,
+          contextWindow: window ?? null,
           inputTokens: inputTokens ?? null,
           contextTokens: replaced ? tokens().reduce((sum, count) => sum + count, 0) : contextTokens,
-          blocks: seen.head.length + seen.kept,
+          blockCount: seen.head.length + seen.kept,
           blockTokens: tokens,
-          context: () => {
+          blocks: () => {
             const before = round.context();
             return [...jsonCopy(seen.head, "the answer"), ...before.slice(before.length - seen.kept)];
           },
@@ -610,7 +617,7 @@ function start(
   open: number,
   sessionId: string,
   parent: string | undefined,
-  folder: string,
+  cwd: string,
   ask: Ask,
   send: SendRequest,
   settings: () => SessionSettings,
@@ -653,7 +660,7 @@ function start(
    * Run `work` as a job of the scope. With `call`, the signal of a tool call, the call waits for the job until a background
    * request moves it. The native job decides where the end of `work` goes, so a move and an end cannot both answer.
    */
-  const runJob = async (job: JobOptions, work: JobWork, call: AbortSignal | undefined): Promise<JobOutcome> => {
+  const runJob = async (job: CallJobOptions, work: JobWork, call: AbortSignal | undefined): Promise<JobOutcome> => {
     if (scope.closed) throw new TypeError(`plugin ${plugin} starts a job after the end of its session`);
     const id = job.id;
     const native = startJob(plugin, id, job.label, call !== undefined);
@@ -705,14 +712,14 @@ function start(
   const s: SessionContext<Options> = Object.freeze({
     sessionId,
     parent,
-    folder,
+    cwd,
     get settings(): SessionSettings {
       return frozen(settings());
     },
     options,
     signal,
     tools: Object.freeze({
-      define<const S extends ObjectSchema>(tool: Tool<S>): () => void {
+      add<const S extends ObjectSchema>(tool: Tool<S>): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} defines a tool after the end of its session`);
         const registration = defineTool(tool, { open, plugin }, (call) => ({
           run: (job, work) => runJob(job, work, job.background === true ? undefined : call),
@@ -728,17 +735,19 @@ function start(
         }
         return () => unregister([registration.id]);
       },
-      remove(name: string): void {
+      remove(name: string): () => void {
         if (scope.closed) throw new TypeError(`plugin ${plugin} removes a tool after the end of its session`);
-        scope.toolChanges.push(removeTool({ open, plugin }, name));
+        const id = removeTool({ open, plugin }, name);
+        scope.toolChanges.push(id);
+        return () => unregister([id]);
       },
     }),
     jobs: Object.freeze({
-      async run(job: Omit<JobOptions, "background">, work: JobWork): Promise<void> {
+      async start(job: JobOptions, work: JobWork): Promise<void> {
         await runJob(job, work, undefined);
       },
     }),
-    hook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
+    addHook<K extends keyof SessionHooks>(point: K, handler: SessionHooks[K]): () => void {
       if (scope.closed) throw new TypeError(`plugin ${plugin} adds a hook after the end of its session`);
       const handlers: SessionHooks[K][] = scope.hooks[point];
       handlers.push(handler);

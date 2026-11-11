@@ -51,13 +51,13 @@ test("assert, throws, and rejects fail with a message", async () => {
 // The two tests run in this order. The first test leaves a global and a file. The second test sees neither.
 test("a test leaves a global and a file behind", async () => {
   Reflect.set(globalThis, "leftover", true);
-  await writeTextFile("left.txt", "x", { baseDir: folder() });
+  await writeTextFile("left.txt", "x", { cwd: folder() });
   equal(Reflect.has(globalThis, "leftover"), true);
 });
 
 test("the next test runs in a fresh runtime with an empty folder of its own", async () => {
   equal(Reflect.has(globalThis, "leftover"), false);
-  equal(await readDir(".", { baseDir: folder() }), []);
+  equal(await readDir(".", { cwd: folder() }), []);
 });
 
 test("a host needs the runner of yuke test", async () => {

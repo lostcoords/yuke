@@ -2,10 +2,7 @@
 
 import type { GenerateTextOptions } from "yuke:ai";
 import type {
-  Auth,
-  Block,
   Catalog,
-  FinishReason,
   Frozen,
   PluginApply,
   PluginContext,
@@ -22,6 +19,7 @@ import type {
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
+import type { Block, FinishReason } from "yuke:protocol";
 import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -40,7 +38,7 @@ declare module "yuke:plugins" {
 }
 
 // An inline schema needs no `as const`. A required field is required, another is optional, and nested types follow.
-s.tools.define({
+s.tools.add({
   name: "summarize",
   description: "d",
   concurrency: "parallel",
@@ -103,7 +101,7 @@ assert<
 >();
 
 // An inline `enum` gives the union of its values, and a list typed as `string[]` gives `string`.
-s.tools.define({
+s.tools.add({
   name: "sort",
   description: "d",
   concurrency: "parallel",
@@ -159,7 +157,7 @@ const session: PluginSession = async (scope) => {
 // @ts-expect-error: a cleanup is a function.
 const valued: PluginSession = () => 5;
 const plain: PluginSession = async (scope) => {
-  await Promise.resolve(scope.folder);
+  await Promise.resolve(scope.cwd);
 };
 const quiet: PluginSession = (scope) => {
   scope.notify("info", "x");
@@ -184,35 +182,42 @@ ctx.provide("test.notes.v1", null);
 // The sessions and the catalog of yuke are services that are never undefined, in each mode.
 assert<Equal<ReturnType<typeof ctx.get<"sessions">>, Sessions>>();
 assert<Equal<ReturnType<typeof ctx.get<"catalog">>, Catalog>>();
-assert<Equal<ReturnType<typeof ctx.get<"auth">>, Auth>>();
+// @ts-expect-error: the credentials are no service of the plugins.
+ctx.get("auth");
+// @ts-expect-error: no plugin provides a service of yuke.
+ctx.provide("catalog", { list: async () => ({ providers: [] }) });
 export async function drive(sessions: Sessions): Promise<void> {
   const handle = await sessions.open("id", { tail: 50, onEvent: (event) => void event });
-  await handle.sendMessage([{ user_text: "hi" }]);
+  await handle.sendMessage({ content: [{ user_text: "hi" }] });
   // @ts-expect-error: an input holds blocks, not a text.
   await handle.sendMessage("hi");
   // @ts-expect-error: the snapshot needs a tail.
   await sessions.open("id", { onEvent: () => undefined });
   // @ts-expect-error: the callback is `onEvent`.
   await sessions.open("id", { tail: 0, event: () => undefined });
-  // @ts-expect-error: a handle ends by its signal. Only `sessions.closeForAll` closes the session for each holder.
-  await handle.close();
+  // A close ends this hold only, and `using` closes the handle too. `sessions.closeForAll` closes the session for each holder.
+  handle.close();
+  {
+    using held = await sessions.open("id", { tail: 0, onEvent: () => undefined });
+    void held.id;
+  }
   await sessions.closeForAll(handle.id);
 }
 
 // `yuke:fs` takes a base folder and a signal, and its failure has a code.
 async function files(): Promise<void> {
   const fs = await import("yuke:fs");
-  const text: string = await fs.readTextFile("state.json", { baseDir: ctx.dataDir, signal: ctx.signal });
-  const bytes: Uint8Array = await fs.readFile("data.bin", { baseDir: ctx.dataDir, position: 0, length: 4 });
+  const text: string = await fs.readTextFile("state.json", { cwd: ctx.dataDir, signal: ctx.signal });
+  const bytes: Uint8Array = await fs.readFile("data.bin", { cwd: ctx.dataDir, position: 0, length: 4 });
   // A module finds the files beside it through `import.meta`. A built-in module has no folder.
   const here: string | undefined = import.meta.dirname;
   // @ts-expect-error: `dirname` can be undefined.
   const folder: string = import.meta.dirname;
   const url: string = import.meta.url;
-  const info: Date | null = (await fs.stat("prompt.md", { baseDir: here ?? ctx.dataDir })).mtime;
-  await fs.writeTextFile("state.json", text, { baseDir: ctx.dataDir, atomic: true, mode: 0o600 });
+  const info: Date | null = (await fs.stat("prompt.md", { cwd: here ?? ctx.dataDir })).mtime;
+  await fs.writeTextFile("state.json", text, { cwd: ctx.dataDir, atomic: true, mode: 0o600 });
   // @ts-expect-error: the data of `writeFile` is bytes.
-  await fs.writeFile("data.bin", "text", { baseDir: ctx.dataDir });
+  await fs.writeFile("data.bin", "text", { cwd: ctx.dataDir });
   void bytes;
   void info;
   void folder;
@@ -312,7 +317,7 @@ void models;
 export { results };
 
 // A `prompt.build` handler gets the sections, and answers new sections or nothing.
-const remove: () => void = s.hook("prompt.build", (event) => {
+const remove: () => void = s.addHook("prompt.build", (event) => {
   assert<Equal<typeof event, PromptBuildEvent>>();
   assert<Equal<typeof event.sections, Readonly<Record<string, string>>>>();
   // @ts-expect-error: a handler changes the sections through its answer.
@@ -320,37 +325,37 @@ const remove: () => void = s.hook("prompt.build", (event) => {
   return { sections: { ...event.sections, rules: "Be brief." } };
 });
 remove();
-s.hook("prompt.build", async ({ sections }): Promise<PromptBuildAnswer> => {
+s.addHook("prompt.build", async ({ sections }): Promise<PromptBuildAnswer> => {
   await Promise.resolve();
   const { environment: _, ...rest } = sections;
   return { sections: rest };
 });
 // @ts-expect-error: an answer is an object.
-s.hook("prompt.build", () => "done");
+s.addHook("prompt.build", () => "done");
 // @ts-expect-error: an input answer has one decision.
-s.hook("input.before", () => ({ handled: true as const, block: "no" }));
+s.addHook("input.before", () => ({ handled: true as const, deny: "no" }));
 // @ts-expect-error: no hook has this point.
-s.hook("turn.start", () => undefined);
+s.addHook("turn.start", () => undefined);
 
-// A `tool.before` handler gets the call and blocks it with a reason, or returns nothing.
-s.hook("tool.before", (event) => {
+// A `tool.before` handler gets the call and denies it with a reason, or returns nothing.
+s.addHook("tool.before", (event) => {
   assert<Equal<typeof event, ToolBeforeEvent>>();
   assert<Equal<typeof event.call, ToolCall>>();
   assert<Equal<typeof event.call.arguments, unknown>>();
   // @ts-expect-error: the call belongs to the model.
   event.call.name = "write";
-  if (event.call.name === "exec") return { block: "exec needs the user" };
+  if (event.call.name === "exec") return { deny: "exec needs the user" };
   return undefined;
 });
-s.hook("tool.before", async ({ call }): Promise<ToolBeforeAnswer | undefined> => {
+s.addHook("tool.before", async ({ call }): Promise<ToolBeforeAnswer | undefined> => {
   await Promise.resolve();
-  return call.callId === "" ? { block: "no id" } : undefined;
+  return call.callId === "" ? { deny: "no id" } : undefined;
 });
-// @ts-expect-error: a block names its reason as a string.
-s.hook("tool.before", () => ({ block: true }));
+// @ts-expect-error: a denial names its reason as a string.
+s.addHook("tool.before", () => ({ deny: true }));
 
 // A `tool.after` handler gets the call and the result, and answers the changed fields or nothing.
-s.hook("tool.after", ({ call, result }) => {
+s.addHook("tool.after", ({ call, result }) => {
   assert<Equal<typeof result, ToolCallResult>>();
   // @ts-expect-error: a handler changes the result through its answer.
   result.text = "";
@@ -360,15 +365,17 @@ s.hook("tool.after", ({ call, result }) => {
     media: [...result.media.slice(1), { mimeType: "image/png", path: "a.png" }],
   };
 });
-s.hook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
+s.addHook("tool.after", async (): Promise<ToolAfterAnswer | undefined> => {
   await Promise.resolve();
   return { isError: true };
 });
 // An optional field takes `undefined` as missing, as the runtime does.
 declare const maybe: boolean | undefined;
-s.hook("tool.after", () => ({ text: undefined, isError: maybe, media: undefined }));
-s.hook("tool.after", ({ result }) => ({ media: [{ id: "0", mimeType: undefined, size: undefined }, ...result.media] }));
-s.tools.define({
+s.addHook("tool.after", () => ({ text: undefined, isError: maybe, media: undefined }));
+s.addHook("tool.after", ({ result }) => ({
+  media: [{ id: "0", mimeType: undefined, size: undefined }, ...result.media],
+}));
+s.tools.add({
   name: "maybe",
   description: "d",
   concurrency: "serial",
@@ -377,36 +384,38 @@ s.tools.define({
   execute: () => ({ text: "x", isError: maybe, media: undefined }),
 });
 // A copy of an item keeps it, and so does its id alone.
-s.hook("tool.after", ({ result }) => ({ media: [...result.media.map((item) => ({ ...item })), { id: "ab" }] }));
+s.addHook("tool.after", ({ result }) => ({ media: [...result.media.map((item) => ({ ...item })), { id: "ab" }] }));
 // @ts-expect-error: an answer has no field outside text, isError, and media.
-s.hook("tool.after", () => ({ content: "x" }));
+s.addHook("tool.after", () => ({ content: "x" }));
 const mixed = { id: "ab", mimeType: "image/png", bytes: new Uint8Array() };
 // @ts-expect-error: an item with an id keeps an item, so it has no path or bytes.
-s.hook("tool.after", () => ({ media: [mixed] }));
+s.addHook("tool.after", () => ({ media: [mixed] }));
 // @ts-expect-error: a new media item needs a path or bytes.
-s.hook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
+s.addHook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
 
-// A round.before handler reads the window and the tokens, and answers a summary of the old blocks.
-s.hook("round.before", ({ window, contextTokens, blockTokens, context }): RoundBeforeAnswer | undefined => {
-  if (window === null || contextTokens < window * 0.8) return undefined;
-  const tokens: number[] = blockTokens();
-  const summary: Block = { user_text: `${context().length} blocks, ${tokens.length} estimates before this summary.` };
+// A round.before handler reads the context window and the tokens, and answers a summary of the old blocks.
+s.addHook("round.before", (event): RoundBeforeAnswer | undefined => {
+  const window = event.contextWindow;
+  if (window === null || event.contextTokens < window * 0.8) return undefined;
+  const tokens: number[] = event.blockTokens();
+  const count: number = event.blockCount;
+  const summary: Block = { user_text: `${event.blocks().length} of ${count} blocks, ${tokens.length} estimates.` };
   return { replace: { head: [summary], keep: 4 }, settings: { temperature: 0 } };
 });
 // @ts-expect-error: a block holds one known kind.
-s.hook("round.before", () => ({ replace: { head: [{ text: "x" }], keep: 0 } }));
+s.addHook("round.before", () => ({ replace: { head: [{ text: "x" }], keep: 0 } }));
 // @ts-expect-error: a model names its provider and its model.
-s.hook("round.before", () => ({ model: { model: "x" } }));
+s.addHook("round.before", () => ({ model: { model: "x" } }));
 
 // A round.after handler reads the reason and the count, and answers a stop or a continue.
-s.hook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {
+s.addHook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {
   if (finishReason === null) return undefined;
   return continues < 3 ? { continue: "Run the tests." } : { stop: true };
 });
 // @ts-expect-error: an answer is a stop or a continue, not both.
-s.hook("round.after", () => ({ stop: true, continue: "x" }));
+s.addHook("round.after", () => ({ stop: true, continue: "x" }));
 // @ts-expect-error: a stop is `true`.
-s.hook("round.after", () => ({ stop: false }));
+s.addHook("round.after", () => ({ stop: false }));
 
 // The web globals declare what the runtime has, and no more.
 new TextDecoder("utf8");
@@ -439,9 +448,9 @@ export const sessionWithOptions: PluginSession<Options> = (session) => {
 // @ts-expect-error: a plugin without options has no option field.
 export const noOption: string = ctx.options.folder;
 
-// Each definition has its own disposer. A name removal needs no return value.
-assert<Equal<ReturnType<SessionContext["tools"]["define"]>, () => void>>();
-assert<Equal<ReturnType<SessionContext["tools"]["remove"]>, void>>();
+// Each definition and each name removal has its own disposer.
+assert<Equal<ReturnType<SessionContext["tools"]["add"]>, () => void>>();
+assert<Equal<ReturnType<SessionContext["tools"]["remove"]>, () => void>>();
 s.tools.remove("read");
 // @ts-expect-error A tool name is a string.
 s.tools.remove(1);

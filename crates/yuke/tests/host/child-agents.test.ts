@@ -1,6 +1,7 @@
 // The whole flow of a child agent: the smallest plugin that uses `parent` and `context.jobs` together.
 
-import type { PluginApply, PluginSession, QuestionAnswer, Sessions } from "yuke:plugins";
+import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
+import type { QuestionAnswer } from "yuke:protocol";
 import { createHost, equal, type Reply, reply, test, waitForSettled } from "yuke:test";
 
 /** The plugin. Its tool `spawn_subagent` runs the one child of a session as the job `explorer`. */
@@ -17,7 +18,7 @@ function agents() {
   };
   const session: PluginSession = (s) => {
     // The child asks here. The plugin forwards the question to the parent.
-    s.tools.define({
+    s.tools.add({
       name: "ask",
       description: "Ask the user.",
       concurrency: "serial",
@@ -30,7 +31,7 @@ function agents() {
         ),
     });
     // The child waits here until a test opens the gate.
-    s.tools.define({
+    s.tools.add({
       name: "gate",
       description: "Wait for the test.",
       concurrency: "parallel",
@@ -40,7 +41,7 @@ function agents() {
         return "open";
       },
     });
-    s.tools.define({
+    s.tools.add({
       name: "spawn_subagent",
       description: "Run a child.",
       concurrency: "parallel",
@@ -67,13 +68,13 @@ function agents() {
                 .then((answers) =>
                   handle.respond(
                     update.interactionId,
-                    answers === undefined ? { kind: "canceled" } : { kind: "questions", answers },
+                    answers === undefined ? { kind: "cancelled" } : { kind: "questions", answers },
                   ),
                 );
             },
           });
           signal.addEventListener("abort", () => handle.cancel());
-          await handle.sendMessage([{ user_text: args.message }]);
+          await handle.sendMessage({ content: [{ user_text: args.message }] });
           await handle.waitForIdle();
           const events = await list.events(child, { limit: 2 });
           ended.abort();

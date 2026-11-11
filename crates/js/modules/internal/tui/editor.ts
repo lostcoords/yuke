@@ -27,6 +27,7 @@ import type {
   TextCoordinates,
   TextEdit,
   TextExtension,
+  TextWidget,
 } from "yuke:tui";
 
 const SELECTION = "editor.selection";
@@ -87,7 +88,7 @@ interface Mark {
   readonly wholeRows: boolean;
 }
 
-export class TextEditor {
+export class TextEditor implements TextWidget<number, EditorChange> {
   readonly kind = "editor";
   readonly focusable = true;
   /** A press focuses the editor. An owner that keeps the focus itself, as a question does, sets it to false. */
@@ -117,7 +118,7 @@ export class TextEditor {
     this.#multiline = options.multiline !== false;
     this.#mask = options.mask === true;
     this.#placeholder = options.placeholder ?? "";
-    this.#submit = options.submit;
+    this.#submit = options.onSubmit;
     this.#support = new TextSupport(options.group);
     this.#appearance = options.appearance === undefined ? {} : Object.freeze({ ...options.appearance });
     this.#state = this.#checked(options.state ?? { text: "", selection: { anchor: 0, head: 0 }, spans: [] });
@@ -298,7 +299,7 @@ export class TextEditor {
     return shape === undefined ? at : { ...at, shape };
   }
 
-  key(event: KeyEvent): boolean {
+  onKey(event: KeyEvent): boolean {
     if (this.#support.key(event, "beforeDefault")) return true;
     const stroke = strokeOf(event);
     const select = stroke.startsWith("shift+");
@@ -360,7 +361,7 @@ export class TextEditor {
     return true;
   }
 
-  mouse(event: MouseEvent): boolean {
+  onMouse(event: MouseEvent): boolean {
     if (this.#support.mouse(event)) return true;
     if (event.button === "wheel_up" || event.button === "wheel_down") {
       const count = this.#rowCount(this.#current());
@@ -390,7 +391,7 @@ export class TextEditor {
     return true;
   }
 
-  paste(text: string): boolean {
+  onPaste(text: string): boolean {
     if (this.#support.paste(text)) return true;
     const { anchor, head } = this.#state.selection;
     this.replace(Math.min(anchor, head), Math.max(anchor, head), text);

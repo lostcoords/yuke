@@ -317,7 +317,7 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
         &[(
             "entry.ts",
             "export function session(s) {
-               s.hook('round.before', (event) => {
+               s.addHook('round.before', (event) => {
                  globalThis.answer = event.sideRequest({ prompt: 'Summarize.' });
                });
              }",
@@ -378,7 +378,7 @@ async fn s_settings_gives_the_settings_of_the_session_now_frozen() {
         "return [
            JSON.stringify(s.settings.model),
            s.settings.settings.reasoning.effort,
-           s.settings.cwd === s.folder,
+           s.settings.cwd === s.cwd,
            Object.isFrozen(s.settings),
            Object.isFrozen(s.settings.settings.reasoning),
          ].map(String);",

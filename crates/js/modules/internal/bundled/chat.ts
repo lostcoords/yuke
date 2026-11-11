@@ -203,7 +203,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       }
     },
     session: (view) => panes.get(view)?.session(),
-    onChange: (listener) => {
+    addChangeListener: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
@@ -255,19 +255,22 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   });
   if (tui === undefined) return undefined;
   // The work of each open session that a quit stops, also of a session that no pane shows.
-  const work = new Map<SessionId, { readonly parent: SessionId | null; turn: boolean; readonly jobs: Set<string> }>();
-  ctx.on("session.opened", (data) => {
+  const work = new Map<
+    SessionId,
+    { readonly parent: SessionId | undefined; turn: boolean; readonly jobs: Set<string> }
+  >();
+  ctx.addListener("session.opened", (data) => {
     const jobs = new Set(data.jobs.map((job) => job.id));
     work.set(data.sessionId, { parent: data.parent, turn: data.state === "running", jobs });
   });
-  ctx.on("session.update", ({ sessionId, update }) => {
+  ctx.addListener("session.update", ({ sessionId, update }) => {
     const entry = work.get(sessionId);
     if (entry === undefined) return;
     if (update.sessionUpdate === "state") entry.turn = update.state === "running";
     else if (update.sessionUpdate === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
     else if (update.sessionUpdate === "job") entry.jobs.delete(update.job.id);
   });
-  ctx.on("session.closed", ({ sessionId }) => work.delete(sessionId));
+  ctx.addListener("session.closed", ({ sessionId }) => work.delete(sessionId));
   const chat: Chat = {
     ctx,
     tui,
@@ -411,22 +414,22 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
           });
   // A plugin can set its view before the default exists.
   emptyView ??= defaultEmptyView;
-  tui.onFocusChange(() => publish());
-  ctx.on("catalog.changed", () => {
+  tui.addFocusListener(() => publish());
+  ctx.addListener("catalog.changed", () => {
     // The bar and the header of an empty pane name the models of the ready providers.
     void readModels().then(() => {
       publish();
       repaint();
     });
   });
-  tui.guardQuit((quit) => {
+  tui.setQuitGuard((quit) => {
     // The resume text names each shown session, and each session whose work the quit stops.
     const resumed = new Set([...panes.values()].flatMap((pane) => pane.resumeSession() ?? []));
     let turns = 0;
     let jobs = 0;
     for (const [session, entry] of work) {
       // A subagent runs as a job of its parent, so the turn of a child session does not count again.
-      const turn = entry.turn && entry.parent === null;
+      const turn = entry.turn && entry.parent === undefined;
       turns += turn ? 1 : 0;
       jobs += entry.jobs.size;
       // A child session resumes at its parent.
@@ -459,7 +462,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       asked = undefined;
     });
   });
-  tui.views.register("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
+  tui.views.add("pane", (state, mount) => chatPane(chat, mount, state as PaneState));
   tui.panes.setDefault((mount, reason) =>
     chatPane(chat, mount, { session: reason === "start" ? tui.startup.session : undefined }),
   );
@@ -478,7 +481,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         return pane !== undefined && (command.enabled?.(pane) ?? true);
       },
     });
-    for (const key of command.keys) tui.keys.bind(key, command.name, { in: command.in });
+    for (const key of command.keys) tui.keys.add(key, command.name, { in: command.in });
   }
   return undefined;
 }

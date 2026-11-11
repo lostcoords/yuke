@@ -15,27 +15,37 @@ export class StatusItems {
     this.#changed = changed;
   }
 
-  /** Set the item `key` to `entry`. The same entry again changes nothing. */
-  set(key: string, entry: StatusEntry): void {
+  /**
+   * Set the item `key` to `entry`. The same entry again changes nothing. The remover deletes the item while this call
+   * set it, so a later `set` of the key keeps its item.
+   */
+  set(key: string, entry: StatusEntry): () => void {
     const last = this.#items.get(key);
     const priority = entry.priority ?? 0;
-    if (
-      last !== undefined &&
-      last.text === entry.text &&
-      last.side === entry.side &&
-      last.order === entry.order &&
-      last.priority === priority &&
-      // A plugin can give an equal style in a new object, as on each update.
-      JSON.stringify(last.style) === JSON.stringify(entry.style)
-    ) {
-      return;
-    }
     const style = entry.style === undefined ? {} : { style: entry.style };
-    this.#items.set(
-      key,
-      Object.freeze({ key, text: entry.text, side: entry.side, order: entry.order, priority, ...style }),
-    );
-    this.#change();
+    const item: StatusItem = Object.freeze({
+      id: key,
+      text: entry.text,
+      side: entry.side,
+      order: entry.order,
+      priority,
+      ...style,
+    });
+    this.#items.set(key, item);
+    if (
+      last === undefined ||
+      last.text !== item.text ||
+      last.side !== item.side ||
+      last.order !== item.order ||
+      last.priority !== priority ||
+      // A plugin can give an equal style in a new object, as on each update.
+      JSON.stringify(last.style) !== JSON.stringify(item.style)
+    ) {
+      this.#change();
+    }
+    return () => {
+      if (this.#items.get(key) === item) this.delete(key);
+    };
   }
 
   delete(key: string): void {
@@ -56,7 +66,7 @@ export class StatusItems {
   }
 
   /** Give each later change to `listener`, and return the remover. */
-  onChange(listener: () => void): () => void {
+  addChangeListener(listener: () => void): () => void {
     const entry = { listener };
     this.#listeners.add(entry);
     return () => {

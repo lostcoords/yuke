@@ -34,6 +34,7 @@ import type {
   TextSection,
   TextViewChange,
   TextViewOptions,
+  TextWidget,
 } from "yuke:tui";
 
 const SELECTION = "textView.selection";
@@ -65,7 +66,7 @@ interface Mark {
   readonly wholeRows: boolean;
 }
 
-export class TextView {
+export class TextView implements TextWidget<TextPosition, TextViewChange> {
   readonly kind = "textView";
   readonly focusable = true;
   /** A press gives the focus to the nearest parent that takes it, so a click or a selection keeps the composer. */
@@ -93,10 +94,10 @@ export class TextView {
     this.role = options.role ?? "text";
     this.#appearance = options.appearance === undefined ? {} : Object.freeze({ ...options.appearance });
     this.#copyOnRelease = options.copyOnRelease !== false;
-    this.#activate = options.activate;
+    this.#activate = options.onActivate;
     this.#support = new TextSupport(options.group);
     this.#list = new ScrollList<TextItem>({
-      key: (item) => item.key,
+      id: (item) => item.id,
       render: (item, width) => renderItem(item, width),
       followTail: options.followTail === true,
       ...(options.onTopReached === undefined ? {} : { onTopReached: options.onTopReached }),
@@ -104,7 +105,7 @@ export class TextView {
     this.#order = checkDocument(options.document);
     this.#document = options.document;
     this.#list.setItems(this.#document.items);
-    this.#list.onChange(() => {
+    this.#list.addChangeListener(() => {
       if (!this.#quiet) this.#emit("scroll");
     });
     this.rows = this.#coordinates();
@@ -183,7 +184,7 @@ export class TextView {
   setDocument(document: TextDocument): void {
     if (document === this.#document) return;
     const order = checkDocument(document);
-    const same = document.key === this.#document.key;
+    const same = document.id === this.#document.id;
     this.#quiet = true;
     try {
       this.#list.setItems(document.items);
@@ -265,7 +266,7 @@ export class TextView {
     if (place === undefined) return false;
     const found = this.#list.rowAt(place.row);
     if (found === undefined) return false;
-    return this.#list.ensureVisible(found.item.key, found.row);
+    return this.#list.ensureVisible(found.item.id, found.row);
   }
 
   layout(size: Size): readonly Placement[] {
@@ -326,13 +327,13 @@ export class TextView {
   }
 
   /** The view has no default keys: only the handlers of the extensions take a key. */
-  key(event: KeyEvent): boolean {
+  onKey(event: KeyEvent): boolean {
     return this.#support.key(event, "beforeDefault");
   }
 
-  mouse(event: MouseEvent): boolean {
+  onMouse(event: MouseEvent): boolean {
     if (this.#support.mouse(event)) return true;
-    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.mouse(event);
+    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.onMouse(event);
     if (event.button !== "left") return false;
     if (event.action === "cancel") {
       this.#drag = undefined;
@@ -393,7 +394,7 @@ export class TextView {
     );
   }
 
-  paste(text: string): boolean {
+  onPaste(text: string): boolean {
     return this.#support.paste(text);
   }
 
@@ -442,11 +443,11 @@ export class TextView {
     for (let at = first; at <= last; at += 1) {
       const item = this.#document.items[at] as TextItem;
       for (const section of item.sections) {
-        const position = { item: item.key, section: section.key, offset: 0 };
+        const position = { item: item.id, section: section.id, offset: 0 };
         const end = { ...position, offset: section.text.length };
         if (this.#compare(end, from) < 0 || this.#compare(position, to) > 0) continue;
-        const start = section.key === from.section && item.key === from.item ? from.offset : 0;
-        const stop = section.key === to.section && item.key === to.item ? to.offset : section.text.length;
+        const start = section.id === from.section && item.id === from.item ? from.offset : 0;
+        const stop = section.id === to.section && item.id === to.item ? to.offset : section.text.length;
         parts.push(section.text.slice(start, stop));
       }
     }
@@ -496,7 +497,7 @@ export class TextView {
     if (found === undefined) return undefined;
     const view = found.text as ViewRow;
     const position = (source: number): TextPosition =>
-      Object.freeze({ item: found.item.key, section: view.section, offset: source });
+      Object.freeze({ item: found.item.id, section: view.section, offset: source });
     let at = 0;
     let previous: number | undefined;
     for (const [index, segment] of view.segments.entries()) {
@@ -514,12 +515,12 @@ export class TextView {
         // A layout piece has no source, so the position goes to the shown source next to it.
         const next = view.segments.slice(index + 1).find((item) => item.source !== undefined)?.source?.from;
         const chosen = bias === "before" ? (previous ?? next) : (next ?? previous);
-        return position(chosen ?? this.#nearest(found.item.key, view.section, row, bias));
+        return position(chosen ?? this.#nearest(found.item.id, view.section, row, bias));
       }
       if (source !== undefined) previous = source.to;
       at = end;
     }
-    return position(previous ?? this.#nearest(found.item.key, view.section, row, bias));
+    return position(previous ?? this.#nearest(found.item.id, view.section, row, bias));
   }
 
   /**
@@ -622,7 +623,7 @@ function renderItem(item: TextItem, width: number): ViewRow[] {
       const last = rows.at(-1) as ViewRow;
       rows[rows.length - 1] = { ...last, join: "\n" };
     }
-    for (const row of own) rows.push({ segments: row.segments, join: row.join, section: section.key });
+    for (const row of own) rows.push({ segments: row.segments, join: row.join, section: section.id });
   }
   if (rows.length > 0) {
     const last = rows.at(-1) as ViewRow;
@@ -678,10 +679,10 @@ function checkDocument(document: TextDocument): Order {
   const order: Order = new Map();
   for (const [at, item] of document.items.entries()) {
     const sections = new Map<string, number>();
-    order.set(item.key, { at, sections });
+    order.set(item.id, { at, sections });
     for (const [index, section] of item.sections.entries()) {
-      if (sections.has(section.key)) throw new TypeError(`the item ${item.key} has two sections ${section.key}`);
-      sections.set(section.key, index);
+      if (sections.has(section.id)) throw new TypeError(`the item ${item.id} has two sections ${section.id}`);
+      sections.set(section.id, index);
     }
   }
   return order;
