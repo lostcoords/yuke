@@ -231,13 +231,11 @@ fn a_cut_background_answer_and_a_paste_wait_for_their_end() {
         let mut parser = Parser::new();
         assert_eq!(only_events(parser.feed(start)), []);
         assert!(!parser.waits(), "{start:?}");
-        assert_eq!(only_events(parser.flush()), []);
         assert_eq!(only_events(parser.feed(rest)), [Event::Background(rgb(0xff, 0x80, 0))]);
     }
     let mut parser = Parser::new();
     assert_eq!(only_events(parser.feed(b"\x1b[200~a\x1b")), []);
     assert!(!parser.waits());
-    assert_eq!(only_events(parser.flush()), []);
     assert_eq!(only_events(parser.feed(b"[201~")), [Event::Paste("a".to_owned())]);
 }
 

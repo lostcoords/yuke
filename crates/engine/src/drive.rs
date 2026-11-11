@@ -311,16 +311,12 @@ impl<'a> Driver<'a> {
         call.name == SEARCH_TOOL_NAME && self.toolset.is_some_and(Toolset::has_deferred)
     }
 
-    /// The concurrency of a resolved call. A call that runs nothing, and the search that only reads the toolset, do
+    /// The concurrency of a resolved call. A call without a tool, such as a refused bridge call or the search, does
     /// not wait for other calls.
     fn concurrency(&self, resolved: &Resolved<'_>) -> Concurrency {
-        if resolved.result.is_some() || self.is_search(&resolved.call) {
-            Concurrency::Parallel
-        } else {
-            self.toolset.map_or(Concurrency::Parallel, |toolset| {
-                toolset.concurrency(&resolved.call.name)
-            })
-        }
+        self.toolset.map_or(Concurrency::Parallel, |toolset| {
+            toolset.concurrency(&resolved.call.name)
+        })
     }
 
     /// Send `request` to `model`, and give each event of the reply to `observer`. If [`retry::decide`] permits a retry,
@@ -587,22 +583,17 @@ impl TurnParts<'_> {
         let Some(journal) = self.journal else {
             return Ok(());
         };
-        let calls = self.call_display(&commit.blocks);
-        let saved = if calls.is_empty() {
-            journal.commit(commit).await
-        } else {
-            let display = CommitDisplay {
-                calls,
-                results: commit.display.results.clone(),
-            };
-            journal
-                .commit(&Commit {
-                    display,
-                    ..commit.clone()
-                })
-                .await
+        let display = CommitDisplay {
+            calls: self.call_display(&commit.blocks),
+            results: commit.display.results.clone(),
         };
-        saved.map_err(TurnError::Commit)
+        journal
+            .commit(&Commit {
+                display,
+                ..commit.clone()
+            })
+            .await
+            .map_err(TurnError::Commit)
     }
 
     /// The request of `context` that offers `tools` with `settings`, and the system prompt, the session id, and the

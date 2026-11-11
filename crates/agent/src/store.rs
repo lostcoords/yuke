@@ -196,6 +196,11 @@ pub fn title_of(input: &Input) -> Option<SessionTitle> {
     SessionTitle::from_text(&text.join("\n"))
 }
 
+/// The title of a fork of a session that has `title`: `title` behind a "Fork" prefix, cut to the title limit.
+pub fn fork_title_of(title: &str) -> Option<SessionTitle> {
+    SessionTitle::from_text(&format!("Fork — {title}"))
+}
+
 /// The blob of `bytes`: their SHA-256 and their length. Each store finds a blob by this digest.
 pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
     use sha2::Digest;

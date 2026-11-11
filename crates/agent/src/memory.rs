@@ -16,7 +16,7 @@ use yuke_protocol::{
 
 use crate::store::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
-    check_consumed_blocks, title_of,
+    check_consumed_blocks, fork_title_of, title_of,
 };
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
@@ -124,11 +124,7 @@ impl Saved {
                 SessionEvent::Commit { commit, .. } => {
                     commit.apply(&mut context);
                     newest_turn = commit.end.clone().map_or(NewestTurn::Open, NewestTurn::Ended);
-                    if let Some(answer) = &commit.answer {
-                        input_tokens = answer.usage.input;
-                    } else if commit.replaced.is_some() {
-                        input_tokens = None;
-                    }
+                    input_tokens = commit.input_tokens(input_tokens);
                 }
             }
         }
@@ -247,10 +243,7 @@ impl Store for MemoryStore {
             pending: Vec::new(),
             blobs: saved.blobs.clone(),
             newest_write: write,
-            title: saved
-                .title
-                .as_ref()
-                .and_then(|title| SessionTitle::from_text(&format!("Fork — {title}"))),
+            title: saved.title.as_ref().and_then(|title| fork_title_of(title)),
             fork_of: Some(source),
             parent: None,
             created_at: now,
@@ -354,9 +347,8 @@ impl Store for MemoryStore {
         let mut state = lock(&self.state);
         let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
         // Each check comes before the first change, so a refused commit changes nothing.
-        for (index, input) in consumed.iter().enumerate() {
-            let taken_before = consumed[..index].iter().any(|earlier| earlier.id == input.id);
-            if taken_before || !saved.pending.iter().any(|pending| pending.id == input.id) {
+        for input in consumed {
+            if !saved.pending.iter().any(|pending| pending.id == input.id) {
                 return Err(StoreError::InputNotPending(input.id));
             }
         }

@@ -248,12 +248,11 @@ impl Screen {
             return column;
         }
         for (grapheme, cells) in graphemes(text) {
-            let wide = match cells {
+            let width: u8 = match cells {
                 0 => continue,
-                1 => false,
-                _ => true,
+                1 => 1,
+                _ => 2,
             };
-            let width = if wide { 2 } else { 1 };
             if column >= self.size.columns {
                 break;
             }
@@ -267,11 +266,11 @@ impl Screen {
                 row,
                 Cell {
                     glyph: Glyph::new(grapheme),
-                    width: if wide { 2 } else { 1 },
+                    width,
                     style,
                 },
             );
-            column += width;
+            column += u16::from(width);
         }
         column
     }
@@ -305,22 +304,23 @@ impl Screen {
         out.extend_from_slice(b"\x1b[?2026h\x1b[?25l\x1b[0m");
         let mut style = Style::default();
         let mut at: Option<(u16, u16)> = None;
-        let columns = usize::from(self.size.columns);
-        for (index, cell) in self.next.iter().enumerate() {
-            if cell.width == 0 || (!self.repaint && self.shown.get(index) == Some(cell)) {
-                continue;
+        for row in 0..self.size.rows {
+            for column in 0..self.size.columns {
+                let index = usize::from(row) * usize::from(self.size.columns) + usize::from(column);
+                let cell = &self.next[index];
+                if cell.width == 0 || (!self.repaint && self.shown[index] == *cell) {
+                    continue;
+                }
+                if at != Some((column, row)) {
+                    move_to(out, column, row);
+                }
+                if cell.style != style {
+                    write_style(out, cell.style);
+                    style = cell.style;
+                }
+                out.extend_from_slice(cell.glyph.as_bytes());
+                at = Some((column.saturating_add(u16::from(cell.width)), row));
             }
-            let column = u16::try_from(index % columns).unwrap_or(u16::MAX);
-            let row = u16::try_from(index / columns).unwrap_or(u16::MAX);
-            if at != Some((column, row)) {
-                move_to(out, column, row);
-            }
-            if cell.style != style {
-                write_style(out, cell.style);
-                style = cell.style;
-            }
-            out.extend_from_slice(cell.glyph.as_bytes());
-            at = Some((column.saturating_add(u16::from(cell.width)), row));
         }
         out.extend_from_slice(b"\x1b[0m");
         if let Some(cursor) = self.cursor {

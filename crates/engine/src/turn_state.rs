@@ -154,6 +154,18 @@ impl<'a> Commit<'a> {
         context.extend_from_slice(&self.blocks);
     }
 
+    /// The input tokens of the context after this commit, given the count `before` it. An answer sets the count, a
+    /// replacement clears it, and another commit keeps it.
+    pub fn input_tokens(&self, before: Option<u64>) -> Option<u64> {
+        if let Some(answer) = &self.answer {
+            answer.usage.input
+        } else if self.replaced.is_some() {
+            None
+        } else {
+            before
+        }
+    }
+
     /// The same commit with its own copy of each block.
     pub fn into_owned(self) -> Commit<'static> {
         Commit {

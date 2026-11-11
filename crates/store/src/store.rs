@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use yuke_agent::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
-    check_consumed_blocks, title_of,
+    check_consumed_blocks, fork_title_of, title_of,
 };
 use yuke_engine::{Commit, Outcome, TurnEnd};
 use yuke_protocol::{
@@ -311,17 +311,8 @@ impl Store for SqliteStore {
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        let cwd = match cwd.map(Path::to_str) {
-            None => None,
-            Some(Some(cwd)) => Some(cwd.to_owned()),
-            // The settings save `cwd` as JSON text, which holds only UTF-8, so no session works in another folder.
-            Some(None) => {
-                return Ok(SessionPage {
-                    sessions: Vec::new(),
-                    next: None,
-                });
-            }
-        };
+        // The settings save `cwd` as JSON text, which holds only UTF-8, so a lossy name matches no session.
+        let cwd = cwd.map(|cwd| cwd.to_string_lossy().into_owned());
         // No event id reaches `i64::MAX`, so a larger position starts at the newest session too.
         let before = after.map_or(i64::MAX, |ListPosition(position)| {
             i64::try_from(position).unwrap_or(i64::MAX)
@@ -341,22 +332,15 @@ impl Store for SqliteStore {
                 found
                     .into_iter()
                     .map(|row| {
-                        let SessionSettings { model, cwd, .. } = row.settings.0;
-                        let summary = SessionSummary {
-                            session_id: SessionId::from_bytes(row.id),
-                            model,
-                            cwd,
-                            title: row
-                                .title
-                                .as_deref()
-                                .map(SessionTitle::new)
-                                .transpose()
-                                .map_err(failed)?,
-                            created_at: row.created_at,
-                            updated_at: row.updated_at,
-                            fork_of: row.fork_of.map(SessionId::from_bytes),
-                            parent: row.parent.map(SessionId::from_bytes),
-                        };
+                        let summary = summary_of(
+                            row.id,
+                            row.settings,
+                            row.title.as_deref(),
+                            row.fork_of,
+                            row.parent,
+                            row.created_at,
+                            row.updated_at,
+                        )?;
                         Ok((summary, row.newest_event))
                     })
                     .collect::<Result<Vec<(SessionSummary, i64)>, StoreError>>()
@@ -383,22 +367,15 @@ impl Store for SqliteStore {
             .call(move |connection| sessions::session_summary(connection, session).opt().map_err(failed))
             .await?
             .ok_or(StoreError::NotFound)?;
-        let SessionSettings { model, cwd, .. } = row.settings.0;
-        Ok(SessionSummary {
-            session_id: SessionId::from_bytes(row.id),
-            model,
-            cwd,
-            title: row
-                .title
-                .as_deref()
-                .map(SessionTitle::new)
-                .transpose()
-                .map_err(failed)?,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            fork_of: row.fork_of.map(SessionId::from_bytes),
-            parent: row.parent.map(SessionId::from_bytes),
-        })
+        summary_of(
+            row.id,
+            row.settings,
+            row.title.as_deref(),
+            row.fork_of,
+            row.parent,
+            row.created_at,
+            row.updated_at,
+        )
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
@@ -666,7 +643,7 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
         .map_err(failed)?
         .ok_or(StoreError::NotFound)?
         .title
-        .and_then(|title| SessionTitle::from_text(&format!("Fork — {title}")))
+        .and_then(|title| fork_title_of(&title))
         .map(|title| title.to_string());
     let session = sessions::CopySessionParams {
         source: rows.source,
@@ -737,6 +714,29 @@ fn commit_params(
 /// Tell whether the database has session `session`.
 pub(crate) fn has_session(connection: &Connection, session: [u8; 16]) -> Result<bool, StoreError> {
     sessions::session_exists(connection, session).one().map_err(failed)
+}
+
+/// The summary of the session columns that `list_sessions` and `session_summary` select.
+fn summary_of(
+    id: [u8; 16],
+    settings: crate::Json<SessionSettings>,
+    title: Option<&str>,
+    fork_of: Option<[u8; 16]>,
+    parent: Option<[u8; 16]>,
+    created_at: u64,
+    updated_at: u64,
+) -> Result<SessionSummary, StoreError> {
+    let SessionSettings { model, cwd, .. } = settings.0;
+    Ok(SessionSummary {
+        session_id: SessionId::from_bytes(id),
+        model,
+        cwd,
+        title: title.map(SessionTitle::new).transpose().map_err(failed)?,
+        created_at,
+        updated_at,
+        fork_of: fork_of.map(SessionId::from_bytes),
+        parent: parent.map(SessionId::from_bytes),
+    })
 }
 
 /// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise. Call this function before the

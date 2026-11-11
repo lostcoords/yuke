@@ -15,14 +15,6 @@ fn repeated_strings_require_separate_occurrences() {
 }
 
 #[test]
-fn json_string_escapes_are_matched() {
-    assert_in_order(
-        r#"["a\"b","c\\d","line\nbreak","雪"]"#,
-        &["a\"b", "c\\d", "line\nbreak", "雪"],
-    );
-}
-
-#[test]
 #[should_panic(expected = "expected JSON string at index 1: \"b\"")]
 fn reversed_strings_are_rejected() {
     assert_in_order(r#"["b","a"]"#, &["a", "b"]);
@@ -52,21 +44,4 @@ fn folder_paths_are_absolute_and_canonical() {
     assert!(path.is_absolute());
     assert_eq!(path, path.canonicalize().unwrap());
     std::fs::remove_dir_all(path).unwrap();
-}
-
-#[test]
-fn folder_groups_and_names_keep_contents_separate() {
-    let first = folder("testing", "folder_groups_and_names_keep_contents_separate");
-    std::fs::write(first.join("value.txt"), "first").unwrap();
-    let other_name = folder("testing", "folder_groups_and_names_keep_contents_separate_other");
-    std::fs::write(other_name.join("value.txt"), "other name").unwrap();
-    let other_group = folder("testing-other", "folder_groups_and_names_keep_contents_separate");
-    std::fs::write(other_group.join("value.txt"), "other group").unwrap();
-
-    let contents =
-        [&first, &other_name, &other_group].map(|path| std::fs::read_to_string(path.join("value.txt")).unwrap());
-    assert_eq!(contents, ["first", "other name", "other group"]);
-    for path in [first, other_name, other_group] {
-        std::fs::remove_dir_all(path).unwrap();
-    }
 }

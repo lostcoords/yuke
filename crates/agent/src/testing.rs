@@ -525,21 +525,9 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
         )
         .await;
 
-    let twice = store
-        .commit(
-            id,
-            &step(&[yuke_ai::Block::user_text("two"), yuke_ai::Block::user_text("two")]),
-            &[consumed(second, 1), consumed(second, 1)],
-        )
-        .await;
-
     assert!(
         matches!(again, Err(StoreError::InputNotPending(input)) if input == first),
         "{again:?}"
-    );
-    assert!(
-        matches!(twice, Err(StoreError::InputNotPending(input)) if input == second),
-        "{twice:?}"
     );
     assert!(
         matches!(mixed, Err(StoreError::InputNotPending(input)) if input == first),

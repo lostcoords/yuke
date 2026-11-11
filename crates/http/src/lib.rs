@@ -302,13 +302,9 @@ impl Client {
     async fn connect(&self, target: &Target) -> Result<Box<dyn Socket>, Error> {
         // A TLS configuration that fails to build fails the send before it connects.
         let tls = if target.tls { Some(self.tls()?) } else { None };
-        let mut addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
+        let addresses = tokio::net::lookup_host((target.host.as_str(), target.port))
             .await
-            .map_err(|_| Error::DnsFailed)?
-            .peekable();
-        if addresses.peek().is_none() {
-            return Err(Error::DnsFailed);
-        }
+            .map_err(|_| Error::DnsFailed)?;
         let mut tcp = None;
         for address in addresses {
             if let Ok(stream) = TcpStream::connect(address).await {
@@ -599,10 +595,6 @@ impl Body {
         if self.armed.is_none()
             && let Some((at, error)) = earlier(self.idle_timeout.map(|idle| Instant::now() + idle), self.deadline)
         {
-            // A deadline that already passed starts no read.
-            if at <= Instant::now() {
-                return self.fail(error);
-            }
             match &mut self.timer {
                 Some(timer) => timer.as_mut().reset(at),
                 None => self.timer = Some(Box::pin(tokio::time::sleep_until(at))),

@@ -188,11 +188,7 @@ impl Journal for TurnJournal<'_> {
         let TurnInputs { store, id, taken, .. } = &self.inputs;
         let consumed = taken.take();
         let event_number = store.commit(*id, commit, &consumed).await?;
-        if let Some(answer) = &commit.answer {
-            self.input_tokens.set(answer.usage.input);
-        } else if commit.replaced.is_some() {
-            self.input_tokens.set(None);
-        }
+        self.input_tokens.set(commit.input_tokens(self.input_tokens.get()));
         self.updates.committed(event_number, commit, consumed);
         Ok(())
     }
@@ -331,15 +327,12 @@ impl Session {
     /// Returns [`SessionError::Stale`] for a stale session, and [`SessionError::Store`] with the error of
     /// [`Store::set_settings`].
     pub async fn set_settings(&mut self, settings: SessionSettings) -> Result<EventNumber, SessionError> {
-        if self.is_stale() {
-            return Err(SessionError::Stale);
-        }
         // The store can save after the caller drops this future. So the future holds the lease, and a dropped write
         // leaves the session stale.
-        let lease = self.lease.take();
+        let lease = self.lease.take().ok_or(SessionError::Stale)?;
         let event_number = self.store.set_settings(self.id, &settings).await?;
         self.settings = settings;
-        self.lease = lease;
+        self.lease = Some(lease);
         Ok(event_number)
     }
 

@@ -27,7 +27,7 @@ pub const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
 /// order, so the device attributes end the probe.
 const PROBE: &[u8] = b"\x1b[?u\x1b[c";
 
-/// The longest wait for the probe answers, as in the Zig yuke. A real terminal answers in a few milliseconds.
+/// The longest wait for the probe answers. A real terminal answers in a few milliseconds.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(100);
 
 /// The terminal device in raw mode. A drop tries to turn off each mode that the terminal turned on and to restore the

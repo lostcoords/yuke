@@ -44,11 +44,9 @@ impl Parser {
     }
 
     /// Read the kept bytes as no more bytes will come: a lone escape byte is the escape key, and an escape byte before
-    /// a cut sequence is alt with the next byte. A cut code point gives no key.
+    /// a cut sequence is alt with the next byte. A cut code point gives no key. Call it only when [`Parser::waits`],
+    /// or it reads a cut answer or paste as keys.
     pub(crate) fn flush(&mut self) -> Vec<Parsed> {
-        if !self.waits() {
-            return Vec::new();
-        }
         self.read(true)
     }
 
