@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress';
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
@@ -9,6 +10,30 @@ const project = fileURLToPath(new URL('..', import.meta.url));
 const root = resolve(project, '..');
 const publicDir = join(project, 'public');
 const base = process.env.DOCS_BASE ?? '/';
+
+// The date is the commit that last changed the page. lastUpdated would also print that date on every guide.
+function sourcesOf(url) {
+  const path = (url.startsWith(site) ? url.slice(site.length) : url).replace(/^\//, '');
+  if (path === '') return ['docs/index.md', 'website/.vitepress/theme', 'website/styles'];
+  if (path === 'docs' || path === 'docs/') return ['docs/guide/index.md'];
+  const slug = path.replace(/^docs\//, '').replace(/\/$/, '');
+  return [slug === 'themes' ? 'docs/themes.md' : `docs/guide/${slug}.md`];
+}
+
+function committedAt(url) {
+  let newest = null;
+  for (const path of sourcesOf(url)) {
+    const stamp = execFileSync('git', ['log', '-1', '--format=%cI', '--', path], {
+      cwd: root,
+      encoding: 'utf8',
+    }).trim();
+    if (stamp === '') throw new Error(`no commit date for ${path}`);
+    const date = new Date(stamp);
+    if (Number.isNaN(date.getTime())) throw new Error(`bad commit date for ${path}: ${stamp}`);
+    if (newest === null || date > newest) newest = date;
+  }
+  return newest;
+}
 
 // A static redirect, because GitHub Pages cannot send a 301 for a path.
 const redirect = (target) => `<!doctype html>
@@ -36,7 +61,12 @@ export default defineConfig({
   appearance: 'dark',
   title: 'yuke',
   description: 'A fast, lightweight, TypeScript-scriptable coding agent.',
-  sitemap: { hostname: site },
+  sitemap: {
+    hostname: site,
+    transformItems(items) {
+      return items.map((item) => ({ ...item, lastmod: committedAt(item.url) }));
+    },
+  },
   head: [
     ['link', { rel: 'icon', href: `${base}logo.svg` }],
     ['link', { rel: 'apple-touch-icon', href: `${base}apple-touch-icon.png` }],
@@ -65,6 +95,8 @@ export default defineConfig({
   buildEnd({ outDir }) {
     // VitePress copies only srcDir/public, so the build copies this folder's public/ itself.
     cpSync(publicDir, outDir, { recursive: true });
+    // Crawlers find the sitemap here. GitHub Pages has no other place to declare it.
+    writeFileSync(join(outDir, 'robots.txt'), `User-agent: *\nSitemap: ${site}/sitemap.xml\n`);
     // The page serves the release installer, so `curl … /install.sh | bash` gets the tested
     // script. /install keeps the command that yuke-cloud printed working.
     copyFileSync(join(root, 'tools/install.sh'), join(outDir, 'install.sh'));
