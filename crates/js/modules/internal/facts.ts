@@ -60,12 +60,11 @@ function track(fact: Fact): void {
   }
 }
 
-/** Give `data` to `listener`. A throw removes the listener and gives a notice of its plugin. */
+/** Give `data` to `listener`. A throw gives a notice of its plugin, and the listener stays. */
 function call(listener: Listener, data: unknown): void {
   try {
     listener.call(data as never);
   } catch (error) {
-    remove(listener);
     notify(listener.plugin, "error", `a listener of ${listener.event} failed: ${failureOf(error)}`, undefined);
   }
 }

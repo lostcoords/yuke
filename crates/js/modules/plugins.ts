@@ -342,7 +342,7 @@ export interface PluginContext<O = Record<string, never>> {
    * happened. The host does not wait for the listener, and the return of the listener does nothing.
    * - A listener of `session.opened` first gets each session that is open now, then each later open.
    * - A listener holds no session.
-   * - A throw removes the listener and gives a notice. The abort of `ctx.signal` removes it too.
+   * - A throw gives a notice, and the listener stays. The abort of `ctx.signal` removes it.
    *
    * ```ts
    * ctx.on("session.update", ({ sessionId, update }) => {

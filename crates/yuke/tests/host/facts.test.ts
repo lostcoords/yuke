@@ -175,7 +175,7 @@ test("an open gives the parent and the running jobs, and a later listener gets t
   );
 });
 
-test("a listener that throws is removed with one notice, and the other listeners stay", async () => {
+test("a listener that throws gives a notice for each throw, and it and the other listeners stay", async () => {
   const plugin = watcher();
   await using host = await createHost({ plugins: [{ name: "watcher", apply: plugin.apply }] });
   await host.openSession();
@@ -198,7 +198,11 @@ test("a listener that throws is removed with one notice, and the other listeners
       others,
       host.notices.filter((notice) => notice.source === "watcher").map((notice) => notice.message.split("\n")[0]),
     ],
-    [1, 2, ["a listener of session.opened failed: Error: broken"]],
+    [
+      2,
+      2,
+      ["a listener of session.opened failed: Error: broken", "a listener of session.opened failed: Error: broken"],
+    ],
   );
 });
 
