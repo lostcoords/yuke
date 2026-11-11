@@ -1,7 +1,7 @@
 // The questions of the plugins in a session of the test host.
 
 import type { PluginSession, Question, QuestionAnswer } from "yuke:plugins";
-import { createHost, equal, reply, settled, test } from "yuke:test";
+import { createHost, equal, reply, test, waitForSettled } from "yuke:test";
 
 /** A yes or no question. */
 const yesNo = (id: string, question: string): Question => ({
@@ -138,7 +138,7 @@ test("an answer promise keeps the request open until it settles", async () => {
   const session = await host.openSession();
 
   const pending = session.call("ask", {});
-  await settled();
+  await waitForSettled();
   equal(host.questions.length, 1);
   release(picked("go", "Yes"));
 
@@ -188,7 +188,7 @@ for (const [name, settle] of [
     await session.close();
 
     release();
-    await settled();
+    await waitForSettled();
 
     equal(host.questions.length, 1);
   });

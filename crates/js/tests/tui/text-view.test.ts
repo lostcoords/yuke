@@ -1,7 +1,7 @@
 // The text view of `yuke:tui`: positions on sections, copy, the mouse, hidden sections, Markdown rows, extensions,
 // and its scroll control.
 
-import { createFrame, equal, settled, test, throws } from "yuke:test";
+import { createFrame, equal, test, throws, waitForSettled } from "yuke:test";
 import {
   Markdown,
   type MouseEvent,
@@ -290,7 +290,7 @@ test("the scroll control follows the tail and asks for older items", async () =>
   equal(rows(frame.frame), ["line 3", "line 4"]);
   view.scroll.scrollTo(0);
   frame.draw();
-  await settled();
+  await waitForSettled();
   equal(asked, 1);
 });
 

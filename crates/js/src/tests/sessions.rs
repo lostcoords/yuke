@@ -45,7 +45,7 @@ async fn the_first_tools_wait_for_session_and_a_dropped_wait_leaves_it_running()
         tokio::select! {
             biased;
             _ = &mut pending => panic!("the tools arrived before release"),
-            () = crate::settled() => {}
+            () = crate::wait_for_settled() => {}
         }
     }
     evaluate::<bool>(&runtime, "globalThis.release(); return true;")

@@ -1,7 +1,7 @@
 // The web class `ReadableStream`: a minimal default stream. Many cases follow the web platform tests (WPT) of
 // `streams/readable-streams`.
 
-import { assert, equal, rejects, settled, test } from "yuke:test";
+import { assert, equal, rejects, test, waitForSettled } from "yuke:test";
 import { rejectedName, thrownNames } from "./errors.ts";
 
 /** A stream with `strategy`, and the controller that its source gets at the start. */
@@ -62,17 +62,17 @@ test("pull fills the queue up to the high water mark and runs once at a time", a
     },
     { highWaterMark: 2 },
   );
-  await settled();
+  await waitForSettled();
   const first = pulls;
   const reader = stream.getReader();
   const reads = [reader.read(), reader.read()];
-  await settled();
+  await waitForSettled();
   const waiting = pulls;
   finish();
-  await settled();
+  await waitForSettled();
   finish();
   const values = (await Promise.all(reads)).map((read) => read.value);
-  await settled();
+  await waitForSettled();
   // A third pull starts after the two reads take their chunks, because the queue has space again.
   equal([first, waiting, values, pulls], [1, 1, [1, 2], 3]);
 });
@@ -87,10 +87,10 @@ test("a high water mark of zero pulls only for a read", async () => {
     },
     { highWaterMark: 0 },
   );
-  await settled();
+  await waitForSettled();
   const before = pulls;
   const read = await stream.getReader().read();
-  await settled();
+  await waitForSettled();
   equal([before, read.value, pulls], [0, 1, 1]);
 });
 
@@ -183,10 +183,10 @@ test("an error rejects each waiting read and the closed promise without a fault"
       throw "pull";
     },
   });
-  await settled();
+  await waitForSettled();
   equal(await rejects(failedStart.getReader().read()), "start");
   equal(await rejects(failedPull.getReader().read()), "pull");
-  await settled();
+  await waitForSettled();
 });
 
 test("a cancel calls the source once and ends each waiting read", async () => {
@@ -210,7 +210,7 @@ test("a cancel calls the source once and ends each waiting read", async () => {
   const locked = new ReadableStream();
   locked.getReader();
   equal(await rejectedName(locked.cancel()), "TypeError");
-  await settled();
+  await waitForSettled();
   equal(seen, [["cancel", "first"], ["cancel", "second"], true]);
 });
 
@@ -231,7 +231,7 @@ test("releaseLock rejects each waiting read and keeps the queued chunks", async 
   });
   queued.getReader().releaseLock();
   equal((await queued.getReader().read()).value, "kept");
-  await settled();
+  await waitForSettled();
 });
 
 test("enqueue counts the size of each chunk against the high water mark", () => {

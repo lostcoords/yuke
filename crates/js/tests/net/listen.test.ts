@@ -3,7 +3,7 @@
 
 import * as fs from "yuke:fs";
 import { ConnectionError, connect, listen, type UnixConnection } from "yuke:net";
-import { assert, equal, rejects, settled, test, listen as testServer, throws } from "yuke:test";
+import { assert, equal, rejects, test, listen as testServer, throws, waitForSettled } from "yuke:test";
 
 /** A new short socket path with no file. The scratch folder of a test can be too long for a socket. */
 function freePath(): string {
@@ -54,7 +54,7 @@ test("two pending accepts each get a client", async () => {
   using listener = listen({ path });
   const pending = [listener.accept(), listener.accept()] as const;
   // Both native accepts wait before the first client comes, so each one must wake.
-  await settled();
+  await waitForSettled();
   using one = await connect({ path });
   using two = await connect({ path });
   using left = await pending[0];
@@ -70,7 +70,7 @@ test("a close rejects each pending and later accept and removes the file, and a 
   equal(await fileAt(path), "found");
   const pending = [listener.accept(), listener.accept()];
   // The native accepts start to wait, so the close must stop them.
-  await settled();
+  await waitForSettled();
   listener.close();
   listener.close();
   for (const accept of [...pending, listener.accept()]) {
@@ -91,7 +91,7 @@ test("an abort rejects each accept, closes an accepted connection with its reaso
   const pending = listener.accept();
   const read = peer.readable.getReader().read();
   // The native accept and read start to wait, so the abort must stop them.
-  await settled();
+  await waitForSettled();
   const reason = new Error("stop");
   controller.abort(reason);
   for (const stopped of [pending, read, listener.accept()]) assert((await rejects(stopped)) === reason);

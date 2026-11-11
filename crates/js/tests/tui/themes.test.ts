@@ -2,7 +2,7 @@
 
 import { readTextFile, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/themes";
-import { createFrame, equal, type FrameTest, folder, settled, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import type { Tui } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -54,7 +54,7 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
 
   open();
   frame.key("n o r d enter");
-  await settled();
+  await waitForSettled();
   equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"nord"}');
   equal(
     [
@@ -81,7 +81,7 @@ test("a saved theme applies at the load, also when its plugin comes later, and d
   frame.surface("themes").tui.commands.run("themes:open");
   frame.draw();
   frame.key("d e f enter");
-  await settled();
+  await waitForSettled();
   equal(await readTextFile("theme.json", { baseDir: dataDir }), '{"name":"default"}');
   equal([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
 });

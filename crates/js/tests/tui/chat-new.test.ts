@@ -2,7 +2,7 @@
 // creates a session in the folder of the session before.
 
 import { writeTextFile } from "yuke:fs";
-import { createFrame, equal, folder, settled, test } from "yuke:test";
+import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
 import type { View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -36,11 +36,11 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   const view = chat.tui.panes.active?.view as View;
   const before = items(chat);
   frame.key("/ n e w enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame).join("\n");
 
@@ -79,10 +79,10 @@ test("the next message after /new creates a session in the folder of the old ses
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.key("/ n e w enter");
   frame.key("h i enter");
-  await settled();
+  await waitForSettled();
 
   equal(
     [sessions.created.map((settings) => settings.cwd), chat.opened.map((open) => open.id), sessions.inputs],
@@ -94,7 +94,7 @@ test("ctrl+k n empties a draft", async () => {
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("half a thought");
   frame.key("ctrl+k n");
   frame.draw();
@@ -106,7 +106,7 @@ test("a pane with a session lists /new, and a pane without a session does not", 
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
   await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.key("/ n e");
   frame.draw();
   const listed = rows(frame.frame).some((text) => text.startsWith(" /new"));
@@ -123,14 +123,14 @@ test("ctrl+k n during a send keeps the session and its handle", async () => {
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const { promise, resolve } = Promise.withResolvers<void>();
   sessions.state.accept = promise;
   frame.key("h i enter");
-  await settled();
+  await waitForSettled();
   frame.key("ctrl+k n");
   resolve();
-  await settled();
+  await waitForSettled();
 
   equal(
     [chat.chat.session(chat.tui.panes.active?.view as View), chat.opened.map((open) => [open.id, open.signal.aborted])],
@@ -143,10 +143,10 @@ test("/new during a turn leaves the turn running and says so", async () => {
   const sessions = fakeSessions(SAVED);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.key("/ n e w enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame).join("\n");
 
@@ -168,9 +168,9 @@ test("/new with a running job of a subagent says that the work goes on", async (
   sessions.state.jobs = [{ id: "reader", label: "Read the store", state: "running", kind: "plugin", plugin: "agents" }];
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.key("/ n e w enter");
-  await settled();
+  await waitForSettled();
 
   equal(chat.notices, ["info the work goes on: /sessions shows it"]);
 });
@@ -180,18 +180,18 @@ test("a reload after /new keeps the folder of the old session", async () => {
   using before = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
   await loadChat(before, fakeSessions(SAVED));
   before.start();
-  await settled();
+  await waitForSettled();
   before.key("/ n e w enter");
-  await settled();
+  await waitForSettled();
   const snapshot = before.snapshot();
   using after = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start" });
   const sessions = fakeSessions();
   const chat = await loadChat(after, sessions);
   after.start(snapshot);
-  await settled();
+  await waitForSettled();
   const shown = items(chat).find((item) => item[0] === "chat:folder");
   after.key("h i enter");
-  await settled();
+  await waitForSettled();
 
   equal([shown, sessions.created.map((settings) => settings.cwd)], [["chat:folder", "/w"], ["/w"]]);
 });
@@ -200,7 +200,7 @@ test("a draft that a pane left before /new does not come back after a later retu
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/start", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("a");
   await chat.chat.show("s2");
   frame.key("ctrl+k n");

@@ -2,7 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/login";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, folder, settled, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 /** A provider `id` in `state`. */
@@ -72,7 +72,7 @@ function load(frame: FrameTest, providers: readonly ProviderInfo[] = PROVIDERS) 
     end: (outcome: LoginOutcome) => end(outcome),
     run: async (command: "login" | "logout", args?: string) => {
       surface.tui.commands.run(`login:${command}`, args);
-      await settled();
+      await waitForSettled();
       frame.draw();
       return rows(frame.frame);
     },
@@ -112,14 +112,14 @@ test("a chosen key provider opens a masked field that stores the key and shows n
   await login.run("login");
 
   frame.key("e n v enter");
-  await settled();
+  await waitForSettled();
   frame.paste("  sk-secret\n");
   const typed = rows(frame.frame).join("\n");
   const title = rowWith(frame, "API key · ENV");
   // The second enter of a double press stores nothing more.
   frame.key("enter");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(title !== undefined, true);
@@ -137,14 +137,14 @@ test("a connected provider can be picked, and esc in the field stores nothing", 
   await login.run("login", "stored");
   frame.paste("new-key");
   frame.key("esc");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const afterEscape = [...login.calls];
   const closed = rowWith(frame, "API key · STORED");
   await login.run("login", "stored");
   frame.paste("new-key");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
 
   equal([afterEscape, closed], [[], undefined]);
   equal(login.calls, ["set stored new-key"]);
@@ -157,17 +157,17 @@ test("a refused key stays in the field with its error, and an empty field stores
   await login.run("login", "needs-key");
 
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   const afterEmpty = [...login.calls];
   frame.paste("first");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const refused = rowWith(frame, "the key is bad");
   const open = rowWith(frame, "API key · NEEDS-KEY");
   login.refuseWith(undefined);
   frame.key("enter");
-  await settled();
+  await waitForSettled();
 
   equal(afterEmpty, []);
   equal(refused !== undefined, true);
@@ -200,7 +200,7 @@ test("/logout lists only what yuke stored, removes it, and names the variable of
 
   const listed = (await login.run("logout")).join("\n");
   frame.key("s t o r e d enter");
-  await settled();
+  await waitForSettled();
   await login.run("logout", "env");
   await login.run("logout", "device");
   await login.run("logout", "logged");
@@ -242,7 +242,7 @@ test("a login provider shows the page and the code, its keys copy each, and a co
   equal(frame.copies, [CODE, URL]);
   equal(login.notices, ["info code copied", "info URL copied"]);
   frame.key("esc");
-  await settled();
+  await waitForSettled();
 });
 
 test("each end of a device login closes the dialog with its notice, and esc cancels the login with no notice", async () => {
@@ -256,7 +256,7 @@ test("each end of a device login closes the dialog with its notice, and esc canc
     await login.run("login", "device");
 
     login.end(outcome);
-    await settled();
+    await waitForSettled();
     frame.draw();
 
     equal(login.notices, [notice]);
@@ -267,7 +267,7 @@ test("each end of a device login closes the dialog with its notice, and esc canc
   const login = load(frame);
   await login.run("login", "device");
   frame.key("esc");
-  await settled();
+  await waitForSettled();
 
   equal(login.signals[0]?.aborted, true);
   equal(login.notices, []);

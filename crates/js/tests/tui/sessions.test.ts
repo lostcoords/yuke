@@ -2,7 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/sessions";
 import type { SessionActivity, SessionRow } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -36,7 +36,7 @@ async function load(frame: FrameTest, sessions = fakeSessions(replies(2))) {
 /** Run `/sessions`, and give the drawn rows after its list loads. */
 async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadChat>>): Promise<string[]> {
   chat.tui.commands.run("sessions:open");
-  await settled();
+  await waitForSettled();
   frame.draw();
   return rows(frame.frame);
 }
@@ -44,10 +44,10 @@ async function openList(frame: FrameTest, chat: Awaited<ReturnType<typeof loadCh
 test("the list shows the sessions of the folder of the pane, and tab shows every folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settled();
+  await waitForSettled();
   const here = await openList(frame, loaded.chat);
   frame.key("tab");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const every = rows(frame.frame);
   /** Whether one row of `all` holds every text of `texts`, in any column. */
@@ -79,10 +79,10 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
 test("a query matches the first prompt, and else the model, the folder, or the id", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settled();
+  await waitForSettled();
   const shown = (query: string): string[] => {
     frame.paste(query);
     frame.draw();
@@ -106,11 +106,11 @@ test("a query matches the first prompt, and else the model, the folder, or the i
 test("enter shows the chosen session in the focused chat pane and closes the list", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const loaded = await load(frame);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.paste("bar");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(
     [loaded.chat.opened.map((open) => open.id), rows(frame.frame).some((line) => line.includes("tab: every folder"))],
@@ -123,11 +123,11 @@ test("a pick that does not open gives a notice", async () => {
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("missing", "/w", "gone", "closed", 1));
   const loaded = await load(frame, sessions);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.paste("gone");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   equal(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
 });
 
@@ -146,12 +146,12 @@ test("a list of an earlier scope that loads late keeps the list of the later sco
     return page;
   };
   const loaded = await load(frame, sessions);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settled();
+  await waitForSettled();
   resolve();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(
     rows(frame.frame).some((line) => line.includes("refactor sqlgen")),
@@ -164,10 +164,10 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   const sessions = fakeSessions(replies(2));
   sessions.rows.push(row("s4", "/srv/bar", "deploy notes", "closed", 1));
   const loaded = await load(frame, sessions);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settled();
+  await waitForSettled();
   frame.paste("bar");
   frame.draw();
   const drawn = rows(frame.frame);
@@ -189,12 +189,12 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
     return list(params);
   };
   const loaded = await load(frame, sessions);
-  await settled();
+  await waitForSettled();
   await openList(frame, loaded.chat);
   frame.key("tab");
-  await settled();
+  await waitForSettled();
   reject(new Error("disk"));
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal([rows(frame.frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
 });
@@ -202,7 +202,7 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
 test("the list of a pane whose session is gone starts with the start folder", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s9" });
   const loaded = await load(frame);
-  await settled();
+  await waitForSettled();
   const drawn = await openList(frame, loaded.chat);
   equal(
     [drawn.some((line) => line.trim() === "/start"), loaded.sessions.lists],

@@ -19,7 +19,7 @@ async fn run_fs(name: &str, setup: impl FnOnce(&Path), body: &str) -> (String, s
         .await
         .unwrap()
         .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     if let Ok(report) = reports.try_recv() {
         panic!("unexpected report: {report:?}");
     }

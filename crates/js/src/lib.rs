@@ -51,7 +51,7 @@ pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime, THREAD_STACK};
 pub use session::{ScriptHooks, ScriptSession};
 pub use sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent, ViewSink};
-pub use settled::settled;
+pub use settled::wait_for_settled;
 pub use test_host::TestHost;
 pub use test_runner::{
     TestError, TestFileError, TestOutcome, TestRuntime, TestStatus, TestSummary, find_test_files, run_test_file,

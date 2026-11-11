@@ -4,7 +4,7 @@
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:plugins";
 import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { assert, createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { assert, createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
@@ -92,7 +92,7 @@ function load(frame: FrameTest, plugins: PluginManager): string[] {
 /** Run `command`, and give the drawn rows after it settles. */
 async function run(frame: FrameTest, command: string): Promise<string[]> {
   frame.surface("plugins").tui.commands.run(command);
-  await settled();
+  await waitForSettled();
   frame.draw();
   return rows(frame.frame);
 }
@@ -101,7 +101,7 @@ async function run(frame: FrameTest, command: string): Promise<string[]> {
 async function press(frame: FrameTest, ...keys: [string, ...string[]]): Promise<string[]> {
   for (const key of keys) {
     frame.key(key);
-    await settled();
+    await waitForSettled();
   }
   frame.draw();
   return rows(frame.frame);
@@ -174,7 +174,7 @@ test("S syncs and shows the result in the title, and the actions wait while it r
   await run(frame, "plugins:open");
   const running = await press(frame, "S");
   fake.syncs.finish?.();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const synced = rows(frame.frame);
 

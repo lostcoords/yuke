@@ -2,7 +2,7 @@
 
 import { apply as applySessions } from "yuke:internal/bundled/sessions";
 import type { SessionRow } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -34,13 +34,13 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   const composer = chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
   composer.paste("draft");
   equal(chat.tui.commands.run("chat:rename"), true);
-  await settled();
+  await waitForSettled();
   frame.draw();
   const editor = renameEditor(chat.tui);
   equal(editor.state.text, "old title");
   editor.replace(0, editor.state.text.length, "new title");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(
@@ -61,7 +61,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
     notify: (_level: string, text: string) => notices.push(text),
   } as never);
   equal(chat.tui.commands.run("sessions:open"), true);
-  await settled();
+  await waitForSettled();
   frame.paste("new title");
   frame.draw();
   equal([rows(frame.frame).some((line) => line.includes("○ new title")), notices], [true, []]);
@@ -75,13 +75,13 @@ test("a rename failure shows an error and retains the editor", async () => {
   const chat = await loadChat(frame, sessions);
   frame.start();
   chat.tui.commands.run("chat:rename");
-  await settled();
+  await waitForSettled();
   frame.draw();
   const editor = renameEditor(chat.tui);
   equal(editor.state.text, "old title");
   editor.replace(0, editor.state.text.length, "new title");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(
@@ -108,9 +108,9 @@ test("Esc cancels rename, and an unbound pane does not expose the command", asyn
   const loaded = await loadChat(bound, sessions);
   bound.start();
   loaded.tui.commands.run("chat:rename");
-  await settled();
+  await waitForSettled();
   bound.key("esc");
-  await settled();
+  await waitForSettled();
   bound.draw();
   equal([sessions.renames, rows(bound.frame).some((line) => line.includes("Rename session"))], [[], false]);
 });

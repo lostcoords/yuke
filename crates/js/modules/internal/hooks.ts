@@ -310,9 +310,9 @@ async function sideRequest(
   kept: number,
   options: SideRequestOptions,
 ): Promise<SideRequestResult> {
-  const { prompt, blocks = head.length + kept, maxOutputTokens, abortSignal } = options;
+  const { prompt, blocks = head.length + kept, maxOutputTokens, signal } = options;
   const request = { head: jsonCopy(head, "the answer"), kept, blocks, prompt, maxOutputTokens };
-  return Object.freeze(await underStop(abortSignal, () => round.sideRequest(request)));
+  return Object.freeze(await underStop(signal, () => round.sideRequest(request)));
 }
 
 /** Start the `round.before` handlers of the open session `open` before one round, as `startRoundPlan` says. */

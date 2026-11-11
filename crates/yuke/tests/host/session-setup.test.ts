@@ -2,7 +2,7 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginSession, SessionContext } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, settled, test, throws } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, test, throws, waitForSettled } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 /** A tool `name` with no parameters that answers `answer`. */
@@ -436,7 +436,7 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
   const closing = session.close().then(() => {
     closed = true;
   });
-  await settled();
+  await waitForSettled();
   equal([closed, cleaned], [false, 0]);
   cleanup.resolve();
   await closing;

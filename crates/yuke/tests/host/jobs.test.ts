@@ -1,7 +1,7 @@
 // The jobs of a plugin: `s.jobs.run`, `context.jobs.run`, the signal of the work, its end, and its report.
 
 import type { JobReport, JobWork, PluginContext, SessionContext, SessionHandle } from "yuke:plugins";
-import { assert, createHost, equal, reply, settled, type TestSession, test } from "yuke:test";
+import { assert, createHost, equal, reply, type TestSession, test, waitForSettled } from "yuke:test";
 
 /** Work that ends when a test says so. */
 function held() {
@@ -77,7 +77,7 @@ test("a job lists with the jobs of the session, and its report starts a turn", a
   await s.jobs.run({ id: "explorer", label: "one" }, work.work);
   const listed = handle.jobs();
   work.finish(REPORT);
-  await settled();
+  await waitForSettled();
 
   equal(listed, [{ id: "explorer", label: "one", state: "running", kind: "plugin", plugin: "agents" }]);
   equal(handle.jobs(), []);
@@ -94,11 +94,11 @@ test("an id that still runs rejects, and the end of its work frees the id", asyn
   await s.jobs.run({ id: "explorer", label: "one" }, first.work);
   const refusal = await s.jobs.run({ id: "explorer", label: "two" }, () => undefined).catch(String);
   first.finish(undefined);
-  await settled();
+  await waitForSettled();
   await s.jobs.run({ id: "explorer", label: "three" }, second.work);
   const labels = handle.jobs().map((job) => job.label);
   second.finish(undefined);
-  await settled();
+  await waitForSettled();
 
   assert(String(refusal).includes("the job explorer still runs"), String(refusal));
   equal(labels, ["three"]);
@@ -115,14 +115,14 @@ test("the stop tool aborts the signal, waits for the end, and drops the report",
     answered = true;
     return answer;
   });
-  await settled();
+  await waitForSettled();
   equal([work.signal.aborted, answered], [true, false]);
   work.finish(REPORT);
 
   equal(await pending, "explorer stopped.");
   // The stop answered after the end, so the list no longer holds the job.
   equal(handle.jobs(), []);
-  await settled();
+  await waitForSettled();
   equal(session.transcript.entries, []);
   equal(host.requests.length, 0);
 });
@@ -135,7 +135,7 @@ test("a cancel of the stop tool ends its wait, and the stop goes on", async () =
   const cancel = new AbortController();
 
   const answer = stop(session, "explorer", cancel.signal);
-  await settled();
+  await waitForSettled();
   equal(work.signal.aborted, true);
   cancel.abort(new Error("cancelled"));
   const failure = await answer.then(
@@ -144,7 +144,7 @@ test("a cancel of the stop tool ends its wait, and the stop goes on", async () =
   );
   const running = handle.jobs().map((listed) => listed.id);
   work.finish(undefined);
-  await settled();
+  await waitForSettled();
 
   equal(failure, "rejected");
   equal(running, ["explorer"]);
@@ -160,7 +160,7 @@ test("the close aborts the work, waits for its end, and refuses a later job", as
   const closing = session.close().then(() => {
     closed = true;
   });
-  await settled();
+  await waitForSettled();
   const whileWorking = closed;
   work.finish(undefined);
   await closing;
@@ -176,7 +176,7 @@ test("after its end a job is gone, so a stop finds no job and the report goes ou
   await using _host = host;
 
   await s.jobs.run({ id: "explorer", label: "one" }, () => REPORT);
-  await settled();
+  await waitForSettled();
   const stopped = await session.call("stop", { id: "explorer" });
 
   equal(handle.jobs(), []);
@@ -211,10 +211,10 @@ test("two sessions can run one id, and the end of one job leaves the other", asy
   await two.jobs.run({ id: "explorer", label: "second" }, stays.work);
 
   await one.jobs.run({ id: "explorer", label: "first" }, () => undefined);
-  await settled();
+  await waitForSettled();
   const listed = handle.jobs().map((job) => job.label);
   stays.finish(undefined);
-  await settled();
+  await waitForSettled();
 
   equal(listed, ["second"]);
 });
@@ -251,7 +251,7 @@ test("a job start rejects while its session closes", async () => {
   const session = await host.openSession();
 
   const turn = session.send("Work.").catch(() => undefined);
-  await settled();
+  await waitForSettled();
   equal(session.transcript.state, "running");
   await session.close();
   await turn;
@@ -267,7 +267,7 @@ test("a label of many lines shows its first line in the list and in the report",
   await s.jobs.run({ id: "explorer", label: "one\ntwo" }, work.work);
   const listed = handle.jobs().map((job) => job.label);
   work.finish(REPORT);
-  await settled();
+  await waitForSettled();
 
   equal(listed, ["one..."]);
   equal(host.requests[0]?.messages.at(-1)?.text, SENT.replace("one:", "one...:"));
@@ -280,7 +280,7 @@ test("work without a report sends no input, and its signal stays quiet at the cl
   await s.jobs.run({ id: "explorer", label: "one" }, work.work);
 
   work.finish(undefined);
-  await settled();
+  await waitForSettled();
   const requests = host.requests.length;
   await session.close();
 
@@ -295,7 +295,7 @@ test("work that throws without a call reports the failure", async () => {
   await s.jobs.run({ id: "explorer", label: "one" }, () => {
     throw new Error("the store is gone");
   });
-  await settled();
+  await waitForSettled();
 
   equal(handle.jobs(), []);
   assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer one: failed.") === true, "no report");
@@ -309,12 +309,12 @@ test("a job in a call stays hidden, and its report answers the call and not the 
   tool.work = work.work;
 
   const call = session.call("work", {});
-  await settled();
+  await waitForSettled();
   const listed = handle.jobs();
   const movable = handle.canMoveJobsToBackground();
   work.finish(REPORT);
   const result = await call;
-  await settled();
+  await waitForSettled();
 
   equal([listed, movable], [[], true]);
   equal(result.text, REPORT.text);
@@ -330,7 +330,7 @@ test("a throw of the work rejects the call that waits and frees the id", async (
   };
 
   const result = await session.call("work", {});
-  await settled();
+  await waitForSettled();
   await s.jobs.run({ id: "explorer", label: "again" }, () => undefined);
 
   equal([result.isError, result.text], [true, "the store is gone"]);
@@ -345,9 +345,9 @@ test("a cancel of the call aborts the signal of its job", async () => {
   const cancel = new AbortController();
 
   const call = session.call("work", {}, { signal: cancel.signal }).catch(() => undefined);
-  await settled();
+  await waitForSettled();
   cancel.abort(new Error("cancelled"));
-  await settled();
+  await waitForSettled();
   const aborted = work.signal.aborted;
   work.finish(undefined);
   await call;
@@ -361,16 +361,16 @@ test("a move answers the call, keeps the signal quiet at its end, and the report
   const work = held();
   tool.work = work.work;
   const call = session.call("work", {});
-  await settled();
+  await waitForSettled();
 
   handle.moveJobsToBackground();
   const result = await call;
-  await settled();
+  await waitForSettled();
   const listed = handle.jobs().map((job) => job.id);
   const aborted = work.signal.aborted;
   const movable = handle.canMoveJobsToBackground();
   work.finish(REPORT);
-  await settled();
+  await waitForSettled();
 
   equal(result.text, "explorer moved.");
   equal([listed, aborted, movable], [["explorer"], false, false]);
@@ -384,12 +384,12 @@ test("a throw of the work after a move reports the failure", async () => {
   const work = held();
   tool.work = work.work;
   const call = session.call("work", {});
-  await settled();
+  await waitForSettled();
 
   handle.moveJobsToBackground();
   await call;
   work.fail(new Error("the store is gone"));
-  await settled();
+  await waitForSettled();
 
   assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer one: failed.") === true, "no report");
 });
@@ -400,18 +400,18 @@ test("a stop after a move aborts the signal and drops the report", async () => {
   const work = held();
   tool.work = work.work;
   const call = session.call("work", {});
-  await settled();
+  await waitForSettled();
   handle.moveJobsToBackground();
   await call;
 
   const pending = stop(session, "explorer");
-  await settled();
+  await waitForSettled();
   const aborted = work.signal.aborted;
   work.finish(REPORT);
 
   equal(await pending, "explorer stopped.");
   equal(aborted, true);
-  await settled();
+  await waitForSettled();
   equal(host.requests.length, 0);
 });
 
@@ -421,7 +421,7 @@ test("a hidden job holds its id", async () => {
   const work = held();
   tool.work = work.work;
   const call = session.call("work", {});
-  await settled();
+  await waitForSettled();
 
   const refusal = await s.jobs.run({ id: "explorer", label: "two" }, () => undefined).catch(String);
   work.finish(undefined);
@@ -438,10 +438,10 @@ test("the option background runs the work without the call", async () => {
   tool.background = true;
 
   const result = await session.call("work", {});
-  await settled();
+  await waitForSettled();
   const listed = handle.jobs().map((job) => job.id);
   work.finish(REPORT);
-  await settled();
+  await waitForSettled();
 
   equal(result.text, "explorer moved.");
   equal(listed, ["explorer"]);

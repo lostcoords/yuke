@@ -2,7 +2,7 @@
 
 import { ExtensionRequestError, type PluginSession } from "yuke:plugins";
 import type { ExtensionRequestParams } from "yuke:protocol";
-import { createHost, equal, rejects, settled, test } from "yuke:test";
+import { createHost, equal, rejects, test, waitForSettled } from "yuke:test";
 
 /** A plugin whose tool `read_session` sends a request. It gives the result, the error, or an event of a failure. */
 const requester: PluginSession = (s) => {
@@ -79,7 +79,7 @@ test("a cancel of the plugin ends its wait while respond still runs", async () =
   const stop = new AbortController();
 
   const called = session.call("read_session", {}, { signal: stop.signal });
-  await settled();
+  await waitForSettled();
   equal(responding, true);
   stop.abort(new Error("stop"));
 

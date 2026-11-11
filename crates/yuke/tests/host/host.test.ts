@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { assert, createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
 
 const echo: PluginSession = (s) => {
   s.tools.define({
@@ -117,14 +117,14 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
   const session = await host.openSession();
   const callStop = new AbortController();
   const called = rejects(session.call("wait", {}, { signal: callStop.signal }));
-  await settled();
+  await waitForSettled();
   callStop.abort(new Error("stop"));
   const callError = await called;
   const hookStop = new AbortController();
   const ran = rejects(
     session.run("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
   );
-  await settled();
+  await waitForSettled();
   hookStop.abort(new Error("stop"));
 
   equal(
@@ -169,7 +169,7 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   const session = await host.openSession();
   const stop = new AbortController();
   const sending = rejects(session.send("Wait.", { signal: stop.signal }));
-  await settled();
+  await waitForSettled();
   equal(host.requests.length, 1);
 
   await rejects(session.setSettings({ ...session.settings, model: { provider: "openai", model: "gpt-4.1" } }));

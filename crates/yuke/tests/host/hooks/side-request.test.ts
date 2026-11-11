@@ -2,7 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import type { Block, Settings } from "yuke:protocol";
-import { createHost, equal, type ModelRequest, type Reply, rejects, reply, settled, test } from "yuke:test";
+import { createHost, equal, type ModelRequest, type Reply, rejects, reply, test, waitForSettled } from "yuke:test";
 
 /** The context of the round: an input, an answer, and a second input. */
 const context: Block[] = [{ user_text: "one" }, { assistant_text: { text: "two" } }, { user_text: "three" }];
@@ -93,7 +93,7 @@ test("an abort stops the request and rejects with the reason of the signal", asy
   const controller = new AbortController();
   const compact: PluginSession = (s) => {
     s.hook("round.before", async (event) => {
-      const request = event.sideRequest({ prompt: "Summarize.", abortSignal: controller.signal });
+      const request = event.sideRequest({ prompt: "Summarize.", signal: controller.signal });
       try {
         await request;
       } catch (error) {
@@ -108,7 +108,7 @@ test("an abort stops the request and rejects with the reason of the signal", asy
   });
   const session = await host.openSession();
   const pending = session.run("round.before", { context, window: 1000, system: "Be brief.", tools: [echo], settings });
-  await settled();
+  await waitForSettled();
   equal(host.requests.length, 1);
   controller.abort(new Error("too slow"));
   await pending;

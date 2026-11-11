@@ -2,7 +2,7 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, settled, type TestSession, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, type TestSession, test, waitForSettled } from "yuke:test";
 
 /** The text of the last answer in the transcript of `session`. */
 function finalText(session: TestSession): string | undefined {
@@ -52,14 +52,14 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
   const stop = new AbortController();
   const sent = rejects(session.send("hi", { signal: stop.signal }));
   // The turn runs before the cancel, so the cancel reaches a turn that waits for the plugins.
-  await settled();
+  await waitForSettled();
   equal(session.transcript.state, "running");
   stop.abort(new Error("stop"));
 
   await sent;
   const cancelled = session.transcript.entries.at(-1);
   const again = session.send("again");
-  await settled();
+  await waitForSettled();
   equal(session.transcript.state, "running");
   await session.close();
   // The close ends the waiting turn, so the second send settles too.
@@ -260,7 +260,7 @@ test("a plugin creates a session, sends input, and sees the turn of that session
   await using host = await createHost({ plugins: [{ name: "driver", apply: driver }], replies });
 
   await drive();
-  await settled();
+  await waitForSettled();
   equal(host.events.length, 1);
 
   equal(host.events[0]?.data, { states: ["running", "idle"], texts: ["hello"], used: "MiniMax-M3", jobs: 0 });
@@ -277,7 +277,7 @@ test("a plugin summarizes the context with the model of the session and replaces
         model: s.settings.model,
         instructions,
         prompt: event.context(),
-        abortSignal: event.signal,
+        signal: event.signal,
       });
       return { replace: { head: [{ user_text: `Summary: ${answer.text}` }], keep: 0 } };
     });

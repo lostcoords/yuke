@@ -2,7 +2,7 @@
 
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
-import { createFrame, equal, rejects, settled, test } from "yuke:test";
+import { createFrame, equal, rejects, test, waitForSettled } from "yuke:test";
 import { TextEditor, type View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -18,7 +18,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const view = chat.tui.panes.active?.view as View;
   const moves: (string | undefined)[] = [];
   chat.chat.onChange((moved) => moves.push(chat.chat.session(moved)));
@@ -51,7 +51,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("keep");
   const error = String(await rejects(chat.chat.show("missing")));
   equal(
@@ -77,15 +77,15 @@ test("show rejects during a send and succeeds after the send ends", async () => 
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const { promise, resolve } = Promise.withResolvers<void>();
   sessions.state.accept = promise;
   frame.paste("hi");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   const refused = String(await rejects(chat.chat.show("s2")));
   resolve();
-  await settled();
+  await waitForSettled();
   await chat.chat.show("s2");
   equal([refused, chat.opened.map((open) => open.id)], ["Error: the pane is busy", ["s1", "s2"]]);
 });
@@ -118,7 +118,7 @@ test("a show of the shown session opens it again after a close by another client
   const sessions = fakeSessions(replies(2));
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("keep");
   sessions.close("s1");
   await chat.chat.show("s1");
@@ -138,7 +138,7 @@ test("each pane keeps its own draft of a session that it leaves", async () => {
   using frame = createFrame({ width: 60, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("left");
   chat.tui.commands.run("core:split-right");
   await chat.chat.show("s1");

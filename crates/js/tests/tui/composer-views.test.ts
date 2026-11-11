@@ -2,7 +2,7 @@
 
 import { type ChatPane, composerRows } from "yuke:chat";
 import type { SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -30,7 +30,7 @@ test("views above show below the transcript and above the waiting messages, cut 
   );
   const remove = chat.chat.addComposerView("above", plain("second source"));
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push(waiting(5, "fix the test"));
   frame.draw();
   const shown = rows(frame.frame).slice(3);
@@ -64,7 +64,7 @@ test("views above share at most half the rows above the frame and give way to th
   chat.chat.addComposerView("above", plain("b1", "b2", "b3"));
   chat.chat.addComposerView("above", plain("c1"));
   frame.start();
-  await settled();
+  await waitForSettled();
   const plugin = (): string[] => {
     frame.draw();
     return rows(frame.frame).filter((text) => /^[abc]\d$/.test(text));
@@ -82,7 +82,7 @@ test("views below show under the composer in add order, and the composer moves u
   const remove = chat.chat.addComposerView("below", plain("third"));
   chat.chat.addComposerView("above", plain("above"));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame).slice(4);
   remove();
@@ -105,7 +105,7 @@ test("views below share at most half the pane, and views above share half of wha
   chat.chat.addComposerView("below", plain("c1"));
   chat.chat.addComposerView("above", plain("d1", "d2", "d3"));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(
@@ -132,7 +132,7 @@ test("a height of 0 places no view, and the next view gets the rows that remain"
     },
   }));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal([heights.at(-1), drawnEmpty], [4, 0]);
 });
@@ -146,7 +146,7 @@ test("each pane makes one view per call and gives its live fields, and a close e
     return composerRows(() => []);
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   frame.draw();
   const first = made[0]?.pane;
@@ -156,7 +156,7 @@ test("each pane makes one view per call and gives its live fields, and a close e
   );
 
   chat.tui.commands.run("core:split-right");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(made.length, 2);
   // The close of a pane ends only its own mount.
@@ -181,7 +181,7 @@ test("a view that closes its mount stays closed in the pane, and its factory run
     return composerRows(() => [{ text: "shown" }]);
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const before = rows(frame.frame).at(-1);
   close();
@@ -196,7 +196,7 @@ test("a view above sits directly above the working row", async () => {
   const chat = await loadChat(frame, sessions);
   chat.chat.addComposerView("above", plain("view row"));
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
   const shown = rows(frame.frame);
@@ -213,7 +213,7 @@ test("a factory that throws gives one notice and runs once, and the pane still d
     throw new Error("bad view");
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   frame.draw();
   equal(
@@ -235,7 +235,7 @@ test("a press on a view reaches it and leaves the focus on the composer", async 
     },
   }));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const focused = chat.tui.focused;
   click(frame, 2, 7);
@@ -247,7 +247,7 @@ test("views below leave the composer half of the rows that remain", async () => 
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("b1", "b2", "b3", "b4"));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("1\n2\n3\n4\n5\n6\n7\n8\n9");
   frame.draw();
   const shown = rows(frame.frame);
@@ -261,7 +261,7 @@ test("each call is its own view, and a disposer removes only its own", async () 
   const first = chat.chat.addComposerView("above", plain("same"));
   chat.chat.addComposerView("above", plain("same"));
   frame.start();
-  await settled();
+  await waitForSettled();
   const count = (): number => {
     frame.draw();
     return rows(frame.frame).filter((text) => text === "same").length;
@@ -276,7 +276,7 @@ test("the rule above the composer has a default look that a plugin changes", asy
   using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w" });
   await loadChat(frame, fakeSessions());
   frame.start();
-  await settled();
+  await waitForSettled();
   const look = () => {
     const cells = frame.draw().cells;
     return cells[rows(frame.frame).findIndex((line) => line.startsWith("──"))]?.[0]?.style;
@@ -290,7 +290,7 @@ test("a pane without plugin views shows a rule below the composer, in the look o
   using frame = createFrame({ width: 24, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, fakeSessions());
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const rule = "─".repeat(24);
   equal([rows(frame.frame), frame.frame.cells[5]?.[23]?.style], [["", "", "", rule, "Message…", rule], { dim: true }]);
@@ -301,7 +301,7 @@ test("a view below takes a free row from the rule below the composer", async () 
   const chat = await loadChat(frame, fakeSessions());
   chat.chat.addComposerView("below", plain("only"));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const two = rows(frame.frame);
   frame.resize({ width: 24, height: 4 });
@@ -319,7 +319,7 @@ test("a tall draft stays above the rule below the composer, with the caret on it
   using frame = createFrame({ width: 24, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, fakeSessions());
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("1\n2\n3\n4\n5\n6\n7\n8\n9");
   frame.draw();
   const rule = "─".repeat(24);
@@ -334,7 +334,7 @@ test("a tall question stays above the rule below the composer, with the caret on
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const question = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   const options = [{ label: "Yes" }];
   sessions.push({

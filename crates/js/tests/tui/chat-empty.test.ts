@@ -5,7 +5,7 @@ import { writeTextFile } from "yuke:fs";
 import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import { env } from "yuke:process";
 import type { Block, SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, folder, settled, test } from "yuke:test";
+import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
 import { CATALOG, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -37,7 +37,7 @@ test("a pane without a session shows the icon and, beside it, the version, the m
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", version: "1.2.3" });
   await loadChat(frame);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame);
 
@@ -53,13 +53,13 @@ test("the first send hides the header at once, and the waiting message keeps it 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.key("h i enter");
   frame.draw();
   const sending = rows(frame.frame).join("\n").includes("Type / for commands");
-  await settled();
+  await waitForSettled();
   sessions.push(accepted(1, [{ user_text: "hi" }]), "s-new");
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal([sending, rows(frame.frame).join("\n").includes("Type / for commands")], [false, false]);
@@ -69,7 +69,7 @@ test("a session with history shows no header", async () => {
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, fakeSessions(replies(3)));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(rows(frame.frame).join("\n").includes("yuke 0.0.0"), false);
@@ -83,7 +83,7 @@ test("a narrow pane puts the lines below the icon and cuts a long line", async (
   });
   await loadChat(frame);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame);
 
@@ -98,7 +98,7 @@ test("a pane too short for the whole header shows none of it", async () => {
   using frame = createFrame({ width: 80, height: 8 }, undefined, { cwd: "/w" });
   await loadChat(frame);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(
@@ -113,7 +113,7 @@ test("without a ready provider the header names /login, and a catalog change bri
   let ready = false;
   const chat = await loadChat(frame, fakeSessions(), { list: async () => (ready ? CATALOG : { providers: [] }) });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const before = rows(frame.frame)
     .slice(1, 4)
@@ -121,7 +121,7 @@ test("without a ready provider the header names /login, and a catalog change bri
 
   ready = true;
   chat.fact("catalog.changed", undefined);
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(
@@ -144,7 +144,7 @@ test("the header names the model and the folder of the bar, with the home folder
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: `${home}/launch` });
   const chat = await loadChat(frame);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const bar = ["chat:model", "chat:folder"].map((key) => chat.tui.status.list().find((item) => item.key === key)?.text);
 
@@ -155,7 +155,7 @@ test("setEmptyView replaces the header in each pane, and its disposer brings the
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
   const chat = await loadChat(frame);
   frame.start();
-  await settled();
+  await waitForSettled();
   const dispose = chat.chat.setEmptyView(() => ({ draw: (canvas) => canvas.text(1, 1, "Ask me anything.") }));
   frame.draw();
   const replaced = rows(frame.frame)[1];
@@ -170,7 +170,7 @@ test("the option emptyView false shows nothing in an empty pane", async () => {
   using frame = createFrame({ width: 80, height: 20 }, undefined, { cwd: "/w" });
   await loadChat(frame, fakeSessions(), undefined, { emptyView: false });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(

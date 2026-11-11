@@ -1,6 +1,6 @@
 // The working row of the bundled chat: a spinner, the phase, the elapsed time, and the cancel key of a running turn.
 
-import { createFrame, equal, type FrameTest, settled, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { commit, fakeSessions, fixedClock, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -11,7 +11,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   using _clock = fixedClock();
   /** Draw the frame. Return the text two rows above the rule. */
   const row = (): string => {
@@ -76,7 +76,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.advance(185_000);
   equal(
@@ -90,7 +90,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
   const phase = (): string | undefined => {
@@ -116,7 +116,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
   const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
@@ -150,7 +150,7 @@ test("a short pane gives up the empty rows before the last row of the transcript
   using frame = createFrame({ width: 50, height: 5 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   using _clock = fixedClock();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
@@ -166,7 +166,7 @@ test("a close of the session by another client takes the working row away", asyn
   using frame = createFrame({ width: 50, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
   const running = rows(frame.frame).some((text) => text.includes("to interrupt"));
@@ -180,7 +180,7 @@ test("the working row shows no cancel key while the command list takes esc", asy
   using frame = createFrame({ width: 50, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.key("/ m o d e l");
   frame.draw();
@@ -197,7 +197,7 @@ async function runningExec(width: number, command: string) {
   const frame = createFrame({ width, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(

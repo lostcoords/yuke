@@ -126,7 +126,7 @@ async fn hidden(name: &str) -> Started {
 async fn started(name: &str) -> Started {
     let (mut runtime, reports, display, output, requests) = hidden(name).await;
     runtime.show(None);
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return frames === 1;").await.unwrap());
     (runtime, reports, display, output, requests)
 }
@@ -167,7 +167,7 @@ async fn a_cursor_shape_reaches_the_terminal_and_an_unknown_shape_throws() {
     .await
     .unwrap();
     output.frames(&runtime, 2).await;
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
     assert!(
         output.text().contains("\x1b[2;3H\x1b[6 q\x1b[?25h"),
@@ -189,7 +189,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     let (mut runtime, _reports, display, output, _requests) =
         hidden("a_runtime_draws_and_takes_input_only_after_the_show").await;
     display.send(key('a'));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(
         evaluate::<String>(&runtime, "return `${seen.length} ${frames}`;")
             .await
@@ -199,7 +199,7 @@ async fn a_runtime_draws_and_takes_input_only_after_the_show() {
     assert_eq!(output.text(), "");
 
     runtime.show(Some(r#"{"panes":2}"#.to_owned()));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(
         evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 1;")
             .await
@@ -220,7 +220,7 @@ async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
     let (runtime, _reports, display, _output, _requests) =
         started("a_notice_comes_as_an_event_with_its_level_source_and_text").await;
     display.send(notice(NoticeLevel::Warn, "notes", "the index is stale"));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
@@ -240,7 +240,7 @@ async fn a_notice_of_a_session_keeps_its_session_id() {
         source: "host:session".to_owned(),
         message: "the turn failed".to_owned(),
     }));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return seen[1].sessionId;").await.unwrap(),
@@ -277,7 +277,7 @@ async fn a_batch_of_inputs_draws_one_frame() {
     for character in ['a', 'b', 'c'] {
         display.send(key(character));
     }
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 4;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
@@ -293,7 +293,7 @@ async fn a_redraw_draws_a_frame_at_once_and_gives_the_handler_no_event() {
     let (runtime, _reports, display, _output, _requests) = started("a_redraw_draws_a_frame_at_once").await;
     // The start frame was just drawn, so an asked frame would wait for the frame limit.
     display.send(Input::Redraw);
-    crate::settled().await;
+    crate::wait_for_settled().await;
     let text = evaluate::<String>(&runtime, "return `${frames} ${seen.length}`;")
         .await
         .unwrap();
@@ -307,12 +307,12 @@ async fn asks_for_frames_give_one_frame() {
         .await
         .unwrap();
     output.frames(&runtime, 2).await;
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
     tokio::time::pause();
     tokio::time::advance(Duration::from_millis(50)).await;
     tokio::time::resume();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
@@ -326,12 +326,12 @@ async fn the_frame_of_an_input_answers_an_ask_of_its_handler() {
     .await
     .unwrap();
     display.send(key('a'));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
     tokio::time::pause();
     tokio::time::advance(Duration::from_millis(50)).await;
     tokio::time::resume();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 2);
 }
 
@@ -348,7 +348,7 @@ async fn an_ask_of_the_draw_gives_the_next_frame() {
     .await
     .unwrap();
     output.frames(&runtime, 4).await;
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 4);
 }
 
@@ -357,7 +357,7 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
     let (runtime, _reports, display, _output, _requests) = started("a_focus_event_says_whether").await;
     display.send(Input::Event(Event::FocusLost));
     display.send(Input::Event(Event::FocusGained));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 3;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
@@ -381,7 +381,7 @@ async fn a_motion_with_no_button_reaches_the_handler_and_draws_only_when_it_asks
         }))
     };
     display.send(motion());
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<i32>(&runtime, "return seen.length;").await.unwrap(), 2);
     assert_eq!(evaluate::<i32>(&runtime, "return frames;").await.unwrap(), 1);
 
@@ -411,7 +411,7 @@ async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
         kind: MouseKind::Drag,
         modifiers: Modifiers::CTRL,
     })));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return JSON.stringify(seen[1]);")
@@ -437,7 +437,7 @@ async fn a_throwing_handler_reports_and_the_next_event_runs() {
     let fault = next_fault(&mut reports).await;
     assert!(fault.message.contains("a broken handler"), "{fault:?}");
     display.send(key('b'));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert_eq!(
         evaluate::<String>(&runtime, "return seen[1].character;").await.unwrap(),
@@ -476,7 +476,7 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     )
     .await
     .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 5;").await.unwrap());
     let text = evaluate::<String>(&runtime, "return seen.join(' ');").await.unwrap();
     assert_eq!(text, "start@20 mouse@20 mouse@20 resize@30 resize@40");
@@ -490,7 +490,7 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
         .unwrap();
     output.clear();
     display.send(Input::Resize(Size { columns: 30, rows: 4 }));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(
         evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 2;")
             .await
@@ -529,7 +529,7 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
     display.send(Input::Event(Event::SchemeChanged));
     // The scheme change gives the handler no event, so the key is the next event.
     display.send(key('x'));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 2;").await.unwrap());
     assert!(output.text().starts_with("\x1b]11;?\x1b\\"), "{:?}", output.text());
     assert_eq!(
@@ -556,7 +556,7 @@ async fn a_background_event_comes_only_when_the_class_changes() {
         display.send(Input::Event(Event::Background(color)));
     }
     display.send(key('x'));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 3;").await.unwrap());
     let text = evaluate::<String>(
         &runtime,
@@ -583,14 +583,14 @@ async fn a_frame_asked_before_the_run_waits_for_it() {
     runtime.show(None);
     global_term(&runtime).await;
     evaluate::<()>(&runtime, "term.requestFrame();").await.unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     evaluate::<()>(
         &runtime,
         "globalThis.frames = 0; term.run({ event() {}, draw() { frames += 1; } });",
     )
     .await
     .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return frames === 1;").await.unwrap());
 }
 

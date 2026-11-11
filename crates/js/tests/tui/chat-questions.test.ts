@@ -2,7 +2,7 @@
 // answer, and two panes on one session.
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -39,7 +39,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("draft");
   sessions.push(asked(1, DELETE));
   frame.draw();
@@ -51,7 +51,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
     .map((command) => command.enabled);
   // The second enter comes before the close of the question, and it sends nothing.
   frame.key("down enter enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(
     [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-2), chat.tui.focused === composerOf(chat)],
@@ -71,7 +71,7 @@ test("a question from yuke shows its source without host:", async () => {
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ ...asked(1, DELETE), source: "host:mcp" } as SessionUpdate);
   frame.draw();
 
@@ -83,7 +83,7 @@ test("a request of several questions shows one page each, with ticks and typed a
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const request: InteractionRequest = {
     kind: "questions",
     questions: [
@@ -144,7 +144,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const questions: Question[] = [
     { id: "a", header: "a", question: "a?", options: [{ label: "X" }, { label: "Y" }] },
     { id: "b", header: "b", question: "b?", options: [], other: true },
@@ -191,7 +191,7 @@ test("a press on the field row keeps the page keys with the question", async () 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push(asked(14, one({ options: [{ label: "X" }], other: true })));
   frame.key("down");
   frame.draw();
@@ -207,7 +207,7 @@ test("a tall question keeps its options in view and counts the lines that do not
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
   frame.draw();
@@ -219,7 +219,7 @@ test("a short pane keeps the first line of a tall question above its options", a
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   const options = ["A", "B", "C", "D"].map((label) => ({ label }));
   sessions.push(asked(15, one({ question: text, options })));
@@ -232,15 +232,15 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("draft");
   sessions.push(asked(4, DELETE));
   frame.key("esc");
-  await settled();
+  await waitForSettled();
   sessions.push(asked(5, one({ header: "Name", question: "Name?", options: [], other: true })));
   frame.paste("abc");
   frame.key("ctrl+c");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(
     [sessions.responses, sessions.state.cancels, composerOf(chat).state.text],
@@ -260,7 +260,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   const sessions = fakeSessions();
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.state.refuseAnswer = true;
   sessions.push(asked(6, DELETE));
   frame.key("enter");
@@ -281,7 +281,7 @@ test("each pane of a session shows its question, and the focused pane takes the 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start(saved);
-  await settled();
+  await waitForSettled();
   sessions.push(asked(7, DELETE));
   frame.draw();
   const both = rows(frame.frame).at(-3);
@@ -294,14 +294,14 @@ test("a close of the session by another client drops its question, and the next 
   const sessions = fakeSessions();
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.paste("draft");
   sessions.push(asked(10, DELETE));
   sessions.close("s1");
   frame.draw();
   const shown = rows(frame.frame).at(-2);
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ user_text: "draft" }]]]);
 });
 
@@ -319,7 +319,7 @@ test("a browse of the messages stops while a question shows", async () => {
   const sessions = fakeSessions(saved);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.key("up");
   const enabled = () => chat.tui.commands.list().find((command) => command.name === "chat:newer-message")?.enabled;
   const browsing = enabled();

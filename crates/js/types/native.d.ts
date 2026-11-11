@@ -560,8 +560,8 @@ declare module "yuke:internal/native" {
   export function testHostRecord(): HostRecord;
   /** Close the sessions and the plugins of the host, then check the model script. */
   export function testHostClose(request: null): Operation<undefined>;
-  /** See `settled` of `yuke:test`. */
-  export function testSettled(): Promise<undefined>;
+  /** See `waitForSettled` of `yuke:test`. */
+  export function testWaitForSettled(): Promise<undefined>;
   /** Run the hook point `point` of the session `id` with `event`. The answer is the decision of the host. */
   export function testHostRun(request: readonly [id: SessionId, point: string, event: unknown]): Operation<unknown>;
   /** Call the tool `tool` of the session `id` with `args`. The answer has the live texts of the call in order. */

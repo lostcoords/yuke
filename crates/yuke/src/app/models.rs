@@ -303,7 +303,7 @@ mod tests {
             tokio::select! {
                 biased;
                 answer = &mut complete => panic!("the request ended before the cancel: {answer:?}"),
-                () = yuke_js::settled() => {}
+                () = yuke_js::wait_for_settled() => {}
             }
             assert_eq!(transport.requests().len(), 1);
             cancel.cancel();

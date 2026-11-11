@@ -1,7 +1,7 @@
 // The facts of `ctx.on`: the opens, the updates, and the closes of the sessions, and the notices.
 
 import type { HostEvents, PluginContext, PluginSession, QuestionAnswer, SessionContext } from "yuke:plugins";
-import { createHost, equal, reply, settled, test } from "yuke:test";
+import { createHost, equal, reply, test, waitForSettled } from "yuke:test";
 
 /** A plugin that keeps its context for the test. */
 function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonly ctx: () => PluginContext } {
@@ -57,7 +57,7 @@ test("a listener gets each open session first, then the states of a turn, a late
     if (data.update.sessionUpdate === "state") seen.push(`state ${data.update.state}`);
   });
   ctx.on("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
-  await settled();
+  await waitForSettled();
 
   await first.send("Hi.");
   await host.openSession();
@@ -89,11 +89,11 @@ test("an open during a turn gives its state and questions, and a later listener 
     return got;
   };
   const turn = session.send("Ask me.");
-  await settled();
+  await waitForSettled();
   equal(host.questions.length, 1);
   // The first listener starts the watch, so the host gives the open as the session is now.
   const during = opens();
-  await settled();
+  await waitForSettled();
   answered.resolve(yes);
   await turn;
   // The watch runs already, so this listener gets the open as the facts of the turn left it.
@@ -117,9 +117,9 @@ test("a listener that comes during a question of a running watch gets the open a
   const ctx = plugin.ctx();
   const first: string[] = [];
   ctx.on("session.opened", (data) => first.push(`${data.state} ${data.questions.length}`));
-  await settled();
+  await waitForSettled();
   const turn = session.send("Ask me.");
-  await settled();
+  await waitForSettled();
   equal(host.questions.length, 1);
   const later: string[] = [];
   ctx.on("session.opened", (data) => later.push(`${data.state} ${data.questions.length}`));
@@ -160,9 +160,9 @@ test("an open gives the parent and the running jobs, and a later listener gets t
   };
   // The first listener starts the watch, so the host gives each open as the session is now.
   const during = opens();
-  await settled();
+  await waitForSettled();
   end.resolve(undefined);
-  await settled();
+  await waitForSettled();
   // The watch runs already, so this listener gets each open as the job updates left it.
   const after = opens();
 
@@ -183,11 +183,11 @@ test("a stored API key and a logout each tell the listeners that the catalog cha
   ctx.on("catalog.changed", () => {
     changes += 1;
   });
-  await settled();
+  await waitForSettled();
 
   await ctx.get("auth").setApiKey("anthropic", "sk-test");
   await ctx.get("auth").logout("anthropic");
-  await settled();
+  await waitForSettled();
 
   equal(changes, 2);
 });
@@ -206,7 +206,7 @@ test("a listener that throws gives a notice for each throw, and it and the other
   ctx.on("session.opened", () => {
     others += 1;
   });
-  await settled();
+  await waitForSettled();
   await host.openSession();
 
   equal(
@@ -237,10 +237,10 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
   const delivered: string[] = [];
   plugin.ctx().on("notice", (data) => delivered.push(data.message));
   sender.ctx().notify("info", "first");
-  await settled();
+  await waitForSettled();
   remove();
   sender.ctx().notify("info", "second");
-  await settled();
+  await waitForSettled();
 
   equal(
     [got.map((notice) => [notice.source, notice.level, notice.message]), delivered],
@@ -255,11 +255,11 @@ test("the last removal ends the watch, and a new listener gets the open sessions
   const ctx = plugin.ctx();
   const first: string[] = [];
   const remove = ctx.on("session.opened", (data) => first.push(data.sessionId));
-  await settled();
+  await waitForSettled();
   remove();
   const again: string[] = [];
   ctx.on("session.opened", (data) => again.push(data.sessionId));
-  await settled();
+  await waitForSettled();
 
   equal(first.length, 1);
   equal(again, first);

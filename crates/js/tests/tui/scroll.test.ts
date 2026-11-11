@@ -2,7 +2,7 @@
 // pages, the cache of rows, and the frames.
 
 import { Core } from "yuke:internal/tui/core";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { ScrollList, type TextRow } from "yuke:tui";
 import { rows } from "./rows.ts";
 import { fakeTerminal } from "./terminal.ts";
@@ -179,22 +179,22 @@ test("older pages come once for each top visit and never overlap", async () => {
   const { scroll } = list([{ key: "a", text: "a0a1a2a3" }], { onTopReached: older });
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
   // The first frame alone starts the first load.
-  await settled();
+  await waitForSettled();
   equal(calls, [0]);
   // A second visit while the first load runs waits for its end, and then the list asks again once.
   scroll.scrollBy(2);
   scroll.scrollBy(-2);
   frame.draw();
-  await settled();
+  await waitForSettled();
   equal(calls, [0]);
   finish();
-  await settled();
+  await waitForSettled();
   equal(calls, [0, 1]);
   // A load that ends with no new items asks for nothing more.
   finish();
-  await settled();
+  await waitForSettled();
   frame.draw();
-  await settled();
+  await waitForSettled();
   equal(calls, [0, 1]);
 });
 

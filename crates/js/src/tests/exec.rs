@@ -326,7 +326,7 @@ async fn a_shutdown_waits_until_a_job_that_ended_has_delivered_its_end() {
     tokio::select! {
         biased;
         result = &mut shutdown => panic!("the shutdown ended before delivery: {result:?}"),
-        () = crate::settled() => {}
+        () = crate::wait_for_settled() => {}
     }
     gate.notify_one();
     tokio::time::timeout(WAIT, shutdown).await.unwrap().unwrap();

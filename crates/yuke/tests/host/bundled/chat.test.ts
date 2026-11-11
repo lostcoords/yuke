@@ -5,7 +5,7 @@ import { writeTextFile } from "yuke:fs";
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
 import type { SessionSettings } from "yuke:protocol";
-import { assert, createFrame, createHost, equal, type FrameTest, folder, reply, settled, test } from "yuke:test";
+import { assert, createFrame, createHost, equal, type FrameTest, folder, reply, test, waitForSettled } from "yuke:test";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
@@ -68,10 +68,10 @@ test("a pane draws the same transcript live and after a reload", async () => {
   const service = sessions as Sessions;
   using live = await chatFrame(service, session.id);
   await session.send("Greet Ada.");
-  await settled();
+  await waitForSettled();
   live.draw();
   using reloaded = await chatFrame(service, session.id);
-  await settled();
+  await waitForSettled();
   reloaded.draw();
   for (const text of ["Greet Ada.", "hello Ada", "Done."]) {
     assert(
@@ -116,7 +116,7 @@ test("the first send of a pane with a saved choice creates its session and gets 
   frame.start();
   frame.paste("hello");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
   equal(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
@@ -167,17 +167,17 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
     notify() {},
   } as never);
   frame.start();
-  await settled();
+  await waitForSettled();
   await (shown as unknown as ChatService).show(child);
-  await settled();
+  await waitForSettled();
   frame.draw();
   const text = rows(frame).join("\n");
 
   frame.paste("And the indexes?");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   await held.waitForIdle();
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(text.includes("Two tables."), true);

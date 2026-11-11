@@ -1,7 +1,7 @@
 // The web classes of `yuke:internal/events`: events, event targets, and abort signals. Many cases follow the web
 // platform tests (WPT) of `dom/events` and `dom/abort`.
 
-import { assert, equal, settled, test, throws } from "yuke:test";
+import { assert, equal, test, throws, waitForSettled } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
@@ -366,7 +366,7 @@ test("a listener added after the abort does not run", async () => {
   signal.onabort = () => {
     calls += 1;
   };
-  await settled();
+  await waitForSettled();
   equal(calls, 0);
 });
 

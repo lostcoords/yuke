@@ -260,7 +260,7 @@ void sockets;
 async function models(): Promise<void> {
   const { generateText } = await import("yuke:ai");
   const prompt: Block[] = [{ user_text: "Hi." }];
-  const answer = await generateText({ model: s.settings.model, prompt, maxOutputTokens: 100, abortSignal: s.signal });
+  const answer = await generateText({ model: s.settings.model, prompt, maxOutputTokens: 100, signal: s.signal });
   await generateText({ model: s.settings.model, instructions: "Be brief.", prompt: "Hi." });
   await generateText({ model: s.settings.model, prompt: "Hi.", reasoning: { effort: "high" } });
   await generateText({

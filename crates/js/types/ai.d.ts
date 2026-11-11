@@ -8,7 +8,7 @@
  * - After an overload or a lost connection, the request sends its attempt again, as a turn does.
  * - A media block of the prompt fails the request, because the request cannot read the store of a session. Pass new
  *   media as `attachments`.
- * - An abort of the `abortSignal` stops the request, and `generateText` rejects with the reason of the signal.
+ * - An abort of the `signal` stops the request, and `generateText` rejects with the reason of the signal.
  * - A misuse throws a `TypeError`: an unknown option, an option of another type, a block of another shape, or a
  *   setting that JSON cannot hold.
  */
@@ -86,7 +86,7 @@ declare module "yuke:ai" {
      */
     output?: ObjectOutput<unknown> | undefined;
     /** A signal that stops the request. */
-    abortSignal?: AbortSignal | undefined;
+    signal?: AbortSignal | undefined;
   }
 
   /** The answer of the model. */

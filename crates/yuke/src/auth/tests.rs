@@ -397,7 +397,7 @@ async fn a_cancelled_attempt_still_saves_the_login_of_its_refresh() {
     attempt.abort();
     assert!(attempt.await.unwrap_err().is_cancelled());
     gated.gate.notify_one();
-    yuke_js::settled().await;
+    yuke_js::wait_for_settled().await;
 
     assert_eq!(saved(&folder), Some(("new".to_owned(), "rt2".to_owned())));
     assert_eq!(gated.script.sent().len(), 1);

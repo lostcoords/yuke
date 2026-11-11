@@ -2,7 +2,7 @@
 
 import { mkdir, readDir, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
+import { createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 const empty = { type: "object", properties: {} } as const;
@@ -310,7 +310,7 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
   await using _host = host;
   const stop = new AbortController();
   const pending = session.call("wait", {}, { signal: stop.signal }).catch(() => undefined);
-  await settled();
+  await waitForSettled();
   stop.abort(new Error("stop"));
   await pending;
 
@@ -455,7 +455,7 @@ test("a media path starts in the folder of the start of the call", async () => {
   await session.setSettings({ ...session.settings, cwd: `${folder()}/first` });
 
   const pending = session.call("later", {});
-  await settled();
+  await waitForSettled();
   await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
   release();
 

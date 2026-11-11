@@ -4,7 +4,7 @@
 import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
-import { equal, settled, test } from "yuke:test";
+import { equal, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { commit, fakeSessions, replies, SETTINGS } from "./tui/chat.ts";
 
@@ -132,7 +132,7 @@ test("a composer sends the draft, and a refused input comes back above newer tex
     (error: unknown) => String(error),
   );
   // The send takes the draft after the handle comes, so later text stays in the editor.
-  await settled();
+  await waitForSettled();
   editor.replace(0, 0, "newer");
   reject(new Error("refused"));
   equal(
@@ -189,7 +189,7 @@ test("a send before the store of an attach ends does nothing, so the image goes 
   const store = Promise.withResolvers<void>();
   sessions.state.store = store.promise;
   const attaching = composer.attachImage({ bytes: new Uint8Array([1]), mime: "image/png" });
-  await settled();
+  await waitForSettled();
   const busy = composer.busy;
   await composer.send();
   const early = [...sessions.inputs];
@@ -251,7 +251,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   questions.cancel();
   questions.cancel();
   sessions.state.refuseAnswer = true;
-  await settled();
+  await waitForSettled();
   const second = questions.current;
   // A refused answer leaves the question open for the next answer.
   questions.cancel();

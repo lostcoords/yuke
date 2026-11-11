@@ -1,7 +1,7 @@
 // The whole flow of a child agent: the smallest plugin that uses `parent` and `context.jobs` together.
 
 import type { PluginApply, PluginSession, QuestionAnswer, Sessions } from "yuke:plugins";
-import { createHost, equal, type Reply, reply, settled, test } from "yuke:test";
+import { createHost, equal, type Reply, reply, test, waitForSettled } from "yuke:test";
 
 /** The plugin. Its tool `spawn_subagent` runs the one child of a session as the job `explorer`. */
 function agents() {
@@ -188,15 +188,15 @@ test("ctrl+b moves a foreground child: the call answers, the child goes on, and 
   await using _host = host;
   const handle = await list().open(parent.id, { tail: 0, onEvent() {} });
   const running = parent.call("spawn_subagent", { message: "Read the store.", background: false });
-  await settled();
+  await waitForSettled();
   const movable = handle.canMoveJobsToBackground();
 
   handle.moveJobsToBackground();
   const result = await running;
-  await settled();
+  await waitForSettled();
   const jobs = handle.jobs().map((job) => [job.id, job.state]);
   state.open();
-  await settled();
+  await waitForSettled();
 
   equal(movable, true);
   equal(result.text, "explorer runs in the background.");

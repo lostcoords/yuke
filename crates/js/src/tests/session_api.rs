@@ -480,7 +480,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
     )
     .await
     .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     let all = evaluate::<Vec<String>>(&runtime, "return updates;").await.unwrap();
     let recursed = evaluate::<bool>(&runtime, "return recursed;").await.unwrap();
 
@@ -511,7 +511,7 @@ async fn an_aborted_handle_ends_its_hold_and_gets_no_later_update() {
     // The feed keeps the order, so the update of the second view comes after the one of the first view.
     scripted.send(0, state(SessionState::Running));
     scripted.send(1, state(SessionState::Running));
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(evaluate::<usize>(&runtime, "return later.length;").await.unwrap(), 2);
     let input = evaluate::<String>(
         &runtime,
@@ -752,7 +752,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     .await
     .unwrap();
     // An abort before the first poll creates no hold, so the drop assertion must wait for the task to start.
-    crate::settled().await;
+    crate::wait_for_settled().await;
     let aborted = evaluate::<bool>(
         &runtime,
         "controller.abort();
@@ -761,7 +761,7 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
     .await
     .unwrap();
     // The abort of the task drops it at the next poll of the host runtime.
-    crate::settled().await;
+    crate::wait_for_settled().await;
 
     assert_eq!(answers, r#"[{"plugins":[]},true,false,"clock"]"#);
     assert!(aborted);

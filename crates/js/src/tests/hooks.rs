@@ -172,7 +172,7 @@ async fn a_cancel_aborts_the_signal_of_each_point_and_the_host_answers_at_once()
         .await;
         let token = CancellationToken::new();
         let cancel = async {
-            crate::settled().await;
+            crate::wait_for_settled().await;
             assert!(
                 evaluate::<bool>(&runtime, "return globalThis.started === true;")
                     .await
@@ -220,7 +220,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
         }
     };
     let cancel = async {
-        crate::settled().await;
+        crate::wait_for_settled().await;
         assert!(
             evaluate::<bool>(&runtime, "return globalThis.started === true;")
                 .await
@@ -231,7 +231,7 @@ async fn a_cancel_aborts_the_signal_also_when_the_driver_drops_the_hook_future()
     let (decision, ()) = tokio::join!(raced, cancel);
 
     assert_eq!(decision, None);
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(
         evaluate::<String>(&runtime, "return globalThis.aborted;")
             .await
@@ -264,7 +264,7 @@ async fn an_answer_that_comes_after_the_close_of_the_session_does_not_count() {
         )
         .await;
         let close = async {
-            crate::settled().await;
+            crate::wait_for_settled().await;
             assert!(
                 evaluate::<bool>(&runtime, "return typeof globalThis.release === 'function';")
                     .await

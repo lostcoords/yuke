@@ -264,13 +264,13 @@ async fn an_abort_stops_the_request_and_rejects_with_the_reason_of_the_signal() 
         "const ai = await import('yuke:ai');
          globalThis.controller = new AbortController();
          globalThis.answer = ai
-           .generateText({ model: { provider: 'p', model: 'm' }, prompt: [], abortSignal: controller.signal })
+           .generateText({ model: { provider: 'p', model: 'm' }, prompt: [], signal: controller.signal })
            .catch((error) => error);
          return true;",
     )
     .await
     .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(models.requests.borrow_mut().len(), 1);
     let reason = evaluate::<String>(
         &runtime,
@@ -296,13 +296,13 @@ async fn a_shutdown_stops_a_request_that_waits_for_its_answer() {
     )
     .await
     .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(models.requests.borrow_mut().len(), 1);
     assert!(!models.request_tokens.borrow_mut()[0].is_cancelled());
 
     runtime.shutdown().await.unwrap();
 
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(models.request_tokens.borrow_mut()[0].is_cancelled());
     assert_eq!(*models.alive.borrow_mut(), 0);
 }
@@ -341,13 +341,13 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
         })
         .await
         .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert_eq!(models.request_tokens.borrow_mut().len(), 1);
     assert!(!models.request_tokens.borrow_mut()[0].is_cancelled());
 
     runtime.shutdown().await.unwrap();
 
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(models.request_tokens.borrow_mut()[0].is_cancelled());
     assert_eq!(*models.alive.borrow_mut(), 0);
 }

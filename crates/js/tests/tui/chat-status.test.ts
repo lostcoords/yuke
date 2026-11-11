@@ -4,7 +4,7 @@
 import { writeTextFile } from "yuke:fs";
 import { env } from "yuke:process";
 import type { Job, ProviderInfo, ProviderState, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, folder, settled, test } from "yuke:test";
+import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
 import type { StatusItem } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -57,7 +57,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
     }),
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   const items = (): string[][] => listed(chat).map((item) => [item.key, item.text]);
   const shown = items();
   sessions.push(
@@ -94,7 +94,7 @@ test("without a context window the context use is a token count", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   equal(
     listed(chat).map((item) => [item.key, item.text]),
     [
@@ -116,7 +116,7 @@ test("an answer without an input count shows no context item", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
-  await settled();
+  await waitForSettled();
   equal(
     listed(chat).map((item) => item.key),
     ["chat:model"],
@@ -131,11 +131,11 @@ test("the first send of a new pane shows the jobs of its session once the handle
   sessions.state.jobs = [JOB];
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w" });
   const chat = await loadChat(frame, sessions);
-  await settled();
+  await waitForSettled();
   frame.start();
   frame.paste("hi");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   equal(sessions.inputs.length, 1);
   equal(
     listed(chat).map((item) => item.key),
@@ -157,17 +157,17 @@ test("a pane without a session shows the saved pick, and a new pick replaces it"
   frame.start();
   const first = shownItems(chat);
   frame.key("ctrl+k m");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(rows(frame.frame).includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(rows(frame.frame).includes("low"), true);
   frame.key("down");
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   equal([first, shownItems(chat)], [[["chat:model", "m high"]], [["chat:model", "n low"]]]);
 });
 
@@ -201,14 +201,14 @@ test("the bar of a session of a provider that was not ready at the start shows i
   const catalog = { list: async () => (ready ? CATALOG : { providers: [] }) };
   const chat = await loadChat(frame, fakeSessions(SAVED), catalog);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const model = (): string | undefined => listed(chat).find((item) => item.key === "chat:model")?.text;
   const before = model();
 
   ready = true;
   chat.fact("catalog.changed", undefined);
-  await settled();
+  await waitForSettled();
 
   equal([before, model()], ["m", "m high"]);
 });
@@ -223,7 +223,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   const catalog = { list: async () => ({ providers: state.kind === "ready" ? providers() : [] }) };
   const chat = await loadChat(frame, fakeSessions(), catalog);
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const model = (): string | undefined => listed(chat).find((item) => item.key === "chat:model")?.text;
   const before = model();
@@ -232,11 +232,11 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   // As the host does after a login.
   chat.fact("catalog.changed", undefined);
   chat.tui.commands.run("chat:model");
-  await settled();
+  await waitForSettled();
   frame.key("enter");
-  await settled();
+  await waitForSettled();
   frame.key("h i g h enter");
-  await settled();
+  await waitForSettled();
 
   equal([before, model()], [undefined, "m high"]);
 });
@@ -246,12 +246,12 @@ test("the folder item shows the folder of the session, and a pane without one sh
   using frame = createFrame({ width: 60, height: 10 }, undefined, { cwd: `${home}/launch` });
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
-  await settled();
+  await waitForSettled();
   const shown = (): string | undefined => chat.tui.status.list().find((item) => item.key === "chat:folder")?.text;
   const before = shown();
 
   await chat.chat.show("s1");
-  await settled();
+  await waitForSettled();
 
   equal([before, shown()], ["~/launch", "/w"]);
 });

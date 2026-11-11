@@ -1,7 +1,7 @@
 // The turns of a session of the test host: the fake replies, the transcript, and the hooks and the tools of a plugin.
 
 import type { PluginSession } from "yuke:plugins";
-import { assert, createHost, equal, folder, rejects, reply, settled, test } from "yuke:test";
+import { assert, createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
 import type { Entry } from "yuke:transcript";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
@@ -79,7 +79,7 @@ test("an abort of the signal cancels a turn that waits for the replies, and send
   const session = await host.openSession();
   const stop = new AbortController();
   const sent = rejects(session.send("Hi.", { signal: stop.signal }));
-  await settled();
+  await waitForSettled();
   equal(host.requests.length, 1);
   stop.abort(new Error("stop"));
 

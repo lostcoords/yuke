@@ -1,7 +1,7 @@
 // The tool calls of the bundled chat: the head line, the previews, the body, the diffs, the folds, and the links.
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
-import { assert, createFrame, equal, settled, test } from "yuke:test";
+import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
 import {
   click,
   commit,
@@ -422,7 +422,7 @@ test("a silent running call counts up on its own, and its end shows the measured
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   using clock = fixedClock();
   const execution = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "state", state: "running" });

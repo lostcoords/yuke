@@ -2,7 +2,7 @@
 // drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
-import { assert, createFrame, equal, settled, test } from "yuke:test";
+import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
 import { click, commit, EMPTY, fakeSessions, loadChat, mouse, replies, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -82,7 +82,7 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   using other = createFrame({ width: 21, height: 4 });
   const failed = await loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
-  await settled();
+  await waitForSettled();
   equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
   equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
@@ -163,7 +163,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
     const shown = transcriptRows(frame);
-    await settled();
+    await waitForSettled();
     frame.draw();
     // A prepend keeps the item at the top and its row.
     equal(transcriptRows(frame), shown);
@@ -172,7 +172,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   const loaded = sessions.pages.length;
   sessions.push(commit(251, [{ assistant_text: { text: "reply 251" } }]));
   frame.draw();
-  await settled();
+  await waitForSettled();
   equal(sessions.pages.length, loaded);
   const starts = sessions.pages.map((page) => page.before);
   // Each page asks for events before the page that came before it.
@@ -189,12 +189,12 @@ test("a failed page shows its error below the transcript and loads no more pages
   for (let visit = 0; visit < 2; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
-    await settled();
+    await waitForSettled();
   }
   sessions.push(commit(251, [{ assistant_text: { text: "reply 251" } }]));
   chat.transcript().scroll.scrollTo(0);
   frame.draw();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(rows(frame.frame).at(-4), " the history did not load: Error: disk");
   equal(sessions.pages.length, 1);
@@ -234,7 +234,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
-  await settled();
+  await waitForSettled();
   after.draw();
   equal(transcriptRows(after), shown);
 });
@@ -250,7 +250,7 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   saved.push(commit(11, [{ assistant_text: { text: "reply 11" } }]));
   sessions.push(commit(12, [{ assistant_text: { text: "reply 12" } }]));
   frame.draw();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(sessions.pages, [{ before: 12, limit: 1 }]);
   equal(

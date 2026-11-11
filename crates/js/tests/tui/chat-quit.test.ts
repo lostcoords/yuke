@@ -1,7 +1,7 @@
 // A quit of the bundled chat: it asks while work runs, and it says what stops.
 
 import type { Job, SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -18,7 +18,7 @@ async function opened(jobs: readonly Job[] = []) {
   // A frame test has no default keys.
   chat.tui.keys.bind("ctrl+q", "core:quit");
   frame.start();
-  await settled();
+  await waitForSettled();
   // As the host does, the open of the pane gives the open of its session to each listener.
   open(chat, "s1", { jobs });
   frame.draw();
@@ -53,11 +53,11 @@ test("a quit names each session once and leaves out a pane without a session", a
   const { frame, chat } = await opened();
   using _frame = frame;
   chat.tui.commands.run("core:split-right");
-  await settled();
+  await waitForSettled();
   chat.tui.commands.run("core:split-right");
-  await settled();
+  await waitForSettled();
   await chat.chat.show("s1");
-  await settled();
+  await waitForSettled();
 
   frame.key("ctrl+q");
 
@@ -137,9 +137,9 @@ test("two panes on one session count its work once", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
   chat.tui.commands.run("core:split-right");
-  await settled();
+  await waitForSettled();
   await chat.chat.show("s1");
-  await settled();
+  await waitForSettled();
 
   frame.key("ctrl+q");
 
@@ -181,9 +181,9 @@ test("two read-only children of one parent count each job, and a quit resumes th
   using _frame = frame;
   chat.chat.addReadOnly((session) => (session === "p1" ? undefined : { text: "A child", back: "p1" }));
   chat.tui.commands.run("core:split-right");
-  await settled();
+  await waitForSettled();
   await chat.chat.show("s2");
-  await settled();
+  await waitForSettled();
   open(chat, "s1", { parent: "p1", jobs: [JOB] });
   open(chat, "s2", { parent: "p1", jobs: [{ ...JOB, id: "j3" }] });
   frame.draw();

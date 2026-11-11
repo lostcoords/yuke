@@ -362,7 +362,7 @@ async fn run_test(
     limited(runtime, limit, runtime.import(path))
         .await
         .map_err(TestFileError::ImportTimedOut)??;
-    limited(runtime, limit, crate::settled())
+    limited(runtime, limit, crate::wait_for_settled())
         .await
         .map_err(TestFileError::ImportTimedOut)?;
     if let Some(fault) = drain(reports).into_iter().find_map(|report| match report {
@@ -409,7 +409,7 @@ async fn run_test(
         Ok(Err(error)) => return Err(error.into()),
     };
     // A timer of the test can still keep the runtime busy, so the settled wait has the time limit too.
-    if !matches!(status, TestStatus::TimedOut) && limited(runtime, limit, crate::settled()).await.is_err() {
+    if !matches!(status, TestStatus::TimedOut) && limited(runtime, limit, crate::wait_for_settled()).await.is_err() {
         status = TestStatus::TimedOut;
     }
     Ok(Ran {

@@ -1,5 +1,5 @@
 //! The host of `createHost` in `yuke:test`: a capability that the consumer gives to the runtime of a test, and the
-//! natives that reach it. Without it, each `testHost` native fails with a clear text. `testSettled` needs no host.
+//! natives that reach it. Without it, each `testHost` native fails with a clear text. `testWaitForSettled` needs no host.
 
 use std::rc::Rc;
 
@@ -63,11 +63,11 @@ pub trait TestHost {
 /// Add the natives of the test host to `object`, the export object of the native module.
 pub(crate) fn add<'js>(ctx: &Ctx<'js>, object: &Object<'js>, host: Option<&Rc<dyn TestHost>>) -> rquickjs::Result<()> {
     object.set(
-        "testSettled",
+        "testWaitForSettled",
         Function::new(
             ctx.clone(),
             Async(|| async {
-                crate::settled().await;
+                crate::wait_for_settled().await;
                 rquickjs::Result::Ok(())
             }),
         )?,

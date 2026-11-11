@@ -109,7 +109,7 @@ async fn a_load_during_or_after_the_close_fails_and_runs_its_cleanup() {
 
     let slow = [slow];
     let (during, ()) = tokio::join!(runtime.load_plugins(&slow), async {
-        crate::settled().await;
+        crate::wait_for_settled().await;
         assert!(
             evaluate::<bool>(&runtime, "return typeof globalThis.finishApply === 'function';")
                 .await

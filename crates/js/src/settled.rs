@@ -29,7 +29,7 @@ impl Drop for Wait {
 /// # Panics
 ///
 /// Panics outside a current-thread runtime, and when a caller other than this function paused the clock.
-pub async fn settled() {
+pub async fn wait_for_settled() {
     if WAITS.get() == 0 {
         tokio::time::pause();
     }

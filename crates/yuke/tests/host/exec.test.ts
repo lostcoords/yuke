@@ -3,7 +3,7 @@
 
 import { readTextFile } from "yuke:fs";
 import type { Sessions } from "yuke:plugins";
-import { assert, createHost, equal, folder, settled, type TestSession, test } from "yuke:test";
+import { assert, createHost, equal, folder, type TestSession, test, waitForSettled } from "yuke:test";
 
 /** The answer of `exec` for `command`, with the arguments `extra`. */
 function exec(session: TestSession, command: string, extra: object = {}) {
@@ -87,7 +87,7 @@ test("a moved exec shows the user a short row and tells the model the log and th
   const session = await host.openSession();
   const handle = await (sessions as Sessions).open(session.id, { tail: 0, onEvent() {} });
   const running = exec(session, "sleep 30");
-  while (!handle.canMoveJobsToBackground()) await settled();
+  while (!handle.canMoveJobsToBackground()) await waitForSettled();
   handle.moveJobsToBackground();
   const moved = await running;
   const id = moved.text.split(" as ")[1]?.split(".")[0] as string;

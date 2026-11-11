@@ -1,7 +1,7 @@
 /** The code of the public module `yuke:test`. Its declaration is `types/test.d.ts`, and the check at the end compares the two. */
 
 import { createHost, reply } from "yuke:internal/host";
-import { testSettled, testSocketPath } from "yuke:internal/native";
+import { testSocketPath, testWaitForSettled } from "yuke:internal/native";
 import { Listener } from "yuke:internal/net";
 import { folder, register } from "yuke:internal/test";
 import { createFrame } from "yuke:internal/tui/frame";
@@ -9,8 +9,8 @@ import type { UnixListener } from "yuke:net";
 
 export { createFrame, createHost, folder, reply };
 
-export async function settled(): Promise<void> {
-  await testSettled();
+export async function waitForSettled(): Promise<void> {
+  await testWaitForSettled();
 }
 
 export function listen(): UnixListener {
@@ -147,7 +147,7 @@ const declared = {
   equal,
   throws,
   rejects,
-  settled,
+  waitForSettled,
   folder,
   listen,
   createHost,

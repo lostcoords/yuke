@@ -325,7 +325,7 @@ where
         .await
         .unwrap()
         .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
     if let Ok(report) = reports.try_recv() {
         panic!("unexpected report: {report:?}");
     }
@@ -342,7 +342,7 @@ async fn collect_garbage(runtime: &Runtime) {
         })
         .await
         .unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
 }
 
 /// The JavaScript of a function `names(calls)`. It gives the name of the error of each call, or `none`.
@@ -425,9 +425,9 @@ async fn a_dropped_call_stops_its_future() {
             result = entered => result.unwrap(),
         }
     }
-    crate::settled().await;
+    crate::wait_for_settled().await;
     evaluate::<()>(&runtime, "finishCall();").await.unwrap();
-    crate::settled().await;
+    crate::wait_for_settled().await;
 
     assert_eq!(
         evaluate::<Option<bool>>(&runtime, "return globalThis.finished;")
@@ -633,7 +633,7 @@ async fn a_rejection_that_gets_a_handler_in_its_drive_is_no_fault() {
     .await
     .unwrap();
 
-    crate::settled().await;
+    crate::wait_for_settled().await;
     assert!(faults.try_recv().is_err());
 }
 

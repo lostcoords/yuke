@@ -138,7 +138,7 @@ async function compact(
   blocks: number | undefined,
 ): Promise<RoundBeforeAnswer> {
   const prompt = isSummary(context[0]) ? MERGE : SUMMARIZE;
-  const answer = await event.sideRequest({ prompt, blocks, abortSignal: event.signal });
+  const answer = await event.sideRequest({ prompt, blocks, signal: event.signal });
   if (answer.finishReason !== "stop") throw new Error(`the summary stopped with ${answer.finishReason}`);
   if (answer.text.trim() === "") throw new Error("the summary is empty");
   const head = [summaryBlock(answer.text)];

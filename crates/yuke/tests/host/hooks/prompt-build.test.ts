@@ -1,7 +1,7 @@
 // The `prompt.build` hook: its order, its answers, and its failures.
 
 import type { PluginSession, SessionHooks } from "yuke:plugins";
-import { createHost, equal, rejects, reply, settled, test } from "yuke:test";
+import { createHost, equal, rejects, reply, test, waitForSettled } from "yuke:test";
 
 /** The sections of a new session before any hook. */
 const saved = { base: "You are yuke.", environment: "workspace: /work" };
@@ -97,7 +97,7 @@ test("the first build waits for the setup of the session", async () => {
     built = true;
     return result;
   });
-  await settled();
+  await waitForSettled();
   equal(built, false);
   setup.resolve();
 
@@ -125,12 +125,12 @@ test("a build that fails after a cancel sends no fault", async () => {
   const session = await host.openSession();
   const stop = new AbortController();
   const built = session.run("prompt.build", { sections: saved }, { signal: stop.signal });
-  await settled();
+  await waitForSettled();
   stop.abort(new Error("stop"));
 
   await rejects(built);
   handler.reject(new Error("stopped"));
-  await settled();
+  await waitForSettled();
 });
 
 // A handler can be in a list twice, so a remover removes one entry, and a second call of it removes nothing.

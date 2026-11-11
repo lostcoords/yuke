@@ -1,7 +1,7 @@
 // A read-only session in a chat pane: the row in place of the composer, the keys that stop working, and the way back.
 
 import type { InteractionRequest, SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -21,7 +21,7 @@ async function opened() {
     session === "s1" ? { text: "A child session", back: "p1" } : undefined,
   );
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   return { frame, sessions, chat, end };
 }
@@ -44,7 +44,7 @@ test("a read-only session takes no message, no recall, no image, and no cancel",
   frame.key("ctrl+v");
   frame.key("ctrl+c");
   frame.key("ctrl+b");
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal([sessions.inputs.length, sessions.state.cancels, sessions.state.backgrounds], [0, 0, 0]);
@@ -76,7 +76,7 @@ test("a read-only session shows no question in its pane", async () => {
     request: QUESTION,
   };
   sessions.push(update);
-  await settled();
+  await waitForSettled();
   frame.draw();
 
   equal(rows(frame.frame).at(-2), "A child session · esc back");
@@ -88,7 +88,7 @@ test("the key back shows the session behind the pane, and the composer gets the 
   using _frame = frame;
 
   frame.key("esc");
-  await settled();
+  await waitForSettled();
   frame.draw();
   frame.paste("draft");
   frame.draw();
@@ -108,10 +108,10 @@ test("a selection in the transcript goes first, and the next key goes back", asy
   view.selection = { anchor: { ...place, offset: 0 }, head: { ...place, offset: 1 } };
 
   frame.key("esc");
-  await settled();
+  await waitForSettled();
   const before = chat.opened.at(-1)?.id;
   frame.key("esc");
-  await settled();
+  await waitForSettled();
 
   equal([before, chat.opened.at(-1)?.id], ["s1", "p1"]);
 });
@@ -122,7 +122,7 @@ test("the key back gives the composer the focus after a press on the transcript"
 
   click(frame, 2, 2);
   frame.key("esc");
-  await settled();
+  await waitForSettled();
   frame.draw();
   frame.paste("draft");
   frame.draw();

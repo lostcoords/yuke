@@ -2,7 +2,7 @@
 
 import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
 import type { StoredEvent, ToolCall } from "yuke:protocol";
-import { assert, createFrame, equal, settled, test } from "yuke:test";
+import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument, View } from "yuke:tui";
 import { click, commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
@@ -79,7 +79,7 @@ test("a plugin shows three tools as one row, and a click opens and folds that ro
   const chat = await loadChat(frame, fakeSessions(reads("a", "b", "c")));
   chat.chat.setPresentation((options) => new Grouped(options));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const folded = shown(frame);
   click(frame, 1, transcriptRows(frame).indexOf("● tools: 3"));
@@ -95,7 +95,7 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(reads("a", "b")));
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   click(frame, 1, transcriptRows(frame).indexOf(" read a"));
   const before = shown(frame);
@@ -131,7 +131,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
     };
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   using clock = fixedClock();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
@@ -167,7 +167,7 @@ test("a disposer of an old factory leaves the look of a later factory", async ()
   chat.chat.setPresentation((options) => new Grouped(options));
   removeOld();
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(shown(frame), ["● tools: 1"]);
 });
@@ -183,7 +183,7 @@ test("requestUpdate shows new state of a presentation with no session event, and
     return grouped;
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   (grouped as unknown as Grouped).label = "running";
   chat.tui.requestFrame();
@@ -204,7 +204,7 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
   };
   chat.chat.setPresentation(factory);
   frame.start();
-  await settled();
+  await waitForSettled();
   const pane = chat.tui.panes.active?.view as View;
   await chat.chat.show("s2");
   const afterShow = [options[0]?.signal.aborted, options[1]?.signal.aborted];
@@ -233,7 +233,7 @@ test("a group key in the folds survives a snapshot and a restore", async () => {
   const first = await loadChat(before, fakeSessions(reads("a")));
   first.chat.setPresentation((options) => new Grouped(options));
   before.start();
-  await settled();
+  await waitForSettled();
   before.draw();
   click(before, 1, transcriptRows(before).indexOf("● tools: 1"));
   const snapshot = before.snapshot();
@@ -241,7 +241,7 @@ test("a group key in the folds survives a snapshot and a restore", async () => {
   const second = await loadChat(after, fakeSessions(reads("a")));
   second.chat.setPresentation((options) => new Grouped(options));
   after.start(snapshot);
-  await settled();
+  await waitForSettled();
   after.draw();
   equal(shown(after), ["● tools: 1", " read a"]);
 });

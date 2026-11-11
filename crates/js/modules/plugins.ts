@@ -561,7 +561,7 @@ export interface SideRequestOptions {
   /** The output limit of the request in tokens. Without it, the request has the limit of the round. */
   readonly maxOutputTokens?: number | undefined;
   /** An abort stops the request, and the promise rejects with the reason of the signal. */
-  readonly abortSignal?: AbortSignal | undefined;
+  readonly signal?: AbortSignal | undefined;
 }
 
 /** The answer of `sideRequest`. */

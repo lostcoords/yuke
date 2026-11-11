@@ -2,7 +2,7 @@
 
 import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat";
 import type { InteractionRequest } from "yuke:protocol";
-import { createFrame, equal, settled, test } from "yuke:test";
+import { createFrame, equal, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -43,7 +43,7 @@ test("a frame without insets leaves each row to the transcript and the input", a
   const chat = await loadChat(frame, fakeSessions(replies(30)));
   chat.chat.setComposerFrame({ inset: () => ({}), draw() {} });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame);
   equal(shown.at(-1), "Message…");
@@ -112,7 +112,7 @@ test("a frame gets the view in the input area, the focus, and the state of the t
     },
   });
   frame.start();
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(seen.at(-1), "composer true false 1 s1");
   sessions.push({ sessionUpdate: "state", state: "running" });
@@ -121,7 +121,7 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   sessions.push({ sessionUpdate: "state", state: "idle" });
   frame.draw();
   sessions.push({ sessionUpdate: "interaction_requested", interactionId: 1, source: "guard", request: QUESTION });
-  await settled();
+  await waitForSettled();
   frame.draw();
   equal(seen.at(-1), "question true false 0 s1");
   const end = chat.chat.addReadOnly(() => ({ text: "A child session", back: "p1" }));

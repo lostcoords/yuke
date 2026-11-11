@@ -11,7 +11,7 @@ import {
   testHostCreate,
   testHostRecord,
   testHostRun,
-  testSettled,
+  testWaitForSettled,
 } from "yuke:internal/native";
 import { give } from "yuke:internal/plugins";
 import { sessionsOf } from "yuke:internal/sessions";
@@ -113,7 +113,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
   // A plugin can send a request while the host loads it.
   if (options.respond !== undefined) setResponder(responderOf(options.respond));
   await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
-  await testSettled();
+  await testWaitForSettled();
 
   const stop = new AbortController();
   const sessions = sessionsOf("test", stop.signal);
@@ -173,7 +173,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         else ask(id, event.update);
       },
     });
-    await testSettled();
+    await testWaitForSettled();
     return Object.freeze({
       id,
       transcript,
@@ -187,7 +187,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         } finally {
           operation?.signal?.removeEventListener("abort", cancel);
         }
-        await testSettled();
+        await testWaitForSettled();
         // A cancel ends the turn early, and `send` rejects as `run` and `call` do.
         operation?.signal?.throwIfAborted();
       },
@@ -197,14 +197,14 @@ export async function createHost(options: HostOptions): Promise<Host> {
         operation?: OperationOptions,
       ): Promise<HookResults[K]> {
         const result = await underSignal(operation?.signal, () => testHostRun([id, point, event]));
-        await testSettled();
+        await testWaitForSettled();
         // The hook point ends early after a cancel, so its decision is no answer.
         operation?.signal?.throwIfAborted();
         return (result ?? undefined) as HookResults[K];
       },
       async call(tool: string, args: unknown, operation?: OperationOptions): Promise<CallOutcome> {
         const result = await underSignal(operation?.signal, () => testHostCall([id, tool, args]));
-        await testSettled();
+        await testWaitForSettled();
         // The tool ends early after a cancel, so its result is no answer.
         operation?.signal?.throwIfAborted();
         return result;
@@ -215,12 +215,12 @@ export async function createHost(options: HostOptions): Promise<Host> {
       async setSettings(settings: SessionSettings): Promise<void> {
         await handle.setSettings(settings);
         current = settings;
-        await testSettled();
+        await testWaitForSettled();
       },
       async close(): Promise<void> {
         closed.add(id);
         await sessions.closeForAll(id);
-        await testSettled();
+        await testWaitForSettled();
       },
     } satisfies TestSession);
   };
@@ -230,7 +230,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
       stop.abort(new Error("the host closed"));
       setResponder(undefined);
       await testHostClose(null).promise;
-      await testSettled();
+      await testWaitForSettled();
     })();
     return closing;
   };

@@ -12,7 +12,7 @@ import type { Infer, ObjectSchema, Schema } from "yuke:tools";
 const SETTINGS = ["maxOutputTokens", "temperature", "topP", "reasoning"] as const;
 
 /** The names of the options of `generateText`. */
-const OPTIONS = ["model", "instructions", "prompt", "attachments", "output", "abortSignal", ...SETTINGS] as const;
+const OPTIONS = ["model", "instructions", "prompt", "attachments", "output", "signal", ...SETTINGS] as const;
 
 /** A schema name that OpenAI takes. */
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -72,7 +72,7 @@ export function generateText<T>(
 export function generateText(options: GenerateTextOptions): Promise<GenerateTextResult>;
 export async function generateText(options: GenerateTextOptions): Promise<GenerateTextResult<unknown>> {
   const fields = fieldsOf(options, "the options", OPTIONS);
-  const { model, instructions = "", prompt, attachments = [], abortSignal } = fields as unknown as GenerateTextOptions;
+  const { model, instructions = "", prompt, attachments = [], signal } = fields as unknown as GenerateTextOptions;
   const output = fields.output as ObjectOutput<unknown> | undefined;
   const { provider, model: id } = fieldsOf(model, "the option model", ["provider", "model"]) as {
     provider: string;
@@ -93,7 +93,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     // The copy drops a missing setting. It refuses a number that is not finite, which JSON would make `null`.
     settings: jsonCopy(settings, "a setting"),
   };
-  const answer = await underStop(abortSignal, () => aiComplete(request));
+  const answer = await underStop(signal, () => aiComplete(request));
   return Object.freeze({ ...answer, output: output === undefined ? undefined : objectOf(output.schema, answer) });
 }
 

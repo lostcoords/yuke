@@ -2,7 +2,7 @@
 
 import { mkdir, stat, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, settled, test } from "yuke:test";
+import { createHost, equal, folder, rejects, test, waitForSettled } from "yuke:test";
 
 /** The lines of a rejected `createHost` that name a failed plugin, in load order. Other lines are stacks. */
 async function failures(host: Promise<unknown>): Promise<string[]> {
@@ -213,7 +213,7 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
   const closing = host.close().then(() => {
     closed = true;
   });
-  await settled();
+  await waitForSettled();
   equal(closed, false);
   equal(events, ["three", "two true,true,true"]);
   cleanup.resolve();

@@ -6,7 +6,7 @@ import { Commands } from "yuke:internal/tui/commands";
 import { Keymap } from "yuke:internal/tui/keymap";
 import { Notices } from "yuke:internal/tui/notices";
 import { Styles } from "yuke:internal/tui/styles";
-import { assert, equal, settled, test, throws } from "yuke:test";
+import { assert, equal, test, throws, waitForSettled } from "yuke:test";
 import { type Command, parseKeys, strokeOf } from "yuke:tui";
 import { key, named } from "./terminal.ts";
 
@@ -308,10 +308,10 @@ test("an async command lets keys go on and a failure names it", async () => {
   equal(keys.ran, ["next"]);
   assert(finish !== undefined);
   finish();
-  await settled();
+  await waitForSettled();
   keys.commands.run("broken");
   keys.commands.run("sync");
-  await settled();
+  await waitForSettled();
   equal(
     keys.faults.map((fault) => fault.split("\n")[0]),
     ["the command sync failed: Error: bad state", "the command broken failed: Error: no disk"],

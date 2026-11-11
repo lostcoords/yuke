@@ -1,6 +1,6 @@
 // Shared reasoning runs in the bundled chat: one fold and source for adjacent provider blocks.
 
-import { assert, createFrame, equal, settled, test } from "yuke:test";
+import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
 import { click, commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -12,7 +12,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   ]);
   const chat = await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   equal(
     transcriptRows(frame).filter((row) => row !== ""),
     [" thought"],
@@ -31,7 +31,7 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   using restored = createFrame({ width: 60, height: 14 });
   await loadChat(restored, sessions);
   restored.start(snapshot);
-  await settled();
+  await waitForSettled();
   equal(transcriptRows(restored).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
   click(frame, 2, 4);
   equal(
@@ -45,7 +45,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
   frame.start();
-  await settled();
+  await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   sessions.push({ sessionUpdate: "draft_started", draftId: "d" });
   sessions.push({
