@@ -142,10 +142,6 @@ impl<'de> Visitor<'de> for ValueVisitor {
         Ok(Value::String(Cow::Owned(value.to_owned())))
     }
 
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(Value::String(Cow::Owned(value)))
-    }
-
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let mut items = Vec::new();
         while let Some(item) = seq.next_element()? {
@@ -196,10 +192,6 @@ impl<'de: 'a, 'a> Visitor<'de> for TextVisitor<'a> {
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
         Ok(Text(Cow::Owned(value.to_owned())))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(Text(Cow::Owned(value)))
     }
 }
 

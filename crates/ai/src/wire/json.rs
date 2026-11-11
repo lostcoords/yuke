@@ -128,11 +128,10 @@ impl<'b> JsonWriter<'b> {
         }
     }
 
-    /// Write caller JSON text without a check. An empty text writes `{}`.
+    /// Write caller JSON text without a check.
     pub(crate) fn raw(&mut self, json: &str) {
         self.value_start();
-        self.out
-            .extend_from_slice(if json.is_empty() { b"{}" } else { json.as_bytes() });
+        self.out.extend_from_slice(json.as_bytes());
         self.value_done();
     }
 

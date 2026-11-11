@@ -20,16 +20,6 @@ pub(crate) struct Wyhash {
 }
 
 impl Wyhash {
-    pub(crate) fn new(seed: u64) -> Self {
-        let first = seed ^ mix(seed ^ SECRET[0], SECRET[1]);
-        Wyhash {
-            state: [first; 3],
-            total_len: 0,
-            buf: [0; 48],
-            buf_len: 0,
-        }
-    }
-
     fn round(&mut self, input: &[u8; 48]) {
         for i in 0..3 {
             let a = read8(&input[16 * i..]);
@@ -41,7 +31,12 @@ impl Wyhash {
 
 impl Default for Wyhash {
     fn default() -> Self {
-        Wyhash::new(0)
+        Wyhash {
+            state: [mix(SECRET[0], SECRET[1]); 3],
+            total_len: 0,
+            buf: [0; 48],
+            buf_len: 0,
+        }
     }
 }
 
@@ -152,27 +147,24 @@ fn mix(a: u64, b: u64) -> u64 {
 mod tests {
     use super::*;
 
-    const INPUTS: [(u64, &str); 7] = [
-        (0, ""),
-        (1, "a"),
-        (2, "abc"),
-        (3, "message digest"),
-        (4, "abcdefghijklmnopqrstuvwxyz"),
-        (5, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
-        (
-            6,
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-        ),
+    const INPUTS: [&str; 7] = [
+        "",
+        "a",
+        "abc",
+        "message digest",
+        "abcdefghijklmnopqrstuvwxyz",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
     ];
 
     #[test]
     fn split_input_hashes_like_one_write() {
-        for (seed, input) in INPUTS {
+        for input in INPUTS {
             let bytes = input.as_bytes();
-            let mut whole = Wyhash::new(seed);
+            let mut whole = Wyhash::default();
             whole.write(bytes);
             for chunk in 1..=bytes.len().saturating_sub(1).max(1) {
-                let mut hasher = Wyhash::new(seed);
+                let mut hasher = Wyhash::default();
                 for piece in bytes.chunks(chunk) {
                     hasher.write(piece);
                 }
@@ -182,10 +174,10 @@ mod tests {
         // Longer inputs cross several 48-byte blocks, and a final block that ends on the boundary.
         let long: Vec<u8> = (0..500u32).map(|i| u8::try_from(i % 251).unwrap()).collect();
         for len in [47, 48, 49, 96, 97, 144, 500] {
-            let mut whole = Wyhash::new(9);
+            let mut whole = Wyhash::default();
             whole.write(&long[..len]);
             for chunk in [1, 7, 16, 48, 50] {
-                let mut split = Wyhash::new(9);
+                let mut split = Wyhash::default();
                 for piece in long[..len].chunks(chunk) {
                     split.write(piece);
                 }

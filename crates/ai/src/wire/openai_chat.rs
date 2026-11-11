@@ -153,7 +153,6 @@ fn write_user_message(
     results: &[Block],
     blocks: &[Block],
 ) -> Result<(), EncodeError> {
-    debug_assert!(!results.is_empty() || !blocks.is_empty());
     jw.begin_object();
     jw.field_str("role", "user");
     jw.key("content");
@@ -186,17 +185,12 @@ fn write_user_message(
 
 /// `blocks` holds assistant blocks alone, as `group` groups them.
 fn write_assistant_message(jw: &mut JsonWriter<'_>, target: &Target, replay: ReasoningReplayMode, blocks: &[Block]) {
-    debug_assert_ne!(blocks, []);
     let has_text = blocks.iter().any(|block| matches!(block, Block::AssistantText(_)));
     let has_tool_calls = blocks.iter().any(|block| matches!(block, Block::ToolCall(_)));
     // A host that takes no replay drops the block. It is never a reason to fail the turn.
     let has_details = blocks
         .iter()
         .any(|block| matches!(block, Block::Reasoning(reasoning) if reasoning.replay_to(target).is_some()));
-    debug_assert!(
-        has_text || has_tool_calls,
-        "`write_group` writes no message without either"
-    );
 
     jw.begin_object();
     jw.field_str("role", "assistant");

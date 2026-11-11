@@ -200,7 +200,7 @@ impl Reducer {
     }
 
     fn on_content_part_added(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let output_index = Self::output_for(root)?;
+        let output_index = root.get_index("output_index")?;
         let Some(kind) = part_kind(part_type(root)?) else {
             return Ok(());
         };
@@ -269,7 +269,7 @@ impl Reducer {
     /// Stop the block of kind `kind` that the item at `output_index` holds. `None` is an unknown part type and stops
     /// nothing.
     fn stop_part(&mut self, root: &Value<'_>, kind: Option<BlockKind>) -> Result<(), DecodeError> {
-        let output_index = Self::output_for(root)?;
+        let output_index = root.get_index("output_index")?;
         let Some(kind) = kind else {
             return Ok(());
         };
@@ -281,7 +281,7 @@ impl Reducer {
     }
 
     fn on_output_item_done(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
-        let output_index = Self::output_for(root)?;
+        let output_index = root.get_index("output_index")?;
         let item = root.get("item").ok_or(DecodeError::Protocol)?;
 
         let output = *self.output(output_index)?;
@@ -344,7 +344,7 @@ impl Reducer {
         let mut text = Vec::new();
         JsonWriter::new(&mut text).value(object);
         // The text comes from parsed strings and ASCII syntax, so it is valid UTF-8.
-        let text = String::from_utf8(text).map_err(|_| DecodeError::Protocol)?;
+        let text = String::from_utf8(text).unwrap_or_else(|_| unreachable!("`JsonWriter` writes UTF-8"));
         self.draft.final_args(id, &text)
     }
 
@@ -359,7 +359,8 @@ impl Reducer {
             FinishReason::Stop
         };
         self.draft.set_finish(reason, "completed");
-        self.draft.close_and_finish(OpenTools::Drop)
+        self.draft.close_and_finish(OpenTools::Drop);
+        Ok(())
     }
 
     fn on_incomplete(&mut self, root: &Value<'_>) -> Result<(), DecodeError> {
@@ -371,7 +372,8 @@ impl Reducer {
             None => "incomplete",
         };
         self.draft.set_finish(incomplete_reason(reason), reason);
-        self.draft.close_and_finish(OpenTools::Drop)
+        self.draft.close_and_finish(OpenTools::Drop);
+        Ok(())
     }
 
     fn read_usage(&mut self, response: &Value<'_>) {
@@ -388,11 +390,6 @@ impl Reducer {
         if let Some(details) = usage.get_object("output_tokens_details") {
             total.reasoning = details.count("reasoning_tokens");
         }
-    }
-
-    /// The `output_index` of the event `root`.
-    fn output_for(root: &Value<'_>) -> Result<usize, DecodeError> {
-        Ok(root.get_index("output_index")?)
     }
 
     /// The item at `output_index`. An unknown index is a protocol error.

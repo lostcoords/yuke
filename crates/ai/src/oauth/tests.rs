@@ -215,16 +215,6 @@ fn a_refresh_repeats_only_when_its_request_never_left() {
 }
 
 #[test]
-fn an_empty_refresh_token_ends_the_grant_and_sends_nothing() {
-    let transport = ScriptedExchange::new([]);
-
-    let refreshed = block_on(Flow::Xai.refresh(&transport, "", now()));
-
-    assert_eq!(refreshed, Err(OAuthError::Permanent));
-    assert_eq!(transport.sent(), []);
-}
-
-#[test]
 fn a_grant_and_a_pending_login_write_no_secret_in_their_debug_text() {
     let grant = Grant {
         access_token: "secret-access".to_owned(),

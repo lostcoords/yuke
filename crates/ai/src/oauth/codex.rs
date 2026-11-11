@@ -109,39 +109,26 @@ fn grant(body: &[u8], now: SystemTime) -> Result<Grant, OAuthError> {
     let mut answer: TokenAnswer = serde_json::from_slice(body).map_err(|_| OAuthError::BadResponse)?;
     let id_token = answer.id_token.take();
     let mut grant = answer.grant(now)?;
-    // The access token states its own end, and `expires_in` can disagree with it. An end at or before 0 has passed.
-    if let Some(end) = claims(&grant.access_token).and_then(|claims| claims.get("exp")?.as_i64()) {
-        let seconds = u64::try_from(end).unwrap_or(0);
-        if let Some(expires_at) = UNIX_EPOCH.checked_add(Duration::from_secs(seconds)) {
-            grant.expires_at = expires_at;
-        }
+    // The access token states its own end, and `expires_in` can disagree with it.
+    if let Some(seconds) = claims(&grant.access_token).and_then(|claims| claims.get("exp")?.as_u64())
+        && let Some(expires_at) = UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+    {
+        grant.expires_at = expires_at;
     }
-    grant.account_id = id_token
-        .as_deref()
-        .and_then(claims)
-        .and_then(|claims| {
-            claims
-                .get(AUTH_CLAIM)?
-                .get("chatgpt_account_id")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .filter(|account_id| !account_id.trim().is_empty());
+    grant.account_id = super::nonblank(id_token.as_deref().and_then(claims).and_then(|claims| {
+        claims
+            .get(AUTH_CLAIM)?
+            .get("chatgpt_account_id")?
+            .as_str()
+            .map(str::to_owned)
+    }));
     Ok(grant)
 }
 
 /// The claims of the JSON Web Token `token`. The signature stays unchecked, because the token came from the provider
 /// over TLS. The claims give only the end of the token and the account that each request names.
 fn claims(token: &str) -> Option<Value> {
-    // A JSON Web Token has three non-empty parts: the header, the payload, and the signature.
-    let mut parts = token.split('.');
-    let (Some(header), Some(payload), Some(signature), None) = (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return None;
-    };
-    if header.is_empty() || payload.is_empty() || signature.is_empty() {
-        return None;
-    }
+    let payload = token.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD_INDIFFERENT.decode(payload).ok()?;
     serde_json::from_slice(&bytes).ok()
 }

@@ -353,13 +353,16 @@ impl Reducer {
         if !self.details_seen {
             return Ok(());
         }
-        let id = self.channels[channel_index(BlockKind::Reasoning)].ok_or(DecodeError::Protocol)?;
         let max = self.draft.limits.max_event_bytes;
-        let block = self.draft.open(id)?;
+        // `details_seen` is set only after `channel(Reasoning)`, and this dialect stops no block before `[DONE]`.
+        let id = self.channels[channel_index(BlockKind::Reasoning)]
+            .unwrap_or_else(|| unreachable!("the details came with a reasoning block"));
+        let block = &mut self.draft.blocks[id as usize];
         block.replay = Some(ReplayKind::OpenrouterDetails);
-        let mut bytes = std::mem::take(&mut block.bytes).into_bytes();
+        // A reasoning block of this dialect holds no bytes until here, as its text goes through `delta`.
+        let mut bytes = Vec::new();
         write_details(&mut bytes, &self.details);
-        block.bytes = String::from_utf8(bytes).map_err(|_| DecodeError::Protocol)?;
+        block.bytes = String::from_utf8(bytes).unwrap_or_else(|_| unreachable!("`JsonWriter` writes UTF-8"));
         // The array returns whole in one message, so it is bounded like one event.
         if block.bytes.len() > max {
             return Err(DecodeError::TooLarge);
@@ -458,7 +461,8 @@ impl Reducer {
         // A signature can arrive after the text, so the entries are final only here.
         self.store_details()?;
         // This dialect stops no block before `[DONE]`, so every call is complete here.
-        self.draft.close_and_finish(OpenTools::Keep)
+        self.draft.close_and_finish(OpenTools::Keep);
+        Ok(())
     }
 }
 

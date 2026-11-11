@@ -199,7 +199,7 @@ impl Draft {
         if self.blocks.len() >= self.limits.max_blocks as usize {
             return Err(DecodeError::TooLarge);
         }
-        let id = BlockId::try_from(self.blocks.len()).map_err(|_| DecodeError::TooLarge)?;
+        let id = BlockId::try_from(self.blocks.len()).unwrap_or_else(|_| unreachable!("`max_blocks` is a `u32`"));
         self.blocks.push(Block {
             kind,
             state: BlockState::Open,
@@ -267,11 +267,8 @@ impl Draft {
 
     /// Mark the start of a new reasoning section. The next delta of the block opens it.
     pub(crate) fn section(&mut self, id: BlockId) -> Result<(), DecodeError> {
-        debug_assert_eq!(
-            self.open(id)?.kind,
-            BlockKind::Reasoning,
-            "only a reasoning block has sections"
-        );
+        let kind = self.open(id)?.kind;
+        debug_assert_eq!(kind, BlockKind::Reasoning, "only a reasoning block has sections");
         self.events.push(Pending::Section(id));
         Ok(())
     }
@@ -331,21 +328,19 @@ impl Draft {
     }
 
     /// Close every open block, then end the draft. `OpenTools::Drop` discards unfinished tool calls.
-    pub(crate) fn close_and_finish(&mut self, open_tools: OpenTools) -> Result<(), DecodeError> {
-        for index in 0..self.blocks.len() {
-            let block = &self.blocks[index];
+    pub(crate) fn close_and_finish(&mut self, open_tools: OpenTools) {
+        for (id, block) in (0..).zip(&mut self.blocks) {
             if block.state != BlockState::Open {
                 continue;
             }
-            let id = BlockId::try_from(index).map_err(|_| DecodeError::TooLarge)?;
             if open_tools == OpenTools::Drop && block.kind == BlockKind::ToolCall {
-                self.drop_block(id)?;
+                block.state = BlockState::Dropped;
             } else {
-                self.stop(id)?;
+                block.state = BlockState::Stopped;
+                self.events.push(Pending::Stopped(id));
             }
         }
         self.finish();
-        Ok(())
     }
 
     /// End the draft, which holds no open block. A stopped refusal turns `Stop` or `ToolCalls` into `Refusal`, but a

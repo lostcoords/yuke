@@ -61,10 +61,12 @@ pub struct Policy {
     pub retry_after_cap: Duration,
 }
 
+const MAX_ATTEMPTS: NonZeroU32 = NonZeroU32::new(5).unwrap();
+
 impl Default for Policy {
     fn default() -> Self {
         Policy {
-            max_attempts: NonZeroU32::new(5).unwrap_or(NonZeroU32::MIN),
+            max_attempts: MAX_ATTEMPTS,
             base: Duration::from_millis(500),
             cap: Duration::from_secs(8),
             retry_after_cap: Duration::from_secs(120),

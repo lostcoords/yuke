@@ -228,14 +228,6 @@ async fn redirect_is_refused() {
     let (_, out) = exchange(server, &client()).await;
     assert_eq!(out.err, Some(Fault::RedirectRefused));
     assert_eq!(out.bytes, b"");
-    // A 304 has no redirect target, so it is a response.
-    let server = Server {
-        status: 304,
-        ..Server::default()
-    };
-    let (_, out) = exchange(server, &client()).await;
-    assert_eq!(out.err, None);
-    assert_eq!(out.head.unwrap().status, 304);
 }
 
 #[test]

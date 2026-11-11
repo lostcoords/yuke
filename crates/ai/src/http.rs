@@ -81,8 +81,8 @@ async fn round_trip(
     request.body = plan.body;
     let response = client.send(request, deadline).await.map_err(fault_of)?;
     let status = response.status.as_u16();
-    // The client never follows a redirect, so the key never reaches another origin. A 304 has no redirect target.
-    if (300..400).contains(&status) && status != 304 {
+    // The client never follows a redirect, so the key never reaches another origin.
+    if (300..400).contains(&status) {
         return Err(Fault::RedirectRefused);
     }
     check_content_encoding(&response.headers)?;
