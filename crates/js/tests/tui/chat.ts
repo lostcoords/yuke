@@ -238,11 +238,12 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   };
 }
 
-/** Load the chat into `frame` with `sessions`. Return the surface of the chat, each notice, and its service. */
+/** Load the chat into `frame` with `sessions` and the chat `options`. Return the surface of the chat, each notice, and its service. */
 export async function loadChat(
   frame: FrameTest,
   sessions: ReturnType<typeof fakeSessions> = fakeSessions(),
   catalog: { readonly list: () => Promise<ListCatalogResult> } = { list: async () => CATALOG },
+  options: { readonly emptyView?: boolean } = {},
 ) {
   const surface = frame.surface("chat");
   const notices: string[] = [];
@@ -257,7 +258,7 @@ export async function loadChat(
       facts.set(event, listeners.add(listener));
       return () => listeners.delete(listener);
     },
-    options: {},
+    options,
     signal: surface.signal,
     dataDir: folder(),
     notify: (level: string, text: string) => notices.push(`${level} ${text}`),

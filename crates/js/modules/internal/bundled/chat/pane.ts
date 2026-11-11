@@ -131,7 +131,8 @@ export interface ComposerViewEntry {
 
 /** What each pane of the chat shares. */
 export interface Chat {
-  readonly ctx: PluginContext;
+  /** The context of the chat plugin. A pane reads no option. */
+  readonly ctx: PluginContext<object>;
   readonly tui: Tui;
   /** The actions of each open pane, by its view. A pane leaves the map when its mount closes. */
   readonly panes: Map<View, PaneActions>;
@@ -147,6 +148,8 @@ export interface Chat {
   readonly composerViews: (place: ComposerPlace) => readonly ComposerViewEntry[];
   /** The frame of the `chat` service around the input. Without one, a pane draws two rules. */
   readonly frame: () => ComposerFrame | undefined;
+  /** The factory of the view of an empty pane, or `undefined` when an empty pane shows nothing. */
+  readonly emptyView: () => ((mount: Mount, pane: ChatPane) => View) | undefined;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
 }
@@ -583,6 +586,39 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       return [{ view: shown, height }];
     });
   };
+  // The view of the empty pane with the factory that made it, so a new factory makes a new view.
+  let empty: { readonly create: (mount: Mount, pane: ChatPane) => View; readonly view: View | undefined } | undefined;
+  let emptyMount: Mount | undefined;
+  mount.signal.addEventListener("abort", () => emptyMount?.close(), { once: true });
+  /** The view of the empty pane: from the current factory, made once per factory. */
+  const emptyView = (): View | undefined => {
+    const create = chat.emptyView();
+    if (empty?.create !== create) {
+      emptyMount?.close();
+      emptyMount = undefined;
+      empty = undefined;
+      if (create === undefined) return undefined;
+      const child = createMount(() => {});
+      emptyMount = child;
+      const view = startView(
+        ctx.name,
+        (own) => create(own, chatPaneFields),
+        child,
+        (_source, text) => ctx.notify("error", text),
+      );
+      empty = { create, view };
+    }
+    return empty?.view;
+  };
+  /**
+   * The pane is empty: it has no session, or its session has no history, while no message waits, no send runs, and no
+   * turn runs. A session that loads its history is not empty, so the empty view does not flash.
+   */
+  const isEmpty = (): boolean => {
+    const transcript = chatSession.transcript;
+    if (transcript.pending.size > 0 || chatComposer.busy || working.active) return false;
+    return chatSession.id === undefined || (transcript.entries.length === 0 && chatSession.historyComplete);
+  };
   /** The placements of `views` in a column from `row`. */
   const stacked = (
     views: readonly { readonly view: ComposerView; readonly height: number }[],
@@ -662,8 +698,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       transcriptRows -= workingGap;
       workingRows = workingRow + workingGap;
       noticeRow = gap === 1 ? transcriptRows : -1;
+      const transcriptRect = { column: 0, row: 0, width: size.width, height: transcriptRows };
+      // The empty view draws over the transcript, which keeps the focus and the scroll state.
+      const emptyShown = isEmpty() ? emptyView() : undefined;
       const placements = [
-        { view, rect: { column: 0, row: 0, width: size.width, height: transcriptRows } },
+        { view, rect: transcriptRect },
+        ...(emptyShown === undefined ? [] : [{ view: emptyShown, rect: transcriptRect }]),
         { view: frameView, rect: { column: 0, row: frameRow, width: size.width, height: frameRows } },
         { view: commands.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
         ...stacked(aboveViews, frameRow - listRows - workingRows - shown.length - aboveRows, size.width),

@@ -5,8 +5,9 @@
  * shows a session in a pane for other plugins.
  */
 
-import type { ChatPresentation, ChatPresentationOptions, ChatReadOnly, ComposerFrame } from "yuke:chat";
+import type { ChatPane, ChatPresentation, ChatPresentationOptions, ChatReadOnly, ComposerFrame } from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
+import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import {
   type Chat,
   type ComposerViewEntry,
@@ -15,9 +16,10 @@ import {
   type PaneState,
 } from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
-import type { PluginContext } from "yuke:plugins";
+import type { Frozen, PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
-import type { ModelInfo, SessionId } from "yuke:protocol";
+import type { ModelInfo, SessionId, SessionSettings } from "yuke:protocol";
+import type { Infer } from "yuke:tools";
 import type { Mount, View } from "yuke:tui";
 
 /** The cells of the gauge of the token share of the last answer. */
@@ -145,7 +147,19 @@ const COMMANDS: readonly {
   },
 ];
 
-export async function apply(ctx: PluginContext): Promise<void> {
+export const optionsSchema = {
+  type: "object",
+  properties: {
+    emptyView: {
+      type: "boolean",
+      description: "Show the icon, the version, and the way to start in an empty chat pane. The default is true.",
+    },
+  },
+} as const;
+
+type Options = Infer<typeof optionsSchema>;
+
+export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
   // A disposer can run after this plugin stops, and a stopped `tui` throws.
@@ -159,6 +173,9 @@ export async function apply(ctx: PluginContext): Promise<void> {
   // One entry per call of `addReadOnly`, so each disposer removes its own.
   const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
   let frame: ComposerFrame | undefined;
+  // The default view of an empty pane comes after the state that it reads, and the option can turn it off.
+  let defaultEmptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
+  let emptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -217,6 +234,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
         repaint();
       };
     },
+    setEmptyView: (create) => {
+      emptyView = create;
+      repaint();
+      return () => {
+        if (emptyView !== create) return;
+        emptyView = defaultEmptyView;
+        repaint();
+      };
+    },
   });
   if (tui === undefined) return undefined;
   // The work of each open session that a quit stops, also of a session that no pane shows.
@@ -243,6 +269,7 @@ export async function apply(ctx: PluginContext): Promise<void> {
     }),
     presenter: () => presenter,
     frame: () => frame,
+    emptyView: () => emptyView,
     readOnly: (session) => {
       for (const entry of readOnlySources) {
         const answer = entry.source(session);
@@ -283,16 +310,41 @@ export async function apply(ctx: PluginContext): Promise<void> {
   /** The open question before a quit. */
   let asked: Mount | undefined;
   const home = env.get("HOME");
-  /** Show the folder item with `folder`, the home folder as `~`, or no folder item. */
-  const setFolder = (folder: string | undefined): void => {
-    if (folder === undefined) {
-      tui.status.delete("folder");
-      return;
+  /** `folder` with the home folder as `~`. */
+  const shownFolder = (folder: string): string =>
+    home !== undefined && (folder === home || folder.startsWith(`${home}/`)) ? `~${folder.slice(home.length)}` : folder;
+  /**
+   * The model with its level, and the folder, of the next message of a pane. A pane without a session uses the saved
+   * pick, while its provider is ready, and the start folder. A session without its settings yet gives nothing.
+   */
+  const targetOf = (
+    bound: boolean,
+    settings: Frozen<SessionSettings> | undefined,
+  ): { readonly model?: string | undefined; readonly folder?: string | undefined } => {
+    if (bound) {
+      if (settings === undefined) return {};
+      const { thinking, effort } = settings.settings.reasoning;
+      const level = models
+        ?.get(`${settings.model.provider}/${settings.model.model}`)
+        ?.reasoning.find(
+          (choice) =>
+            choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
+        )?.level;
+      const model = level === undefined ? settings.model.model : `${settings.model.model} ${level}`;
+      return { model, folder: shownFolder(settings.cwd) };
     }
-    const inHome = home !== undefined && (folder === home || folder.startsWith(`${home}/`));
-    const text = inHome ? `~${folder.slice(home.length)}` : folder;
+    const pick = chat.choice.current;
+    const level = models
+      ?.get(`${pick?.model.provider}/${pick?.model.model}`)
+      ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
+    const model = pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`;
+    return { model, folder: shownFolder(tui.startup.cwd) };
+  };
+  /** Show the folder item with `text`, or no folder item. */
+  const setFolder = (text: string | undefined): void => {
     // The folder gives way first in a narrow bar.
-    tui.status.set("folder", { text, side: "left", order: 10, priority: -1 });
+    if (text === undefined) tui.status.delete("folder");
+    else tui.status.set("folder", { text, side: "left", order: 10, priority: -1 });
   };
   /** Show the model item with `text`, or no model item. */
   const setModel = (text: string | undefined): void => {
@@ -307,27 +359,15 @@ export async function apply(ctx: PluginContext): Promise<void> {
     // A handle can end after the stop of the plugin, when its tui takes no more calls.
     if (ctx.signal.aborted) return;
     const status = active()?.status();
+    const target = status === undefined ? {} : targetOf(status.bound, status.settings);
+    setFolder(target.folder);
+    setModel(target.model);
     const settings = status?.settings;
     if (status === undefined || settings === undefined) {
       for (const key of ["context", "jobs"]) tui.status.delete(key);
-      // A pane without a session shows the folder and the saved pick that its first send uses, while its provider is
-      // ready.
-      setFolder(status === undefined || status.bound ? undefined : tui.startup.cwd);
-      const pick = status === undefined || status.bound ? undefined : chat.choice.current;
-      const level = models
-        ?.get(`${pick?.model.provider}/${pick?.model.model}`)
-        ?.reasoning.find((choice) => choice.level === pick?.reasoning)?.level;
-      setModel(pick === undefined || level === undefined ? undefined : `${pick.model.model} ${level}`);
       return;
     }
-    setFolder(settings.cwd);
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
-    const { thinking, effort } = settings.settings.reasoning;
-    const level = model?.reasoning.find(
-      (choice) =>
-        choice.settings.effort === effort && JSON.stringify(choice.settings.thinking) === JSON.stringify(thinking),
-    )?.level;
-    setModel(level === undefined ? settings.model.model : `${settings.model.model} ${level}`);
     const usage = status.usage;
     // A count that the provider did not send is unknown, not zero.
     if (usage === undefined || usage.input === null) tui.status.delete("context");
@@ -344,9 +384,25 @@ export async function apply(ctx: PluginContext): Promise<void> {
     if (status.jobs === 0) tui.status.delete("jobs");
     else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
+  defaultEmptyView =
+    ctx.options.emptyView === false
+      ? undefined
+      : (_mount, pane) =>
+          emptyHeader({
+            version: tui.startup.version,
+            target: () => targetOf(pane.session !== undefined, pane.transcript.settings),
+            // Without the catalog, the header keeps the usual hint.
+            ready: () => models === undefined || models.size > 0,
+          });
+  // A plugin can set its view before the default exists.
+  emptyView ??= defaultEmptyView;
   tui.onFocusChange(() => publish());
   ctx.on("catalog.changed", () => {
-    void readModels().then(publish);
+    // The bar and the header of an empty pane name the models of the ready providers.
+    void readModels().then(() => {
+      publish();
+      repaint();
+    });
   });
   tui.guardQuit((quit) => {
     // The resume text names each shown session, and each session whose work the quit stops.
