@@ -261,18 +261,6 @@ fn each_reasoning_level_reads_and_writes_its_name() {
 }
 
 #[test]
-fn the_method_list_names_each_request_variant() {
-    // serde lists the variant names in the error of an unknown variant.
-    let error = serde_json::from_value::<ClientRequest>(json!({ "method": "none" }))
-        .unwrap_err()
-        .to_string();
-    let expected = error.split_once("expected one of ").unwrap().1;
-    let variants: Vec<&str> = expected.split(", ").map(|name| name.trim_matches('`')).collect();
-
-    assert_eq!(variants, ClientRequest::METHODS);
-}
-
-#[test]
 fn a_response_holds_a_result_or_an_error() {
     assert_json(
         &json!({ "jsonrpc": "2.0", "id": 1, "result": { "sessionId": SESSION } }),
