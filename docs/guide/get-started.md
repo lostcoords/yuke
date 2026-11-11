@@ -31,22 +31,15 @@ These pages describe the current Rust and QuickJS implementation. An older relea
 
 ## Connect a model
 
-Set the API key of your provider in the shell that starts yuke:
+Start yuke, then type `/login` and press **Enter**:
 
 ```sh
-export ANTHROPIC_API_KEY=sk-ant-...
+yuke
 ```
 
-For OpenAI, use `OPENAI_API_KEY`. See [Providers](providers.md) for the other variables and local servers. `yuke login` does not ask for API keys.
+Choose your provider. For an API key, paste the key. For a ChatGPT or Grok account, open the page that yuke shows and confirm the code.
 
-For an account login, run one of these commands instead:
-
-```sh
-yuke login openai-codex   # a ChatGPT account
-yuke login xai-grok      # a Grok account
-```
-
-Open the URL that yuke prints. Confirm the code on that page. Wait for yuke to report a successful login. yuke stores the login in `auth.json` in the [data folder](config.md). `yuke logout <provider>` removes the stored credential. It does not unset an environment variable or revoke a token at the provider.
+In CI or a script, set the provider variable instead, such as `ANTHROPIC_API_KEY`. See [Providers](providers.md) for the variables and local servers.
 
 ## Run your first task
 
@@ -97,8 +90,7 @@ yuke prints the final answer and exits. See [One-shot tasks](one-shot.md) for JS
 ## If the task does not start
 
 - If the shell cannot find `yuke`, add `~/.local/bin` to `PATH`.
-- If yuke reports no API key, set the provider variable in the shell that starts yuke.
-- If an account login is missing or expired, run `yuke login <provider>` again.
+- If yuke reports no API key, or a login is missing or expired, run `/login` again.
 - If a profile file fails to load, fix the file that the error names. Unknown configuration fields are errors.
 - If a command is absent, check `yuke --help` and the installed version.
 
