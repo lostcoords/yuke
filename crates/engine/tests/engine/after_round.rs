@@ -126,7 +126,9 @@ fn a_failed_take_of_the_inbox_ends_the_turn_and_saves_the_failure() {
     );
     assert_eq!(
         journal.saved().last().and_then(|commit| commit.end.clone()),
-        Some(TurnEnd::Failed("the store is gone".to_owned()))
+        Some(TurnEnd::Failed {
+            error: "the store is gone".to_owned()
+        })
     );
 }
 

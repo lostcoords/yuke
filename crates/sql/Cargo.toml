@@ -5,6 +5,7 @@ description = "Typed SQLite queries for the code that yuke-sqlgen generates."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 # With `fallible_uint`, rusqlite binds and reads `u64` and `usize`. A value above `i64::MAX` fails.

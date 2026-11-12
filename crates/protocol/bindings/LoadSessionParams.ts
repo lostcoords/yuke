@@ -13,4 +13,4 @@ sessionId: SessionId,
 /**
  * The last event that the client has. None sends every event.
  */
-after?: EventNumber | null, };
+after?: EventNumber, };

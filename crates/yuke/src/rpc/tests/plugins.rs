@@ -37,7 +37,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let item = format!("{url} (folder plugins/clock)");
     assert_eq!(
         listed,
-        Ok(json!({ "plugins": [{ "item": item, "loaded": false, "state": "not_locked" }] }))
+        Ok(json!({ "plugins": [{ "item": item, "loaded": false, "state": "notLocked" }] }))
     );
     assert_eq!(synced["plugins"][0]["commit"], json!(commit));
     assert_eq!(synced["written"], json!(true));

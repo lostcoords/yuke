@@ -1,7 +1,7 @@
 # protocol
 
 The yuke protocol: JSON-RPC 2.0 messages between a yuke server and its clients. The messages take conventions of the
-Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, camelCase fields, and snake_case kinds. The protocol
+Agent Client Protocol (ACP): `"jsonrpc": "2.0"`, `noun/verb` methods, and camelCase fields. The protocol
 is not ACP: for example, it has `session/input` in place of `session/prompt`, and a tool update uses a saved call position rather than a provider call id.
 
 - Transports: each message is one line. `yuke --rpc` serves one client on stdin and stdout. The end of stdin ends the
@@ -15,10 +15,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
   `plugin/apply`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
-- `plugin/list` gives each plugin of `config.json` with `state` (`local`, `not_locked`, `not_installed`, or `installed`
+- `plugin/list` gives each plugin of `config.json` with `state` (`local`, `notLocked`, `notInstalled`, or `installed`
   with its `commit`) and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
-  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `"all"` or
-  `{ "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
+  `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `{ "kind": "all" }` or
+  `{ "kind": "names", "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
   writes their `new` commits into `plugins.lock`. `plugin/add { source, options? }` adds a Git plugin to `config.json`,
   installs it, locks it, and answers its `name`, `source`, and `commit`. `plugin/remove { name }` removes a plugin from
   `config.json` and `plugins.lock`. Each edit keeps the comments of `config.json`. Git asks for no password. A new
@@ -41,7 +41,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `auth/login { provider }` starts the device login of a provider with a login flow, and answers its `loginId`,
   `verificationUrl`, and `userCode` at once. A login in progress of the provider ends as `cancelled` first. The
   client shows the page and the code. The server polls the provider, saves the login in `auth.json`, and sends
-  `auth/login_finished { loginId, provider, outcome }`: `succeeded`, `cancelled`, or `failed { message }`.
+  `auth/login_finished { loginId, provider, outcome }`: `succeeded`, `cancelled`, or `failed { error }`.
 - `auth/cancel_login { loginId }` asks a login in progress to stop. A poll that got the approval still saves the
   login, so the outcome tells what happened. A client that missed the notification, for example after a reconnect,
   reads the state with `catalog/list`. No answer and no notification holds a token.
@@ -52,11 +52,11 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `auth/set_api_key { provider, apiKey }` stores the key in `auth.json` for a provider with an API key variable. The
   new key replaces the stored key and wins over the variable. Each session takes the key at its next turn.
 - `catalog/list` gives the providers that are ready now, or every provider with `all: true`. Each provider has its
-  state (`ready` with its credential, `needs_api_key` with the variable, or `needs_login`) and its models: limits,
+  state (`ready` with its credential, `needsApiKey` with the variable, or `needsLogin`) and its models: limits,
   prices, tool support, input kinds, and the reasoning choices with the reasoning settings that a session sends for
   each. A provider is ready when its API key variable holds UTF-8 text that is not empty, when it has a stored key, a login, or a pushed
   token, or when it needs no key. The server does not test the credential. A client asks again after `profile/reload`.
-- A row holds the saved facts (model, folder, title, times, fork source, parent) and the activity now: `closed`, `idle`, or
+- A row holds the saved facts (model, folder, title, times, fork source, parent) and the `state` now: `closed`, `idle`, or
   `running`. A text message or an explicit rename supplies the title. Initial message text normalizes whitespace and truncates
   the title to 200 Unicode scalar values. `session/rename { sessionId, title }` changes the title of an open or closed session
   and answers `{}` without a session update.
@@ -100,28 +100,28 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   close of its session. The client can stop its work. Its answer is optional, and the server ignores it. An answer and
   a cancel can cross, so a client ignores a cancel of a request that it answered.
 - `session/update` carries a saved event with its event number (`seq`), or a live update of a running turn.
-- The queue: `input_accepted` and `input_removed` are live updates. A queued input leaves the queue when a saved
-  commit names it in `consumed`, or when `input_removed` names it.
+- The queue: `inputAccepted` and `inputRemoved` are live updates. A queued input leaves the queue when a saved
+  commit names it in `consumed`, or when `inputRemoved` names it.
 - Turns: `session/input` starts a turn when the session is idle. During a turn, an input joins the turn at its next
   round. A `state` update tells when a turn runs. `session/load` starts no turn.
 - During a turn, a client can add and remove inputs, cancel the turn, move its waiting tool calls to the background, close
   the session, and list and stop jobs. The
   settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
   runs or input waits.
-- `session/load` sends the session as updates: the saved events, a `state` update, an `input_accepted` for each
-  pending input, a `job` update for each running job, an `interaction_requested` for each open question, and an
-  `mcp_server` update for each MCP server. Then come the live updates of the load time that these do not hold, and the
+- `session/load` sends the session as updates: the saved events, a `state` update, an `inputAccepted` for each
+  pending input, a `job` update for each running job, an `interactionRequested` for each open question, and an
+  `mcpServer` update for each MCP server. Then come the live updates of the load time that these do not hold, and the
   empty answer. A client applies the updates
-  in order. It drops a saved event that it has (by `seq`), an `input_accepted` that it has (by `inputId`), and an
-  `interaction_requested` that it has (by `interactionId`). The server disconnects a client that falls behind. On
+  in order. It drops a saved event that it has (by `seq`), an `inputAccepted` that it has (by `inputId`), and an
+  `interactionRequested` that it has (by `interactionId`). The server disconnects a client that falls behind. On
   stdin and stdout, that ends the server. On a socket, the client connects and loads again.
 - A notice that comes while no client is connected goes to stderr. The server drops the session updates and the
   extension events of that interval. The store keeps the saved events, and `session/load` sends them again.
 - Live model updates belong to a draft and retain native block ids and boundaries. They exclude provider replay state.
-- `draft_committed` carries one `eventNumber` and an array of original draft block ids, in saved block order.
+- `draftCommitted` carries one `eventNumber` and an array of original draft block ids, in saved block order.
   Array index `i` maps to block index `i` in that commit. A client replaces the whole draft.
-- `draft_discarded` removes a draft without a confirmed replacement. It never removes saved history.
-- `turn_unconfirmed` discards provisional tool state when the turn has no confirmed terminal commit. Reload the journal.
+- `draftDiscarded` removes a draft without a confirmed replacement. It never removes saved history.
+- `turnUnconfirmed` discards provisional tool state when the turn has no confirmed terminal commit. Reload the journal.
   Before the next turn, the server ends a turn that the store holds as open, and sends that commit as a saved event.
 - Tool updates use `{ eventNumber, blockIndex }` within the enclosing session. The position names the saved call block.
 - Saved commits still contain model context data. A visible-history projection is separate from that raw journal.
@@ -132,19 +132,61 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - An input holds the content that the user saw. It holds model content only when the model reads other blocks.
 - A saved commit starts with the model blocks of its consumed inputs. `consumed` gives the id, the source, the kind, and
   the block count of each input. It gives the content that the user saw only when that content differs.
-- Questions: a plugin or yuke asks the user with an `interaction_requested` live update: a `questions` request with
+- Questions: a plugin or yuke asks the user with an `interactionRequested` live update: a `questions` request with
   its `source`. Each question has options, `other` for a typed answer, or both. The client answers all questions at
   once with `interaction/respond`, or cancels the whole request with `cancelled`. An answer that does not fit its
-  questions, or an unknown id, fails the request. An `interaction_closed` update ends each request: an answer, an
+  questions, or an unknown id, fails the request. An `interactionClosed` update ends each request: an answer, an
   abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers each request with no
   answer.
 - MCP servers: each open session runs the servers of the user config and of `.mcp.json` in its folder. An
-  `mcp_server` live update holds the whole state of one server, with its `source` (`user` or `project`): `connecting`,
+  `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`): `connecting`,
   `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server
   of a session.
 - Project servers start only after the user confirms them. yuke asks one question from `host:mcp`, with the options
   "Start" and "Don't start", and keeps a start for that folder and that list of servers.
-- Each type holds one message. The protocol has no batches.
+- Each type holds one message. The protocol has no batches: a line that is no JSON object gets -32600.
+
+## Shapes
+
+- A union is an object with a tag. The tag is `kind`, as in `{ "kind": "userText", "text": "hi" }`. A session update has
+  the tag `sessionUpdate`, and the state of a plugin or an MCP server has the tag `state`. Each tag value and each
+  enum value is camelCase.
+- A failure is the kind or the state `failed` with the text `error`.
+- An absent field is left out. No value is `null`, apart from the `id` of a response to a message without a readable
+  id, as JSON-RPC asks.
+- A flag whose absence means `false` is left out when it is `false`.
+- A time is in milliseconds since the Unix epoch, and its name ends in `At` (`createdAt`, `expiresAt`). A duration
+  names its unit (`durationMs`, `afterMs`).
+
+## Errors
+
+A request fails with one of these codes. The `message` is text for a person, and a client does not parse it.
+
+| Code   | Constant                | Meaning                                                                 |
+| ------ | ----------------------- | ----------------------------------------------------------------------- |
+| -32700 | `PARSE_ERROR`           | The line is no JSON.                                                    |
+| -32600 | `INVALID_REQUEST`       | The message is no JSON object, or it has no valid `jsonrpc`, `id`, or `method`. |
+| -32601 | `METHOD_NOT_FOUND`      | The server has no such method.                                          |
+| -32602 | `INVALID_PARAMS`        | The params do not fit the method, or a value of them cannot work.       |
+| -32603 | `INTERNAL_ERROR`        | The server failed.                                                      |
+| -32002 | `SESSION_NOT_FOUND`     | The session is not open, or the store has no such session.              |
+| -32003 | `SESSION_OWNED`         | Another writer holds the session.                                       |
+| -32004 | `JOB_NOT_FOUND`         | The session runs no such job.                                           |
+| -32005 | `INTERACTION_NOT_FOUND` | The session has no such open question.                                  |
+| -32006 | `LOGIN_NOT_FOUND`       | No such login is in progress.                                           |
+| -32007 | `BLOB_NOT_FOUND`        | The session has no blob with this digest.                               |
+| -32008 | `SESSION_OPEN`          | The session is open, so it cannot be removed. Close it first.           |
+| -32009 | `TURN_ACTIVE`           | A turn runs or input waits. Send the request again after the turn ends. |
+| -32010 | `TRY_AGAIN`             | Another call opens or closes the session, or a reload runs. Send the request again after it ends. |
+| -32011 | `STOPPING`              | The server shuts down.                                                  |
+| -32012 | `NOT_INITIALIZED`       | The connection sent no `initialize` yet.                                |
+
+## Compatibility
+
+- A client ignores each field, kind, method, notification, and error code that it does not know.
+- A new field, kind, method, notification, or error code does not change `PROTOCOL_VERSION`.
+- A removal, a rename, or a change of the meaning or the type of an existing item increases `PROTOCOL_VERSION`.
+- `initialize` gives the version that the server selects. A client that does not speak that version disconnects.
 
 The session types of the messages (`SessionId`, `SessionSettings`, `SessionEvent`, and others) are the types that
 `yuke-agent` and its stores save, so a client reads what the store saves.

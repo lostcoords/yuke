@@ -95,7 +95,7 @@ async fn a_reload_during_a_turn_answers_an_error() {
 
     let refused = client.call("profile/reload", json!({})).await.unwrap_err();
 
-    assert_eq!(refused["code"], ResponseError::INVALID_REQUEST);
+    assert_eq!(refused["code"], ResponseError::TURN_ACTIVE);
     assert_eq!(refused["message"], "a turn runs: reload after it ends");
     client.notify("session/cancel", json!({ "sessionId": session })).await;
     client.until(is_idle).await;

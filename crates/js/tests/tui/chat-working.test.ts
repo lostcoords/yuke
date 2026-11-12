@@ -4,7 +4,7 @@ import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:t
 import { commit, fakeSessions, fixedClock, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
-const hints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
+const hints = { subject: { argument: "command", kind: "text" }, preview: "tail" } as const;
 
 test("a running turn shows its phase and time above an empty row before the rule, and the end of the turn takes the working row away", async () => {
   const sessions = fakeSessions(replies(2));
@@ -29,23 +29,23 @@ test("a running turn shows its phase and time above an empty row before the rule
   const later = phase();
   const call = { callId: "c1", name: "exec", arguments: '{"command":"cargo test"}' };
   sessions.push(
-    commit(3, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] },
+    commit(3, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] },
     }),
   );
   const tool = phase();
   const pendingCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
-  sessions.push({ sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 0 }, call });
+  sessions.push({ sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
   const running = phase();
   const runningCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
-  sessions.push(commit(4, [{ tool_result: { callId: "c1", content: "ok", isError: false } }]));
+  sessions.push(commit(4, [{ kind: "toolResult", callId: "c1", content: "ok", isError: false }]));
   const done = phase();
   const completedCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   equal(
     [pendingCommand, runningCommand, completedCommand],
     [" exec cargo test · waiting", " exec cargo test · running", " exec cargo test"],
   );
-  sessions.push({ sessionUpdate: "retry_scheduled", afterMs: 5000, error: "overloaded" });
+  sessions.push({ sessionUpdate: "retryScheduled", afterMs: 5000, error: "overloaded" });
   frame.advance(2000);
   const retry = phase();
   sessions.push({ sessionUpdate: "state", state: "idle" });
@@ -92,7 +92,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   frame.start();
   await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
+  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
   const phase = (): string | undefined => {
     frame.draw();
     return rows(frame.frame)
@@ -101,13 +101,13 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
       .split(" (")[0];
   };
   const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
-  model({ kind: "block_started", block: 0, content: { kind: "reasoning" } });
-  model({ kind: "reasoning_delta", block: 0, text: "Hmm" });
+  model({ kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } });
+  model({ kind: "reasoningDelta", blockId: 0, text: "Hmm" });
   const reasoning = phase();
-  model({ kind: "block_started", block: 1, content: { kind: "text" } });
-  model({ kind: "text_delta", block: 1, text: "Sure" });
+  model({ kind: "blockStarted", blockId: 1, content: { kind: "text" } });
+  model({ kind: "textDelta", blockId: 1, text: "Sure" });
   const responding = phase();
-  model({ kind: "block_started", block: 2, content: { kind: "tool_call", name: "bash" } });
+  model({ kind: "blockStarted", blockId: 2, content: { kind: "toolCall", name: "bash" } });
   equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
 });
 
@@ -118,7 +118,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   frame.start();
   await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
+  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
   const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
   /** Draw the frame. Return the rows above the working row and the phase of the working row. */
   const shown = (): [string[], string | undefined] => {
@@ -129,11 +129,11 @@ test("a thought without text to show draws no rows, and the working row still sh
   };
   // The transcript follows its tail, so a row of the thought moves the replies up.
   const before = shown()[0];
-  model({ kind: "block_started", block: 0, content: { kind: "reasoning" } });
+  model({ kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } });
   const empty = shown();
-  model({ kind: "reasoning_delta", block: 0, text: " \n" });
+  model({ kind: "reasoningDelta", blockId: 0, text: " \n" });
   const blank = shown();
-  model({ kind: "reasoning_delta", block: 0, text: "Hmm" });
+  model({ kind: "reasoningDelta", blockId: 0, text: "Hmm" });
   const thought = shown();
   equal(
     [empty, blank, [thought[0].slice(-4), thought[1]]],
@@ -201,10 +201,12 @@ async function runningExec(width: number, command: string) {
   sessions.push({ sessionUpdate: "state", state: "running" });
   const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(
-    commit(3, [{ tool_call: call }], { display: { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] } }),
+    commit(3, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] },
+    }),
   );
   const before = workingRow(frame);
-  sessions.push({ sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 0 }, call });
+  sessions.push({ sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
   sessions.state.movable = true;
   // A frame draws each spinner step, and the row counts the delay from the first draw of the movable work.
   frame.draw();

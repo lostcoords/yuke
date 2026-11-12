@@ -65,7 +65,7 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
   // The close ends the waiting turn, so the second send settles too.
   await Promise.allSettled([again]);
 
-  equal(cancelled?.kind === "end" && cancelled.end, { outcome: "cancelled" });
+  equal(cancelled?.kind === "end" && cancelled.end, { kind: "cancelled" });
 });
 
 test("the prompt hook edits the request of each turn from the saved sections", async () => {
@@ -137,7 +137,7 @@ test("a plugin denies one of two tool calls in an answer, and the other tool cal
   );
   equal(denied?.kind === "tool" && denied.result?.isError, true);
   const end = session.transcript.entries.at(-1);
-  equal(end?.kind === "end" && end.end, { outcome: { completed: { finishReason: "stop" } } });
+  equal(end?.kind === "end" && end.end, { kind: "completed", finishReason: "stop" });
 });
 
 // The model and the transcript both get the patched result. Only the hook sees the original text.
@@ -222,12 +222,8 @@ test("a plugin creates a session, sends input, and sees the turn of that session
       const id = await sessions.create({
         model: { provider: "minimax", model: "MiniMax-M3" },
         settings: {
-          maxOutputTokens: null,
-          reasoning: { thinking: null, effort: null },
-          temperature: null,
-          topP: null,
+          reasoning: {},
           toolChoice: "auto",
-          outputSchema: null,
         },
         cwd: folder(),
       });
@@ -243,14 +239,13 @@ test("a plugin creates a session, sends input, and sees the turn of that session
           }
           const update = event.update;
           if (update.sessionUpdate === "commit") {
-            for (const block of update.commit.blocks)
-              if ("assistant_text" in block) texts.push(block.assistant_text.text);
+            for (const block of update.commit.blocks) if (block.kind === "assistantText") texts.push(block.text);
           }
           if (!("state" in update)) return;
           states.push(update.state);
         },
       });
-      await handle.sendMessage({ content: [{ user_text: "hi" }] });
+      await handle.sendMessage({ content: [{ kind: "userText", text: "hi" }] });
       await handle.waitForIdle();
       ctx.sendClientEvent("turn", { states, texts, used, jobs: handle.jobs().length });
     };
@@ -279,7 +274,7 @@ test("a plugin summarizes the context with the model of the session and replaces
         prompt: event.blocks(),
         signal: event.signal,
       });
-      return { replace: { head: [{ user_text: `Summary: ${answer.text}` }], keep: 0 } };
+      return { replace: { head: [{ kind: "userText", text: `Summary: ${answer.text}` }], keep: 0 } };
     });
   };
   const replies = [reply.toolCall("read", { path: "missing.txt" }), reply.text("They said hi."), reply.text("Done.")];
@@ -321,8 +316,10 @@ test("an input that a plugin replaces reaches the model as the new blocks", asyn
   const skills: PluginSession = (s) => {
     s.addHook("input.before", (event) => {
       const first = event.blocks[0];
-      if (first === undefined || !("user_text" in first) || first.user_text !== "/skill:pdf") return undefined;
-      return { replace: { blocks: [{ user_text: "Read PDF files with care." }] } };
+      if (first === undefined || !("kind" in first) || first.kind !== "userText" || first.text !== "/skill:pdf") {
+        return undefined;
+      }
+      return { replace: { blocks: [{ kind: "userText", text: "Read PDF files with care." }] } };
     });
   };
   const replies = [reply.text("Done.")];

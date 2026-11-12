@@ -10,6 +10,7 @@ keywords = ["ai", "llm", "anthropic", "openai", "streaming"]
 categories = ["artificial-intelligence", "api-bindings", "asynchronous"]
 # The catalog scripts run only in this repository.
 exclude = ["scripts/"]
+publish = false
 
 [features]
 default = ["http"]

@@ -2,7 +2,7 @@
 import type { ToolHints } from "./ToolHints";
 
 /**
- * The hints of one tool call of a commit, and the folder where it ran.
+ * The hints of one tool call of a commit, and its working folder.
  */
 export type CallDisplay = { 
 /**
@@ -14,6 +14,6 @@ blockIndex: number,
  */
 hints: ToolHints, 
 /**
- * The folder where the call ran. A relative path of the call starts there.
+ * The working folder of the call. A relative path of the call starts there.
  */
-folder: string | null, };
+cwd?: string, };

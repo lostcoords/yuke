@@ -9,8 +9,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use yuke_agent::{InputDecision, InputHook, PromptSection};
 use yuke_ai::{
-    AttemptError, AttemptInfo, Block, Failure, FinishReason, Media, ProviderKind, Settings, ToolCall, ToolDefinition,
-    ToolResult,
+    AttemptError, AttemptInfo, Block, Failure, FinishReason, Media, ProviderKind, RequestSettings, ToolCall,
+    ToolDefinition, ToolResult,
 };
 use yuke_engine::{
     CancellationToken, DisplayBlock, Hooks, Model, RoundDecision, RoundError, RoundPlan, RoundStart, ToolDecision,
@@ -73,7 +73,7 @@ struct EventRound {
     input_tokens: Option<u64>,
     system: Option<String>,
     tools: Option<Vec<ToolDefinition>>,
-    settings: Option<Settings>,
+    settings: Option<RequestSettings>,
 }
 
 impl<'js> FromJs<'js> for EventRound {
@@ -274,7 +274,7 @@ impl<'js> IntoJs<'js> for Decision {
 
 /// Store each item of `media` in the session of `script`, as for a tool result or a hook answer.
 async fn stored(script: &ScriptSession, media: Vec<MediaFile>) -> Result<Vec<Media>, TestError> {
-    store_media(&*script.host, media, &script.host.folder()).await
+    store_media(&*script.host, media, &script.host.cwd()).await
 }
 
 /// Read the bytes of each item of `media` of the session `id` from the store.
@@ -284,7 +284,7 @@ fn read(host: &dyn TestHost, id: SessionId, media: Vec<Media>) -> Result<Vec<Out
         .map(|item| {
             Ok(OutMedia {
                 bytes: host.read_media(id, &item.blob)?,
-                mime_type: item.mime,
+                mime_type: item.mime_type,
             })
         })
         .collect()
@@ -294,7 +294,7 @@ fn read(host: &dyn TestHost, id: SessionId, media: Vec<Media>) -> Result<Vec<Out
 struct OwnedRound {
     context: Vec<Block>,
     model: Model,
-    settings: Settings,
+    settings: RequestSettings,
     system: String,
     tools: Vec<ToolDefinition>,
     input_tokens: Option<u64>,
@@ -333,21 +333,21 @@ impl OwnedRound {
 fn round_error(kind: &str) -> Result<RoundError, TestError> {
     let provider = |kind: ProviderKind| Failure::Provider(kind);
     let cause = match kind {
-        "context_overflow" => provider(ProviderKind::ContextOverflow),
-        "rate_limited" => provider(ProviderKind::RateLimited),
-        "rate_limit_unknown" => provider(ProviderKind::RateLimitUnknown),
-        "quota_exhausted" => provider(ProviderKind::QuotaExhausted),
-        "server_error" => provider(ProviderKind::ServerError),
+        "contextOverflow" => provider(ProviderKind::ContextOverflow),
+        "rateLimited" => provider(ProviderKind::RateLimited),
+        "rateLimitUnknown" => provider(ProviderKind::RateLimitUnknown),
+        "quotaExhausted" => provider(ProviderKind::QuotaExhausted),
+        "serverError" => provider(ProviderKind::ServerError),
         "timeout" => provider(ProviderKind::Timeout),
         "conflict" => provider(ProviderKind::Conflict),
-        "auth_failed" => provider(ProviderKind::AuthFailed),
-        "permission_denied" => provider(ProviderKind::PermissionDenied),
-        "bad_status" => provider(ProviderKind::BadStatus),
-        "provider_failed" => provider(ProviderKind::ProviderFailed),
+        "authFailed" => provider(ProviderKind::AuthFailed),
+        "permissionDenied" => provider(ProviderKind::PermissionDenied),
+        "badStatus" => provider(ProviderKind::BadStatus),
+        "providerFailed" => provider(ProviderKind::ProviderFailed),
         "transport" => Failure::Transport(yuke_ai::transport::Fault::ConnectionLost),
         "protocol" => Failure::Protocol,
-        "response_too_large" => Failure::ResponseTooLarge,
-        "incomplete_stream" => Failure::IncompleteStream,
+        "responseTooLarge" => Failure::ResponseTooLarge,
+        "incompleteStream" => Failure::IncompleteStream,
         "credential" => return Ok(RoundError::Credential("the test failed the credential".into())),
         "encode" => {
             return Ok(RoundError::Model(yuke_ai::Error::Encode(

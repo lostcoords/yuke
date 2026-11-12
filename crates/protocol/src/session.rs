@@ -15,7 +15,7 @@ pub struct SessionSettings {
     /// The model of the next turn.
     pub model: ModelReference,
     /// The request settings of the next turn.
-    pub settings: yuke_ai::Settings,
+    pub settings: yuke_ai::RequestSettings,
     /// The folder that the tools of the session work in.
     pub cwd: PathBuf,
 }
@@ -106,7 +106,7 @@ fn normalize_title(text: &str) -> String {
 
 /// The saved facts of a session, as `session/list` and `session/get` give them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
     /// The session.
@@ -130,28 +130,15 @@ pub struct SessionSummary {
     pub parent: Option<crate::SessionId>,
 }
 
-/// Whether a session is open in the server, and whether a turn runs in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
-pub enum SessionActivity {
-    /// The session is not open in this server.
-    Closed,
-    /// The session is open, and no turn runs.
-    Idle,
-    /// A turn runs.
-    Running,
-}
-
-/// A saved session with its facts and its activity at the moment of the answer.
+/// A saved session with its facts and its state at the moment of the answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRow {
     /// The saved facts.
     pub session: SessionSummary,
-    /// The activity.
-    pub activity: SessionActivity,
+    /// Whether the session is open in this server, and whether a turn runs in it.
+    pub state: crate::SessionState,
 }
 
 #[cfg(test)]

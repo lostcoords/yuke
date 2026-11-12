@@ -7,17 +7,17 @@ import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
 import { rows } from "./rows.ts";
 
-function session(title: string | null): SessionRow {
+function session(title: string | undefined): SessionRow {
   return {
     session: {
       sessionId: "s1",
       model: { provider: "p", model: "m" },
       cwd: "/w",
-      title,
+      ...(title === undefined ? {} : { title }),
       createdAt: 0,
       updatedAt: 0,
     },
-    activity: "idle",
+    state: "idle",
   };
 }
 

@@ -89,7 +89,7 @@ impl crate::SessionHost for Scripted {
     fn parent(&self) -> Option<SessionId> {
         None
     }
-    fn folder(&self) -> PathBuf {
+    fn cwd(&self) -> PathBuf {
         self.folder.clone()
     }
     fn is_closed(&self) -> bool {
@@ -143,7 +143,7 @@ fn settings() -> SessionSettings {
             provider: "minimax".to_owned(),
             model: "MiniMax-M3".to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: PathBuf::from("/work"),
     }
 }
@@ -613,9 +613,9 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
         &runtime,
         &format!(
             "const id = '{}';
-             const input = await handle.sendMessage({{ content: [{{ user_text: 'hi' }}] }});
+             const input = await handle.sendMessage({{ content: [{{ kind: 'userText', text: 'hi' }}] }});
              const removed = await handle.removeInput(input);
-             await handle.sendMessage({{ content: [{{ user_text: 'Review @main.rs' }}], modelContent: [{{ user_text: 'Review main.rs.' }}] }});
+             await handle.sendMessage({{ content: [{{ kind: 'userText', text: 'Review @main.rs' }}], modelContent: [{{ kind: 'userText', text: 'Review main.rs.' }}] }});
              await handle.notifyModel({{ display: 'shown', text: 'told' }});
              handle.cancel();
              handle.moveJobsToBackground();
@@ -639,14 +639,17 @@ async fn the_requests_reach_the_consumer_with_the_arguments_of_the_plugin() {
     assert_eq!(
         scripted.calls()[1..],
         [
-            format!("input {id} user {:?} [{{\"user_text\":\"hi\"}}]", InputKind::Message),
+            format!(
+                "input {id} user {:?} [{{\"kind\":\"userText\",\"text\":\"hi\"}}]",
+                InputKind::Message
+            ),
             format!("remove input {id} 3"),
             format!(
-                "input {id} user {:?} [{{\"user_text\":\"Review main.rs.\"}}]",
+                "input {id} user {:?} [{{\"kind\":\"userText\",\"text\":\"Review main.rs.\"}}]",
                 InputKind::Message
             ),
             format!(
-                "input {id} test {:?} [{{\"user_text\":\"<system_notification plugin=\\\"test\\\">told</system_notification>\"}}]",
+                "input {id} test {:?} [{{\"kind\":\"userText\",\"text\":\"<system_notification plugin=\\\"test\\\">told</system_notification>\"}}]",
                 InputKind::Notification
             ),
             format!("cancel {id}"),
@@ -744,10 +747,10 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
         "const listed = await plugins.list();
          const synced = await plugins.sync({ locked: true });
          const change = { name: 'clock', source: { git: 'https://host/repo' }, old: 'a'.repeat(40),
-                          new: 'b'.repeat(40), log: { commits: [] } };
+                          new: 'b'.repeat(40), log: { kind: 'commits', commits: [] } };
          const applied = await plugins.apply([change]);
          globalThis.controller = new AbortController();
-         globalThis.checked = plugins.check({ names: ['clock'] }, { signal: controller.signal });
+         globalThis.checked = plugins.check({ kind: 'names', names: ['clock'] }, { signal: controller.signal });
          const added = await plugins.add({ source: { git: 'https://host/clock' }, options: { format: '24h' } });
          await plugins.remove('clock');
          return JSON.stringify([listed, synced.written, applied.written, added.name]);",
@@ -773,9 +776,9 @@ async fn the_plugin_requests_reach_the_consumer_and_an_abort_of_a_check_drops_it
         scripted.calls(),
         [
             "plugins list".to_owned(),
-            "plugins sync Some(true)".to_owned(),
+            "plugins sync true".to_owned(),
             format!("plugins apply {}", "b".repeat(40)),
-            r#"plugins check Names(["clock"])"#.to_owned(),
+            r#"plugins check Names { names: ["clock"] }"#.to_owned(),
             r#"plugins add https://host/clock Some({"format": String("24h")})"#.to_owned(),
             "plugins remove clock".to_owned(),
         ]
@@ -855,9 +858,9 @@ async fn ask_delivers_host_events_before_its_reply() {
     .await
     .unwrap();
 
-    let mut expected = vec!["interaction_requested"];
+    let mut expected = vec!["interactionRequested"];
     expected.resize(1201, "state");
-    expected.extend(["interaction_closed", "reply 0"]);
+    expected.extend(["interactionClosed", "reply 0"]);
     assert_eq!(delivered, expected);
 }
 

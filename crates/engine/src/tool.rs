@@ -129,12 +129,14 @@ pub struct ToolContent {
 
 /// How a frontend shows the calls of a tool. The model never sees the hints.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ToolHints {
     /// The name of the summary line in place of the tool name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// The argument of the call that the summary line shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<Subject>,
     /// The part of the output that a folded call shows.
     pub preview: Preview,
@@ -320,8 +322,9 @@ pub struct Toolset {
     handlers: Vec<Box<dyn Tool>>,
     /// The hints of each handler, at the same index.
     hints: Vec<ToolHints>,
-    /// The folder where the tools run, for a frontend that opens a relative path of a call. The engine does not read it.
-    folder: Option<String>,
+    /// The working folder of the tools, for a frontend that opens a relative path of a call. The engine does not read
+    /// it.
+    cwd: Option<String>,
 }
 
 impl fmt::Debug for Toolset {
@@ -339,18 +342,18 @@ impl Toolset {
             definitions: Vec::new(),
             handlers: Vec::new(),
             hints: Vec::new(),
-            folder: None,
+            cwd: None,
         }
     }
 
-    /// Set the folder where the tools run. Each call carries it to the frontend.
-    pub fn set_folder(&mut self, folder: impl Into<String>) {
-        self.folder = Some(folder.into());
+    /// Set the working folder of the tools. Each call carries it to the frontend.
+    pub fn set_cwd(&mut self, cwd: impl Into<String>) {
+        self.cwd = Some(cwd.into());
     }
 
-    /// The folder where the tools run, if the caller set one.
-    pub(crate) fn folder(&self) -> Option<&str> {
-        self.folder.as_deref()
+    /// The working folder of the tools, if the caller set one.
+    pub(crate) fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
     }
 
     /// The hints of the tool `name`, or the default hints for a name that no tool has.

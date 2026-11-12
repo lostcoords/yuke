@@ -14,4 +14,4 @@ sessionId: SessionId,
  * The event number of the end of a completed turn. None takes the newest completed turn, or the settings before
  * the first commit when no turn completed.
  */
-through?: EventNumber | null, };
+through?: EventNumber, };

@@ -53,9 +53,9 @@ fn task(prompt: &str, session: SessionChoice) -> Task {
 }
 
 fn completed() -> TurnEnd {
-    TurnEnd::Outcome(Outcome::Completed {
+    TurnEnd::Completed {
         finish_reason: yuke_ai::FinishReason::Stop,
-    })
+    }
 }
 
 #[tokio::test(flavor = "local")]
@@ -117,7 +117,7 @@ async fn a_round_before_plugin_gets_the_window_of_the_catalog_and_replaces_the_c
     std::fs::write(
         plugin.join("index.ts"),
         "export function session(s) {
-           s.addHook('round.before', (event) => ({ replace: { head: [{ user_text: `window ${event.contextWindow}` }], keep: 1 } }));
+           s.addHook('round.before', (event) => ({ replace: { head: [{ kind: 'userText', text: `window ${event.contextWindow}` }], keep: 1 } }));
          }",
     )
     .unwrap();
@@ -287,8 +287,8 @@ async fn a_round_retry_plugin_replaces_the_context_after_an_overflow_and_the_rou
         "shrink",
         "export function session(s) {
            s.addHook('round.retry', ({ failure, retries }) => {
-             if (failure.kind !== 'context_overflow' || retries > 0) return undefined;
-             return { replace: { head: [{ user_text: 'Shorter.' }], keep: 0 } };
+             if (failure.kind !== 'contextOverflow' || retries > 0) return undefined;
+             return { replace: { head: [{ kind: 'userText', text: 'Shorter.' }], keep: 0 } };
            });
          }",
     );
@@ -433,7 +433,7 @@ async fn an_input_that_a_plugin_handles_starts_no_turn_and_the_run_stops() {
     let (finished, requests) = run_with(&place, &task("/compact", SessionChoice::New), &[]).await;
 
     let finished = finished.unwrap();
-    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Stopped));
+    assert_eq!(finished.end, TurnEnd::Stopped);
     assert_eq!(finished.text, "");
     assert_eq!(requests, Vec::<String>::new());
     let pending = place
@@ -551,7 +551,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
     assert_eq!(
         settings[1].settings.reasoning,
         yuke_ai::ReasoningSettings {
-            thinking: Some(yuke_ai::Thinking::Adaptive(None)),
+            thinking: Some(yuke_ai::Thinking::Adaptive { display: None }),
             effort: None,
         }
     );
@@ -787,7 +787,7 @@ async fn a_run_cancelled_before_its_turn_ends_as_cancelled_and_leaves_no_input()
     .await;
 
     let finished = finished.unwrap();
-    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Cancelled));
+    assert_eq!(finished.end, TurnEnd::Cancelled);
     assert_eq!(requests, Vec::<String>::new());
     // A later run of the session must not answer this prompt.
     assert_eq!(place.store().await.pending(finished.session).await.unwrap(), []);
@@ -822,7 +822,7 @@ async fn a_run_cancelled_during_its_turn_saves_the_turn_as_cancelled() {
     .await;
 
     let finished = finished.unwrap();
-    assert_eq!(finished.end, TurnEnd::Outcome(Outcome::Cancelled));
+    assert_eq!(finished.end, TurnEnd::Cancelled);
     let opened = place.store().await.open(finished.session, Access::Read).await.unwrap();
     assert_eq!(opened.context.first(), Some(&Block::user_text("Hi.")));
 }
@@ -842,7 +842,9 @@ async fn a_rejected_credential_ends_the_turn_with_its_text_once() {
 
     assert_eq!(
         finished.unwrap().end,
-        TurnEnd::Failed("the provider rejected the credential (status 401): {}".to_owned())
+        TurnEnd::Failed {
+            error: "the provider rejected the credential (status 401): {}".to_owned()
+        }
     );
 }
 
@@ -896,14 +898,14 @@ fn the_end_of_another_session_does_not_end_the_run() {
 fn the_json_report_names_the_session_the_end_and_the_text() {
     let finished = Finished {
         session: SessionId::from_bytes([1; 16]),
-        end: TurnEnd::Outcome(Outcome::Completed {
+        end: TurnEnd::Completed {
             finish_reason: yuke_ai::FinishReason::Stop,
-        }),
+        },
         text: "done".to_owned(),
     };
 
     assert_eq!(
         serde_json::to_string(&finished).unwrap(),
-        r#"{"sessionId":"01010101-0101-0101-0101-010101010101","end":{"outcome":{"completed":{"finishReason":"stop"}}},"text":"done"}"#
+        r#"{"sessionId":"01010101-0101-0101-0101-010101010101","end":{"kind":"completed","finishReason":"stop"},"text":"done"}"#
     );
 }

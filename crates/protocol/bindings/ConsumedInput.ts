@@ -24,7 +24,7 @@ kind: InputKind,
 /**
  * The blocks that the user saw, only when they differ from the blocks that the model read.
  */
-displayContent?: Array<Block> | null, 
+displayContent?: Array<Block>, 
 /**
  * The number of blocks of the commit that the model read for this input.
  */

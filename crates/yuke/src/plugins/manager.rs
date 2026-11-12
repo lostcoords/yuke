@@ -212,10 +212,10 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
         match (named, target) {
             (Ok((old, name)), _) => targets.push((source, old, name)),
             (Err(error), PluginTarget::All) => return Err(error),
-            (Err(_), PluginTarget::Names(_)) => {}
+            (Err(_), PluginTarget::Names { .. }) => {}
         }
     }
-    if let PluginTarget::Names(names) = target {
+    if let PluginTarget::Names { names } = target {
         if let Some(missing) = names
             .iter()
             .find(|name| !targets.iter().any(|(_, _, found)| found == *name))
@@ -247,7 +247,10 @@ pub(crate) async fn check(paths: &Paths, target: &PluginTarget) -> Result<Vec<Pl
             source: source.clone(),
             old: old.clone(),
             new,
-            log: log.map_or_else(PluginLog::Error, PluginLog::Commits),
+            log: match log {
+                Ok(commits) => PluginLog::Commits { commits },
+                Err(error) => PluginLog::Failed { error },
+            },
         });
     }
     Ok(changes)

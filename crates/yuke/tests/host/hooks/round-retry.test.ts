@@ -18,7 +18,7 @@ test("an answer sends the round again, and each round counts its retries from ze
   const compact: PluginSession = (s) => {
     s.addHook("round.retry", (event) => {
       seen.push(`${event.failure.kind} ${event.retries} ${event.failure.text.includes("prompt is too long")}`);
-      return { replace: { head: [{ user_text: "summary" }], keep: 0 } };
+      return { replace: { head: [{ kind: "userText", text: "summary" }], keep: 0 } };
     });
   };
   const replies = [
@@ -39,7 +39,7 @@ test("an answer sends the round again, and each round counts its retries from ze
 
   await session.sendMessage("Greet Ada.");
 
-  equal(seen, ["context_overflow 0 true", "context_overflow 1 true", "context_overflow 0 true"]);
+  equal(seen, ["contextOverflow 0 true", "contextOverflow 1 true", "contextOverflow 0 true"]);
   equal(
     host.requests.map((request) => request.messages[0]?.text),
     ["Greet Ada.", "summary", "summary", "summary", "summary"],
@@ -58,7 +58,7 @@ test("without an answer the round does not run again, and the turn fails", async
   await session.sendMessage("Hi.");
 
   const end = session.transcript.entries.at(-1);
-  equal([end?.kind, end?.kind === "end" && "failed" in end.end, host.requests.length], ["end", true, 1]);
+  equal([end?.kind, end?.kind === "end" && end.end.kind === "failed", host.requests.length], ["end", true, 1]);
 });
 
 test("a handler gets the context window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {
@@ -67,21 +67,21 @@ test("a handler gets the context window, the tokens, and the blocks of the faile
     s.addHook("round.retry", (event) => {
       const fields = [event.retries, event.contextWindow, event.inputTokens, event.contextTokens, event.blockCount];
       seen.push(`${event.failure.kind} ${fields.join(" ")} ${event.blockTokens()}`);
-      return { replace: { head: [{ user_text: "summary" }], keep: 0 } };
+      return { replace: { head: [{ kind: "userText", text: "summary" }], keep: 0 } };
     });
   };
   await using host = await createHost({ plugins: [{ name: "compact", session: compact }] });
   const session = await host.openSession();
 
   const plan = await session.runHook("round.retry", {
-    blocks: [{ user_text: "one" }],
+    blocks: [{ kind: "userText", text: "one" }],
     contextWindow: 1000,
     inputTokens: 900,
-    failure: { kind: "context_overflow" },
+    failure: { kind: "contextOverflow" },
   });
 
-  equal(seen, ["context_overflow 0 1000 900 901 1 1"]);
-  equal(plan, { replace: { head: [{ user_text: "summary" }], keep: 0 } });
+  equal(seen, ["contextOverflow 0 1000 900 901 1 1"]);
+  equal(plan, { replace: { head: [{ kind: "userText", text: "summary" }], keep: 0 } });
 });
 
 test("the failure names its kind and its text", async () => {
@@ -95,14 +95,14 @@ test("the failure names its kind and its text", async () => {
   await using host = await createHost({ plugins: [{ name: "watch", session: watch }] });
   const session = await host.openSession();
 
-  for (const kind of ["rate_limited", "transport", "incomplete_stream", "credential"] as const) {
+  for (const kind of ["rateLimited", "transport", "incompleteStream", "credential"] as const) {
     await session.runHook("round.retry", { blocks: [], failure: { kind } });
   }
 
   equal(seen, [
-    ["rate_limited", true],
+    ["rateLimited", true],
     ["transport", true],
-    ["incomplete_stream", true],
+    ["incompleteStream", true],
     ["credential", true],
   ]);
 });

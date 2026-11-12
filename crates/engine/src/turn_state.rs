@@ -68,23 +68,27 @@ pub(crate) enum Action<'a> {
 /// of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
 /// blocks, and a store that reads a commit back owns them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct Commit<'a> {
     /// The replacement of the context. A commit with a replacement holds no blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaced: Option<Replaced<'a>>,
 
     /// The blocks after the saved blocks, in context order.
     pub blocks: Cow<'a, [Block]>,
 
     /// The facts of the answer in `blocks`. A commit without an answer has `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<Answer>,
 
     /// How the turn ended. A commit in the middle of a turn has `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<TurnEnd>,
 
     /// What a frontend shows for the tool calls and results in `blocks`. The model never sees it.
     #[serde(default, skip_serializing_if = "CommitDisplay::is_empty")]
+    #[cfg_attr(feature = "ts", ts(as = "Option<CommitDisplay>", optional))]
     pub display: CommitDisplay,
 }
 
@@ -106,22 +110,23 @@ impl CommitDisplay {
     }
 }
 
-/// The hints of one tool call of a commit, and the folder where it ran.
+/// The hints of one tool call of a commit, and its working folder.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct CallDisplay {
     /// The index of the call in the blocks of the commit.
     pub block_index: usize,
     /// The hints of the tool that the call names, after the deferred-tool bridge.
     pub hints: ToolHints,
-    /// The folder where the call ran. A relative path of the call starts there.
-    pub folder: Option<String>,
+    /// The working folder of the call. A relative path of the call starts there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// The display of one tool result of a commit.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ResultDisplay {
     /// The index of the result in the blocks of the commit.
@@ -185,20 +190,36 @@ impl<'a> Commit<'a> {
 /// [`crate::TurnError::Round`] gives the caller the error itself.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum TurnEnd {
-    /// The turn ended without a failure.
-    Outcome(Outcome),
-    /// A round failed, or the turn stopped before it saved its end. The text tells why.
-    Failed(String),
+    /// [`Outcome::Completed`].
+    Completed {
+        /// The reason in the closed set.
+        finish_reason: FinishReason,
+    },
+    /// [`Outcome::Stopped`].
+    Stopped,
+    /// [`Outcome::Cancelled`].
+    Cancelled,
+    /// A round failed, or the turn stopped before it saved its end.
+    Failed {
+        /// Why.
+        error: String,
+    },
 }
 
 impl TurnEnd {
     /// The end of a turn that gave `result`. A failure keeps the [`chain_text`] of its error.
     pub fn from_result(result: Result<&Outcome, &RoundError>) -> Self {
         match result {
-            Ok(outcome) => Self::Outcome(outcome.clone()),
-            Err(error) => Self::Failed(chain_text(error)),
+            Ok(Outcome::Completed { finish_reason }) => Self::Completed {
+                finish_reason: *finish_reason,
+            },
+            Ok(Outcome::Stopped) => Self::Stopped,
+            Ok(Outcome::Cancelled) => Self::Cancelled,
+            Err(error) => Self::Failed {
+                error: chain_text(error),
+            },
         }
     }
 }
@@ -234,9 +255,7 @@ pub struct Answer {
 }
 
 /// How a turn ended without a failure.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Outcome {
     /// The turn ended with an answer of the model, and the answer joined the context. A filter or a refusal answer
     /// can hold calls that did not run.

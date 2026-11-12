@@ -333,7 +333,7 @@ export class TextView implements TextWidget<TextPosition, TextViewChange> {
 
   onMouse(event: MouseEvent): boolean {
     if (this.#support.mouse(event)) return true;
-    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.onMouse(event);
+    if (event.button === "wheelup" || event.button === "wheeldown") return this.#list.onMouse(event);
     if (event.button !== "left") return false;
     if (event.action === "cancel") {
       this.#drag = undefined;

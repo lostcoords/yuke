@@ -22,12 +22,12 @@ function stateText(state: ProviderState): string {
 
 /** Whether `state` holds a credential that yuke stored. */
 function isStored(state: ProviderState): boolean {
-  return state.kind === "ready" && (state.credential.kind === "stored_api_key" || state.credential.kind === "login");
+  return state.kind === "ready" && (state.credential.kind === "storedApiKey" || state.credential.kind === "login");
 }
 
 /** Whether the provider of `state` takes a device login, and not an API key. */
 function takesLogin(state: ProviderState): boolean {
-  return state.kind === "needs_login" || (state.kind === "ready" && state.credential.kind === "login");
+  return state.kind === "needsLogin" || (state.kind === "ready" && state.credential.kind === "login");
 }
 
 /** The providers that take a credential. */
@@ -176,7 +176,7 @@ async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provide
   const closedByUser = dialog.signal.aborted;
   if (!closedByUser) dialog.close();
   if (outcome.kind === "succeeded") ctx.notify("info", `logged in · ${provider.id}`);
-  else if (outcome.kind === "failed") ctx.notify("error", `the login failed: ${outcome.message}`);
+  else if (outcome.kind === "failed") ctx.notify("error", `the login failed: ${outcome.error}`);
   else if (!closedByUser) ctx.notify("info", "login cancelled");
 }
 

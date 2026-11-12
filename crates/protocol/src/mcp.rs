@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The state of one MCP server of a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum McpServerState {
     /// The server starts.
     Connecting,
@@ -28,7 +28,7 @@ pub enum McpServerState {
 /// The config file of an MCP server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum McpServerSource {
     /// `mcp.json` in the config folder of the user.
     User,

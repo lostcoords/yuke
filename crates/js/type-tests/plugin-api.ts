@@ -188,7 +188,7 @@ ctx.get("auth");
 ctx.provide("catalog", { list: async () => ({ providers: [] }) });
 export async function drive(sessions: Sessions): Promise<void> {
   const handle = await sessions.open("id", { tail: 50, onEvent: (event) => void event });
-  await handle.sendMessage({ content: [{ user_text: "hi" }] });
+  await handle.sendMessage({ content: [{ kind: "userText", text: "hi" }] });
   // @ts-expect-error: an input holds blocks, not a text.
   await handle.sendMessage("hi");
   // @ts-expect-error: the snapshot needs a tail.
@@ -264,7 +264,7 @@ void sockets;
 // `yuke:ai` needs a model, takes a text or blocks, and its answer has the finish reason and the usage.
 async function models(): Promise<void> {
   const { generateText } = await import("yuke:ai");
-  const prompt: Block[] = [{ user_text: "Hi." }];
+  const prompt: Block[] = [{ kind: "userText", text: "Hi." }];
   const answer = await generateText({ model: s.settings.model, prompt, maxOutputTokens: 100, signal: s.signal });
   await generateText({ model: s.settings.model, instructions: "Be brief.", prompt: "Hi." });
   await generateText({ model: s.settings.model, prompt: "Hi.", reasoning: { effort: "high" } });
@@ -280,7 +280,7 @@ async function models(): Promise<void> {
   await generateText({ model: s.settings.model, prompt: "Describe.", attachments: [{ mimeType: "image/png" }] });
   const text: string = answer.text;
   assert<Equal<typeof answer.finishReason, FinishReason>>();
-  const input: number | null = answer.usage.input;
+  const input: number | undefined = answer.usage.input;
   // @ts-expect-error: a request names its model.
   await generateText({ prompt });
   // @ts-expect-error: a setting has its type.
@@ -396,10 +396,13 @@ s.addHook("tool.after", () => ({ media: [{ mimeType: "image/png" }] }));
 // A round.before handler reads the context window and the tokens, and answers a summary of the old blocks.
 s.addHook("round.before", (event): RoundBeforeAnswer | undefined => {
   const window = event.contextWindow;
-  if (window === null || event.contextTokens < window * 0.8) return undefined;
+  if (window === undefined || event.contextTokens < window * 0.8) return undefined;
   const tokens: number[] = event.blockTokens();
   const count: number = event.blockCount;
-  const summary: Block = { user_text: `${event.blocks().length} of ${count} blocks, ${tokens.length} estimates.` };
+  const summary: Block = {
+    kind: "userText",
+    text: `${event.blocks().length} of ${count} blocks, ${tokens.length} estimates.`,
+  };
   return { replace: { head: [summary], keep: 4 }, settings: { temperature: 0 } };
 });
 // @ts-expect-error: a block holds one known kind.
@@ -409,7 +412,7 @@ s.addHook("round.before", () => ({ model: { model: "x" } }));
 
 // A round.after handler reads the reason and the count, and answers a stop or a continue.
 s.addHook("round.after", ({ finishReason, continues }): RoundAfterAnswer | undefined => {
-  if (finishReason === null) return undefined;
+  if (finishReason === undefined) return undefined;
   return continues < 3 ? { continue: "Run the tests." } : { stop: true };
 });
 // @ts-expect-error: an answer is a stop or a continue, not both.

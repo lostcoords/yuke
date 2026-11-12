@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
 
 [features]
 # The feature exposes the loopback server of the tests to the tests of other crates.

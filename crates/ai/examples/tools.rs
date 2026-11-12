@@ -2,7 +2,8 @@
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
 use yuke_ai::{
-    Block, Effort, FinishReason, ReplyOptions, Request, Settings, ToolCall, ToolChoice, ToolDefinition, ToolResult,
+    Block, Effort, FinishReason, ReplyOptions, Request, RequestSettings, ToolCall, ToolChoice, ToolDefinition,
+    ToolResult,
 };
 
 const SCHEMA: &str = r#"{
@@ -30,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut context = vec![Block::user_text(
         "Use uppercase_ascii on 'Hello, Rust!' and report its result.",
     )];
-    let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
+    let settings = RequestSettings::new().max_output_tokens(4096).effort(Effort::Low);
     let request = Request::new(&context).tools(&tools).settings(&settings);
     let first = yuke_ai::generate(&http, &target, &credential, request, ReplyOptions::default())
         .await?

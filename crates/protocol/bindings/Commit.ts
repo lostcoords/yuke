@@ -14,7 +14,7 @@ export type Commit = {
 /**
  * The replacement of the context. A commit with a replacement holds no blocks.
  */
-replaced: Replaced | null, 
+replaced?: Replaced, 
 /**
  * The blocks after the saved blocks, in context order.
  */
@@ -22,11 +22,11 @@ blocks: Array<Block>,
 /**
  * The facts of the answer in `blocks`. A commit without an answer has `None`.
  */
-answer: Answer | null, 
+answer?: Answer, 
 /**
  * How the turn ended. A commit in the middle of a turn has `None`.
  */
-end: TurnEnd | null, 
+end?: TurnEnd, 
 /**
  * What a frontend shows for the tool calls and results in `blocks`. The model never sees it.
  */

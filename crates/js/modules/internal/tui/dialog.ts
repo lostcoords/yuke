@@ -11,8 +11,8 @@ const KEYS = "dialog.keys";
 const STEPS: Readonly<Record<string, (page: number) => number>> = {
   up: () => -1,
   down: () => 1,
-  page_up: (page) => -page,
-  page_down: (page) => page,
+  pageup: (page) => -page,
+  pagedown: (page) => page,
 };
 
 /** The scroll of `body`: a text view has a scroll control, and a scroll list scrolls itself. */

@@ -7,4 +7,4 @@ export type ProviderCredential = { "kind": "none" } | { "kind": "variable",
 /**
  * The name of the environment variable.
  */
-name: string, } | { "kind": "stored_api_key" } | { "kind": "login" };
+name: string, } | { "kind": "storedApiKey" } | { "kind": "login" };

@@ -4,4 +4,4 @@
  * The kind of provider state that a reasoning block must return verbatim. Each kind names the protocol that
  * produced the state. Only the encoder of that protocol writes it.
  */
-export type ReplayKind = "anthropic_signature" | "anthropic_redacted" | "responses_encrypted" | "openrouter_details";
+export type ReplayKind = "anthropicSignature" | "anthropicRedacted" | "responsesEncrypted" | "openrouterDetails";

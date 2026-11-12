@@ -24,7 +24,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   chat.chat.addChangeListener((moved) => moves.push(chat.chat.session(moved)));
   frame.paste("draft of s1");
   await chat.chat.show("s2");
-  sessions.push(commit(3, [{ assistant_text: { text: "only in s2" } }]), "s2");
+  sessions.push(commit(3, [{ kind: "assistantText", text: "only in s2" }]), "s2");
   frame.draw();
   const shown = rows(frame.frame).some((text) => text.includes("only in s2"));
   const away = composerOf(chat).state.text;

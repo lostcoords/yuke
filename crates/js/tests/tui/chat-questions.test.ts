@@ -9,7 +9,7 @@ import { rows } from "./rows.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
-  return { sessionUpdate: "interaction_requested", interactionId: id, source: "guard", request };
+  return { sessionUpdate: "interactionRequested", interactionId: id, source: "guard", request };
 }
 
 /** The composer of the chat in `frame`. */
@@ -266,7 +266,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   frame.key("enter");
   frame.draw();
   const stays = rows(frame.frame).at(-7);
-  sessions.push({ sessionUpdate: "interaction_closed", interactionId: 6 });
+  sessions.push({ sessionUpdate: "interactionClosed", interactionId: 6 });
   frame.draw();
   equal(
     [chat.notices, stays, rows(frame.frame).at(-2)],
@@ -302,7 +302,7 @@ test("a close of the session by another client drops its question, and the next 
   const shown = rows(frame.frame).at(-2);
   frame.key("enter");
   await waitForSettled();
-  equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ user_text: "draft" }]]]);
+  equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ kind: "userText", text: "draft" }]]]);
 });
 
 test("a browse of the messages stops while a question shows", async () => {
@@ -311,7 +311,7 @@ test("a browse of the messages stops while a question shows", async () => {
     {
       seq: 2,
       sessionUpdate: "commit",
-      commit: { replaced: null, blocks: [{ user_text: "old" }], answer: null, end: null },
+      commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];

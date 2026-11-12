@@ -25,7 +25,7 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
     loop {
         let message = client.next().await;
         let update = &message["params"]["update"];
-        if update["sessionUpdate"] == "input_accepted" && update["input"]["source"]["name"] == "host:jobs" {
+        if update["sessionUpdate"] == "inputAccepted" && update["input"]["source"]["name"] == "host:jobs" {
             job_input = Some((messages.len(), update["inputId"].clone(), update["input"].clone()));
         } else if let Some((_, id, _)) = &job_input
             && update["sessionUpdate"] == "commit"
@@ -61,10 +61,10 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
         (&jobs[1]["state"], &jobs[1]["exitCode"], &jobs[1]["kind"]),
         (&json!("ended"), &json!(3), &json!("process"))
     );
-    let shown = job_input["content"][0]["user_text"].as_str().unwrap();
+    let shown = job_input["content"][0]["text"].as_str().unwrap();
     assert!(!shown.starts_with("job-") && shown.ends_with(" · exited 3"), "{shown}");
     let label = shown.trim_end_matches(" · exited 3");
-    let model_text = job_input["modelContent"][0]["user_text"].as_str().unwrap();
+    let model_text = job_input["modelContent"][0]["text"].as_str().unwrap();
     assert!(
         model_text.starts_with(r#"<system_notification plugin="host:jobs">job-"#)
             && model_text.contains(&format!(" {label}: exited 3.")),

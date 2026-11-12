@@ -3,7 +3,7 @@
 
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
-import { equal, test, throws } from "yuke:test";
+import { equal, test } from "yuke:test";
 import type { PaneReason, View } from "yuke:tui";
 import { fakeTerminal } from "./terminal.ts";
 
@@ -39,12 +39,21 @@ test("the start pane comes at the later of the start event and the default pane"
   equal(terminal.screen(second)[0], "");
   second.event({ type: "start" });
   equal(terminal.screen(second)[0], "start 1");
-  // A later default pane makes no second start pane.
-  const third = createSurface(second, "other", new AbortController().signal);
-  equal(early.reasons, ["start"]);
-  equal(late.reasons, ["start"]);
-  const error = throws(() => third.panes.setDefault(counted().create));
-  equal([error instanceof TypeError, (error as Error).message], [true, "plugin chat sets the default pane"]);
+  equal([early.reasons, late.reasons], [["start"], ["start"]]);
+});
+
+test("the last default pane makes new panes, and its remover brings back the one before it", () => {
+  const terminal = fakeTerminal();
+  const core = new Core(terminal.driver);
+  const chat = counted();
+  createSurface(core, "chat", new AbortController().signal).panes.setDefault(chat.create);
+  core.event({ type: "start" });
+  const other = counted();
+  const remove = createSurface(core, "other", new AbortController().signal).panes.setDefault(other.create);
+  core.commands.run("core:split-right");
+  remove();
+  core.commands.run("core:split-right");
+  equal([chat.reasons, other.reasons], [["start", "new"], ["new"]]);
 });
 
 test("a split and a close of the last pane make new default panes, and a stopping plugin makes none", () => {

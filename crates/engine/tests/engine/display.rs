@@ -71,7 +71,7 @@ impl Tool for Show {
 fn toolset(tool: Show) -> Toolset {
     let mut toolset = Toolset::new();
     toolset.add(definition("show"), tool).unwrap();
-    toolset.set_folder("/repo");
+    toolset.set_cwd("/repo");
     toolset
 }
 
@@ -114,7 +114,7 @@ fn the_answer_saves_the_hints_and_the_folder_of_each_call_and_the_results_save_t
     let call = |block_index, hints| CallDisplay {
         block_index,
         hints,
-        folder: Some("/repo".to_owned()),
+        cwd: Some("/repo".to_owned()),
     };
     assert_eq!(
         saved[0].display,
@@ -226,7 +226,7 @@ fn a_call_that_never_runs_still_saves_its_hints() {
         [CallDisplay {
             block_index: 0,
             hints: hints(),
-            folder: Some("/repo".to_owned()),
+            cwd: Some("/repo".to_owned()),
         }]
     );
 }

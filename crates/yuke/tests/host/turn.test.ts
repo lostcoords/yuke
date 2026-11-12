@@ -69,7 +69,7 @@ test("an answer that fails after its first text ends the turn without a retry", 
   await session.sendMessage("Hi.");
 
   const end = session.transcript.entries.at(-1);
-  assert(end?.kind === "end" && "failed" in end.end, "the turn did not fail");
+  assert(end?.kind === "end" && end.end.kind === "failed", "the turn did not fail");
   equal(host.requests.length, 1);
 });
 
@@ -87,7 +87,7 @@ test("an abort of the signal cancels a turn that waits for the replies, and send
 
   equal(error instanceof Error ? error.message : error, "stop");
   const last = session.transcript.entries.at(-1);
-  equal([last?.kind === "end" && last.end], [{ outcome: "cancelled" }]);
+  equal([last?.kind === "end" && last.end], [{ kind: "cancelled" }]);
 });
 
 test("send with an aborted signal rejects and sends nothing", async () => {

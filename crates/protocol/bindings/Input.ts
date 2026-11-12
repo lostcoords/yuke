@@ -23,4 +23,4 @@ content: Array<Block>,
 /**
  * The blocks that the model reads, only when they differ from the content.
  */
-modelContent?: Array<Block> | null, };
+modelContent?: Array<Block>, };

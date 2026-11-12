@@ -5,6 +5,6 @@
  */
 export type SyncPluginsParams = { 
 /**
- * Fail when `plugins.lock` does not match `config.json`, and never write it. None or false syncs normally.
+ * Fail when `plugins.lock` does not match `config.json`, and never write it. A missing flag is `false`.
  */
-locked?: boolean | null, };
+locked?: boolean, };

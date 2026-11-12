@@ -23,12 +23,8 @@ import { type Entry, Transcript } from "yuke:transcript";
 const settings: SessionSettings = {
   model: { provider: "p", model: "m" },
   settings: {
-    maxOutputTokens: null,
-    reasoning: { thinking: null, effort: null },
-    temperature: null,
-    topP: null,
+    reasoning: {},
     toolChoice: "auto",
-    outputSchema: null,
   },
   cwd: "/w",
 };
@@ -37,13 +33,13 @@ function commit(seq: number, fields: Partial<Commit>, consumed: ConsumedInput[] 
   return {
     seq,
     sessionUpdate: "commit",
-    commit: { replaced: null, blocks: [], answer: null, end: null, ...fields },
+    commit: { blocks: [], ...fields },
     consumed,
   };
 }
 
 function answer(finishReason: FinishReason): Answer {
-  const usage = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null };
+  const usage = {};
   return { origin: { model: "m", baseUrl: "https://p" }, usage, finishReason };
 }
 
@@ -57,62 +53,62 @@ function position(seq: number, index: number): { eventNumber: number; blockIndex
 
 const call: ToolCall = { callId: "call_0", name: "bash", arguments: '{"command":"cargo test"}' };
 const result: ToolResult = { callId: "call_0", content: "1 failed", isError: false };
-const userText: Block = { user_text: "fix the test" };
-const hints: ToolHints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" };
+const userText: Block = { kind: "userText", text: "fix the test" };
+const hints: ToolHints = { subject: { argument: "command", kind: "text" }, preview: "tail" };
 const shown: DisplayBlock[] = [{ kind: "markdown", text: "**1 failed**" }];
 
 /** The updates of one turn in the order of the protocol: it reads a test, runs it, and answers. */
 const turn: SessionUpdate[] = [
   { seq: 1, sessionUpdate: "settings", ...settings },
   {
-    sessionUpdate: "input_accepted",
+    sessionUpdate: "inputAccepted",
     inputId: 1,
     input: { source: { kind: "user" }, kind: "message", content: [userText] },
   },
   { sessionUpdate: "state", state: "running" },
   commit(2, { blocks: [userText] }, [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }]),
-  { sessionUpdate: "draft_started", draftId: "d1" },
-  model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-  model("d1", { kind: "reasoning_delta", block: 0, text: "the test " }),
-  model("d1", { kind: "reasoning_section_started", block: 0 }),
-  model("d1", { kind: "reasoning_delta", block: 0, text: "expects 3" }),
-  model("d1", { kind: "block_started", block: 1, content: { kind: "text" } }),
-  model("d1", { kind: "text_delta", block: 1, text: "I run " }),
-  model("d1", { kind: "text_delta", block: 1, text: "the tests." }),
-  model("d1", { kind: "block_started", block: 2, content: { kind: "tool_call", name: "bash" } }),
-  model("d1", { kind: "tool_input_delta", block: 2, text: '{"command":' }),
-  model("d1", { kind: "tool_input_delta", block: 2, text: '"cargo test"}' }),
-  model("d1", { kind: "block_stopped", block: 2, call }),
+  { sessionUpdate: "draftStarted", draftId: "d1" },
+  model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+  model("d1", { kind: "reasoningDelta", blockId: 0, text: "the test " }),
+  model("d1", { kind: "reasoningSectionStarted", blockId: 0 }),
+  model("d1", { kind: "reasoningDelta", blockId: 0, text: "expects 3" }),
+  model("d1", { kind: "blockStarted", blockId: 1, content: { kind: "text" } }),
+  model("d1", { kind: "textDelta", blockId: 1, text: "I run " }),
+  model("d1", { kind: "textDelta", blockId: 1, text: "the tests." }),
+  model("d1", { kind: "blockStarted", blockId: 2, content: { kind: "toolCall", name: "bash" } }),
+  model("d1", { kind: "toolInputDelta", blockId: 2, text: '{"command":' }),
+  model("d1", { kind: "toolInputDelta", blockId: 2, text: '"cargo test"}' }),
+  model("d1", { kind: "blockStopped", blockId: 2, call }),
   model("d1", {
-    kind: "response_completed",
-    finishReason: "tool_calls",
+    kind: "responseCompleted",
+    finishReason: "toolCalls",
     rawFinishReason: "tool_use",
-    usage: answer("tool_calls").usage,
+    usage: answer("toolCalls").usage,
   }),
   commit(3, {
     blocks: [
-      { reasoning: { text: "the test expects 3" } },
-      { assistant_text: { text: "I run the tests." } },
-      { tool_call: call },
+      { kind: "reasoning", text: "the test expects 3" },
+      { kind: "assistantText", text: "I run the tests." },
+      { kind: "toolCall", ...call },
     ],
-    answer: answer("tool_calls"),
-    display: { calls: [{ blockIndex: 2, hints, folder: "/w" }], results: [] },
+    answer: answer("toolCalls"),
+    display: { calls: [{ blockIndex: 2, hints, cwd: "/w" }], results: [] },
   }),
-  { sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
-  { sessionUpdate: "tool_started", execution: position(3, 2), call },
-  { sessionUpdate: "tool_output", execution: position(3, 2), text: "running 1 test\n" },
-  { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: shown, durationMs: 40_000 },
+  { sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
+  { sessionUpdate: "toolStarted", position: position(3, 2), call },
+  { sessionUpdate: "toolOutput", position: position(3, 2), text: "running 1 test\n" },
+  { sessionUpdate: "toolFinished", position: position(3, 2), result, display: shown, durationMs: 40_000 },
   commit(4, {
-    blocks: [{ tool_result: result }],
+    blocks: [{ kind: "toolResult", ...result }],
     display: { calls: [], results: [{ blockIndex: 0, blocks: shown, durationMs: 40_000 }] },
   }),
-  { sessionUpdate: "draft_started", draftId: "d2" },
-  model("d2", { kind: "block_started", block: 0, content: { kind: "text" } }),
-  model("d2", { kind: "text_delta", block: 0, text: "Fixed." }),
-  model("d2", { kind: "block_stopped", block: 0, call: null }),
-  commit(5, { blocks: [{ assistant_text: { text: "Fixed." } }], answer: answer("stop") }),
-  { sessionUpdate: "draft_committed", draftId: "d2", eventNumber: 5, blocks: [0] },
-  commit(6, { end: { outcome: { completed: { finishReason: "stop" } } } }),
+  { sessionUpdate: "draftStarted", draftId: "d2" },
+  model("d2", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
+  model("d2", { kind: "textDelta", blockId: 0, text: "Fixed." }),
+  model("d2", { kind: "blockStopped", blockId: 0 }),
+  commit(5, { blocks: [{ kind: "assistantText", text: "Fixed." }], answer: answer("stop") }),
+  { sessionUpdate: "draftCommitted", draftId: "d2", eventNumber: 5, blocks: [0] },
+  commit(6, { end: { kind: "completed", finishReason: "stop" } }),
   { sessionUpdate: "state", state: "idle" },
 ];
 const saved = turn.filter((update): update is StoredEvent => "seq" in update);
@@ -171,7 +167,7 @@ const turnEntries: Entry[] = [
   {
     kind: "end",
     id: "6:end",
-    end: { outcome: { completed: { finishReason: "stop" } } },
+    end: { kind: "completed", finishReason: "stop" },
     answer: answer("stop"),
   },
 ];
@@ -194,7 +190,7 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
       arguments: '{"command":"cargo test"}',
       status: "waiting",
       // The host has not handled the call yet, so it has the default hints.
-      hints: { title: null, subject: null, preview: "head" },
+      hints: { preview: "head" },
       cwd: undefined,
       startedAt: undefined,
       durationMs: undefined,
@@ -223,10 +219,10 @@ test("a tool shows its live output until its saved result", () => {
 test("tool updates reach their call by position when call ids repeat", () => {
   const read: ToolCall = { callId: "call_0", name: "read", arguments: "{}" };
   const transcript = fed(opened(saved.slice(0, 3)), [
-    commit(4, { blocks: [{ tool_result: result }] }),
-    commit(5, { blocks: [{ tool_call: read }], answer: answer("tool_calls") }),
-    { sessionUpdate: "tool_started", execution: position(5, 0), call: read },
-    { sessionUpdate: "tool_output", execution: position(5, 0), text: "lib.rs" },
+    commit(4, { blocks: [{ kind: "toolResult", ...result }] }),
+    commit(5, { blocks: [{ kind: "toolCall", ...read }], answer: answer("toolCalls") }),
+    { sessionUpdate: "toolStarted", position: position(5, 0), call: read },
+    { sessionUpdate: "toolOutput", position: position(5, 0), text: "lib.rs" },
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
   equal(
@@ -241,14 +237,17 @@ test("tool updates reach their call by position when call ids repeat", () => {
 // An answer cut by its length saves an error result per call in the same commit. A repair commit saves the results of
 // the calls that an unconfirmed turn left open.
 test("saved results pair with the calls of their answer in the same or a later commit", () => {
-  const error = (content: string): Block => ({ tool_result: { callId: "call_0", content, isError: true } });
+  const error = (content: string): Block => ({ kind: "toolResult", callId: "call_0", content, isError: true });
   const transcript = opened([
     commit(1, {
-      blocks: [{ tool_call: call }, { tool_call: call }, error("cut 1"), error("cut 2")],
+      blocks: [{ kind: "toolCall", ...call }, { kind: "toolCall", ...call }, error("cut 1"), error("cut 2")],
       answer: answer("length"),
     }),
-    commit(2, { blocks: [{ tool_call: call }], answer: answer("tool_calls") }),
-    commit(3, { blocks: [error("the turn stopped")], end: { failed: "the turn stopped before it saved its end" } }),
+    commit(2, { blocks: [{ kind: "toolCall", ...call }], answer: answer("toolCalls") }),
+    commit(3, {
+      blocks: [error("the turn stopped")],
+      end: { kind: "failed", error: "the turn stopped before it saved its end" },
+    }),
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
   equal(
@@ -295,24 +294,24 @@ test("a gap fill removes the inputs that its commits consume", () => {
 test("a cancel mid-draft keeps only what its commit saved", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 11),
-    commit(3, { blocks: [{ assistant_text: { text: "I run " } }], end: { outcome: "cancelled" } }),
-    { sessionUpdate: "draft_discarded", draftId: "d1", reason: "failed" },
+    commit(3, { blocks: [{ kind: "assistantText", text: "I run " }], end: { kind: "cancelled" } }),
+    { sessionUpdate: "draftDiscarded", draftId: "d1", reason: "failed" },
   ]);
   equal(transcript.entries, [
     input,
     { kind: "text", id: "3:0", text: "I run ", refusal: false, draft: false },
-    { kind: "end", id: "3:end", end: { outcome: "cancelled" }, answer: undefined },
+    { kind: "end", id: "3:end", end: { kind: "cancelled" }, answer: undefined },
   ]);
 });
 
 test("an end keeps the last saved answer before it, and the next end without an answer has none", () => {
-  const first = { ...answer("tool_calls"), origin: { model: "first", baseUrl: "https://p" } };
+  const first = { ...answer("toolCalls"), origin: { model: "first", baseUrl: "https://p" } };
   const last = { ...answer("stop"), origin: { model: "last", baseUrl: "https://p" } };
   const transcript = opened([
-    commit(1, { blocks: [{ tool_call: call }], answer: first }),
-    commit(2, { blocks: [{ assistant_text: { text: "done" } }], answer: last }),
-    commit(3, { end: { outcome: "cancelled" } }),
-    commit(4, { end: { outcome: "cancelled" } }),
+    commit(1, { blocks: [{ kind: "toolCall", ...call }], answer: first }),
+    commit(2, { blocks: [{ kind: "assistantText", text: "done" }], answer: last }),
+    commit(3, { end: { kind: "cancelled" } }),
+    commit(4, { end: { kind: "cancelled" } }),
   ]);
   const ends = transcript.entries.filter((entry) => entry.kind === "end");
   equal(
@@ -322,11 +321,8 @@ test("an end keeps the last saved answer before it, and the next end without an 
 });
 
 test("an older page gives an end its answer, and an end without a change keeps its object", () => {
-  const saved = commit(1, { blocks: [{ assistant_text: { text: "done" } }], answer: answer("stop") });
-  const transcript = opened([
-    commit(2, { end: { outcome: "cancelled" } }),
-    commit(3, { end: { outcome: "cancelled" } }),
-  ]);
+  const saved = commit(1, { blocks: [{ kind: "assistantText", text: "done" }], answer: answer("stop") });
+  const transcript = opened([commit(2, { end: { kind: "cancelled" } }), commit(3, { end: { kind: "cancelled" } })]);
   const [end, other] = transcript.entries;
   transcript.insert([saved]);
   const after = transcript.entries.filter((entry) => entry.kind === "end");
@@ -335,7 +331,7 @@ test("an older page gives an end its answer, and an end without a change keeps i
 
 test("a context replacement adds a marker and keeps the entries before it", () => {
   const transcript = fed(opened(saved), [
-    commit(7, { replaced: { head: [{ user_text: "<context_summary>…" }], keep: 0 } }),
+    commit(7, { replaced: { head: [{ kind: "userText", text: "<context_summary>…" }], keep: 0 } }),
   ]);
   equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2", "5:0", "6:end", "7:replaced"]);
 });
@@ -360,9 +356,9 @@ test("the updates of a draft that started before the snapshot add nothing", () =
 test("an unconfirmed turn drops its draft and the live state of its tools", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 21),
-    { sessionUpdate: "draft_started", draftId: "d2" },
-    model("d2", { kind: "block_started", block: 0, content: { kind: "text" } }),
-    { sessionUpdate: "turn_unconfirmed" },
+    { sessionUpdate: "draftStarted", draftId: "d2" },
+    model("d2", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
+    { sessionUpdate: "turnUnconfirmed" },
   ]);
   equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
   equal([tool(transcript, 3).status, tool(transcript, 3).output], ["waiting", ""]);
@@ -374,14 +370,14 @@ test("a running tool has its start timestamp, and a finished tool has its durati
   const running = tool(transcript, 3);
   assert(running.startedAt !== undefined && running.startedAt >= before, `${running.startedAt}`);
   fed(transcript, [
-    { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: [], durationMs: 40_000 },
+    { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
   ]);
   equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, 40_000]);
 });
 
 test("a saved duration without display blocks gives a tool with its duration and no display", () => {
   const timed = commit(4, {
-    blocks: [{ tool_result: result }],
+    blocks: [{ kind: "toolResult", ...result }],
     display: { calls: [], results: [{ blockIndex: 0, blocks: [], durationMs: 40_000 }] },
   });
   const transcript = opened([...saved.slice(0, 3), timed]);
@@ -390,7 +386,7 @@ test("a saved duration without display blocks gives a tool with its duration and
 });
 
 test("a saved result without a duration has no duration", () => {
-  const unmeasured = commit(4, { blocks: [{ tool_result: result }] });
+  const unmeasured = commit(4, { blocks: [{ kind: "toolResult", ...result }] });
   equal(tool(opened([...saved.slice(0, 3), unmeasured]), 3).durationMs, undefined);
 });
 
@@ -399,8 +395,8 @@ test("a gap fill keeps the start timestamp of a running tool", () => {
   fed(transcript, saved.slice(2, 3));
   // The output makes the tool differ from its saved form, so only the rule for a waiting tool keeps it.
   fed(transcript, [
-    { sessionUpdate: "tool_started", execution: position(3, 2), call },
-    { sessionUpdate: "tool_output", execution: position(3, 2), text: "running" },
+    { sessionUpdate: "toolStarted", position: position(3, 2), call },
+    { sessionUpdate: "toolOutput", position: position(3, 2), text: "running" },
   ]);
   const started = tool(transcript, 2).startedAt;
   assert(started !== undefined, "the tool has no start timestamp");
@@ -411,8 +407,8 @@ test("a gap fill keeps the start timestamp of a running tool", () => {
 test("an unconfirmed turn drops the start timestamps and the durations of its tools", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 20),
-    { sessionUpdate: "tool_finished", execution: position(3, 2), result, display: [], durationMs: 40_000 },
-    { sessionUpdate: "turn_unconfirmed" },
+    { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
+    { sessionUpdate: "turnUnconfirmed" },
   ]);
   equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
 });
@@ -429,7 +425,7 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
   fed(transcript, turn.slice(0, 3));
   fed(transcript, [
     {
-      sessionUpdate: "interaction_requested",
+      sessionUpdate: "interactionRequested",
       interactionId: 7,
       source: "ask",
       request: {
@@ -437,10 +433,10 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
         questions: [{ id: "go", header: "Go", question: "t", options: [{ label: "Yes" }, { label: "No" }] }],
       },
     },
-    { sessionUpdate: "retry_scheduled", afterMs: 3000, error: "overloaded" },
+    { sessionUpdate: "retryScheduled", afterMs: 3000, error: "overloaded" },
   ]);
-  equal(facts(), ["running", [1], [7], { kind: "retry_scheduled", afterMs: 3000, error: "overloaded" }, "m"]);
-  fed(transcript, [...turn.slice(3, 5), { sessionUpdate: "interaction_closed", interactionId: 7 }]);
+  equal(facts(), ["running", [1], [7], { kind: "retryScheduled", afterMs: 3000, error: "overloaded" }, "m"]);
+  fed(transcript, [...turn.slice(3, 5), { sessionUpdate: "interactionClosed", interactionId: 7 }]);
   equal(facts(), ["running", [], [], undefined, "m"]);
   fed(transcript, [{ seq: 3, sessionUpdate: "settings", ...settings, model: { provider: "p", model: "n" } }]);
   equal(facts(), ["running", [], [], undefined, "n"]);
@@ -452,12 +448,12 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
 
 test("a deferred tool shows the tool that its bridge call names", () => {
   const bridge: ToolCall = { callId: "c", name: "tool_call", arguments: '{"name":"grep","arguments":{"pattern":"x"}}' };
-  const transcript = opened([commit(1, { blocks: [{ tool_call: bridge }], answer: answer("tool_calls") })]);
+  const transcript = opened([commit(1, { blocks: [{ kind: "toolCall", ...bridge }], answer: answer("toolCalls") })]);
   equal([tool(transcript, 0).name, tool(transcript, 0).arguments], ["grep", '{"pattern":"x"}']);
 });
 
 test("usage is the token counts of the last saved answer, and a replaced context or a snapshot clears it", () => {
-  const counts = (input: number) => ({ input, output: 10, reasoning: null, cacheRead: null, cacheWrite: null });
+  const counts = (input: number) => ({ input, output: 10 });
   const withUsage = (input: number): Answer => ({ ...answer("stop"), usage: counts(input) });
   const transcript = new Transcript();
   transcript.apply({ snapshot: { settings, updates: [commit(2, { answer: withUsage(100) })] } });

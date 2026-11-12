@@ -135,12 +135,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
   });
 
-  const setQuitGuard = live((guard: (quit: (text?: string) => void) => void): (() => void) => {
-    core.quitGuard = guard;
-    return scope.own(() => {
-      if (core.quitGuard === guard) core.quitGuard = undefined;
-    });
-  });
+  const addQuitGuard = live((guard: (quit: (text?: string) => void) => void): (() => void) =>
+    scope.own(core.addQuitGuard(guard)),
+  );
   const dialog = live((options: DialogOptions): Mount => {
     const rows = options.rows ?? DIALOG_ROWS;
     // The view forms before the overlay, so a bad key throws to the caller, not as a fault of the overlay.
@@ -172,6 +169,8 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           id: (item) => String(options.items.indexOf(item)),
           label: options.label,
           detail: options.detail,
+          rank: options.rank,
+          render: options.render,
           onChoose: (item) => {
             picked = item;
             mount.close();
@@ -232,7 +231,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
     dialog,
-    setQuitGuard,
+    addQuitGuard,
     select,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {

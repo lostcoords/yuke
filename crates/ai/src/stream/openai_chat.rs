@@ -618,7 +618,7 @@ mod tests {
              args 1 \"2}\"\n\
              stop 0 tool_call id=\"a\" name=\"one\" arguments=\"{\\\"a\\\":1}\"\n\
              stop 1 tool_call id=\"b\" name=\"two\" arguments=\"{\\\"b\\\":2}\"\n\
-             done tool_calls \"tool_calls\"",
+             done toolCalls \"tool_calls\"",
         );
     }
 
@@ -649,7 +649,7 @@ mod tests {
              stop 0 reasoning\n\
              stop 1 text\n\
              stop 2 tool_call id=\"a\" name=\"read\" arguments=\"{}\"\n\
-             done tool_calls \"tool_calls\"",
+             done toolCalls \"tool_calls\"",
         );
     }
 
@@ -666,7 +666,7 @@ mod tests {
         h.expect_trace(
             "start 0 tool_call \"read\"\n\
              stop 0 tool_call id=\"real_id\" name=\"read\" arguments=\"{}\"\n\
-             done tool_calls \"tool_calls\"",
+             done toolCalls \"tool_calls\"",
         );
     }
 
@@ -680,7 +680,7 @@ mod tests {
             ),
             (
                 "content_filter",
-                "start 0 refusal\nrefusal_delta 0 \"I cannot\"\nstop 0 refusal\ndone content_filter \"content_filter\"",
+                "start 0 refusal\nrefusal_delta 0 \"I cannot\"\nstop 0 refusal\ndone contentFilter \"content_filter\"",
             ),
         ] {
             let mut h = Harness::new(PROTOCOL);
@@ -726,7 +726,7 @@ mod tests {
              args 1 \"{}\"\n\
              stop 0 tool_call id=\"a\" name=\"one\" arguments=\"{}\"\n\
              stop 1 tool_call id=\"b\" name=\"two\" arguments=\"{}\"\n\
-             done tool_calls \"tool_calls\"",
+             done toolCalls \"tool_calls\"",
         );
     }
 

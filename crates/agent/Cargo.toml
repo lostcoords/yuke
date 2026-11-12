@@ -5,6 +5,7 @@ description = "Durable sessions that run yuke-engine turns and save each commit 
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [features]
 # The shared behavior tests of a `Store`, for the crate of each store.

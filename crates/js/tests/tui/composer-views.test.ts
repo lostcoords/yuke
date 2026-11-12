@@ -15,9 +15,9 @@ const plain =
 /** The update that accepts the waiting message `text` of the user as the input `id`. */
 function waiting(id: number, text: string): SessionUpdate {
   return {
-    sessionUpdate: "input_accepted",
+    sessionUpdate: "inputAccepted",
     inputId: id,
-    input: { source: { kind: "user" }, kind: "message", content: [{ user_text: text }] },
+    input: { source: { kind: "user" }, kind: "message", content: [{ kind: "userText", text: text }] },
   };
 }
 
@@ -338,7 +338,7 @@ test("a tall question stays above the rule below the composer, with the caret on
   const question = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   const options = [{ label: "Yes" }];
   sessions.push({
-    sessionUpdate: "interaction_requested",
+    sessionUpdate: "interactionRequested",
     interactionId: 1,
     source: "guard",
     request: { kind: "questions", questions: [{ id: "q", header: "Q", question, options, other: true }] },

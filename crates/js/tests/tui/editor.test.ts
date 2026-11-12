@@ -47,7 +47,7 @@ test("an edit inside a grapheme or a span takes the whole of it", () => {
 });
 
 test("a restore brings back an image with its media and a change keeps its states", () => {
-  const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
+  const media = { blob: { digest: "abc", len: 3 }, mimeType: "image/png" };
   const editor = new TextEditor({
     state: state("x￼y", 3, [{ from: 1, to: 2, kind: "image", label: "[image 1]", media }]),
   });
@@ -75,7 +75,7 @@ test("a restore brings back an image with its media and a change keeps its state
         to: 2,
         kind: "image",
         label: "[image 1]",
-        media: { blob: { digest: "abc", len: 3 }, mime: "image/png" },
+        media: { blob: { digest: "abc", len: 3 }, mimeType: "image/png" },
       },
     ],
   });
@@ -333,7 +333,7 @@ test("a press puts the caret, a drag selects, and the wheel scrolls", () => {
     type: "mouse",
     column: 2,
     row: 1,
-    button: "wheel_down",
+    button: "wheeldown",
     action: "press",
     modifiers: { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false },
   });
@@ -388,7 +388,7 @@ test("reset and restore report one edit over the whole text", () => {
 });
 
 test("the editor checks the grapheme edges of its spans and copies its media", () => {
-  const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
+  const media = { blob: { digest: "abc", len: 3 }, mimeType: "image/png" };
   // The astronaut is one grapheme of 5 units, so a span that ends inside it splits it.
   throws(() => new TextEditor({ state: state("👩‍💻", 0, [{ from: 0, to: 2, kind: "paste", label: "[p]" }]) }));
   const image = (value: unknown) =>

@@ -22,7 +22,7 @@ cwd: string,
 /**
  * The display title from a message, an explicit rename, or a fork of a titled session.
  */
-title?: SessionTitle | null, 
+title?: SessionTitle, 
 /**
  * The creation time, in milliseconds since the Unix epoch.
  */
@@ -34,8 +34,8 @@ updatedAt: number,
 /**
  * The source of a fork. The source can be gone.
  */
-forkOf?: SessionId | null, 
+forkOf?: SessionId, 
 /**
  * The parent session. A removal of the parent removes this session.
  */
-parent?: SessionId | null, };
+parent?: SessionId, };

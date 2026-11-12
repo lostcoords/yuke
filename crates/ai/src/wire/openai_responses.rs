@@ -103,7 +103,10 @@ fn group_end(target: &Target, blocks: &[Block], start: usize) -> usize {
 }
 
 fn in_message(block: &Block) -> bool {
-    matches!(block, Block::UserText(_) | Block::AssistantText(_) | Block::Media(_))
+    matches!(
+        block,
+        Block::UserText { .. } | Block::AssistantText(_) | Block::Media(_)
+    )
 }
 
 /// The phase of assistant text. Any other block has none.
@@ -127,7 +130,7 @@ pub(crate) fn write_group(
     let blocks = request.blocks;
     let first = &blocks[start];
     match first {
-        Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) => {
+        Block::UserText { .. } | Block::AssistantText(_) | Block::Media(_) => {
             jw.begin_object();
             jw.field_str("type", "message");
             jw.field_str("role", first.role().as_str());
@@ -138,7 +141,7 @@ pub(crate) fn write_group(
             jw.begin_array();
             for (index, block) in blocks.iter().enumerate().take(end).skip(start) {
                 match block {
-                    Block::UserText(text) => {
+                    Block::UserText { text } => {
                         jw.begin_object();
                         jw.field_str("type", "input_text");
                         jw.field_str("text", text);
@@ -219,7 +222,7 @@ pub(crate) fn write_group(
 
 /// The last user text carries the explicit cache breakpoint. A breakpoint on a tool result never writes a cache.
 pub(crate) fn cacheable(block: &Block) -> bool {
-    matches!(block, Block::UserText(_))
+    matches!(block, Block::UserText { .. })
 }
 
 /// Write the effort. Responses has no thinking shape of its own, so only `off` and the effort reach the wire.
@@ -312,7 +315,7 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
             jw.begin_object();
             jw.field_str("type", "input_image");
             jw.key("image_url");
-            jw.base64(Some(&media.mime), &data);
+            jw.base64(Some(&media.mime_type), &data);
             jw.field_str("detail", "auto");
             jw.end_object();
         }
@@ -326,7 +329,7 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
             jw.field_str("type", "input_file");
             jw.field_str("filename", &media.filename);
             jw.key("file_data");
-            jw.base64(Some(&media.mime), &data);
+            jw.base64(Some(&media.mime_type), &data);
             jw.end_object();
         }
         // This API takes text, image and file alone. Sound needs the Chat Completions endpoint.
@@ -341,7 +344,9 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
 mod tests {
     use super::*;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
-    use crate::{AssistantText, Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolResult, Wire};
+    use crate::{
+        AssistantText, Effort, OutputSchema, Reasoning, ReplayKind, RequestSettings, Thinking, ToolResult, Wire,
+    };
 
     fn responses() -> Wire {
         Wire::OpenaiResponses(ResponsesWire::default())
@@ -384,7 +389,7 @@ mod tests {
             responses(),
             Request::new(&blocks)
                 .system("be brief")
-                .settings(&Settings::new().max_output_tokens(1024)),
+                .settings(&RequestSettings::new().max_output_tokens(1024)),
         );
     }
 
@@ -395,7 +400,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).effort(Effort::High)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).effort(Effort::High)),
         );
     }
 
@@ -407,7 +412,7 @@ mod tests {
             r#"{"model":"gpt-5.2","stream":true,"store":false,"max_output_tokens":8,"reasoning":{"effort":"none"},"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
             "gpt-5.2",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).thinking(Thinking::Off)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).thinking(Thinking::Off)),
         );
     }
 
@@ -423,7 +428,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"check"}],"encrypted_content":"sig_1"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking"}]},{"type":"function_call","call_id":"call_1","name":"run","arguments":"{\"c\":1}"},{"type":"function_call_output","call_id":"call_1","output":"Error: no \"x\""}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(64)),
         );
     }
 
@@ -446,7 +451,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":64,"input":[{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I run the tests."}]},{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"They pass."},{"type":"output_text","text":" All of them."}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Anything else?"}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(64)),
         );
     }
 
@@ -467,7 +472,7 @@ mod tests {
                 &expected,
                 "gpt-5",
                 responses(),
-                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+                Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
             );
         }
     }
@@ -500,7 +505,7 @@ mod tests {
             responses(),
             Request::new(&blocks)
                 .tools(&tools)
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
         // Without a deferred tool, as on a bridge target, the search is an ordinary call and its result keeps its text.
         expect_json(
@@ -509,7 +514,7 @@ mod tests {
             responses(),
             Request::new(&blocks)
                 .tools(&tools[..1])
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -531,7 +536,9 @@ mod tests {
             ),
         ] {
             schema.strict = strict;
-            let settings = Settings::new().max_output_tokens(8).output_schema(schema.clone());
+            let settings = RequestSettings::new()
+                .max_output_tokens(8)
+                .output_schema(schema.clone());
             expect_json(
                 expected,
                 "gpt-5",
@@ -549,7 +556,7 @@ mod tests {
             EncodeError::Unsupported(Unsupported::Media(Modality::Audio)),
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -563,7 +570,7 @@ mod tests {
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,YWI=","detail":"auto"},{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,YWI="}]}]}"#,
             "gpt-5",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -578,7 +585,7 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"one"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -591,7 +598,7 @@ mod tests {
             "gpt-5.6",
             responses(),
             Request::new(&blocks)
-                .settings(&Settings::new().max_output_tokens(8))
+                .settings(&RequestSettings::new().max_output_tokens(8))
                 .session_id("0123456789abcdef"),
         );
         expect_json(
@@ -599,7 +606,7 @@ mod tests {
             "gpt-5.6",
             codex(),
             Request::new(&blocks)
-                .settings(&Settings::new().max_output_tokens(8))
+                .settings(&RequestSettings::new().max_output_tokens(8))
                 .session_id("0123456789abcdef"),
         );
     }
@@ -612,7 +619,7 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&only_result).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&only_result).settings(&RequestSettings::new().max_output_tokens(8)),
         );
         // A tool call and its result after the user text leave the marker on that text.
         let after = [
@@ -624,14 +631,14 @@ mod tests {
             r#"{"model":"gpt-5.6","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"q","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"type":"function_call","call_id":"c1","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#,
             "gpt-5.6",
             cached(),
-            Request::new(&after).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&after).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
     #[test]
     fn codex_dialect() {
         let blocks = [Block::user_text("hello")];
-        let settings = Settings::new().max_output_tokens(8).temperature(0.7).top_p(0.9);
+        let settings = RequestSettings::new().max_output_tokens(8).temperature(0.7).top_p(0.9);
         let request = Request::new(&blocks).settings(&settings);
         expect_json(
             r#"{"model":"gpt-5","stream":true,"store":false,"max_output_tokens":8,"temperature":0.7,"top_p":0.9,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]}"#,
@@ -662,7 +669,7 @@ mod tests {
             r#"{"model":"m","stream":true,"store":false,"max_output_tokens":8,"input":[{"type":"function_call","call_id":"c","name":"ls","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}"#,
             "m",
             responses(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 

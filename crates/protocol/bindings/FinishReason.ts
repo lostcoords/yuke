@@ -4,4 +4,4 @@
  * Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
  * `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
  */
-export type FinishReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "pause" | "unknown";
+export type FinishReason = "stop" | "length" | "contentFilter" | "refusal" | "toolCalls" | "pause" | "unknown";

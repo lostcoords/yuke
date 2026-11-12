@@ -8,16 +8,16 @@ export type ListSessionsParams = {
 /**
  * Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
  */
-cwd?: string | null, 
+cwd?: string, 
 /**
  * Only the children of this session. None lists the sessions without a parent.
  */
-parent?: SessionId | null, 
+parent?: SessionId, 
 /**
  * The most rows of the page, from 1 to 100. None gives 50.
  */
-limit?: number | null, 
+limit?: number, 
 /**
  * The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
  */
-cursor?: string | null, };
+cursor?: string, };

@@ -7,11 +7,11 @@ import type { ToolChoice } from "./ToolChoice";
  * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
  * one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
  */
-export type Settings = { 
+export type RequestSettings = { 
 /**
  * The output limit. `None` leaves the endpoint default.
  */
-maxOutputTokens: number | null, 
+maxOutputTokens?: number, 
 /**
  * The reasoning settings.
  */
@@ -19,11 +19,11 @@ reasoning: ReasoningSettings,
 /**
  * The sampling temperature. `None` leaves the endpoint default.
  */
-temperature: number | null, 
+temperature?: number, 
 /**
  * The nucleus sampling mass. `None` leaves the endpoint default.
  */
-topP: number | null, 
+topP?: number, 
 /**
  * The tool control.
  */
@@ -31,4 +31,4 @@ toolChoice: ToolChoice,
 /**
  * The schema of the response. `None` leaves the response free.
  */
-outputSchema: OutputSchema | null, };
+outputSchema?: OutputSchema, };

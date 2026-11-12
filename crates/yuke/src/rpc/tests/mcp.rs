@@ -4,7 +4,7 @@ use super::*;
 
 fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
     let update = &message["params"]["update"];
-    update["sessionUpdate"] == "mcp_server" && update["name"] == name && update["state"] == state
+    update["sessionUpdate"] == "mcpServer" && update["name"] == name && update["state"] == state
 }
 
 // A server of the user config starts with the session: its state reaches the client, its tool reaches the model, and
@@ -49,7 +49,7 @@ async fn a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_clie
         .messages
         .iter()
         .map(|message| &message["params"]["update"])
-        .filter(|update| update["sessionUpdate"] == "mcp_server")
+        .filter(|update| update["sessionUpdate"] == "mcpServer")
         .map(|update| json!({ "name": update["name"], "state": update["state"], "tools": update["tools"] }))
         .collect();
     assert_eq!(

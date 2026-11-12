@@ -3,7 +3,7 @@
 
 use std::io::{BufRead, Write};
 
-use yuke_ai::{Block, Effort, Encoder, Event, Reply, ReplyOptions, Request, Settings};
+use yuke_ai::{Block, Effort, Encoder, Event, Reply, ReplyOptions, Request, RequestSettings};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The encoder keeps the encoding of each request, so the next turn writes only what changed.
     let mut encoder = Encoder::new();
     let mut context: Vec<Block> = Vec::new();
-    let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
+    let settings = RequestSettings::new().max_output_tokens(4096).effort(Effort::Low);
 
     println!("Type /quit to exit.");
     let mut lines = std::io::stdin().lock().lines();

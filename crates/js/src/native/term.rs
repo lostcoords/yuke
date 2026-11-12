@@ -525,11 +525,11 @@ fn mouse_object<'js>(ctx: &Ctx<'js>, mouse: yuke_term::Mouse) -> rquickjs::Resul
         Button::Middle => "middle".to_owned(),
         Button::Right => "right".to_owned(),
         Button::None => "none".to_owned(),
-        Button::WheelUp => "wheel_up".to_owned(),
-        Button::WheelDown => "wheel_down".to_owned(),
-        Button::WheelLeft => "wheel_left".to_owned(),
-        Button::WheelRight => "wheel_right".to_owned(),
-        Button::Extra(number) => format!("button_{number}"),
+        Button::WheelUp => "wheelup".to_owned(),
+        Button::WheelDown => "wheeldown".to_owned(),
+        Button::WheelLeft => "wheelleft".to_owned(),
+        Button::WheelRight => "wheelright".to_owned(),
+        Button::Extra(number) => format!("button{number}"),
     };
     object.set("button", button)?;
     let event = match mouse.kind {
@@ -583,8 +583,8 @@ fn code_name(code: Code) -> &'static str {
         Code::Right => "right",
         Code::Up => "up",
         Code::Down => "down",
-        Code::PageUp => "page_up",
-        Code::PageDown => "page_down",
+        Code::PageUp => "pageup",
+        Code::PageDown => "pagedown",
         Code::Home => "home",
         Code::End => "end",
         Code::Menu => "menu",

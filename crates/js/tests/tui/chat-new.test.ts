@@ -22,10 +22,10 @@ function items(chat: Awaited<ReturnType<typeof loadChat>>): string[][] {
 /** A session in `/w` with one answer, so the bar shows a context item. */
 const SAVED = [
   ...replies(1),
-  commit(2, [{ assistant_text: { text: "old answer" } }], {
+  commit(2, [{ kind: "assistantText", text: "old answer" }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
-      usage: { input: 3000, output: 200, reasoning: null, cacheRead: null, cacheWrite: null },
+      usage: { input: 3000, output: 200 },
       finishReason: "stop",
     },
   }),
@@ -86,7 +86,7 @@ test("the next message after /new creates a session in the folder of the old ses
 
   equal(
     [sessions.created.map((settings) => settings.cwd), chat.opened.map((open) => open.id), sessions.inputs],
-    [["/w"], ["s1", "s-new"], [[{ user_text: "hi" }]]],
+    [["/w"], ["s1", "s-new"], [[{ kind: "userText", text: "hi" }]]],
   );
 });
 

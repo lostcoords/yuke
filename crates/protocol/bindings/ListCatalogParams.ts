@@ -5,6 +5,7 @@
  */
 export type ListCatalogParams = { 
 /**
- * List every provider with its state. None or false lists only the providers that are ready now.
+ * List every provider with its state. A missing flag is `false`: the list holds only the providers that are
+ * ready now.
  */
-all?: boolean | null, };
+all?: boolean, };

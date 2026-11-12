@@ -37,8 +37,8 @@ pub trait SessionHost: MediaStore {
     /// The parent session.
     fn parent(&self) -> Option<yuke_protocol::SessionId>;
 
-    /// The workspace folder of the session now. Relative paths and commands of the tools start here.
-    fn folder(&self) -> PathBuf;
+    /// The working folder of the session now. Relative paths and commands of the tools start here.
+    fn cwd(&self) -> PathBuf;
 
     /// Whether the session closed. A close must set this before it stops the jobs of the session. A job start then fails.
     fn is_closed(&self) -> bool;
@@ -314,7 +314,7 @@ impl fmt::Debug for ScriptTool {
         f.debug_struct("ScriptTool")
             .field("id", &self.id)
             .field("concurrency", &self.concurrency)
-            .field("folder", &self.host.folder())
+            .field("folder", &self.host.cwd())
             .finish_non_exhaustive()
     }
 }
@@ -384,7 +384,7 @@ impl ScriptTool {
         output: mpsc::UnboundedSender<String>,
     ) -> Result<ToolContent, Box<dyn std::error::Error + Send + Sync>> {
         // One folder for the whole call: the context, the commands, and the media paths of the answer.
-        let folder = self.host.folder();
+        let folder = self.host.cwd();
         let Some(folder_text) = folder.to_str().map(str::to_owned) else {
             return Err(Error::Folder(folder).into());
         };
@@ -417,7 +417,7 @@ impl ScriptTool {
                     arguments: JsonText(arguments),
                     session_id,
                     call_id,
-                    folder: folder_text,
+                    cwd: folder_text,
                     output,
                     call,
                 };
@@ -513,8 +513,8 @@ struct CallRequest<'js> {
     arguments: JsonText,
     session_id: String,
     call_id: String,
-    /// The workspace folder of the session at the start of the call.
-    folder: String,
+    /// The working folder of the session at the start of the call.
+    cwd: String,
     /// Sends one text of the call to the consumer.
     output: Function<'js>,
     /// The natives that need the session or the life of the call.

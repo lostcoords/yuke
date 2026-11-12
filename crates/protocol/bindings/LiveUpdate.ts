@@ -26,7 +26,7 @@ state: SessionState, } | { "sessionUpdate": "job",
 /**
  * The job.
  */
-job: Job, } | { "sessionUpdate": "input_accepted", 
+job: Job, } | { "sessionUpdate": "inputAccepted", 
 /**
  * The id of the input.
  */
@@ -34,7 +34,7 @@ inputId: InputId,
 /**
  * The input.
  */
-input: Input, } | { "sessionUpdate": "interaction_requested", 
+input: Input, } | { "sessionUpdate": "interactionRequested", 
 /**
  * The id that the answer names.
  */
@@ -46,11 +46,11 @@ source: string,
 /**
  * The question.
  */
-request: InteractionRequest, } | { "sessionUpdate": "interaction_closed", 
+request: InteractionRequest, } | { "sessionUpdate": "interactionClosed", 
 /**
  * The question.
  */
-interactionId: InteractionId, } | { "sessionUpdate": "mcp_server", 
+interactionId: InteractionId, } | { "sessionUpdate": "mcpServer", 
 /**
  * The name of the server in its config.
  */
@@ -66,11 +66,11 @@ tools: number, } | { "state": "failed",
 /**
  * Why.
  */
-error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "input_removed", 
+error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "inputRemoved", 
 /**
  * The id of the input.
  */
-inputId: InputId, } | { "sessionUpdate": "turn_unconfirmed" } | { "sessionUpdate": "draft_started", 
+inputId: InputId, } | { "sessionUpdate": "turnUnconfirmed" } | { "sessionUpdate": "draftStarted", 
 /**
  * The identity of this attempt, distinct across turns and process restarts.
  */
@@ -82,7 +82,7 @@ draftId: DraftId,
 /**
  * The model fact.
  */
-event: ModelUpdate, } | { "sessionUpdate": "draft_committed", 
+event: ModelUpdate, } | { "sessionUpdate": "draftCommitted", 
 /**
  * The draft to replace, including any blocks absent from `blocks`.
  */
@@ -95,7 +95,7 @@ eventNumber: EventNumber,
  * Original draft block ids in saved block order. Array index `i` maps to commit block index `i`.
  * Draft blocks absent from this array do not enter history.
  */
-blocks: Array<number>, } | { "sessionUpdate": "draft_discarded", 
+blocks: Array<number>, } | { "sessionUpdate": "draftDiscarded", 
 /**
  * The draft to remove.
  */
@@ -103,27 +103,27 @@ draftId: DraftId,
 /**
  * Why the draft has no confirmed replacement.
  */
-reason: DraftDiscardReason, } | { "sessionUpdate": "tool_started", 
+reason: DraftDiscardReason, } | { "sessionUpdate": "toolStarted", 
 /**
  * The position of the saved call, even when the provider repeats its call id.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The resolved call after the deferred-tool bridge. Its call id remains provider data.
  */
-call: ToolCall, } | { "sessionUpdate": "tool_output", 
+call: ToolCall, } | { "sessionUpdate": "toolOutput", 
 /**
  * The position of the saved call.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The new output text.
  */
-text: string, } | { "sessionUpdate": "tool_finished", 
+text: string, } | { "sessionUpdate": "toolFinished", 
 /**
  * The position of the saved call.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The result of the call.
  */
@@ -135,7 +135,7 @@ display: Array<DisplayBlock>,
 /**
  * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
  */
-durationMs?: number | null, } | { "sessionUpdate": "retry_scheduled", 
+durationMs?: number, } | { "sessionUpdate": "retryScheduled", 
 /**
  * The wait in milliseconds.
  */
@@ -143,7 +143,7 @@ afterMs: number,
 /**
  * The failure text.
  */
-error: string, } | { "sessionUpdate": "round_failed", 
+error: string, } | { "sessionUpdate": "roundFailed", 
 /**
  * The failure text with each cause.
  */

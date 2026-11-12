@@ -5,14 +5,14 @@
  */
 
 import type { PluginContext } from "yuke:plugins";
-import type { SessionActivity, SessionRow } from "yuke:protocol";
+import type { SessionRow, SessionState } from "yuke:protocol";
 import { fuzzyMatch, Picker, type PickerMatch, type Tui } from "yuke:tui";
 
 /** The list shows at most this count of sessions. */
 const PAGE = 100;
 
-/** The mark of each activity: a running turn, an open session, and a closed one. */
-const MARK: Readonly<Record<SessionActivity, string>> = { running: "●", idle: "○", closed: " " };
+/** The mark of each state: a running turn, an open session, and a closed one. */
+const MARK: Readonly<Record<SessionState, string>> = { running: "●", idle: "○", closed: " " };
 
 export function apply(ctx: PluginContext): undefined {
   const tui = ctx.get("tui");
@@ -36,9 +36,9 @@ function age(at: number, now: number): string {
   return `${Math.floor(minutes / (24 * 60))}d`;
 }
 
-/** The label of `row`: its activity mark and its title. */
+/** The label of `row`: its state mark and its title. */
 function labelOf(row: SessionRow): string {
-  return `${MARK[row.activity]} ${row.session.title ?? "(untitled)"}`;
+  return `${MARK[row.state]} ${row.session.title ?? "(untitled)"}`;
 }
 
 /**

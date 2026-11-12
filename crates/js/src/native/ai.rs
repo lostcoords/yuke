@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, FromJs, Function, IntoJs, Object};
 use serde_json::{Map, Value};
-use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
+use yuke_ai::{Block, FinishReason, RequestSettings, ToolDefinition, Usage};
 use yuke_engine::{CancellationToken, Model, chain_text};
 use yuke_protocol::{ModelReference, SessionId};
 
@@ -89,7 +89,7 @@ pub(crate) struct Round {
     pub(crate) model: Model,
     pub(crate) system: String,
     pub(crate) tools: Vec<ToolDefinition>,
-    pub(crate) settings: Settings,
+    pub(crate) settings: RequestSettings,
     pub(crate) session_id: SessionId,
     pub(crate) context: Vec<Block>,
 }
@@ -120,7 +120,7 @@ const BYTES_PER_TOKEN: u64 = 4;
 pub(crate) fn block_tokens(block: &Block) -> u64 {
     match block {
         Block::Media(_) => MEDIA_TOKENS,
-        Block::UserText(text) | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text_tokens(text.len()),
+        Block::UserText { text } | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text_tokens(text.len()),
         Block::ToolResult(result) => text_tokens(result.content.len()) + result.media.len() as u64 * MEDIA_TOKENS,
         Block::Reasoning(reasoning) => {
             let state = reasoning.replay.as_ref().map_or(0, |replay| replay.data.len());
@@ -228,7 +228,7 @@ fn checked(ctx: &Ctx<'_>, request: Request) -> rquickjs::Result<(CompleteRequest
             &format!("the blocks are not a list of blocks: {error}"),
         )
     })?;
-    let settings = merge_settings(&Settings::new(), request.settings.0)
+    let settings = merge_settings(&RequestSettings::new(), request.settings.0)
         .map_err(|error| throw(ctx, ErrorClass::TypeError, &error))?;
     for (index, file) in request.attachments.iter().enumerate() {
         // `yuke:ai` has no workspace folder, so a relative path has no start.

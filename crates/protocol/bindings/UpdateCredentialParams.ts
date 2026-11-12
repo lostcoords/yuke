@@ -19,4 +19,4 @@ expiresAt: number,
 /**
  * The account id, for a login flow with accounts. Each model request names it.
  */
-accountId?: string | null, };
+accountId?: string, };

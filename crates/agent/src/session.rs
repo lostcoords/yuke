@@ -28,17 +28,17 @@ const SESSION_SOURCE: &str = "host:session";
 /// The note about `newest_turn`, when that turn was cancelled or failed.
 fn interruption_note(newest_turn: &NewestTurn) -> Option<Input> {
     match newest_turn {
-        NewestTurn::Ended(TurnEnd::Outcome(Outcome::Cancelled)) => Some(Input::notification(
+        NewestTurn::Ended(TurnEnd::Cancelled) => Some(Input::notification(
             SESSION_SOURCE,
             "The previous turn was cancelled.",
             "The user cancelled the previous turn before it ended.",
         )),
-        NewestTurn::Ended(TurnEnd::Failed(error)) => Some(Input::notification(
+        NewestTurn::Ended(TurnEnd::Failed { error }) => Some(Input::notification(
             SESSION_SOURCE,
             "The previous turn failed.",
             &format!("The previous turn ended with an error: {error}"),
         )),
-        NewestTurn::Empty | NewestTurn::Open | NewestTurn::Ended(TurnEnd::Outcome(_)) => None,
+        NewestTurn::Empty | NewestTurn::Open | NewestTurn::Ended(TurnEnd::Completed { .. } | TurnEnd::Stopped) => None,
     }
 }
 
@@ -365,7 +365,9 @@ async fn open_and_end_turn(
     let results = open_calls(&opened.context)
         .map(|call_id| yuke_ai::Block::ToolResult(yuke_ai::ToolResult::error(call_id, OUTCOME_UNKNOWN)))
         .collect::<Vec<_>>();
-    let end = TurnEnd::Failed(TURN_STOPPED.to_owned());
+    let end = TurnEnd::Failed {
+        error: TURN_STOPPED.to_owned(),
+    };
     let repair = Commit {
         end: Some(end.clone()),
         ..Commit::blocks(results)

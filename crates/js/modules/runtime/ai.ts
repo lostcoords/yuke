@@ -1,6 +1,6 @@
 /** The code of the public module `yuke:ai`. Its declaration is `types/ai.d.ts`, and the check at the end compares the two. */
 
-import type { GenerateTextOptions, GenerateTextResult, ObjectOutput } from "yuke:ai";
+import type { GenerateTextOptions, GenerateTextResult, ObjectOutput, TextAnswer } from "yuke:ai";
 import { checkArguments, checkParameters } from "yuke:internal/arguments";
 import { underStop } from "yuke:internal/events";
 import { aiComplete } from "yuke:internal/native";
@@ -78,7 +78,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
     provider: string;
     model: string;
   };
-  const blocks = typeof prompt === "string" ? [{ user_text: prompt }] : prompt;
+  const blocks = typeof prompt === "string" ? [{ kind: "userText" as const, text: prompt }] : prompt;
   const media = attachments.map((item: unknown, index) => mediaOf(item, `attachments[${index}]`));
   const settings: Record<string, unknown> = Object.fromEntries(SETTINGS.map((name) => [name, fields[name]]));
   if (output !== undefined) {
@@ -98,7 +98,7 @@ export async function generateText(options: GenerateTextOptions): Promise<Genera
 }
 
 /** Parse the text of `answer`, and check it against `schema`. A failure throws a `NoObjectGeneratedError`. */
-function objectOf(schema: ObjectSchema, answer: Omit<GenerateTextResult, "output">): unknown {
+function objectOf(schema: ObjectSchema, answer: TextAnswer): unknown {
   try {
     if (answer.finishReason !== "stop") throw new Error(`the answer stopped with ${answer.finishReason}`);
     return checkArguments(schema, JSON.parse(answer.text));

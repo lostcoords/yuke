@@ -11,6 +11,7 @@
  * - A tool that throws, or a result with `isError: true`, gives the model an error result.
  * - A notice only informs the user. It fails no tool and no turn.
  */
+import type { TextAnswer } from "yuke:ai";
 import type { ChatService } from "yuke:chat";
 import type {
   Blob,
@@ -33,15 +34,14 @@ import type {
   NoticeParams,
   Question,
   QuestionAnswer,
+  RequestSettings,
   SessionId,
   SessionRow,
   SessionSettings,
   SessionSnapshot,
   SessionState,
   SessionUpdate,
-  Settings,
   StoredEvent,
-  Usage,
 } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
@@ -84,7 +84,7 @@ export interface Sessions {
    * the sessions without a parent. With `parent`, it holds the sessions of that parent.
    */
   readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
-  /** The row of the saved session `id`, with its activity now. */
+  /** The row of the saved session `id`, with its state now. */
   readonly get: (id: SessionId) => Promise<SessionRow>;
   /**
    * Rename an open or closed session without changing its history or activity times.
@@ -419,13 +419,13 @@ export interface ToolAfterAnswer {
 
 /** What a `round.before` handler gets. */
 export interface RoundBeforeEvent {
-  /** The context window of the model of the round in tokens, or `null` when the catalog names none. */
-  readonly contextWindow: number | null;
+  /** The context window of the model of the round in tokens. It is absent when the catalog names none. */
+  readonly contextWindow?: number;
   /**
-   * The input tokens of the newest answer of the session. It is `null` before an answer, without a provider count, or
+   * The input tokens of the newest answer of the session. It is absent before an answer, without a provider count, or
    * after a newer replacement.
    */
-  readonly inputTokens: number | null;
+  readonly inputTokens?: number;
   /**
    * The estimated input tokens of the context that this handler sees. It adds the estimate of the newest assistant run
    * and each later block to `inputTokens`. Without `inputTokens`, or after an earlier replacement, it sums
@@ -450,7 +450,7 @@ export interface RoundBeforeEvent {
    * - No tool runs, and the session keeps nothing of the request.
    * - A failed request rejects with an `Error`.
    */
-  readonly sideRequest: (options: SideRequestOptions) => Promise<SideRequestResult>;
+  readonly sideRequest: (options: SideRequestOptions) => Promise<TextAnswer>;
   /**
    * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
    * and it ignores the answer of the handler.
@@ -470,16 +470,6 @@ export interface SideRequestOptions {
   readonly signal?: AbortSignal | undefined;
 }
 
-/** The answer of `sideRequest`. */
-export interface SideRequestResult {
-  /** The text of the answer. A call of a tool is not in it. */
-  readonly text: string;
-  /** Why the answer stopped. A call of a tool stops it with `tool_calls`. */
-  readonly finishReason: FinishReason;
-  /** The token counts of the request. */
-  readonly usage: Usage;
-}
-
 /**
  * The answer of a `round.before` handler. Each part is optional.
  * - `replace` makes the context `head`, then the last `keep` blocks of the context. The session keeps the replacement.
@@ -490,33 +480,33 @@ export interface SideRequestResult {
 export interface RoundBeforeAnswer {
   readonly replace?: { readonly head: readonly Block[]; readonly keep: number } | undefined;
   readonly model?: ModelReference | undefined;
-  readonly settings?: Partial<Settings> | undefined;
+  readonly settings?: Partial<RequestSettings> | undefined;
 }
 
 /**
  * The kind of a failure of a round.
- * - The provider kinds come from the status, the error code, or the error message of the provider. `context_overflow`
+ * - The provider kinds come from the status, the error code, or the error message of the provider. `contextOverflow`
  *   means that the input does not fit the context window of the model.
- * - `transport`, `protocol`, `response_too_large`, and `incomplete_stream` are failures of the connection or the stream.
+ * - `transport`, `protocol`, `responseTooLarge`, and `incompleteStream` are failures of the connection or the stream.
  * - `encode` means that yuke could not build the request, for example for a media type that the provider refuses.
  * - `credential` means that yuke could not get a credential, for example after a failed refresh of a login.
  */
 export type RoundFailureKind =
-  | "context_overflow"
-  | "rate_limited"
-  | "rate_limit_unknown"
-  | "quota_exhausted"
-  | "server_error"
+  | "contextOverflow"
+  | "rateLimited"
+  | "rateLimitUnknown"
+  | "quotaExhausted"
+  | "serverError"
   | "timeout"
   | "conflict"
-  | "auth_failed"
-  | "permission_denied"
-  | "bad_status"
-  | "provider_failed"
+  | "authFailed"
+  | "permissionDenied"
+  | "badStatus"
+  | "providerFailed"
   | "transport"
   | "protocol"
-  | "response_too_large"
-  | "incomplete_stream"
+  | "responseTooLarge"
+  | "incompleteStream"
   | "encode"
   | "credential";
 
@@ -570,10 +560,10 @@ export interface RoundAfterEvent {
   /** The assistant text of the answer of this round. It can be empty, for example for an answer with calls only. */
   readonly text: string;
   /**
-   * Why the answer ended, when it needs no other request. `null` after a round of tool calls, because the turn then
-   * goes on.
+   * Why the answer ended, when it needs no other request. It is absent after a round of tool calls, because the turn
+   * then goes on.
    */
-  readonly finishReason: FinishReason | null;
+  readonly finishReason?: FinishReason;
   /** The `continue` answers of the `round.after` handlers in this turn. The host sets no limit, so guard a loop here. */
   readonly continues: number;
   /**

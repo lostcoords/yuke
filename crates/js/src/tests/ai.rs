@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, Effort, FinishReason, OutputSchema, ReasoningSettings, Settings, Thinking, Usage};
+use yuke_ai::{Block, Effort, FinishReason, OutputSchema, ReasoningSettings, RequestSettings, Thinking, Usage};
 use yuke_engine::{CancellationToken, Hooks, RoundStart};
 use yuke_protocol::ModelReference;
 
@@ -115,11 +115,11 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
          const full = await ai.generateText({
            model,
            instructions: 'Summarize.',
-           prompt: [{ user_text: 'the text' }],
+           prompt: [{ kind: 'userText', text: 'the text' }],
            maxOutputTokens: 9,
            temperature: 0.5,
            topP: 0.9,
-           reasoning: { thinking: 'off', effort: 'high' },
+           reasoning: { thinking: { kind: 'off' }, effort: 'high' },
          });
          const bare = await ai.generateText({ model, prompt: 'the question', temperature: null, topP: undefined });
          await ai.generateText({ model, prompt: 'the effort', reasoning: { effort: 'low' } });
@@ -131,9 +131,9 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
     assert_eq!(
         answers,
         [
-            r#"{"text":"A summary.","finishReason":"length","usage":{"input":42,"output":7,"reasoning":null,"cacheRead":null,"cacheWrite":null}}"#,
+            r#"{"text":"A summary.","finishReason":"length","usage":{"input":42,"output":7}}"#,
             "true",
-            r#"{"input":42,"output":7,"reasoning":null,"cacheRead":null,"cacheWrite":null}"#,
+            r#"{"input":42,"output":7}"#,
         ]
     );
     assert_eq!(
@@ -143,7 +143,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
                 model: reference("p", "m"),
                 system: "Summarize.".to_owned(),
                 blocks: vec![Block::user_text("the text")],
-                settings: Settings {
+                settings: RequestSettings {
                     max_output_tokens: Some(9),
                     temperature: Some(0.5),
                     top_p: Some(0.9),
@@ -151,7 +151,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
                         thinking: Some(Thinking::Off),
                         effort: Some(Effort::High),
                     },
-                    ..Settings::new()
+                    ..RequestSettings::new()
                 },
                 attachments: Vec::new(),
             },
@@ -159,7 +159,7 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
                 model: reference("p", "m"),
                 system: String::new(),
                 blocks: vec![Block::user_text("the question")],
-                settings: Settings::new(),
+                settings: RequestSettings::new(),
                 attachments: Vec::new(),
             },
             // A missing reasoning field keeps the default of the endpoint.
@@ -167,12 +167,12 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
                 model: reference("p", "m"),
                 system: String::new(),
                 blocks: vec![Block::user_text("the effort")],
-                settings: Settings {
+                settings: RequestSettings {
                     reasoning: ReasoningSettings {
                         thinking: None,
                         effort: Some(Effort::Low),
                     },
-                    ..Settings::new()
+                    ..RequestSettings::new()
                 },
                 attachments: Vec::new(),
             },
@@ -327,7 +327,7 @@ async fn a_shutdown_stops_a_side_request_that_waits_for_its_answer() {
     let host = Rc::new(TestHost::new(&folder));
     let tools = Tools::open(&runtime, host).await;
     let model = yuke_testing::model();
-    let settings = Settings::new();
+    let settings = RequestSettings::new();
     tools
         .session
         .hooks(CancellationToken::new())
@@ -480,7 +480,7 @@ async fn an_answer_that_is_not_the_object_throws_a_no_object_generated_error_tha
         (
             r#"{"summary":"done"}"#,
             FinishReason::ContentFilter,
-            "Error: the answer stopped with content_filter",
+            "Error: the answer stopped with contentFilter",
         ),
     ];
     for (index, (text, finish_reason, cause)) in cases.into_iter().enumerate() {

@@ -7,7 +7,7 @@ use crate::{InteractionId, SessionId};
 /// A request to the user. A client shows it in its own way.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum InteractionRequest {
     /// One or more questions, which the user answers together.
     Questions {
@@ -46,7 +46,7 @@ pub struct Question {
 
 /// One option of a question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 pub struct QuestionOption {
     /// The text of the option, which the answer names.
     pub label: String,
@@ -57,7 +57,7 @@ pub struct QuestionOption {
 
 /// The answer to one question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 pub struct QuestionAnswer {
     /// The id of the question.
     pub id: String,
@@ -72,7 +72,7 @@ pub struct QuestionAnswer {
 /// answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum InteractionResponse {
     /// The answers to the questions.
     Questions {

@@ -144,7 +144,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   const list = sessions as unknown as Sessions;
   const child = await list.create(settings as unknown as SessionSettings, { parent: parent.id });
   const held = await list.open(child, { tail: 0, onEvent() {} });
-  await held.sendMessage({ content: [{ user_text: "Read the store." }] });
+  await held.sendMessage({ content: [{ kind: "userText", text: "Read the store." }] });
   await held.waitForIdle();
 
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: parent.id });

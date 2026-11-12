@@ -24,7 +24,7 @@ test("a failed open keeps the shown session, and a later open shows its own tran
   });
   const kept = [chat.id, chat.transcript === first, chat.handle !== undefined];
   await chat.open("s2");
-  sessions.push(commit(3, [{ assistant_text: { text: "in s2" } }]), "s2");
+  sessions.push(commit(3, [{ kind: "assistantText", text: "in s2" }]), "s2");
   equal(
     [failure, kept, chat.id, chat.transcript === first, texts(chat).at(-1)],
     ["Error: no session missing", ["s1", true, true], "s2", false, "in s2"],
@@ -137,7 +137,11 @@ test("a composer sends the draft, and a refused input comes back above newer tex
   reject(new Error("refused"));
   equal(
     [sessions.inputs, await sending, editor.state.text],
-    [[[{ user_text: "first" }], [{ user_text: "second" }]], "Error: refused", "second\nnewer"],
+    [
+      [[{ kind: "userText", text: "first" }], [{ kind: "userText", text: "second" }]],
+      "Error: refused",
+      "second\nnewer",
+    ],
   );
 });
 
@@ -165,7 +169,7 @@ test("attachImage stores the image and puts it over the selection, and an abort 
   await chat.open("s1");
   const editor = new TextEditor({ state: { text: "abc", selection: { anchor: 2, head: 1 }, spans: [] } });
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
-  await composer.attachImage({ bytes: new Uint8Array([1, 2]), mime: "image/png" });
+  await composer.attachImage({ bytes: new Uint8Array([1, 2]), mimeType: "image/png" });
   const attached = [editor.state.text, editor.state.spans.map((span) => [span.from, span.label])];
   const closed = new AbortController();
   const handle = async () => {
@@ -174,7 +178,7 @@ test("attachImage stores the image and puts it over the selection, and an abort 
   };
   await new ChatComposer(chat, new TextEditor(), { handle, signal: closed.signal }).attachImage({
     bytes: new Uint8Array([3]),
-    mime: "image/png",
+    mimeType: "image/png",
   });
   equal([attached, sessions.blobs], [["a\uFFFCc", [[1, "[image 1]"]]], [[1, 2]]]);
 });
@@ -188,7 +192,7 @@ test("a send before the store of an attach ends does nothing, so the image goes 
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
   const store = Promise.withResolvers<void>();
   sessions.state.store = store.promise;
-  const attaching = composer.attachImage({ bytes: new Uint8Array([1]), mime: "image/png" });
+  const attaching = composer.attachImage({ bytes: new Uint8Array([1]), mimeType: "image/png" });
   await waitForSettled();
   const busy = composer.busy;
   await composer.send();
@@ -198,7 +202,17 @@ test("a send before the store of an attach ends does nothing, so the image goes 
   await composer.send();
   equal(
     [busy, early, sessions.inputs, composer.busy],
-    [true, [], [[{ user_text: "hello" }, { media: { blob: { digest: "d1", len: 1 }, mime: "image/png" } }]], false],
+    [
+      true,
+      [],
+      [
+        [
+          { kind: "userText", text: "hello" },
+          { kind: "media", blob: { digest: "d1", len: 1 }, mimeType: "image/png" },
+        ],
+      ],
+      false,
+    ],
   );
 });
 
@@ -211,9 +225,9 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
   const waiting = (id: number, text: string) =>
     sessions.push({
-      sessionUpdate: "input_accepted",
+      sessionUpdate: "inputAccepted",
       inputId: id,
-      input: { source: { kind: "user" }, kind: "message", content: [{ user_text: text }] },
+      input: { source: { kind: "user" }, kind: "message", content: [{ kind: "userText", text: text }] },
     });
   waiting(5, "older");
   waiting(6, "newest");
@@ -237,7 +251,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   });
   const ask = (id: number) =>
     sessions.push({
-      sessionUpdate: "interaction_requested",
+      sessionUpdate: "interactionRequested",
       interactionId: id,
       source: "guard",
       request: {
@@ -268,7 +282,7 @@ test("questions that start after a question opened show it at once", async () =>
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   sessions.push({
-    sessionUpdate: "interaction_requested",
+    sessionUpdate: "interactionRequested",
     interactionId: 3,
     source: "guard",
     request: {
@@ -295,7 +309,7 @@ test("the timer counts from observation, resets for another session, and stops w
   await chat.open("s2");
   const second = working.text()?.text;
   // An event that keeps the turn running changes no `active`.
-  sessions.push(commit(3, [{ assistant_text: { text: "more" } }]), "s2");
+  sessions.push(commit(3, [{ kind: "assistantText", text: "more" }]), "s2");
   sessions.close("s2");
   equal(
     [first, second, working.text(), changes],

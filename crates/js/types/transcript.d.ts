@@ -66,7 +66,7 @@ declare module "yuke:transcript" {
    * call. `display` is what to show in place of the result text, and it is empty for a result without one. The model
    * sees neither.
    *
-   * `startedAt` is the timestamp of this client, as from `Date.now()`, when it received the `tool_started` of a `running`
+   * `startedAt` is the timestamp of this client, as from `Date.now()`, when it received the `toolStarted` of a `running`
    * call. It is `undefined` in each other status. `durationMs` is the duration of a `done` call, without the hooks. It is `undefined`
    * when the call did not run.
    */
@@ -103,7 +103,7 @@ declare module "yuke:transcript" {
 
   /** A failure of the running turn that is not its end. */
   export type TurnFailure = Frozen<
-    { kind: "retry_scheduled"; afterMs: number; error: string } | { kind: "round_failed"; error: string }
+    { kind: "retryScheduled"; afterMs: number; error: string } | { kind: "roundFailed"; error: string }
   >;
 
   /**

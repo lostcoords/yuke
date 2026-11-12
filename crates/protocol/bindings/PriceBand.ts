@@ -11,20 +11,20 @@ minPromptTokens: number,
 /**
  * The price of an input token.
  */
-input?: number | null, 
+input?: number, 
 /**
  * The price of an output token.
  */
-output?: number | null, 
+output?: number, 
 /**
  * The price of a reasoning token, which replaces the output price for it.
  */
-reasoning?: number | null, 
+reasoning?: number, 
 /**
  * The price of a token that the prompt cache gives.
  */
-cacheRead?: number | null, 
+cacheRead?: number, 
 /**
  * The price of a token that the prompt cache keeps.
  */
-cacheWrite?: number | null, };
+cacheWrite?: number, };

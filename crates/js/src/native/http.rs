@@ -182,17 +182,17 @@ struct HttpError {
 /// The stable code of `error`, for the `cause` of the `TypeError` of `fetch`.
 fn code(error: yuke_http::Error) -> &'static str {
     match error {
-        yuke_http::Error::InvalidRequest => "invalid_request",
-        yuke_http::Error::BadUrl => "bad_url",
-        yuke_http::Error::DnsFailed => "dns_failed",
-        yuke_http::Error::ConnectFailed => "connect_failed",
-        yuke_http::Error::ConnectTimeout => "connect_timeout",
-        yuke_http::Error::CertificateRejected => "certificate_rejected",
-        yuke_http::Error::TlsSetupFailed => "tls_setup_failed",
-        yuke_http::Error::IdleTimeout => "idle_timeout",
-        yuke_http::Error::RequestTimeout => "request_timeout",
-        yuke_http::Error::ConnectionLost => "connection_lost",
-        yuke_http::Error::MalformedResponse => "malformed_response",
+        yuke_http::Error::InvalidRequest => "invalidRequest",
+        yuke_http::Error::BadUrl => "badUrl",
+        yuke_http::Error::DnsFailed => "dnsFailed",
+        yuke_http::Error::ConnectFailed => "connectFailed",
+        yuke_http::Error::ConnectTimeout => "connectTimeout",
+        yuke_http::Error::CertificateRejected => "certificateRejected",
+        yuke_http::Error::TlsSetupFailed => "tlsSetupFailed",
+        yuke_http::Error::IdleTimeout => "idleTimeout",
+        yuke_http::Error::RequestTimeout => "requestTimeout",
+        yuke_http::Error::ConnectionLost => "connectionLost",
+        yuke_http::Error::MalformedResponse => "malformedResponse",
     }
 }
 

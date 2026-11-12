@@ -13,4 +13,4 @@ text: string,
  * The phase of the text, or no phase when the provider sent none. The encoder sends the phase back to OpenAI
  * Responses.
  */
-phase?: TextPhase | null, };
+phase?: TextPhase, };

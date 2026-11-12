@@ -14,8 +14,8 @@ use futures_util::future::join_all;
 use tokio_util::sync::CancellationToken;
 use yuke_ai::transport::Transport;
 use yuke_ai::{
-    AttemptError, BlobStore, Block, Encoder, Origin, OriginRef, Partial, Reply, ReplyOptions, Request, Response,
-    ResponseLimits, SEARCH_TOOL_NAME, Settings, ToolCall, ToolDefinition, ToolResult, retry,
+    AttemptError, BlobStore, Block, Encoder, Origin, OriginRef, Partial, Reply, ReplyOptions, Request, RequestSettings,
+    Response, ResponseLimits, SEARCH_TOOL_NAME, ToolCall, ToolDefinition, ToolResult, retry,
 };
 
 use crate::hooks::{Hooks, NoHooks, RoundDecision, RoundStart, ToolDecision};
@@ -175,7 +175,7 @@ pub struct Driver<'a> {
 }
 
 /// The settings of a turn without settings. Each value stays at its endpoint default.
-static NO_SETTINGS: Settings = Settings::new();
+static NO_SETTINGS: RequestSettings = RequestSettings::new();
 
 impl fmt::Debug for Driver<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -418,7 +418,7 @@ struct TurnParts<'a> {
     inbox: &'a dyn Inbox,
     journal: Option<&'a dyn Journal>,
     system: &'a str,
-    settings: &'a Settings,
+    settings: &'a RequestSettings,
     session_id: Option<&'a str>,
     blob_store: Option<&'a dyn BlobStore>,
     observer: &'a dyn Observer,
@@ -454,7 +454,7 @@ impl<'a> Turn<'a> {
     }
 
     /// Send each request with `settings`, unless a [`RoundPlan`](crate::RoundPlan) gives other settings for its round.
-    pub fn settings(mut self, settings: &'a Settings) -> Self {
+    pub fn settings(mut self, settings: &'a RequestSettings) -> Self {
         self.parts.settings = settings;
         self
     }
@@ -602,7 +602,7 @@ impl TurnParts<'_> {
         &'r self,
         context: &'r [Block],
         tools: &'r [ToolDefinition],
-        settings: &'r Settings,
+        settings: &'r RequestSettings,
     ) -> Request<'r> {
         let mut request = Request::new(context)
             .system(self.system)
@@ -697,7 +697,7 @@ impl TurnParts<'_> {
                 Block::ToolCall(call) => Some(CallDisplay {
                     block_index,
                     hints: toolset.hints_of(&self.driver.resolve(block_index, call).call.name),
-                    folder: toolset.folder().map(str::to_owned),
+                    cwd: toolset.cwd().map(str::to_owned),
                 }),
                 _ => None,
             })

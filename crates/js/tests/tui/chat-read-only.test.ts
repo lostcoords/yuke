@@ -70,7 +70,7 @@ test("a read-only session shows no question in its pane", async () => {
   using _frame = frame;
 
   const update: SessionUpdate = {
-    sessionUpdate: "interaction_requested",
+    sessionUpdate: "interactionRequested",
     interactionId: 1,
     source: "guard",
     request: QUESTION,

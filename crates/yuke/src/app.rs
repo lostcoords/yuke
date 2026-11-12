@@ -313,7 +313,7 @@ impl Shared {
             let outcome = match polled {
                 None => LoginOutcome::Cancelled,
                 Some(Err(error)) => LoginOutcome::Failed {
-                    message: error.to_string(),
+                    error: error.to_string(),
                 },
                 Some(Ok(grant)) => {
                     match crate::auth::save_login(&provider, grant, shared.machine.paths.data.clone()).await {
@@ -322,7 +322,7 @@ impl Shared {
                             LoginOutcome::Succeeded
                         }
                         Err(error) => LoginOutcome::Failed {
-                            message: error.to_string(),
+                            error: error.to_string(),
                         },
                     }
                 }
@@ -441,8 +441,7 @@ impl Shared {
 
     /// Install the locked commits and lock the new Git plugins, for `plugin/sync`.
     pub(crate) async fn sync_plugins(&self, params: SyncPluginsParams) -> Result<SyncPluginsResult, AppError> {
-        let locked = params.locked.unwrap_or(false);
-        plugins::manager::sync(&self.machine.paths, locked)
+        plugins::manager::sync(&self.machine.paths, params.locked)
             .await
             .map_err(AppError::Invalid)
     }

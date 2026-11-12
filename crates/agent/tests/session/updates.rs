@@ -105,35 +105,36 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
             _ => None,
         })
         .collect();
+    let stopped = |block_id| ModelUpdate::BlockStopped { block_id, call: None };
     assert_eq!(
         &events[..8],
         [
             ModelUpdate::BlockStarted {
-                block: 0,
+                block_id: 0,
                 content: yuke_protocol::StartedBlock::Reasoning
             },
             ModelUpdate::ReasoningDelta {
-                block: 0,
+                block_id: 0,
                 text: "why".into()
             },
             ModelUpdate::BlockStarted {
-                block: 1,
+                block_id: 1,
                 content: yuke_protocol::StartedBlock::Text
             },
             ModelUpdate::TextDelta {
-                block: 1,
+                block_id: 1,
                 text: "Hello".into()
             },
             ModelUpdate::ReasoningDelta {
-                block: 0,
+                block_id: 0,
                 text: " now".into()
             },
             ModelUpdate::TextDelta {
-                block: 1,
+                block_id: 1,
                 text: " world".into()
             },
-            ModelUpdate::BlockStopped { block: 0, call: None },
-            ModelUpdate::BlockStopped { block: 1, call: None },
+            stopped(0),
+            stopped(1),
         ]
     );
     assert!(matches!(
@@ -204,7 +205,7 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
         .into_iter()
         .filter_map(|update| match update {
             LiveUpdate::Model {
-                event: ModelUpdate::BlockStarted { block, .. },
+                event: ModelUpdate::BlockStarted { block_id: block, .. },
                 ..
             } => Some(block),
             _ => None,
@@ -332,9 +333,9 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolStarted { execution, call, .. } => Some(("start", execution, call.call_id)),
-            LiveUpdate::ToolOutput { execution, text } => Some(("output", execution, text)),
-            LiveUpdate::ToolFinished { execution, result, .. } => Some(("finish", execution, result.call_id)),
+            LiveUpdate::ToolStarted { position, call, .. } => Some(("start", position, call.call_id)),
+            LiveUpdate::ToolOutput { position, text } => Some(("output", position, text)),
+            LiveUpdate::ToolFinished { position, result, .. } => Some(("finish", position, result.call_id)),
             _ => None,
         })
         .collect();
@@ -468,7 +469,7 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let updates = capture.0.lock().unwrap();
     assert!(matches!(updates.last(),
         Some(SessionUpdate::Saved(event)) if event.event_number == EventNumber(3)
-            && matches!(&event.event, SessionEvent::Commit { commit, .. } if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed(_))))));
+            && matches!(&event.event, SessionEvent::Commit { commit, .. } if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed { .. })))));
 }
 
 /// A refused login. Its text names no cause, so only `source` gives the cause.
@@ -709,8 +710,8 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolFinished { execution, result, .. } => {
-                Some((execution.event_number.0, execution.block_index, result.content))
+            LiveUpdate::ToolFinished { position, result, .. } => {
+                Some((position.event_number.0, position.block_index, result.content))
             }
             _ => None,
         })
@@ -720,7 +721,7 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolOutput { execution, text } => Some((execution.block_index, text)),
+            LiveUpdate::ToolOutput { position, text } => Some((position.block_index, text)),
             _ => None,
         })
         .collect();
@@ -774,24 +775,27 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         &model[..7],
         [
             ModelUpdate::BlockStarted {
-                block: 0,
+                block_id: 0,
                 content: yuke_protocol::StartedBlock::Reasoning
             },
-            ModelUpdate::ReasoningSectionStarted { block: 0 },
+            ModelUpdate::ReasoningSectionStarted { block_id: 0 },
             ModelUpdate::ReasoningDelta {
-                block: 0,
+                block_id: 0,
                 text: "One".into()
             },
             ModelUpdate::ReasoningDelta {
-                block: 0,
+                block_id: 0,
                 text: "\n\n".into()
             },
-            ModelUpdate::ReasoningSectionStarted { block: 0 },
+            ModelUpdate::ReasoningSectionStarted { block_id: 0 },
             ModelUpdate::ReasoningDelta {
-                block: 0,
+                block_id: 0,
                 text: "Two".into()
             },
-            ModelUpdate::BlockStopped { block: 0, call: None },
+            ModelUpdate::BlockStopped {
+                block_id: 0,
+                call: None
+            },
         ]
     );
     let Block::Reasoning(reasoning) = &session.context()[1] else {
@@ -883,13 +887,13 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         .into_iter()
         .filter_map(|update| match update {
             LiveUpdate::Model {
-                event: ModelUpdate::ToolInputDelta { block, text },
+                event: ModelUpdate::ToolInputDelta { block_id: block, text },
                 ..
             } => Some(("fragment", block, text)),
             LiveUpdate::Model {
                 event:
                     ModelUpdate::BlockStopped {
-                        block,
+                        block_id: block,
                         call: Some(call),
                     },
                 ..
@@ -909,7 +913,7 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolOutput { execution, text } => Some((execution.event_number.0, execution.block_index, text)),
+            LiveUpdate::ToolOutput { position, text } => Some((position.event_number.0, position.block_index, text)),
             _ => None,
         })
         .collect();
@@ -1002,8 +1006,8 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         let finished: Vec<_> = live
             .iter()
             .filter_map(|event| match event {
-                LiveUpdate::ToolFinished { execution, result, .. } => {
-                    Some((execution.event_number.0, execution.block_index, result.content.as_str()))
+                LiveUpdate::ToolFinished { position, result, .. } => {
+                    Some((position.event_number.0, position.block_index, result.content.as_str()))
                 }
                 _ => None,
             })
@@ -1068,7 +1072,7 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
                     .is_pending()
             );
             assert!(capture.live().iter().any(|event| matches!(event,
-                LiveUpdate::ToolFinished { execution, result, .. } if execution.event_number == EventNumber(3) && result.content == "{}")));
+                LiveUpdate::ToolFinished { position, result, .. } if position.event_number == EventNumber(3) && result.content == "{}")));
             assert!(!capture.live().contains(&LiveUpdate::TurnUnconfirmed));
         }
         assert_eq!(capture.live().last(), Some(&LiveUpdate::TurnUnconfirmed));

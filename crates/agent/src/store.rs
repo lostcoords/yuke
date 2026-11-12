@@ -189,7 +189,7 @@ pub fn title_of(input: &Input) -> Option<SessionTitle> {
         .content()
         .iter()
         .filter_map(|block| match block {
-            yuke_ai::Block::UserText(text) => Some(text.as_str()),
+            yuke_ai::Block::UserText { text } => Some(text.as_str()),
             _ => None,
         })
         .collect();

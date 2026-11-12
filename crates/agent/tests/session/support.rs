@@ -28,7 +28,7 @@ pub(crate) fn settings() -> SessionSettings {
             provider: "test".to_owned(),
             model: "test-model".to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: std::path::PathBuf::from("/work"),
     }
 }

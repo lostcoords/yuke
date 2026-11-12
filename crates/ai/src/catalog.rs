@@ -279,11 +279,13 @@ impl Model {
         Ok(match self.dialect.anthropic_thinking {
             AnthropicThinking::None => effort_only,
             AnthropicThinking::Toggle => ReasoningSettings {
-                thinking: Some(Thinking::Adaptive(None)),
+                thinking: Some(Thinking::Adaptive { display: None }),
                 effort: None,
             },
             AnthropicThinking::Adaptive => ReasoningSettings {
-                thinking: Some(Thinking::Adaptive(Some(ThinkingDisplay::Summarized))),
+                thinking: Some(Thinking::Adaptive {
+                    display: Some(ThinkingDisplay::Summarized),
+                }),
                 effort: Some(effort),
             },
             AnthropicThinking::Budget { min, max } => {
@@ -294,7 +296,7 @@ impl Model {
                     .max(SMALLEST_THINKING_BUDGET);
                 if self.limits.max_output_tokens.is_some_and(|limit| budget < limit) {
                     ReasoningSettings {
-                        thinking: Some(Thinking::Budget(budget)),
+                        thinking: Some(Thinking::Budget { tokens: budget }),
                         effort: None,
                     }
                 } else {
@@ -813,21 +815,23 @@ mod tests {
             (
                 AnthropicThinking::Toggle,
                 ReasoningSettings {
-                    thinking: Some(Thinking::Adaptive(None)),
+                    thinking: Some(Thinking::Adaptive { display: None }),
                     effort: None,
                 },
             ),
             (
                 AnthropicThinking::Adaptive,
                 ReasoningSettings {
-                    thinking: Some(Thinking::Adaptive(Some(ThinkingDisplay::Summarized))),
+                    thinking: Some(Thinking::Adaptive {
+                        display: Some(ThinkingDisplay::Summarized),
+                    }),
                     effort: Some(Effort::High),
                 },
             ),
             (
                 budget(Some(1024), Some(32_000)),
                 ReasoningSettings {
-                    thinking: Some(Thinking::Budget(16_000)),
+                    thinking: Some(Thinking::Budget { tokens: 16_000 }),
                     effort: None,
                 },
             ),
@@ -845,10 +849,22 @@ mod tests {
     fn a_thinking_budget_stays_within_the_bounds_of_the_model() {
         let budget_of = |anthropic_thinking| thinking_model(anthropic_thinking).reasoning(HIGH).unwrap().thinking;
 
-        assert_eq!(budget_of(budget(None, Some(2000))), Some(Thinking::Budget(2000)));
-        assert_eq!(budget_of(budget(Some(20_000), None)), Some(Thinking::Budget(20_000)));
-        assert_eq!(budget_of(budget(None, Some(10))), Some(Thinking::Budget(1024)));
-        assert_eq!(budget_of(budget(Some(-5), None)), Some(Thinking::Budget(16_000)));
+        assert_eq!(
+            budget_of(budget(None, Some(2000))),
+            Some(Thinking::Budget { tokens: 2000 })
+        );
+        assert_eq!(
+            budget_of(budget(Some(20_000), None)),
+            Some(Thinking::Budget { tokens: 20_000 })
+        );
+        assert_eq!(
+            budget_of(budget(None, Some(10))),
+            Some(Thinking::Budget { tokens: 1024 })
+        );
+        assert_eq!(
+            budget_of(budget(Some(-5), None)),
+            Some(Thinking::Budget { tokens: 16_000 })
+        );
     }
 
     #[test]

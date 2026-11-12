@@ -25,8 +25,8 @@ export function defineTool<const S extends ObjectSchema>(
   checkParameters(parameters);
   // Rust validates the hints. The default of `preview` is here because the stored form requires it.
   const hints = {
-    title: tool.hints?.title ?? null,
-    subject: tool.hints?.subject ?? null,
+    ...(tool.hints?.title === undefined ? {} : { title: tool.hints.title }),
+    ...(tool.hints?.subject === undefined ? {} : { subject: tool.hints.subject }),
     preview: tool.hints?.preview ?? "head",
   } as const;
   const description = {
@@ -40,8 +40,8 @@ export function defineTool<const S extends ObjectSchema>(
   };
   return register(description, (request) =>
     hostOperation(async (signal, abort) => {
-      const { arguments: args, sessionId, callId, folder, output, call } = request;
-      const context: ToolContext = { sessionId, callId, cwd: folder, signal, output, jobs: jobsOf(signal) };
+      const { arguments: args, sessionId, callId, cwd, output, call } = request;
+      const context: ToolContext = { sessionId, callId, cwd, signal, output, jobs: jobsOf(signal) };
       bindCall(context, call);
       try {
         return answerOf(await execute(checkArguments(parameters, args) as Infer<S>, context));

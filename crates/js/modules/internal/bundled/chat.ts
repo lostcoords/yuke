@@ -16,6 +16,7 @@ import {
   type PaneState,
 } from "yuke:internal/bundled/chat/pane";
 import { clipped } from "yuke:internal/chat/rows";
+import { Stack } from "yuke:internal/stack";
 import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
 import type { ModelInfo, SessionId } from "yuke:protocol";
@@ -127,14 +128,14 @@ const COMMANDS: readonly {
   {
     name: "page-up",
     description: "Scroll up one page",
-    keys: ["page_up"],
+    keys: ["pageup"],
     in: "chat",
     run: (pane) => pane.scroll("pageUp"),
   },
   {
     name: "page-down",
     description: "Scroll down one page",
-    keys: ["page_down"],
+    keys: ["pagedown"],
     in: "chat",
     run: (pane) => pane.scroll("pageDown"),
   },
@@ -175,16 +176,24 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const repaint = (): void => {
     if (!ctx.signal.aborted) tui?.requestFrame();
   };
+  // A change of a single-slot value repaints now and at its removal.
+  const repainted = (remove: () => void): (() => void) => {
+    repaint();
+    return () => {
+      remove();
+      repaint();
+    };
+  };
   // One entry per call of `addComposerView`, so each disposer removes its own.
   const composerViews = new Set<ComposerViewEntry>();
   const panes = new Map<View, PaneActions>();
-  let presenter: ((options: ChatPresentationOptions) => ChatPresentation) | undefined;
+  const presenters = new Stack<(options: ChatPresentationOptions) => ChatPresentation>();
   // One entry per call of `addReadOnly`, so each disposer removes its own.
   const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
-  let frame: ComposerFrame | undefined;
+  const frames = new Stack<ComposerFrame>();
+  const emptyViews = new Stack<(mount: Mount, pane: ChatPane) => View>();
   // The default view of an empty pane comes after the state that it reads, and the option can turn it off.
   let defaultEmptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
-  let emptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -225,33 +234,9 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         if (readOnlySources.delete(entry)) repaint();
       };
     },
-    setComposerFrame: (next) => {
-      frame = next;
-      repaint();
-      return () => {
-        if (frame !== next) return;
-        frame = undefined;
-        repaint();
-      };
-    },
-    setPresentation: (factory) => {
-      presenter = factory;
-      repaint();
-      return () => {
-        if (presenter !== factory) return;
-        presenter = undefined;
-        repaint();
-      };
-    },
-    setEmptyView: (create) => {
-      emptyView = create;
-      repaint();
-      return () => {
-        if (emptyView !== create) return;
-        emptyView = defaultEmptyView;
-        repaint();
-      };
-    },
+    setComposerFrame: (frame) => repainted(frames.add(frame)),
+    setPresentation: (factory) => repainted(presenters.add(factory)),
+    setEmptyView: (create) => repainted(emptyViews.add(create)),
   });
   if (tui === undefined) return undefined;
   // The work of each open session that a quit stops, also of a session that no pane shows.
@@ -279,9 +264,9 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
       if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
     }),
-    presenter: () => presenter,
-    frame: () => frame,
-    emptyView: () => emptyView,
+    presenter: () => presenters.top(),
+    frame: () => frames.top(),
+    emptyView: () => emptyViews.top() ?? defaultEmptyView,
     readOnly: (session) => {
       for (const entry of readOnlySources) {
         const answer = entry.source(session);
@@ -383,7 +368,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     const model = models?.get(`${settings.model.provider}/${settings.model.model}`);
     const usage = status.usage;
     // A count that the provider did not send is unknown, not zero.
-    if (usage === undefined || usage.input === null) tui.status.delete("context");
+    if (usage?.input === undefined) tui.status.delete("context");
     else {
       const used = usage.input + (usage.output ?? 0);
       const window = model?.contextWindow ?? undefined;
@@ -412,8 +397,6 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
             // Terminal.app finds no font with sextant glyphs and draws boxes.
             icon: env.get("TERM_PROGRAM") !== "Apple_Terminal",
           });
-  // A plugin can set its view before the default exists.
-  emptyView ??= defaultEmptyView;
   tui.addFocusListener(() => publish());
   ctx.addListener("catalog.changed", () => {
     // The bar and the header of an empty pane name the models of the ready providers.
@@ -422,7 +405,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       repaint();
     });
   });
-  tui.setQuitGuard((quit) => {
+  tui.addQuitGuard((quit) => {
     // The resume text names each shown session, and each session whose work the quit stops.
     const resumed = new Set([...panes.values()].flatMap((pane) => pane.resumeSession() ?? []));
     let turns = 0;

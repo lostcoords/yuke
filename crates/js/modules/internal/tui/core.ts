@@ -7,6 +7,7 @@
 import { announce } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import type { TermStyle } from "yuke:internal/native";
+import { Stack } from "yuke:internal/stack";
 import type { TermEvent } from "yuke:internal/term";
 import type { After } from "yuke:internal/tui/clock";
 import { Commands } from "yuke:internal/tui/commands";
@@ -26,6 +27,9 @@ import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, View } 
 interface DefaultPaneSlot extends DefaultPaneEntry {
   readonly signal: AbortSignal;
 }
+
+/** A guard of a quit: it calls `quit` to let the quit go on, later or never. */
+type QuitGuard = (quit: (text?: string) => void) => void;
 
 /** What the core needs from the terminal. The boot passes `term`; a test passes a fake. */
 export interface Driver {
@@ -70,7 +74,9 @@ export class Core {
   readonly widgets: WidgetMounts;
   readonly driver: Driver;
   readonly startup: Startup;
-  #defaultPane: DefaultPaneSlot | undefined;
+  readonly #defaultPanes = new Stack<DefaultPaneSlot>();
+  /** The guards that decide on a quit, in add order. */
+  readonly #quitGuards = new Set<{ readonly guard: QuitGuard }>();
   /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
   #startWaits = false;
   readonly #focusListeners = new Set<{ readonly listener: (change: FocusChange) => void }>();
@@ -112,10 +118,7 @@ export class Core {
       report,
     );
     this.panes = new PaneTree({
-      defaultPane: () => {
-        const slot = this.#defaultPane;
-        return slot === undefined || slot.signal.aborted ? undefined : slot;
-      },
+      defaultPane: () => this.#defaultPanes.top((slot) => !slot.signal.aborted),
       focus: (view) => this.scene.focusRoot(view),
       report,
       requestFrame: frame,
@@ -168,18 +171,21 @@ export class Core {
   }
 
   /**
-   * Make `slot` the default pane. A start that waits gets its first pane now. A second live default pane throws a
-   * `TypeError`.
+   * Make `slot` the default pane until its remover runs. The last call wins, and the remover brings back the slot
+   * before it. A start that waits gets its first pane now.
    */
   setDefaultPane(slot: DefaultPaneSlot): () => void {
-    const current = this.#defaultPane;
-    if (current !== undefined && !current.signal.aborted) {
-      throw new TypeError(`plugin ${current.owner} sets the default pane`);
-    }
-    this.#defaultPane = slot;
+    const remove = this.#defaultPanes.add(slot);
     if (this.#startWaits) this.#startWaits = !this.panes.start();
+    return remove;
+  }
+
+  /** Add `guard` to the guards of a quit. */
+  addQuitGuard(guard: QuitGuard): () => void {
+    const entry = { guard };
+    this.#quitGuards.add(entry);
     return () => {
-      if (this.#defaultPane === slot) this.#defaultPane = undefined;
+      this.#quitGuards.delete(entry);
     };
   }
 
@@ -258,9 +264,6 @@ export class Core {
     for (const entry of [...this.#focusListeners]) entry.listener(change);
   }
 
-  /** The function that decides on a quit. Without one, a quit goes on at once. */
-  quitGuard: ((quit: (text?: string) => void) => void) | undefined;
-
   #addCommands(): void {
     const driver = this.driver;
     const add = (name: string, description: string, run: () => void, slash?: string): void => {
@@ -270,9 +273,26 @@ export class Core {
       "quit",
       "Quit yuke",
       () => {
-        const quit = (text?: string): void => driver.quit(text);
-        if (this.quitGuard === undefined) quit();
-        else this.quitGuard(quit);
+        // Each guard in add order gets a call, and the quit goes on after the last guard calls its `quit`.
+        const guards = [...this.#quitGuards];
+        const texts: string[] = [];
+        const next = (index: number): void => {
+          const entry = guards[index];
+          if (entry === undefined) {
+            driver.quit(texts.length === 0 ? undefined : texts.join("\n"));
+            return;
+          }
+          // A guard that a stopped plugin removed while an earlier guard waited does not ask.
+          if (!this.#quitGuards.has(entry)) {
+            next(index + 1);
+            return;
+          }
+          entry.guard((text) => {
+            if (text !== undefined) texts.push(text);
+            next(index + 1);
+          });
+        };
+        next(0);
       },
       "quit",
     );

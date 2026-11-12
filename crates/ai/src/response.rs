@@ -13,7 +13,7 @@ use crate::{AssistantText, Block, ParseError, Reasoning, ReasoningReplayRef, Tex
 /// `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum FinishReason {
     /// The model finished its answer.
@@ -33,14 +33,14 @@ pub enum FinishReason {
 }
 
 impl FinishReason {
-    /// The snake-case name of the reason.
+    /// The name of the reason.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Stop => "stop",
             Self::Length => "length",
-            Self::ContentFilter => "content_filter",
+            Self::ContentFilter => "contentFilter",
             Self::Refusal => "refusal",
-            Self::ToolCalls => "tool_calls",
+            Self::ToolCalls => "toolCalls",
             Self::Pause => "pause",
             Self::Unknown => "unknown",
         }
@@ -65,18 +65,23 @@ impl FromStr for FinishReason {
 /// Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it. A provider can
 /// leave out a count. A missing count is not zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     /// Every prompt token, `cache_read` and `cache_write` among them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<u64>,
     /// Every generated token, `reasoning` among them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<u64>,
     /// The output tokens the model spent on reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<u64>,
     /// The input tokens read from the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read: Option<u64>,
     /// The input tokens written to the prompt cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<u64>,
 }
 

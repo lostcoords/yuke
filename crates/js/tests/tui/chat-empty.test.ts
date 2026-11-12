@@ -26,7 +26,7 @@ async function savedPick(): Promise<void> {
 
 function accepted(id: number, content: Block[]): SessionUpdate {
   return {
-    sessionUpdate: "input_accepted",
+    sessionUpdate: "inputAccepted",
     inputId: id,
     input: { source: { kind: "user" }, kind: "message", content },
   };
@@ -58,7 +58,7 @@ test("the first send hides the header at once, and the waiting message keeps it 
   frame.draw();
   const sending = rows(frame.frame).join("\n").includes("Type / for commands");
   await waitForSettled();
-  sessions.push(accepted(1, [{ user_text: "hi" }]), "s-new");
+  sessions.push(accepted(1, [{ kind: "userText", text: "hi" }]), "s-new");
   await waitForSettled();
   frame.draw();
 

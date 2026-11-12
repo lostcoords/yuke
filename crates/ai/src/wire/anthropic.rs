@@ -112,13 +112,13 @@ fn write_thinking(jw: &mut JsonWriter<'_>, thinking: Option<Thinking>) {
     jw.begin_object();
     match thinking {
         Thinking::Off => jw.field_str("type", "disabled"),
-        Thinking::Adaptive(display) => {
+        Thinking::Adaptive { display } => {
             jw.field_str("type", "adaptive");
             if let Some(shown) = display {
                 jw.field_str("display", shown.as_str());
             }
         }
-        Thinking::Budget(tokens) => {
+        Thinking::Budget { tokens } => {
             jw.field_str("type", "enabled");
             jw.field_uint("budget_tokens", tokens);
         }
@@ -143,7 +143,7 @@ fn write_block(
     cache: bool,
 ) -> Result<(), EncodeError> {
     match block {
-        Block::UserText(text) | Block::AssistantText(AssistantText { text, .. }) => {
+        Block::UserText { text } | Block::AssistantText(AssistantText { text, .. }) => {
             jw.begin_object();
             jw.field_str("type", "text");
             jw.field_str("text", text);
@@ -249,7 +249,7 @@ fn write_media(
         jw.string(&String::from_utf8_lossy(&data));
     } else {
         jw.field_str("type", "base64");
-        jw.field_str("media_type", &media.mime);
+        jw.field_str("media_type", &media.mime_type);
         jw.key("data");
         jw.base64(None, &data);
     }
@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
     use crate::{
-        Blob, BlobStore, Effort, Origin, OutputSchema, Reasoning, ReasoningReplay, Settings, ThinkingDisplay,
+        Blob, BlobStore, Effort, Origin, OutputSchema, Reasoning, ReasoningReplay, RequestSettings, ThinkingDisplay,
         ToolDefinition, ToolResult,
     };
 
@@ -304,7 +304,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":9,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(64),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(9)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(9)),
         );
     }
 
@@ -317,7 +317,7 @@ mod tests {
             anthropic(8),
             Request::new(&blocks)
                 .system("be brief")
-                .settings(&Settings::new().max_output_tokens(1024)),
+                .settings(&RequestSettings::new().max_output_tokens(1024)),
         );
     }
 
@@ -332,7 +332,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"text","text":"read"}]},{"role":"assistant","content":[{"type":"text","text":"searching"},{"type":"text","text":"done"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -343,7 +343,11 @@ mod tests {
             r#"{"model":"claude","max_tokens":8192,"stream":true,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8192).thinking(Thinking::Budget(4096))),
+            Request::new(&blocks).settings(
+                &RequestSettings::new()
+                    .max_output_tokens(8192)
+                    .thinking(Thinking::Budget { tokens: 4096 }),
+            ),
         );
     }
 
@@ -354,7 +358,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"disabled"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).thinking(Thinking::Off)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).thinking(Thinking::Off)),
         );
     }
 
@@ -364,14 +368,18 @@ mod tests {
         for (model, settings, expected) in [
             (
                 "MiniMax-M3",
-                Settings::new().max_output_tokens(8).thinking(Thinking::Adaptive(None)),
+                RequestSettings::new()
+                    .max_output_tokens(8)
+                    .thinking(Thinking::Adaptive { display: None }),
                 r#"{"model":"MiniMax-M3","max_tokens":8,"stream":true,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             ),
             (
                 "claude",
-                Settings::new()
+                RequestSettings::new()
                     .max_output_tokens(8)
-                    .thinking(Thinking::Adaptive(Some(ThinkingDisplay::Summarized)))
+                    .thinking(Thinking::Adaptive {
+                        display: Some(ThinkingDisplay::Summarized),
+                    })
                     .effort(Effort::Low),
                 r#"{"model":"claude","max_tokens":8,"stream":true,"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"low"},"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             ),
@@ -391,7 +399,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":64,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"toolu_1","name":"run","input":{"c":1}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no","is_error":true}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(64)),
         );
     }
 
@@ -407,7 +415,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"PNG image"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}}],"is_error":false,"cache_control":{"type":"ephemeral"}}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -445,7 +453,7 @@ mod tests {
             anthropic(8),
             Request::new(&blocks)
                 .tools(&tools)
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
         // Without a deferred tool, as on a bridge target, a reference would name an undeclared tool, so none is written.
         expect_json(
@@ -454,7 +462,7 @@ mod tests {
             anthropic(8),
             Request::new(&blocks)
                 .tools(&tools[..1])
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -467,7 +475,7 @@ mod tests {
             cached(8),
             Request::new(&blocks)
                 .system("sys")
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -496,7 +504,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"answer","cache_control":{"type":"ephemeral"}},{"type":"thinking","thinking":"ponder","signature":"sig"}]}]}"#,
             "claude",
             cached(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -510,7 +518,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"YWI="}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"YWI="}}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -522,7 +530,7 @@ mod tests {
                 EncodeError::Unsupported(Unsupported::Media(modality)),
                 "claude",
                 anthropic(8),
-                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8)),
+                Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8)),
             );
         }
     }
@@ -535,7 +543,7 @@ mod tests {
             "claude",
             anthropic(8),
             Request::new(&blocks).settings(
-                &Settings::new()
+                &RequestSettings::new()
                     .max_output_tokens(8)
                     .output_schema(OutputSchema::new(r#"{"type":"object"}"#).clone()),
             ),
@@ -550,7 +558,7 @@ mod tests {
             "claude",
             anthropic(8),
             Request::new(&blocks).settings(
-                &Settings::new()
+                &RequestSettings::new()
                     .max_output_tokens(8)
                     .effort(Effort::High)
                     .output_schema(OutputSchema::new(r#"{"type":"object"}"#).clone()),
@@ -583,7 +591,7 @@ mod tests {
             anthropic(8),
             Request::new(&blocks)
                 .blobs(&Latin1)
-                .settings(&Settings::new().max_output_tokens(8)),
+                .settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -595,7 +603,7 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"note"}}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&text_doc).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&text_doc).settings(&RequestSettings::new().max_output_tokens(8)),
         );
         // A document is a PDF or plain text. Anything else has no source shape and must not be mislabelled.
         let spreadsheet = [Block::Media(image("ab", "application/zip"))];
@@ -603,7 +611,7 @@ mod tests {
             EncodeError::Unsupported(Unsupported::Media(Modality::Other)),
             "claude",
             anthropic(8),
-            Request::new(&spreadsheet).settings(&Settings::new().max_output_tokens(8)),
+            Request::new(&spreadsheet).settings(&RequestSettings::new().max_output_tokens(8)),
         );
     }
 
@@ -614,14 +622,14 @@ mod tests {
             r#"{"model":"claude","max_tokens":8,"stream":true,"temperature":0.7,"top_p":0.9,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(0.7).top_p(0.9)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).temperature(0.7).top_p(0.9)),
         );
         // A missing value leaves the endpoint default, so the member never reaches the wire.
         expect_json(
             r#"{"model":"claude","max_tokens":8,"stream":true,"temperature":0,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}"#,
             "claude",
             anthropic(8),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(0.0)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).temperature(0.0)),
         );
     }
 

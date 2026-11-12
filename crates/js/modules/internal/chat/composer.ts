@@ -25,21 +25,21 @@ function blocksOf(draft: EditorState): Block[] {
   const blocks: Block[] = [];
   let from = 0;
   const text = (to: number): void => {
-    if (to > from) blocks.push({ user_text: draft.text.slice(from, to) });
+    if (to > from) blocks.push({ kind: "userText", text: draft.text.slice(from, to) });
   };
   for (const span of draft.spans) {
     if (span.kind !== "image") continue;
     text(span.from);
-    blocks.push({ media: span.media });
+    blocks.push({ kind: "media", ...span.media });
     from = span.to;
   }
   text(draft.text.length);
   // Only the edges of the whole draft trim, so the space between a text and an image stays.
   const first = blocks[0];
-  if (first !== undefined && "user_text" in first) blocks[0] = { user_text: first.user_text.trimStart() };
+  if (first?.kind === "userText") blocks[0] = { kind: "userText", text: first.text.trimStart() };
   const last = blocks.at(-1);
-  if (last !== undefined && "user_text" in last) blocks[blocks.length - 1] = { user_text: last.user_text.trimEnd() };
-  return blocks.filter((block) => !("user_text" in block) || block.user_text.trim() !== "");
+  if (last?.kind === "userText") blocks[blocks.length - 1] = { kind: "userText", text: last.text.trimEnd() };
+  return blocks.filter((block) => block.kind !== "userText" || block.text.trim() !== "");
 }
 
 /** The draft of the blocks of an input, with an image span for each media block. The caret is at the end. */
@@ -47,14 +47,15 @@ function draftOf(content: Extract<Entry, { kind: "input" }>["content"]): EditorS
   let text = "";
   const spans: EditorSpan[] = [];
   for (const block of content) {
-    if ("user_text" in block) text += block.user_text;
-    else if ("media" in block) {
+    if (block.kind === "userText") text += block.text;
+    else if (block.kind === "media") {
+      const { kind, ...media } = block;
       spans.push({
         from: text.length,
         to: text.length + 1,
         kind: "image",
         label: `[image ${spans.length + 1}]`,
-        media: block.media,
+        media,
       });
       text += IMAGE;
     }
@@ -161,7 +162,7 @@ export class ChatComposer {
     this.#browseBy(1);
   }
 
-  async attachImage(image: { readonly bytes: Uint8Array; readonly mime: string }): Promise<void> {
+  async attachImage(image: { readonly bytes: Uint8Array; readonly mimeType: string }): Promise<void> {
     this.#attaching += 1;
     try {
       const target = await this.#options.handle();
@@ -173,7 +174,7 @@ export class ChatComposer {
       const count = editor.state.spans.filter((span) => span.kind === "image").length;
       const selection = editor.selection;
       editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), IMAGE, [
-        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mime: image.mime } },
+        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mimeType: image.mimeType } },
       ]);
     } finally {
       this.#attaching -= 1;

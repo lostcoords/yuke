@@ -16,13 +16,13 @@ async fn an_input_starts_a_turn_and_the_client_sees_its_updates_in_order() {
     assert_eq!(
         labels,
         [
-            "input_accepted",
+            "inputAccepted",
             "response",
             "state running",
             "saved 2",
-            "draft_started",
+            "draftStarted",
             "saved 3",
-            "draft_committed",
+            "draftCommitted",
             "saved 4",
             "state idle"
         ]
@@ -45,8 +45,8 @@ async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_c
     let transport = ScriptedTransport::new([text_reply("done")]);
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let session = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
-    let content = json!([{ "user_text": "Review @main.rs" }]);
-    let model_content = json!([{ "user_text": "Review main.rs, and read it first." }]);
+    let content = json!([{ "kind": "userText", "text": "Review @main.rs" }]);
+    let model_content = json!([{ "kind": "userText", "text": "Review main.rs, and read it first." }]);
 
     let empty = client
         .call(
@@ -67,7 +67,7 @@ async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_c
     assert_eq!(empty["message"], "the model content of the input has no block");
     let accepted = messages
         .iter()
-        .find(|message| message["params"]["update"]["sessionUpdate"] == "input_accepted")
+        .find(|message| message["params"]["update"]["sessionUpdate"] == "inputAccepted")
         .unwrap();
     assert_eq!(accepted["params"]["update"]["input"]["content"], content);
     assert_eq!(accepted["params"]["update"]["input"]["modelContent"], model_content);
@@ -122,13 +122,13 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
     let messages = client.until(is_idle).await;
 
     let refused = refused.unwrap_err();
-    assert_eq!(refused["code"], json!(ResponseError::INVALID_REQUEST));
+    assert_eq!(refused["code"], json!(ResponseError::TURN_ACTIVE));
     let end = messages
         .iter()
         .rev()
         .find_map(|message| message["params"]["update"]["commit"]["end"].as_object())
         .unwrap();
-    assert_eq!(end["outcome"], "cancelled");
+    assert_eq!(end["kind"], "cancelled");
     client.end().await;
 }
 
@@ -164,7 +164,7 @@ async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answe
     assert_eq!(results, [&json!({ "removed": true }), &json!({ "removed": false })]);
     let removed: Vec<&Value> = messages
         .iter()
-        .filter(|message| message["params"]["update"]["sessionUpdate"] == "input_removed")
+        .filter(|message| message["params"]["update"]["sessionUpdate"] == "inputRemoved")
         .map(|message| &message["params"]["update"]["inputId"])
         .collect();
     assert_eq!(removed, [&input]);
@@ -277,11 +277,8 @@ async fn process_and_session_notices_reach_the_client_and_a_failed_load_sends_a_
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() {
-    let place = Place::new(
-        "rpc",
-        "a_request_before_initialize_an_unknown_method_and_no_json_get_errors",
-    );
+async fn each_bad_message_gets_the_error_code_of_its_fault() {
+    let place = Place::new("rpc", "each_bad_message_gets_the_error_code_of_its_fault");
     let mut client = Client::start(&place, Box::new(ScriptedTransport::default()));
 
     let early = client.call("session/new", settings(&place)).await;
@@ -296,12 +293,34 @@ async fn a_request_before_initialize_an_unknown_method_and_no_json_get_errors() 
         .await;
     client.write("{ no json").await;
     let broken = client.next().await;
+    client
+        .write(r#"[{ "jsonrpc": "2.0", "id": 90, "method": "session/list", "params": {} }]"#)
+        .await;
+    let batch = client.next().await;
+    client.write(r#"{ "jsonrpc": "2.0", "id": 91 }"#).await;
+    let no_method = client.next().await;
+    client
+        .write(r#"{ "jsonrpc": "1.0", "id": 92, "method": "session/list", "params": {} }"#)
+        .await;
+    let old_version = client.next().await;
 
-    assert_eq!(early.unwrap_err()["code"], json!(ResponseError::INVALID_REQUEST));
+    assert_eq!(early.unwrap_err()["code"], json!(ResponseError::NOT_INITIALIZED));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::METHOD_NOT_FOUND));
     assert_eq!(bad_block.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     assert_eq!(broken["id"], Value::Null);
     assert_eq!(broken["error"]["code"], json!(ResponseError::PARSE_ERROR));
+    assert_eq!(
+        [&batch["id"], &batch["error"]["code"]],
+        [&Value::Null, &json!(ResponseError::INVALID_REQUEST)]
+    );
+    assert_eq!(
+        [&no_method["id"], &no_method["error"]["code"]],
+        [&json!(91), &json!(ResponseError::INVALID_REQUEST)]
+    );
+    assert_eq!(
+        [&old_version["id"], &old_version["error"]["code"]],
+        [&json!(92), &json!(ResponseError::INVALID_REQUEST)]
+    );
     client.end().await;
 }
 
@@ -313,7 +332,7 @@ async fn saved_session(place: &Place, provider: &str, model: &str) -> SessionId 
             provider: provider.to_owned(),
             model: model.to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: place.work.clone(),
     };
     let session = Session::create(
@@ -349,7 +368,7 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     let reloaded = client.load(&json!(session), json!({ "after": 1 })).await;
 
     let labels: Vec<String> = loaded.messages.iter().filter_map(label).collect();
-    assert_eq!(labels, ["settings", "state idle", "input_accepted", "response"]);
+    assert_eq!(labels, ["settings", "state idle", "inputAccepted", "response"]);
     // No turn started: the session is still idle, and the input still waits.
     assert!(
         !refused
@@ -369,11 +388,11 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     );
     assert_eq!(loaded.state, "idle");
     assert_eq!(loaded.pending.len(), 1);
-    assert_eq!(loaded.pending[0]["content"][0]["user_text"], "waiting");
+    assert_eq!(loaded.pending[0]["content"][0]["text"], "waiting");
     assert_eq!(reloaded.pending, loaded.pending);
     assert_eq!(
         refused.last().unwrap()["error"]["code"],
-        json!(ResponseError::INVALID_REQUEST)
+        json!(ResponseError::TURN_ACTIVE)
     );
     client.end().await;
 }
@@ -462,7 +481,7 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
             &Value::Null,
             &Value::Null,
             &Value::Null,
-            &json!({ "outcome": { "completed": { "finishReason": "stop" } } })
+            &json!({ "kind": "completed", "finishReason": "stop" })
         ]
     );
     assert_eq!(
@@ -471,13 +490,13 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
             "id": 2,
             "source": { "kind": "plugin", "name": "guard" },
             "kind": "notification",
-            "displayContent": [{ "user_text": "Run the tests." }],
+            "displayContent": [{ "kind": "userText", "text": "Run the tests." }],
             "blockCount": 1,
         }])
     );
     assert_eq!(
         commits[3]["commit"]["blocks"],
-        json!([{ "assistant_text": { "text": "tests pass" } }])
+        json!([{ "kind": "assistantText", "text": "tests pass" }])
     );
     client.end().await;
 }
@@ -521,7 +540,7 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     client.request("session/input", input_params(&session, "first")).await;
     // The turn takes the waiting input when it starts, so the second input comes after its request.
     client
-        .until(|message| message["params"]["update"]["sessionUpdate"] == "draft_started")
+        .until(|message| message["params"]["update"]["sessionUpdate"] == "draftStarted")
         .await;
     client
         .call("session/input", input_params(&session, "second"))
@@ -548,28 +567,28 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     let pending: Vec<&Value> = loaded
         .pending
         .iter()
-        .map(|input| &input["content"][0]["user_text"])
+        .map(|input| &input["content"][0]["text"])
         .collect();
     assert_eq!(pending, [&json!("second")]);
     client.end().await;
 }
 
-/// The activity of each row of `listed`, a `session/list` result, by session id.
-fn activities(listed: &Value) -> BTreeMap<String, String> {
+/// The state of each row of `listed`, a `session/list` result, by session id.
+fn states(listed: &Value) -> BTreeMap<String, String> {
     listed["sessions"]
         .as_array()
         .unwrap()
         .iter()
         .map(|row| {
             let id = row["session"]["sessionId"].as_str().unwrap().to_owned();
-            (id, row["activity"].as_str().unwrap().to_owned())
+            (id, row["state"].as_str().unwrap().to_owned())
         })
         .collect()
 }
 
 #[tokio::test(flavor = "local")]
-async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
-    let place = Place::new("rpc", "the_list_and_a_get_give_each_saved_session_with_its_activity");
+async fn the_list_and_a_get_give_each_saved_session_with_its_state() {
+    let place = Place::new("rpc", "the_list_and_a_get_give_each_saved_session_with_its_state");
     let saved = saved_session(&place, "minimax", "MiniMax-M3").await;
     let mut client = Client::initialized(&place, Box::new(Stalled)).await;
     let running = client.call("session/new", settings(&place)).await.unwrap()["sessionId"].clone();
@@ -593,8 +612,8 @@ async fn the_list_and_a_get_give_each_saved_session_with_its_activity() {
         (running.as_str().unwrap().to_owned(), "running".to_owned()),
         (idle.as_str().unwrap().to_owned(), "idle".to_owned()),
     ]);
-    assert_eq!(activities(&listed), expected);
-    assert_eq!(row["activity"], "closed");
+    assert_eq!(states(&listed), expected);
+    assert_eq!(row["state"], "closed");
     assert_eq!(row["session"]["title"], "waiting");
     assert_eq!(row["session"]["cwd"], json!(place.work));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
@@ -678,10 +697,7 @@ async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit(
     }
     client.end().await;
 
-    let ids: BTreeSet<String> = activities(&first)
-        .into_keys()
-        .chain(activities(&second).into_keys())
-        .collect();
+    let ids: BTreeSet<String> = states(&first).into_keys().chain(states(&second).into_keys()).collect();
     assert_eq!(first["sessions"].as_array().unwrap().len(), 2);
     assert_eq!(second["sessions"].as_array().unwrap().len(), 1);
     assert_eq!(second.get("nextCursor"), None);
@@ -721,14 +737,14 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
 
     assert_eq!(removed.unwrap(), json!({}));
     assert_eq!(again.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
-    assert_eq!(refused_open.unwrap_err()["code"], json!(ResponseError::INVALID_REQUEST));
+    assert_eq!(refused_open.unwrap_err()["code"], json!(ResponseError::SESSION_OPEN));
     assert_eq!(refused_held.unwrap_err()["code"], json!(ResponseError::SESSION_OWNED));
     assert_eq!(closed.unwrap(), json!({}));
     let expected = BTreeMap::from([
         (fork.to_string(), "closed".to_owned()),
         (held.to_string(), "closed".to_owned()),
     ]);
-    assert_eq!(activities(&listed), expected);
+    assert_eq!(states(&listed), expected);
     assert_eq!(fork_row["session"]["forkOf"], json!(source));
 }
 
@@ -792,7 +808,8 @@ async fn a_put_blob_reaches_the_model_in_an_input_and_reads_back_after_the_close
         .call("blob/put", json!({ "sessionId": session, "data": "AQID" }))
         .await
         .unwrap();
-    let content = json!([{ "user_text": "see" }, { "media": { "blob": blob, "mime": "image/png" } }]);
+    let content =
+        json!([{ "kind": "userText", "text": "see" }, { "kind": "media", "blob": blob, "mimeType": "image/png" }]);
     client
         .request("session/input", json!({ "sessionId": session, "content": content }))
         .await;

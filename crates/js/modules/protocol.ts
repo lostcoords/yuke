@@ -78,7 +78,7 @@ text: string,
  * The phase of the text, or no phase when the provider sent none. The encoder sends the phase back to OpenAI
  * Responses.
  */
-phase?: TextPhase | null, };
+phase?: TextPhase, };
 
 /**
  * Bytes in the caller's store, named by the digest of their content. Equal digests name equal bytes. Thus the request
@@ -98,7 +98,11 @@ len: number, };
  * One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
  * The serializer groups the blocks into the messages of each protocol.
  */
-export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": AssistantText } | { "reasoning": Reasoning } | { "tool_call": ToolCall };
+export type Block = { "kind": "userText", 
+/**
+ * The text.
+ */
+text: string, } | { "kind": "media" } & Media | { "kind": "toolResult" } & ToolResult | { "kind": "assistantText" } & AssistantText | { "kind": "reasoning" } & Reasoning | { "kind": "toolCall" } & ToolCall;
 
 /**
  * A block position within one session. A tool execution uses the position of its call, not its result.
@@ -114,7 +118,7 @@ eventNumber: EventNumber,
 blockIndex: number, };
 
 /**
- * The hints of one tool call of a commit, and the folder where it ran.
+ * The hints of one tool call of a commit, and its working folder.
  */
 export type CallDisplay = { 
 /**
@@ -126,9 +130,9 @@ blockIndex: number,
  */
 hints: ToolHints, 
 /**
- * The folder where the call ran. A relative path of the call starts there.
+ * The working folder of the call. A relative path of the call starts there.
  */
-folder: string | null, };
+cwd?: string, };
 
 /**
  * The params of `plugin/check`.
@@ -157,7 +161,7 @@ export type Commit = {
 /**
  * The replacement of the context. A commit with a replacement holds no blocks.
  */
-replaced: Replaced | null, 
+replaced?: Replaced, 
 /**
  * The blocks after the saved blocks, in context order.
  */
@@ -165,11 +169,11 @@ blocks: Array<Block>,
 /**
  * The facts of the answer in `blocks`. A commit without an answer has `None`.
  */
-answer: Answer | null, 
+answer?: Answer, 
 /**
  * How the turn ended. A commit in the middle of a turn has `None`.
  */
-end: TurnEnd | null, 
+end?: TurnEnd, 
 /**
  * What a frontend shows for the tool calls and results in `blocks`. The model never sees it.
  */
@@ -208,7 +212,7 @@ kind: InputKind,
 /**
  * The blocks that the user saw, only when they differ from the blocks that the model read.
  */
-displayContent?: Array<Block> | null, 
+displayContent?: Array<Block>, 
 /**
  * The number of blocks of the commit that the model read for this input.
  */
@@ -259,7 +263,7 @@ export type ExtensionEventParams = {
 /**
  * The session of the event. The field is absent for an event of the whole process.
  */
-sessionId?: SessionId | null, 
+sessionId?: SessionId, 
 /**
  * The name that the host gives the plugin.
  */
@@ -298,7 +302,7 @@ data: unknown, };
  * Why a response ended. At `Length` a tool call can hold cut-off arguments, so do not run such a call.
  * `Pause` marks an Anthropic server-tool loop at its iteration cap. The same content resumes the loop.
  */
-export type FinishReason = "stop" | "length" | "content_filter" | "refusal" | "tool_calls" | "pause" | "unknown";
+export type FinishReason = "stop" | "length" | "contentFilter" | "refusal" | "toolCalls" | "pause" | "unknown";
 
 /**
  * An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. An input
@@ -320,7 +324,7 @@ content: Array<Block>,
 /**
  * The blocks that the model reads, only when they differ from the content.
  */
-modelContent?: Array<Block> | null, };
+modelContent?: Array<Block>, };
 
 /**
  * The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
@@ -393,7 +397,7 @@ log: string,
 /**
  * The exit code, when the process exited. An ended process without one did not exit by itself.
  */
-exitCode?: number | null, } | { "kind": "plugin", 
+exitCode?: number, } | { "kind": "plugin", 
 /**
  * The name of the plugin.
  */
@@ -429,19 +433,19 @@ export type ListSessionsParams = {
 /**
  * Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
  */
-cwd?: string | null, 
+cwd?: string, 
 /**
  * Only the children of this session. None lists the sessions without a parent.
  */
-parent?: SessionId | null, 
+parent?: SessionId, 
 /**
  * The most rows of the page, from 1 to 100. None gives 50.
  */
-limit?: number | null, 
+limit?: number, 
 /**
  * The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
  */
-cursor?: string | null, };
+cursor?: string, };
 
 /**
  * The result of `session/list`.
@@ -455,7 +459,7 @@ sessions: Array<SessionRow>,
 /**
  * The cursor of the next page. None when no older session exists.
  */
-nextCursor?: string | null, };
+nextCursor?: string, };
 
 /**
  * A live fact of a session. Saved events remain authoritative after reconnect.
@@ -468,7 +472,7 @@ state: SessionState, } | { "sessionUpdate": "job",
 /**
  * The job.
  */
-job: Job, } | { "sessionUpdate": "input_accepted", 
+job: Job, } | { "sessionUpdate": "inputAccepted", 
 /**
  * The id of the input.
  */
@@ -476,7 +480,7 @@ inputId: InputId,
 /**
  * The input.
  */
-input: Input, } | { "sessionUpdate": "interaction_requested", 
+input: Input, } | { "sessionUpdate": "interactionRequested", 
 /**
  * The id that the answer names.
  */
@@ -488,11 +492,11 @@ source: string,
 /**
  * The question.
  */
-request: InteractionRequest, } | { "sessionUpdate": "interaction_closed", 
+request: InteractionRequest, } | { "sessionUpdate": "interactionClosed", 
 /**
  * The question.
  */
-interactionId: InteractionId, } | { "sessionUpdate": "mcp_server", 
+interactionId: InteractionId, } | { "sessionUpdate": "mcpServer", 
 /**
  * The name of the server in its config.
  */
@@ -508,11 +512,11 @@ tools: number, } | { "state": "failed",
 /**
  * Why.
  */
-error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "input_removed", 
+error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "inputRemoved", 
 /**
  * The id of the input.
  */
-inputId: InputId, } | { "sessionUpdate": "turn_unconfirmed" } | { "sessionUpdate": "draft_started", 
+inputId: InputId, } | { "sessionUpdate": "turnUnconfirmed" } | { "sessionUpdate": "draftStarted", 
 /**
  * The identity of this attempt, distinct across turns and process restarts.
  */
@@ -524,7 +528,7 @@ draftId: DraftId,
 /**
  * The model fact.
  */
-event: ModelUpdate, } | { "sessionUpdate": "draft_committed", 
+event: ModelUpdate, } | { "sessionUpdate": "draftCommitted", 
 /**
  * The draft to replace, including any blocks absent from `blocks`.
  */
@@ -537,7 +541,7 @@ eventNumber: EventNumber,
  * Original draft block ids in saved block order. Array index `i` maps to commit block index `i`.
  * Draft blocks absent from this array do not enter history.
  */
-blocks: Array<number>, } | { "sessionUpdate": "draft_discarded", 
+blocks: Array<number>, } | { "sessionUpdate": "draftDiscarded", 
 /**
  * The draft to remove.
  */
@@ -545,27 +549,27 @@ draftId: DraftId,
 /**
  * Why the draft has no confirmed replacement.
  */
-reason: DraftDiscardReason, } | { "sessionUpdate": "tool_started", 
+reason: DraftDiscardReason, } | { "sessionUpdate": "toolStarted", 
 /**
  * The position of the saved call, even when the provider repeats its call id.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The resolved call after the deferred-tool bridge. Its call id remains provider data.
  */
-call: ToolCall, } | { "sessionUpdate": "tool_output", 
+call: ToolCall, } | { "sessionUpdate": "toolOutput", 
 /**
  * The position of the saved call.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The new output text.
  */
-text: string, } | { "sessionUpdate": "tool_finished", 
+text: string, } | { "sessionUpdate": "toolFinished", 
 /**
  * The position of the saved call.
  */
-execution: BlockPosition, 
+position: BlockPosition, 
 /**
  * The result of the call.
  */
@@ -577,7 +581,7 @@ display: Array<DisplayBlock>,
 /**
  * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
  */
-durationMs?: number | null, } | { "sessionUpdate": "retry_scheduled", 
+durationMs?: number, } | { "sessionUpdate": "retryScheduled", 
 /**
  * The wait in milliseconds.
  */
@@ -585,7 +589,7 @@ afterMs: number,
 /**
  * The failure text.
  */
-error: string, } | { "sessionUpdate": "round_failed", 
+error: string, } | { "sessionUpdate": "roundFailed", 
 /**
  * The failure text with each cause.
  */
@@ -601,9 +605,9 @@ export type LoginId = number;
  */
 export type LoginOutcome = { "kind": "succeeded" } | { "kind": "cancelled" } | { "kind": "failed", 
 /**
- * The text of the failure. It holds no token.
+ * Why. The text holds no token.
  */
-message: string, };
+error: string, };
 
 /**
  * The result of `auth/login`: the code that the user confirms on the page of the provider.
@@ -633,12 +637,12 @@ item: string,
 /**
  * The name of its `plugin.json`, when the server can read it.
  */
-name?: string | null, 
+name?: string, 
 /**
  * Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
  * from an older commit until `profile/reload`.
  */
-loaded: boolean, } & ({ "state": "local" } | { "state": "not_locked" } | { "state": "not_installed", 
+loaded: boolean, } & ({ "state": "local" } | { "state": "notLocked" } | { "state": "notInstalled", 
 /**
  * The full commit id of the lock.
  */
@@ -686,7 +690,7 @@ blob: Blob,
 /**
  * The IANA media type, such as `image/png` or `application/pdf`.
  */
-mime: string, 
+mimeType: string, 
 /**
  * The name a provider requires beside file bytes. An image needs none.
  */
@@ -712,11 +716,11 @@ name: string,
 /**
  * The context window in tokens. None when the catalog does not know it.
  */
-contextWindow?: number | null, 
+contextWindow?: number, 
 /**
  * The output limit in tokens. None when the catalog does not know it.
  */
-maxOutputTokens?: number | null, 
+maxOutputTokens?: number, 
 /**
  * The reasoning choices of the model, each with the settings that a session sends for it.
  */
@@ -728,11 +732,11 @@ cost: Array<PriceBand>,
 /**
  * Whether the model calls tools. None when the catalog does not know it.
  */
-tools?: boolean | null, 
+tools?: boolean, 
 /**
  * Whether the model takes deferred tools. None when the catalog does not know it.
  */
-toolSearch?: boolean | null, 
+toolSearch?: boolean, 
 /**
  * The kinds of content that the model reads. Empty when the catalog does not know them.
  */
@@ -754,59 +758,59 @@ model: string, };
 /**
  * An owned model event for clients. Block ids belong to one draft and follow block start order.
  */
-export type ModelUpdate = { "kind": "block_started", 
+export type ModelUpdate = { "kind": "blockStarted", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * What the block holds.
  */
-content: StartedBlock, } | { "kind": "text_delta", 
+content: StartedBlock, } | { "kind": "textDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "refusal_delta", 
+text: string, } | { "kind": "refusalDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "reasoning_delta", 
+text: string, } | { "kind": "reasoningDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "reasoning_section_started", 
+text: string, } | { "kind": "reasoningSectionStarted", 
 /**
  * The block id.
  */
-block: number, } | { "kind": "tool_input_delta", 
+blockId: number, } | { "kind": "toolInputDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The argument fragment, which need not be valid JSON alone.
  */
-text: string, } | { "kind": "block_stopped", 
+text: string, } | { "kind": "blockStopped", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The authoritative complete call for a tool block, otherwise `None`.
  */
-call: ToolCall | null, } | { "kind": "response_completed", 
+call?: ToolCall, } | { "kind": "responseCompleted", 
 /**
  * The normalized finish reason.
  */
@@ -832,7 +836,7 @@ export type NoticeParams = {
 /**
  * The session of the notice. The field is absent for a notice of the whole process.
  */
-sessionId?: SessionId | null, 
+sessionId?: SessionId, 
 /**
  * The severity of the notice. A client uses it to show the notice.
  */
@@ -858,15 +862,6 @@ model: string,
  * The route base URL without its final slashes, so `https://h/v1/` and `https://h/v1` are one origin.
  */
 baseUrl: string, };
-
-/**
- * How a turn ended without a failure.
- */
-export type Outcome = { "completed": { 
-/**
- * The reason in the closed set.
- */
-finishReason: FinishReason, } } | "stopped" | "cancelled";
 
 /**
  * Ask for a response that matches a JSON Schema. Anthropic, and OpenAI with a strict schema, enforce it while
@@ -912,10 +907,17 @@ new: string,
 log: PluginLog, };
 
 /**
- * The commits between the locked commit and the new one: `{ "commits": [...] }`, newest first as a short id and a
- * subject each, or `{ "error": text }` when the server cannot read them.
+ * The commits between the locked commit and the new one, or why the server cannot read them.
  */
-export type PluginLog = { "commits": Array<string> } | { "error": string };
+export type PluginLog = { "kind": "commits", 
+/**
+ * Newest first, as a short id and a subject each.
+ */
+commits: Array<string>, } | { "kind": "failed", 
+/**
+ * Why.
+ */
+error: string, };
 
 /**
  * A Git plugin of `config.json`, as `plugins.lock` keys it.
@@ -928,16 +930,20 @@ git: string,
 /**
  * The plugin folder in the repository. None is the root.
  */
-folder?: string | null, 
+folder?: string, 
 /**
  * The branch, tag, or commit that an update follows. None is the default branch.
  */
-ref?: string | null, };
+ref?: string, };
 
 /**
- * Which Git plugins `plugin/check` checks: `"all"`, or `{ "names": [...] }` by the name of their `plugin.json`.
+ * Which Git plugins `plugin/check` checks: each one, or the ones with these names in their `plugin.json`.
  */
-export type PluginTarget = "all" | { "names": Array<string> };
+export type PluginTarget = { "kind": "all" } | { "kind": "names", 
+/**
+ * The names.
+ */
+names: Array<string>, };
 
 /**
  * The part of the output that a folded call shows. An error always shows its first rows.
@@ -955,23 +961,23 @@ minPromptTokens: number,
 /**
  * The price of an input token.
  */
-input?: number | null, 
+input?: number, 
 /**
  * The price of an output token.
  */
-output?: number | null, 
+output?: number, 
 /**
  * The price of a reasoning token, which replaces the output price for it.
  */
-reasoning?: number | null, 
+reasoning?: number, 
 /**
  * The price of a token that the prompt cache gives.
  */
-cacheRead?: number | null, 
+cacheRead?: number, 
 /**
  * The price of a token that the prompt cache keeps.
  */
-cacheWrite?: number | null, };
+cacheWrite?: number, };
 
 /**
  * The credential that a ready provider uses.
@@ -980,7 +986,7 @@ export type ProviderCredential = { "kind": "none" } | { "kind": "variable",
 /**
  * The name of the environment variable.
  */
-name: string, } | { "kind": "stored_api_key" } | { "kind": "login" };
+name: string, } | { "kind": "storedApiKey" } | { "kind": "login" };
 
 /**
  * A provider and its models. The `id` of the provider and the `id` of a model make the
@@ -1012,11 +1018,11 @@ export type ProviderState = { "kind": "ready",
 /**
  * The credential that a request uses.
  */
-credential: ProviderCredential, } | { "kind": "needs_api_key", 
+credential: ProviderCredential, } | { "kind": "needsApiKey", 
 /**
  * The name of the environment variable.
  */
-variable: string, } | { "kind": "needs_login" };
+variable: string, } | { "kind": "needsLogin" };
 
 /**
  * One question of a request.
@@ -1067,7 +1073,7 @@ values: Array<string>,
 /**
  * The text that the user typed, only for a question with `other`.
  */
-other?: string | null, };
+other?: string, };
 
 /**
  * One option of a question.
@@ -1080,7 +1086,7 @@ label: string,
 /**
  * More text about the option.
  */
-description?: string | null, };
+description?: string, };
 
 /**
  * Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that
@@ -1094,7 +1100,7 @@ text: string,
 /**
  * `None` for text alone: a block that never finished, or one whose provider sent no state.
  */
-replay?: ReasoningReplay | null, };
+replay?: ReasoningReplay, };
 
 /**
  * A reasoning level that a user can pick for a model, and the reasoning settings that a session sends for it.
@@ -1139,11 +1145,11 @@ export type ReasoningSettings = {
 /**
  * Whether and how the model thinks. `None` leaves the endpoint default.
  */
-thinking: Thinking | null, 
+thinking?: Thinking, 
 /**
  * How hard the model thinks. `None` leaves the endpoint default.
  */
-effort: Effort | null, };
+effort?: Effort, };
 
 /**
  * The params of `plugin/remove`.
@@ -1174,7 +1180,37 @@ keep: number, };
  * The kind of provider state that a reasoning block must return verbatim. Each kind names the protocol that
  * produced the state. Only the encoder of that protocol writes it.
  */
-export type ReplayKind = "anthropic_signature" | "anthropic_redacted" | "responses_encrypted" | "openrouter_details";
+export type ReplayKind = "anthropicSignature" | "anthropicRedacted" | "responsesEncrypted" | "openrouterDetails";
+
+/**
+ * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
+ * one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
+ */
+export type RequestSettings = { 
+/**
+ * The output limit. `None` leaves the endpoint default.
+ */
+maxOutputTokens?: number, 
+/**
+ * The reasoning settings.
+ */
+reasoning: ReasoningSettings, 
+/**
+ * The sampling temperature. `None` leaves the endpoint default.
+ */
+temperature?: number, 
+/**
+ * The nucleus sampling mass. `None` leaves the endpoint default.
+ */
+topP?: number, 
+/**
+ * The tool control.
+ */
+toolChoice: ToolChoice, 
+/**
+ * The schema of the response. `None` leaves the response free.
+ */
+outputSchema?: OutputSchema, };
 
 /**
  * The display of one tool result of a commit.
@@ -1191,12 +1227,7 @@ blocks: Array<DisplayBlock>,
 /**
  * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
  */
-durationMs?: number | null, };
-
-/**
- * Whether a session is open in the server, and whether a turn runs in it.
- */
-export type SessionActivity = "closed" | "idle" | "running";
+durationMs?: number, };
 
 /**
  * The id of a session: a version 7 UUID, so the ids sort by the millisecond of their creation.
@@ -1204,7 +1235,7 @@ export type SessionActivity = "closed" | "idle" | "running";
 export type SessionId = string;
 
 /**
- * A saved session with its facts and its activity at the moment of the answer.
+ * A saved session with its facts and its state at the moment of the answer.
  */
 export type SessionRow = { 
 /**
@@ -1212,9 +1243,9 @@ export type SessionRow = {
  */
 session: SessionSummary, 
 /**
- * The activity.
+ * Whether the session is open in this server, and whether a turn runs in it.
  */
-activity: SessionActivity, };
+state: SessionState, };
 
 /**
  * The current choice of a session: the model, the request settings, and the working folder. It holds no credential
@@ -1228,7 +1259,7 @@ model: ModelReference,
 /**
  * The request settings of the next turn.
  */
-settings: Settings, 
+settings: RequestSettings, 
 /**
  * The folder that the tools of the session work in.
  */
@@ -1249,9 +1280,10 @@ settings: SessionSettings,
 updates: Array<SessionUpdate>, };
 
 /**
- * Whether a session runs a turn.
+ * Whether a session is open in the server, and whether a turn runs in it. A `state` update of an open session is
+ * `idle` or `running`.
  */
-export type SessionState = "running" | "idle";
+export type SessionState = "closed" | "idle" | "running";
 
 /**
  * The saved facts of a session, as `session/list` and `session/get` give them.
@@ -1272,7 +1304,7 @@ cwd: string,
 /**
  * The display title from a message, an explicit rename, or a fork of a titled session.
  */
-title?: SessionTitle | null, 
+title?: SessionTitle, 
 /**
  * The creation time, in milliseconds since the Unix epoch.
  */
@@ -1284,11 +1316,11 @@ updatedAt: number,
 /**
  * The source of a fork. The source can be gone.
  */
-forkOf?: SessionId | null, 
+forkOf?: SessionId, 
 /**
  * The parent session. A removal of the parent removes this session.
  */
-parent?: SessionId | null, };
+parent?: SessionId, };
 
 /**
  * A non-empty session title with normalized whitespace and at most 200 Unicode scalar values.
@@ -1314,39 +1346,9 @@ provider: string,
 apiKey: string, };
 
 /**
- * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
- * one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
- */
-export type Settings = { 
-/**
- * The output limit. `None` leaves the endpoint default.
- */
-maxOutputTokens: number | null, 
-/**
- * The reasoning settings.
- */
-reasoning: ReasoningSettings, 
-/**
- * The sampling temperature. `None` leaves the endpoint default.
- */
-temperature: number | null, 
-/**
- * The nucleus sampling mass. `None` leaves the endpoint default.
- */
-topP: number | null, 
-/**
- * The tool control.
- */
-toolChoice: ToolChoice, 
-/**
- * The schema of the response. `None` leaves the response free.
- */
-outputSchema: OutputSchema | null, };
-
-/**
  * What a block holds when it starts. A refusal is the text of a model that declined the request.
  */
-export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind": "reasoning" } | { "kind": "tool_call", 
+export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind": "reasoning" } | { "kind": "toolCall", 
 /**
  * The name of the tool, or an empty name when the provider has not named it yet. The block stop gives
  * the final call.
@@ -1394,9 +1396,9 @@ export type SubjectKind = "text" | "file" | "uri";
  */
 export type SyncPluginsParams = { 
 /**
- * Fail when `plugins.lock` does not match `config.json`, and never write it. None or false syncs normally.
+ * Fail when `plugins.lock` does not match `config.json`, and never write it. A missing flag is `false`.
  */
-locked?: boolean | null, };
+locked?: boolean, };
 
 /**
  * The result of `plugin/sync`.
@@ -1428,12 +1430,20 @@ commit: string, };
  * The place of assistant text in its turn. The names come from OpenAI Responses, which asks each request to send
  * the phase of each earlier output item back.
  */
-export type TextPhase = "commentary" | "final_answer";
+export type TextPhase = "commentary" | "finalAnswer";
 
 /**
  * Whether and how the model thinks before it answers.
  */
-export type Thinking = "off" | { "adaptive": ThinkingDisplay | null } | { "budget": number };
+export type Thinking = { "kind": "off" } | { "kind": "adaptive", 
+/**
+ * Whether a thinking block returns its summary text. `None` leaves the endpoint default.
+ */
+display?: ThinkingDisplay, } | { "kind": "budget", 
+/**
+ * The most thinking tokens.
+ */
+tokens: number, };
 
 /**
  * Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
@@ -1492,11 +1502,11 @@ export type ToolHints = {
 /**
  * The name of the summary line in place of the tool name.
  */
-title: string | null, 
+title?: string, 
 /**
  * The argument of the call that the summary line shows.
  */
-subject: Subject | null, 
+subject?: Subject, 
 /**
  * The part of the output that a folded call shows.
  */
@@ -1532,7 +1542,15 @@ loaded?: Array<ToolDefinition>, };
  * How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
  * [`crate::TurnError::Round`] gives the caller the error itself.
  */
-export type TurnEnd = { "outcome": Outcome } | { "failed": string };
+export type TurnEnd = { "kind": "completed", 
+/**
+ * The reason in the closed set.
+ */
+finishReason: FinishReason, } | { "kind": "stopped" } | { "kind": "cancelled" } | { "kind": "failed", 
+/**
+ * Why.
+ */
+error: string, };
 
 /**
  * Token counts of one attempt, in the convention of OpenAI: a total includes the parts named after it. A provider can
@@ -1542,20 +1560,20 @@ export type Usage = {
 /**
  * Every prompt token, `cache_read` and `cache_write` among them.
  */
-input: number | null, 
+input?: number, 
 /**
  * Every generated token, `reasoning` among them.
  */
-output: number | null, 
+output?: number, 
 /**
  * The output tokens the model spent on reasoning.
  */
-reasoning: number | null, 
+reasoning?: number, 
 /**
  * The input tokens read from the prompt cache.
  */
-cacheRead: number | null, 
+cacheRead?: number, 
 /**
  * The input tokens written to the prompt cache.
  */
-cacheWrite: number | null, };
+cacheWrite?: number, };

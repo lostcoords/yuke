@@ -256,8 +256,8 @@ test("the built-in tools show their path or command as the subject, and read and
 
   const hints = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.hints] : []));
   equal(hints, [
-    { title: null, subject: { argument: "path", kind: "file" }, preview: "none" },
-    { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" },
-    { title: null, subject: { argument: "path", kind: "file" }, preview: "head" },
+    { subject: { argument: "path", kind: "file" }, preview: "none" },
+    { subject: { argument: "command", kind: "text" }, preview: "tail" },
+    { subject: { argument: "path", kind: "file" }, preview: "head" },
   ]);
 });

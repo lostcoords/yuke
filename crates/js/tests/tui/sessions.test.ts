@@ -1,17 +1,18 @@
 // The bundled plugin `sessions`: the list of the recent sessions, its scope, its search, and the show of a pick.
 
 import { apply } from "yuke:internal/bundled/sessions";
-import type { SessionActivity, SessionRow } from "yuke:protocol";
+import type { SessionRow, SessionState } from "yuke:protocol";
 import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 /** A saved session `id` of the folder `cwd` with the title `title`, `minutes` old. */
-function row(id: string, cwd: string, title: string | null, activity: SessionActivity, minutes: number): SessionRow {
+function row(id: string, cwd: string, title: string | undefined, state: SessionState, minutes: number): SessionRow {
   const updatedAt = Date.now() - minutes * 60_000;
+  const model = { provider: "p", model: "m" };
   return {
-    session: { sessionId: id, model: { provider: "p", model: "m" }, cwd, title, createdAt: updatedAt, updatedAt },
-    activity,
+    session: { sessionId: id, model, cwd, ...(title === undefined ? {} : { title }), createdAt: updatedAt, updatedAt },
+    state,
   };
 }
 

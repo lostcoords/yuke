@@ -54,7 +54,7 @@ const PLUGIN_TYPES: &[&str] = &[
     "SessionSnapshot",
     "SessionUpdate",
     "SetApiKeyParams",
-    "Settings",
+    "RequestSettings",
     "StoredEvent",
     "SyncPluginsParams",
     "SyncPluginsResult",
@@ -192,4 +192,21 @@ fn the_checked_in_bindings_match_the_types() {
         std::fs::read_to_string(&plugin).ok().as_deref() == Some(module.as_str()),
         "crates/js/modules/protocol.ts differs from the types. Write it again: YUKE_WRITE_BINDINGS=1 mise exec -- cargo test -p yuke-protocol"
     );
+}
+
+// D3 of the wire: an absent field is left out, never `null`. Only JSON-RPC asks for a null, as the id of a response to
+// a message without a readable id.
+#[test]
+fn no_binding_but_the_response_holds_a_null() {
+    let fresh = std::env::temp_dir().join(format!("yuke-protocol-nulls-{}", std::process::id()));
+    remove(&fresh);
+    export(&fresh);
+    let bindings = files(&fresh);
+    remove(&fresh);
+    let nulls: Vec<&PathBuf> = bindings
+        .iter()
+        .filter(|(path, text)| text.contains("| null") && path.as_path() != Path::new("Response.ts"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(nulls.is_empty(), "these bindings hold a null: {nulls:?}");
 }

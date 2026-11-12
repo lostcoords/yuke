@@ -85,7 +85,7 @@ pub(crate) fn write_head(out: &mut Vec<u8>, target: &Target, wire: ChatWire, req
 fn user_end(blocks: &[Block], start: usize) -> usize {
     blocks[start..]
         .iter()
-        .position(|block| !matches!(block, Block::UserText(_) | Block::Media(_)))
+        .position(|block| !matches!(block, Block::UserText { .. } | Block::Media(_)))
         .map_or(blocks.len(), |len| start + len)
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn write_group(
             )?;
             Ok(end)
         }
-        Block::UserText(_) | Block::Media(_) => {
+        Block::UserText { .. } | Block::Media(_) => {
             let end = user_end(blocks, start);
             write_user_message(jw, request.blobs, &[], &blocks[start..end])?;
             Ok(end)
@@ -167,7 +167,7 @@ fn write_user_message(
     }
     for block in blocks {
         match block {
-            Block::UserText(text) => {
+            Block::UserText { text } => {
                 jw.begin_object();
                 jw.field_str("type", "text");
                 jw.field_str("text", text);
@@ -305,14 +305,14 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
             jw.key("image_url");
             jw.begin_object();
             jw.key("url");
-            jw.base64(Some(&media.mime), &data);
+            jw.base64(Some(&media.mime_type), &data);
             jw.end_object();
             jw.end_object();
         }
         // The part carries raw base64 with no envelope.
         Modality::Audio => {
             let data = read_blob(blobs, &media.blob)?;
-            let format = audio_format(&media.mime)?;
+            let format = audio_format(&media.mime_type)?;
             jw.begin_object();
             jw.field_str("type", "input_audio");
             jw.key("input_audio");
@@ -334,7 +334,7 @@ fn write_media(jw: &mut JsonWriter<'_>, blobs: Option<&dyn BlobStore>, media: &M
             jw.key("file");
             jw.begin_object();
             jw.key("file_data");
-            jw.base64(Some(&media.mime), &data);
+            jw.base64(Some(&media.mime_type), &data);
             jw.field_str("filename", &media.filename);
             jw.end_object();
             jw.end_object();
@@ -416,7 +416,8 @@ mod tests {
     use super::*;
     use crate::wire::testing::{blob, call, expect_error, expect_json, replay};
     use crate::{
-        Credential, Effort, OutputSchema, Reasoning, ReplayKind, Settings, Thinking, ToolDefinition, ToolResult, Wire,
+        Credential, Effort, OutputSchema, Reasoning, ReplayKind, RequestSettings, Thinking, ToolDefinition, ToolResult,
+        Wire,
     };
 
     fn chat() -> Wire {
@@ -449,7 +450,8 @@ mod tests {
     }
 
     /// The settings of most tests: a small output limit.
-    static SETTINGS: std::sync::LazyLock<Settings> = std::sync::LazyLock::new(|| Settings::new().max_output_tokens(8));
+    static SETTINGS: std::sync::LazyLock<RequestSettings> =
+        std::sync::LazyLock::new(|| RequestSettings::new().max_output_tokens(8));
 
     fn request(blocks: &[Block]) -> Request<'_> {
         Request::new(blocks).settings(&SETTINGS)
@@ -526,7 +528,7 @@ mod tests {
                 replaying(ReasoningReplayMode::ReasoningContent),
                 Request::new(blocks)
                     .system(system)
-                    .settings(&Settings::new().max_output_tokens(8)),
+                    .settings(&RequestSettings::new().max_output_tokens(8)),
             );
         }
     }
@@ -618,7 +620,7 @@ mod tests {
                         thinking_format: format,
                         ..ChatWire::default()
                     }),
-                    Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).reasoning(reasoning)),
+                    Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).reasoning(reasoning)),
                 );
             }
         }
@@ -633,7 +635,7 @@ mod tests {
             chat(),
             Request::new(&blocks)
                 .system("be brief")
-                .settings(&Settings::new().max_output_tokens(1024)),
+                .settings(&RequestSettings::new().max_output_tokens(1024)),
         );
     }
 
@@ -648,7 +650,7 @@ mod tests {
             r#"{"model":"gpt","stream":true,"stream_options":{"include_usage":true},"max_tokens":64,"messages":[{"role":"assistant","content":"checking","tool_calls":[{"id":"call_1","type":"function","function":{"name":"run","arguments":"{\"c\":1}"}}]},{"role":"tool","tool_call_id":"call_1","content":"Error: no \"x\""}]}"#,
             "gpt",
             chat(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(64)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(64)),
         );
     }
 
@@ -725,7 +727,11 @@ mod tests {
                 expected,
                 "m",
                 chat(),
-                Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).output_schema(schema.clone())),
+                Request::new(&blocks).settings(
+                    &RequestSettings::new()
+                        .max_output_tokens(8)
+                        .output_schema(schema.clone()),
+                ),
             );
         }
     }
@@ -765,7 +771,7 @@ mod tests {
             r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"max_tokens":8,"temperature":1.5,"top_p":0.1,"messages":[{"role":"user","content":[{"type":"text","text":"go"}]}]}"#,
             "m",
             chat(),
-            Request::new(&blocks).settings(&Settings::new().max_output_tokens(8).temperature(1.5).top_p(0.1)),
+            Request::new(&blocks).settings(&RequestSettings::new().max_output_tokens(8).temperature(1.5).top_p(0.1)),
         );
     }
 

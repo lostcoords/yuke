@@ -90,7 +90,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
         (changes[0].old.as_str(), changes[0].new.as_str()),
         (first.as_str(), second.as_str())
     );
-    let PluginLog::Commits(log) = &changes[0].log else {
+    let PluginLog::Commits { commits: log } = &changes[0].log else {
         panic!("no log: {:?}", changes[0].log);
     };
     assert_eq!(log.len(), 1, "{log:?}");
@@ -146,9 +146,14 @@ async fn an_update_by_a_name_that_no_git_plugin_has_fails() {
     );
     sync(&paths, false).await.unwrap();
 
-    let error = check(&paths, &PluginTarget::Names(vec!["nope".to_owned()]))
-        .await
-        .unwrap_err();
+    let error = check(
+        &paths,
+        &PluginTarget::Names {
+            names: vec!["nope".to_owned()],
+        },
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error,
@@ -228,7 +233,7 @@ async fn an_apply_with_a_commit_that_is_not_a_full_id_fails_and_keeps_the_lock()
         source: clock(&root, None),
         old: first.clone(),
         new: "3f9c1a2".to_owned(),
-        log: PluginLog::Commits(Vec::new()),
+        log: PluginLog::Commits { commits: Vec::new() },
     };
 
     let error = apply(&paths, &[change]).await.unwrap_err();

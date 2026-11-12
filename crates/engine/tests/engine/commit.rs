@@ -18,24 +18,26 @@ use crate::support::{Batches, Recorder, Replay, Script, block_on, yield_once};
 
 /// Return the end of a turn that the model ended with `stop`.
 fn completed() -> TurnEnd {
-    TurnEnd::Outcome(Outcome::Completed {
+    TurnEnd::Completed {
         finish_reason: FinishReason::Stop,
-    })
+    }
 }
 
 /// Return the end of a turn that a hook stopped.
 fn stopped() -> TurnEnd {
-    TurnEnd::Outcome(Outcome::Stopped)
+    TurnEnd::Stopped
 }
 
 /// Return the end of a cancelled turn.
 fn cancelled() -> TurnEnd {
-    TurnEnd::Outcome(Outcome::Cancelled)
+    TurnEnd::Cancelled
 }
 
 /// Return the end of a turn whose request failed with the scripted failed reply.
 fn failed() -> TurnEnd {
-    TurnEnd::Failed("the provider returned a server error: overloaded_error: Overloaded".to_owned())
+    TurnEnd::Failed {
+        error: "the provider returned a server error: overloaded_error: Overloaded".to_owned(),
+    }
 }
 
 fn call(id: &str) -> Block {
@@ -471,7 +473,7 @@ fn a_replacement_commits_before_its_request_and_replays_to_the_new_context() {
         let texts: Vec<&str> = context
             .iter()
             .map(|block| match block {
-                Block::UserText(text) | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text.as_str(),
+                Block::UserText { text } | Block::AssistantText(yuke_ai::AssistantText { text, .. }) => text.as_str(),
                 other => panic!("unexpected block {other:?}"),
             })
             .collect();

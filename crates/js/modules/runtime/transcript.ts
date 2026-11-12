@@ -3,6 +3,7 @@
 import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
 import type {
   Answer,
+  Block,
   DisplayBlock,
   Input,
   InputId,
@@ -13,6 +14,7 @@ import type {
   StoredEvent,
   ToolCall,
   ToolHints,
+  ToolResult,
   Usage,
 } from "yuke:protocol";
 import type { Entry, Interaction, TurnFailure } from "yuke:transcript";
@@ -32,7 +34,7 @@ interface Draft {
 }
 
 /** The hints of a call whose tool gave none, or before the host handles it. */
-const NO_HINTS: Frozen<ToolHints> = Object.freeze({ title: null, subject: null, preview: "head" });
+const NO_HINTS: Frozen<ToolHints> = Object.freeze({ preview: "head" });
 
 /** The display of a result without one. One object, so an entry keeps its object across a re-fold. */
 const NO_DISPLAY: Frozen<DisplayBlock[]> = Object.freeze([]);
@@ -84,6 +86,8 @@ export class Transcript {
   #turnAnswer: Answer | undefined;
   /** During a re-fold, the entries before it by key, so an entry that did not change keeps its object. */
   #previous: Map<string, Entry> | undefined;
+  /** The result of each saved result block, so a re-fold of the same block gives the same result object. */
+  readonly #results = new WeakMap<Frozen<Block>, Frozen<ToolResult>>();
 
   get state(): SessionState {
     return this.#state;
@@ -171,7 +175,7 @@ export class Transcript {
         return;
       }
       for (const input of update.consumed) this.pending.delete(input.id);
-      if (update.commit.end !== null) this.#status = undefined;
+      if (update.commit.end !== undefined) this.#status = undefined;
       this.#dropDraft();
       this.#fold(update);
       return;
@@ -180,25 +184,25 @@ export class Transcript {
       case "state":
         this.#state = update.state;
         break;
-      case "input_accepted":
+      case "inputAccepted":
         this.pending.set(update.inputId, update.input);
         break;
-      case "input_removed":
+      case "inputRemoved":
         this.pending.delete(update.inputId);
         break;
-      case "interaction_requested":
+      case "interactionRequested":
         this.interactions.set(update.interactionId, { source: update.source, request: update.request });
         break;
-      case "interaction_closed":
+      case "interactionClosed":
         this.interactions.delete(update.interactionId);
         break;
-      case "retry_scheduled":
-        this.#status = { kind: "retry_scheduled", afterMs: update.afterMs, error: update.error };
+      case "retryScheduled":
+        this.#status = { kind: "retryScheduled", afterMs: update.afterMs, error: update.error };
         break;
-      case "round_failed":
-        this.#status = { kind: "round_failed", error: update.error };
+      case "roundFailed":
+        this.#status = { kind: "roundFailed", error: update.error };
         break;
-      case "turn_unconfirmed":
+      case "turnUnconfirmed":
         this.#dropDraft();
         for (const key of this.#calls) {
           const entry = this.#at(key);
@@ -214,7 +218,7 @@ export class Transcript {
             });
         }
         break;
-      case "draft_started":
+      case "draftStarted":
         this.#dropDraft();
         this.#draft = {
           id: update.draftId,
@@ -225,16 +229,16 @@ export class Transcript {
         };
         this.#status = undefined;
         break;
-      case "draft_committed":
-      case "draft_discarded":
+      case "draftCommitted":
+      case "draftDiscarded":
         if (this.#draft?.id === update.draftId) this.#dropDraft();
         break;
       case "model": {
         const draft = this.#draft;
         if (draft?.id !== update.draftId) break;
         const model = update.event;
-        if (model.kind === "block_started") {
-          const key = `draft:${draft.id}:${model.block}`;
+        if (model.kind === "blockStarted") {
+          const key = `draft:${draft.id}:${model.blockId}`;
           if (model.content.kind === "reasoning") {
             const group = draft.tail ?? key;
             let parts = draft.reasoning.get(group);
@@ -243,13 +247,13 @@ export class Transcript {
               draft.reasoning.set(group, parts);
               this.#put({ kind: "reasoning", id: group, text: "", draft: true });
             }
-            parts.set(model.block, "");
-            draft.keys.set(model.block, group);
+            parts.set(model.blockId, "");
+            draft.keys.set(model.blockId, group);
             draft.tail = group;
           } else {
             draft.tail = undefined;
-            draft.keys.set(model.block, key);
-            if (model.content.kind === "tool_call") {
+            draft.keys.set(model.blockId, key);
+            if (model.content.kind === "toolCall") {
               const name = model.content.name;
               this.#put({ kind: "tool", id: key, name, arguments: "", status: "streaming", ...UNHANDLED });
             } else
@@ -257,18 +261,18 @@ export class Transcript {
           }
           break;
         }
-        if (model.kind === "response_completed" || model.kind === "reasoning_section_started") break;
-        const entry = this.#at(draft.keys.get(model.block));
+        if (model.kind === "responseCompleted" || model.kind === "reasoningSectionStarted") break;
+        const entry = this.#at(draft.keys.get(model.blockId));
         if (entry === undefined) break;
-        if (model.kind === "tool_input_delta") {
+        if (model.kind === "toolInputDelta") {
           if (entry.kind === "tool") this.#set({ ...entry, arguments: entry.arguments + model.text });
-        } else if (model.kind === "block_stopped") {
-          if (entry.kind === "tool" && model.call !== null)
+        } else if (model.kind === "blockStopped") {
+          if (entry.kind === "tool" && model.call !== undefined)
             this.#set({ ...entry, ...called(model.call), status: "waiting" });
         } else if (entry.kind === "reasoning") {
           // A later block can start before an earlier block sends its last delta.
           const parts = draft.reasoning.get(entry.id) as Map<number, string>;
-          parts.set(model.block, (parts.get(model.block) as string) + model.text);
+          parts.set(model.blockId, (parts.get(model.blockId) as string) + model.text);
           const text = [...parts.values()].filter((part) => part.trim() !== "").join("\n\n");
           if (text !== entry.text) this.#set({ ...entry, text });
         } else if (entry.kind === "text") {
@@ -276,16 +280,16 @@ export class Transcript {
         }
         break;
       }
-      case "tool_started":
-      case "tool_output":
-      case "tool_finished": {
-        const entry = this.#at(`${update.execution.eventNumber}:${update.execution.blockIndex}`);
+      case "toolStarted":
+      case "toolOutput":
+      case "toolFinished": {
+        const entry = this.#at(`${update.position.eventNumber}:${update.position.blockIndex}`);
         if (entry?.kind !== "tool" || entry.status === "done") break;
-        if (update.sessionUpdate === "tool_started") this.#set({ ...entry, status: "running", startedAt: Date.now() });
-        else if (update.sessionUpdate === "tool_output") this.#set({ ...entry, output: entry.output + update.text });
+        if (update.sessionUpdate === "toolStarted") this.#set({ ...entry, status: "running", startedAt: Date.now() });
+        else if (update.sessionUpdate === "toolOutput") this.#set({ ...entry, output: entry.output + update.text });
         else {
           const display = update.display.length === 0 ? NO_DISPLAY : update.display;
-          const durationMs = update.durationMs ?? undefined;
+          const durationMs = update.durationMs;
           this.#set({ ...entry, status: "done", startedAt: undefined, durationMs, result: update.result, display });
         }
         break;
@@ -298,12 +302,12 @@ export class Transcript {
     if (event.sessionUpdate === "settings") return;
     const commit = event.commit;
     // A replaced context makes the counts of the earlier answer stale, until the next answer.
-    if (commit.replaced !== null) this.#usage = undefined;
-    if (commit.answer !== null) {
+    if (commit.replaced !== undefined) this.#usage = undefined;
+    if (commit.answer !== undefined) {
       this.#usage = commit.answer.usage;
       this.#turnAnswer = commit.answer;
     }
-    if (commit.replaced !== null) this.#put({ kind: "compaction", id: `${event.seq}:replaced` });
+    if (commit.replaced !== undefined) this.#put({ kind: "compaction", id: `${event.seq}:replaced` });
     let offset = 0;
     for (const input of event.consumed) {
       this.#put({
@@ -328,15 +332,14 @@ export class Transcript {
     for (const [index, block] of commit.blocks.entries()) {
       if (index < offset) continue;
       const key = `${event.seq}:${index}`;
-      if ("reasoning" in block) {
+      if (block.kind === "reasoning") {
         reasoning ??= { key, parts: [] };
-        if (block.reasoning.text.trim() !== "") reasoning.parts.push(block.reasoning.text);
+        if (block.text.trim() !== "") reasoning.parts.push(block.text);
         continue;
       }
       flushReasoning();
-      if ("assistant_text" in block)
-        this.#put({ kind: "text", id: key, text: block.assistant_text.text, refusal, draft: false });
-      else if ("tool_call" in block) {
+      if (block.kind === "assistantText") this.#put({ kind: "text", id: key, text: block.text, refusal, draft: false });
+      else if (block.kind === "toolCall") {
         if (!answer) this.#calls = [];
         answer = true;
         this.#calls.push(key);
@@ -344,25 +347,30 @@ export class Transcript {
         this.#put({
           kind: "tool",
           id: key,
-          ...called(block.tool_call),
+          ...called(block),
           status: "waiting",
           ...UNHANDLED,
-          ...(shown === undefined ? {} : { hints: shown.hints, cwd: shown.folder ?? undefined }),
+          ...(shown === undefined ? {} : { hints: shown.hints, cwd: shown.cwd }),
         });
-      } else if ("tool_result" in block) {
+      } else if (block.kind === "toolResult") {
         // The results come in the order of the calls. A result whose call is on an older page waits for that page.
         const entry = this.#at(this.#calls.shift());
         const shown = commit.display?.results.find((result) => result.blockIndex === index);
         const display = shown?.blocks ?? NO_DISPLAY;
         if (entry?.kind === "tool") {
-          const durationMs = shown?.durationMs ?? undefined;
-          const result = block.tool_result;
+          const durationMs = shown?.durationMs;
+          let result = this.#results.get(block);
+          if (result === undefined) {
+            const { kind, ...fields } = block;
+            result = fields;
+            this.#results.set(block, result);
+          }
           this.#set({ ...entry, status: "done", startedAt: undefined, durationMs, output: "", result, display });
         }
       }
     }
     flushReasoning();
-    if (commit.end !== null) {
+    if (commit.end !== undefined) {
       this.#put({ kind: "end", id: `${event.seq}:end`, end: commit.end, answer: this.#turnAnswer });
       this.#turnAnswer = undefined;
     }

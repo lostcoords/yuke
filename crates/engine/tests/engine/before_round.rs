@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use yuke_ai::scripted::{ScriptedTransport, counted, failed_reply, text_reply, tool_reply};
-use yuke_ai::{Block, Settings, Target};
+use yuke_ai::{Block, RequestSettings, Target};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, Outcome, Replaced, RoundPlan, Toolset, TurnEvent};
 use yuke_testing::{definition, model, model_of, target};
@@ -17,8 +17,8 @@ fn other_target(model: &'static str) -> Target {
 }
 
 /// Settings with the sampling temperature `value`.
-fn temperature(value: f64) -> Settings {
-    Settings::new().temperature(value)
+fn temperature(value: f64) -> RequestSettings {
+    RequestSettings::new().temperature(value)
 }
 
 #[test]

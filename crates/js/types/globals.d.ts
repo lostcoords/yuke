@@ -468,17 +468,17 @@ declare class Response {
 
 /** The code of a `FetchFailure`. `redirect` names a refused redirect; each other code names a fault of the network. */
 type FetchFailureCode =
-  | "invalid_request"
-  | "bad_url"
-  | "dns_failed"
-  | "connect_failed"
-  | "connect_timeout"
-  | "certificate_rejected"
-  | "tls_setup_failed"
-  | "idle_timeout"
-  | "request_timeout"
-  | "connection_lost"
-  | "malformed_response"
+  | "invalidRequest"
+  | "badUrl"
+  | "dnsFailed"
+  | "connectFailed"
+  | "connectTimeout"
+  | "certificateRejected"
+  | "tlsSetupFailed"
+  | "idleTimeout"
+  | "requestTimeout"
+  | "connectionLost"
+  | "malformedResponse"
   | "redirect";
 
 /** The `cause` of the `TypeError` of a failed `fetch`: `(error.cause as FetchFailure).code`. */

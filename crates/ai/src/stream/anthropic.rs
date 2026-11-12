@@ -410,7 +410,7 @@ mod tests {
              args 0 \"{\\\"cmd\\\":\\\"cargo \"\n\
              args 0 \"test\\\"}\"\n\
              stop 0 tool_call id=\"toolu_1\" name=\"run\" arguments=\"{\\\"cmd\\\":\\\"cargo test\\\"}\"\n\
-             done tool_calls \"tool_use\"",
+             done toolCalls \"tool_use\"",
         );
     }
 

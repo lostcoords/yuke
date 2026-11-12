@@ -18,12 +18,8 @@ import { Transcript, type Entry as TranscriptEntry } from "yuke:transcript";
 const settings: SessionSettings = {
   model: { provider: "p", model: "m" },
   settings: {
-    maxOutputTokens: null,
-    reasoning: { thinking: null, effort: null },
-    temperature: null,
-    topP: null,
+    reasoning: {},
     toolChoice: "auto",
-    outputSchema: null,
   },
   cwd: "/w",
 };
@@ -32,7 +28,7 @@ function commit(seq: number, fields: Partial<Commit>, consumed: ConsumedInput[] 
   return {
     seq,
     sessionUpdate: "commit",
-    commit: { replaced: null, blocks: [], answer: null, end: null, ...fields },
+    commit: { blocks: [], ...fields },
     consumed,
   };
 }
@@ -61,32 +57,37 @@ function reasoning(transcript: Transcript): Extract<TranscriptEntry, { kind: "re
 function answer(finishReason: FinishReason): Answer {
   return {
     origin: { model: "m", baseUrl: "https://p" },
-    usage: { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null },
+    usage: {},
     finishReason,
   };
 }
 
 const call: ToolCall = { callId: "call_0", name: "bash", arguments: '{"command":"true"}' };
-const userText: Block = { user_text: "hello" };
+const userText: Block = { kind: "userText", text: "hello" };
 
 // A saved reasoning entry uses the source position of its first block, not a new position for the group.
 test("saved consecutive reasoning blocks group within a commit and stop at boundaries", () => {
   const replay = {
     origin: { model: "m", baseUrl: "https://p" },
-    kind: "responses_encrypted" as const,
+    kind: "responsesEncrypted" as const,
     data: "first-provider-state",
   };
   const firstBlocks: Block[] = [
-    { reasoning: { text: "  first  ", replay } },
-    { reasoning: { text: "second", replay: { ...replay, data: "second-provider-state" } } },
-    { assistant_text: { text: "response" } },
-    { reasoning: { text: "" } },
-    { reasoning: { text: "  after  " } },
-    { tool_call: call },
-    { reasoning: { text: "tail" } },
+    { kind: "reasoning", text: "  first  ", replay },
+    { kind: "reasoning", text: "second", replay: { ...replay, data: "second-provider-state" } },
+    { kind: "assistantText", text: "response" },
+    { kind: "reasoning", text: "" },
+    { kind: "reasoning", text: "  after  " },
+    { kind: "toolCall", ...call },
+    { kind: "reasoning", text: "tail" },
   ];
-  const first = commit(1, { blocks: firstBlocks, answer: answer("tool_calls") });
-  const second = commit(2, { blocks: [{ reasoning: { text: "next" } }, { reasoning: { text: "last" } }] });
+  const first = commit(1, { blocks: firstBlocks, answer: answer("toolCalls") });
+  const second = commit(2, {
+    blocks: [
+      { kind: "reasoning", text: "next" },
+      { kind: "reasoning", text: "last" },
+    ],
+  });
 
   const original = JSON.stringify([first, second]);
   const transcript = opened([first, second]);
@@ -104,12 +105,19 @@ test("saved consecutive reasoning blocks group within a commit and stop at bound
 });
 
 test("saved all-empty reasoning runs are omitted, while a live run remains visible", () => {
-  const transcript = opened([commit(1, { blocks: [{ reasoning: { text: "" } }, { reasoning: { text: " \t\n " } }] })]);
+  const transcript = opened([
+    commit(1, {
+      blocks: [
+        { kind: "reasoning", text: "" },
+        { kind: "reasoning", text: " \t\n " },
+      ],
+    }),
+  ]);
   equal(reasoning(transcript), []);
 
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "empty" },
-    model("empty", { kind: "block_started", block: 4, content: { kind: "reasoning" } }),
+    { sessionUpdate: "draftStarted", draftId: "empty" },
+    model("empty", { kind: "blockStarted", blockId: 4, content: { kind: "reasoning" } }),
   ]);
   const entry = reasoning(transcript)[0];
   equal(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
@@ -119,27 +127,27 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
 test("a live group keeps its first key and only changes when its retained text changes", () => {
   const transcript = opened();
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "d1" },
-    model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("d1", { kind: "reasoning_delta", block: 0, text: "  first  " }),
+    { sessionUpdate: "draftStarted", draftId: "d1" },
+    model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("d1", { kind: "reasoningDelta", blockId: 0, text: "  first  " }),
   ]);
   const first = reasoning(transcript)[0];
   assert(first !== undefined, "the first reasoning group is missing");
 
   fed(transcript, [
-    model("d1", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
-    model("d1", { kind: "reasoning_delta", block: 1, text: " \t" }),
+    model("d1", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
+    model("d1", { kind: "reasoningDelta", blockId: 1, text: " \t" }),
   ]);
   assert(reasoning(transcript)[0] === first, "starting an empty source block replaced the group");
   equal(reasoning(transcript)[0]?.text, "  first  ");
 
-  fed(transcript, [model("d1", { kind: "reasoning_delta", block: 1, text: "second" })]);
+  fed(transcript, [model("d1", { kind: "reasoningDelta", blockId: 1, text: "second" })]);
   equal(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["draft:d1:0", "  first  \n\n \tsecond"]],
   );
 
-  fed(transcript, [model("d1", { kind: "reasoning_delta", block: 1, text: "tail" })]);
+  fed(transcript, [model("d1", { kind: "reasoningDelta", blockId: 1, text: "tail" })]);
   equal(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["draft:d1:0", "  first  \n\n \tsecondtail"]],
@@ -148,14 +156,14 @@ test("a live group keeps its first key and only changes when its retained text c
 
 test("interleaved reasoning deltas route back to their source group", () => {
   const transcript = fed(opened(), [
-    { sessionUpdate: "draft_started", draftId: "interleaved" },
-    model("interleaved", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("interleaved", { kind: "reasoning_delta", block: 0, text: "one" }),
-    model("interleaved", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
-    model("interleaved", { kind: "reasoning_delta", block: 1, text: "two" }),
-    model("interleaved", { kind: "block_started", block: 2, content: { kind: "text" } }),
-    model("interleaved", { kind: "text_delta", block: 2, text: "answer" }),
-    model("interleaved", { kind: "reasoning_delta", block: 0, text: " late" }),
+    { sessionUpdate: "draftStarted", draftId: "interleaved" },
+    model("interleaved", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("interleaved", { kind: "reasoningDelta", blockId: 0, text: "one" }),
+    model("interleaved", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
+    model("interleaved", { kind: "reasoningDelta", blockId: 1, text: "two" }),
+    model("interleaved", { kind: "blockStarted", blockId: 2, content: { kind: "text" } }),
+    model("interleaved", { kind: "textDelta", blockId: 2, text: "answer" }),
+    model("interleaved", { kind: "reasoningDelta", blockId: 0, text: " late" }),
   ]);
 
   equal(
@@ -167,21 +175,21 @@ test("interleaved reasoning deltas route back to their source group", () => {
 test("live grouped reasoning and replayed saved reasoning end equal", () => {
   const saved = commit(4, {
     blocks: [
-      { reasoning: { text: "first" } },
-      { reasoning: { text: "second" } },
-      { assistant_text: { text: "answer" } },
+      { kind: "reasoning", text: "first" },
+      { kind: "reasoning", text: "second" },
+      { kind: "assistantText", text: "answer" },
     ],
   });
   const updates: SessionUpdate[] = [
-    { sessionUpdate: "draft_started", draftId: "d1" },
-    model("d1", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("d1", { kind: "reasoning_delta", block: 0, text: "first" }),
-    model("d1", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
-    model("d1", { kind: "reasoning_delta", block: 1, text: "second" }),
-    model("d1", { kind: "block_started", block: 2, content: { kind: "text" } }),
-    model("d1", { kind: "text_delta", block: 2, text: "answer" }),
+    { sessionUpdate: "draftStarted", draftId: "d1" },
+    model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("d1", { kind: "reasoningDelta", blockId: 0, text: "first" }),
+    model("d1", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
+    model("d1", { kind: "reasoningDelta", blockId: 1, text: "second" }),
+    model("d1", { kind: "blockStarted", blockId: 2, content: { kind: "text" } }),
+    model("d1", { kind: "textDelta", blockId: 2, text: "answer" }),
     saved,
-    { sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 4, blocks: [0, 1, 2] },
+    { sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 4, blocks: [0, 1, 2] },
   ];
   const live = fed(opened(), updates);
   const replay = opened([saved]);
@@ -194,13 +202,13 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
 });
 
 test("draft discard and replacement do not remove saved neighbors", () => {
-  const transcript = opened([commit(1, { blocks: [{ reasoning: { text: "saved" } }] })]);
+  const transcript = opened([commit(1, { blocks: [{ kind: "reasoning", text: "saved" }] })]);
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "discarded" },
-    model("discarded", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("discarded", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
-    model("discarded", { kind: "reasoning_delta", block: 1, text: "not saved" }),
-    { sessionUpdate: "draft_discarded", draftId: "discarded", reason: "failed" },
+    { sessionUpdate: "draftStarted", draftId: "discarded" },
+    model("discarded", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("discarded", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
+    model("discarded", { kind: "reasoningDelta", blockId: 1, text: "not saved" }),
+    { sessionUpdate: "draftDiscarded", draftId: "discarded", reason: "failed" },
   ]);
   equal(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -208,11 +216,11 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "cancelled" },
-    model("cancelled", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("cancelled", { kind: "reasoning_delta", block: 0, text: "cancelled" }),
-    commit(2, { blocks: [{ reasoning: { text: "cancelled" } }], end: { outcome: "cancelled" } }),
-    { sessionUpdate: "draft_discarded", draftId: "cancelled", reason: "failed" },
+    { sessionUpdate: "draftStarted", draftId: "cancelled" },
+    model("cancelled", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("cancelled", { kind: "reasoningDelta", blockId: 0, text: "cancelled" }),
+    commit(2, { blocks: [{ kind: "reasoning", text: "cancelled" }], end: { kind: "cancelled" } }),
+    { sessionUpdate: "draftDiscarded", draftId: "cancelled", reason: "failed" },
   ]);
   equal(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -223,11 +231,11 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "replacement" },
-    model("replacement", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("replacement", { kind: "reasoning_delta", block: 0, text: "replacement" }),
-    commit(3, { blocks: [{ reasoning: { text: "replacement" } }] }),
-    { sessionUpdate: "draft_committed", draftId: "replacement", eventNumber: 3, blocks: [0] },
+    { sessionUpdate: "draftStarted", draftId: "replacement" },
+    model("replacement", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("replacement", { kind: "reasoningDelta", blockId: 0, text: "replacement" }),
+    commit(3, { blocks: [{ kind: "reasoning", text: "replacement" }] }),
+    { sessionUpdate: "draftCommitted", draftId: "replacement", eventNumber: 3, blocks: [0] },
   ]);
   equal(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -239,9 +247,9 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draft_started", draftId: "unconfirmed" },
-    model("unconfirmed", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    { sessionUpdate: "turn_unconfirmed" },
+    { sessionUpdate: "draftStarted", draftId: "unconfirmed" },
+    model("unconfirmed", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    { sessionUpdate: "turnUnconfirmed" },
   ]);
   equal(
     reasoning(transcript).map((entry) => entry.id),
@@ -251,23 +259,28 @@ test("draft discard and replacement do not remove saved neighbors", () => {
 
 test("input, end, compaction, refusal, and tools keep reasoning runs apart", () => {
   const transcript = opened([
-    commit(1, { blocks: [userText, { reasoning: { text: "before" } }] }, [
+    commit(1, { blocks: [userText, { kind: "reasoning", text: "before" }] }, [
       { id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 },
     ]),
     commit(2, {
       blocks: [
-        { reasoning: { text: "turn" } },
-        { reasoning: { text: "end" } },
-        { assistant_text: { text: "no" } },
-        { reasoning: { text: "after refusal" } },
-        { tool_call: call },
-        { reasoning: { text: "after tool" } },
+        { kind: "reasoning", text: "turn" },
+        { kind: "reasoning", text: "end" },
+        { kind: "assistantText", text: "no" },
+        { kind: "reasoning", text: "after refusal" },
+        { kind: "toolCall", ...call },
+        { kind: "reasoning", text: "after tool" },
       ],
       answer: answer("refusal"),
-      end: { outcome: "cancelled" },
+      end: { kind: "cancelled" },
     }),
-    commit(3, { replaced: { head: [{ user_text: "summary" }], keep: 0 } }),
-    commit(4, { blocks: [{ reasoning: { text: "next" } }, { reasoning: { text: "part" } }] }),
+    commit(3, { replaced: { head: [{ kind: "userText", text: "summary" }], keep: 0 } }),
+    commit(4, {
+      blocks: [
+        { kind: "reasoning", text: "next" },
+        { kind: "reasoning", text: "part" },
+      ],
+    }),
   ]);
 
   equal(
@@ -288,33 +301,37 @@ test("input, end, compaction, refusal, and tools keep reasoning runs apart", () 
 
 test("inserting older and gap events preserves a live group and tool state", () => {
   const newer = commit(3, {
-    blocks: [{ reasoning: { text: "saved one" } }, { reasoning: { text: "saved two" } }, { tool_call: call }],
-    answer: answer("tool_calls"),
+    blocks: [
+      { kind: "reasoning", text: "saved one" },
+      { kind: "reasoning", text: "saved two" },
+      { kind: "toolCall", ...call },
+    ],
+    answer: answer("toolCalls"),
   });
   const transcript = opened([newer]);
   fed(transcript, [
-    { sessionUpdate: "tool_started", execution: { eventNumber: 3, blockIndex: 2 }, call },
-    { sessionUpdate: "tool_output", execution: { eventNumber: 3, blockIndex: 2 }, text: "running" },
-    { sessionUpdate: "draft_started", draftId: "live" },
-    model("live", { kind: "block_started", block: 0, content: { kind: "reasoning" } }),
-    model("live", { kind: "reasoning_delta", block: 0, text: "draft one" }),
-    model("live", { kind: "block_started", block: 1, content: { kind: "reasoning" } }),
-    model("live", { kind: "reasoning_delta", block: 1, text: "draft two" }),
-    model("live", { kind: "block_started", block: 2, content: { kind: "tool_call", name: "bash" } }),
-    model("live", { kind: "tool_input_delta", block: 2, text: "{}" }),
-    model("live", { kind: "block_stopped", block: 2, call }),
+    { sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 2 }, call },
+    { sessionUpdate: "toolOutput", position: { eventNumber: 3, blockIndex: 2 }, text: "running" },
+    { sessionUpdate: "draftStarted", draftId: "live" },
+    model("live", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
+    model("live", { kind: "reasoningDelta", blockId: 0, text: "draft one" }),
+    model("live", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
+    model("live", { kind: "reasoningDelta", blockId: 1, text: "draft two" }),
+    model("live", { kind: "blockStarted", blockId: 2, content: { kind: "toolCall", name: "bash" } }),
+    model("live", { kind: "toolInputDelta", blockId: 2, text: "{}" }),
+    model("live", { kind: "blockStopped", blockId: 2, call }),
   ]);
   const savedTool = transcript.entries.find((entry) => entry.id === "3:2");
   assert(savedTool?.kind === "tool", "the saved tool is missing");
   const startedAt = savedTool.startedAt;
   assert(startedAt !== undefined, "the running tool has no start timestamp");
 
-  transcript.insert([commit(1, { blocks: [{ assistant_text: { text: "older" } }] })]);
+  transcript.insert([commit(1, { blocks: [{ kind: "assistantText", text: "older" }] })]);
   equal(transcript.gap, { before: 3, limit: 1 });
-  transcript.insert([commit(2, { blocks: [{ assistant_text: { text: "gap" } }] })]);
+  transcript.insert([commit(2, { blocks: [{ kind: "assistantText", text: "gap" }] })]);
   equal(transcript.gap, undefined);
 
-  fed(transcript, [model("live", { kind: "reasoning_delta", block: 0, text: " late" })]);
+  fed(transcript, [model("live", { kind: "reasoningDelta", blockId: 0, text: " late" })]);
   equal(reasoning(transcript).at(-1), {
     kind: "reasoning",
     id: "draft:live:0",

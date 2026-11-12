@@ -748,7 +748,7 @@ impl Parts {
                 let tools = script.tools().await;
                 self.servers.ready().await;
                 tools
-            } => toolset_of(tools, self.servers.tools(), &self.host.folder()),
+            } => toolset_of(tools, self.servers.tools(), &self.host.cwd()),
             () = token.cancelled() => Ok(Toolset::new()),
         }
     }
@@ -886,7 +886,7 @@ fn toolset_of(
     folder: &Path,
 ) -> Result<Toolset, String> {
     let mut toolset = Toolset::new();
-    toolset.set_folder(folder.to_string_lossy());
+    toolset.set_cwd(folder.to_string_lossy());
     for (definition, tool) in tools.map_err(|error| chain_text(&error))? {
         toolset.add(definition, tool).map_err(|error| chain_text(&error))?;
     }
@@ -1075,7 +1075,7 @@ impl SessionHost for Host {
         self.parent
     }
 
-    fn folder(&self) -> PathBuf {
+    fn cwd(&self) -> PathBuf {
         self.settings.borrow().cwd.clone()
     }
 
@@ -1191,7 +1191,7 @@ mod tests {
                 provider: "minimax".to_owned(),
                 model: "MiniMax-M3".to_owned(),
             },
-            settings: yuke_ai::Settings::new(),
+            settings: yuke_ai::RequestSettings::new(),
             cwd: PathBuf::from("/"),
         }
     }
@@ -1630,7 +1630,7 @@ mod tests {
                 provider: "minimax".to_owned(),
                 model: "MiniMax-M3".to_owned(),
             },
-            settings: yuke_ai::Settings::new(),
+            settings: yuke_ai::RequestSettings::new(),
             cwd: place.work.clone(),
         };
         let id = app.sessions().create(first.clone(), None).await.unwrap();
@@ -1648,7 +1648,7 @@ mod tests {
 
         app.sessions().set_settings(id, changed.clone()).await.unwrap();
         let live = app.sessions().live(id).unwrap();
-        let named = (live.parts.host.settings(), live.parts.host.folder());
+        let named = (live.parts.host.settings(), live.parts.host.cwd());
         drop(live);
         app.shutdown().await;
 

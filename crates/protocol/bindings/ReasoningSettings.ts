@@ -10,8 +10,8 @@ export type ReasoningSettings = {
 /**
  * Whether and how the model thinks. `None` leaves the endpoint default.
  */
-thinking: Thinking | null, 
+thinking?: Thinking, 
 /**
  * How hard the model thinks. `None` leaves the endpoint default.
  */
-effort: Effort | null, };
+effort?: Effort, };

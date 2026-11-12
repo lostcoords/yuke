@@ -9,4 +9,8 @@ import type { ToolResult } from "./ToolResult";
  * One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
  * The serializer groups the blocks into the messages of each protocol.
  */
-export type Block = { "user_text": string } | { "media": Media } | { "tool_result": ToolResult } | { "assistant_text": AssistantText } | { "reasoning": Reasoning } | { "tool_call": ToolCall };
+export type Block = { "kind": "userText", 
+/**
+ * The text.
+ */
+text: string, } | { "kind": "media" } & Media | { "kind": "toolResult" } & ToolResult | { "kind": "assistantText" } & AssistantText | { "kind": "reasoning" } & Reasoning | { "kind": "toolCall" } & ToolCall;

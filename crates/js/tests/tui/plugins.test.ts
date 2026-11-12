@@ -15,8 +15,8 @@ const LISTED: readonly ManagedPlugin[] = [
   { item: SOURCE, name: "clock", loaded: true, state: "installed", commit: OLD },
   { item: "./notes", name: "notes", loaded: true, state: "local" },
   { item: "https://h/tools", name: "tools", loaded: false, state: "installed", commit: OLD },
-  { item: "https://h/weather", loaded: false, state: "not_locked" },
-  { item: "https://h/maps", loaded: false, state: "not_installed", commit: NEW },
+  { item: "https://h/weather", loaded: false, state: "notLocked" },
+  { item: "https://h/maps", loaded: false, state: "notInstalled", commit: NEW },
 ];
 
 const CHANGE: PluginChange = {
@@ -24,7 +24,7 @@ const CHANGE: PluginChange = {
   source: { git: "https://h/r", folder: "plugins/clock" },
   old: OLD,
   new: NEW,
-  log: { commits: ["8d02e77 fix: 12h format", "5b1e0c3 feat: add seconds"] },
+  log: { kind: "commits", commits: ["8d02e77 fix: 12h format", "5b1e0c3 feat: add seconds"] },
 };
 
 /**
@@ -162,7 +162,7 @@ test("u reviews the new commits of the selected plugin, and enter writes them an
 
   equal([shows(reviewed, "clock  3f9c1a2 → 8d02e77"), shows(reviewed, "  8d02e77 fix: 12h format")], [true, true]);
   equal(shows(reviewed, "enter: write plugins.lock · esc: close"), true);
-  equal(fake.calls, ["list", 'check {"names":["clock"]}', "apply clock 8d02e77", "list"]);
+  equal(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply clock 8d02e77", "list"]);
   equal(shows(after, "Plugins · 5 · plugins.lock written: R reloads"), true);
   // The dashboard tells the result in its title, not in a notice.
   equal(notices, []);
@@ -234,7 +234,7 @@ test("/ finds a plugin by its name and selects it", async () => {
   frame.paste("tools");
   await press(frame, "enter", "u");
 
-  equal(fake.calls, ["list", 'check {"names":["tools"]}']);
+  equal(fake.calls, ["list", 'check {"kind":"names","names":["tools"]}']);
 });
 
 test("esc closes the review, stops its check, and keeps the lock", async () => {
@@ -249,7 +249,7 @@ test("esc closes the review, stops its check, and keeps the lock", async () => {
     [shows(checking, "the check of the Git plugins runs"), shows(closed, "the check of the Git plugins runs")],
     [true, false],
   );
-  equal(fake.calls, ['check "all"', "check stopped"]);
+  equal(fake.calls, ['check {"kind":"all"}', "check stopped"]);
   equal(notices, []);
 });
 
@@ -265,7 +265,7 @@ test("a check without a change says so, and enter writes nothing", async () => {
     [shows(reviewed, "each Git plugin is at the newest commit of its ref"), shows(reviewed, "esc: close")],
     [true, true],
   );
-  equal(fake.calls, ['check "all"']);
+  equal(fake.calls, ['check {"kind":"all"}']);
 });
 
 test("a check that fails closes the review and gives one error notice", async () => {
@@ -282,11 +282,11 @@ test("a check that fails closes the review and gives one error notice", async ()
 test("the arrow and page keys scroll a long review", async () => {
   using frame = createFrame({ width: 100, height: 20 });
   const commits = Array.from({ length: 30 }, (_, index) => `c${String(index).padStart(2, "0")} change ${index}`);
-  const fake = manager([{ ...CHANGE, log: { commits } }]);
+  const fake = manager([{ ...CHANGE, log: { kind: "commits", commits } }]);
   load(frame, fake.plugins);
 
   const top = await run(frame, "plugins:update");
-  const paged = await press(frame, "page_down");
+  const paged = await press(frame, "pagedown");
   const back = await press(frame, "up");
 
   equal([shows(top, "c00 change 0"), shows(top, "c20 change 20")], [true, false]);
@@ -313,7 +313,7 @@ test("the command update writes the chosen commits with a notice", async () => {
   await run(frame, "plugins:update");
   await press(frame, "enter");
 
-  equal(fake.calls, ['check "all"', "apply clock 8d02e77"]);
+  equal(fake.calls, ['check {"kind":"all"}', "apply clock 8d02e77"]);
   equal(notices, ["info plugins.lock written: run /reload to load the new commits"]);
 });
 

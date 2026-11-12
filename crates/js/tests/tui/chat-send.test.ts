@@ -16,7 +16,7 @@ function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
 /** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
 function accepted(id: number, content: Block[], source: "user" | "plugin" = "user"): SessionUpdate {
   return {
-    sessionUpdate: "input_accepted",
+    sessionUpdate: "inputAccepted",
     inputId: id,
     input:
       source === "user"
@@ -46,19 +46,15 @@ test("a saved choice skips the picker on the first send and sends the draft", as
     {
       model: { provider: "p", model: "m" },
       settings: {
-        maxOutputTokens: null,
-        reasoning: { thinking: null, effort: "high" },
-        temperature: null,
-        topP: null,
+        reasoning: { effort: "high" },
         toolChoice: "auto",
-        outputSchema: null,
       },
       cwd: "/launch",
     },
   ]);
   equal(
     [sessions.opened.map((open) => open.id), sessions.inputs, composerOf(chat).state.text],
-    [["s-new"], [[{ user_text: "hello" }]], ""],
+    [["s-new"], [[{ kind: "userText", text: "hello" }]], ""],
   );
   frame.draw();
   equal(JSON.parse(frame.snapshot()).tree.state.session, "s-new");
@@ -96,7 +92,7 @@ test("without a saved choice the first send asks for the model and level, and a 
   await waitForSettled();
   equal(
     [sessions.created.map((settings) => settings.settings.reasoning), sessions.inputs],
-    [[{ thinking: null, effort: "high" }], [[{ user_text: "hi" }]]],
+    [[{ effort: "high" }], [[{ kind: "userText", text: "hi" }]]],
   );
   equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
     model: { provider: "p", model: "m" },
@@ -127,15 +123,7 @@ for (const choice of [
     await waitForSettled();
     equal(
       [sessions.created.map((settings) => [settings.model, settings.settings.reasoning]), sessions.inputs],
-      [
-        [
-          [
-            { provider: "p", model: "m" },
-            { thinking: null, effort: null },
-          ],
-        ],
-        [[{ user_text: "hi" }]],
-      ],
+      [[[{ provider: "p", model: "m" }, {}]], [[{ kind: "userText", text: "hi" }]]],
     );
     equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
       model: { provider: "p", model: "m" },
@@ -190,7 +178,11 @@ test("a choice that does not save gives a notice and the send goes on", async ()
       sessions.inputs,
       chat.tui.status.list().some((item) => item.id === "chat:model"),
     ],
-    [["error the model choice did not load", "error the model choice did not save"], [[{ user_text: "hi" }]], false],
+    [
+      ["error the model choice did not load", "error the model choice did not save"],
+      [[{ kind: "userText", text: "hi" }]],
+      false,
+    ],
   );
 });
 
@@ -223,8 +215,8 @@ test("an accepted input followed by a failed turn does not come back", async () 
   frame.paste("go");
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.inputs, composerOf(chat).state.text], [[[{ user_text: "go" }]], ""]);
-  sessions.push(commit(2, [], { end: { failed: "boom" } }));
+  equal([sessions.inputs, composerOf(chat).state.text], [[[{ kind: "userText", text: "go" }]], ""]);
+  sessions.push(commit(2, [], { end: { kind: "failed", error: "boom" } }));
   await waitForSettled();
   frame.draw();
   equal([composerOf(chat).state.text, chat.notices], ["", []]);
@@ -242,7 +234,7 @@ test("a pane whose open failed opens its session again at the next send", async 
   await waitForSettled();
   equal(
     [sessions.opened.map((open) => open.id), sessions.inputs, chat.notices],
-    [["s1", "s1"], [[{ user_text: "again" }]], ["error the session s1 did not open: Error: busy"]],
+    [["s1", "s1"], [[{ kind: "userText", text: "again" }]], ["error the session s1 did not open: Error: busy"]],
   );
 });
 
@@ -304,7 +296,7 @@ test("the edges of a draft trim, and a paste over 300 characters shows a label a
   frame.paste("\n hi\n\nthere \n\n");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.inputs, [[{ user_text: "hi\n\nthere" }]]);
+  equal(sessions.inputs, [[{ kind: "userText", text: "hi\n\nthere" }]]);
   frame.paste("a".repeat(300));
   equal(composerOf(chat).state.spans, []);
   frame.key("ctrl+c");
@@ -312,7 +304,7 @@ test("the edges of a draft trim, and a paste over 300 characters shows a label a
   equal(rows(frame.frame).at(-2), "[Pasted text · 301 chars]");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.inputs.at(-1), [{ user_text: "b".repeat(301) }]);
+  equal(sessions.inputs.at(-1), [{ kind: "userText", text: "b".repeat(301) }]);
 });
 
 test("up in an empty composer shows the older messages of the user, down past the newest empties it, and an edit ends it", async () => {
@@ -320,7 +312,7 @@ test("up in an empty composer shows the older messages of the user, down past th
   const message = (seq: number, text: string, source: "user" | "plugin" = "user"): StoredEvent => ({
     seq,
     sessionUpdate: "commit",
-    commit: { replaced: null, blocks: [{ user_text: text }], answer: null, end: null },
+    commit: { blocks: [{ kind: "userText", text: text }] },
     consumed: [
       {
         id: seq,
@@ -362,7 +354,7 @@ test("up in an empty composer shows the older messages of the user, down past th
 test("ctrl+c clears the draft, then stops the turn, and esc drops the selection before it stops the turn", async () => {
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ assistant_text: { text: "hello" } }]),
+    commit(2, [{ kind: "assistantText", text: "hello" }]),
   ];
   using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions(saved);
@@ -386,12 +378,12 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
-  for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ assistant_text: { text: `reply ${seq}` } }]));
+  for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
   using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   const bottom = chat.transcript().scroll.state.top;
-  frame.key("page_up");
+  frame.key("pageup");
   assert(chat.transcript().scroll.state.top < bottom);
   frame.key("ctrl+home");
   equal(transcriptRows(frame)[1], " reply 2");
@@ -407,7 +399,7 @@ test("a refusal while the user browses the messages ends the browse, so down kee
     {
       seq: 2,
       sessionUpdate: "commit",
-      commit: { replaced: null, blocks: [{ user_text: "old" }], answer: null, end: null },
+      commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];
@@ -464,7 +456,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   await waitForSettled();
   equal(
     [sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.cwd]), sessions.inputs],
-    [[[{ provider: "p", model: "n" }, { thinking: null, effort: "low" }, "/launch"]], [[{ user_text: "hi" }]]],
+    [[[{ provider: "p", model: "n" }, { effort: "low" }, "/launch"]], [[{ kind: "userText", text: "hi" }]]],
   );
 });
 
@@ -490,7 +482,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   equal(sessions.changes, [
     {
       model: { provider: "p", model: "m" },
-      settings: { ...own.settings, reasoning: { thinking: null, effort: null } },
+      settings: { ...own.settings, reasoning: {} },
       cwd: "/session",
     },
   ]);
@@ -574,7 +566,7 @@ test("a question in the place of the composer hides the commands", async () => {
   frame.key("/ a l p");
   const before = listed();
   sessions.push({
-    sessionUpdate: "interaction_requested",
+    sessionUpdate: "interactionRequested",
     interactionId: 1,
     source: "guard",
     request: {
@@ -606,7 +598,10 @@ test("esc hides the commands until the draft changes, and a draft with no comman
   const path = listed();
   frame.key("enter");
   await waitForSettled();
-  equal([hidden, back, path, sessions.inputs], [[false, "/mo"], true, false, [[{ user_text: "/etc/hosts is wrong" }]]]);
+  equal(
+    [hidden, back, path, sessions.inputs],
+    [[false, "/mo"], true, false, [[{ kind: "userText", text: "/etc/hosts is wrong" }]]],
+  );
 });
 
 test("the commands of the chat are disabled in a pane of another plugin", async () => {
@@ -630,9 +625,9 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push(accepted(5, [{ user_text: "fix the test" }]));
-  sessions.push(accepted(6, [{ user_text: "CI failed" }], "plugin"));
-  sessions.push(accepted(7, [{ user_text: "and the docs\nthen push them" }]));
+  sessions.push(accepted(5, [{ kind: "userText", text: "fix the test" }]));
+  sessions.push(accepted(6, [{ kind: "userText", text: "CI failed" }], "plugin"));
+  sessions.push(accepted(7, [{ kind: "userText", text: "and the docs\nthen push them" }]));
   frame.draw();
   equal(rows(frame.frame).slice(3), [
     "",
@@ -652,12 +647,17 @@ test("up recalls the newest waiting message with its images, the next up puts th
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  const media = { blob: { digest: "abc", len: 3 }, mime: "image/png" };
-  sessions.push(accepted(1, [{ user_text: "first" }]));
-  sessions.push(accepted(3, [{ user_text: "zero" }]));
-  sessions.push(accepted(5, [{ user_text: "one" }]));
-  sessions.push(accepted(6, [{ user_text: "CI failed" }], "plugin"));
-  sessions.push(accepted(9, [{ user_text: "see " }, { media }]));
+  const media = { blob: { digest: "abc", len: 3 }, mimeType: "image/png" };
+  sessions.push(accepted(1, [{ kind: "userText", text: "first" }]));
+  sessions.push(accepted(3, [{ kind: "userText", text: "zero" }]));
+  sessions.push(accepted(5, [{ kind: "userText", text: "one" }]));
+  sessions.push(accepted(6, [{ kind: "userText", text: "CI failed" }], "plugin"));
+  sessions.push(
+    accepted(9, [
+      { kind: "userText", text: "see " },
+      { kind: "media", ...media },
+    ]),
+  );
   frame.key("up");
   await waitForSettled();
   const recalled = draft(composerOf(chat).state);
@@ -694,8 +694,8 @@ test("a message that a turn took stays sent and the next up recalls an older one
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push(accepted(3, [{ user_text: "zero" }]));
-  sessions.push(accepted(5, [{ user_text: "one" }]));
+  sessions.push(accepted(3, [{ kind: "userText", text: "zero" }]));
+  sessions.push(accepted(5, [{ kind: "userText", text: "one" }]));
   sessions.state.removed = false;
   frame.key("up");
   await waitForSettled();
@@ -719,7 +719,7 @@ test("a pane close during a recall leaves the composer and gives no notice", asy
   frame.start();
   await waitForSettled();
   const composer = composerOf(chat);
-  sessions.push(accepted(5, [{ user_text: "one" }]));
+  sessions.push(accepted(5, [{ kind: "userText", text: "one" }]));
   const { promise, resolve } = Promise.withResolvers<void>();
   sessions.state.removal = promise;
   frame.key("up");
@@ -735,7 +735,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
     {
       seq: 2,
       sessionUpdate: "commit",
-      commit: { replaced: null, blocks: [{ user_text: "old" }], answer: null, end: null },
+      commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
   ];
@@ -745,7 +745,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
   frame.start();
   await waitForSettled();
   frame.key("up");
-  sessions.push(accepted(7, [{ user_text: "wait" }]));
+  sessions.push(accepted(7, [{ kind: "userText", text: "wait" }]));
   frame.key("up");
   await waitForSettled();
   const browsed = [composerOf(chat).state.text, [...sessions.removals]];
@@ -765,7 +765,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
     [3, "a"],
     [5, "b"],
   ] as const)
-    sessions.push(accepted(id, [{ user_text: text }]));
+    sessions.push(accepted(id, [{ kind: "userText", text: text }]));
   frame.draw();
   const strip = rows(frame.frame).slice(0, 2);
   sessions.state.removal = Promise.reject(new Error("disk"));
@@ -787,10 +787,13 @@ test("a send after a close of the session by another client opens the session ag
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.opened.map((open) => open.id), sessions.inputs], [["s1", "s1"], [[{ user_text: "hi" }]]]);
+  equal(
+    [sessions.opened.map((open) => open.id), sessions.inputs],
+    [["s1", "s1"], [[{ kind: "userText", text: "hi" }]]],
+  );
 });
 
-const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mime: "image/png" as const });
+const PNG = Object.freeze({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/png" as const });
 
 test("ctrl+v puts the image of the clipboard at the caret with the next number, and a send keeps the order", async () => {
   using frame = createFrame({ width: 40, height: 6 }, undefined, { cwd: "/w", session: "s1" });
@@ -808,7 +811,7 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
   const shown = draft(composerOf(chat).state);
   frame.key("enter");
   await waitForSettled();
-  const media = (digest: string) => ({ media: { blob: { digest, len: 3 }, mime: "image/png" } });
+  const media = (digest: string) => ({ kind: "media", blob: { digest, len: 3 }, mimeType: "image/png" });
   equal(
     [shown, sessions.blobs, sessions.inputs],
     [
@@ -823,7 +826,7 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
         [1, 2, 3],
         [1, 2, 3],
       ],
-      [[{ user_text: "see " }, media("d1"), { user_text: " and " }, media("d2")]],
+      [[{ kind: "userText", text: "see " }, media("d1"), { kind: "userText", text: " and " }, media("d2")]],
     ],
   );
 });
@@ -913,7 +916,7 @@ test("text typed while the first send sets up the session goes with the message"
   frame.paste("test");
   resolve(CATALOG);
   await waitForSettled();
-  equal(sessions.inputs, [[{ user_text: "fix the test" }]]);
+  equal(sessions.inputs, [[{ kind: "userText", text: "fix the test" }]]);
 });
 
 test("ctrl+k m after a failed open gives the notice of the open only", async () => {

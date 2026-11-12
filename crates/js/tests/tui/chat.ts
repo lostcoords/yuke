@@ -46,12 +46,8 @@ interface Opened {
 export const SETTINGS: SessionSettings = {
   model: { provider: "p", model: "m" },
   settings: {
-    maxOutputTokens: null,
-    reasoning: { thinking: null, effort: null },
-    temperature: null,
-    topP: null,
+    reasoning: {},
     toolChoice: "auto",
-    outputSchema: null,
   },
   cwd: "/w",
 };
@@ -61,7 +57,7 @@ export function commit(seq: number, blocks: Block[], fields: Partial<Commit> = {
   return {
     seq,
     sessionUpdate: "commit",
-    commit: { replaced: null, blocks, answer: null, end: null, ...fields },
+    commit: { blocks, ...fields },
     consumed: [],
   };
 }
@@ -69,7 +65,7 @@ export function commit(seq: number, blocks: Block[], fields: Partial<Commit> = {
 /** A session with the settings event 1, then a reply `reply <seq>` in each event up to `last`. */
 export function replies(last: number): StoredEvent[] {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
-  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ assistant_text: { text: `reply ${seq}` } }]));
+  for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
   return saved;
 }
 
@@ -204,7 +200,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         async removeInput(inputId: number) {
           removals.push(inputId);
           await state.removal;
-          if (state.removed) deliver(id, { sessionUpdate: "input_removed", inputId });
+          if (state.removed) deliver(id, { sessionUpdate: "inputRemoved", inputId });
           return state.removed;
         },
         async putBlob(bytes: Uint8Array) {
@@ -216,7 +212,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           if (state.refuseAnswer) throw new Error(`no open question ${interactionId}`);
           responses.push([interactionId, response]);
           // As the host does, the first answer closes the question for each handle, later through the event feed.
-          queueMicrotask(() => deliver(id, { sessionUpdate: "interaction_closed", interactionId }));
+          queueMicrotask(() => deliver(id, { sessionUpdate: "interactionClosed", interactionId }));
         },
       });
     },
@@ -285,17 +281,17 @@ export const CATALOG = {
           id: "m",
           name: "M",
           reasoning: [
-            { level: "default", settings: { thinking: null, effort: null } },
-            { level: "off", settings: { thinking: "off", effort: null } },
-            { level: "high", settings: { thinking: null, effort: "high" } },
+            { level: "default", settings: {} },
+            { level: "off", settings: { thinking: "off" } },
+            { level: "high", settings: { effort: "high" } },
           ],
         },
         {
           id: "n",
           name: "N",
           reasoning: [
-            { level: "default", settings: { thinking: null, effort: null } },
-            { level: "low", settings: { thinking: null, effort: "low" } },
+            { level: "default", settings: {} },
+            { level: "low", settings: { effort: "low" } },
           ],
         },
       ],

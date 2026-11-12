@@ -75,7 +75,7 @@ fn settings(place: &Place) -> SessionSettings {
             provider: "minimax".to_owned(),
             model: "MiniMax-M3".to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: place.work.clone(),
     }
 }
@@ -114,7 +114,7 @@ async fn a_rename_keeps_a_running_turn_and_also_works_after_the_session_closes()
 
     let running = sessions.get(id).await.unwrap();
     assert_eq!(running.session.title.as_deref(), Some("Login fix"));
-    assert_eq!(running.activity, SessionActivity::Running);
+    assert_eq!(running.state, SessionState::Running);
     sessions.close(id).await.unwrap();
     sessions
         .rename(id, SessionTitle::new("Saved login fix").unwrap())
@@ -122,7 +122,7 @@ async fn a_rename_keeps_a_running_turn_and_also_works_after_the_session_closes()
         .unwrap();
     let closed = sessions.get(id).await.unwrap();
     assert_eq!(closed.session.title.as_deref(), Some("Saved login fix"));
-    assert_eq!(closed.activity, SessionActivity::Closed);
+    assert_eq!(closed.state, SessionState::Closed);
     drop(attachment);
     app.shutdown().await;
 }
@@ -437,7 +437,7 @@ async fn a_countdown_starts_when_idle_is_reported_not_when_its_task_first_runs()
     sessions.report_idle(id);
     closed(sessions, id, GRACE + Duration::from_secs(1)).await;
 
-    assert_eq!(sessions.get(id).await.unwrap().activity, SessionActivity::Closed);
+    assert_eq!(sessions.get(id).await.unwrap().state, SessionState::Closed);
     app.shutdown().await;
 }
 
@@ -455,7 +455,7 @@ async fn a_repeated_idle_report_does_not_extend_the_countdown() {
     sessions.report_idle(id);
     closed(sessions, id, GRACE / 2 + Duration::from_secs(1)).await;
 
-    assert_eq!(sessions.get(id).await.unwrap().activity, SessionActivity::Closed);
+    assert_eq!(sessions.get(id).await.unwrap().state, SessionState::Closed);
     app.shutdown().await;
 }
 

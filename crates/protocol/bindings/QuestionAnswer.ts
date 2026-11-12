@@ -15,4 +15,4 @@ values: Array<string>,
 /**
  * The text that the user typed, only for a question with `other`.
  */
-other?: string | null, };
+other?: string, };

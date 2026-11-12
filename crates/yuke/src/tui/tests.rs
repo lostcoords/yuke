@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use yuke_ai::scripted::ScriptedTransport;
 use yuke_js::{Display, Input, Interface, Startup};
-use yuke_protocol::{ModelReference, SessionActivity, SessionId, SessionSettings, SessionTitle};
+use yuke_protocol::{ModelReference, SessionId, SessionSettings, SessionState, SessionTitle};
 use yuke_term::{Code, Event, Key, Size};
 
 use super::{Notices, reload};
@@ -285,7 +285,7 @@ async fn saved_session(place: &Place) -> SessionId {
                     provider: "minimax".to_owned(),
                     model: "MiniMax-M3".to_owned(),
                 },
-                settings: yuke_ai::Settings::new(),
+                settings: yuke_ai::RequestSettings::new(),
                 cwd: place.work.clone(),
             },
             None,
@@ -310,7 +310,7 @@ async fn the_start_pane_opens_the_session_of_the_startup() {
     let app = started_on(&place, &display, Some(id)).await;
 
     output.contains(&format!("opened {id}")).await;
-    assert_eq!(app.sessions().get(id).await.unwrap().activity, SessionActivity::Idle);
+    assert_eq!(app.sessions().get(id).await.unwrap().state, SessionState::Idle);
     app.shutdown().await;
 }
 

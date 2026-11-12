@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use yuke_ai::scripted::{ScriptedTransport, overloaded_reply, text_reply, tool_reply};
-use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Request, Settings, Target, ToolDefinition, Wire};
+use yuke_ai::{AnthropicWire, Block, Content, FinishReason, Request, RequestSettings, Target, ToolDefinition, Wire};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, Hooks, Model, RoundPlan, RoundStart, Toolset};
 use yuke_testing::{definition, model, model_of, target};
@@ -10,7 +10,7 @@ use yuke_testing::{definition, model, model_of, target};
 use crate::support::{Recorder, Script, block_on};
 
 /// The model, the settings, the system prompt, the tools, and the context of the newest round start.
-type Start = (Model, Settings, String, Vec<ToolDefinition>, Vec<Block>);
+type Start = (Model, RequestSettings, String, Vec<ToolDefinition>, Vec<Block>);
 
 /// Keeps the newest round start.
 #[derive(Default)]
@@ -48,7 +48,7 @@ fn a_request_from_a_round_start_repeats_the_round_request_and_its_cache_marker_a
     });
     let mut toolset = Toolset::new();
     toolset.add(definition("echo"), Recorder::default()).unwrap();
-    let settings = Settings::new().temperature(0.25);
+    let settings = RequestSettings::new().temperature(0.25);
     let hooks = Newest::default();
     let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
     block_on(

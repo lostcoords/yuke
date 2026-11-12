@@ -342,7 +342,7 @@ mod tests {
     use crate::wire::testing::{TestBlobs, blob, replay};
     use crate::{
         AnthropicWire, BlobStore, ChatWire, CredentialHeader, Header, MaxTokensField, Media, OriginRef, Reasoning,
-        ReasoningReplayMode, ReplayKind, ResponsesDialect, ResponsesWire, Route, SEARCH_TOOL_NAME, Settings,
+        ReasoningReplayMode, ReplayKind, RequestSettings, ResponsesDialect, ResponsesWire, Route, SEARCH_TOOL_NAME,
         ThinkingFormat, ToolCall, ToolDefinition, ToolResult,
     };
 
@@ -729,7 +729,7 @@ mod tests {
         for wire in ALL_WIRES {
             let mut encoder = Encoder::new();
             for blocks in rounds {
-                let settings = Settings::new().max_output_tokens(8);
+                let settings = RequestSettings::new().max_output_tokens(8);
                 let request = Request::new(blocks).blobs(&TestBlobs).system("s").settings(&settings);
                 encode_checked(&mut encoder, "m", wire, request).unwrap();
             }
@@ -895,8 +895,8 @@ mod tests {
                 let target = target_of("m", wire);
                 let mut encoder = Encoder::new();
                 for request in [
-                    Request::new(&blocks).settings(&Settings::new().temperature(value)),
-                    Request::new(&blocks).settings(&Settings::new().top_p(value)),
+                    Request::new(&blocks).settings(&RequestSettings::new().temperature(value)),
+                    Request::new(&blocks).settings(&RequestSettings::new().top_p(value)),
                 ] {
                     assert!(matches!(
                         encoder.encode(&target, &Credential::None, request),
@@ -907,7 +907,7 @@ mod tests {
                     .encode(
                         &target,
                         &Credential::None,
-                        Request::new(&blocks).settings(&Settings::new().temperature(0.5)),
+                        Request::new(&blocks).settings(&RequestSettings::new().temperature(0.5)),
                     )
                     .unwrap();
             }

@@ -73,7 +73,7 @@ test("the arrow and page keys scroll a body that scrolls", () => {
   frame.surface("test").tui.dialog({ body: lines(40), rows: 8 });
   frame.draw();
   const top = shows(frame, "line 0");
-  frame.key("page_down");
+  frame.key("pagedown");
   frame.draw();
   const paged = [shows(frame, "line 0"), shows(frame, "line 6")];
   frame.key("up");
@@ -112,6 +112,22 @@ test("a select gives the chosen item, and it shows the title", async () => {
   equal(await answer, items[1]);
   frame.draw();
   equal(shows(frame, "Pick one"), false);
+});
+
+test("a select shows its items in the order of its rank, with the rows of its render", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const items = [{ name: "first" }, { name: "second" }];
+  const answer = frame.surface("test").tui.select({
+    items,
+    label: (item) => item.name,
+    rank: (_query, all) => [...all].reverse().map((item) => ({ item })),
+    render: (match) => [{ segments: [{ text: `item ${match.item.name}` }], join: "\n" }],
+  });
+  frame.draw();
+  const shown = shows(frame, "item second");
+  frame.key("enter");
+
+  equal([shown, await answer], [true, items[1]]);
 });
 
 test("a select of two items with one label gives the chosen one", async () => {
@@ -184,7 +200,7 @@ test("a guard decides on a quit, and its disposer ends it", () => {
   const tui = frame.surface("test").tui;
   tui.keys.add("ctrl+q", "core:quit");
   let held: ((text?: string) => void) | undefined;
-  const end = tui.setQuitGuard((quit) => {
+  const end = tui.addQuitGuard((quit) => {
     held = quit;
   });
 
@@ -196,6 +212,29 @@ test("a guard decides on a quit, and its disposer ends it", () => {
   frame.key("ctrl+q");
 
   equal([asked, after, frame.quits], [0, 1, ["bye", undefined]]);
+});
+
+test("each quit guard asks in add order, and the quit writes the text of each", () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const first = frame.surface("first").tui;
+  const second = frame.surface("second").tui;
+  first.keys.add("ctrl+q", "core:quit");
+  const asked: string[] = [];
+  let held: ((text?: string) => void) | undefined;
+  first.addQuitGuard((quit) => {
+    asked.push("first");
+    held = quit;
+  });
+  second.addQuitGuard((quit) => {
+    asked.push("second");
+    quit("second text");
+  });
+
+  frame.key("ctrl+q");
+  const waiting = [[...asked], frame.quits.length];
+  held?.("first text");
+
+  equal([waiting, asked, frame.quits], [[["first"], 0], ["first", "second"], ["first text\nsecond text"]]);
 });
 
 test("a key of more than one stroke throws", () => {

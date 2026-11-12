@@ -1,19 +1,20 @@
 // `sideRequest` of a round event: the request of the round, with the context that the handler sees.
 
 import type { PluginSession } from "yuke:plugins";
-import type { Block, Settings } from "yuke:protocol";
+import type { Block, RequestSettings } from "yuke:protocol";
 import { createHost, equal, type ModelRequest, type Reply, rejects, reply, test, waitForSettled } from "yuke:test";
 
 /** The context of the round: an input, an answer, and a second input. */
-const context: Block[] = [{ user_text: "one" }, { assistant_text: { text: "two" } }, { user_text: "three" }];
+const context: Block[] = [
+  { kind: "userText", text: "one" },
+  { kind: "assistantText", text: "two" },
+  { kind: "userText", text: "three" },
+];
 
-const settings: Settings = {
-  maxOutputTokens: null,
-  reasoning: { thinking: null, effort: null },
+const settings: RequestSettings = {
+  reasoning: {},
   temperature: 0.5,
-  topP: null,
   toolChoice: "auto",
-  outputSchema: null,
 };
 
 const echo = { name: "echo", description: "Echo the text.", inputSchema: '{"type":"object"}', deferLoading: false };
@@ -47,7 +48,7 @@ function only(requests: readonly ModelRequest[]): ModelRequest {
 test("a side request repeats the round with the context that the handler sees, then the prompt", async () => {
   let answer: unknown;
   const first: PluginSession = (s) => {
-    s.addHook("round.before", () => ({ replace: { head: [{ user_text: "summary" }], keep: 1 } }));
+    s.addHook("round.before", () => ({ replace: { head: [{ kind: "userText", text: "summary" }], keep: 1 } }));
   };
   const second: PluginSession = (s) => {
     s.addHook("round.before", async (event) => {

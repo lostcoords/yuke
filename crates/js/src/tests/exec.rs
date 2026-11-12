@@ -32,7 +32,7 @@ fn job_id(started: &str) -> String {
 /// The text that the model reads for `input`.
 fn model_text(input: &Input) -> String {
     match input.model_content() {
-        [Block::UserText(text)] => text.clone(),
+        [Block::UserText { text }] => text.clone(),
         other => panic!("the input is not one text: {other:?}"),
     }
 }

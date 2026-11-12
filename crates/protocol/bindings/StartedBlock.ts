@@ -3,7 +3,7 @@
 /**
  * What a block holds when it starts. A refusal is the text of a model that declined the request.
  */
-export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind": "reasoning" } | { "kind": "tool_call", 
+export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind": "reasoning" } | { "kind": "toolCall", 
 /**
  * The name of the tool, or an empty name when the provider has not named it yet. The block stop gives
  * the final call.

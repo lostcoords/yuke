@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct ListCatalogParams {
-    /// List every provider with its state. None or false lists only the providers that are ready now.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub all: Option<bool>,
+    /// List every provider with its state. A missing flag is `false`: the list holds only the providers that are
+    /// ready now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub all: bool,
 }
 
 /// The result of `catalog/list`.
@@ -41,7 +43,7 @@ pub struct ProviderInfo {
 /// credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProviderState {
     /// The provider can serve a request.
     Ready {
@@ -60,7 +62,7 @@ pub enum ProviderState {
 /// The credential that a ready provider uses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ProviderCredential {
     /// The provider takes no credential.
     None,
@@ -77,7 +79,7 @@ pub enum ProviderCredential {
 
 /// A model of a provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     /// The model half of a model reference.
@@ -118,7 +120,7 @@ pub struct ReasoningChoice {
 /// A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ReasoningLevel {
     /// No reasoning control, so the endpoint chooses.
     Default,
@@ -147,7 +149,7 @@ impl std::str::FromStr for ReasoningLevel {
 
 /// The prices of one band, in US dollars per million tokens. A missing price is unknown, never zero.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct PriceBand {
     /// The smallest prompt that this band prices. The prompt counts every input token, the cached ones too.
@@ -172,7 +174,7 @@ pub struct PriceBand {
 /// A kind of content that a model reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum Modality {
     /// Text.
     Text,

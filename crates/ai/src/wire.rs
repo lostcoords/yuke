@@ -18,9 +18,11 @@ use json::JsonWriter;
 fn writes(target: &Target, block: &Block) -> bool {
     match block {
         Block::Reasoning(reasoning) => reasoning.replay_to(target).is_some(),
-        Block::UserText(_) | Block::AssistantText(_) | Block::Media(_) | Block::ToolCall(_) | Block::ToolResult(_) => {
-            true
-        }
+        Block::UserText { .. }
+        | Block::AssistantText(_)
+        | Block::Media(_)
+        | Block::ToolCall(_)
+        | Block::ToolResult(_) => true,
     }
 }
 

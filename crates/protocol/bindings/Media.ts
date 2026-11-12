@@ -13,7 +13,7 @@ blob: Blob,
 /**
  * The IANA media type, such as `image/png` or `application/pdf`.
  */
-mime: string, 
+mimeType: string, 
 /**
  * The name a provider requires beside file bytes. An image needs none.
  */

@@ -1,7 +1,7 @@
 // The look of the transcript from a plugin: `chat.setPresentation`, with one row that groups all tools.
 
 import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
-import type { StoredEvent, ToolCall } from "yuke:protocol";
+import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
 import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument, View } from "yuke:tui";
@@ -49,14 +49,14 @@ class Grouped implements ChatPresentation {
 
 /** A session with one read call and its result for each of `paths`. */
 function reads(...paths: string[]): StoredEvent[] {
-  const hints = { title: null, subject: { argument: "path", kind: "file" as const }, preview: "none" as const };
+  const hints = { subject: { argument: "path", kind: "file" as const }, preview: "none" as const };
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
   for (const [at, path] of paths.entries()) {
     const callId = `c${at}`;
-    const call = { tool_call: { callId, name: "read", arguments: JSON.stringify({ path }) } };
-    const display = { calls: [{ blockIndex: 0, hints, folder: "/w" }], results: [] };
+    const call: Block = { kind: "toolCall", callId, name: "read", arguments: JSON.stringify({ path }) };
+    const display = { calls: [{ blockIndex: 0, hints, cwd: "/w" }], results: [] };
     saved.push(commit(saved.length + 1, [call], { display }));
-    const result = { tool_result: { callId, content: "text", isError: false } };
+    const result: Block = { kind: "toolResult", callId, content: "text", isError: false };
     saved.push(commit(saved.length + 1, [result], { display: { calls: [], results: [] } }));
   }
   return saved;
@@ -64,9 +64,9 @@ function reads(...paths: string[]): StoredEvent[] {
 
 /** The first tool call of the commit `event`. */
 function toolCall(event: Extract<StoredEvent, { sessionUpdate: "commit" }>): ToolCall {
-  const block = event.commit.blocks.find((candidate) => "tool_call" in candidate);
-  assert(block !== undefined && "tool_call" in block, "the commit has no tool call");
-  return block.tool_call;
+  const block = event.commit.blocks.find((candidate) => candidate.kind === "toolCall");
+  assert(block?.kind === "toolCall", "the commit has no tool call");
+  return { callId: block.callId, name: block.name, arguments: block.arguments };
 }
 
 /** The rows of the transcript of `frame` that have text. */
@@ -147,8 +147,8 @@ test("a turn calls the presentation again each second only while a tool runs", a
   nextSecond();
   const idle = nextSecond();
   sessions.push({
-    sessionUpdate: "tool_started",
-    execution: { eventNumber: called.seq, blockIndex: 0 },
+    sessionUpdate: "toolStarted",
+    position: { eventNumber: called.seq, blockIndex: 0 },
     call: toolCall(called),
   });
   frame.draw();
@@ -166,6 +166,18 @@ test("a disposer of an old factory leaves the look of a later factory", async ()
   const removeOld = chat.chat.setPresentation(() => new ChatDocument("old"));
   chat.chat.setPresentation((options) => new Grouped(options));
   removeOld();
+  frame.start();
+  await waitForSettled();
+  frame.draw();
+  equal(shown(frame), ["● tools: 1"]);
+});
+
+test("a disposer of a later factory brings back the look of the factory before it", async () => {
+  using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  const chat = await loadChat(frame, fakeSessions(reads("a")));
+  chat.chat.setPresentation((options) => new Grouped(options));
+  const removeNew = chat.chat.setPresentation(() => new ChatDocument("new"));
+  removeNew();
   frame.start();
   await waitForSettled();
   frame.draw();

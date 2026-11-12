@@ -5,6 +5,6 @@
  */
 export type LoginOutcome = { "kind": "succeeded" } | { "kind": "cancelled" } | { "kind": "failed", 
 /**
- * The text of the failure. It holds no token.
+ * Why. The text holds no token.
  */
-message: string, };
+error: string, };

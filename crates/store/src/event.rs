@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use yuke_agent::StoreError;
-use yuke_engine::{Answer, Commit, Outcome, Replaced, TurnEnd};
+use yuke_engine::{Answer, Commit, Replaced, TurnEnd};
 use yuke_protocol::{EventNumber, SessionEvent, StoredEvent};
 use yuke_sql::rusqlite;
 
@@ -76,12 +76,14 @@ pub(crate) fn turn_end(
 ) -> rusqlite::Result<Option<TurnEnd>> {
     Ok(match end_kind {
         None => None,
-        Some(COMPLETED) => Some(TurnEnd::Outcome(Outcome::Completed {
+        Some(COMPLETED) => Some(TurnEnd::Completed {
             finish_reason: finish_reason(&required(end_finish_reason, "end_finish_reason")?, "end_finish_reason")?,
-        })),
-        Some(STOPPED) => Some(TurnEnd::Outcome(Outcome::Stopped)),
-        Some(CANCELLED) => Some(TurnEnd::Outcome(Outcome::Cancelled)),
-        Some(FAILED) => Some(TurnEnd::Failed(required(end_message, "end_message")?)),
+        }),
+        Some(STOPPED) => Some(TurnEnd::Stopped),
+        Some(CANCELLED) => Some(TurnEnd::Cancelled),
+        Some(FAILED) => Some(TurnEnd::Failed {
+            error: required(end_message, "end_message")?,
+        }),
         Some(_) => return Err(invalid("end_kind")),
     })
 }

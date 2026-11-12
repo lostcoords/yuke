@@ -122,7 +122,7 @@ declare module "yuke:chat" {
      * Store `image` in the session of `handle()`, then put it at the caret of that time as `[image N]`. A send gives it
      * as a media block. `undefined` from `handle()` puts nothing, and a failed store rejects.
      */
-    attachImage(image: { readonly bytes: Uint8Array; readonly mime: string }): Promise<void>;
+    attachImage(image: { readonly bytes: Uint8Array; readonly mimeType: string }): Promise<void>;
     /** Put `draft` in the editor, and end a browse. A running recall puts its message above `draft` when it ends. */
     setDraft(draft: EditorState): void;
   }
@@ -440,14 +440,14 @@ declare module "yuke:chat" {
      */
     readonly addReadOnly: (source: (session: SessionId) => ChatReadOnly | undefined) => () => void;
     /**
-     * Replace the frame around the input of each chat pane. The last call wins. A disposer restores the default only if
-     * its frame is current.
+     * Replace the frame around the input of each chat pane. The last call wins, and the returned function brings
+     * back the frame before it.
      */
     readonly setComposerFrame: (frame: ComposerFrame) => () => void;
     /**
      * Replace the presentation of the transcript in each chat pane. A pane calls `factory` each time that it creates a
-     * presentation, also for one session. The last call wins. A disposer restores the default only if its factory is
-     * current.
+     * presentation, also for one session. The last call wins, and the returned function brings back the factory
+     * before it.
      *
      * ```ts
      * chat.setPresentation((options) => new GroupedTools(options.id, options.folds));
@@ -457,8 +457,8 @@ declare module "yuke:chat" {
     /**
      * Replace the view that each chat pane shows while its transcript is empty: a pane without a session, or a session
      * without history, while no message waits and no turn runs. The view draws over the transcript area, and it reads
-     * its size from the canvas. `create` runs once per pane, when the pane first shows the view. The last call wins. A
-     * disposer restores the default only if its view is current. The default shows the icon, the version, the model,
+     * its size from the canvas. `create` runs once per pane, when the pane first shows the view. The last call wins,
+     * and the returned function brings back the view before it. The default shows the icon, the version, the model,
      * the folder, and the way to start. Terminal.app shows the lines without the icon. The option `emptyView: false` of
      * the chat turns the header off.
      *

@@ -5,6 +5,7 @@ description = "Assistant turns through model and tool calls."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [features]
 # Derive the TypeScript declarations of the serde types through ts-rs. The binding test of yuke-protocol turns it on.

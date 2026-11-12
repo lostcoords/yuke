@@ -4,7 +4,7 @@ use std::error::Error;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value};
-use yuke_ai::{Block, FinishReason, Settings, ToolDefinition, Usage};
+use yuke_ai::{Block, FinishReason, RequestSettings, ToolDefinition, Usage};
 use yuke_engine::{CancellationToken, Model};
 use yuke_protocol::{ModelReference, SessionId};
 
@@ -18,7 +18,7 @@ pub struct CompleteRequest {
     /// The input of the request, oldest first.
     pub blocks: Vec<Block>,
     /// The settings of the request.
-    pub settings: Settings,
+    pub settings: RequestSettings,
     /// The media that follow `blocks` in the input, in order.
     pub attachments: Vec<Attachment>,
 }
@@ -43,7 +43,7 @@ pub struct SideRequest {
     /// The tool definitions of the round. The request offers them, and no tool runs.
     pub tools: Vec<ToolDefinition>,
     /// The settings of the round, with the output limit of the caller.
-    pub settings: Settings,
+    pub settings: RequestSettings,
     /// The session of the round. Its media store serves the media blocks, and its id is the cache key.
     pub session_id: SessionId,
     /// The blocks of the round, oldest first. The cache marker goes on them, as in the round.
@@ -90,19 +90,52 @@ pub trait Models {
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
 }
 
-/// `base` with the fields of `changes`, a part of the JSON of [`Settings`]. A field replaces the whole value of `base`.
+/// The JSON fields of [`RequestSettings`].
+const SETTINGS_FIELDS: [&str; 6] = [
+    "maxOutputTokens",
+    "reasoning",
+    "temperature",
+    "topP",
+    "toolChoice",
+    "outputSchema",
+];
+
+/// `base` with the fields of `changes`, a part of the JSON of [`RequestSettings`]. A field replaces the whole value of `base`.
 ///
 /// # Errors
 ///
 /// Returns a text when `changes` has an unknown field, or a value of another shape.
-pub(crate) fn merge_settings(base: &Settings, changes: Map<String, Value>) -> Result<Settings, String> {
+pub(crate) fn merge_settings(base: &RequestSettings, changes: Map<String, Value>) -> Result<RequestSettings, String> {
+    // The wire ignores an unknown field for compatibility, but a plugin learns of its misspelt setting.
+    if let Some(unknown) = changes.keys().find(|key| !SETTINGS_FIELDS.contains(&key.as_str())) {
+        return Err(format!("the settings have the unknown field '{unknown}'"));
+    }
     let mut settings = serde_json::to_value(base).map_err(|error| error.to_string())?;
     if let Some(fields) = settings.as_object_mut() {
-        // serde skips an unknown field, so a misspelt setting would change nothing without this check.
-        if let Some(unknown) = changes.keys().find(|key| !fields.contains_key(*key)) {
-            return Err(format!("the settings have the unknown field '{unknown}'"));
-        }
         fields.extend(changes);
     }
     serde_json::from_value(settings).map_err(|error| format!("the settings are not valid: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use yuke_ai::{OutputSchema, RequestSettings};
+
+    use super::SETTINGS_FIELDS;
+
+    // The check of a plugin answer must know each field of the settings, and no other.
+    #[test]
+    fn the_settings_fields_are_the_fields_of_full_settings() {
+        let full = RequestSettings::new()
+            .max_output_tokens(1)
+            .temperature(0.5)
+            .top_p(0.5)
+            .output_schema(OutputSchema::new("{}"));
+        let json = serde_json::to_value(full).unwrap();
+        let mut fields: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut expected = SETTINGS_FIELDS.to_vec();
+        fields.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(fields, expected);
+    }
 }

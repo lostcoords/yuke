@@ -1,7 +1,7 @@
 //! Ask a question and print the model's answer.
 #![expect(clippy::print_stdout, reason = "an example prints its answer")]
 
-use yuke_ai::{Block, Effort, ReplyOptions, Request, Settings};
+use yuke_ai::{Block, Effort, ReplyOptions, Request, RequestSettings};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +11,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http = yuke_http::Client::new(yuke_http::ClientOptions::new("ai-example"))?;
 
     let blocks = [Block::user_text("Explain Rust in one sentence.")];
-    let settings = Settings::new().max_output_tokens(4096).effort(Effort::Low);
+    let settings = RequestSettings::new().max_output_tokens(4096).effort(Effort::Low);
     let request = Request::new(&blocks).settings(&settings);
     let response = yuke_ai::generate(&http, &target, &credential, request, ReplyOptions::default()).await?;
     println!("{}", response.completion.text());

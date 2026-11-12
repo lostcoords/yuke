@@ -15,7 +15,7 @@ use crate::{EncodeError, ParseError, Protocol, Target, ToolDefinition};
 /// produced the state. Only the encoder of that protocol writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum ReplayKind {
     /// The `signature` of an Anthropic thinking block. A compatible host may send an empty one.
@@ -263,11 +263,14 @@ impl Role {
 /// The serializer groups the blocks into the messages of each protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum Block {
     /// User text.
-    UserText(String),
+    UserText {
+        /// The text.
+        text: String,
+    },
     /// A user attachment.
     Media(Media),
     /// The result of a tool call.
@@ -283,7 +286,7 @@ pub enum Block {
 impl Block {
     /// A block of user text.
     pub fn user_text(text: impl Into<String>) -> Self {
-        Block::UserText(text.into())
+        Block::UserText { text: text.into() }
     }
 
     /// A block of assistant text with no phase.
@@ -294,7 +297,7 @@ impl Block {
     /// The role the kind fixes.
     pub fn role(&self) -> Role {
         match self {
-            Self::UserText(_) | Self::Media(_) | Self::ToolResult(_) => Role::User,
+            Self::UserText { .. } | Self::Media(_) | Self::ToolResult(_) => Role::User,
             Self::AssistantText(_) | Self::Reasoning(_) | Self::ToolCall(_) => Role::Assistant,
         }
     }
@@ -308,14 +311,13 @@ impl From<ToolResult> for Block {
 
 /// Assistant text, and the phase that the provider gave it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantText {
     /// The text.
     pub text: String,
     /// The phase of the text, or no phase when the provider sent none. The encoder sends the phase back to OpenAI
     /// Responses.
-    // ts-rs marks the field optional only with `default` beside `skip_serializing_if`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<TextPhase>,
 }
@@ -334,7 +336,7 @@ impl AssistantText {
 /// the phase of each earlier output item back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum TextPhase {
     /// A note while the model works, such as the text before a tool call.
@@ -344,11 +346,20 @@ pub enum TextPhase {
 }
 
 impl TextPhase {
-    /// The wire name of the phase.
+    /// The name of the phase at OpenAI Responses.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Commentary => "commentary",
             Self::FinalAnswer => "final_answer",
+        }
+    }
+
+    /// The phase of the OpenAI Responses name `name`, or `None` for a name that the library does not know.
+    pub fn from_responses(name: &str) -> Option<Self> {
+        match name {
+            "commentary" => Some(Self::Commentary),
+            "final_answer" => Some(Self::FinalAnswer),
+            _ => None,
         }
     }
 }
@@ -362,7 +373,7 @@ pub struct Media {
     /// element.
     pub blob: Blob,
     /// The IANA media type, such as `image/png` or `application/pdf`.
-    pub mime: String,
+    pub mime_type: String,
     /// The name a provider requires beside file bytes. An image needs none.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub filename: String,
@@ -373,7 +384,7 @@ impl Media {
     pub fn new(blob: Blob, mime: impl Into<String>) -> Self {
         Media {
             blob,
-            mime: mime.into(),
+            mime_type: mime.into(),
             filename: String::new(),
         }
     }
@@ -381,7 +392,7 @@ impl Media {
     /// The kind its media type names, in any letter case. A protocol writes a different part for each kind.
     pub fn kind(&self) -> Modality {
         // A media type ignores the letter case (RFC 6838).
-        let mime = self.mime.to_ascii_lowercase();
+        let mime = self.mime_type.to_ascii_lowercase();
         let mime = mime.as_str();
         if mime.starts_with("image/") {
             Modality::Image
@@ -402,13 +413,12 @@ impl Media {
 /// Reasoning text, and the provider state that returns with it. A request carries the state only to the origin that
 /// produced it, in that protocol. Elsewhere the block drops, except where a dialect replays the text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct Reasoning {
     /// The reasoning text.
     pub text: String,
     /// `None` for text alone: a block that never finished, or one whose provider sent no state.
-    // ts-rs marks the field optional only with `default` beside `skip_serializing_if`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<ReasoningReplay>,
 }
@@ -579,18 +589,18 @@ mod tests {
             data: "sig".to_owned(),
         };
         let cases = [
-            (Block::user_text("hi"), r#"{"user_text":"hi"}"#.to_owned()),
-            (Block::assistant_text("ok"), r#"{"assistant_text":{"text":"ok"}}"#.to_owned()),
+            (Block::user_text("hi"), r#"{"kind":"userText","text":"hi"}"#.to_owned()),
+            (Block::assistant_text("ok"), r#"{"kind":"assistantText","text":"ok"}"#.to_owned()),
             (
                 Block::AssistantText(AssistantText {
                     text: "ok".to_owned(),
                     phase: Some(TextPhase::FinalAnswer),
                 }),
-                r#"{"assistant_text":{"text":"ok","phase":"final_answer"}}"#.to_owned(),
+                r#"{"kind":"assistantText","text":"ok","phase":"finalAnswer"}"#.to_owned(),
             ),
             (
                 Block::Media(Media::new(blob, "image/png")),
-                format!(r#"{{"media":{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}}}"#),
+                format!(r#"{{"kind":"media","blob":{{"digest":"{digest}","len":3}},"mimeType":"image/png"}}"#),
             ),
             (
                 Block::Media(Media {
@@ -598,7 +608,7 @@ mod tests {
                     ..Media::new(blob, "application/pdf")
                 }),
                 format!(
-                    r#"{{"media":{{"blob":{{"digest":"{digest}","len":3}},"mime":"application/pdf","filename":"a.pdf"}}}}"#
+                    r#"{{"kind":"media","blob":{{"digest":"{digest}","len":3}},"mimeType":"application/pdf","filename":"a.pdf"}}"#
                 ),
             ),
             (
@@ -606,22 +616,22 @@ mod tests {
                     text: "think".to_owned(),
                     replay: None,
                 }),
-                r#"{"reasoning":{"text":"think"}}"#.to_owned(),
+                r#"{"kind":"reasoning","text":"think"}"#.to_owned(),
             ),
             (
                 Block::Reasoning(Reasoning {
                     text: "think".to_owned(),
                     replay: Some(replay),
                 }),
-                r#"{"reasoning":{"text":"think","replay":{"origin":{"model":"m","baseUrl":"https://h/v1"},"kind":"anthropic_signature","data":"sig"}}}"#.to_owned(),
+                r#"{"kind":"reasoning","text":"think","replay":{"origin":{"model":"m","baseUrl":"https://h/v1"},"kind":"anthropicSignature","data":"sig"}}"#.to_owned(),
             ),
             (
                 Block::ToolCall(ToolCall { call_id: "c1".to_owned(), name: "read".to_owned(), arguments: r#"{"path":"a"}"#.to_owned() }),
-                r#"{"tool_call":{"callId":"c1","name":"read","arguments":"{\"path\":\"a\"}"}}"#.to_owned(),
+                r#"{"kind":"toolCall","callId":"c1","name":"read","arguments":"{\"path\":\"a\"}"}"#.to_owned(),
             ),
             (
                 Block::ToolResult(ToolResult::success("c1", "text")),
-                r#"{"tool_result":{"callId":"c1","content":"text","isError":false}}"#.to_owned(),
+                r#"{"kind":"toolResult","callId":"c1","content":"text","isError":false}"#.to_owned(),
             ),
             (
                 Block::ToolResult(
@@ -630,7 +640,7 @@ mod tests {
                         .with_loaded(vec![ToolDefinition { name: "grep".to_owned(), description: "Search.".to_owned(), input_schema: "{}".to_owned(), defer_loading: false }.deferred()]),
                 ),
                 format!(
-                    r#"{{"tool_result":{{"callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mime":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true}}]}}}}"#
+                    r#"{{"kind":"toolResult","callId":"c1","content":"failed","isError":true,"media":[{{"blob":{{"digest":"{digest}","len":3}},"mimeType":"image/png"}}],"loaded":[{{"name":"grep","description":"Search.","inputSchema":"{{}}","deferLoading":true}}]}}"#
                 ),
             ),
         ];

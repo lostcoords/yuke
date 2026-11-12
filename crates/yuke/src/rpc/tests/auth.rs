@@ -183,16 +183,16 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
             "minimax".to_owned(),
             ready_with(json!({ "kind": "variable", "name": "MINIMAX_API_KEY" })),
         ),
-        ("openai".to_owned(), ready_with(json!({ "kind": "stored_api_key" }))),
+        ("openai".to_owned(), ready_with(json!({ "kind": "storedApiKey" }))),
         ("openai-codex".to_owned(), ready_with(json!({ "kind": "login" }))),
     ]);
     assert_eq!(provider_states(&ready), ready_states);
     let all_states = provider_states(&all);
     assert_eq!(
         all_states["anthropic"],
-        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
+        json!({ "kind": "needsApiKey", "variable": "ANTHROPIC_API_KEY" })
     );
-    assert_eq!(all_states["xai-grok"], json!({ "kind": "needs_login" }));
+    assert_eq!(all_states["xai-grok"], json!({ "kind": "needsLogin" }));
     assert_eq!(all_states["openai-codex"], ready_states["openai-codex"]);
     let models_of = |id: &str| {
         let providers = all["providers"].as_array().unwrap();
@@ -211,10 +211,7 @@ async fn the_catalog_gives_the_ready_providers_or_each_provider_with_its_state()
     let small = &local["models"][0];
     assert_eq!(small["id"], "small");
     assert_eq!(small["maxOutputTokens"], 4096);
-    assert_eq!(
-        small["reasoning"][0],
-        json!({ "level": "default", "settings": { "thinking": null, "effort": null } })
-    );
+    assert_eq!(small["reasoning"][0], json!({ "level": "default", "settings": {} }));
     let levels: Vec<&str> = small["reasoning"]
         .as_array()
         .unwrap()
@@ -401,8 +398,8 @@ async fn a_logout_removes_the_saved_login_and_the_pushed_token_and_cancels_a_log
     assert_eq!(cancelled, json!({ "kind": "cancelled" }));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::INVALID_PARAMS));
     let states = provider_states(&catalog);
-    assert_eq!(states["xai-grok"], json!({ "kind": "needs_login" }));
-    assert_eq!(states["openai-codex"], json!({ "kind": "needs_login" }));
+    assert_eq!(states["xai-grok"], json!({ "kind": "needsLogin" }));
+    assert_eq!(states["openai-codex"], json!({ "kind": "needsLogin" }));
     let saved: Value = serde_json::from_slice(&std::fs::read(place.paths.data.join("auth.json")).unwrap()).unwrap();
     assert_eq!(saved, json!({}));
 }
@@ -486,7 +483,7 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
     assert_eq!(saved["anthropic"], json!({ "api_key": "first-key" }));
     assert_eq!(saved["xai-grok"], login["xai-grok"]);
     let states = provider_states(&ready);
-    let stored_api_key = json!({ "kind": "ready", "credential": { "kind": "stored_api_key" } });
+    let stored_api_key = json!({ "kind": "ready", "credential": { "kind": "storedApiKey" } });
     assert_eq!(states["anthropic"], stored_api_key);
     assert_eq!(states["minimax"], stored_api_key);
     assert_eq!(
@@ -509,7 +506,7 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
     let after = provider_states(&after);
     assert_eq!(
         after["anthropic"],
-        json!({ "kind": "needs_api_key", "variable": "ANTHROPIC_API_KEY" })
+        json!({ "kind": "needsApiKey", "variable": "ANTHROPIC_API_KEY" })
     );
     assert_eq!(
         after["minimax"],

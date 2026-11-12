@@ -4,4 +4,12 @@ import type { ThinkingDisplay } from "./ThinkingDisplay";
 /**
  * Whether and how the model thinks before it answers.
  */
-export type Thinking = "off" | { "adaptive": ThinkingDisplay | null } | { "budget": number };
+export type Thinking = { "kind": "off" } | { "kind": "adaptive", 
+/**
+ * Whether a thinking block returns its summary text. `None` leaves the endpoint default.
+ */
+display?: ThinkingDisplay, } | { "kind": "budget", 
+/**
+ * The most thinking tokens.
+ */
+tokens: number, };

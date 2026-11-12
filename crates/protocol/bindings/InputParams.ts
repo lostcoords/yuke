@@ -17,4 +17,4 @@ content: Array<Block>,
 /**
  * The blocks that the model reads in place of the content.
  */
-modelContent?: Array<Block> | null, };
+modelContent?: Array<Block>, };

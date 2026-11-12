@@ -53,8 +53,8 @@ function track(fact: Fact): void {
       if (job.state !== "running") session.jobs = session.jobs.filter((entry) => entry.id !== job.id);
       else if (known) session.jobs = session.jobs.map((entry) => (entry.id === job.id ? job : entry));
       else session.jobs.push(job);
-    } else if (update.sessionUpdate === "interaction_requested") session.interactions.push(update.interactionId);
-    else if (update.sessionUpdate === "interaction_closed") {
+    } else if (update.sessionUpdate === "interactionRequested") session.interactions.push(update.interactionId);
+    else if (update.sessionUpdate === "interactionClosed") {
       session.interactions = session.interactions.filter((id) => id !== update.interactionId);
     }
   }

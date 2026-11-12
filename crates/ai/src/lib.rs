@@ -32,7 +32,7 @@ pub use encoder::{EncodeError, Encoded, Encoder, Unsupported};
 pub use failure::{Failure, ProviderKind};
 pub use reply::Reply;
 pub use request::{
-    Effort, OutputSchema, ReasoningSettings, Request, SEARCH_TOOL_NAME, Settings, Thinking, ThinkingDisplay,
+    Effort, OutputSchema, ReasoningSettings, Request, RequestSettings, SEARCH_TOOL_NAME, Thinking, ThinkingDisplay,
     ToolChoice, ToolDefinition,
 };
 pub use response::{

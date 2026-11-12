@@ -56,14 +56,14 @@ function short(commit: string): string {
 
 /** The sections of the dashboard, in order, with the test of the plugins of each one. */
 const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
-  { title: "Needs sync", has: (plugin) => plugin.state === "not_locked" || plugin.state === "not_installed" },
+  { title: "Needs sync", has: (plugin) => plugin.state === "notLocked" || plugin.state === "notInstalled" },
   { title: "Installed", has: (plugin) => plugin.state === "installed" },
   { title: "Local", has: (plugin) => plugin.state === "local" },
 ];
 
 /** The mark of `plugin`: loaded, not loaded, or a problem that a sync fixes. */
 function markOf(plugin: ManagedPlugin): string {
-  if (plugin.state === "not_locked" || plugin.state === "not_installed") return "!";
+  if (plugin.state === "notLocked" || plugin.state === "notInstalled") return "!";
   return plugin.loaded ? "●" : "○";
 }
 
@@ -72,9 +72,9 @@ function stateOf(plugin: ManagedPlugin): string {
   switch (plugin.state) {
     case "local":
       return plugin.loaded ? "" : "not loaded";
-    case "not_locked":
+    case "notLocked":
       return "not locked";
-    case "not_installed":
+    case "notInstalled":
       return `${short(plugin.commit)} not installed`;
     case "installed":
       return plugin.loaded ? short(plugin.commit) : `${short(plugin.commit)} not loaded`;
@@ -251,12 +251,12 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
             return synced.written ? "plugins.lock written: R reloads" : "each Git plugin is at its locked commit";
           }),
       },
-      { key: "U", label: "update all", when: idle, run: () => update("all") },
+      { key: "U", label: "update all", when: idle, run: () => update({ kind: "all" }) },
       {
         key: "u",
         label: "update",
         when: () => idle() && list.selected?.state === "installed" && named() !== undefined,
-        run: () => update({ names: [named() ?? ""] }),
+        run: () => update({ kind: "names", names: [named() ?? ""] }),
       },
       { key: "a", label: "add", when: idle, run: () => add() },
       { key: "d", label: "remove", when: () => idle() && named() !== undefined, run: () => remove(named() ?? "") },
@@ -367,14 +367,16 @@ function reviewOf(changes: readonly PluginChange[]): TextDocument {
     changes.map((change) => ({
       label: `${change.name}  ${short(change.old)} → ${short(change.new)}`,
       lines:
-        "commits" in change.log ? change.log.commits.map((line) => `  ${line}`) : [`  no log: ${change.log.error}`],
+        change.log.kind === "commits"
+          ? change.log.commits.map((line) => `  ${line}`)
+          : [`  no log: ${change.log.error}`],
     })),
   );
 }
 
 /** Check each Git plugin in a review, and write the new commits that the user chooses. Notices tell the result. */
 async function update(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promise<void> {
-  const chosen = await review(tui, plugins, "all", ctx.signal);
+  const chosen = await review(tui, plugins, { kind: "all" }, ctx.signal);
   if (chosen === undefined) return;
   const applied = await plugins.apply(chosen);
   ctx.notify(

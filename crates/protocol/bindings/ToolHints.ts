@@ -9,11 +9,11 @@ export type ToolHints = {
 /**
  * The name of the summary line in place of the tool name.
  */
-title: string | null, 
+title?: string, 
 /**
  * The argument of the call that the summary line shows.
  */
-subject: Subject | null, 
+subject?: Subject, 
 /**
  * The part of the output that a folded call shows.
  */

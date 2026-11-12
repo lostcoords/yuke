@@ -299,6 +299,15 @@ impl Server {
                 );
             }
         };
+        if !value.is_object() {
+            return connection.respond(
+                None,
+                Err(error_with(
+                    ResponseError::INVALID_REQUEST,
+                    "the message is no JSON object: the protocol has no batches",
+                )),
+            );
+        }
         if value.get("id").is_none() {
             match serde_json::from_value::<Notification<ClientNotification>>(value) {
                 Ok(Notification {
@@ -324,23 +333,20 @@ impl Server {
             .get("id")
             .cloned()
             .and_then(|id| serde_json::from_value::<RequestId>(id).ok());
-        let unknown_method = value
-            .get("method")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|method| !ClientRequest::METHODS.contains(&method));
+        // Only the params are left to blame once the envelope reads.
+        let code = match value.get("method").and_then(serde_json::Value::as_str) {
+            Some(method) if !ClientRequest::METHODS.contains(&method) => ResponseError::METHOD_NOT_FOUND,
+            Some(_) if id.is_some() && value.get("jsonrpc").and_then(serde_json::Value::as_str) == Some("2.0") => {
+                ResponseError::INVALID_PARAMS
+            }
+            _ => ResponseError::INVALID_REQUEST,
+        };
         let request = match serde_json::from_value::<Request<ClientRequest>>(value) {
             Ok(request) => request,
-            Err(error) => {
-                let code = if unknown_method {
-                    ResponseError::METHOD_NOT_FOUND
-                } else {
-                    ResponseError::INVALID_PARAMS
-                };
-                return connection.respond(id, Err(error_with(code, &error.to_string())));
-            }
+            Err(error) => return connection.respond(id, Err(error_with(code, &error.to_string()))),
         };
         let result = if !connection.initialized && !matches!(request.call, ClientRequest::Initialize(_)) {
-            Err(error_with(ResponseError::INVALID_REQUEST, "send initialize first"))
+            Err(error_with(ResponseError::NOT_INITIALIZED, "send initialize first"))
         } else if let ClientRequest::StopJob(params) = request.call {
             // A plugin sets no limit on the end of its job, so this wait must leave the connection free to read.
             let (sessions, writer) = (Rc::clone(self.app.sessions()), connection.writer.clone());
@@ -415,7 +421,7 @@ impl Server {
                 app.shared().set_api_key(&params.provider, params.api_key).await?;
                 result(&EmptyResult {})
             }
-            ClientRequest::ListCatalog(params) => result(&app.shared().catalog(params.all.unwrap_or(false)).await?),
+            ClientRequest::ListCatalog(params) => result(&app.shared().catalog(params.all).await?),
             ClientRequest::RemoveSession(params) => {
                 app.sessions().remove(params.session_id).await?;
                 result(&EmptyResult {})
@@ -720,12 +726,10 @@ fn response_error(error: &AppError) -> ResponseError {
     let code = match error {
         AppError::NotOpen(_) => ResponseError::SESSION_NOT_FOUND,
         AppError::Invalid(_) => ResponseError::INVALID_PARAMS,
-        AppError::Open(_)
-        | AppError::Busy
-        | AppError::TurnRuns
-        | AppError::Changing(_)
-        | AppError::Reloading
-        | AppError::Stopped => ResponseError::INVALID_REQUEST,
+        AppError::Open(_) => ResponseError::SESSION_OPEN,
+        AppError::Busy | AppError::TurnRuns => ResponseError::TURN_ACTIVE,
+        AppError::Changing(_) | AppError::Reloading => ResponseError::TRY_AGAIN,
+        AppError::Stopped => ResponseError::STOPPING,
         AppError::NoJob(_) => ResponseError::JOB_NOT_FOUND,
         AppError::NoInteraction(_) => ResponseError::INTERACTION_NOT_FOUND,
         AppError::NoLogin(_) => ResponseError::LOGIN_NOT_FOUND,

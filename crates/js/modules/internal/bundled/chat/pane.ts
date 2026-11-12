@@ -325,14 +325,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     }
     return {
       model: { provider: chosen.provider, model: chosen.model.id },
-      settings: {
-        maxOutputTokens: null,
-        reasoning: reasoning.settings,
-        temperature: null,
-        topP: null,
-        toolChoice: "auto",
-        outputSchema: null,
-      },
+      settings: { reasoning: reasoning.settings, toolChoice: "auto" },
       cwd: nextFolder ?? tui.startup.cwd,
     };
   };

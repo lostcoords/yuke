@@ -16,16 +16,16 @@ function listed(chat: Awaited<ReturnType<typeof loadChat>>): readonly StatusItem
 
 const HIGH = {
   ...SETTINGS,
-  settings: { ...SETTINGS.settings, reasoning: { thinking: null, effort: "high" as const } },
+  settings: { ...SETTINGS.settings, reasoning: { effort: "high" as const } },
 };
 
 /** A session on `p/m` at the level high, with one answer that used 30,000 input and 2,000 output tokens. */
 const SAVED: StoredEvent[] = [
   { seq: 1, sessionUpdate: "settings", ...HIGH },
-  commit(2, [{ assistant_text: { text: "hi" } }], {
+  commit(2, [{ kind: "assistantText", text: "hi" }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
-      usage: { input: 30_000, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },
+      usage: { input: 30_000, output: 2000 },
       finishReason: "stop",
     },
   }),
@@ -61,10 +61,10 @@ test("the focused chat pane shows its model, its context use, and its process jo
   const items = (): string[][] => listed(chat).map((item) => [item.id, item.text]);
   const shown = items();
   sessions.push(
-    commit(3, [{ assistant_text: { text: "more" } }], {
+    commit(3, [{ kind: "assistantText", text: "more" }], {
       answer: {
         origin: { model: "m", baseUrl: "https://p" },
-        usage: { input: 60_000, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },
+        usage: { input: 60_000, output: 2000 },
         finishReason: "stop",
       },
     }),
@@ -106,10 +106,10 @@ test("without a context window the context use is a token count", async () => {
 
 test("an answer without an input count shows no context item", async () => {
   const [settings] = SAVED;
-  const unknown = commit(2, [{ assistant_text: { text: "hi" } }], {
+  const unknown = commit(2, [{ kind: "assistantText", text: "hi" }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },
-      usage: { input: null, output: 2000, reasoning: null, cacheRead: null, cacheWrite: null },
+      usage: { output: 2000 },
       finishReason: "stop",
     },
   });
@@ -218,7 +218,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
     cwd: folder(),
   });
   using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/launch" });
-  let state: ProviderState = { kind: "needs_login" };
+  let state: ProviderState = { kind: "needsLogin" };
   const providers = (): ProviderInfo[] => CATALOG.providers.map((provider) => ({ ...provider, state })) as never;
   const catalog = { list: async () => ({ providers: state.kind === "ready" ? providers() : [] }) };
   const chat = await loadChat(frame, fakeSessions(), catalog);
@@ -228,7 +228,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   const model = (): string | undefined => listed(chat).find((item) => item.id === "chat:model")?.text;
   const before = model();
 
-  state = { kind: "ready", credential: { kind: "stored_api_key" } };
+  state = { kind: "ready", credential: { kind: "storedApiKey" } };
   // As the host does after a login.
   chat.fact("catalog.changed", undefined);
   chat.tui.commands.run("chat:model");

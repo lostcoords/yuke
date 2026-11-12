@@ -11,10 +11,10 @@ function provider(id: string, state: ProviderState): ProviderInfo {
 }
 
 const PROVIDERS: ProviderInfo[] = [
-  provider("needs-key", { kind: "needs_api_key", variable: "NEEDS_KEY" }),
+  provider("needs-key", { kind: "needsApiKey", variable: "NEEDS_KEY" }),
   provider("env", { kind: "ready", credential: { kind: "variable", name: "ENV_KEY" } }),
-  provider("stored", { kind: "ready", credential: { kind: "stored_api_key" } }),
-  provider("device", { kind: "needs_login" }),
+  provider("stored", { kind: "ready", credential: { kind: "storedApiKey" } }),
+  provider("device", { kind: "needsLogin" }),
   provider("logged", { kind: "ready", credential: { kind: "login" } }),
   provider("local", { kind: "ready", credential: { kind: "none" } }),
 ];
@@ -253,7 +253,7 @@ test("a login provider shows the page and the code, its keys copy each, and a co
 test("each end of a device login closes the dialog with its notice, and esc cancels the login with no notice", async () => {
   for (const [outcome, notice] of [
     [{ kind: "succeeded" }, "info logged in · device"],
-    [{ kind: "failed", message: "denied" }, "error the login failed: denied"],
+    [{ kind: "failed", error: "denied" }, "error the login failed: denied"],
     [{ kind: "cancelled" }, "info login cancelled"],
   ] as const) {
     using frame = createFrame({ width: 70, height: 16 });

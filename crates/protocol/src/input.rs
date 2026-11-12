@@ -10,7 +10,7 @@ use crate::InputId;
 /// Who sent an input. It records the sender only. It grants no permission and sets no visibility.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum InputSource {
     /// The user.
     User,
@@ -24,7 +24,7 @@ pub enum InputSource {
 /// What an input is. A client shows a message in the conversation, and a notification as a notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum InputKind {
     /// A message of a person: the text of the user, or a text that a plugin passes on from a person.
     Message,
@@ -35,7 +35,7 @@ pub enum InputKind {
 /// An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. An input
 /// has at least one block.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct Input {
     /// Who sent the input.
@@ -198,7 +198,7 @@ impl PendingInput {
 /// An input that a commit consumed. The commit starts with the model blocks of its consumed inputs, in input order.
 /// This input has the next `blockCount` blocks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ConsumedInput {
     /// The id that `Store::accept_input` of `yuke-agent` gave.

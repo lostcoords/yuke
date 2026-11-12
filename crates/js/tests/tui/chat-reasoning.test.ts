@@ -8,7 +8,10 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions([
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ reasoning: { text: "first thought" } }, { reasoning: { text: "second thought" } }]),
+    commit(2, [
+      { kind: "reasoning", text: "first thought" },
+      { kind: "reasoning", text: "second thought" },
+    ]),
   ]);
   const chat = await loadChat(frame, sessions);
   frame.start();
@@ -47,26 +50,30 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   frame.start();
   await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draft_started", draftId: "d" });
+  sessions.push({ sessionUpdate: "draftStarted", draftId: "d" });
   sessions.push({
     sessionUpdate: "model",
     draftId: "d",
-    event: { kind: "block_started", block: 0, content: { kind: "reasoning" } },
+    event: { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } },
   });
   sessions.push({
     sessionUpdate: "model",
     draftId: "d",
-    event: { kind: "block_started", block: 1, content: { kind: "reasoning" } },
+    event: { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } },
   });
-  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoning_delta", block: 1, text: " \n\t" } });
+  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 1, text: " \n\t" } });
   frame.draw();
   equal(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [],
   );
   assert(rows(frame.frame).some((row) => row.includes("Reasoning…")));
-  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoning_delta", block: 0, text: "first" } });
-  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoning_delta", block: 1, text: "second" } });
+  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 0, text: "first" } });
+  sessions.push({
+    sessionUpdate: "model",
+    draftId: "d",
+    event: { kind: "reasoningDelta", blockId: 1, text: "second" },
+  });
   frame.draw();
   equal(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),

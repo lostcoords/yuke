@@ -112,7 +112,9 @@ fn a_failed_before_round_hook_ends_the_turn_before_any_request() {
             (vec![Block::user_text("go")], None),
             (
                 vec![],
-                Some(TurnEnd::Failed("the test hook failed: the cause".to_owned()))
+                Some(TurnEnd::Failed {
+                    error: "the test hook failed: the cause".to_owned()
+                })
             )
         ]
     );
@@ -177,7 +179,9 @@ fn a_failed_after_round_hook_ends_the_turn_and_keeps_the_answer_and_the_input() 
             (vec![Block::assistant_text("done")], None),
             (
                 vec![],
-                Some(TurnEnd::Failed("the test hook failed: the cause".to_owned()))
+                Some(TurnEnd::Failed {
+                    error: "the test hook failed: the cause".to_owned()
+                })
             )
         ]
     );

@@ -1,5 +1,6 @@
 // The part of each plugin in each open session: its scope, its tools and hooks, and the runs of the hook points.
 
+import type { TextAnswer } from "yuke:ai";
 import { defineTool } from "yuke:internal/define";
 import { hostOperation, hostSignal, underSignal, underStop } from "yuke:internal/events";
 import { failureOf, stackOf, textOf } from "yuke:internal/failure";
@@ -25,7 +26,6 @@ import type {
   SessionContext,
   SessionHooks,
   SideRequestOptions,
-  SideRequestResult,
   ToolAfterAnswer,
   ToolCall,
   ToolCallResult,
@@ -123,7 +123,7 @@ interface OpenRequest {
   readonly open: number;
   readonly sessionId: string;
   readonly parent: string | undefined;
-  readonly folder: string;
+  readonly cwd: string;
   readonly ask: Ask;
   readonly request: SendRequest;
   /** The settings of the session now. */
@@ -136,9 +136,9 @@ interface OpenRequest {
  * The open does not wait for them; `ready(open)` does.
  */
 export function openSession(request: OpenRequest): void {
-  const { open, sessionId, parent, folder, ask, settings, startJob } = request;
+  const { open, sessionId, parent, cwd, ask, settings, startJob } = request;
   const scopes = sessionExports.map((entry) =>
-    start(open, sessionId, parent, folder, ask, request.request, settings, startJob, entry),
+    start(open, sessionId, parent, cwd, ask, request.request, settings, startJob, entry),
   );
   const ready = Promise.all(scopes.map((scope) => scope.settled)).then(() => undefined);
   opens.set(open, { scopes, ready });
@@ -258,7 +258,7 @@ export function startInputBefore(
             return true;
           }
           current = answer.replace.blocks.map((item) =>
-            "mimeType" in item
+            !("kind" in item)
               ? item.path !== undefined
                 ? { mimeType: item.mimeType, path: item.path }
                 : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) }
@@ -280,7 +280,7 @@ export function startInputBefore(
 /** What `startRoundBefore` gets. A Rust `None` crosses as `undefined`. */
 interface RoundBeforeRequest {
   readonly open: number;
-  readonly window: number | undefined;
+  readonly contextWindow: number | undefined;
   readonly inputTokens: number | undefined;
   /** The estimated input tokens of the context before the round. It adds to `inputTokens` when that count is set. */
   readonly contextTokens: number;
@@ -316,7 +316,7 @@ async function sideRequest(
   head: readonly Block[],
   kept: number,
   options: SideRequestOptions,
-): Promise<SideRequestResult> {
+): Promise<TextAnswer> {
   const { prompt, blockCount: blocks = head.length + kept, maxOutputTokens, signal } = options;
   const request = { head: jsonCopy(head, "the answer"), kept, blocks, prompt, maxOutputTokens };
   return Object.freeze(await underStop(signal, () => round.sideRequest(request)));
@@ -343,7 +343,7 @@ function startRoundPlan<K extends RoundPoint>(
   request: RoundBeforeRequest,
   facts: Omit<EventOf<K>, keyof RoundBeforeEvent>,
 ): Operation<RoundBeforePlan | undefined> {
-  const { open, window, inputTokens, contextTokens, blocks, round } = request;
+  const { open, contextWindow, inputTokens, contextTokens, blocks, round } = request;
   return hostOperation(async (signal) => {
     // The replacements so far make the context `head`, then the last `kept` blocks of the context before the round.
     let head: readonly Block[] = [];
@@ -361,8 +361,8 @@ function startRoundPlan<K extends RoundPoint>(
         const replaced = seen.head.length > 0 || seen.kept !== blocks;
         const event = Object.freeze({
           ...facts,
-          contextWindow: window ?? null,
-          inputTokens: inputTokens ?? null,
+          ...(contextWindow === undefined ? {} : { contextWindow }),
+          ...(inputTokens === undefined ? {} : { inputTokens }),
           contextTokens: replaced ? tokens().reduce((sum, count) => sum + count, 0) : contextTokens,
           blockCount: seen.head.length + seen.kept,
           blockTokens: tokens,
@@ -419,7 +419,12 @@ interface RoundAfterRequest {
 export function startRoundAfter(request: RoundAfterRequest): Operation<RoundDecision | undefined> {
   const { open, text, finishReason, continues } = request;
   return hostOperation(async (signal) => {
-    const event: RoundAfterEvent = Object.freeze({ text, finishReason: finishReason ?? null, continues, signal });
+    const event: RoundAfterEvent = Object.freeze({
+      text,
+      ...(finishReason === undefined ? {} : { finishReason }),
+      continues,
+      signal,
+    });
     let decision: RoundDecision | undefined;
     await runHandlers(
       open,

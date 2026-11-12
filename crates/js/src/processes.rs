@@ -245,7 +245,7 @@ impl Processes {
             label,
             command,
             log: log.clone(),
-            folder: owner.folder(),
+            folder: owner.cwd(),
             owner,
         };
         tokio::task::spawn_local(task.run(Mode::Job { timeout }, answer));

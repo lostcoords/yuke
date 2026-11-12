@@ -3,7 +3,7 @@
 import type { PluginSession } from "yuke:plugins";
 import { createHost, equal, rejects, reply, test } from "yuke:test";
 
-// After a round of calls, the turn goes on, so the reason is `null`, and the text is the text before the calls.
+// After a round of calls, the turn goes on, so the event has no reason, and the text is the text before the calls.
 test("a handler gets the text, the reason, and the count of each round of a turn", async () => {
   const greeter: PluginSession = (s) => {
     s.tools.add({
@@ -34,7 +34,7 @@ test("a handler gets the text, the reason, and the count of each round of a turn
   await session.sendMessage("Greet Ada.");
 
   equal(seen, [
-    ["checking", null, 0],
+    ["checking", undefined, 0],
     ["Done.", "stop", 0],
   ]);
   equal(
@@ -76,11 +76,15 @@ test("the first answer decides, and a continue is a counted notification of its 
   const inputs = session.transcript.entries.flatMap((entry) =>
     entry.kind === "input" ? [[entry.source, entry.inputKind, entry.content]] : [],
   );
-  const continued = [{ kind: "plugin", name: "tests-guard" }, "notification", [{ user_text: "Run the tests." }]];
+  const continued = [
+    { kind: "plugin", name: "tests-guard" },
+    "notification",
+    [{ kind: "userText", text: "Run the tests." }],
+  ];
   equal(inputs, [
-    [{ kind: "user" }, "message", [{ user_text: "Work." }]],
+    [{ kind: "user" }, "message", [{ kind: "userText", text: "Work." }]],
     continued,
-    [{ kind: "user" }, "message", [{ user_text: "More." }]],
+    [{ kind: "user" }, "message", [{ kind: "userText", text: "More." }]],
     continued,
   ]);
   equal(second, 2);
@@ -103,7 +107,7 @@ test("round.after stops the turn, and a continue answer adds its input to the se
   );
   equal(
     session.transcript.entries.flatMap((entry) => (entry.kind === "input" ? [[entry.inputKind, entry.content]] : [])),
-    [["notification", [{ user_text: "go on" }]]],
+    [["notification", [{ kind: "userText", text: "go on" }]]],
   );
 });
 

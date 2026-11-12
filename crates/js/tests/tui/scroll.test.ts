@@ -163,7 +163,7 @@ test("the list renders only new item objects until the width changes", () => {
 test("the wheel scrolls the list", () => {
   const { scroll } = list([{ key: "a", text: "a0a1a2a3a4a5" }]);
   using frame = createFrame({ width: 2, height: 2 }, () => scroll);
-  frame.mouse({ type: "mouse", column: 0, row: 0, button: "wheel_down", action: "press", modifiers: MODIFIERS });
+  frame.mouse({ type: "mouse", column: 0, row: 0, button: "wheeldown", action: "press", modifiers: MODIFIERS });
   equal(rows(frame.frame), ["a3", "a4"]);
 });
 

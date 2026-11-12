@@ -13,8 +13,8 @@ use yuke_engine::chain_text;
 use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
     EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListSessionsParams, ListSessionsResult,
-    NoticeLevel, NoticeParams, ServerNotification, SessionActivity, SessionId, SessionRow, SessionSettings,
-    SessionState, SessionSummary, SessionTitle, StoredEvent,
+    NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow, SessionSettings, SessionState,
+    SessionSummary, SessionTitle, StoredEvent,
 };
 
 use super::facts::Watch;
@@ -387,7 +387,7 @@ impl SessionService {
         self.start_new(session).await
     }
 
-    /// A page of the saved sessions, newest first, with the activity of each one. `params.cursor` continues the list
+    /// A page of the saved sessions, newest first, with the state of each one. `params.cursor` continues the list
     /// with the same `params.cwd` and `params.parent`.
     ///
     /// # Errors
@@ -476,14 +476,12 @@ impl SessionService {
         Ok(())
     }
 
-    /// The row of `session` with its activity in this app now.
+    /// The row of `session` with its state in this app now.
     fn row(&self, session: SessionSummary) -> SessionRow {
-        let activity = match self.live(session.session_id).map(|live| live.state()) {
-            Err(_) => SessionActivity::Closed,
-            Ok(SessionState::Idle) => SessionActivity::Idle,
-            Ok(SessionState::Running) => SessionActivity::Running,
-        };
-        SessionRow { session, activity }
+        let state = self
+            .live(session.session_id)
+            .map_or(SessionState::Closed, |live| live.state());
+        SessionRow { session, state }
     }
 
     /// Open session `id`, which is not open. `change` gets the saved settings and the providers, and it can return new

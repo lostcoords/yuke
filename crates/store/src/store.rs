@@ -10,7 +10,7 @@ use yuke_agent::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
     check_consumed_blocks, fork_title_of, title_of,
 };
-use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_engine::{Commit, TurnEnd};
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, SessionSummary, SessionTitle,
 };
@@ -680,12 +680,10 @@ fn commit_params(
 
     let (end_kind, end_finish_reason, end_message) = match &commit.end {
         None => (None, None, None),
-        Some(TurnEnd::Outcome(Outcome::Completed { finish_reason })) => {
-            (Some(event::COMPLETED), Some(finish_reason.as_str()), None)
-        }
-        Some(TurnEnd::Outcome(Outcome::Stopped)) => (Some(event::STOPPED), None, None),
-        Some(TurnEnd::Outcome(Outcome::Cancelled)) => (Some(event::CANCELLED), None, None),
-        Some(TurnEnd::Failed(message)) => (Some(event::FAILED), None, Some(message.clone())),
+        Some(TurnEnd::Completed { finish_reason }) => (Some(event::COMPLETED), Some(finish_reason.as_str()), None),
+        Some(TurnEnd::Stopped) => (Some(event::STOPPED), None, None),
+        Some(TurnEnd::Cancelled) => (Some(event::CANCELLED), None, None),
+        Some(TurnEnd::Failed { error: message }) => (Some(event::FAILED), None, Some(message.clone())),
     };
 
     Ok(events::InsertCommitParams {

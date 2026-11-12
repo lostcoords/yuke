@@ -11,12 +11,12 @@ item: string,
 /**
  * The name of its `plugin.json`, when the server can read it.
  */
-name?: string | null, 
+name?: string, 
 /**
  * Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
  * from an older commit until `profile/reload`.
  */
-loaded: boolean, } & ({ "state": "local" } | { "state": "not_locked" } | { "state": "not_installed", 
+loaded: boolean, } & ({ "state": "local" } | { "state": "notLocked" } | { "state": "notInstalled", 
 /**
  * The full commit id of the lock.
  */

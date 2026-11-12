@@ -124,7 +124,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
 
   /** Record the question of `update` in the session `id`, and answer it. */
   const ask = (id: SessionId, update: Frozen<SessionUpdate>): void => {
-    if (update.sessionUpdate !== "interaction_requested") return;
+    if (update.sessionUpdate !== "interactionRequested") return;
     const question: TestQuestion = Object.freeze({ sessionId: id, source: update.source, request: update.request });
     questions.push(question);
     // A rejection that no code handles is a fault, so a failed answer fails the test.
@@ -153,12 +153,8 @@ export async function createHost(options: HostOptions): Promise<Host> {
     let current: SessionSettings = {
       model: settings?.model ?? TEST_MODEL,
       settings: settings?.settings ?? {
-        maxOutputTokens: null,
-        reasoning: { thinking: null, effort: null },
-        temperature: null,
-        topP: null,
+        reasoning: {},
         toolChoice: "auto",
-        outputSchema: null,
       },
       cwd: settings?.cwd ?? folder(),
     };
@@ -182,7 +178,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
         const cancel = (): void => handle.cancel();
         operation?.signal?.addEventListener("abort", cancel, { once: true });
         try {
-          await handle.sendMessage({ content: [{ user_text: text }] });
+          await handle.sendMessage({ content: [{ kind: "userText", text }] });
           await handle.waitForIdle();
         } finally {
           operation?.signal?.removeEventListener("abort", cancel);

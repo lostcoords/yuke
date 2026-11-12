@@ -43,9 +43,7 @@ pub use plugin::{
     ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
     RemovePluginParams, SyncPluginsParams, SyncPluginsResult, SyncedPlugin,
 };
-pub use session::{
-    InvalidSessionTitle, ModelReference, SessionActivity, SessionRow, SessionSettings, SessionSummary, SessionTitle,
-};
+pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};
 pub use update::{
     BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionSnapshot, SessionState, SessionUpdate,
     SessionUpdateParams, StartedBlock,

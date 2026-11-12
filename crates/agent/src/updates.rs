@@ -108,7 +108,7 @@ impl<'a> Updates<'a> {
         clippy::expect_used,
         reason = "the engine saves each answer before it emits tool events"
     )]
-    fn execution(&self, block_index: usize) -> BlockPosition {
+    fn position(&self, block_index: usize) -> BlockPosition {
         BlockPosition {
             event_number: self.state.borrow().execution_event.expect("a tool has a saved call"),
             block_index,
@@ -156,11 +156,11 @@ impl Observer for Updates<'_> {
                 }
             }
             TurnEvent::ToolStarted { block_index, call } => self.live(LiveUpdate::ToolStarted {
-                execution: self.execution(*block_index),
+                position: self.position(*block_index),
                 call: (*call).clone(),
             }),
             TurnEvent::ToolOutput { block_index, text } => self.live(LiveUpdate::ToolOutput {
-                execution: self.execution(*block_index),
+                position: self.position(*block_index),
                 text: (*text).to_owned(),
             }),
             TurnEvent::ToolFinished {
@@ -169,7 +169,7 @@ impl Observer for Updates<'_> {
                 display,
                 duration,
             } => self.live(LiveUpdate::ToolFinished {
-                execution: self.execution(*block_index),
+                position: self.position(*block_index),
                 result: (*result).clone(),
                 display: display.to_vec(),
                 duration_ms: duration.map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),

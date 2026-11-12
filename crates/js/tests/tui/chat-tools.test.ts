@@ -27,8 +27,8 @@ interface Call {
   readonly hints: ToolHints;
   readonly result: ToolResult;
   readonly display?: DisplayBlock[];
-  /** The folder of the call. The default is /tools. */
-  readonly folder?: string | null;
+  /** The working folder of the call, or `null` for none. The default is /tools. */
+  readonly cwd?: string | null;
   readonly durationMs?: number;
 }
 
@@ -37,27 +37,39 @@ function calls(...called: Call[]): StoredEvent[] {
   const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
   for (const [at, call] of called.entries()) {
     const callId = `c${at}`;
-    const block: Block = { tool_call: { callId, name: call.name, arguments: JSON.stringify(call.args) } };
+    const block: Block = { kind: "toolCall", callId, name: call.name, arguments: JSON.stringify(call.args) };
     // The calls run in /tools, and the session works in /w.
     const hints = {
-      calls: [{ blockIndex: 0, hints: call.hints, folder: call.folder === undefined ? "/tools" : call.folder }],
+      calls: [
+        {
+          blockIndex: 0,
+          hints: call.hints,
+          ...(call.cwd === undefined ? { cwd: "/tools" } : call.cwd === null ? {} : { cwd: call.cwd }),
+        },
+      ],
       results: [],
     };
     saved.push(commit(saved.length + 1, [block], { display: hints }));
-    const result: Block = { tool_result: { ...call.result, callId } };
+    const result: Block = { kind: "toolResult", ...call.result, callId };
     const shown =
       call.display === undefined && call.durationMs === undefined
         ? []
-        : [{ blockIndex: 0, blocks: call.display ?? [], durationMs: call.durationMs ?? null }];
+        : [
+            {
+              blockIndex: 0,
+              blocks: call.display ?? [],
+              ...(call.durationMs === undefined ? {} : { durationMs: call.durationMs }),
+            },
+          ];
     saved.push(commit(saved.length + 1, [result], { display: { calls: [], results: shown } }));
   }
   return saved;
 }
 
-const READ: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "none" };
-const EXEC: ToolHints = { title: null, subject: { argument: "command", kind: "text" }, preview: "tail" };
-const PROBE: ToolHints = { title: "Probe", subject: null, preview: "head" };
-const PROBE_FILE: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
+const READ: ToolHints = { subject: { argument: "path", kind: "file" }, preview: "none" };
+const EXEC: ToolHints = { subject: { argument: "command", kind: "text" }, preview: "tail" };
+const PROBE: ToolHints = { title: "Probe", preview: "head" };
+const PROBE_FILE: ToolHints = { subject: { argument: "path", kind: "file" }, preview: "head" };
 
 const ok = (content: string): ToolResult => ({ callId: "", content, isError: false });
 
@@ -261,8 +273,8 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   const call = { callId: "c0", name: "read", arguments: '{"path":"a' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: PROBE, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: PROBE, cwd: "/w" }], results: [] },
     }),
   ];
   await loadChat(frame, fakeSessions(saved));
@@ -280,20 +292,20 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
     frame.draw();
     return transcriptRows(frame)[1];
   };
-  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
-  model({ kind: "block_started", block: 0, content: { kind: "tool_call", name: "exec" } });
-  model({ kind: "tool_input_delta", block: 0, text: '{"command":' });
+  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
+  model({ kind: "blockStarted", blockId: 0, content: { kind: "toolCall", name: "exec" } });
+  model({ kind: "toolInputDelta", blockId: 0, text: '{"command":' });
   const streaming = head();
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
-  model({ kind: "tool_input_delta", block: 0, text: '"make"}' });
-  model({ kind: "block_stopped", block: 0, call });
+  model({ kind: "toolInputDelta", blockId: 0, text: '"make"}' });
+  model({ kind: "blockStopped", blockId: 0, call });
   const stopped = head();
   sessions.push(
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   );
-  sessions.push({ sessionUpdate: "draft_committed", draftId: "d1", eventNumber: 2, blocks: [0] });
+  sessions.push({ sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
   equal(
     [streaming, stopped, head()],
     [' exec {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
@@ -302,7 +314,7 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
 
 test("a tool search that ends well shows no row, and a failed one shows its error", async () => {
   using frame = createFrame({ width: 40, height: 12 }, undefined, { cwd: "/w", session: "s1" });
-  const search: ToolHints = { title: null, subject: null, preview: "head" };
+  const search: ToolHints = { preview: "head" };
   const saved = calls(
     { name: "tool_search", args: { query: "slack" }, hints: search, result: ok("loaded slack_send") },
     { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("x") },
@@ -322,7 +334,7 @@ test("a tool search that ends well shows no row, and a failed one shows its erro
 
 test("the tool toggle folds each shown tool when each one is open, and a hidden tool search does not count", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const search: ToolHints = { title: null, subject: null, preview: "head" };
+  const search: ToolHints = { preview: "head" };
   const saved = calls(
     { name: "tool_search", args: { query: "read" }, hints: search, result: ok("loaded read") },
     { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("x") },
@@ -349,11 +361,11 @@ test("a streaming tool search shows no row from its start", async () => {
   await loadChat(frame, sessions);
   frame.start();
   const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
-  sessions.push({ sessionUpdate: "draft_started", draftId: "d1" });
-  model({ kind: "block_started", block: 0, content: { kind: "text" } });
-  model({ kind: "text_delta", block: 0, text: "I look for a tool." });
-  model({ kind: "block_started", block: 1, content: { kind: "tool_call", name: "tool_search" } });
-  model({ kind: "tool_input_delta", block: 1, text: '{"query":' });
+  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
+  model({ kind: "blockStarted", blockId: 0, content: { kind: "text" } });
+  model({ kind: "textDelta", blockId: 0, text: "I look for a tool." });
+  model({ kind: "blockStarted", blockId: 1, content: { kind: "toolCall", name: "tool_search" } });
+  model({ kind: "toolInputDelta", blockId: 1, text: '{"query":' });
   frame.draw();
   equal(transcriptRows(frame), ["", " I look for a tool.", "", "", ""]);
 });
@@ -374,21 +386,21 @@ test("the live output of a call gives way to its result at once", async () => {
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
   using _clock = fixedClock();
-  const execution = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "tool_started", execution, call });
-  sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });
+  const position = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "toolStarted", position, call });
+  sessions.push({ sessionUpdate: "toolOutput", position, text: "compiling" });
   frame.draw();
   equal(transcriptRows(frame).slice(0, 4), ["", " exec make · running", " compiling", ""]);
   const result = { callId: "c0", content: "built", isError: false };
-  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
+  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
   equal(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
 });
@@ -415,8 +427,8 @@ test("a silent running call counts up on its own, and its end shows the measured
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
@@ -424,9 +436,9 @@ test("a silent running call counts up on its own, and its end shows the measured
   frame.start();
   await waitForSettled();
   using clock = fixedClock();
-  const execution = { eventNumber: 2, blockIndex: 0 };
+  const position = { eventNumber: 2, blockIndex: 0 };
   sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "tool_started", execution, call });
+  sessions.push({ sessionUpdate: "toolStarted", position, call });
   frame.draw();
   equal(transcriptRows(frame)[1], " exec make · running");
   clock.now += 12_000;
@@ -434,7 +446,7 @@ test("a silent running call counts up on its own, and its end shows the measured
   frame.draw();
   equal(transcriptRows(frame)[1], " exec make · 12s");
   const result = { callId: "c0", content: "", isError: false };
-  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [], durationMs: 40_000 });
+  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [], durationMs: 40_000 });
   frame.draw();
   equal(transcriptRows(frame)[1], " exec make · 40s");
 });
@@ -444,16 +456,16 @@ test("a copy of live output gives its lines", async () => {
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
-  const execution = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "tool_started", execution, call });
-  sessions.push({ sessionUpdate: "tool_output", execution, text: "one\ntwo" });
+  const position = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "toolStarted", position, call });
+  sessions.push({ sessionUpdate: "toolOutput", position, text: "one\ntwo" });
   frame.draw();
   frame.mouse(mouse(1, 2, "press"));
   frame.mouse(mouse(4, 3, "drag"));
@@ -466,20 +478,20 @@ test("a folded call gives no count of the lines that its live output leaves out,
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
-  const execution = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "tool_started", execution, call });
-  sessions.push({ sessionUpdate: "tool_output", execution, text: lines("out", 8) });
+  const position = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "toolStarted", position, call });
+  sessions.push({ sessionUpdate: "toolOutput", position, text: lines("out", 8) });
   frame.draw();
   const live = transcriptRows(frame).slice(2, 8);
   const result = { callId: "c0", content: lines("out", 8), isError: false };
-  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
+  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
   const tail = lines(" out", 8).split("\n").slice(3);
   equal(
@@ -494,8 +506,8 @@ test("a folded call gives no count of the lines that its live output leaves out,
 test("a result with only media shows a label with the type, the number, and the size of each one", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const media = [
-    { mime: "image/png", blob: { digest: "a".repeat(64), len: 2048 } },
-    { mime: "application/pdf", blob: { digest: "b".repeat(64), len: 10 } },
+    { mimeType: "image/png", blob: { digest: "a".repeat(64), len: 2048 } },
+    { mimeType: "application/pdf", blob: { digest: "b".repeat(64), len: 10 } },
   ];
   const saved = calls({ name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } });
   await loadChat(frame, fakeSessions(saved));
@@ -516,7 +528,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
     { kind: "markdown", text: "**Edited**" },
     { kind: "diff", path: "src/a.rs", patch },
   ];
-  const edit: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
+  const edit: ToolHints = { subject: { argument: "path", kind: "file" }, preview: "head" };
   const saved = calls({ name: "edit", args: { path: "src/a.rs" }, hints: edit, result: ok("done"), display });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
@@ -553,7 +565,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
 /** A frame with one call `edit` of `patch` at `width`, and the rows of the transcript after the head row. */
 async function diffShown(patch: string, width = 40) {
   const frame = createFrame({ width, height: 24 }, undefined, { cwd: "/w", session: "s1" });
-  const edit: ToolHints = { title: null, subject: { argument: "path", kind: "file" }, preview: "head" };
+  const edit: ToolHints = { subject: { argument: "path", kind: "file" }, preview: "head" };
   const display: DisplayBlock[] = [{ kind: "diff", path: "a.rs", patch }];
   const saved = calls({ name: "edit", args: { path: "a.rs" }, hints: edit, result: ok("done"), display });
   await loadChat(frame, fakeSessions(saved));
@@ -653,7 +665,7 @@ test("a click on the text of an open thought folds it", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ reasoning: { text: "why" } } as never]),
+    commit(2, [{ kind: "reasoning", text: "why" } as never]),
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
@@ -727,7 +739,7 @@ test("a call that opens in a view away from the tail leaves the rows above it in
 test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/start", session: "s1" });
   const saved = calls(
-    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), folder: null },
+    { name: "read", args: { path: "a.rs" }, hints: READ, result: ok("A"), cwd: null },
     { name: "note", args: {}, hints: PROBE, result: ok("x"), display: [{ kind: "markdown", text: "[b](b.rs)" }] },
   );
   await loadChat(frame, fakeSessions(saved));
@@ -744,7 +756,7 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
     { name: "read", args: { path: "a" }, hints: READ, result: ok("A") },
     { name: "read", args: { path: "b" }, hints: READ, result: ok("B") },
   );
-  saved.push(commit(saved.length + 1, [{ reasoning: { text: "why" } } as never]));
+  saved.push(commit(saved.length + 1, [{ kind: "reasoning", text: "why" } as never]));
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The composer has the focus, and the key reaches the command through the context of the pane.
@@ -761,7 +773,7 @@ test("a link in a reply copies its target, and a relative target starts in the f
   const reply = "see [source](src/main.rs#L40-L52) or [docs](https://docs.rs)";
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ assistant_text: { text: reply } }]),
+    commit(2, [{ kind: "assistantText", text: reply }]),
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
@@ -819,17 +831,17 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [{ tool_call: call }], {
-      display: { calls: [{ blockIndex: 0, hints: EXEC, folder: "/w" }], results: [] },
+    commit(2, [{ kind: "toolCall", ...call }], {
+      display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   ];
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
   using _clock = fixedClock();
-  const execution = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "tool_started", execution, call });
-  sessions.push({ sessionUpdate: "tool_output", execution, text: "compiling" });
+  const position = { eventNumber: 2, blockIndex: 0 };
+  sessions.push({ sessionUpdate: "toolStarted", position, call });
+  sessions.push({ sessionUpdate: "toolOutput", position, text: "compiling" });
   frame.draw();
   const band = themeStyle("chat.tool.pending").bg;
   assert(band !== undefined);
@@ -839,7 +851,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   frame.mouse(mouse(29, 2, "release"));
   const copied = [...frame.copies];
   const result = { callId: "c0", content: "built", isError: false };
-  sessions.push({ sessionUpdate: "tool_finished", execution, result, display: [] });
+  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
   equal([running, copied, frame.frame.cells[1]?.[29]?.style], [[band, band], ["exec make · running\ncompiling"], {}]);
 });
@@ -863,7 +875,7 @@ test("the failure of a turn shows in bold in the danger color", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved: StoredEvent[] = [
     { seq: 1, sessionUpdate: "settings", ...SETTINGS },
-    commit(2, [], { end: { failed: "boom" } }),
+    commit(2, [], { end: { kind: "failed", error: "boom" } }),
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();

@@ -3,7 +3,7 @@
 #![expect(clippy::print_stdout, reason = "an example prints what the store saved")]
 
 use yuke_agent::{Access, PromptSection, Store};
-use yuke_engine::{Commit, CommitDisplay, Outcome, TurnEnd};
+use yuke_engine::{Commit, CommitDisplay, TurnEnd};
 use yuke_protocol::{Input, InputKind, InputSource, ModelReference, PendingInput, SessionSettings};
 use yuke_store::SqliteStore;
 
@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provider: "minimax".to_owned(),
             model: "MiniMax-M3".to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: std::env::current_dir()?,
     };
     let opened = store
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replaced: None,
         blocks: std::borrow::Cow::Owned(blocks),
         answer: None,
-        end: Some(TurnEnd::Outcome(Outcome::Stopped)),
+        end: Some(TurnEnd::Stopped),
         display: CommitDisplay::default(),
     };
     let event_number = store.commit(id, &commit, &[consumed]).await?;

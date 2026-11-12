@@ -28,7 +28,7 @@ log: string,
 /**
  * The exit code, when the process exited. An ended process without one did not exit by itself.
  */
-exitCode?: number | null, } | { "kind": "plugin", 
+exitCode?: number, } | { "kind": "plugin", 
 /**
  * The name of the plugin.
  */

@@ -61,7 +61,7 @@ function agents() {
             tail: 0,
             signal: ended.signal,
             onEvent: (event) => {
-              if ("snapshot" in event || event.update.sessionUpdate !== "interaction_requested") return;
+              if ("snapshot" in event || event.update.sessionUpdate !== "interactionRequested") return;
               const update = event.update;
               void s
                 .ask({ questions: update.request.questions })
@@ -74,14 +74,12 @@ function agents() {
             },
           });
           signal.addEventListener("abort", () => handle.cancel());
-          await handle.sendMessage({ content: [{ user_text: args.message }] });
+          await handle.sendMessage({ content: [{ kind: "userText", text: args.message }] });
           await handle.waitForIdle();
           const events = await list.events(child, { limit: 2 });
           ended.abort();
           const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
-          const text = blocks
-            .flatMap((block) => ("assistant_text" in block ? [block.assistant_text.text] : []))
-            .join("");
+          const text = blocks.flatMap((block) => (block.kind === "assistantText" ? [block.text] : [])).join("");
           return { status: "completed", text };
         });
         return outcome.kind === "background" ? `${outcome.id} runs in the background.` : (outcome.report?.text ?? "");

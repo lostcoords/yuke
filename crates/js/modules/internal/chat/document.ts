@@ -142,10 +142,8 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
       return item(entry.id, label("context replaced", STYLE.meta));
     case "end": {
       const end = entry.end;
-      if ("failed" in end) return item(entry.id, label(`failed: ${end.failed}`, STYLE.error));
-      if (end.outcome === "stopped" || end.outcome === "cancelled") {
-        return item(entry.id, label(end.outcome, STYLE.meta));
-      }
+      if (end.kind === "failed") return item(entry.id, label(`failed: ${end.error}`, STYLE.error));
+      if (end.kind === "stopped" || end.kind === "cancelled") return item(entry.id, label(end.kind, STYLE.meta));
       // A completed turn shows no row.
       return { id: entry.id, sections: [] };
     }
@@ -160,7 +158,7 @@ function hasText(entry: ReasoningEntry): boolean {
 /** The item of a failure of the running turn. */
 function statusItem(status: TurnFailure): TextItem {
   const text =
-    status.kind === "retry_scheduled"
+    status.kind === "retryScheduled"
       ? `retry in ${Math.ceil(status.afterMs / 1000)} s: ${status.error}`
       : `round failed: ${status.error}`;
   return item(STATUS, label(text, STYLE.error));
@@ -171,13 +169,13 @@ export function inputText(content: Extract<Entry, { kind: "input" }>["content"])
   let image = 0;
   return content
     .map((block) => {
-      if ("user_text" in block) return block.user_text;
-      if ("media" in block) {
-        if (block.media.mime.startsWith("image/")) {
+      if (block.kind === "userText") return block.text;
+      if (block.kind === "media") {
+        if (block.mimeType.startsWith("image/")) {
           image += 1;
           return `[image ${image}]`;
         }
-        return `[${block.media.mime}]`;
+        return `[${block.mimeType}]`;
       }
       return "";
     })

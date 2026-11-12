@@ -29,7 +29,7 @@ fn settings(place: &Place) -> Value {
             provider: "minimax".to_owned(),
             model: "MiniMax-M3".to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: place.work.clone(),
     })
     .unwrap()
@@ -37,7 +37,7 @@ fn settings(place: &Place) -> Value {
 
 /// The params of an input of `text` to `session`.
 fn input_params(session: &Value, text: &str) -> Value {
-    json!({ "sessionId": session, "content": [{ "user_text": text }] })
+    json!({ "sessionId": session, "content": [{ "kind": "userText", "text": text }] })
 }
 
 /// The client side of a server that runs in this test.
@@ -264,7 +264,7 @@ impl Client {
             state: updates("state")
                 .last()
                 .map_or(Value::Null, |update| update["state"].clone()),
-            pending: updates("input_accepted")
+            pending: updates("inputAccepted")
                 .into_iter()
                 .map(|update| update["input"].clone())
                 .collect(),
@@ -298,7 +298,7 @@ fn is_idle(message: &Value) -> bool {
 }
 
 fn is_question(message: &Value) -> bool {
-    message["params"]["update"]["sessionUpdate"] == "interaction_requested"
+    message["params"]["update"]["sessionUpdate"] == "interactionRequested"
 }
 
 /// Send `text` to `session`, and wait until the session is idle again.

@@ -25,7 +25,7 @@ const core = new Core({
   copy: (text) => term.copy(text),
   readImage: async () => {
     const bytes = await clipboardReadImage();
-    return bytes === undefined ? undefined : Object.freeze({ bytes, mime: "image/png" });
+    return bytes === undefined ? undefined : Object.freeze({ bytes, mimeType: "image/png" });
   },
   quit: (text) => term.quit(text),
   suspend: () => term.suspend(),

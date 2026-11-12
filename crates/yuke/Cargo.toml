@@ -5,6 +5,7 @@ description = "The yuke coding agent."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [dependencies]
 async-trait = "0.1.92"

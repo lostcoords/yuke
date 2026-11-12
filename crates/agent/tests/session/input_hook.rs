@@ -27,7 +27,7 @@ impl InputHook for ByText {
         input: &PendingInput,
     ) -> Result<InputDecision, Box<dyn std::error::Error + Send + Sync>> {
         let text = match input.input.model_content() {
-            [Block::UserText(text)] => text.clone(),
+            [Block::UserText { text }] => text.clone(),
             other => format!("{other:?}"),
         };
         self.0.lock().unwrap().push(text.clone());

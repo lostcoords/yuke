@@ -73,7 +73,7 @@ impl TestHost {
                     provider: "test".to_owned(),
                     model: "test-model".to_owned(),
                 },
-                settings: yuke_ai::Settings::new(),
+                settings: yuke_ai::RequestSettings::new(),
                 cwd: folder.to_owned(),
             }),
             failure: None,
@@ -106,7 +106,7 @@ impl SessionHost for TestHost {
         None
     }
 
-    fn folder(&self) -> PathBuf {
+    fn cwd(&self) -> PathBuf {
         self.folder.borrow_mut().clone()
     }
 
@@ -270,7 +270,7 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
 
     assert_eq!(error_of(&tools["image"], "{}").await, "the host failed: the cause");
     let model = yuke_testing::model();
-    let settings = yuke_ai::Settings::new();
+    let settings = yuke_ai::RequestSettings::new();
     let error = tools
         .session
         .hooks(CancellationToken::new())

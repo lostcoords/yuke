@@ -9,7 +9,7 @@ export type NoticeParams = {
 /**
  * The session of the notice. The field is absent for a notice of the whole process.
  */
-sessionId?: SessionId | null, 
+sessionId?: SessionId, 
 /**
  * The severity of the notice. A client uses it to show the notice.
  */

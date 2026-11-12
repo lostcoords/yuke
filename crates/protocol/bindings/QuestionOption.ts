@@ -11,4 +11,4 @@ label: string,
 /**
  * More text about the option.
  */
-description?: string | null, };
+description?: string, };

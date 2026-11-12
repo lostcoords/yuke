@@ -149,7 +149,7 @@ export class Picker<T extends object> implements View {
   onMouse(event: MouseEvent): boolean {
     // The search field takes the first row.
     const local = { ...event, row: event.row - 1 };
-    if (event.button === "wheel_up" || event.button === "wheel_down") return this.#list.onMouse(local);
+    if (event.button === "wheelup" || event.button === "wheeldown") return this.#list.onMouse(local);
     if (event.button !== "left" || event.action !== "press" || local.row < 0) return false;
     const found = this.#list.rowAt(this.#list.state.top + local.row);
     if (found === undefined) return false;

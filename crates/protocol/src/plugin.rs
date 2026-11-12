@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// A Git plugin of `config.json`, as `plugins.lock` keys it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct PluginSource {
     /// The URL of the repository, as `git` takes it.
@@ -34,7 +34,7 @@ impl fmt::Display for PluginSource {
 
 /// One plugin of `config.json` in `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedPlugin {
     /// The folder of a local plugin, or the URL, folder, and ref of a Git plugin.
@@ -53,7 +53,7 @@ pub struct ManagedPlugin {
 /// The state on disk of one plugin of `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "state", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PluginState {
     /// A folder of the user.
     Local,
@@ -85,9 +85,10 @@ pub struct ListPluginsResult {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SyncPluginsParams {
-    /// Fail when `plugins.lock` does not match `config.json`, and never write it. None or false syncs normally.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked: Option<bool>,
+    /// Fail when `plugins.lock` does not match `config.json`, and never write it. A missing flag is `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub locked: bool,
 }
 
 /// The commit of one Git plugin after `plugin/sync`.
@@ -112,15 +113,18 @@ pub struct SyncPluginsResult {
     pub written: bool,
 }
 
-/// Which Git plugins `plugin/check` checks: `"all"`, or `{ "names": [...] }` by the name of their `plugin.json`.
+/// Which Git plugins `plugin/check` checks: each one, or the ones with these names in their `plugin.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PluginTarget {
     /// Each Git plugin.
     All,
     /// The Git plugins of these names.
-    Names(Vec<String>),
+    Names {
+        /// The names.
+        names: Vec<String>,
+    },
 }
 
 /// The params of `plugin/check`.
@@ -132,16 +136,21 @@ pub struct CheckPluginsParams {
     pub target: PluginTarget,
 }
 
-/// The commits between the locked commit and the new one: `{ "commits": [...] }`, newest first as a short id and a
-/// subject each, or `{ "error": text }` when the server cannot read them.
+/// The commits between the locked commit and the new one, or why the server cannot read them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PluginLog {
     /// The commits.
-    Commits(Vec<String>),
-    /// Why the log is missing.
-    Error(String),
+    Commits {
+        /// Newest first, as a short id and a subject each.
+        commits: Vec<String>,
+    },
+    /// The server cannot read the commits.
+    Failed {
+        /// Why.
+        error: String,
+    },
 }
 
 /// The new commit of one Git plugin whose ref moved.
@@ -190,7 +199,7 @@ pub struct ApplyPluginsResult {
 
 /// The params of `plugin/add`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct AddPluginParams {
     /// The Git plugin to add.

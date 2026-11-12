@@ -9,8 +9,8 @@ export type ProviderState = { "kind": "ready",
 /**
  * The credential that a request uses.
  */
-credential: ProviderCredential, } | { "kind": "needs_api_key", 
+credential: ProviderCredential, } | { "kind": "needsApiKey", 
 /**
  * The name of the environment variable.
  */
-variable: string, } | { "kind": "needs_login" };
+variable: string, } | { "kind": "needsLogin" };

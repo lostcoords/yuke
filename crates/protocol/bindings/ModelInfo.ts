@@ -18,11 +18,11 @@ name: string,
 /**
  * The context window in tokens. None when the catalog does not know it.
  */
-contextWindow?: number | null, 
+contextWindow?: number, 
 /**
  * The output limit in tokens. None when the catalog does not know it.
  */
-maxOutputTokens?: number | null, 
+maxOutputTokens?: number, 
 /**
  * The reasoning choices of the model, each with the settings that a session sends for it.
  */
@@ -34,11 +34,11 @@ cost: Array<PriceBand>,
 /**
  * Whether the model calls tools. None when the catalog does not know it.
  */
-tools?: boolean | null, 
+tools?: boolean, 
 /**
  * Whether the model takes deferred tools. None when the catalog does not know it.
  */
-toolSearch?: boolean | null, 
+toolSearch?: boolean, 
 /**
  * The kinds of content that the model reads. Empty when the catalog does not know them.
  */

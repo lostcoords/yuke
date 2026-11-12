@@ -193,9 +193,9 @@ mod tests {
             },
             system: "Summarize the text.".to_owned(),
             blocks: vec![Block::user_text("the text to summarize")],
-            settings: yuke_ai::Settings {
+            settings: yuke_ai::RequestSettings {
                 max_output_tokens: Some(77),
-                ..yuke_ai::Settings::new()
+                ..yuke_ai::RequestSettings::new()
             },
             attachments: Vec::new(),
         }
@@ -327,7 +327,7 @@ mod tests {
         let reference = request("MiniMax-M3").model;
         let settings = yuke_protocol::SessionSettings {
             model: reference.clone(),
-            settings: yuke_ai::Settings::new(),
+            settings: yuke_ai::RequestSettings::new(),
             cwd: std::env::temp_dir(),
         };
         let session = app.shared.store.create_session(&settings, &[], None).await.unwrap();
@@ -346,7 +346,7 @@ mod tests {
                 input_schema: r#"{"type":"object"}"#.to_owned(),
                 defer_loading: false,
             }],
-            settings: yuke_ai::Settings::new(),
+            settings: yuke_ai::RequestSettings::new(),
             session_id: session.id,
             blocks: vec![Block::Media(Media::new(blob, "image/png".to_owned()))],
             prompt: "Describe.".to_owned(),
@@ -387,7 +387,7 @@ mod tests {
             model: yuke_testing::model_of(target),
             system: String::new(),
             tools: Vec::new(),
-            settings: yuke_ai::Settings::new(),
+            settings: yuke_ai::RequestSettings::new(),
             session_id,
             blocks: vec![Block::user_text("one")],
             prompt: "Summarize.".to_owned(),

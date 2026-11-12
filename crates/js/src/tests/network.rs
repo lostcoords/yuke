@@ -272,7 +272,7 @@ async fn a_network_failure_rejects_with_a_type_error_that_names_its_cause() {
 
     assert_eq!(
         text,
-        "fetch failed TypeError:connect_failed TypeError:malformed_response TypeError:bad_url"
+        "fetch failed TypeError:connectFailed TypeError:malformedResponse TypeError:badUrl"
     );
 }
 

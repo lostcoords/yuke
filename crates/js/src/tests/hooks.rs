@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use yuke_agent::PromptSection;
-use yuke_ai::{Blob, Block, FinishReason, Media, Settings, ToolCall, ToolDefinition, ToolResult};
+use yuke_ai::{Blob, Block, FinishReason, Media, RequestSettings, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::{CancellationToken, DisplayBlock, Hooks, RoundDecision, RoundStart, ToolDecision, ToolOutcome};
 
 use super::{evaluate, opened, windowed};
@@ -94,7 +94,7 @@ fn result() -> ToolResult {
 async fn decide(session: &ScriptSession, point: &str, token: CancellationToken) -> Decision {
     let hooks = session.hooks(token.clone());
     let context = [Block::user_text("one")];
-    let settings = Settings::new();
+    let settings = RequestSettings::new();
     let model = windowed(None);
     let round = RoundStart {
         context: &context,

@@ -11,7 +11,7 @@ name: string,
 /**
  * The name for a person.
  */
-title?: string | null, 
+title?: string, 
 /**
  * The version.
  */

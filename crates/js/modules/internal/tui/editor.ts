@@ -363,11 +363,11 @@ export class TextEditor implements TextWidget<number, EditorChange> {
 
   onMouse(event: MouseEvent): boolean {
     if (this.#support.mouse(event)) return true;
-    if (event.button === "wheel_up" || event.button === "wheel_down") {
+    if (event.button === "wheelup" || event.button === "wheeldown") {
       const count = this.#rowCount(this.#current());
       const scroll = Math.max(
         0,
-        Math.min(count - this.#size.height, this.#scroll + (event.button === "wheel_up" ? -1 : 1)),
+        Math.min(count - this.#size.height, this.#scroll + (event.button === "wheelup" ? -1 : 1)),
       );
       if (scroll !== this.#scroll) {
         this.#scroll = scroll;
@@ -675,7 +675,10 @@ function checkSpans(text: string, spans: readonly EditorSpan[]): readonly Editor
       if (span.kind === "paste") return Object.freeze({ from, to, kind: "paste", label });
       if (text.slice(from, to) !== "￼") throw new RangeError("an image span covers one U+FFFC");
       const { media } = span;
-      const copy = { blob: Object.freeze({ digest: media.blob.digest, len: media.blob.len }), mime: media.mime };
+      const copy = {
+        blob: Object.freeze({ digest: media.blob.digest, len: media.blob.len }),
+        mimeType: media.mimeType,
+      };
       return Object.freeze({
         from,
         to,

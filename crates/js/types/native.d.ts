@@ -51,8 +51,8 @@ declare module "yuke:internal/native" {
     readonly arguments: unknown;
     readonly sessionId: string;
     readonly callId: string;
-    /** The workspace folder of the session at the start of the call. */
-    readonly folder: string;
+    /** The working folder of the session at the start of the call. */
+    readonly cwd: string;
     /** Send one text of the call to the consumer. */
     readonly output: (text: string) => void;
     readonly call: CallHost;
@@ -317,7 +317,7 @@ declare module "yuke:internal/native" {
     readonly settings: object;
     /** Each path is absolute. A path that does not read rejects with an `Error` that names the path. */
     readonly attachments: readonly ToolMedia[];
-  }): Operation<Omit<import("yuke:ai").GenerateTextResult, "output">>;
+  }): Operation<import("yuke:ai").TextAnswer>;
 
   /**
    * The natives of the round of a `round.before` or `round.retry` request.
@@ -337,7 +337,7 @@ declare module "yuke:internal/native" {
       readonly blocks: number;
       readonly prompt: string;
       readonly maxOutputTokens: number | undefined;
-    }) => Operation<import("yuke:plugins").SideRequestResult>;
+    }) => Operation<import("yuke:ai").TextAnswer>;
   }
 
   /** One operation in flight: its promise, and the function that asks it to stop. */

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use yuke_engine::{Commit, Outcome, TurnEnd};
+use yuke_engine::{Commit, TurnEnd};
 
 use crate::{PromptSection, lock};
 use yuke_protocol::{
@@ -148,7 +148,7 @@ fn fork_cut(events: &[StoredEvent], through: Option<EventNumber>) -> Result<usiz
         matches!(
             &stored.event,
             SessionEvent::Commit { commit, .. }
-                if matches!(commit.end, Some(TurnEnd::Outcome(Outcome::Completed { .. })))
+                if matches!(commit.end, Some(TurnEnd::Completed { .. }))
         )
     };
     match through {

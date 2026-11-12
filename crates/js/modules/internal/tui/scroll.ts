@@ -4,7 +4,17 @@
  * row offset stay across a prepend, an update, and a resize. A list that follows the tail stays at the bottom.
  */
 import { registerHost, type WidgetHost } from "yuke:internal/tui/widgets";
-import type { Canvas, MouseEvent, Placement, ScrollListOptions, ScrollState, Size, TextRow, View } from "yuke:tui";
+import type {
+  Canvas,
+  MouseEvent,
+  Placement,
+  ScrollControl,
+  ScrollListOptions,
+  ScrollState,
+  Size,
+  TextRow,
+  View,
+} from "yuke:tui";
 
 /** A wheel step moves this many rows. */
 const WHEEL_ROWS = 3;
@@ -29,7 +39,7 @@ interface Anchor {
   readonly row: number;
 }
 
-export class ScrollList<T extends object> implements View {
+export class ScrollList<T extends object> implements View, ScrollControl {
   readonly #key: (item: T) => string;
   readonly #render: (item: T, width: number) => readonly TextRow[];
   readonly #onTopReached: (() => void | Promise<void>) | undefined;
@@ -211,8 +221,8 @@ export class ScrollList<T extends object> implements View {
   }
 
   onMouse(event: MouseEvent): boolean {
-    if (event.button !== "wheel_up" && event.button !== "wheel_down") return false;
-    this.scrollBy(event.button === "wheel_up" ? -WHEEL_ROWS : WHEEL_ROWS);
+    if (event.button !== "wheelup" && event.button !== "wheeldown") return false;
+    this.scrollBy(event.button === "wheelup" ? -WHEEL_ROWS : WHEEL_ROWS);
     return true;
   }
 

@@ -4,7 +4,7 @@
 use std::error::Error;
 
 use async_trait::async_trait;
-use yuke_ai::{Block, FinishReason, Settings, ToolCall, ToolDefinition};
+use yuke_ai::{Block, FinishReason, RequestSettings, ToolCall, ToolDefinition};
 
 use crate::model::{Model, RoundError};
 use crate::tool::ToolOutcome;
@@ -84,7 +84,7 @@ pub struct RoundStart<'a> {
     /// The model of the round: the model of the driver, or the model of a plan for this round.
     pub model: &'a Model,
     /// The settings of the round: the settings of the turn, or the settings of a plan for this round.
-    pub settings: &'a Settings,
+    pub settings: &'a RequestSettings,
     /// The system prompt of the round.
     pub system: &'a str,
     /// The tool definitions that the request of the round offers.
@@ -104,7 +104,7 @@ pub struct RoundPlan {
     /// The model of this round. The next round uses the driver's model again.
     pub model: Option<Model>,
     /// The settings of this round. The next round uses the turn's settings again.
-    pub settings: Option<Settings>,
+    pub settings: Option<RequestSettings>,
 }
 
 /// The answer of [`Hooks::before_tool`].

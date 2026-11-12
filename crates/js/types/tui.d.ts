@@ -91,8 +91,8 @@ declare module "yuke:tui" {
     | "right"
     | "up"
     | "down"
-    | "page_up"
-    | "page_down"
+    | "pageup"
+    | "pagedown"
     | "home"
     | "end"
     | "menu"
@@ -118,11 +118,11 @@ declare module "yuke:tui" {
     | "middle"
     | "right"
     | "none"
-    | "wheel_up"
-    | "wheel_down"
-    | "wheel_left"
-    | "wheel_right"
-    | `button_${number}`;
+    | "wheelup"
+    | "wheeldown"
+    | "wheelleft"
+    | "wheelright"
+    | `button${number}`;
 
   /**
    * A mouse event, local to the view. A captured drag can leave the rect of the view, so its coordinates can be
@@ -551,15 +551,19 @@ declare module "yuke:tui" {
   }
 
   /** The scroll state and moves of a text view. The content changes only through `setDocument`. */
+  /** The scroll of a list of items, such as a `ScrollList` or the list of a `TextView`. */
   export interface ScrollControl {
     readonly state: ScrollState;
-    scrollBy: (rows: number) => void;
-    scrollTo: (row: number) => void;
-    followTail: () => void;
-    scrollToItem: (id: string, row?: number) => boolean;
-    ensureVisible: (id: string, row?: number) => boolean;
+    readonly scrollBy: (rows: number) => void;
+    readonly scrollTo: (row: number) => void;
+    /** Go to the bottom and follow the tail. */
+    readonly followTail: () => void;
+    /** Put row `row` of the item `id` at the top, as far as the rows below allow. `false` without that row. */
+    readonly scrollToItem: (id: string, row?: number) => boolean;
+    /** Scroll the least to show row `row` of the item `id`. `false` when it cannot show. */
+    readonly ensureVisible: (id: string, row?: number) => boolean;
     /** Give each later state to `listener`, until the remover runs. */
-    addChangeListener: (listener: (state: ScrollState) => void) => () => void;
+    readonly addChangeListener: (listener: (state: ScrollState) => void) => () => void;
   }
 
   export interface TextViewOptions {
@@ -723,7 +727,7 @@ declare module "yuke:tui" {
    * Items as rows that scroll by display rows. The list paints only the shown rows. The top item and its row stay
    * across a prepend, an update, and a resize. The wheel scrolls; the owner binds the keys.
    */
-  export class ScrollList<T extends object> implements View {
+  export class ScrollList<T extends object> implements View, ScrollControl {
     constructor(options: ScrollListOptions<T>);
     readonly items: readonly T[];
     readonly state: ScrollState;
@@ -734,11 +738,8 @@ declare module "yuke:tui" {
     setItems(items: readonly T[]): void;
     scrollBy(rows: number): void;
     scrollTo(row: number): void;
-    /** Go to the bottom and follow the tail. */
     followTail(): void;
-    /** Put row `row` of the item `id` at the top, as far as the rows below allow. `false` without that row. */
     scrollToItem(id: string, row?: number): boolean;
-    /** Scroll the least to show row `row` of the item `id`. `false` when it cannot show. */
     ensureVisible(id: string, row?: number): boolean;
     /**
      * The item at absolute display row `row`, counted from the start of the list.
@@ -751,7 +752,6 @@ declare module "yuke:tui" {
      * Return `undefined` when the id is absent.
      */
     rowsOf(id: string): { readonly start: number; readonly rows: readonly TextRow[] } | undefined;
-    /** Give each later state to `listener`, until the remover runs. */
     addChangeListener(listener: (state: ScrollState) => void): () => void;
     layout(size: Size): readonly Placement[];
     draw(canvas: Canvas, focused: boolean): void;
@@ -781,6 +781,7 @@ declare module "yuke:tui" {
     readonly items: readonly T[];
     /** An id that stays the same for one item. New items keep the selection on it; a new query selects the first result. */
     readonly id: (item: T) => string;
+    /** The text of an item. The default rank matches the query against it. */
     readonly label: (item: T) => string;
     /** The picker shows this dim text after the label. The default rank does not match it. It can run again for one item. */
     readonly detail?: ((item: T) => string) | undefined;
@@ -835,7 +836,7 @@ declare module "yuke:tui" {
   /** An image of the clipboard as PNG. */
   export interface ClipboardImage {
     readonly bytes: Uint8Array;
-    readonly mime: "image/png";
+    readonly mimeType: "image/png";
   }
 
   /** A mounted view. `close()` runs once by any path, and `signal` aborts at the close. */
@@ -873,8 +874,8 @@ declare module "yuke:tui" {
     /** Split the active pane. The new pane gets the focus. The close of the last pane gives a new default pane. */
     readonly split: (create: ViewFactory, options?: { readonly direction?: Direction | undefined }) => Pane;
     /**
-     * Make the view of each pane that the core opens. `PaneReason` names the cases. One plugin at a time sets it, and
-     * a second set throws a `TypeError`. Without it, such a pane is empty.
+     * Make the view of each pane that the core opens. `PaneReason` names the cases. The last call wins, and the
+     * returned function brings back the view before it. Without one, such a pane is empty.
      */
     readonly setDefault: (create: DefaultPane) => () => void;
     readonly focus: (direction: FocusDirection) => boolean;
@@ -916,12 +917,8 @@ declare module "yuke:tui" {
   }
 
   /** What `tui.select` shows: a picker in a dialog. For more control, use `Picker` and `tui.dialog`. */
-  export interface SelectOptions<T extends object> {
-    readonly items: readonly T[];
-    /** The text of an item. Each item has its own label. */
-    readonly label: (item: T) => string;
-    /** The dim text after the label. A query does not match it. */
-    readonly detail?: ((item: T) => string) | undefined;
+  export interface SelectOptions<T extends object>
+    extends Pick<PickerOptions<T>, "items" | "label" | "detail" | "rank" | "render"> {
     /** The text of the head row. Without it, the dialog has no head row. */
     readonly title?: string | undefined;
     /** The dialog closes when this signal aborts, for example at the end of a pane. */
@@ -1007,11 +1004,12 @@ declare module "yuke:tui" {
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
     /**
-     * Decide on each quit: `guard` gets the function that quits, and it can call that function later or never. yuke
-     * writes the `text` of that call, when there is one, after it restores the terminal. The last call wins. The
-     * returned function ends the guard, if it is current. A kill of the process does not ask.
+     * Add a guard of each quit: `guard` gets the function that lets the quit go on, and it can call that function later
+     * or never. Each guard in add order gets a call after the guard before it lets the quit go on, so one plugin cannot
+     * drop the guard of another. yuke writes the `text` of each call, when there is one, after it restores the
+     * terminal. A kill of the process does not ask.
      */
-    readonly setQuitGuard: (guard: (quit: (text?: string) => void) => void) => () => void;
+    readonly addQuitGuard: (guard: (quit: (text?: string) => void) => void) => () => void;
     /**
      * Let the user choose one of `items` in a dialog. Gives the item, or `undefined` for Esc, an abort of `signal`, and
      * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.
@@ -1106,7 +1104,7 @@ declare module "yuke:tui" {
   export function wrap(text: string, width: number, head?: number): Int32Array;
   /**
    * The strokes of the key spec `spec`, in the form that `strokeOf` gives. White space separates the strokes. A stroke
-   * is `ctrl+alt+super+shift+key`: a named key in lower case (`enter`, `esc`, `space`, `page_down`, `f5`), or one
+   * is `ctrl+alt+super+shift+key`: a named key in lower case (`enter`, `esc`, `space`, `pagedown`, `f5`), or one
    * character. A character keeps its case, and shift without ctrl, alt, or super folds into it: `shift+g` is `G`. A
    * shifted symbol is its own character: write `!`, not `shift+1`. With ctrl, alt, or super, the character is lower
    * case and shift drops: `ctrl+shift+a` is `ctrl+a`. A spec that names no key throws a `TypeError`.

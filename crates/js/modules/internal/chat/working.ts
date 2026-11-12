@@ -20,7 +20,7 @@ const SMALLEST_PHASE = 16;
 
 /** The phase of the running turn of `transcript`. A retry gives its countdown to `retryAt`, at the time `now`. */
 function phase(transcript: Transcript, now: number, retryAt: number | undefined): string {
-  if (transcript.failure?.kind === "retry_scheduled" && retryAt !== undefined) {
+  if (transcript.failure?.kind === "retryScheduled" && retryAt !== undefined) {
     return `Retrying in ${Math.max(0, Math.ceil((retryAt - now) / 1000))}s…`;
   }
   const last = transcript.entries.at(-1);
@@ -109,7 +109,7 @@ export class ChatWorking {
       this.#retryAt = undefined;
     }
     const status = transcript.failure;
-    if (status !== this.#status && status?.kind === "retry_scheduled") this.#retryAt = this.#now() + status.afterMs;
+    if (status !== this.#status && status?.kind === "retryScheduled") this.#retryAt = this.#now() + status.afterMs;
     this.#status = status;
     if (this.active === active) return;
     for (const listener of this.#listeners) listener();

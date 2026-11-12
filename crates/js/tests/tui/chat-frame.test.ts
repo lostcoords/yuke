@@ -120,7 +120,7 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   equal(seen.at(-1), "composer true true 1 s1");
   sessions.push({ sessionUpdate: "state", state: "idle" });
   frame.draw();
-  sessions.push({ sessionUpdate: "interaction_requested", interactionId: 1, source: "guard", request: QUESTION });
+  sessions.push({ sessionUpdate: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION });
   await waitForSettled();
   frame.draw();
   equal(seen.at(-1), "question true false 0 s1");
@@ -152,7 +152,7 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   // A press on the frame leaves the focus on the input.
   click(frame, 0, 1);
   equal(chat.tui.focused, composer);
-  // An old disposer changes nothing, and the disposer of the current frame gives the two rules back.
+  // The disposer of an earlier frame leaves the current one, and the disposer of the last frame gives the rules back.
   first();
   frame.draw();
   equal(rows(frame.frame)[1], "two");

@@ -11,8 +11,8 @@ git: string,
 /**
  * The plugin folder in the repository. None is the root.
  */
-folder?: string | null, 
+folder?: string, 
 /**
  * The branch, tag, or commit that an update follows. None is the default branch.
  */
-ref?: string | null, };
+ref?: string, };

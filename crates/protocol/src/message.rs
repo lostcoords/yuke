@@ -1,8 +1,8 @@
 //! The JSON-RPC 2.0 messages: the requests and notifications of a client and of a server, and the responses. Each type
 //! holds one message, a JSON object with `"jsonrpc": "2.0"`. The protocol has no batches.
 //!
-//! An `Option` field that JSON can omit has `serde(default)` beside `skip_serializing_if`: serde needs only the second,
-//! and ts-rs marks the field optional only with both.
+//! An absent field is left out of the JSON, never `null`: each `Option` field has `skip_serializing_if`, and its type has
+//! `ts(optional_fields)`. The `id` of a [`Response`] is the one exception, because JSON-RPC asks for a null.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -230,7 +230,7 @@ pub enum ServerNotification {
 
 /// The params of `notice`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct NoticeParams {
     /// The session of the notice. The field is absent for a notice of the whole process.
@@ -247,7 +247,7 @@ pub struct NoticeParams {
 /// The severity of a notice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum NoticeLevel {
     /// A diagnostic detail.
     Debug,
@@ -261,7 +261,7 @@ pub enum NoticeLevel {
 
 /// The params of `extension/event`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionEventParams {
     /// The session of the event. The field is absent for an event of the whole process.
@@ -318,7 +318,7 @@ pub struct Response {
 /// The `result` or the `error` member of a response. A result is the JSON of the result type of its method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ResponseOutcome {
     /// The request succeeded.
     Result(#[cfg_attr(test, ts(type = "unknown"))] serde_json::Value),
@@ -328,7 +328,7 @@ pub enum ResponseOutcome {
 
 /// The error of a failed request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 pub struct ResponseError {
     /// The kind of the error. A server error is one of the constants of this type.
     pub code: i32,
@@ -343,7 +343,7 @@ pub struct ResponseError {
 impl ResponseError {
     /// The server cannot read the message as JSON.
     pub const PARSE_ERROR: i32 = -32_700;
-    /// The JSON is no valid request object.
+    /// The JSON is no valid message object: no object, or a request without a valid `jsonrpc`, `id`, or `method`.
     pub const INVALID_REQUEST: i32 = -32_600;
     /// The server has no such method.
     pub const METHOD_NOT_FOUND: i32 = -32_601;
@@ -363,11 +363,21 @@ impl ResponseError {
     pub const LOGIN_NOT_FOUND: i32 = -32_006;
     /// The session has no blob with this digest.
     pub const BLOB_NOT_FOUND: i32 = -32_007;
+    /// The session is open, so the server cannot remove it. Close it first.
+    pub const SESSION_OPEN: i32 = -32_008;
+    /// A turn runs or input waits, so the request cannot run now. Send it again after the turn ends.
+    pub const TURN_ACTIVE: i32 = -32_009;
+    /// Another call opens or closes the session, or a reload runs. Send the request again after it ends.
+    pub const TRY_AGAIN: i32 = -32_010;
+    /// The server shuts down, so it opens no session.
+    pub const STOPPING: i32 = -32_011;
+    /// The connection sent no `initialize` yet.
+    pub const NOT_INITIALIZED: i32 = -32_012;
 }
 
 /// The name, an optional title, and the version of a client or a server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct Implementation {
     /// The name for a program.
@@ -415,7 +425,7 @@ pub struct SessionResult {
 
 /// The params of `session/fork`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ForkSessionParams {
     /// The source session.
@@ -428,7 +438,7 @@ pub struct ForkSessionParams {
 
 /// The params of `session/new`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionParams {
     /// The settings of the session.
@@ -441,7 +451,7 @@ pub struct NewSessionParams {
 
 /// The params of `session/load`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct LoadSessionParams {
     /// The session.
@@ -453,7 +463,7 @@ pub struct LoadSessionParams {
 
 /// The params of `session/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsParams {
     /// Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
@@ -472,7 +482,7 @@ pub struct ListSessionsParams {
 
 /// The result of `session/list`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsResult {
     /// The sessions of the page, newest first by their newest event. The pages are no snapshot: a session that a new
@@ -539,7 +549,7 @@ pub struct Job {
 /// Whether a job runs, and how it ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum JobState {
     /// The job runs.
     Running,
@@ -551,8 +561,8 @@ pub enum JobState {
 
 /// What a job runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum JobKind {
     /// A shell command.
     Process {
@@ -584,7 +594,7 @@ pub struct StopJobParams {
 
 /// The params of `credential/update`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCredentialParams {
     /// The provider id, such as `openai-codex`. The provider must have a login flow.
@@ -612,7 +622,7 @@ impl fmt::Debug for UpdateCredentialParams {
 
 /// The params of `session/input`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct InputParams {
     /// The session.

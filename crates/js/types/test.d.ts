@@ -37,9 +37,9 @@ declare module "yuke:test" {
     NoticeLevel,
     NoticeParams,
     QuestionAnswer,
+    RequestSettings,
     SessionId,
     SessionSettings,
-    Settings,
     ToolDefinition,
   } from "yuke:protocol";
   import type { ObjectSchema, ToolMedia } from "yuke:tools";
@@ -340,7 +340,7 @@ declare module "yuke:test" {
     readonly inputTokens?: number | null;
     readonly system?: string;
     readonly tools?: readonly ToolDefinition[];
-    readonly settings?: Settings;
+    readonly settings?: RequestSettings;
   }
 
   /** The event of each hook point for `runHook`, as plain data. */
@@ -380,7 +380,7 @@ declare module "yuke:test" {
     readonly replace?: { readonly head: readonly Block[]; readonly keep: number };
     /** The id of the model of the round. */
     readonly model?: string;
-    readonly settings?: Settings;
+    readonly settings?: RequestSettings;
   }
 
   /** The decision of the host at each hook point, after each handler ran. */

@@ -4,4 +4,4 @@
  * The place of assistant text in its turn. The names come from OpenAI Responses, which asks each request to send
  * the phase of each earlier output item back.
  */
-export type TextPhase = "commentary" | "final_answer";
+export type TextPhase = "commentary" | "finalAnswer";

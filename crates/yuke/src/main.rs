@@ -30,7 +30,7 @@ use clap::{Parser, Subcommand};
 use serde_json::Map;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use yuke_ai::oauth::PendingLogin;
-use yuke_engine::{CancellationToken, Outcome, TurnEnd, chain_text};
+use yuke_engine::{CancellationToken, TurnEnd, chain_text};
 use yuke_protocol::{PluginLog, PluginSource, PluginState, PluginTarget, ReasoningLevel, SessionId};
 
 use crate::app::{Machine, warn};
@@ -275,7 +275,7 @@ async fn print_task(task: &Task, json: bool) -> Result<ExitCode, String> {
         Signaled::Ended(finished, signal_number) => {
             let finished = finished?;
             write_output(&finished, json).map_err(|error| format!("the output did not write: {error}"))?;
-            if let TurnEnd::Failed(error) = &finished.end
+            if let TurnEnd::Failed { error } = &finished.end
                 && !json
             {
                 warn(error);
@@ -368,7 +368,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
             let target = if all {
                 PluginTarget::All
             } else {
-                PluginTarget::Names(names)
+                PluginTarget::Names { names }
             };
             let changes = manager::check(&paths, &target).await?;
             if changes.is_empty() {
@@ -383,8 +383,8 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                     short(&change.new)
                 ))?;
                 match &change.log {
-                    PluginLog::Commits(lines) => lines.iter().try_for_each(|line| say(&format!("  {line}")))?,
-                    PluginLog::Error(error) => say(&format!("  no log: {error}"))?,
+                    PluginLog::Commits { commits } => commits.iter().try_for_each(|line| say(&format!("  {line}")))?,
+                    PluginLog::Failed { error } => say(&format!("  no log: {error}"))?,
                 }
             }
             if !yes && !confirm("Apply? [y/N] ")? {
@@ -543,9 +543,9 @@ fn write_output(finished: &Finished, json: bool) -> io::Result<()> {
 /// The exit status of a turn that ended with `end`. A cancel by a signal exits with 128 plus its number.
 fn exit_code(end: &TurnEnd, signal_number: Option<u8>) -> ExitCode {
     match (end, signal_number) {
-        (TurnEnd::Outcome(Outcome::Completed { .. } | Outcome::Stopped), _) => ExitCode::SUCCESS,
-        (TurnEnd::Outcome(Outcome::Cancelled), Some(number)) => signal_exit(number),
-        (TurnEnd::Outcome(Outcome::Cancelled), None) | (TurnEnd::Failed(_), _) => ExitCode::FAILURE,
+        (TurnEnd::Completed { .. } | TurnEnd::Stopped, _) => ExitCode::SUCCESS,
+        (TurnEnd::Cancelled, Some(number)) => signal_exit(number),
+        (TurnEnd::Cancelled, None) | (TurnEnd::Failed { .. }, _) => ExitCode::FAILURE,
     }
 }
 

@@ -16,4 +16,4 @@ blocks: Array<DisplayBlock>,
 /**
  * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
  */
-durationMs?: number | null, };
+durationMs?: number, };

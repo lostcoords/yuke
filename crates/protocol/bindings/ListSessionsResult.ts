@@ -13,4 +13,4 @@ sessions: Array<SessionRow>,
 /**
  * The cursor of the next page. None when no older session exists.
  */
-nextCursor?: string | null, };
+nextCursor?: string, };

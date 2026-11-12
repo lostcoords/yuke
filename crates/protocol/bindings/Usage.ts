@@ -8,20 +8,20 @@ export type Usage = {
 /**
  * Every prompt token, `cache_read` and `cache_write` among them.
  */
-input: number | null, 
+input?: number, 
 /**
  * Every generated token, `reasoning` among them.
  */
-output: number | null, 
+output?: number, 
 /**
  * The output tokens the model spent on reasoning.
  */
-reasoning: number | null, 
+reasoning?: number, 
 /**
  * The input tokens read from the prompt cache.
  */
-cacheRead: number | null, 
+cacheRead?: number, 
 /**
  * The input tokens written to the prompt cache.
  */
-cacheWrite: number | null, };
+cacheWrite?: number, };

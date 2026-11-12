@@ -13,4 +13,4 @@ text: string,
 /**
  * `None` for text alone: a block that never finished, or one whose provider sent no state.
  */
-replay?: ReasoningReplay | null, };
+replay?: ReasoningReplay, };

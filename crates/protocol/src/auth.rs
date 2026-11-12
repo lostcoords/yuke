@@ -84,15 +84,15 @@ pub struct LoginFinishedParams {
 /// How a login ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum LoginOutcome {
     /// The user approved, and the server saved the login in `auth.json`.
     Succeeded,
     /// `auth/cancel_login`, or a new `auth/login` for the provider, ended the login.
     Cancelled,
-    /// The provider refused, the login expired, or the save failed, and `message` tells why.
+    /// The provider refused, the login expired, or the save failed.
     Failed {
-        /// The text of the failure. It holds no token.
-        message: String,
+        /// Why. The text holds no token.
+        error: String,
     },
 }

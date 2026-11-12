@@ -60,8 +60,8 @@ impl Handle {
     /// Returns [`Error::Folder`] when the folder of `host` is not UTF-8, and [`Error::Stopped`] when the engine task
     /// has ended.
     pub async fn open_session(&self, host: Rc<dyn SessionHost>) -> Result<ScriptSession, Error> {
-        let folder = host.folder();
-        let folder = folder.to_str().ok_or_else(|| Error::Folder(folder.clone()))?.to_owned();
+        let cwd = host.cwd();
+        let cwd = cwd.to_str().ok_or_else(|| Error::Folder(cwd.clone()))?.to_owned();
         let session_id = host.session_id().to_string();
         let parent = host.parent().map(|parent| parent.to_string());
         let job_host = Rc::clone(&host);
@@ -77,7 +77,7 @@ impl Handle {
                     open,
                     session_id,
                     parent,
-                    folder,
+                    cwd,
                     start_job: caught(&ctx, start_job_function(&ctx, &registry, job_host))?,
                     ask: caught(&ctx, ask_function(&ctx, ask_host))?,
                     request: caught(&ctx, request_function(&ctx, request_host))?,
@@ -240,7 +240,7 @@ impl Hooks for ScriptHooks {
         self.retries.set(0);
         let request = RoundBeforeRequest {
             open: self.open,
-            window: round.model.context_window,
+            context_window: round.model.context_window,
             input_tokens: round.input_tokens,
             context_tokens: context_tokens(round.context, round.input_tokens),
             blocks: round.context.len(),
@@ -272,7 +272,7 @@ impl Hooks for ScriptHooks {
                 text: chain_text(failure),
             },
             retries: self.retries.get(),
-            window: round.model.context_window,
+            context_window: round.model.context_window,
             input_tokens: round.input_tokens,
             context_tokens: context_tokens(round.context, round.input_tokens),
             blocks: round.context.len(),
@@ -347,7 +347,7 @@ impl Hooks for ScriptHooks {
                     .media
                     .iter()
                     .map(|item| HookMedia {
-                        mime_type: item.mime.clone(),
+                        mime_type: item.mime_type.clone(),
                         size: item.blob.len,
                     })
                     .collect(),
@@ -401,7 +401,7 @@ impl ScriptHooks {
                 }
             }
         }
-        let mut stored = store_media(&*self.host, files, &self.host.folder())
+        let mut stored = store_media(&*self.host, files, &self.host.cwd())
             .await
             .map_err(|error| format!("the {point} hooks failed: {}", chain_text(error.as_ref())))?
             .into_iter();
@@ -474,7 +474,7 @@ struct OpenRequest<'js> {
     open: u64,
     session_id: String,
     parent: Option<String>,
-    folder: String,
+    cwd: String,
     /// The native `startJob(plugin, id, label, inCall)` of the session.
     start_job: Function<'js>,
     /// The native `ask(source, question)` of the session.
@@ -698,7 +698,7 @@ struct RoundRetryRequest {
     open: u64,
     failure: RoundFailure,
     retries: u64,
-    window: Option<u64>,
+    context_window: Option<u64>,
     input_tokens: Option<u64>,
     /// The estimate of [`context_tokens`] for the context before the round.
     context_tokens: u64,
@@ -721,23 +721,23 @@ fn failure_kind(failure: &RoundError) -> Option<&'static str> {
         RoundError::Model(yuke_ai::Error::Encode(_)) => "encode",
         RoundError::Model(yuke_ai::Error::Attempt(attempt)) => match attempt.cause {
             Failure::Provider(kind) => match kind {
-                ProviderKind::ContextOverflow => "context_overflow",
-                ProviderKind::RateLimited => "rate_limited",
-                ProviderKind::RateLimitUnknown => "rate_limit_unknown",
-                ProviderKind::QuotaExhausted => "quota_exhausted",
-                ProviderKind::ServerError => "server_error",
+                ProviderKind::ContextOverflow => "contextOverflow",
+                ProviderKind::RateLimited => "rateLimited",
+                ProviderKind::RateLimitUnknown => "rateLimitUnknown",
+                ProviderKind::QuotaExhausted => "quotaExhausted",
+                ProviderKind::ServerError => "serverError",
                 ProviderKind::Timeout => "timeout",
                 ProviderKind::Conflict => "conflict",
-                ProviderKind::AuthFailed => "auth_failed",
-                ProviderKind::PermissionDenied => "permission_denied",
-                ProviderKind::BadStatus => "bad_status",
+                ProviderKind::AuthFailed => "authFailed",
+                ProviderKind::PermissionDenied => "permissionDenied",
+                ProviderKind::BadStatus => "badStatus",
                 // The kind names a provider error that no other kind names.
-                _ => "provider_failed",
+                _ => "providerFailed",
             },
             Failure::Transport(_) => "transport",
             Failure::Protocol => "protocol",
-            Failure::ResponseTooLarge => "response_too_large",
-            Failure::IncompleteStream => "incomplete_stream",
+            Failure::ResponseTooLarge => "responseTooLarge",
+            Failure::IncompleteStream => "incompleteStream",
             _ => return None,
         },
         RoundError::Model(_) | RoundError::Hook { .. } | RoundError::Inbox(_) => return None,
@@ -749,7 +749,7 @@ fn failure_kind(failure: &RoundError) -> Option<&'static str> {
 #[qjs(rename_all = "camelCase")]
 struct RoundBeforeRequest {
     open: u64,
-    window: Option<u64>,
+    context_window: Option<u64>,
     input_tokens: Option<u64>,
     /// The estimate of [`context_tokens`] for the context before the round.
     context_tokens: u64,
@@ -918,17 +918,17 @@ struct PlannedInput {
 pub(crate) enum InputItem {
     /// A block, also a media block that the session holds. It crosses as its JSON.
     Block(Block),
-    /// A new media item: a `ToolMedia`, with a `mimeType`.
+    /// A new media item: a `ToolMedia`, which has no `kind`.
     Media(MediaFile),
 }
 
 impl<'js> FromJs<'js> for InputItem {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
         let object = Object::from_value(value.clone())?;
-        if object.contains_key("mimeType")? {
-            MediaFile::from_js(ctx, value).map(Self::Media)
-        } else {
+        if object.contains_key("kind")? {
             Ok(Self::Block(Json::from_js(ctx, value)?.0))
+        } else {
+            MediaFile::from_js(ctx, value).map(Self::Media)
         }
     }
 }

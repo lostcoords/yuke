@@ -96,7 +96,7 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
       const from = name.length + 1;
       const segments: Segment[] = [];
       if (shown.length > from) {
-        const link = entry.hints.subject === null || entry.hints.subject.kind === "text" ? undefined : value;
+        const link = entry.hints.subject === undefined || entry.hints.subject.kind === "text" ? undefined : value;
         segments.push({ text: name, style: STYLE.title, source: { kind: "text", from: 0, to: name.length } });
         segments.push({ text: " ", source: { kind: "text", from: name.length, to: from } });
         segments.push({ text: shown.slice(from), style: STYLE.subject, link, source: { kind, from, to: head.length } });
@@ -133,7 +133,7 @@ function stateOf(entry: ToolEntry): string | undefined {
  */
 function subjectOf(entry: ToolEntry): string | undefined {
   const subject = entry.hints.subject;
-  if (subject === null) return entry.arguments === "" || entry.arguments === "{}" ? undefined : entry.arguments;
+  if (subject === undefined) return entry.arguments === "" || entry.arguments === "{}" ? undefined : entry.arguments;
   try {
     const value: unknown = JSON.parse(entry.arguments);
     const field =
@@ -187,7 +187,7 @@ function bodyOf(entry: ToolEntry): Body | undefined {
     }
   }
   for (const [index, media] of (result?.media ?? []).entries()) {
-    blocks.push(plainBlock(`[${media.mime} #${index + 1} · ${size(media.blob.len)}]`));
+    blocks.push(plainBlock(`[${media.mimeType} #${index + 1} · ${size(media.blob.len)}]`));
   }
   if (blocks.length === 0) return undefined;
   // One source for all blocks, with a line end between two, so one preview budget counts all of them.

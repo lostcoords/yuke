@@ -45,7 +45,7 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
     assert_eq!(
         asked["params"]["update"],
         json!({
-            "sessionUpdate": "interaction_requested",
+            "sessionUpdate": "interactionRequested",
             "interactionId": 1,
             "source": "deploy",
             "request": { "kind": "questions", "questions": [{
@@ -56,7 +56,7 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
         })
     );
     assert_eq!(wrong.unwrap_err()["code"], -32_602);
-    let closed = json!({ "sessionUpdate": "interaction_closed", "interactionId": 1 });
+    let closed = json!({ "sessionUpdate": "interactionClosed", "interactionId": 1 });
     assert_eq!(answered[answered.len() - 2]["params"]["update"], closed, "{answered:?}");
     assert_eq!(answered.last().unwrap()["result"], json!({}));
     assert!(
@@ -102,12 +102,12 @@ async fn a_load_sends_an_open_question_again() {
         .messages
         .iter()
         .map(|message| &message["params"]["update"])
-        .filter(|update| update["sessionUpdate"] == "interaction_requested")
+        .filter(|update| update["sessionUpdate"] == "interactionRequested")
         .collect();
     assert_eq!(
         questions,
         [&json!({
-            "sessionUpdate": "interaction_requested",
+            "sessionUpdate": "interactionRequested",
             "interactionId": 1,
             "source": "keeper",
             "request": { "kind": "questions", "questions": [{

@@ -163,9 +163,7 @@ impl Reducer {
                 let output = self.output_mut(index)?;
                 output.kind = ItemKind::Message;
                 // An unknown phase counts as no phase, so a new provider phase does not fail the response.
-                output.phase = item
-                    .get_str("phase")
-                    .and_then(|name| crate::parse_name(name, "a text phase").ok());
+                output.phase = item.get_str("phase").and_then(TextPhase::from_responses);
                 return Ok(());
             }
             "reasoning" => {
@@ -498,7 +496,7 @@ mod tests {
                 h.expect_trace(
                     "start 0 tool_call \"tool_search\"\n\
                      stop 0 tool_call id=\"call_9\" name=\"tool_search\" arguments=\"{\\\"query\\\":\\\"read\\\",\\\"limit\\\":2}\"\n\
-                     done tool_calls \"completed\"",
+                     done toolCalls \"completed\"",
                 );
             } else {
                 assert_eq!(fed, Err(DecodeError::TooLarge));
@@ -528,7 +526,7 @@ mod tests {
              args 0 \"a\\\"}\"\n\
              stop 1 tool_call id=\"call_b\" name=\"read\" arguments=\"{\\\"path\\\":\\\"b\\\"}\"\n\
              stop 0 tool_call id=\"call_a\" name=\"read\" arguments=\"{\\\"path\\\":\\\"a\\\"}\"\n\
-             done tool_calls \"completed\"",
+             done toolCalls \"completed\"",
         );
     }
 
@@ -787,7 +785,7 @@ mod tests {
                     r#"{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","arguments":"{}"}}"#,
                     r#"{"type":"response.completed","response":{"status":"completed","usage":{}}}"#,
                 ],
-                "start 0 tool_call \"read\"\nstart 1 tool_call \"read\"\nstop 0 tool_call id=\"call_a\" name=\"read\" arguments=\"{}\"\ndone tool_calls \"completed\"",
+                "start 0 tool_call \"read\"\nstart 1 tool_call \"read\"\nstop 0 tool_call id=\"call_a\" name=\"read\" arguments=\"{}\"\ndone toolCalls \"completed\"",
             ),
         ];
         for (events, expected) in cases {

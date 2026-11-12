@@ -10,8 +10,8 @@ use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use yuke_engine::{
-    Answer, CallDisplay, Commit, CommitDisplay, DisplayBlock, Outcome, Preview, Replaced, ResultDisplay, Subject,
-    SubjectKind, ToolHints, TurnEnd,
+    Answer, CallDisplay, Commit, CommitDisplay, DisplayBlock, Preview, Replaced, ResultDisplay, Subject, SubjectKind,
+    ToolHints, TurnEnd,
 };
 
 use yuke_protocol::{
@@ -113,7 +113,7 @@ pub fn settings(model: &str) -> SessionSettings {
             provider: "test".to_owned(),
             model: model.to_owned(),
         },
-        settings: yuke_ai::Settings::new(),
+        settings: yuke_ai::RequestSettings::new(),
         cwd: PathBuf::from("/work"),
     }
 }
@@ -152,7 +152,7 @@ pub fn display() -> CommitDisplay {
                 }),
                 preview: Preview::None,
             },
-            folder: Some("/repo".to_owned()),
+            cwd: Some("/repo".to_owned()),
         }],
         results: vec![ResultDisplay {
             block_index: 0,
@@ -173,9 +173,9 @@ pub fn step(blocks: &[yuke_ai::Block]) -> Commit<'_> {
 /// A commit that ends a turn as completed.
 pub fn end(blocks: &[yuke_ai::Block]) -> Commit<'_> {
     Commit {
-        end: Some(TurnEnd::Outcome(Outcome::Completed {
+        end: Some(TurnEnd::Completed {
             finish_reason: yuke_ai::FinishReason::Stop,
-        })),
+        }),
         ..step(blocks)
     }
 }
@@ -397,22 +397,27 @@ pub async fn the_newest_turn_keeps_a_cancelled_or_failed_end(store: &dyn Store) 
     };
 
     let empty = newest().await;
-    store
-        .commit(id, &ending(TurnEnd::Outcome(Outcome::Cancelled)), &[])
-        .await
-        .unwrap();
+    store.commit(id, &ending(TurnEnd::Cancelled), &[]).await.unwrap();
     let cancelled = newest().await;
     store
-        .commit(id, &ending(TurnEnd::Failed("the disk is gone".to_owned())), &[])
+        .commit(
+            id,
+            &ending(TurnEnd::Failed {
+                error: "the disk is gone".to_owned(),
+            }),
+            &[],
+        )
         .await
         .unwrap();
     let failed = newest().await;
 
     assert_eq!(empty, NewestTurn::Empty);
-    assert_eq!(cancelled, NewestTurn::Ended(TurnEnd::Outcome(Outcome::Cancelled)));
+    assert_eq!(cancelled, NewestTurn::Ended(TurnEnd::Cancelled));
     assert_eq!(
         failed,
-        NewestTurn::Ended(TurnEnd::Failed("the disk is gone".to_owned()))
+        NewestTurn::Ended(TurnEnd::Failed {
+            error: "the disk is gone".to_owned()
+        })
     );
 }
 
@@ -1087,9 +1092,11 @@ pub async fn a_fork_point_that_does_not_end_a_completed_turn_gets_not_a_complete
         .unwrap()
         .id;
     let ends = [
-        Some(TurnEnd::Outcome(Outcome::Stopped)),
-        Some(TurnEnd::Outcome(Outcome::Cancelled)),
-        Some(TurnEnd::Failed("the request failed".to_owned())),
+        Some(TurnEnd::Stopped),
+        Some(TurnEnd::Cancelled),
+        Some(TurnEnd::Failed {
+            error: "the request failed".to_owned(),
+        }),
     ];
     store
         .commit(source, &step(&[yuke_ai::Block::user_text("a")]), &[])
@@ -1315,21 +1322,23 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
             ..step(&blocks)
         },
         Commit {
-            end: Some(TurnEnd::Outcome(Outcome::Completed {
+            end: Some(TurnEnd::Completed {
                 finish_reason: yuke_ai::FinishReason::ToolCalls,
-            })),
+            }),
             ..step(&[])
         },
         Commit {
-            end: Some(TurnEnd::Outcome(Outcome::Stopped)),
+            end: Some(TurnEnd::Stopped),
             ..step(&[])
         },
         Commit {
-            end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+            end: Some(TurnEnd::Cancelled),
             ..step(&[])
         },
         Commit {
-            end: Some(TurnEnd::Failed("the request failed".to_owned())),
+            end: Some(TurnEnd::Failed {
+                error: "the request failed".to_owned(),
+            }),
             ..step(&[])
         },
         Commit {

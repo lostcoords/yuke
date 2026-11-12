@@ -17,13 +17,13 @@ fn lines(context: &[Block]) -> Vec<String> {
     context
         .iter()
         .map(|block| match block {
-            Block::UserText(text) => format!("user {text}"),
+            Block::UserText { text } => format!("user {text}"),
             Block::AssistantText(text) => format!("assistant {}", text.text),
             Block::Reasoning(reasoning) => format!("reasoning {}", reasoning.text),
             Block::ToolCall(call) => format!("call {}", call.call_id),
             Block::ToolResult(result) if result.is_error => format!("error {} {}", result.call_id, result.content),
             Block::ToolResult(result) => format!("result {} {}", result.call_id, result.content),
-            Block::Media(media) => format!("media {}", media.mime),
+            Block::Media(media) => format!("media {}", media.mime_type),
             other => format!("{other:?}"),
         })
         .collect()
@@ -195,7 +195,7 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let results: Vec<(&str, bool)> = context
         .iter()
         .filter_map(|block| match block {
-            Block::ToolResult(result) if result.content.ends_with("finish reason content_filter.") => {
+            Block::ToolResult(result) if result.content.ends_with("finish reason contentFilter.") => {
                 Some((result.call_id.as_str(), result.is_error))
             }
             _ => None,
@@ -263,7 +263,7 @@ fn a_failed_turn_saves_the_causes_of_its_error() {
         "the blob store failed to read the attachment blob {}: the disk is gone",
         "0".repeat(64)
     );
-    assert_eq!(commit.end, Some(TurnEnd::Failed(expected)));
+    assert_eq!(commit.end, Some(TurnEnd::Failed { error: expected }));
 }
 
 #[test]
@@ -292,32 +292,34 @@ fn a_commit_reads_back_from_its_json() {
                     },
                     finish_reason: FinishReason::Stop,
                 }),
-                end: Some(TurnEnd::Outcome(Outcome::Completed {
+                end: Some(TurnEnd::Completed {
                     finish_reason: FinishReason::ToolCalls,
-                })),
+                }),
                 display: CommitDisplay::default(),
             },
-            r#"{"replaced":{"head":[{"user_text":"summary"}],"keep":2},"blocks":[{"assistant_text":{"text":"a"}}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"outcome":{"completed":{"finishReason":"tool_calls"}}}}"#,
+            r#"{"replaced":{"head":[{"kind":"userText","text":"summary"}],"keep":2},"blocks":[{"kind":"assistantText","text":"a"}],"answer":{"origin":{"model":"m","baseUrl":"https://h"},"usage":{"input":1,"output":2,"reasoning":3,"cacheRead":4,"cacheWrite":5},"finishReason":"stop"},"end":{"kind":"completed","finishReason":"toolCalls"}}"#,
         ),
         (
             Commit {
                 replaced: None,
                 blocks: Cow::Borrowed(&[]),
                 answer: None,
-                end: Some(TurnEnd::Failed("the request failed".to_owned())),
+                end: Some(TurnEnd::Failed {
+                    error: "the request failed".to_owned(),
+                }),
                 display: CommitDisplay::default(),
             },
-            r#"{"replaced":null,"blocks":[],"answer":null,"end":{"failed":"the request failed"}}"#,
+            r#"{"blocks":[],"end":{"kind":"failed","error":"the request failed"}}"#,
         ),
         (
             Commit {
                 replaced: None,
                 blocks: Cow::Borrowed(&[]),
                 answer: None,
-                end: Some(TurnEnd::Outcome(Outcome::Cancelled)),
+                end: Some(TurnEnd::Cancelled),
                 display: CommitDisplay::default(),
             },
-            r#"{"replaced":null,"blocks":[],"answer":null,"end":{"outcome":"cancelled"}}"#,
+            r#"{"blocks":[],"end":{"kind":"cancelled"}}"#,
         ),
         (
             Commit {
@@ -332,7 +334,7 @@ fn a_commit_reads_back_from_its_json() {
                             }),
                             preview: Preview::None,
                         },
-                        folder: Some("/repo".to_owned()),
+                        cwd: Some("/repo".to_owned()),
                     }],
                     results: vec![ResultDisplay {
                         block_index: 1,
@@ -348,7 +350,7 @@ fn a_commit_reads_back_from_its_json() {
                 },
                 ..Commit::blocks(&[][..])
             },
-            r#"{"replaced":null,"blocks":[],"answer":null,"end":null,"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"folder":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
+            r#"{"blocks":[],"display":{"calls":[{"blockIndex":0,"hints":{"title":"Read","subject":{"argument":"path","kind":"file"},"preview":"none"},"cwd":"/repo"}],"results":[{"blockIndex":1,"blocks":[{"kind":"markdown","text":"*a*"},{"kind":"diff","path":"a.rs","patch":"@@ -1 +1 @@\n-a\n+b\n"}],"durationMs":40}]}}"#,
         ),
     ];
     for (commit, json) in cases {

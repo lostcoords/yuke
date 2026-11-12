@@ -8,7 +8,7 @@ export type ExtensionEventParams = {
 /**
  * The session of the event. The field is absent for an event of the whole process.
  */
-sessionId?: SessionId | null, 
+sessionId?: SessionId, 
 /**
  * The name that the host gives the plugin.
  */

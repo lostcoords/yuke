@@ -55,7 +55,7 @@ pub struct BlockPosition {
 /// Why a client must remove a draft without a confirmed saved replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum DraftDiscardReason {
     /// The provider attempt failed. None of its blocks enter the context.
     Failed,
@@ -63,21 +63,24 @@ pub enum DraftDiscardReason {
     Unconfirmed,
 }
 
-/// Whether a session runs a turn.
+/// Whether a session is open in the server, and whether a turn runs in it. A `state` update of an open session is
+/// `idle` or `running`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum SessionState {
+    /// The session is not open in this server.
+    Closed,
+    /// The session is open, and no turn runs.
+    Idle,
     /// A turn runs.
     Running,
-    /// No turn runs.
-    Idle,
 }
 
 /// A live fact of a session. Saved events remain authoritative after reconnect.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "sessionUpdate", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(tag = "sessionUpdate", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum LiveUpdate {
     /// The session starts or ends a turn.
     State {
@@ -159,14 +162,14 @@ pub enum LiveUpdate {
     /// The driver handles a saved call. A denied call also has this event.
     ToolStarted {
         /// The position of the saved call, even when the provider repeats its call id.
-        execution: BlockPosition,
+        position: BlockPosition,
         /// The resolved call after the deferred-tool bridge. Its call id remains provider data.
         call: yuke_ai::ToolCall,
     },
     /// A tool emits temporary output that the model does not receive.
     ToolOutput {
         /// The position of the saved call.
-        execution: BlockPosition,
+        position: BlockPosition,
         /// The new output text.
         text: String,
     },
@@ -174,7 +177,7 @@ pub enum LiveUpdate {
     /// `TurnUnconfirmed` invalidates the provisional result.
     ToolFinished {
         /// The position of the saved call.
-        execution: BlockPosition,
+        position: BlockPosition,
         /// The result of the call.
         result: yuke_ai::ToolResult,
         /// What a frontend shows in place of the result text. The model never sees it.
@@ -200,7 +203,7 @@ pub enum LiveUpdate {
 /// What a block holds when it starts. A refusal is the text of a model that declined the request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum StartedBlock {
     /// Answer text.
     Text,
@@ -218,54 +221,55 @@ pub enum StartedBlock {
 
 /// An owned model event for clients. Block ids belong to one draft and follow block start order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ModelUpdate {
     /// A block starts.
     BlockStarted {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// What the block holds.
         content: StartedBlock,
     },
     /// Answer text arrives.
     TextDelta {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// The new text.
         text: String,
     },
     /// Refusal text arrives.
     RefusalDelta {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// The new text.
         text: String,
     },
     /// Reasoning text arrives.
     ReasoningDelta {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// The new text.
         text: String,
     },
     /// A reasoning section starts.
     ReasoningSectionStarted {
         /// The block id.
-        block: u32,
+        block_id: u32,
     },
     /// A fragment of tool arguments arrives. Final arguments come with the block stop.
     ToolInputDelta {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// The argument fragment, which need not be valid JSON alone.
         text: String,
     },
     /// A block stops. Reasoning signatures and encrypted replay data stay outside this payload.
     BlockStopped {
         /// The block id.
-        block: u32,
+        block_id: u32,
         /// The authoritative complete call for a tool block, otherwise `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         call: Option<yuke_ai::ToolCall>,
     },
     /// The response completes. This does not end its turn or confirm a durable save.
@@ -284,7 +288,7 @@ impl ModelUpdate {
     pub fn from_event(event: yuke_ai::Event<'_>) -> Option<Self> {
         Some(match event {
             yuke_ai::Event::BlockStarted(started) => Self::BlockStarted {
-                block: started.block,
+                block_id: started.block,
                 content: match started.content {
                     yuke_ai::StartedBlock::Text => StartedBlock::Text,
                     yuke_ai::StartedBlock::Refusal => StartedBlock::Refusal,
@@ -294,24 +298,24 @@ impl ModelUpdate {
                 },
             },
             yuke_ai::Event::TextDelta(delta) => Self::TextDelta {
-                block: delta.block,
+                block_id: delta.block,
                 text: delta.text.to_owned(),
             },
             yuke_ai::Event::RefusalDelta(delta) => Self::RefusalDelta {
-                block: delta.block,
+                block_id: delta.block,
                 text: delta.text.to_owned(),
             },
             yuke_ai::Event::ReasoningDelta(delta) => Self::ReasoningDelta {
-                block: delta.block,
+                block_id: delta.block,
                 text: delta.text.to_owned(),
             },
             yuke_ai::Event::ToolInputDelta(delta) => Self::ToolInputDelta {
-                block: delta.block,
+                block_id: delta.block,
                 text: delta.text.to_owned(),
             },
-            yuke_ai::Event::ReasoningSectionStarted(block) => Self::ReasoningSectionStarted { block },
+            yuke_ai::Event::ReasoningSectionStarted(block) => Self::ReasoningSectionStarted { block_id: block },
             yuke_ai::Event::BlockStopped(stopped) => Self::BlockStopped {
-                block: stopped.block,
+                block_id: stopped.block,
                 call: match stopped.result {
                     yuke_ai::BlockResult::ToolCall(call) => Some(call.into()),
                     _ => None,

@@ -11,7 +11,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::{Store, StoreError};
 use yuke_ai::Block;
-use yuke_engine::{CancellationToken, Outcome, TurnEnd, answer_text, chain_text};
+use yuke_engine::{CancellationToken, TurnEnd, answer_text, chain_text};
 use yuke_protocol::{
     Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
     ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
@@ -154,11 +154,13 @@ async fn run_turn(
 
     let end = match (watched.end, watched.failure) {
         (Some(end), _) => end,
-        (None, Some(failure)) => TurnEnd::Failed(failure),
-        (None, None) if cancellation_token.is_cancelled() => TurnEnd::Outcome(Outcome::Cancelled),
+        (None, Some(failure)) => TurnEnd::Failed { error: failure },
+        (None, None) if cancellation_token.is_cancelled() => TurnEnd::Cancelled,
         // A plugin denied or handled the input, so no turn ran.
-        (None, None) if watched.removed => TurnEnd::Outcome(Outcome::Stopped),
-        (None, None) => TurnEnd::Failed("the turn saved no end".to_owned()),
+        (None, None) if watched.removed => TurnEnd::Stopped,
+        (None, None) => TurnEnd::Failed {
+            error: "the turn saved no end".to_owned(),
+        },
     };
     Ok(Finished {
         session: id,
@@ -182,9 +184,9 @@ fn new_settings(
     let (model, reasoning) = choose(providers, selector, choice)?;
     Ok(SessionSettings {
         model,
-        settings: yuke_ai::Settings {
+        settings: yuke_ai::RequestSettings {
             reasoning,
-            ..yuke_ai::Settings::new()
+            ..yuke_ai::RequestSettings::new()
         },
         cwd: cwd.to_owned(),
     })

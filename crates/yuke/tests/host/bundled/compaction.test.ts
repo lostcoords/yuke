@@ -17,15 +17,15 @@ import {
 const WINDOW = 100_000;
 
 /** A user text of about `tokens` estimated tokens. */
-const long = (letter: string, tokens: number): Block => ({ user_text: letter.repeat(tokens * 4) });
+const long = (letter: string, tokens: number): Block => ({ kind: "userText", text: letter.repeat(tokens * 4) });
 
 /** Two inputs of about 12,000 tokens each, with an answer between them. */
-const twoInputs = (): Block[] => [long("a", 12_000), { assistant_text: { text: "ok" } }, long("b", 12_000)];
+const twoInputs = (): Block[] => [long("a", 12_000), { kind: "assistantText", text: "ok" }, long("b", 12_000)];
 
 /** The text of a failed summary request: the server error of the fake model. */
 const FAILED = "the provider returned a server error: overloaded_error: Overloaded";
 
-const OLD_SUMMARY: Block = { user_text: "<context_summary>\nold\n</context_summary>" };
+const OLD_SUMMARY: Block = { kind: "userText", text: "<context_summary>\nold\n</context_summary>" };
 
 /** A host with the plugin `compaction` whose side requests go to a fake model with `replies`. */
 async function compacting(replies: readonly Reply[]) {
@@ -66,7 +66,7 @@ test("a context near the window becomes a summary and its newest part", async ()
 
   const [head, keep] = replaced(plan);
   equal(keep, 1);
-  const summary = head.length === 1 && head[0] !== undefined && "user_text" in head[0] ? head[0].user_text : "";
+  const summary = head.length === 1 && head[0]?.kind === "userText" ? head[0].text : "";
   equal(summary.startsWith("<context_summary>\n## Goal\nThe work.\n</context_summary>\n"), true);
   equal(notices, [["info", "The context nears the window of the model. A summary replaces its old part."]]);
   // The summary request sends the whole context, so it reads the prompt cache of the round.
@@ -89,9 +89,9 @@ for (const [name, inputTokens, window] of [
 
 test("the cut never starts at a tool result, and the newest input stays exact", async () => {
   const context: Block[] = [
-    { user_text: "start" },
-    { tool_call: { callId: "c1", name: "read", arguments: "{}" } },
-    { tool_result: { callId: "c1", content: "r".repeat(48_000), isError: false } },
+    { kind: "userText", text: "start" },
+    { kind: "toolCall", callId: "c1", name: "read", arguments: "{}" },
+    { kind: "toolResult", callId: "c1", content: "r".repeat(48_000), isError: false },
   ];
 
   const { plan } = await before({ blocks: context, inputTokens: 90_000, contextWindow: WINDOW }, [
@@ -99,7 +99,7 @@ test("the cut never starts at a tool result, and the newest input stays exact", 
   ]);
 
   const [head, keep] = replaced(plan);
-  equal([keep, head.slice(1)], [2, [{ user_text: "start" }]]);
+  equal([keep, head.slice(1)], [2, [{ kind: "userText", text: "start" }]]);
 });
 
 test("a second compaction merges the old summary", async () => {
@@ -154,7 +154,7 @@ test("the old summary never counts as the newest input", async () => {
 
 for (const [name, answer, reason] of [
   ["a failed summary", reply.failed(""), FAILED],
-  ["a summary that stops for a call", reply.toolCall("read", { path: "a" }), "the summary stopped with tool_calls"],
+  ["a summary that stops for a call", reply.toolCall("read", { path: "a" }), "the summary stopped with toolCalls"],
   ["an empty summary", reply.text(" \n"), "the summary is empty"],
 ] as const) {
   test(`${name} sends a warning, and the round keeps its context`, async () => {
@@ -170,7 +170,7 @@ test("an overflow sends only the part before the cut, and the plugin stops after
   const { host, session } = await compacting([reply.text("summary"), reply.text("summary")]);
   await using _host = host;
   const round = { blocks: twoInputs(), inputTokens: 120_000, contextWindow: WINDOW };
-  const overflow = { kind: "context_overflow" } as const;
+  const overflow = { kind: "contextOverflow" } as const;
 
   const first = await session.runHook("round.retry", { ...round, failure: overflow, retries: 0 });
   await session.runHook("round.retry", { ...round, failure: overflow, retries: 1 });

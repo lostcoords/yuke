@@ -21,7 +21,7 @@ pub struct StoredEvent {
 /// A change of a session that the store saves. A `session/update` carries it with its event number.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "sessionUpdate", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(tag = "sessionUpdate", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum SessionEvent {
     /// A commit of a turn, and the inputs that it consumed. The blocks of the commit start with the model blocks of
     /// those inputs.

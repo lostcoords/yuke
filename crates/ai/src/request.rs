@@ -114,16 +114,24 @@ impl FromStr for Effort {
 /// Whether and how the model thinks before it answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 #[non_exhaustive]
 pub enum Thinking {
     /// Ask for no reasoning. Some hosts accept the field and reason again.
     Off,
-    /// Let the model choose when and how much to think. `None` leaves the endpoint default display.
-    /// Only thinking can carry a display: Anthropic rejects one on disabled thinking.
-    Adaptive(Option<ThinkingDisplay>),
+    /// Let the model choose when and how much to think. Only thinking can carry a display: Anthropic rejects one on
+    /// disabled thinking.
+    #[cfg_attr(feature = "ts", ts(optional_fields))]
+    Adaptive {
+        /// Whether a thinking block returns its summary text. `None` leaves the endpoint default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<ThinkingDisplay>,
+    },
     /// A thinking-token budget, written as given. Anthropic requires it below the output limit.
-    Budget(u64),
+    Budget {
+        /// The most thinking tokens.
+        tokens: u64,
+    },
 }
 
 /// Whether a thinking block returns its summary text. Anthropic bills the full thinking either way.
@@ -151,12 +159,14 @@ impl ThinkingDisplay {
 /// The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
 /// protocol has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningSettings {
     /// Whether and how the model thinks. `None` leaves the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<Thinking>,
     /// How hard the model thinks. `None` leaves the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
 }
 
@@ -170,27 +180,31 @@ impl ReasoningSettings {
 /// The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
 /// one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
-pub struct Settings {
+pub struct RequestSettings {
     /// The output limit. `None` leaves the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     /// The reasoning settings.
     pub reasoning: ReasoningSettings,
     /// The sampling temperature. `None` leaves the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     /// The nucleus sampling mass. `None` leaves the endpoint default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     /// The tool control.
     pub tool_choice: ToolChoice,
     /// The schema of the response. `None` leaves the response free.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<OutputSchema>,
 }
 
-impl Settings {
+impl RequestSettings {
     /// Settings that leave every value at its endpoint default.
     pub const fn new() -> Self {
-        Settings {
+        RequestSettings {
             max_output_tokens: None,
             reasoning: ReasoningSettings {
                 thinking: None,
@@ -207,7 +221,7 @@ impl Settings {
     /// [`AnthropicWire::max_tokens`].
     #[must_use]
     pub fn max_output_tokens(self, tokens: u32) -> Self {
-        Settings {
+        RequestSettings {
             max_output_tokens: Some(tokens),
             ..self
         }
@@ -216,13 +230,13 @@ impl Settings {
     /// The reasoning settings, both at once.
     #[must_use]
     pub fn reasoning(self, reasoning: ReasoningSettings) -> Self {
-        Settings { reasoning, ..self }
+        RequestSettings { reasoning, ..self }
     }
 
     /// Whether and how the model thinks.
     #[must_use]
     pub fn thinking(self, thinking: Thinking) -> Self {
-        Settings {
+        RequestSettings {
             reasoning: ReasoningSettings {
                 thinking: Some(thinking),
                 ..self.reasoning
@@ -234,7 +248,7 @@ impl Settings {
     /// How hard the model thinks.
     #[must_use]
     pub fn effort(self, effort: Effort) -> Self {
-        Settings {
+        RequestSettings {
             reasoning: ReasoningSettings {
                 effort: Some(effort),
                 ..self.reasoning
@@ -246,7 +260,7 @@ impl Settings {
     /// The sampling temperature. A NaN or an infinity fails the encode.
     #[must_use]
     pub fn temperature(self, temperature: f64) -> Self {
-        Settings {
+        RequestSettings {
             temperature: Some(temperature),
             ..self
         }
@@ -256,7 +270,7 @@ impl Settings {
     /// infinity fails the encode.
     #[must_use]
     pub fn top_p(self, top_p: f64) -> Self {
-        Settings {
+        RequestSettings {
             top_p: Some(top_p),
             ..self
         }
@@ -265,20 +279,20 @@ impl Settings {
     /// The tool control.
     #[must_use]
     pub fn tool_choice(self, tool_choice: ToolChoice) -> Self {
-        Settings { tool_choice, ..self }
+        RequestSettings { tool_choice, ..self }
     }
 
     /// The schema of the response.
     #[must_use]
     pub fn output_schema(self, schema: OutputSchema) -> Self {
-        Settings {
+        RequestSettings {
             output_schema: Some(schema),
             ..self
         }
     }
 }
 
-impl Default for Settings {
+impl Default for RequestSettings {
     fn default() -> Self {
         Self::new()
     }
@@ -293,13 +307,13 @@ pub struct Request<'a> {
     pub(crate) tools: &'a [ToolDefinition],
     pub(crate) blobs: Option<&'a dyn BlobStore>,
     pub(crate) system: &'a str,
-    pub(crate) settings: &'a Settings,
+    pub(crate) settings: &'a RequestSettings,
     pub(crate) session_id: Option<&'a str>,
     pub(crate) cached: Option<usize>,
 }
 
 /// The settings of a request without [`Request::settings`]: each value at its endpoint default.
-static DEFAULT_SETTINGS: Settings = Settings::new();
+static DEFAULT_SETTINGS: RequestSettings = RequestSettings::new();
 
 impl<'a> Request<'a> {
     /// A request of the whole context `blocks`, with every setting at its endpoint default. The provider
@@ -339,7 +353,7 @@ impl<'a> Request<'a> {
 
     /// The settings of the request.
     #[must_use]
-    pub fn settings(self, settings: &'a Settings) -> Self {
+    pub fn settings(self, settings: &'a RequestSettings) -> Self {
         Request { settings, ..self }
     }
 
@@ -421,9 +435,11 @@ mod tests {
     // The store keeps the settings of each session as this JSON.
     #[test]
     fn settings_json_keeps_its_stored_shape() {
-        let full = Settings::new()
+        let full = RequestSettings::new()
             .max_output_tokens(1000)
-            .thinking(Thinking::Adaptive(Some(ThinkingDisplay::Summarized)))
+            .thinking(Thinking::Adaptive {
+                display: Some(ThinkingDisplay::Summarized),
+            })
             .effort(Effort::Xhigh)
             .temperature(0.5)
             .top_p(0.9)
@@ -432,20 +448,20 @@ mod tests {
         let cases = [
             (
                 full,
-                r#"{"maxOutputTokens":1000,"reasoning":{"thinking":{"adaptive":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
+                r#"{"maxOutputTokens":1000,"reasoning":{"thinking":{"kind":"adaptive","display":"summarized"},"effort":"xhigh"},"temperature":0.5,"topP":0.9,"toolChoice":"none","outputSchema":{"name":"response","schema":"{\"type\":\"object\"}","strict":true}}"#,
             ),
             (
-                Settings::new().thinking(Thinking::Budget(2048)),
-                r#"{"maxOutputTokens":null,"reasoning":{"thinking":{"budget":2048},"effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
+                RequestSettings::new().thinking(Thinking::Budget { tokens: 2048 }),
+                r#"{"reasoning":{"thinking":{"kind":"budget","tokens":2048}},"toolChoice":"auto"}"#,
             ),
             (
-                Settings::new().thinking(Thinking::Off),
-                r#"{"maxOutputTokens":null,"reasoning":{"thinking":"off","effort":null},"temperature":null,"topP":null,"toolChoice":"auto","outputSchema":null}"#,
+                RequestSettings::new().thinking(Thinking::Off),
+                r#"{"reasoning":{"thinking":{"kind":"off"}},"toolChoice":"auto"}"#,
             ),
         ];
         for (settings, json) in cases {
             assert_eq!(serde_json::to_string(&settings).unwrap(), json);
-            assert_eq!(serde_json::from_str::<Settings>(json).unwrap(), settings);
+            assert_eq!(serde_json::from_str::<RequestSettings>(json).unwrap(), settings);
         }
     }
 }

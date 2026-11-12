@@ -180,7 +180,7 @@ async fn a_dropped_settings_write_leaves_the_next_turn_with_the_saved_settings()
         .await
         .unwrap();
     let mut brief = settings();
-    brief.settings = yuke_ai::Settings::new().temperature(0.25);
+    brief.settings = yuke_ai::RequestSettings::new().temperature(0.25);
     {
         let mut write = pin!(session.set_settings(brief));
         let polled = write.as_mut().poll(&mut Context::from_waker(Waker::noop()));
@@ -209,7 +209,7 @@ async fn a_turn_sends_the_prompt_the_settings_and_the_id_of_its_session() {
     let mut model = model();
     model.target.route.session_header = SessionHeader::XOpencodeSession;
     let mut session_settings = settings();
-    session_settings.settings = yuke_ai::Settings::new().temperature(0.25);
+    session_settings.settings = yuke_ai::RequestSettings::new().temperature(0.25);
     let sections = [
         PromptSection::new("base", "Be brief."),
         PromptSection::new("empty", ""),
@@ -342,7 +342,12 @@ async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open
     let SessionEvent::Commit { commit, consumed } = repair.event else {
         panic!("{:?}", repair.event);
     };
-    assert_eq!(commit.end, Some(TurnEnd::Failed(TURN_STOPPED.to_owned())));
+    assert_eq!(
+        commit.end,
+        Some(TurnEnd::Failed {
+            error: TURN_STOPPED.to_owned()
+        })
+    );
     // The duration of a call that the stop cut is unknown, so its result has no duration.
     assert!(commit.display.is_empty(), "{:?}", commit.display);
     assert_eq!(consumed, []);
@@ -715,7 +720,9 @@ async fn a_failed_read_of_the_inbox_after_a_round_ends_the_turn_as_failed_and_ke
     let saved = store.open(session.id(), Access::Read).await.unwrap();
     assert_eq!(
         saved.newest_turn,
-        NewestTurn::Ended(TurnEnd::Failed("the store failed: the disk is gone".to_owned()))
+        NewestTurn::Ended(TurnEnd::Failed {
+            error: "the store failed: the disk is gone".to_owned()
+        })
     );
 }
 

@@ -7,59 +7,59 @@ import type { Usage } from "./Usage";
 /**
  * An owned model event for clients. Block ids belong to one draft and follow block start order.
  */
-export type ModelUpdate = { "kind": "block_started", 
+export type ModelUpdate = { "kind": "blockStarted", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * What the block holds.
  */
-content: StartedBlock, } | { "kind": "text_delta", 
+content: StartedBlock, } | { "kind": "textDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "refusal_delta", 
+text: string, } | { "kind": "refusalDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "reasoning_delta", 
+text: string, } | { "kind": "reasoningDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The new text.
  */
-text: string, } | { "kind": "reasoning_section_started", 
+text: string, } | { "kind": "reasoningSectionStarted", 
 /**
  * The block id.
  */
-block: number, } | { "kind": "tool_input_delta", 
+blockId: number, } | { "kind": "toolInputDelta", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The argument fragment, which need not be valid JSON alone.
  */
-text: string, } | { "kind": "block_stopped", 
+text: string, } | { "kind": "blockStopped", 
 /**
  * The block id.
  */
-block: number, 
+blockId: number, 
 /**
  * The authoritative complete call for a tool block, otherwise `None`.
  */
-call: ToolCall | null, } | { "kind": "response_completed", 
+call?: ToolCall, } | { "kind": "responseCompleted", 
 /**
  * The normalized finish reason.
  */

@@ -13,7 +13,7 @@
  *   setting that JSON cannot hold.
  */
 declare module "yuke:ai" {
-  import type { Block, FinishReason, ModelReference, ReasoningSettings, Settings, Usage } from "yuke:protocol";
+  import type { Block, FinishReason, ModelReference, ReasoningSettings, RequestSettings, Usage } from "yuke:protocol";
   import type { Infer, ObjectSchema, ToolMedia } from "yuke:tools";
 
   /** The key of the brand that carries the object type of an `ObjectOutput`. Only TypeScript sees it. */
@@ -73,11 +73,11 @@ declare module "yuke:ai" {
      */
     attachments?: readonly ToolMedia[] | undefined;
     /** The output limit. */
-    maxOutputTokens?: Settings["maxOutputTokens"] | undefined;
+    maxOutputTokens?: RequestSettings["maxOutputTokens"] | undefined;
     /** The sampling temperature. */
-    temperature?: Settings["temperature"] | undefined;
+    temperature?: RequestSettings["temperature"] | undefined;
     /** The nucleus sampling mass. */
-    topP?: Settings["topP"] | undefined;
+    topP?: RequestSettings["topP"] | undefined;
     /** Whether and how hard the model thinks. A missing field keeps the default of the endpoint. */
     reasoning?: Partial<ReasoningSettings> | undefined;
     /**
@@ -89,14 +89,18 @@ declare module "yuke:ai" {
     signal?: AbortSignal | undefined;
   }
 
-  /** The answer of the model. */
-  export interface GenerateTextResult<T = undefined> {
-    /** The text of the answer. A line feed joins two text blocks. */
+  /** The answer of a model to one request, of `generateText` and of `sideRequest`. */
+  export interface TextAnswer {
+    /** The text of the answer. A line feed joins two text blocks. A call of a tool is not in it. */
     readonly text: string;
-    /** The reason that the answer stopped. For `"tool_calls"`, yuke runs no tool call of the answer. */
+    /** The reason that the answer stopped. For `"toolCalls"`, yuke runs no tool call of the answer. */
     readonly finishReason: FinishReason;
     /** The token counts of the request. */
     readonly usage: Usage;
+  }
+
+  /** The answer of `generateText`. */
+  export interface GenerateTextResult<T = undefined> extends TextAnswer {
     /** The checked object of an `output` request, or `undefined` without one. */
     readonly output: T;
   }

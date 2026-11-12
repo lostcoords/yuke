@@ -4,7 +4,8 @@ import { writeFile } from "yuke:fs";
 import type { InputBeforeAnswer, PluginSession } from "yuke:plugins";
 import { createHost, equal, folder, test } from "yuke:test";
 
-const typed = (text: string) => ({ source: { kind: "user" }, kind: "message", blocks: [{ user_text: text }] }) as const;
+const typed = (text: string) =>
+  ({ source: { kind: "user" }, kind: "message", blocks: [{ kind: "userText", text: text }] }) as const;
 
 /** A plugin whose `input.before` handler gives `answer`. */
 const answering =
@@ -25,7 +26,7 @@ test("a replace feeds the next handler, and the decision holds the last blocks",
   const first: PluginSession = (s) => {
     s.addHook("input.before", (event) => {
       seen.push(JSON.stringify({ source: event.source, kind: event.kind, blocks: event.blocks }));
-      return { replace: { blocks: [{ user_text: "expanded" }] } };
+      return { replace: { blocks: [{ kind: "userText", text: "expanded" }] } };
     });
   };
   const second: PluginSession = (s) => {
@@ -44,10 +45,10 @@ test("a replace feeds the next handler, and the decision holds the last blocks",
 
   const decision = await session.runHook("input.before", typed("/skill:pdf"));
 
-  equal(decision, { replace: { blocks: [{ user_text: "expanded" }] } });
+  equal(decision, { replace: { blocks: [{ kind: "userText", text: "expanded" }] } });
   equal(seen, [
-    '{"source":{"kind":"user"},"kind":"message","blocks":[{"user_text":"/skill:pdf"}]}',
-    '[{"user_text":"expanded"}]',
+    '{"source":{"kind":"user"},"kind":"message","blocks":[{"kind":"userText","text":"/skill:pdf"}]}',
+    '[{"kind":"userText","text":"expanded"}]',
   ]);
 });
 
@@ -110,7 +111,12 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
       const added = { mimeType: "image/png", bytes: new Uint8Array([1, 2, 3]) };
       return {
         replace: {
-          blocks: [...event.blocks, added, { user_text: "look" }, { mimeType: "image/png", path: "added.png" }],
+          blocks: [
+            ...event.blocks,
+            added,
+            { kind: "userText", text: "look" },
+            { mimeType: "image/png", path: "added.png" },
+          ],
         },
       } as InputBeforeAnswer;
     });
@@ -133,7 +139,7 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
   const blocks = typeof decision === "object" ? decision.replace.blocks : [];
   equal(
     blocks.map((block) => ("bytes" in block ? [block.mimeType, [...block.bytes]] : block)),
-    [["image/jpeg", [9, 9, 9, 9]], ["image/png", [1, 2, 3]], { user_text: "look" }, ["image/png", [4, 5]]],
+    [["image/jpeg", [9, 9, 9, 9]], ["image/png", [1, 2, 3]], { kind: "userText", text: "look" }, ["image/png", [4, 5]]],
   );
   equal(size, 3);
 });
@@ -142,7 +148,7 @@ test("the event gives the blocks in order, and a media block can name a file", a
   const kinds: string[] = [];
   const look: PluginSession = (s) => {
     s.addHook("input.before", (event) => {
-      kinds.push(...event.blocks.map((block) => Object.keys(block)[0] ?? ""));
+      kinds.push(...event.blocks.map((block) => ("kind" in block ? block.kind : "file")));
       return undefined;
     });
   };
@@ -155,12 +161,12 @@ test("the event gives the blocks in order, and a media block can name a file", a
     kind: "message",
     blocks: [
       { mimeType: "image/png", bytes: new Uint8Array([1]) },
-      { user_text: "look" },
+      { kind: "userText", text: "look" },
       { mimeType: "image/png", path: "c.png" },
     ],
   });
 
-  equal([decision, kinds], ["keep", ["media", "user_text", "media"]]);
+  equal([decision, kinds], ["keep", ["media", "userText", "media"]]);
 });
 
 test("a notification shows its plugin source and its kind", async () => {
@@ -177,7 +183,7 @@ test("a notification shows its plugin source and its kind", async () => {
   await session.runHook("input.before", {
     source: { kind: "plugin", name: "host:jobs" },
     kind: "notification",
-    blocks: [{ user_text: "the job ended" }],
+    blocks: [{ kind: "userText", text: "the job ended" }],
   });
 
   equal(seen, ["plugin host:jobs notification"]);
