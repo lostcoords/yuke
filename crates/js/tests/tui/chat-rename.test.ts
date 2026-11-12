@@ -85,7 +85,7 @@ test("a rename failure shows an error and retains the editor", async () => {
   frame.draw();
 
   equal(
-    [editor.state.text, rows(frame.frame).some((line) => line.includes("Error: rename failed")), sessions.renames],
+    [editor.state.text, rows(frame.frame).some((line) => line.includes("rename failed")), sessions.renames],
     ["new title", true, []],
   );
   frame.key("esc");

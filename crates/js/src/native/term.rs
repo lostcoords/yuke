@@ -149,6 +149,18 @@ fn add_drawing<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -
 
     let held = Rc::clone(frames);
     set(
+        "termTitle",
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>, title: Option<String>| -> rquickjs::Result<_> {
+                held.display(&ctx)?.frame().screen.title(title.as_deref());
+                Ok(())
+            },
+        )?,
+    )?;
+
+    let held = Rc::clone(frames);
+    set(
         "termCopy",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>, text: String| -> rquickjs::Result<_> {
             let display = held.display(&ctx)?;

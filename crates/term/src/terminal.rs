@@ -15,10 +15,11 @@ use crate::parser::{Answer, Parsed, Parser};
 use crate::reader::{Reader, read_input, wait};
 use crate::screen::Size;
 
-/// The alternate screen, bracketed paste, mouse reports in SGR form, focus reports, color scheme reports, and kitty
-/// keys with the disambiguate and alternate-key flags. A terminal ignores each mode that it does not know. A later mouse
-/// mode replaces an earlier one, so `1003` gives all motion, and a terminal without it, such as Termux, keeps `1002`.
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1003;1004;1006h\x1b[?2031h\x1b[>5u";
+/// The alternate screen, bracketed paste, mouse reports in SGR form, focus reports, color scheme reports, kitty keys
+/// with the disambiguate and alternate-key flags, and a push of the window title, so a leave brings back the title of
+/// the shell. A terminal ignores each mode that it does not know. A later mouse mode replaces an earlier one, so `1003`
+/// gives all motion, and a terminal without it, such as Termux, keeps `1002`.
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?2004h\x1b[?1002;1003;1004;1006h\x1b[?2031h\x1b[>5u\x1b[22;2t";
 
 /// The OSC 11 query of the background color. The answer is an [`Event::Background`].
 pub const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
@@ -181,14 +182,16 @@ impl Terminal {
         Ok(())
     }
 
-    /// Turn off each mode that the terminal turned on, and restore the saved settings.
+    /// Turn off each mode that the terminal turned on, pop the window title, and restore the saved settings.
     fn leave(&self) -> io::Result<()> {
         let mut leave = b"\x1b[<u".to_vec();
         if self.modify_other_keys {
             // No value resets modifyOtherKeys to the initial value of the terminal.
             leave.extend_from_slice(b"\x1b[>4m");
         }
-        leave.extend_from_slice(b"\x1b[?2031l\x1b[?1002;1003;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l");
+        leave.extend_from_slice(
+            b"\x1b[?2031l\x1b[?1002;1003;1004;1006l\x1b[?2004l\x1b[0m\x1b[0 q\x1b[?25h\x1b[?1049l\x1b[23;2t",
+        );
         let written = self.write_all(&leave);
         // The settings come back also after a failed write, so the shell does not stay raw.
         let restored = set(&self.file, &self.saved);

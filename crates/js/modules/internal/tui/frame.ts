@@ -23,6 +23,7 @@ export function createFrame(
   let height = size.height;
   const screen = new TestScreen(width, height);
   const copies: string[] = [];
+  let title: string | undefined;
   const quits: (string | undefined)[] = [];
   let clipboard: ClipboardImage | undefined;
   const surfaces = new Set<TestSurface>();
@@ -35,6 +36,9 @@ export function createFrame(
     text: (column, row, text, style, right) => screen.text(column, row, text, style, right),
     fill: (column, row, fillWidth, fillHeight, style) => screen.fill(column, row, fillWidth, fillHeight, style),
     cursor: (cursor) => screen.cursor(cursor),
+    title: (text) => {
+      title = text;
+    },
     // Each input and each `advance` draws a frame after it, and `draw()` draws one on demand.
     requestFrame: () => {},
     after: clock.after,
@@ -56,7 +60,13 @@ export function createFrame(
     screen.clear();
     core.draw();
     const drawn = screen.frame();
-    frame = Object.freeze({ width: drawn.width, height: drawn.height, cells: drawn.cells, cursor: drawn.cursor });
+    frame = Object.freeze({
+      width: drawn.width,
+      height: drawn.height,
+      cells: drawn.cells,
+      cursor: drawn.cursor,
+      title,
+    });
     return frame;
   };
   draw();

@@ -8,16 +8,7 @@
 import { plugins as manager, type PluginManager } from "yuke:internal/sessions";
 import type { PluginContext } from "yuke:plugins";
 import type { AddPluginParams, ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import {
-  type Canvas,
-  type KeyEvent,
-  strokeOf,
-  type TextDocument,
-  TextEditor,
-  TextView,
-  type Tui,
-  type View,
-} from "yuke:tui";
+import { type Canvas, type KeyEvent, strokeOf, type TextDocument, TextView, type Tui, type View } from "yuke:tui";
 
 const TITLE = "plugins.title";
 const DETAIL = "plugins.detail";
@@ -196,11 +187,6 @@ function addOf(line: string): AddPluginParams {
   return { source };
 }
 
-/** A text document of the one paragraph `text`. */
-function paragraph(text: string): TextDocument {
-  return { id: "paragraph", items: [{ id: "text", sections: [{ id: "text", kind: "text", text }] }] };
-}
-
 /** Open the dashboard. The title shows the count of the plugins and the state of the last action. */
 async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promise<void> {
   const list = new PluginList();
@@ -258,8 +244,8 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
         when: () => idle() && list.selected?.state === "installed" && named() !== undefined,
         run: () => update({ kind: "names", names: [named() ?? ""] }),
       },
-      { key: "a", label: "add", when: idle, run: () => add() },
-      { key: "d", label: "remove", when: () => idle() && named() !== undefined, run: () => remove(named() ?? "") },
+      { key: "a", label: "add", when: idle, run: () => void add() },
+      { key: "d", label: "remove", when: () => idle() && named() !== undefined, run: () => void remove(named() ?? "") },
       { key: "/", label: "search", when: () => idle() && list.plugins.length > 0, run: () => void search() },
       { key: "R", label: "reload", when: idle, run: () => tui.commands.run("core:reload") },
     ],
@@ -279,54 +265,30 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       },
     );
   };
-  const add = (): void => {
-    let problem = "";
-    const field = new TextEditor({
-      multiline: false,
+  const add = async (): Promise<void> => {
+    let params: AddPluginParams | undefined;
+    // A line that does not parse keeps the prompt with its draft, so a fix needs no new typing.
+    const line = await tui.input({
+      title: "Add a Git plugin",
       placeholder: "URL [--folder FOLDER] [--ref REF]",
-      onSubmit: (state) => {
-        let params: AddPluginParams;
-        try {
-          params = addOf(state.text);
-        } catch (error) {
-          // The prompt stays with its draft, so a fix needs no new typing.
-          problem = String(error);
-          tui.requestFrame();
-          return;
-        }
-        prompt.close();
-        run(`adding ${params.source.git}`, async () => {
-          const added = await plugins.add(params, { signal: dialog.signal });
-          return `${added.name} added at ${short(added.commit)}: R reloads`;
-        });
+      signal: dialog.signal,
+      onSubmit: (text) => {
+        params = addOf(text);
       },
     });
-    const prompt = tui.dialog({
-      title: () => (problem === "" ? "Add a Git plugin" : problem),
-      body: field,
-      rows: 3,
-      signal: dialog.signal,
+    if (line === undefined || params === undefined) return;
+    const chosen = params;
+    run(`adding ${chosen.source.git}`, async () => {
+      const added = await plugins.add(chosen, { signal: dialog.signal });
+      return `${added.name} added at ${short(added.commit)}: R reloads`;
     });
   };
-  const remove = (name: string): void => {
-    const question = new TextView({ document: paragraph(`Remove ${name} from config.json and plugins.lock?`) });
-    const confirm = tui.dialog({
-      body: question,
-      rows: 3,
-      signal: dialog.signal,
-      keys: [
-        {
-          key: "enter",
-          label: "remove",
-          run: () => {
-            confirm.close();
-            run(`removing ${name}`, async () => {
-              await plugins.remove(name);
-              return `${name} removed: R reloads`;
-            });
-          },
-        },
-      ],
+  const remove = async (name: string): Promise<void> => {
+    const text = `Remove ${name} from config.json and plugins.lock?`;
+    if (!(await tui.confirm({ text, confirmLabel: "remove", signal: dialog.signal }))) return;
+    run(`removing ${name}`, async () => {
+      await plugins.remove(name);
+      return `${name} removed: R reloads`;
     });
   };
   const search = async (): Promise<void> => {

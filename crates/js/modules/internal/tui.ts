@@ -15,6 +15,7 @@ const core = new Core({
   text: (column, row, text, style, right) => term.text(column, row, text, style, right),
   fill: (column, row, width, height, style) => term.fill(column, row, width, height, style),
   cursor: (cursor) => term.cursor(cursor),
+  title: (title) => term.title(title),
   requestFrame: (delay) => term.requestFrame(delay),
   after: (delay, callback) => {
     const timer = setTimeout(callback, delay);

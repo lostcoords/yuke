@@ -204,7 +204,7 @@ test("a adds the plugin of a line in the form of yuke plugin add, and a line wit
 
   equal(fake.calls, ["list", 'add {"git":"https://h/news","folder":"p","ref":"v1"}', "list"]);
   equal(shows(added, "news added at 8d02e77: R reloads"), true);
-  equal(shows(refused, "Error: give the URL of the repository first"), true);
+  equal(shows(refused, "give the URL of the repository first"), true);
   // The prompt stays open with its draft after the error.
   equal(shows(refused, "--ref v1"), true);
 });

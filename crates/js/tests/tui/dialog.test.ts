@@ -1,6 +1,6 @@
 // `tui.dialog`: its head and footer rows, the order of the keys, the scroll of its body, and its close. `tui.select`: its answers.
 
-import { createFrame, equal, type FrameTest, test } from "yuke:test";
+import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type KeyEvent, Picker, strokeOf, TextView, type View } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -128,6 +128,57 @@ test("a select shows its items in the order of its rank, with the rows of its re
   frame.key("enter");
 
   equal([shown, await answer], [true, items[1]]);
+});
+
+test("an input keeps a refused text with its message, and gives the text that its check accepts", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const checked: string[] = [];
+  const answer = frame.surface("test").tui.input({
+    title: "Name",
+    text: "a",
+    onSubmit: async (text) => {
+      checked.push(text);
+      if (text !== "ab") throw new Error(`${text} is taken`);
+    },
+  });
+  frame.draw();
+  frame.key("enter");
+  await waitForSettled();
+  frame.draw();
+  const refused = shows(frame, "a is taken");
+  frame.paste("b");
+  frame.key("enter");
+
+  equal([refused, await answer, checked], [true, "ab", ["a", "ab"]]);
+  frame.draw();
+  equal(shows(frame, "Name"), false);
+});
+
+test("an input gives undefined for esc", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const answer = frame.surface("test").tui.input({ placeholder: "URL" });
+  frame.draw();
+  frame.paste("draft");
+  frame.key("esc");
+
+  equal(await answer, undefined);
+});
+
+test("a confirm gives true for enter, and false for esc and an abort", async () => {
+  using frame = createFrame({ width: 60, height: 10 });
+  const tui = frame.surface("test").tui;
+  const yes = tui.confirm({ title: "Plugins", text: "Remove clock?", confirmLabel: "remove" });
+  frame.draw();
+  const shown = [shows(frame, "Remove clock?"), shows(frame, "enter: remove · esc: no")];
+  frame.key("enter");
+  const no = tui.confirm({ text: "Remove clock?" });
+  frame.draw();
+  frame.key("esc");
+  const controller = new AbortController();
+  const aborted = tui.confirm({ text: "Remove clock?", signal: controller.signal });
+  controller.abort();
+
+  equal([shown, await yes, await no, await aborted], [[true, true], true, false, false]);
 });
 
 test("a select of two items with one label gives the chosen one", async () => {

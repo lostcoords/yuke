@@ -19,10 +19,11 @@ import {
   termStartup,
   termSuspend,
   termText,
+  termTitle,
   termTruecolor,
 } from "yuke:internal/native";
 import type { SessionId } from "yuke:protocol";
-import type { Cursor, KeyEvent, MouseEvent, Startup } from "yuke:tui";
+import type { Cursor, KeyEvent, MouseEvent, PasteEvent, Startup } from "yuke:tui";
 
 export type Style = TermStyle;
 
@@ -32,7 +33,7 @@ export type TermEvent =
   | { readonly type: "start"; readonly snapshot?: string }
   | KeyEvent
   | MouseEvent
-  | { readonly type: "paste"; readonly text: string }
+  | PasteEvent
   | { readonly type: "resize"; readonly w: number; readonly h: number }
   | { readonly type: "focus"; readonly focused: boolean }
   | { readonly type: "background"; readonly background: "dark" | "light" }
@@ -82,6 +83,10 @@ export const term = {
   /** Show the cursor, or hide it with `undefined`. A frame starts with the cursor hidden. */
   cursor(cursor: Cursor | undefined): void {
     termCursor(cursor);
+  },
+  /** Show `title` as the window title from the next frame on, or the title of the shell with `undefined`. */
+  title(title: string | undefined): void {
+    termTitle(title?.toWellFormed());
   },
   /** Send `text` to the clipboard of the terminal with OSC 52. */
   copy(text: string): void {

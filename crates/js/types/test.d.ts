@@ -72,6 +72,8 @@ declare module "yuke:test" {
   export interface Frame extends Size {
     readonly cells: readonly (readonly ScreenCell[])[];
     readonly cursor: Cursor | undefined;
+    /** The window title that the frame gave the terminal, or `undefined` for the title of the shell. */
+    readonly title: string | undefined;
   }
 
   /** The surface of a plugin in a frame test. `close()` removes its registrations and mounts, as a plugin stop does. */

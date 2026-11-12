@@ -188,6 +188,10 @@ pub struct Screen {
     shown_shape: Option<CursorShape>,
     /// The terminal content is unknown, so the next render writes every cell.
     repaint: bool,
+    /// The window title of the frames. `None` leaves the title of the shell.
+    title: Option<String>,
+    /// The window title on the terminal, or `None` when it is the title of the shell or unknown.
+    shown_title: Option<String>,
 }
 
 impl Screen {
@@ -203,6 +207,8 @@ impl Screen {
             // A new terminal shows the shape of its settings.
             shown_shape: Some(CursorShape::Default),
             repaint: true,
+            title: None,
+            shown_title: None,
         }
     }
 
@@ -211,17 +217,27 @@ impl Screen {
         self.size
     }
 
-    /// Change the size and blank the grid. The next render writes every cell and the cursor shape.
+    /// Change the size and blank the grid. The title stays. The next render writes every cell, the cursor shape, and
+    /// the title.
     pub fn resize(&mut self, size: Size) {
+        let title = self.title.take();
         *self = Self::new(size);
         self.shown_shape = None;
+        self.title = title;
     }
 
-    /// Write every cell and the cursor shape at the next render, for a terminal whose content changed under the
-    /// screen, such as after a suspend.
+    /// Write every cell, the cursor shape, and the title at the next render, for a terminal whose content changed
+    /// under the screen, such as after a suspend.
     pub fn repaint(&mut self) {
         self.repaint = true;
         self.shown_shape = None;
+        self.shown_title = None;
+    }
+
+    /// Show `title` as the window title from the next render on, or the title of the shell with `None`. A clear of the
+    /// frame keeps the title. The screen drops control characters, so a title cannot end its own sequence.
+    pub fn title(&mut self, title: Option<&str>) {
+        self.title = title.map(|title| title.chars().filter(|char| !char.is_control()).collect());
     }
 
     /// Blank the next frame with the default style and hide its cursor.
@@ -298,6 +314,15 @@ impl Screen {
     /// Append to `out` the bytes that turn the shown frame into the next frame, inside a synchronized update. An
     /// unchanged frame appends nothing. After the call the next frame holds an old frame, so clear it before a draw.
     pub fn render(&mut self, out: &mut Vec<u8>) {
+        if self.title != self.shown_title {
+            match &self.title {
+                Some(title) => write_bytes(out, format_args!("\x1b]2;{title}\x1b\\")),
+                // The terminal saved the title of the shell at the entry, so a pop brings it back and a push saves it
+                // again for the next pop.
+                None => out.extend_from_slice(b"\x1b[23;2t\x1b[22;2t"),
+            }
+            self.shown_title.clone_from(&self.title);
+        }
         if !self.repaint && self.cursor == self.shown_cursor && self.next == self.shown {
             return;
         }

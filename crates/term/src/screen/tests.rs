@@ -322,6 +322,25 @@ fn a_repaint_writes_every_cell_of_the_same_frame() {
 }
 
 #[test]
+fn a_title_is_written_when_it_changes_and_again_after_a_repaint_or_a_resize() {
+    let mut screen = Screen::new(size(2, 1));
+    render(&mut screen);
+    // The control characters go, so the title cannot end its sequence early.
+    screen.title(Some("a\x1b]0;b\x07c"));
+    assert_eq!(render(&mut screen), b"\x1b]2;a]0;bc\x1b\\");
+    screen.clear();
+    assert_eq!(render(&mut screen), b"");
+    screen.repaint();
+    assert!(render(&mut screen).starts_with(b"\x1b]2;a]0;bc\x1b\\\x1b[?2026h"));
+    screen.resize(size(3, 1));
+    assert!(render(&mut screen).starts_with(b"\x1b]2;a]0;bc\x1b\\\x1b[?2026h"));
+    // No title brings back the title of the shell that the entry pushed, and pushes it again.
+    screen.title(None);
+    assert_eq!(render(&mut screen), b"\x1b[23;2t\x1b[22;2t");
+    assert_eq!(render(&mut screen), b"");
+}
+
+#[test]
 fn a_moved_cursor_writes_no_cell() {
     let mut screen = Screen::new(size(4, 2));
     screen.text(0, 0, "ab", Style::default());

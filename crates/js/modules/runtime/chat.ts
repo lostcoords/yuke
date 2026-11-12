@@ -1,7 +1,8 @@
 /** The code of the public module `yuke:chat`. Its declaration is `types/chat.d.ts`, and the check at the end compares the two. */
 
 import type { ChatSessionOptions, ComposerRow, ComposerView } from "yuke:chat";
-import { ChatCommands } from "yuke:internal/chat/commands";
+import { slashCompletions } from "yuke:internal/chat/commands";
+import { ChatCompletions } from "yuke:internal/chat/completions";
 import { ChatComposer } from "yuke:internal/chat/composer";
 import { ChatDocument } from "yuke:internal/chat/document";
 import { ChatQuestions } from "yuke:internal/chat/questions";
@@ -11,7 +12,7 @@ import type { EventsPage, SessionHandle, Sessions } from "yuke:plugins";
 import type { SessionId, SessionSettings } from "yuke:protocol";
 import { Transcript } from "yuke:transcript";
 
-export { ChatCommands, ChatComposer, ChatDocument, ChatQuestions, ChatWorking };
+export { ChatCompletions, ChatComposer, ChatDocument, ChatQuestions, ChatWorking, slashCompletions };
 
 export function composerRows(source: (width: number) => readonly ComposerRow[]): ComposerView {
   return {
@@ -227,10 +228,11 @@ export class ChatSession {
 const declared = {
   ChatSession,
   composerRows,
-  ChatCommands,
+  ChatCompletions,
   ChatComposer,
   ChatDocument,
   ChatQuestions,
   ChatWorking,
+  slashCompletions,
 } satisfies typeof import("yuke:chat");
 void declared;

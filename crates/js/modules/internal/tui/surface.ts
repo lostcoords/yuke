@@ -4,17 +4,23 @@
  */
 import type { Core } from "yuke:internal/tui/core";
 import { dialogView } from "yuke:internal/tui/dialog";
+import { TextEditor } from "yuke:internal/tui/editor";
 import { bottom } from "yuke:internal/tui/layout";
 import { Picker } from "yuke:internal/tui/picker";
+import { measure } from "yuke:internal/tui/text";
+import { TextView } from "yuke:internal/tui/text-view";
 import type {
   ClipboardImage,
   Command,
   CommandItem,
+  ConfirmOptions,
   DefaultPane,
   DialogOptions,
   Direction,
   FocusChange,
   FocusDirection,
+  InputEvent,
+  InputOptions,
   Mount,
   Notice,
   OverlayOptions,
@@ -37,6 +43,9 @@ import type {
 
 /** The rows of a dialog at the bottom of the screen without `rows` or `place`. */
 const DIALOG_ROWS = 13;
+
+/** The most rows of the text of a confirm. A longer text scrolls. */
+const CONFIRM_ROWS = 8;
 
 /** The cleanups of the registrations and mounts of one plugin, newest first at the stop. */
 class Scope {
@@ -135,6 +144,8 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     }),
   });
 
+  const setTitle = live((title: () => string): (() => void) => scope.own(core.setTitle({ title, signal })));
+
   const addQuitGuard = live((guard: (quit: (text?: string) => void) => void): (() => void) =>
     scope.own(core.addQuitGuard(guard)),
   );
@@ -189,6 +200,98 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       }),
   ) as Tui["select"];
 
+  const input = live(
+    (options: InputOptions): Promise<string | undefined> =>
+      new Promise((resolve) => {
+        let answer: string | undefined;
+        let failure: string | undefined;
+        let pending = false;
+        const accept = async (text: string): Promise<void> => {
+          // A throw or a rejection of the check keeps the dialog, with its message below the field.
+          try {
+            await options.onSubmit?.(text);
+          } catch (error) {
+            failure = error instanceof Error ? error.message : String(error);
+            core.driver.requestFrame();
+            return;
+          } finally {
+            pending = false;
+          }
+          answer = text;
+          mount.close();
+        };
+        const text = options.text ?? "";
+        const editor = new TextEditor({
+          role: "field",
+          multiline: false,
+          mask: options.mask,
+          placeholder: options.placeholder,
+          state: { text, spans: [], selection: { anchor: text.length, head: text.length } },
+          onSubmit: (state) => {
+            if (pending) return;
+            pending = true;
+            failure = undefined;
+            void accept(state.text);
+          },
+        });
+        const body: View = {
+          focusable: true,
+          initialFocus: editor,
+          layout: (size) => [
+            { view: editor, rect: { column: 1, row: 0, width: Math.max(0, size.width - 2), height: 1 } },
+          ],
+          draw: (canvas) => {
+            if (failure !== undefined) canvas.text(1, 1, failure, "dialog.error");
+          },
+        };
+        const title = options.title;
+        const mount = dialog({
+          title: title === undefined ? undefined : () => title,
+          body,
+          rows: (title === undefined ? 0 : 1) + 3,
+          signal: options.signal,
+        });
+        mount.signal.addEventListener("abort", () => resolve(answer), { once: true });
+        // An aborted `signal` closes the dialog before this listener attaches.
+        if (mount.signal.aborted) resolve(undefined);
+      }),
+  );
+
+  const confirm = live(
+    (options: ConfirmOptions): Promise<boolean> =>
+      new Promise((resolve) => {
+        let confirmed = false;
+        const document = {
+          id: "confirm",
+          items: [{ id: "text", sections: [{ id: "text", kind: "text" as const, text: options.text }] }],
+        };
+        // The rows of the text at the width of the screen now, so a short question gets a short dialog.
+        const lines = options.text
+          .split("\n")
+          .reduce((sum, line) => sum + Math.max(1, Math.ceil(measure(line) / Math.max(1, core.driver.width() - 2))), 0);
+        const title = options.title;
+        const mount = dialog({
+          title: title === undefined ? undefined : () => title,
+          body: new TextView({ document }),
+          keys: [
+            {
+              key: "enter",
+              label: options.confirmLabel ?? "yes",
+              run: () => {
+                confirmed = true;
+                mount.close();
+              },
+            },
+            { key: "esc", label: "no", run: () => mount.close() },
+          ],
+          rows: (title === undefined ? 0 : 1) + Math.min(lines, CONFIRM_ROWS) + 1,
+          signal: options.signal,
+        });
+        mount.signal.addEventListener("abort", () => resolve(confirmed), { once: true });
+        if (mount.signal.aborted) resolve(false);
+      }),
+  );
+
   return Object.freeze({
     get size(): Size {
       scope.check();
@@ -215,6 +318,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     addFocusListener: live((listener: (change: FocusChange) => void): (() => void) =>
       scope.own(core.addFocusListener(listener)),
     ),
+    addInputHandler: live((handler: (event: InputEvent) => boolean): (() => void) =>
+      scope.own(core.addInputHandler(handler)),
+    ),
     now: live((): number => core.driver.now()),
     addTimer: live((delay: number, callback: () => void): (() => void) => {
       // A fired timer leaves the scope, so a callback that calls `addTimer` again leaves no old disposer.
@@ -231,8 +337,11 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       (create: ViewFactory, options?: OverlayOptions): Mount => mounted(core.scene.overlay(owner, create, options)),
     ),
     dialog,
+    setTitle,
     addQuitGuard,
     select,
+    input,
+    confirm,
     commands: Object.freeze({
       add: live((command: Command): (() => void) => {
         return scope.own(core.commands.add(command, own(command.name)));

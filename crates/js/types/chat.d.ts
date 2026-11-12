@@ -19,6 +19,7 @@ declare module "yuke:chat" {
     CommandItem,
     EditorState,
     Mount,
+    OffsetRange,
     Rect,
     TextDocument,
     TextEditor,
@@ -163,36 +164,100 @@ declare module "yuke:chat" {
     addChangeListener(listener: () => void): () => void;
   }
 
-  export interface ChatCommandsOptions {
-    /** The commands to list and run. `tui.commands` fits. */
-    readonly commands: {
-      readonly list: () => readonly CommandItem[];
-      readonly run: (name: string, args?: string) => boolean;
-    };
-    /** Its abort removes the watch of the editor. */
+  /** What a completion provider reads: the draft of a composer and the folder of its session. */
+  export interface CompletionContext {
+    /** The text of the draft. */
+    readonly text: string;
+    /** The caret in `text`, in UTF-16 units. */
+    readonly caret: number;
+    /** The folder of the session of the pane, else of its next session. */
+    readonly cwd: string;
+    /** It aborts when the draft or the caret changes, or the list ends. */
     readonly signal: AbortSignal;
-    /** While this gives `false`, the list shows nothing and takes no key. */
-    readonly enabled: () => boolean;
+  }
+
+  /** One row of a completion list. */
+  export interface CompletionItem {
+    /** The left column. */
+    readonly label: string;
+    /** The dim text after the label. */
+    readonly detail?: string | undefined;
+    /** The parts of `label` that match, in a strong style. `fuzzyMatch` gives them. */
+    readonly ranges?: readonly OffsetRange[] | undefined;
+    /** Tab writes this text in place of `from` to `to` of the list. Enter writes it too when the item has no `run`. */
+    readonly insert: string;
+    /** Enter empties the draft and calls this. A `false` answer brings the draft back. */
+    readonly run?: (() => boolean) | undefined;
+  }
+
+  /** The completions of the text from `from` to `to`, the best first. */
+  export interface CompletionList {
+    readonly from: number;
+    /** The end of the text that an insert replaces. The default is the caret. */
+    readonly to?: number | undefined;
+    readonly items: readonly CompletionItem[];
   }
 
   /**
-   * A list of the enabled commands with a `slash` word that match a draft of one word, such as `/mod`. A draft with more
-   * text, such as `/mode fast`, matches only the word `mode` of a command with an `argumentHint`, and Enter gives it
-   * `"fast"`. The list shows above a composer. Up and Down move the selection. Tab writes the selected word in the
-   * editor. Enter runs the selected command and empties the editor. A run that gives `false` keeps the draft. Esc hides
-   * the list until the next edit. A draft with no match stays a message. The word of a draft that runs a command gets
-   * the style group `chat.command`.
+   * A source of completions for the draft of a composer. `complete` reads the text before the caret and gives a list,
+   * or `undefined` or no items when the text is not its own. A list that it gives at once shows in the same frame.
+   */
+  export interface CompletionProvider {
+    readonly complete: (context: CompletionContext) => CompletionList | undefined | Promise<CompletionList | undefined>;
+  }
+
+  /** The commands to list and run. `tui.commands` fits. */
+  export interface SlashCommands {
+    readonly list: () => readonly CommandItem[];
+    readonly run: (name: string, args?: string) => boolean;
+  }
+
+  /**
+   * The completions of the enabled commands with a `slash` word that match a draft of one word, such as `/mod`, the
+   * best first. A draft with more text, such as `/mode fast`, matches only the word `mode` of a command with an
+   * `argumentHint`, and Enter gives it `"fast"`. Tab writes the selected word, with a space when the command takes
+   * text. Enter runs the command. The bundled chat adds this provider for `tui.commands`.
+   */
+  export function slashCompletions(commands: SlashCommands): CompletionProvider;
+
+  export interface ChatCompletionsOptions {
+    /** The providers to ask, the first one first. The first list with an item shows. */
+    readonly providers: () => readonly CompletionProvider[];
+    /** The folder of `CompletionContext.cwd`. */
+    readonly cwd: () => string;
+    /** Its abort removes the watch of the editor and aborts the open ask. */
+    readonly signal: AbortSignal;
+    /** While this gives `false`, the list shows nothing and takes no key. */
+    readonly enabled: () => boolean;
+    /** Called when a list comes later than the change of the draft, so the owner asks for a frame. */
+    readonly onChange: () => void;
+    /** Gets the throw or the rejection of a provider. The ask then goes on to the next provider. */
+    readonly onError: (error: unknown) => void;
+  }
+
+  /**
+   * The list of the completions of the draft of a composer. Each change of the draft or of the caret asks the
+   * providers again and aborts the ask before it. While an ask waits, the list shows nothing. Up and Down move the
+   * selection. Tab writes the selected item. Enter runs it, or writes it when it has no `run`. Esc hides the list until
+   * the next edit. A draft without a list stays a message, so Enter sends it.
    *
    * ```ts
-   * const commands = new ChatCommands(editor, { commands: tui.commands, signal: mount.signal, enabled: () => true });
-   * // in layout: { view: commands.view, rect: { column: 0, row: editorRow - commands.rows, width, height: commands.rows } }
+   * const completions = new ChatCompletions(editor, {
+   *   providers: () => providers,
+   *   cwd: () => folder,
+   *   signal: mount.signal,
+   *   enabled: () => true,
+   *   onChange: () => tui.requestFrame(),
+   *   onError: (error) => ctx.notify("error", String(error)),
+   * });
+   * // in layout: { view: completions.view, rect: { column: 0, row: editorRow - completions.rows, width, height: completions.rows } }
    * ```
    */
-  export class ChatCommands {
-    constructor(editor: TextEditor, options: ChatCommandsOptions);
-    /** The count of rows that the list needs now: at most 6, and 0 without a match. */
+  export class ChatCompletions {
+    constructor(editor: TextEditor, options: ChatCompletionsOptions);
+    /** The count of rows that the list needs now: at most 6, and 0 without a list. */
     get rows(): number;
-    /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected command. */
+    /** The view of the list. A place with fewer rows than `rows` scrolls the list to the selected item. */
     readonly view: View;
   }
 
@@ -312,6 +377,8 @@ declare module "yuke:chat" {
   /** A chat pane. Each field reads the current state. */
   export interface ChatPane {
     readonly view: View;
+    /** The editor of the drafts of the pane. A key handler or a decoration of a plugin goes here. */
+    readonly composer: TextEditor;
     readonly session: SessionId | undefined;
     readonly transcript: Transcript;
     /** A turn of the session runs. */
@@ -403,6 +470,30 @@ declare module "yuke:chat" {
      * or for a close.
      */
     readonly addChangeListener: (listener: (view: View) => void) => () => void;
+    /**
+     * Call `watch` once for each chat pane, now and later. Its `signal` aborts when the pane closes or the returned
+     * function runs, so a plugin ends its work on that pane there. A throw of `watch` gives a notice.
+     *
+     * ```ts
+     * chat.addPaneWatcher((pane, signal) => pane.composer.extend(signal).addKeyHandler(onKey, "beforeKeymap"));
+     * ```
+     */
+    readonly addPaneWatcher: (watch: (pane: ChatPane, signal: AbortSignal) => void) => () => void;
+    /**
+     * Add a source of completions for the composer of each chat pane. The newest provider is asked first, so a plugin
+     * can take the place of an older one. The bundled chat adds the slash commands of `tui.commands`.
+     *
+     * ```ts
+     * chat.addCompletionProvider({
+     *   complete: (context) => {
+     *     const word = /(?:^|\s)#(\w*)$/.exec(context.text.slice(0, context.caret));
+     *     if (word === null) return undefined;
+     *     return { from: context.caret - word[1].length - 1, items: tags.map((tag) => ({ label: `#${tag}`, insert: `#${tag} ` })) };
+     *   },
+     * });
+     * ```
+     */
+    readonly addCompletionProvider: (provider: CompletionProvider) => () => void;
     /**
      * Add a view on one side of the composer of each chat pane. `create` runs once per pane, at a layout. A close of the
      * pane or the returned function ends `mount`. A view that closes `mount` stays closed in that pane. After a change of

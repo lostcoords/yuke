@@ -3,6 +3,8 @@
 import { createFrame, equal, test } from "yuke:test";
 import { TextEditor, type View } from "yuke:tui";
 
+const NO_MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
+
 test("a frame holds the cells, the styles, and the cursor that the views drew", () => {
   using frame = createFrame({ width: 6, height: 2 }, () => {
     const input: View = {
@@ -178,5 +180,49 @@ test("the pane dividers have a default look that a plugin changes", () => {
       [{ dim: true }, { dim: true }],
       [{ fg: 1 }, { fg: 1 }],
     ],
+  );
+});
+
+test("the newest title is the window title, a remover brings back the one before, and a stop leaves the shell title", () => {
+  using frame = createFrame({ width: 6, height: 2 });
+  const first = frame.surface("first");
+  const second = frame.surface("second");
+  let session = "draft";
+  first.tui.setTitle(() => `yuke · ${session}`);
+  const removeSecond = second.tui.setTitle(() => "second");
+  const shown = [frame.draw().title];
+  removeSecond();
+  session = "review";
+  shown.push(frame.draw().title);
+  first.close();
+  shown.push(frame.draw().title);
+
+  equal(shown, ["second", "yuke · review", undefined]);
+});
+
+test("an input handler sees each event before the focused editor, the newest first, and a true answer takes it", () => {
+  const editor = new TextEditor();
+  using frame = createFrame({ width: 10, height: 2 }, () => editor);
+  const seen: string[] = [];
+  const older = frame.surface("older").tui;
+  const newer = frame.surface("newer").tui;
+  older.addInputHandler((event) => {
+    seen.push(`older ${event.type}`);
+    return false;
+  });
+  const removeNewer = newer.addInputHandler((event) => {
+    seen.push(`newer ${event.type}`);
+    return event.type !== "key" || event.text !== "a";
+  });
+  frame.key("a");
+  frame.key("b");
+  frame.paste("c");
+  frame.mouse({ type: "mouse", button: "left", action: "press", column: 0, row: 0, modifiers: NO_MODIFIERS });
+  removeNewer();
+  frame.paste("d");
+
+  equal(
+    [editor.state.text, seen],
+    ["ad", ["newer key", "older key", "newer key", "newer paste", "newer mouse", "older paste"]],
   );
 });

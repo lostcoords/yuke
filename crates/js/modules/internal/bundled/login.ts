@@ -7,7 +7,7 @@ import { type Auth, auth as credentials, type LoginInProgress } from "yuke:inter
 import type { PluginContext } from "yuke:plugins";
 import { Command } from "yuke:process";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
-import { type Canvas, type Mount, TextEditor, type Tui, type View } from "yuke:tui";
+import type { Canvas, Tui, View } from "yuke:tui";
 
 /** A notice must not repeat the text after `/login`, because that text can be a key. */
 const NO_PROVIDER = "no provider with this id: run /login to see the list";
@@ -60,41 +60,18 @@ async function chosen(
 }
 
 /** Take an API key for `provider` in a masked field. A refused key stays in the field with its error. */
-function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): void {
-  let errorText: string | undefined;
-  let pending = false;
-  const editor = new TextEditor({
-    multiline: false,
-    mask: true,
-    role: "field",
+async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider: ProviderInfo): Promise<void> {
+  const saved = await tui.input({
+    title: `API key · ${provider.name}`,
     placeholder: "API key",
-    onSubmit: (state) => {
-      const key = state.text.trim();
-      if (key === "" || pending) return;
-      pending = true;
-      errorText = undefined;
-      auth.setApiKey(provider.id, key).then(
-        () => {
-          dialog.close();
-          ctx.notify("info", `key saved · ${provider.id}`);
-        },
-        (reason: unknown) => {
-          errorText = String(reason);
-          pending = false;
-          tui.requestFrame();
-        },
-      );
+    mask: true,
+    onSubmit: async (text) => {
+      const key = text.trim();
+      if (key === "") throw new Error("type the key first");
+      await auth.setApiKey(provider.id, key);
     },
   });
-  const body: View = {
-    focusable: true,
-    initialFocus: editor,
-    layout: (size) => [{ view: editor, rect: { column: 0, row: 0, width: size.width, height: 1 } }],
-    draw: (canvas: Canvas) => {
-      if (errorText !== undefined) canvas.text(0, 1, errorText, "chat.error");
-    },
-  };
-  const dialog: Mount = tui.dialog({ title: () => `API key · ${provider.name}`, body, rows: 5 });
+  if (saved !== undefined) ctx.notify("info", `key saved · ${provider.id}`);
 }
 
 /** Open `url` in the browser. The module cannot read the platform, and `open` on Linux can be another program. */
@@ -185,7 +162,7 @@ async function runLogin(ctx: PluginContext, auth: Auth, tui: Tui, args: unknown)
   const provider = await chosen(ctx, tui, "Log in", await providersOf(ctx), args);
   if (provider === undefined) return;
   if (takesLogin(provider.state)) void openLoginDialog(ctx, auth, tui, provider);
-  else openKeyDialog(ctx, auth, tui, provider);
+  else void openKeyDialog(ctx, auth, tui, provider);
 }
 
 /** Run `/logout`. `args` is the text after the command. */

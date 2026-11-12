@@ -436,6 +436,11 @@ declare module "yuke:internal/native" {
   export function termText(x: number, y: number, text: string, style: TermStyle | undefined, right: number): number;
   /** Show the cursor of the next frame, or hide it with `undefined`. */
   export function termCursor(cursor: Cursor | undefined): void;
+  /**
+   * Show `title` as the window title from the next frame on, or the title of the shell with `undefined`. The grid
+   * drops control characters.
+   */
+  export function termTitle(title: string | undefined): void;
   /** Send `text`, a well-formed string, to the clipboard of the terminal with OSC 52. */
   export function termCopy(text: string): void;
   /** A grid of cells that no terminal shows, for the frame tests. It draws with the rules of the terminal grid. */

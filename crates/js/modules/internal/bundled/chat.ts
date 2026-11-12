@@ -5,7 +5,14 @@
  * Each command acts on the active pane. The service `chat` shows a session in a pane for other plugins.
  */
 
-import type { ChatPane, ChatPresentation, ChatPresentationOptions, ChatReadOnly, ComposerFrame } from "yuke:chat";
+import type {
+  ChatPane,
+  ChatPresentation,
+  ChatPresentationOptions,
+  ChatReadOnly,
+  CompletionProvider,
+  ComposerFrame,
+} from "yuke:chat";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
 import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import {
@@ -15,7 +22,9 @@ import {
   type PaneActions,
   type PaneState,
 } from "yuke:internal/bundled/chat/pane";
+import { slashCompletions } from "yuke:internal/chat/commands";
 import { clipped } from "yuke:internal/chat/rows";
+import { failureOf } from "yuke:internal/failure";
 import { Stack } from "yuke:internal/stack";
 import type { PluginContext } from "yuke:plugins";
 import { env } from "yuke:process";
@@ -169,6 +178,12 @@ export const optionsSchema = {
 
 type Options = Infer<typeof optionsSchema>;
 
+/** One call of `addPaneWatcher`. The abort of `stop` ends its watch of each pane. */
+interface PaneWatcher {
+  readonly watch: (pane: ChatPane, signal: AbortSignal) => void;
+  readonly stop: AbortController;
+}
+
 export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const tui = ctx.get("tui");
   const listeners = new Set<(view: View) => void>();
@@ -187,7 +202,18 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   // One entry per call of `addComposerView`, so each disposer removes its own.
   const composerViews = new Set<ComposerViewEntry>();
   const panes = new Map<View, PaneActions>();
+  const paneWatchers = new Set<PaneWatcher>();
+  const startWatcher = (entry: PaneWatcher, actions: PaneActions): void => {
+    // A failed watcher of another plugin must not stop the open of the pane.
+    try {
+      entry.watch(actions.pane, AbortSignal.any([actions.signal, entry.stop.signal]));
+    } catch (error) {
+      ctx.notify("error", `a pane watcher failed: ${failureOf(error)}`);
+    }
+  };
   const presenters = new Stack<(options: ChatPresentationOptions) => ChatPresentation>();
+  // One entry per call of `addCompletionProvider`, oldest first, so each disposer removes its own.
+  const completionProviders = new Set<{ readonly provider: CompletionProvider }>();
   // One entry per call of `addReadOnly`, so each disposer removes its own.
   const readOnlySources = new Set<{ readonly source: (session: SessionId) => ChatReadOnly | undefined }>();
   const frames = new Stack<ComposerFrame>();
@@ -224,6 +250,21 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
         if (!composerViews.delete(entry)) return;
         entry.stop.abort();
         repaint();
+      };
+    },
+    addPaneWatcher: (watch) => {
+      const entry = { watch, stop: new AbortController() };
+      paneWatchers.add(entry);
+      for (const actions of panes.values()) startWatcher(entry, actions);
+      return () => {
+        if (paneWatchers.delete(entry)) entry.stop.abort();
+      };
+    },
+    addCompletionProvider: (provider) => {
+      const entry = { provider };
+      completionProviders.add(entry);
+      return () => {
+        completionProviders.delete(entry);
       };
     },
     addReadOnly: (source) => {
@@ -278,7 +319,13 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     moved: (view) => {
       for (const listener of listeners) listener(view);
     },
+    opened: (actions) => {
+      for (const entry of paneWatchers) startWatcher(entry, actions);
+    },
+    completionProviders: () => [...completionProviders].map((entry) => entry.provider).toReversed(),
   };
+  // The slash commands are the oldest provider, so a plugin can take their place.
+  completionProviders.add({ provider: slashCompletions(tui.commands) });
   const active = (): PaneActions | undefined => {
     const view = tui.panes.active?.view;
     return view === undefined ? undefined : chat.panes.get(view);

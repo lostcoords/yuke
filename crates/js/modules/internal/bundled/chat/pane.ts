@@ -6,7 +6,7 @@
  */
 
 import {
-  ChatCommands,
+  ChatCompletions,
   ChatComposer,
   ChatDocument,
   type ChatPane,
@@ -16,15 +16,18 @@ import {
   type ChatReadOnly,
   ChatSession,
   ChatWorking,
+  type CompletionProvider,
   type ComposerContext,
   type ComposerFrame,
   type ComposerPlace,
   type ComposerView,
 } from "yuke:chat";
 import type { SavedChoice } from "yuke:internal/bundled/chat/choice";
+import { commandWordLength } from "yuke:internal/chat/commands";
 import { EMPTY } from "yuke:internal/chat/composer";
 import { inputText } from "yuke:internal/chat/document";
 import { clipped, STYLE } from "yuke:internal/chat/rows";
+import { failureOf } from "yuke:internal/failure";
 import { createMount, startView } from "yuke:internal/tui/mount";
 import type { Frozen, PluginContext, SessionHandle } from "yuke:plugins";
 import type { Input, InputId, SessionId, SessionSettings, Usage } from "yuke:protocol";
@@ -74,6 +77,10 @@ export interface PaneState {
 
 /** What the commands of the plugin do in a pane. */
 export interface PaneActions {
+  /** The pane as the `chat` service gives it to a plugin. */
+  readonly pane: ChatPane;
+  /** It aborts when the pane closes. */
+  readonly signal: AbortSignal;
   readonly toggleTools: () => void;
   readonly send: () => Promise<void>;
   /** Let the user choose the model and the reasoning of the pane. */
@@ -163,6 +170,10 @@ export interface Chat {
   readonly emptyView: () => ((mount: Mount, pane: ChatPane) => View) | undefined;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
   readonly moved: (view: View) => void;
+  /** Start each pane watcher of the `chat` service on the new pane of `actions`. */
+  readonly opened: (actions: PaneActions) => void;
+  /** The completion providers of the `chat` service, the newest first. */
+  readonly completionProviders: () => readonly CompletionProvider[];
 }
 
 /**
@@ -277,11 +288,26 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     state: state.draft,
   });
   // A question takes the place of the list, and a pane without a row above the frame shows no list.
-  const commands = new ChatCommands(composer, {
-    commands: tui.commands,
+  const completions = new ChatCompletions(composer, {
+    providers: () => chat.completionProviders(),
+    cwd: () => chatSession.transcript.settings?.cwd ?? nextFolder ?? tui.startup.cwd,
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
+    onChange: () => tui.requestFrame(),
+    onError: (error) => ctx.notify("error", `a completion failed: ${failureOf(error)}`),
   });
+  // The word of a draft that Enter runs as a command gets its style, so a user sees it before the key.
+  const composerExtension = composer.extend(mount.signal);
+  const markCommand = (): void => {
+    const length = commandWordLength(tui.commands, composer.state.text);
+    composerExtension.setDecorations(
+      length === 0 ? [] : [{ range: { anchor: 0, head: length }, style: STYLE.command }],
+    );
+  };
+  composerExtension.addChangeListener((change) => {
+    if (change.kind !== "selection") markCommand();
+  });
+  markCommand();
   const chatComposer = new ChatComposer(chatSession, composer, { handle: () => sessionHandle(), signal: mount.signal });
 
   /**
@@ -457,69 +483,19 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     busy = true;
     try {
       const row = await ctx.get("sessions").get(id);
-      if (mount.signal.aborted || chatSession.id !== id) {
-        busy = false;
-        return;
-      }
-      let errorText: string | undefined;
-      let pending = false;
-      let dialog: Mount | undefined;
-      const title = row.session.title ?? "";
-      const editor = new TextEditor({
-        multiline: false,
-        state: {
-          text: title,
-          selection: { anchor: title.length, head: title.length },
-          spans: [],
-        },
-        onSubmit: (state) => {
-          if (pending || dialog?.signal.aborted === true) return;
-          pending = true;
-          void ctx
-            .get("sessions")
-            .rename(id, state.text)
-            .then(
-              () => dialog?.close(),
-              (reason: unknown) => {
-                if (dialog === undefined || dialog.signal.aborted) return;
-                errorText = String(reason);
-                pending = false;
-                tui.requestFrame();
-              },
-            );
-        },
+      if (mount.signal.aborted || chatSession.id !== id) return;
+      // A refused title stays in the field with its error.
+      await tui.input({
+        title: "Rename session",
+        text: row.session.title ?? "",
+        signal: mount.signal,
+        onSubmit: (text) => ctx.get("sessions").rename(id, text),
       });
-      const body: View = {
-        focusable: true,
-        initialFocus: editor,
-        layout: (size) => [
-          {
-            view: editor,
-            rect: {
-              column: 0,
-              row: 0,
-              width: size.width,
-              height: Math.max(1, size.height - (errorText === undefined ? 0 : 1)),
-            },
-          },
-        ],
-        draw: (canvas) => {
-          if (errorText !== undefined) canvas.text(0, canvas.height - 1, clipped(errorText, canvas.width), STYLE.error);
-        },
-      };
-      dialog = tui.dialog({ title: () => "Rename session", body, signal: mount.signal });
-      dialog.signal.addEventListener(
-        "abort",
-        () => {
-          busy = false;
-          dialog = undefined;
-          if (!ctx.signal.aborted) tui.requestFrame();
-        },
-        { once: true },
-      );
     } catch (error) {
-      busy = false;
       if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not load: ${String(error)}`);
+    } finally {
+      busy = false;
+      if (!ctx.signal.aborted) tui.requestFrame();
     }
   };
 
@@ -546,6 +522,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const chatPaneFields: ChatPane = {
     get view() {
       return pane;
+    },
+    get composer() {
+      return composer;
     },
     get session() {
       return chatSession.id;
@@ -684,7 +663,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const frameRows = topRows + usable - composerRow + bottom;
       inputRect = { column: insetLeft, row: topRows, width: inputWidth, height: usable - composerRow };
       // The command list sits on the frame. While a turn runs, the working row sits above the list.
-      listRows = Math.min(commands.rows, frameRow);
+      listRows = Math.min(completions.rows, frameRow);
       const free = frameRow - listRows;
       const workingRow = working.active && free > 0 ? 1 : 0;
       // The strip takes the rows above the working row that its messages need. When rows run out, the strip keeps the
@@ -711,7 +690,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         { view, rect: transcriptRect },
         ...(emptyShown === undefined ? [] : [{ view: emptyShown, rect: transcriptRect }]),
         { view: frameView, rect: { column: 0, row: frameRow, width: size.width, height: frameRows } },
-        { view: commands.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
+        { view: completions.view, rect: { column: 0, row: frameRow - listRows, width: size.width, height: listRows } },
         ...stacked(aboveViews, frameRow - listRows - workingRows - shown.length - aboveRows, size.width),
         ...stacked(below, left, size.width),
       ];
@@ -817,6 +796,8 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (running) ctx.notify("info", "the work goes on: /sessions shows it");
   };
   const actions: PaneActions = {
+    pane: chatPaneFields,
+    signal: mount.signal,
     session: () => chatSession.id,
     show,
     newSession,
@@ -871,5 +852,6 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   };
   chat.panes.set(pane, actions);
   mount.signal.addEventListener("abort", () => chat.panes.delete(pane), { once: true });
+  chat.opened(actions);
   return pane;
 }

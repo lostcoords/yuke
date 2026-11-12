@@ -54,6 +54,7 @@ export function fakeTerminal(): Terminal {
     cursor: (point) => {
       cursors.push(point);
     },
+    title: () => {},
     requestFrame: () => {
       requests += 1;
     },

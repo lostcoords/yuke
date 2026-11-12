@@ -139,6 +139,15 @@ declare module "yuke:tui" {
     readonly modifiers: Modifiers;
   }
 
+  /** A paste of text into the terminal. */
+  export interface PasteEvent {
+    readonly type: "paste";
+    readonly text: string;
+  }
+
+  /** The input that `addInputHandler` sees. A mouse event there is in the cells of the screen. */
+  export type InputEvent = KeyEvent | MouseEvent | PasteEvent;
+
   /** The names of the base palette. Each one has a color for a dark and a light background. */
   export type PaletteColor =
     | "fg"
@@ -925,6 +934,37 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
+  /** What `tui.input` shows: a text field in a dialog. */
+  export interface InputOptions {
+    /** The text of the head row. Without it, the dialog has no head row. */
+    readonly title?: string | undefined;
+    /** The dim text of an empty field. */
+    readonly placeholder?: string | undefined;
+    /** The first text of the field. The default is empty. */
+    readonly text?: string | undefined;
+    /** Show each character as a mask, for a secret. */
+    readonly mask?: boolean | undefined;
+    /**
+     * Check or use the text at Enter. A throw or a rejection keeps the dialog open and shows its message below the field.
+     * The dialog waits for a promise and takes no second Enter until then.
+     */
+    readonly onSubmit?: ((text: string) => void | Promise<void>) | undefined;
+    /** The dialog closes when this signal aborts, for example at the end of a pane. */
+    readonly signal?: AbortSignal | undefined;
+  }
+
+  /** What `tui.confirm` shows: a question in a dialog. Enter confirms, and Esc does not. */
+  export interface ConfirmOptions {
+    /** The text of the head row. Without it, the dialog has no head row. */
+    readonly title?: string | undefined;
+    /** The question. A long text wraps and scrolls. */
+    readonly text: string;
+    /** The label of Enter in the footer. The default is `yes`. */
+    readonly confirmLabel?: string | undefined;
+    /** The dialog closes when this signal aborts, and the answer is `false`. */
+    readonly signal?: AbortSignal | undefined;
+  }
+
   export interface OverlayOptions {
     /** Default true: a modal takes the focus and all input below it. A float takes only what it handles. */
     readonly modal?: boolean | undefined;
@@ -1004,6 +1044,29 @@ declare module "yuke:tui" {
     /** Open a dialog. Gives its mount; `close` closes the dialog. */
     readonly dialog: (options: DialogOptions) => Mount;
     /**
+     * Show the text of `title` as the window title of the terminal. The core reads it at each frame, so after a change
+     * of its state, call `requestFrame`. The last call wins, and the remover brings back the title before it. Without a
+     * title, and after the quit, the terminal shows the title of the shell. The terminal drops control characters.
+     *
+     * ```ts
+     * tui.setTitle(() => `yuke · ${sessionTitle}`);
+     * ```
+     */
+    readonly setTitle: (title: () => string) => () => void;
+    /**
+     * Give each key, mouse, and paste event to `handler` before the focused widget, the keymap, and the views see it,
+     * also under a modal. A `true` answer takes the event, and nothing else gets it. The newest handler sees an event
+     * first.
+     *
+     * ```ts
+     * tui.addInputHandler((event) => {
+     *   lastInput = tui.now();
+     *   return false;
+     * });
+     * ```
+     */
+    readonly addInputHandler: (handler: (event: InputEvent) => boolean) => () => void;
+    /**
      * Add a guard of each quit: `guard` gets the function that lets the quit go on, and it can call that function later
      * or never. Each guard in add order gets a call after the guard before it lets the quit go on, so one plugin cannot
      * drop the guard of another. yuke writes the `text` of each call, when there is one, after it restores the
@@ -1015,6 +1078,13 @@ declare module "yuke:tui" {
      * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.
      */
     readonly select: <T extends object>(options: SelectOptions<T>) => Promise<T | undefined>;
+    /**
+     * Ask the user for a line of text in a dialog. Gives the text that Enter accepts, or `undefined` for Esc, an abort of
+     * `signal`, and a stop of the plugin during the wait.
+     */
+    readonly input: (options: InputOptions) => Promise<string | undefined>;
+    /** Ask the user a question in a dialog. Gives `true` for Enter, and `false` for Esc, an abort, and a stop. */
+    readonly confirm: (options: ConfirmOptions) => Promise<boolean>;
     readonly commands: {
       readonly add: (command: Command) => () => void;
       /** Run a command. `false` when it is missing or disabled, or when its run gives `false`, else `true`. */

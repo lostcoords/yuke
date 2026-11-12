@@ -21,10 +21,16 @@ import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
 import { WidgetMounts } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
-import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, Startup, View } from "yuke:tui";
+import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, InputEvent, Startup, View } from "yuke:tui";
 
 /** A default pane and the signal of its plugin. The core asks no plugin that stops for a pane. */
 interface DefaultPaneSlot extends DefaultPaneEntry {
+  readonly signal: AbortSignal;
+}
+
+/** A window title and the signal of its plugin. */
+interface TitleSlot {
+  readonly title: () => string;
   readonly signal: AbortSignal;
 }
 
@@ -41,6 +47,8 @@ export interface Driver {
   readonly text: (column: number, row: number, text: string, style: TermStyle, right: number) => number;
   readonly fill: (column: number, row: number, width: number, height: number, style: TermStyle) => void;
   readonly cursor: (cursor: Cursor | undefined) => void;
+  /** Show `title` as the window title, or the title of the shell with `undefined`. The core calls it at each draw. */
+  readonly title: (title: string | undefined) => void;
   readonly requestFrame: (delay?: number) => void;
   /** Call `callback` once after `delay` milliseconds. The returned function cancels the call. */
   readonly after: After;
@@ -75,11 +83,13 @@ export class Core {
   readonly driver: Driver;
   readonly startup: Startup;
   readonly #defaultPanes = new Stack<DefaultPaneSlot>();
+  readonly #titles = new Stack<TitleSlot>();
   /** The guards that decide on a quit, in add order. */
   readonly #quitGuards = new Set<{ readonly guard: QuitGuard }>();
   /** The start event came without a snapshot and found no default pane. The next default pane makes the start pane. */
   #startWaits = false;
   readonly #focusListeners = new Set<{ readonly listener: (change: FocusChange) => void }>();
+  readonly #inputHandlers = new Set<{ readonly handler: (event: InputEvent) => boolean }>();
 
   constructor(driver: Driver) {
     this.driver = driver;
@@ -158,6 +168,15 @@ export class Core {
     };
   }
 
+  /** Give each input event to `handler` before the scene and the keymap. A `true` answer takes the event. */
+  addInputHandler(handler: (event: InputEvent) => boolean): () => void {
+    const entry = { handler };
+    this.#inputHandlers.add(entry);
+    return () => {
+      this.#inputHandlers.delete(entry);
+    };
+  }
+
   /** Call `callback` of the plugin `owner` once after `delay` milliseconds, then draw a frame. A throw is a notice. */
   addTimer(owner: string, delay: number, callback: () => void): () => void {
     return this.driver.after(delay, () => {
@@ -180,6 +199,19 @@ export class Core {
     return remove;
   }
 
+  /**
+   * Make `slot` the window title until its remover runs. The last call wins, and the remover brings back the title
+   * before it. Without a title, the terminal shows the title of the shell.
+   */
+  setTitle(slot: TitleSlot): () => void {
+    const remove = this.#titles.add(slot);
+    this.driver.requestFrame();
+    return () => {
+      remove();
+      this.driver.requestFrame();
+    };
+  }
+
   /** Add `guard` to the guards of a quit. */
   addQuitGuard(guard: QuitGuard): () => void {
     const entry = { guard };
@@ -194,7 +226,7 @@ export class Core {
     switch (event.type) {
       case "key": {
         this.scene.layout();
-        if (this.scene.beforeKeymap(event)) {
+        if (this.#takenByHandler(event) || this.scene.beforeKeymap(event)) {
           this.keymap.cancel();
           return;
         }
@@ -205,11 +237,11 @@ export class Core {
       }
       case "mouse":
         this.scene.layout();
-        this.scene.mouse(event);
+        if (!this.#takenByHandler(event)) this.scene.mouse(event);
         return;
       case "paste":
         this.scene.layout();
-        this.scene.paste(event.text);
+        if (!this.#takenByHandler(event)) this.scene.paste(event.text);
         return;
       case "focus":
         if (!event.focused) {
@@ -243,10 +275,11 @@ export class Core {
     this.panes.restore(JSON.parse(text) as SavedPanes, (type) => this.views.get(type));
   }
 
-  /** Lay out and draw each view. */
+  /** Lay out and draw each view, and give the terminal the window title. */
   draw(): void {
     this.scene.layout();
     this.scene.draw();
+    this.driver.title(this.#titles.top((slot) => !slot.signal.aborted)?.title());
   }
 
   /**
@@ -258,6 +291,15 @@ export class Core {
     const saved = view.snapshot();
     if (saved === undefined) return null;
     return { type: saved.type.includes(":") ? saved.type : `${owner}:${saved.type}`, state: saved.state };
+  }
+
+  /** Give `event` to the input handlers, newest first, until one takes it. */
+  #takenByHandler(event: InputEvent): boolean {
+    for (const entry of [...this.#inputHandlers].toReversed()) {
+      // A handler that an earlier handler removed sees no more events.
+      if (this.#inputHandlers.has(entry) && entry.handler(event)) return true;
+    }
+    return false;
   }
 
   #focusChanged(change: FocusChange): void {

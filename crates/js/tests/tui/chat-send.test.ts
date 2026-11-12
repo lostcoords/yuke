@@ -538,6 +538,34 @@ test("up and down move through the enabled commands, and enter runs the selected
   equal([ran, composerOf(chat).state.text], [["alpine"], ""]);
 });
 
+test("the word of a draft that runs a command has the command style in the composer", async () => {
+  using frame = createFrame({ width: 60, height: 14 });
+  const chat = await loadChat(frame);
+  chat.tui.styles.add({ "chat.command": { fg: 5 } });
+  chat.tui.commands.add({ name: "pick", slash: "mode", argumentHint: "<name>", run: () => {} });
+  chat.tui.commands.add({ name: "off", slash: "off", run: () => {}, enabled: () => false });
+  frame.start();
+  const composer = composerOf(chat);
+  /** The foreground of the cell `offset` of `draft` in the composer row, the last row that shows it. */
+  const fgAt = (draft: string, offset: number) => {
+    composer.reset({ text: draft, selection: { anchor: draft.length, head: draft.length }, spans: [] });
+    const drawn = frame.draw();
+    const shown = rows(drawn);
+    const row = shown.findLastIndex((text) => text.includes(draft));
+    return drawn.cells[row]?.[(shown[row] ?? "").indexOf(draft) + offset]?.style.fg;
+  };
+  const styled = ["/mode", "/mode fast"].map((draft) => fgAt(draft, 0));
+  // The text after the word, a part of a word, a disabled command, and an unknown word have no command style.
+  const plain = [fgAt("/mode fast", 6), fgAt("/mo", 0), fgAt("/off", 0), fgAt("/nothing", 0)];
+  equal(
+    [styled, plain.map((fg) => fg === 5)],
+    [
+      [5, 5],
+      [false, false, false, false],
+    ],
+  );
+});
+
 test("a command that gives false keeps its slash draft, and a command that runs empties it", async () => {
   using frame = createFrame({ width: 60, height: 14 });
   const chat = await loadChat(frame);
