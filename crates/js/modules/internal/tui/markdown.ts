@@ -74,8 +74,12 @@ interface TableCell extends InlineSource {
   pipe?: number;
 }
 
+/** An item of a list, or a later paragraph of an item, which shows spaces for its mark. */
 interface ListItem extends InlineSource {
-  indent: number;
+  depth: number;
+  /** An empty row comes before the item. */
+  gap: boolean;
+  /** The mark and the space after it. */
   marker: string;
   markAt: number;
   markEnd: number;
@@ -107,8 +111,9 @@ const FENCE_CLOSE = /^( {0,3})(`{3,}|~{3,})[ \t]*$/;
 const HEADING = /^( {0,3})(#{1,6})(?:([ \t]+)(.*?))?[ \t]*$/;
 const HR = /^( {0,3})(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const QUOTE = /^( {0,3})>([ \t]?)(.*)$/;
-const UL_ITEM = /^( {0,3})([-*+])([ \t]+)(.*)$/;
-const OL_ITEM = /^( {0,3})(\d{1,9})([.)])([ \t]+)(.*)$/;
+// An item takes any indent, so a nested item matches. `mayStartBlock` keeps a first item within three spaces.
+const UL_ITEM = /^( *)([-*+])([ \t]+)(.*)$/;
+const OL_ITEM = /^( *)(\d{1,9})([.)])([ \t]+)(.*)$/;
 const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
 // QuickJS builds a new RegExp each time a literal runs, so the tests per line and per delimiter hold one each.
 const TABLE_RULE = /^:?-{1,}:?$/;
@@ -282,27 +287,45 @@ function segment(text: string, base: number): Block[] {
     }
 
     if (canStartBlock && (UL_ITEM.test(line) || OL_ITEM.test(line))) {
-      let j = i;
       const items: ListItem[] = [];
       const ordered = OL_ITEM.test(line);
-      for (; j < lines.length; j++) {
+      // The content column of each open item, from the outermost. A line inside an item reaches its content column.
+      const open: number[] = [];
+      let gap = false;
+      let end = i;
+      for (let j = i; j < lines.length; j++) {
         const sourceLine = lines[j] as string;
-        const m = ordered ? OL_ITEM.exec(sourceLine) : UL_ITEM.exec(sourceLine);
-        if (m === null) break;
-        // The last group runs to the end of the line, so its offset needs no group arithmetic.
-        const body = m.at(-1) as string;
-        const src = start(j) + sourceLine.length - body.length;
-        items.push({
-          indent: Math.floor((m[1] as string).length / 2),
-          marker: ordered ? `${m[2]}.` : "•",
-          text: body,
-          runs: oneRun(body, src),
-          markAt: start(j),
-          markEnd: src,
-        });
+        if (sourceLine.trim() === "") {
+          gap = true;
+          continue;
+        }
+        const indent = sourceLine.length - sourceLine.trimStart().length;
+        const numbered = OL_ITEM.exec(sourceLine);
+        const m = HR.test(sourceLine) ? null : (numbered ?? UL_ITEM.exec(sourceLine));
+        if (m === null && isBlockStart(sourceLine.trimStart())) break;
+        if (m === null && !gap) {
+          // A line without a blank line before it continues the paragraph of the last item.
+          const item = items.at(-1) as ListItem;
+          addSource(item, " ", start(j) - 1);
+          addSource(item, sourceLine.slice(indent), start(j) + indent);
+        } else {
+          while (indent < (open.at(-1) ?? 0)) open.pop();
+          // A new mark kind at the outer level starts a new list. After a blank line, a line outside each item ends it.
+          if (open.length === 0 && (m === null || (numbered !== null) !== ordered)) break;
+          // The last group runs to the end of the line, so its offset needs no group arithmetic.
+          const text = m === null ? sourceLine.slice(indent) : (m.at(-1) as string);
+          const src = start(j) + sourceLine.length - text.length;
+          const marker = m === null ? "  " : numbered !== null ? `${m[2]}. ` : "• ";
+          // A line without a mark is a later paragraph of the deepest item that holds it.
+          const depth = m === null ? open.length - 1 : open.length;
+          items.push({ depth, gap, marker, text, runs: oneRun(text, src), markAt: start(j), markEnd: src });
+          if (m !== null) open.push(src - start(j));
+        }
+        gap = false;
+        end = j + 1;
       }
-      push({ kind: "list", items }, i, j);
-      i = j;
+      push({ kind: "list", items }, i, end);
+      i = end;
       continue;
     }
 
@@ -1026,10 +1049,11 @@ function renderBlock(block: Block, width: number, limit = Number.POSITIVE_INFINI
     case "list": {
       const rows: Row[] = [];
       for (const item of block.items) {
+        if (item.gap && rows.length < limit) rows.push(plainRow(""));
         if (rows.length >= limit) break;
-        const pad = "  ".repeat(item.indent);
+        const pad = "  ".repeat(item.depth);
         const source = mapping("replacement", item.markAt, item.markEnd);
-        const mark: Part = { text: `${pad}${item.marker} `, style: STYLE.listMark, source };
+        const mark: Part = { text: `${pad}${item.marker}`, style: STYLE.listMark, source };
         const segments = resolveSegments(parseInline(item.text), item.runs);
         const restPrefix: Part = { text: `${pad}  `, style: STYLE.listMark, copy: false };
         rows.push(...wrapSegments(segments, width, { firstPrefix: mark, restPrefix, limit: limit - rows.length }));

@@ -91,6 +91,44 @@ test("each block marker still opens its block after three spaces", () => {
   equal([kinds("x\n   ==="), kinds("x\n   ---")], ["heading", "heading"]);
 });
 
+test("a nested item shows at its depth, whatever its indent", () => {
+  const source = [
+    "1. **Fixes:**",
+    "   - Its cached buffer.",
+    "     - Drop `SPARE`.",
+    "     - Keep media out.",
+    "2. Next",
+    "    - four spaces",
+    "        - eight spaces",
+    " 3. one space is a sibling",
+  ].join("\n");
+  equal(lines(rowsOf(source, 80)), [
+    "1. Fixes:",
+    "  • Its cached buffer.",
+    "    • Drop SPARE.",
+    "    • Keep media out.",
+    "2. Next",
+    "  • four spaces",
+    "    • eight spaces",
+    "3. one space is a sibling",
+  ]);
+});
+
+test("a line without a mark continues the item above it", () => {
+  equal(lines(rowsOf("- one\n  two\nthree\n- four", 80)), ["• one two three", "• four"]);
+});
+
+test("after a blank line, a line inside an item keeps the list, and a line outside it ends the list", () => {
+  const markdown = new Markdown("1. a\n\n   - b\n\n   more of a\n\n2. c\n\nafter");
+  equal(
+    [markdown.blocks().map((b) => b.kind), lines(markdown.rows(80))],
+    [
+      ["list", "paragraph"],
+      ["1. a", "", "  • b", "", "  more of a", "", "2. c", "", "after"],
+    ],
+  );
+});
+
 // A link keeps its brackets and its target, so the user can copy the target. Each piece of it knows the target.
 test("a link shows its label and its target, and each piece carries the target", () => {
   const rows = rowsOf("see [the **docs**](http://x/a_b) ok", 80);
@@ -203,6 +241,7 @@ function sameRows(actual: readonly TextRow[], expected: readonly TextRow[]): boo
 const streamParts = [
   { name: "headings", text: "Intro para\nsecond line\n\n# Head\n\nSetext\n===\n\n" },
   { name: "lists and quotes", text: "- one\n- two\n\n1. first\n2. second\n\n> quoted\n> more\n\n" },
+  { name: "nested lists", text: "1. a\n   - b\n     - c\nlazy\n\n   more of a\n\n2. d\n\nafter\n\n" },
   { name: "a table and a fence", text: "a | b\n:--|--:\n1 | 2\n\n```zig\nconst x = 1;\nconst y = 2;\n```\n\n" },
   { name: "a rule and inline markup", text: "---\n\nlast **bold** [a](b) para\nwith a|pipe\n---|---\nx|y\n" },
 ];
