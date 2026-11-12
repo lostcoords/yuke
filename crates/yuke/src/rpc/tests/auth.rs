@@ -450,7 +450,15 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
         .unwrap();
     let saved = saved_auth(&place);
     let ready = client.call("catalog/list", json!({})).await.unwrap();
-    let anthropic = new_session(&mut client, &place, "anthropic", "claude-sonnet-4-5").await;
+    let anthropic_model = ready["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|provider| provider["id"] == "anthropic")
+        .unwrap()["models"][0]["id"]
+        .as_str()
+        .unwrap();
+    let anthropic = new_session(&mut client, &place, "anthropic", anthropic_model).await;
     run_turn(&mut client, &anthropic).await;
     client
         .call("auth/set_api_key", key("anthropic", "second-key"))
@@ -470,7 +478,7 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
         .unwrap();
     let after = client.call("catalog/list", json!({ "all": true })).await.unwrap();
     let mut settings = settings(&place);
-    settings["model"] = json!({ "provider": "anthropic", "model": "claude-sonnet-4-5" });
+    settings["model"] = json!({ "provider": "anthropic", "model": anthropic_model });
     let refused = client.call("session/new", settings).await;
     client.end().await;
 
