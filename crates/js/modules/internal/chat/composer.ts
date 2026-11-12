@@ -4,6 +4,7 @@
  */
 
 import type { ChatComposerOptions, ChatSession } from "yuke:chat";
+import { fitImage } from "yuke:internal/native";
 import type { Frozen } from "yuke:plugins";
 import type { Block, Input, InputId } from "yuke:protocol";
 import type { Entry } from "yuke:transcript";
@@ -167,14 +168,18 @@ export class ChatComposer {
     try {
       const target = await this.#options.handle();
       if (target === undefined || this.#options.signal.aborted) return;
-      const blob = await target.putBlob(image.bytes);
+      // The session stores and sends only the scaled image.
+      const fitted = await fitImage(image.bytes, image.mimeType);
+      // A pane that closed during the scale stores nothing.
+      if (this.#options.signal.aborted) return;
+      const blob = await target.putBlob(fitted.bytes);
       if (this.#options.signal.aborted) return;
       // The image goes where the caret is now, also after an edit during the store.
       const editor = this.#editor;
       const count = editor.state.spans.filter((span) => span.kind === "image").length;
       const selection = editor.selection;
       editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), IMAGE, [
-        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mimeType: image.mimeType } },
+        { from: 0, to: 1, kind: "image", label: `[image ${count + 1}]`, media: { blob, mimeType: fitted.mimeType } },
       ]);
     } finally {
       this.#attaching -= 1;

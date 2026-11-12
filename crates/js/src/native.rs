@@ -10,6 +10,7 @@ mod encoding;
 mod exec;
 pub(crate) mod fs;
 mod http;
+pub(crate) mod images;
 mod lines;
 mod net;
 mod process;
@@ -123,6 +124,7 @@ pub(crate) fn install(
     ai::add(ctx, &object, &options.models)?;
     fs::add(ctx, &object)?;
     clipboard::add(ctx, &object)?;
+    images::add(ctx, &object)?;
     http::add(ctx, &object, &options.http)?;
     process::add(ctx, &object, &options.processes)?;
     net::add(ctx, &object)?;

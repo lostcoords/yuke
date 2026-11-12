@@ -475,24 +475,24 @@ pub(crate) async fn store_media(
     Ok(media)
 }
 
-/// The bytes and the media type of each item of `files`, in order. A relative path starts in `folder`.
+/// The bytes and the media type of each item of `files`, in order, with each large image scaled to fit. A relative
+/// path starts in `folder`.
 pub(crate) async fn read_media(files: Vec<MediaFile>, folder: &Path) -> Result<Vec<Attachment>, String> {
     let mut read = Vec::with_capacity(files.len());
     for file in files {
-        let bytes = match file.source {
-            Source::Path(path) => tokio::task::spawn_blocking({
-                let path = folder.join(&path);
-                move || std::fs::read(path)
-            })
-            .await
-            .map_err(|error| format!("{path}: {error}"))?
-            .map_err(|error| format!("{path}: {error}"))?,
-            Source::Bytes(bytes) => bytes,
-        };
-        read.push(Attachment {
-            bytes,
-            mime_type: file.mime_type,
-        });
+        let folder = folder.to_owned();
+        // A read, a decode, and an encode block, so they run on a blocking thread of tokio.
+        let attachment = tokio::task::spawn_blocking(move || {
+            let bytes = match file.source {
+                Source::Path(path) => std::fs::read(folder.join(&path)).map_err(|error| format!("{path}: {error}"))?,
+                Source::Bytes(bytes) => bytes,
+            };
+            let (bytes, mime_type) = crate::native::images::fit(bytes, file.mime_type);
+            Ok::<_, String>(Attachment { bytes, mime_type })
+        })
+        .await
+        .map_err(|error| format!("the media work failed: {error}"))??;
+        read.push(attachment);
     }
     Ok(read)
 }

@@ -306,6 +306,13 @@ declare module "yuke:internal/native" {
   export function clipboardReadImage(): Promise<Uint8Array | undefined>;
 
   /**
+   * Scale the image `bytes` of `mimeType` to fit a side of 2000 pixels and 3.75 MiB. A large image can become a JPEG,
+   * so the result has its own `mimeType`. Other media and an image that does not decode stay as they are. The work
+   * runs off the thread.
+   */
+  export function fitImage(bytes: Uint8Array, mimeType: string): Promise<{ bytes: Uint8Array; mimeType: string }>;
+
+  /**
    * Send one request of a plugin to `model`. `settings` holds the settings that the caller gives; each other setting
    * keeps the default of the endpoint. A block of another shape or a bad setting throws a `TypeError`. A failed request rejects with an
    * `Error`, and a stop with `{ cancelled: true }`.
