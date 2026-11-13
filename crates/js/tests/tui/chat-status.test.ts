@@ -4,7 +4,7 @@
 import { writeTextFile } from "yuke:fs";
 import { env } from "yuke:process";
 import type { Job, ProviderInfo, ProviderState, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import type { StatusItem } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -75,7 +75,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
   const closed = items().map((item) => item[0]);
   frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   frame.draw();
-  equal(
+  assertEquals(
     [shown, live, closed, items()],
     [
       [
@@ -95,7 +95,7 @@ test("without a context window the context use is a token count", async () => {
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
-  equal(
+  assertEquals(
     listed(chat).map((item) => [item.id, item.text]),
     [
       ["chat:model", "m high"],
@@ -117,7 +117,7 @@ test("an answer without an input count shows no context item", async () => {
   const chat = await loadChat(frame, fakeSessions([settings as StoredEvent, unknown]));
   frame.start();
   await waitForSettled();
-  equal(
+  assertEquals(
     listed(chat).map((item) => item.id),
     ["chat:model"],
   );
@@ -136,8 +136,8 @@ test("the first send of a new pane shows the jobs of its session once the handle
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.inputs.length, 1);
-  equal(
+  assertEquals(sessions.inputs.length, 1);
+  assertEquals(
     listed(chat).map((item) => item.id),
     ["chat:model", "chat:jobs"],
   );
@@ -159,16 +159,16 @@ test("a pane without a session shows the saved pick, and a new pick replaces it"
   frame.key("ctrl+k m");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("low"), true);
+  assertEquals(rows(frame.frame).includes("low"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
-  equal([first, shownItems(chat)], [[["chat:model", "m high"]], [["chat:model", "n low"]]]);
+  assertEquals([first, shownItems(chat)], [[["chat:model", "m high"]], [["chat:model", "n low"]]]);
 });
 
 test("a saved pick that the catalog no longer has shows nothing", async () => {
@@ -176,7 +176,7 @@ test("a saved pick that the catalog no longer has shows nothing", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w" });
   const chat = await loadChat(frame);
   frame.start();
-  equal(shownItems(chat), []);
+  assertEquals(shownItems(chat), []);
 });
 
 test("a pane whose session does not open shows no saved pick", async () => {
@@ -191,7 +191,7 @@ test("a pane whose session does not open shows no saved pick", async () => {
   frame.draw();
   chat.tui.commands.run("core:focus-left");
   frame.draw();
-  equal(shownItems(chat), []);
+  assertEquals(shownItems(chat), []);
 });
 
 test("the bar of a session of a provider that was not ready at the start shows its level after a catalog change", async () => {
@@ -210,7 +210,7 @@ test("the bar of a session of a provider that was not ready at the start shows i
   chat.fact("catalog.changed", undefined);
   await waitForSettled();
 
-  equal([before, model()], ["m", "m high"]);
+  assertEquals([before, model()], ["m", "m high"]);
 });
 
 test("the bar hides a saved pick of a provider that is not ready, and a new pick after a login shows", async () => {
@@ -238,7 +238,7 @@ test("the bar hides a saved pick of a provider that is not ready, and a new pick
   frame.key("h i g h enter");
   await waitForSettled();
 
-  equal([before, model()], [undefined, "m high"]);
+  assertEquals([before, model()], [undefined, "m high"]);
 });
 
 test("the folder item shows the folder of the session, and a pane without one shows the start folder with ~ for home", async () => {
@@ -253,5 +253,5 @@ test("the folder item shows the folder of the session, and a pane without one sh
   await chat.chat.show("s1");
   await waitForSettled();
 
-  equal([before, shown()], ["~/launch", "/w"]);
+  assertEquals([before, shown()], ["~/launch", "/w"]);
 });

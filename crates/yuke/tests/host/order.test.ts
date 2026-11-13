@@ -1,7 +1,7 @@
 // The order guarantees of the test host: an operation returns after its updates and its reports arrived.
 
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, reply, test } from "yuke:test";
+import { assertEquals, createHost, reply, test } from "yuke:test";
 
 // Many updates require several deliveries of the feed.
 test("send returns after the transcript got each update of the turn", async () => {
@@ -24,7 +24,7 @@ test("send returns after the transcript got each update of the turn", async () =
   const done = session.transcript.entries.flatMap((entry) =>
     entry.kind === "tool" && entry.status === "done" ? [entry.arguments] : [],
   );
-  equal(
+  assertEquals(
     done,
     calls.map((call) => JSON.stringify(call.args)),
   );

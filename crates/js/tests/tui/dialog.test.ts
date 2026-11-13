@@ -1,6 +1,6 @@
 // `tui.dialog`: its head and footer rows, the order of the keys, the scroll of its body, and its close. `tui.select`: its answers.
 
-import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type KeyEvent, Picker, strokeOf, TextView, type View } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -43,12 +43,12 @@ test("a dialog shows its title, its body, and the keys that work now", () => {
   frame.key("u");
   frame.draw();
 
-  equal(
+  assertEquals(
     [before.at(-6)?.trim(), before.at(-5)?.trim(), before.at(-1)?.trim()],
     ["Plugins", "the body", "u: update · esc: close"],
   );
-  equal(shows(frame, "enter: apply · u: update · esc: close"), true);
-  equal(runs, ["enter", "u"]);
+  assertEquals(shows(frame, "enter: apply · u: update · esc: close"), true);
+  assertEquals(runs, ["enter", "u"]);
 });
 
 test("the body takes a key first, and the dialog takes what the body leaves", () => {
@@ -65,7 +65,7 @@ test("the body takes a key first, and the dialog takes what the body leaves", ()
   frame.key("x");
   frame.key("y");
 
-  equal(runs, ["y"]);
+  assertEquals(runs, ["y"]);
 });
 
 test("the arrow and page keys scroll a body that scrolls", () => {
@@ -79,7 +79,7 @@ test("the arrow and page keys scroll a body that scrolls", () => {
   frame.key("up");
   frame.draw();
 
-  equal([top, ...paged, shows(frame, "line 5")], [true, false, true, true]);
+  assertEquals([top, ...paged, shows(frame, "line 5")], [true, false, true, true]);
 });
 
 test("the abort of its signal closes the dialog, and esc closes it too", () => {
@@ -93,7 +93,7 @@ test("the abort of its signal closes the dialog, and esc closes it too", () => {
   frame.key("esc");
   frame.draw();
 
-  equal(
+  assertEquals(
     [first.signal.aborted, late.signal.aborted, second.signal.aborted, shows(frame, "second")],
     [true, true, true, false],
   );
@@ -108,10 +108,10 @@ test("a select gives the chosen item, and it shows the title", async () => {
   frame.key("down");
   frame.key("enter");
 
-  equal(shown, true);
-  equal(await answer, items[1]);
+  assertEquals(shown, true);
+  assertEquals(await answer, items[1]);
   frame.draw();
-  equal(shows(frame, "Pick one"), false);
+  assertEquals(shows(frame, "Pick one"), false);
 });
 
 test("a select shows its items in the order of its rank, with the rows of its render", async () => {
@@ -127,7 +127,7 @@ test("a select shows its items in the order of its rank, with the rows of its re
   const shown = shows(frame, "item second");
   frame.key("enter");
 
-  equal([shown, await answer], [true, items[1]]);
+  assertEquals([shown, await answer], [true, items[1]]);
 });
 
 test("an input keeps a refused text with its message, and gives the text that its check accepts", async () => {
@@ -149,9 +149,9 @@ test("an input keeps a refused text with its message, and gives the text that it
   frame.paste("b");
   frame.key("enter");
 
-  equal([refused, await answer, checked], [true, "ab", ["a", "ab"]]);
+  assertEquals([refused, await answer, checked], [true, "ab", ["a", "ab"]]);
   frame.draw();
-  equal(shows(frame, "Name"), false);
+  assertEquals(shows(frame, "Name"), false);
 });
 
 test("an input gives undefined for esc", async () => {
@@ -161,7 +161,7 @@ test("an input gives undefined for esc", async () => {
   frame.paste("draft");
   frame.key("esc");
 
-  equal(await answer, undefined);
+  assertEquals(await answer, undefined);
 });
 
 test("a confirm gives true for enter, and false for esc and an abort", async () => {
@@ -178,7 +178,7 @@ test("a confirm gives true for enter, and false for esc and an abort", async () 
   const aborted = tui.confirm({ text: "Remove clock?", signal: controller.signal });
   controller.abort();
 
-  equal([shown, await yes, await no, await aborted], [[true, true], true, false, false]);
+  assertEquals([shown, await yes, await no, await aborted], [[true, true], true, false, false]);
 });
 
 test("a select of two items with one label gives the chosen one", async () => {
@@ -192,7 +192,7 @@ test("a select of two items with one label gives the chosen one", async () => {
   frame.key("down");
   frame.key("enter");
 
-  equal(await answer, { name: "twin", at: 2 });
+  assertEquals(await answer, { name: "twin", at: 2 });
 });
 
 test("a select gives undefined for esc, an abort, and a stop, and a call after the stop throws", async () => {
@@ -203,17 +203,17 @@ test("a select gives undefined for esc, an abort, and a stop, and a call after t
 
   const cancelled = tui.select(options);
   frame.key("esc");
-  equal(await cancelled, undefined);
+  assertEquals(await cancelled, undefined);
 
   const controller = new AbortController();
   const aborted = tui.select({ ...options, signal: controller.signal });
   controller.abort();
-  equal(await aborted, undefined);
-  equal(await tui.select({ ...options, signal: controller.signal }), undefined);
+  assertEquals(await aborted, undefined);
+  assertEquals(await tui.select({ ...options, signal: controller.signal }), undefined);
 
   const stopped = tui.select(options);
   surface.close();
-  equal(await stopped, undefined);
+  assertEquals(await stopped, undefined);
 
   let thrown = false;
   try {
@@ -221,7 +221,7 @@ test("a select gives undefined for esc, an abort, and a stop, and a call after t
   } catch {
     thrown = true;
   }
-  equal(thrown, true);
+  assertEquals(thrown, true);
 });
 
 test("two keys in a row with one label share one footer entry, and a key on esc replaces the close", () => {
@@ -238,12 +238,12 @@ test("two keys in a row with one label share one footer entry, and a key on esc 
   });
   frame.draw();
 
-  equal(shows(frame, "enter/ctrl+t: go · esc: stay"), true);
-  equal(shows(frame, "esc: close"), false);
+  assertEquals(shows(frame, "enter/ctrl+t: go · esc: stay"), true);
+  assertEquals(shows(frame, "esc: close"), false);
   frame.key("esc");
   frame.key("ctrl+t");
   frame.draw();
-  equal([runs, shows(frame, "the body")], [["esc", "ctrl+t"], true]);
+  assertEquals([runs, shows(frame, "the body")], [["esc", "ctrl+t"], true]);
 });
 
 test("a guard decides on a quit, and its disposer ends it", () => {
@@ -262,7 +262,7 @@ test("a guard decides on a quit, and its disposer ends it", () => {
   end();
   frame.key("ctrl+q");
 
-  equal([asked, after, frame.quits], [0, 1, ["bye", undefined]]);
+  assertEquals([asked, after, frame.quits], [0, 1, ["bye", undefined]]);
 });
 
 test("each quit guard asks in add order, and the quit writes the text of each", () => {
@@ -285,7 +285,7 @@ test("each quit guard asks in add order, and the quit writes the text of each", 
   const waiting = [[...asked], frame.quits.length];
   held?.("first text");
 
-  equal([waiting, asked, frame.quits], [[["first"], 0], ["first", "second"], ["first text\nsecond text"]]);
+  assertEquals([waiting, asked, frame.quits], [[["first"], 0], ["first", "second"], ["first text\nsecond text"]]);
 });
 
 test("a key of more than one stroke throws", () => {
@@ -297,7 +297,7 @@ test("a key of more than one stroke throws", () => {
     thrown = String(error);
   }
 
-  equal(thrown, "TypeError: dialog: the key 'ctrl+k x' is not one stroke");
+  assertEquals(thrown, "TypeError: dialog: the key 'ctrl+k x' is not one stroke");
 });
 
 test("a picker body gets the focus of its search field, so typed text filters it", () => {
@@ -315,7 +315,7 @@ test("a picker body gets the focus of its search field, so typed text filters it
   frame.key("l");
   frame.draw();
 
-  equal([picker.query, picker.selected?.name, shows(frame, "clock")], ["tool", "tools", false]);
+  assertEquals([picker.query, picker.selected?.name, shows(frame, "clock")], ["tool", "tools", false]);
 });
 
 test("the title and the keys of a dialog have a default look that a plugin changes", () => {
@@ -330,7 +330,7 @@ test("the title and the keys of a dialog have a default look that a plugin chang
   };
   const before = looks();
   tui.styles.add({ "dialog.title": { fg: 1, dim: null }, "dialog.keys": { fg: 2, dim: null } });
-  equal(
+  assertEquals(
     [before, looks()],
     [
       [{ dim: true }, { dim: true }],

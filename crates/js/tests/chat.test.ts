@@ -4,7 +4,7 @@
 import { ChatComposer, ChatQuestions, ChatSession, ChatWorking } from "yuke:chat";
 import type { Sessions } from "yuke:plugins";
 import type { StoredEvent } from "yuke:protocol";
-import { equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { commit, fakeSessions, replies, SETTINGS } from "./tui/chat.ts";
 
@@ -25,11 +25,11 @@ test("a failed open keeps the shown session, and a later open shows its own tran
   const kept = [chat.id, chat.transcript === first, chat.handle !== undefined];
   await chat.open("s2");
   sessions.push(commit(3, [{ kind: "assistantText", text: "in s2" }]), "s2");
-  equal(
+  assertEquals(
     [failure, kept, chat.id, chat.transcript === first, texts(chat).at(-1)],
     ["Error: no session missing", ["s1", true, true], "s2", false, "in s2"],
   );
-  equal(
+  assertEquals(
     sessions.opened.map((open) => [open.id, open.signal.aborted]),
     [
       ["s1", true],
@@ -45,7 +45,7 @@ test("ensure creates the first session once, and a missing choice creates none",
   const none = await chat.ensure(async () => undefined);
   const first = await chat.ensure(async () => SETTINGS);
   const again = await chat.ensure(async () => SETTINGS);
-  equal([none, first === again, chat.id, sessions.created.length], [undefined, true, "s-new", 1]);
+  assertEquals([none, first === again, chat.id, sessions.created.length], [undefined, true, "s-new", 1]);
 });
 
 test("ensure opens the session again after the end of its handle", async () => {
@@ -56,7 +56,7 @@ test("ensure opens the session again after the end of its handle", async () => {
   chat.addChangeListener(() => changes.push(chat.handle !== undefined));
   sessions.close("s1");
   const handle = await chat.ensure(async () => undefined);
-  equal([changes.slice(0, 1), handle === chat.handle, sessions.opened.length], [[false], true, 2]);
+  assertEquals([changes.slice(0, 1), handle === chat.handle, sessions.opened.length], [[false], true, 2]);
 });
 
 test("a page that fails after the open of another session leaves the history of that session open", async () => {
@@ -76,14 +76,14 @@ test("a page that fails after the open of another session leaves the history of 
   await page;
   held = false;
   await chat.loadOlderHistory();
-  equal([chat.historyError, chat.transcript.entries.length > before], [undefined, true]);
+  assertEquals([chat.historyError, chat.transcript.entries.length > before], [undefined, true]);
 });
 
 test("two calls of ensure without a session create one session", async () => {
   const sessions = fakeSessions(replies(2));
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal });
   const [first, second] = await Promise.all([chat.ensure(async () => SETTINGS), chat.ensure(async () => SETTINGS)]);
-  equal([first === second, sessions.created.length, sessions.opened.length], [true, 1, 1]);
+  assertEquals([first === second, sessions.created.length, sessions.opened.length], [true, 1, 1]);
 });
 
 test("an end of the handle after the snapshot leaves the target shown without a handle", async () => {
@@ -103,7 +103,10 @@ test("an end of the handle after the snapshot leaves the target shown without a 
       () => "",
       (error: unknown) => String(error),
     );
-  equal([chat.id, chat.handle, texts(chat), failure], ["s1", undefined, ["reply 2"], "Error: the session s1 closed"]);
+  assertEquals(
+    [chat.id, chat.handle, texts(chat), failure],
+    ["s1", undefined, ["reply 2"], "Error: the session s1 closed"],
+  );
 });
 
 test("the end of the owner ends the handle and its hold", async () => {
@@ -112,7 +115,7 @@ test("the end of the owner ends the handle and its hold", async () => {
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   owner.abort();
-  equal([chat.handle, sessions.opened.map((open) => open.signal.aborted)], [undefined, [true]]);
+  assertEquals([chat.handle, sessions.opened.map((open) => open.signal.aborted)], [undefined, [true]]);
 });
 
 test("a composer sends the draft, and a refused input comes back above newer text and rejects", async () => {
@@ -135,7 +138,7 @@ test("a composer sends the draft, and a refused input comes back above newer tex
   await waitForSettled();
   editor.replace(0, 0, "newer");
   reject(new Error("refused"));
-  equal(
+  assertEquals(
     [sessions.inputs, await sending, editor.state.text],
     [
       [[{ kind: "userText", text: "first" }], [{ kind: "userText", text: "second" }]],
@@ -159,7 +162,7 @@ test("a composer makes one span of a long paste, and a paste handler added later
     return text.length > 0;
   });
   editor.onPaste("b".repeat(301));
-  equal([spanCount, editor.state.text, editor.state.spans], [1, "claimed", []]);
+  assertEquals([spanCount, editor.state.text, editor.state.spans], [1, "claimed", []]);
 });
 
 test("attachImage stores the image and puts it over the selection, and an abort during the handle stores nothing", async () => {
@@ -180,7 +183,7 @@ test("attachImage stores the image and puts it over the selection, and an abort 
     bytes: new Uint8Array([3]),
     mimeType: "image/png",
   });
-  equal([attached, sessions.blobs], [["a\uFFFCc", [[1, "[image 1]"]]], [[1, 2]]]);
+  assertEquals([attached, sessions.blobs], [["a\uFFFCc", [[1, "[image 1]"]]], [[1, 2]]]);
 });
 
 test("a send before the store of an attach ends does nothing, so the image goes with its draft", async () => {
@@ -200,7 +203,7 @@ test("a send before the store of an attach ends does nothing, so the image goes 
   store.resolve();
   await attaching;
   await composer.send();
-  equal(
+  assertEquals(
     [busy, early, sessions.inputs, composer.busy],
     [
       true,
@@ -235,7 +238,7 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   const text = editor.state.text;
   sessions.state.removed = false;
   const taken = await composer.olderMessage();
-  equal([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
+  assertEquals([recalled, text, taken, composer.waiting.map((entry) => entry[0])], [undefined, "newest", "taken", [5]]);
 });
 
 test("the questions show the first open one, a cancel answers it once, and a refused answer goes to failed and stays open", async () => {
@@ -270,7 +273,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   // A refused answer leaves the question open for the next answer.
   questions.cancel();
   questions.cancel();
-  equal(
+  assertEquals(
     [first !== undefined, second !== undefined && second !== first, sessions.responses, failures, changes],
     [true, true, [[7, { kind: "cancelled" }]], ["Error: no open question 8", "Error: no open question 8"], 2],
   );
@@ -291,7 +294,7 @@ test("questions that start after a question opened show it at once", async () =>
     },
   });
   const questions = new ChatQuestions(chat, { signal: owner.signal, onError: () => {} });
-  equal(questions.current !== undefined, true);
+  assertEquals(questions.current !== undefined, true);
 });
 
 test("the timer counts from observation, resets for another session, and stops when the handle ends", async () => {
@@ -311,7 +314,7 @@ test("the timer counts from observation, resets for another session, and stops w
   // An event that keeps the turn running changes no `active`.
   sessions.push(commit(3, [{ kind: "assistantText", text: "more" }]), "s2");
   sessions.close("s2");
-  equal(
+  assertEquals(
     [first, second, working.text(), changes],
     ["Working… (1m 01s · esc to interrupt)", "Working… (0s)", undefined, [false, true, false]],
   );

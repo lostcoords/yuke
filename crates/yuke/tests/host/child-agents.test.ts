@@ -2,7 +2,7 @@
 
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
 import type { QuestionAnswer } from "yuke:protocol";
-import { createHost, equal, type Reply, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, createHost, type Reply, reply, test, waitForSettled } from "yuke:test";
 
 /** The plugin. Its tool `spawn_subagent` runs the one child of a session as the job `explorer`. */
 function agents() {
@@ -61,7 +61,7 @@ function agents() {
             tail: 0,
             signal: ended.signal,
             onEvent: (event) => {
-              if ("snapshot" in event || event.update.sessionUpdate !== "interactionRequested") return;
+              if (event.kind === "snapshot" || event.update.sessionUpdate !== "interactionRequested") return;
               const update = event.update;
               void s
                 .ask({ questions: update.request.questions })
@@ -114,21 +114,21 @@ test("a child reports to its parent, stays out of the list, and takes a follow-u
   await using _host = host;
 
   await parent.call("spawn_subagent", { message: "Read the store.", background: true });
-  equal(host.requests.length, 2);
+  assertEquals(host.requests.length, 2);
   const first = newest(host);
   const roots = (await list().list()).sessions.map((row) => row.session.sessionId);
   const children = (await list().list({ parent: parent.id })).sessions.map((row) => row.session.sessionId);
   const followup = await parent.call("spawn_subagent", { message: "And the indexes?", background: true });
-  equal(followup.isError, false);
-  equal(host.requests.length, 4);
+  assertEquals(followup.isError, false);
+  assertEquals(host.requests.length, 4);
 
-  equal(
+  assertEquals(
     first,
     '<system_notification plugin="agents">explorer explore the store: completed.\nTwo tables.</system_notification>',
   );
-  equal(roots, [parent.id]);
-  equal(children, [state.child]);
-  equal(
+  assertEquals(roots, [parent.id]);
+  assertEquals(children, [state.child]);
+  assertEquals(
     newest(host),
     '<system_notification plugin="agents">explorer explore the store: completed.\nThree indexes.</system_notification>',
   );
@@ -139,11 +139,11 @@ test("a stop cancels the child, and the parent gets no report", async () => {
   await using _host = host;
 
   await parent.call("spawn_subagent", { message: "Read the store.", background: true });
-  equal(host.requests.length, 1);
+  assertEquals(host.requests.length, 1);
   const stopped = await parent.call("stop", { id: "explorer" });
 
-  equal(stopped.text, "explorer stopped.");
-  equal(host.requests.length, 1);
+  assertEquals(stopped.text, "explorer stopped.");
+  assertEquals(host.requests.length, 1);
 });
 
 test("a question of the child reaches the parent, and its answer returns to the child", async () => {
@@ -154,13 +154,13 @@ test("a question of the child reaches the parent, and its answer returns to the 
   await using _host = host;
 
   await parent.call("spawn_subagent", { message: "Ask first.", background: true });
-  equal(host.requests.length, 3);
+  assertEquals(host.requests.length, 3);
 
-  equal(
+  assertEquals(
     host.questions.map((question) => question.sessionId),
     [parent.id],
   );
-  equal(
+  assertEquals(
     newest(host),
     '<system_notification plugin="agents">explorer explore the store: completed.\nIt said yes.</system_notification>',
   );
@@ -173,9 +173,9 @@ test("a foreground child answers as the tool result, shows no job, and sends no 
 
   const result = await parent.call("spawn_subagent", { message: "Read the store.", background: false });
 
-  equal(result.text, "Two tables.");
-  equal(handle.jobs(), []);
-  equal(host.requests.length, 1);
+  assertEquals(result.text, "Two tables.");
+  assertEquals(handle.jobs(), []);
+  assertEquals(host.requests.length, 1);
 });
 
 test("ctrl+b moves a foreground child: the call answers, the child goes on, and its report reaches the parent", async () => {
@@ -197,11 +197,11 @@ test("ctrl+b moves a foreground child: the call answers, the child goes on, and 
   state.open();
   await waitForSettled();
 
-  equal(movable, true);
-  equal(result.text, "explorer runs in the background.");
-  equal(jobs, [["explorer", "running"]]);
-  equal(handle.jobs(), []);
-  equal(
+  assertEquals(movable, true);
+  assertEquals(result.text, "explorer runs in the background.");
+  assertEquals(jobs, [["explorer", "running"]]);
+  assertEquals(handle.jobs(), []);
+  assertEquals(
     newest(host),
     '<system_notification plugin="agents">explorer explore the store: completed.\nTwo tables.</system_notification>',
   );

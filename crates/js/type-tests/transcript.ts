@@ -1,6 +1,6 @@
 // Type checks of `yuke:transcript`. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
 
-import type { Sessions, ViewEvent } from "yuke:plugins";
+import type { SessionHandleEvent, Sessions } from "yuke:plugins";
 import type { Entry, Transcript } from "yuke:transcript";
 import type * as Runtime from "../modules/runtime/transcript.ts";
 
@@ -25,7 +25,7 @@ export async function follow(sessions: Sessions, transcript: Transcript): Promis
 
 // The close of a session aborts `handle.signal`. It is no event of the plugin.
 // @ts-expect-error: `"closed"` is an event of the bridge only.
-export const closed: ViewEvent = "closed";
+export const closed: SessionHandleEvent = "closed";
 
 // A view reads the entries and never changes them, so a cache by object stays true.
 export function draw(transcript: Transcript, entry: Entry): void {

@@ -1,11 +1,11 @@
 // The web classes `URL` and `URLSearchParams`. Many cases follow the web platform tests (WPT) of `url`.
 
-import { assert, equal, test, throws } from "yuke:test";
+import { assert, assertEquals, assertThrows, test } from "yuke:test";
 import { thrownNames } from "./errors.ts";
 
 test("a URL resolves against its base and gives each component", () => {
   const url = new URL("../c d?x=1#f", "HTTPS://user:pw@EXAMPLE.com:8080/a/b/");
-  equal(
+  assertEquals(
     {
       href: url.href,
       origin: url.origin,
@@ -36,26 +36,25 @@ test("a URL resolves against its base and gives each component", () => {
 });
 
 test("a host with unicode becomes punycode and an opaque origin is null", () => {
-  equal(new URL("https://bücher.example/").hostname, "xn--bcher-kva.example");
-  equal(new URL("https://faß.de/").hostname, "xn--fa-hia.de");
-  equal(new URL("https://example.com:443/").port, "");
-  equal(new URL("data:text/plain,x").origin, "null");
+  assertEquals(new URL("https://bücher.example/").hostname, "xn--bcher-kva.example");
+  assertEquals(new URL("https://faß.de/").hostname, "xn--fa-hia.de");
+  assertEquals(new URL("https://example.com:443/").port, "");
+  assertEquals(new URL("data:text/plain,x").origin, "null");
 });
 
 test("an invalid URL throws and parse gives null", () => {
-  equal(thrownNames([() => new URL("no scheme"), () => new URL("/a", "no base"), () => new URL("https://a b/")]), [
-    "TypeError",
-    "TypeError",
-    "TypeError",
-  ]);
-  const error = throws(() => new URL("/a", "no base"));
+  assertEquals(
+    thrownNames([() => new URL("no scheme"), () => new URL("/a", "no base"), () => new URL("https://a b/")]),
+    ["TypeError", "TypeError", "TypeError"],
+  );
+  const error = assertThrows(() => new URL("/a", "no base"));
   assert(error instanceof Error);
-  equal(error.message, "'/a' with the base 'no base' is not a valid URL");
-  equal(URL.parse("no scheme"), null);
-  equal(URL.parse("/a", "https://a.example/b")?.href, "https://a.example/a");
+  assertEquals(error.message, "'/a' with the base 'no base' is not a valid URL");
+  assertEquals(URL.parse("no scheme"), null);
+  assertEquals(URL.parse("/a", "https://a.example/b")?.href, "https://a.example/a");
   assert(URL.parse("https://a.example/") instanceof URL);
-  equal(URL.canParse("no scheme"), false);
-  equal(URL.canParse("/a", "https://a.example/"), true);
+  assertEquals(URL.canParse("no scheme"), false);
+  assertEquals(URL.canParse("/a", "https://a.example/"), true);
 });
 
 test("a setter parses its component and a refused value keeps the URL", () => {
@@ -69,16 +68,16 @@ test("a setter parses its component and a refused value keeps the URL", () => {
   url.pathname = "a b";
   url.search = "q=1";
   url.hash = "top";
-  equal(url.href, "ftp://me@b.example:8080/a%20b?q=1#top");
+  assertEquals(url.href, "ftp://me@b.example:8080/a%20b?q=1#top");
   url.port = "";
   url.search = "";
   url.hash = "";
-  equal(url.href, "ftp://me@b.example/a%20b");
+  assertEquals(url.href, "ftp://me@b.example/a%20b");
 });
 
 test("an href that is not a URL throws and keeps the URL", () => {
   const url = new URL("https://a.example/");
-  equal(
+  assertEquals(
     thrownNames([
       () => {
         url.href = "no scheme";
@@ -86,11 +85,11 @@ test("an href that is not a URL throws and keeps the URL", () => {
     ]),
     ["TypeError"],
   );
-  equal(url.href, "https://a.example/");
+  assertEquals(url.href, "https://a.example/");
   url.href = "http://b.example/x";
-  equal(url.href, "http://b.example/x");
-  equal(String(url), "http://b.example/x");
-  equal(JSON.stringify({ url }), '{"url":"http://b.example/x"}');
+  assertEquals(url.href, "http://b.example/x");
+  assertEquals(String(url), "http://b.example/x");
+  assertEquals(JSON.stringify({ url }), '{"url":"http://b.example/x"}');
 });
 
 test("the search params of a URL follow its query and set it", () => {
@@ -98,50 +97,50 @@ test("the search params of a URL follow its query and set it", () => {
   const params = url.searchParams;
   assert(params === url.searchParams, "each read gives the same object");
   params.append("c", "x y");
-  equal(url.search, "?a=1&b=2&c=x+y");
+  assertEquals(url.search, "?a=1&b=2&c=x+y");
   url.search = "?z=9";
-  equal([params.get("z"), params.has("a")], ["9", false]);
+  assertEquals([params.get("z"), params.has("a")], ["9", false]);
   params.delete("z");
-  equal(url.href, "https://a.example/");
+  assertEquals(url.href, "https://a.example/");
   url.href = "https://b.example/?q=1";
-  equal([params.get("q"), params.size], ["1", 1]);
+  assertEquals([params.get("q"), params.size], ["1", 1]);
 });
 
 test("search params take a query string, pairs, or a record", () => {
-  equal(new URLSearchParams("?a=1&a=2").getAll("a"), ["1", "2"]);
-  equal(new URLSearchParams("b=%20+x&%zz=%C3").get("b"), "  x");
-  equal(new URLSearchParams("%zz=%C3").toString(), "%25zz=%EF%BF%BD");
-  equal(new URLSearchParams([["a", "1"], new Set(["b", "2"])]).toString(), "a=1&b=2");
+  assertEquals(new URLSearchParams("?a=1&a=2").getAll("a"), ["1", "2"]);
+  assertEquals(new URLSearchParams("b=%20+x&%zz=%C3").get("b"), "  x");
+  assertEquals(new URLSearchParams("%zz=%C3").toString(), "%25zz=%EF%BF%BD");
+  assertEquals(new URLSearchParams([["a", "1"], new Set(["b", "2"])]).toString(), "a=1&b=2");
   // @ts-expect-error: a record value converts to a string.
-  equal(new URLSearchParams({ x: "1", y: 2 }).toString(), "x=1&y=2");
-  equal(new URLSearchParams(new URLSearchParams("k=v")).toString(), "k=v");
-  equal(new URLSearchParams().size, 0);
+  assertEquals(new URLSearchParams({ x: "1", y: 2 }).toString(), "x=1&y=2");
+  assertEquals(new URLSearchParams(new URLSearchParams("k=v")).toString(), "k=v");
+  assertEquals(new URLSearchParams().size, 0);
 });
 
 test("a pair without exactly two values throws a TypeError", () => {
-  equal(thrownNames([() => new URLSearchParams([["a"]]), () => new URLSearchParams([["a", "b", "c"]])]), [
+  assertEquals(thrownNames([() => new URLSearchParams([["a"]]), () => new URLSearchParams([["a", "b", "c"]])]), [
     "TypeError",
     "TypeError",
   ]);
 });
 
 test("search params encode as application/x-www-form-urlencoded", () => {
-  equal(new URLSearchParams({ "a b": "é&=+*-._~?" }).toString(), "a+b=%C3%A9%26%3D%2B*-._%7E%3F");
+  assertEquals(new URLSearchParams({ "a b": "é&=+*-._~?" }).toString(), "a+b=%C3%A9%26%3D%2B*-._%7E%3F");
 });
 
 test("set, delete, has, and sort keep the order of the other pairs", () => {
   const params = new URLSearchParams("b=1&a=2&b=3&c=4&a=5");
   params.set("b", "x");
-  equal(params.toString(), "b=x&a=2&c=4&a=5");
+  assertEquals(params.toString(), "b=x&a=2&c=4&a=5");
   params.sort();
-  equal(params.toString(), "a=2&a=5&b=x&c=4");
+  assertEquals(params.toString(), "a=2&a=5&b=x&c=4");
   params.delete("a", "5");
-  equal(
+  assertEquals(
     [params.toString(), params.has("a", "2"), params.has("a", "5"), params.has("c"), params.get("z")],
     ["a=2&b=x&c=4", true, false, true, null],
   );
   params.delete("a", undefined);
-  equal(params.toString(), "b=x&c=4");
+  assertEquals(params.toString(), "b=x&c=4");
 });
 
 test("an iterator and forEach see a change of the pairs", () => {
@@ -158,15 +157,15 @@ test("an iterator and forEach see a change of the pairs", () => {
     },
     { mark: "!" },
   );
-  equal(first, "a");
-  equal(rest, ["b", "c"]);
-  equal(visited, [
+  assertEquals(first, "a");
+  assertEquals(rest, ["b", "c"]);
+  assertEquals(visited, [
     ["a", "1", true, "!"],
     ["b", "2", true, "!"],
     ["c", "3", true, "!"],
     ["d", "4", true, "!"],
   ]);
-  equal(
+  assertEquals(
     [...params],
     [
       ["a", "1"],
@@ -175,6 +174,6 @@ test("an iterator and forEach see a change of the pairs", () => {
       ["d", "4"],
     ],
   );
-  equal([...params.values()], ["1", "2", "3", "4"]);
+  assertEquals([...params.values()], ["1", "2", "3", "4"]);
   assert(params.entries() instanceof Iterator);
 });

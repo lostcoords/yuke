@@ -2,7 +2,7 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginSession, SessionContext } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, test, throws, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, assertThrows, createHost, folder, reply, test, waitForSettled } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 /** A tool `name` with no parameters that answers `answer`. */
@@ -18,7 +18,7 @@ function tool(name: string, answer = "x"): Tool {
 
 /** The message of the rejection of `call`. */
 async function refusal(call: Promise<unknown>): Promise<string> {
-  const error = await rejects(call);
+  const error = await assertRejects(() => call);
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -35,11 +35,11 @@ test("each session has its own tools, also with one name", async () => {
   const first = await host.openSession();
   const second = await host.openSession();
 
-  equal(
+  assertEquals(
     [(await first.call("t1", {})).text, (await first.call("who", {})).text, (await second.call("who", {})).text],
     ["x", "session 1", "session 2"],
   );
-  equal(await refusal(first.call("t2", {})), "the session has no tool t2");
+  assertEquals(await refusal(first.call("t2", {})), "the session has no tool t2");
 });
 
 test("every session setup starts before any of them settles", async () => {
@@ -66,11 +66,11 @@ test("every session setup starts before any of them settles", async () => {
 
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     [host.requests[0]?.tools.filter((name) => name === "shared"), (await session.call("shared", {})).text],
     [["shared"], "waiting"],
   );
-  equal(
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.text]),
     [["waiting", 'Tool "shared" from "releasing" was replaced by "waiting".']],
   );
@@ -94,7 +94,7 @@ test("a later plugin replaces a tool and names both owners in an info notice", a
 
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     [
       (await session.call("screenshot", {})).text,
       (await session.call("own", {})).text,
@@ -102,7 +102,7 @@ test("a later plugin replaces a tool and names both owners in an info notice", a
     ],
     ["second image", "kept", ["screenshot"]],
   );
-  equal(host.notices, [
+  assertEquals(host.notices, [
     {
       sessionId: session.id,
       source: "second",
@@ -129,7 +129,7 @@ test("a plugin replaces built-ins and its own definitions without a notice", asy
 
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     [(await session.call("read", {})).text, host.requests[0]?.tools.filter((name) => name === "read"), host.notices],
     ["second", ["read"], []],
   );
@@ -158,11 +158,11 @@ test("name removal omits built-ins and plugin tools from the model request", asy
 
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     [host.requests[0]?.tools, (await session.call("kept", {})).text, host.notices],
     [["read", "exec", "stop", "kept"], "still here", []],
   );
-  equal(
+  assertEquals(
     [await refusal(session.call("write", {})), await refusal(session.call("screenshot", {}))],
     ["the session has no tool write", "the session has no tool screenshot"],
   );
@@ -187,14 +187,14 @@ test("a later definition restores a removed name and its disposer reveals the re
   const session = await host.openSession();
 
   await session.sendMessage("First.");
-  equal((await session.call("read", {})).text, "replacement");
+  assertEquals((await session.call("read", {})).text, "replacement");
   removeDefinition();
   await session.sendMessage("Second.");
-  equal(await refusal(session.call("read", {})), "the session has no tool read");
+  assertEquals(await refusal(session.call("read", {})), "the session has no tool read");
   defineAgain();
   await session.sendMessage("Third.");
 
-  equal(
+  assertEquals(
     [
       host.requests.map((request) => request.tools.filter((name) => name === "read")),
       (await session.call("read", {})).text,
@@ -229,16 +229,16 @@ test("disposers restore earlier definitions and never remove a newer registratio
   });
   const session = await host.openSession();
 
-  equal((await session.call("read", {})).text, "second");
+  assertEquals((await session.call("read", {})).text, "second");
   removeSecond();
-  equal((await session.call("read", {})).text, "first");
+  assertEquals((await session.call("read", {})).text, "first");
   defineSecond();
   removeFirst();
   removeFirst();
-  equal((await session.call("read", {})).text, "second");
+  assertEquals((await session.call("read", {})).text, "second");
   removeSecond();
 
-  equal((await session.call("read", { path: "note.txt" })).text, "1: default");
+  assertEquals((await session.call("read", { path: "note.txt" })).text, "1: default");
 });
 
 test("failed setup withdraws its overrides and name removals", async () => {
@@ -259,11 +259,11 @@ test("failed setup withdraws its overrides and name removals", async () => {
   });
   const session = await host.openSession();
 
-  equal(
+  assertEquals(
     [(await session.call("read", {})).text, (await session.call("write", { path: "note.txt", content: "note" })).text],
     ["first", "The tool wrote 4 bytes."],
   );
-  equal(
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text.split("\n")[0]]),
     [["broken", "error", `${SETUP_FAILED}Error: broken`]],
   );
@@ -289,13 +289,13 @@ test("overrides and name removals stay within their session", async () => {
   const first = await host.openSession();
   const second = await host.openSession();
 
-  equal(
+  assertEquals(
     [(await first.call("read", {})).text, (await second.call("read", { path: "note.txt" })).text],
     ["first session", "1: default"],
   );
-  equal(await refusal(first.call("write", {})), "the session has no tool write");
+  assertEquals(await refusal(first.call("write", {})), "the session has no tool write");
   await first.close();
-  equal((await second.call("write", { path: "other.txt", content: "second" })).text, "The tool wrote 6 bytes.");
+  assertEquals((await second.call("write", { path: "other.txt", content: "second" })).text, "The tool wrote 6 bytes.");
 });
 
 test("an invalid replacement or removal leaves the current tool unchanged", async () => {
@@ -306,16 +306,16 @@ test("an invalid replacement or removal leaves the current tool unchanged", asyn
         name: "reader",
         session: (s) => {
           s.tools.add(tool("read", "kept"));
-          errors.push(throws(() => s.tools.add({ ...tool("read", "broken"), concurrency: "wrong" } as never)));
-          errors.push(throws(() => s.tools.remove("bad name")));
-          errors.push(throws(() => s.tools.remove("tool_call")));
+          errors.push(assertThrows(() => s.tools.add({ ...tool("read", "broken"), concurrency: "wrong" } as never)));
+          errors.push(assertThrows(() => s.tools.remove("bad name")));
+          errors.push(assertThrows(() => s.tools.remove("tool_call")));
         },
       },
     ],
   });
   const session = await host.openSession();
 
-  equal(
+  assertEquals(
     [
       (await session.call("read", {})).text,
       errors.map((error) => (error instanceof Error ? error.message : String(error))),
@@ -329,7 +329,7 @@ test("an invalid replacement or removal leaves the current tool unchanged", asyn
       ],
     ],
   );
-  equal(host.notices, []);
+  assertEquals(host.notices, []);
 });
 
 test("the folder of a session stays while a call reads the folder of its start", async () => {
@@ -345,7 +345,7 @@ test("the folder of a session stays while a call reads the folder of its start",
 
   await session.setSettings({ ...session.settings, cwd: `${folder()}/moved` });
 
-  equal((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
+  assertEquals((await session.call("where", {})).text, `${folder()} ${folder()}/moved`);
 });
 
 test("a tool that the session defines after its setup reaches the next calls", async () => {
@@ -360,7 +360,7 @@ test("a tool that the session defines after its setup reaches the next calls", a
 
   defineLater();
 
-  equal([before, (await session.call("later", {})).text], ["the session has no tool later", "late"]);
+  assertEquals([before, (await session.call("later", {})).text], ["the session has no tool later", "late"]);
 });
 
 test("a failed session drops only its tools, aborts its signal, and sends one notice", async () => {
@@ -379,28 +379,28 @@ test("a failed session drops only its tools, aborts its signal, and sends one no
   });
   const session = await host.openSession();
 
-  equal((await session.call("kept", {})).text, "x");
-  equal(await refusal(session.call("dropped", {})), "the session has no tool dropped");
+  assertEquals((await session.call("kept", {})).text, "x");
+  assertEquals(await refusal(session.call("dropped", {})), "the session has no tool dropped");
   const [notice, ...others] = host.notices;
-  equal([notice?.sessionId, notice?.level, notice?.source, others], [session.id, "error", "bad", []]);
+  assertEquals([notice?.sessionId, notice?.level, notice?.source, others], [session.id, "error", "bad", []]);
   // The message ends with a stack frame, so the author finds the line.
   const [message, frame] = notice?.text.split("\n") ?? [];
-  equal(message, `${SETUP_FAILED}Error: broken`);
-  equal(frame?.trim().startsWith("at "), true);
+  assertEquals(message, `${SETUP_FAILED}Error: broken`);
+  assertEquals(frame?.trim().startsWith("at "), true);
   let after = "";
   try {
     bad?.tools.add(tool("again"));
   } catch (error) {
     after = `${bad?.signal.aborted} ${error instanceof Error ? error.message : String(error)}`;
   }
-  equal(after, "true plugin bad defines a tool after the end of its session");
+  assertEquals(after, "true plugin bad defines a tool after the end of its session");
 });
 
 test("a notice of a session names its session", async () => {
   await using host = await createHost({ plugins: [{ name: "loud", session: (s) => void s.notify("info", "opened") }] });
   const session = await host.openSession();
 
-  equal(host.notices, [{ sessionId: session.id, level: "info", source: "loud", text: "opened" }]);
+  assertEquals(host.notices, [{ sessionId: session.id, level: "info", source: "loud", text: "opened" }]);
 });
 
 test("a close refuses definitions from the abort on, and awaits every cleanup", async () => {
@@ -437,16 +437,16 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
     closed = true;
   });
   await waitForSettled();
-  equal([closed, cleaned], [false, 0]);
+  assertEquals([closed, cleaned], [false, 0]);
   cleanup.resolve();
   await closing;
 
-  equal([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
-  equal(
+  assertEquals([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
+  assertEquals(
     host.notices.map((notice) => notice.text.split("\n")[0]),
     ["the cleanup of the session failed: Error: broken cleanup"],
   );
-  equal(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
+  assertEquals(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });
 
 test("a close during the setup ends it, and runs the late cleanup once", async () => {
@@ -462,5 +462,5 @@ test("a close during the setup ends it, and runs the late cleanup once", async (
 
   await session.close();
 
-  equal(cleaned, 1);
+  assertEquals(cleaned, 1);
 });

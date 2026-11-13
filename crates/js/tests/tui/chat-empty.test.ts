@@ -5,7 +5,7 @@ import { writeTextFile } from "yuke:fs";
 import { emptyHeader } from "yuke:internal/bundled/chat/empty";
 import { env } from "yuke:process";
 import type { Block, SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import { CATALOG, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -41,7 +41,7 @@ test("a pane without a session shows the icon and, beside it, the version, the m
   frame.draw();
   const shown = rows(frame.frame);
 
-  equal(
+  assertEquals(
     [cells(shown[1], 2, 13), cells(shown[1], 16), cells(shown[2], 16), cells(shown[3], 16)],
     [ICON_TOP, "yuke 1.2.3", "m high · /w", "Type / for commands"],
   );
@@ -62,7 +62,7 @@ test("the first send hides the header at once, and the waiting message keeps it 
   await waitForSettled();
   frame.draw();
 
-  equal([sending, rows(frame.frame).join("\n").includes("Type / for commands")], [false, false]);
+  assertEquals([sending, rows(frame.frame).join("\n").includes("Type / for commands")], [false, false]);
 });
 
 test("a session with history shows no header", async () => {
@@ -72,7 +72,7 @@ test("a session with history shows no header", async () => {
   await waitForSettled();
   frame.draw();
 
-  equal(rows(frame.frame).join("\n").includes("yuke 0.0.0"), false);
+  assertEquals(rows(frame.frame).join("\n").includes("yuke 0.0.0"), false);
 });
 
 test("a narrow pane puts the lines below the icon and cuts a long line", async () => {
@@ -87,7 +87,7 @@ test("a narrow pane puts the lines below the icon and cuts a long line", async (
   frame.draw();
   const shown = rows(frame.frame);
 
-  equal(
+  assertEquals(
     [cells(shown[1], 2), shown[6], shown[7], shown[8]],
     [ICON_TOP, "  yuke 1.2.3", "  m high · /a/very/long/fold…", "  Type / for commands"],
   );
@@ -101,7 +101,7 @@ test("a pane too short for the whole header shows none of it", async () => {
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     rows(frame.frame).some((row) => row.includes("yuke") || row.includes("🬂")),
     false,
   );
@@ -124,7 +124,7 @@ test("without a ready provider the header names /login, and a catalog change bri
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     [
       before,
       rows(frame.frame)
@@ -148,7 +148,7 @@ test("the header names the model and the folder of the bar, with the home folder
   frame.draw();
   const bar = ["chat:model", "chat:folder"].map((key) => chat.tui.status.list().find((item) => item.id === key)?.text);
 
-  equal([cells(rows(frame.frame)[2], 16), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
+  assertEquals([cells(rows(frame.frame)[2], 16), bar], ["m high · ~/launch", ["m high", "~/launch"]]);
 });
 
 test("setEmptyView replaces the header in each pane, and its disposer brings the default back", async () => {
@@ -163,7 +163,7 @@ test("setEmptyView replaces the header in each pane, and its disposer brings the
   dispose();
   frame.draw();
 
-  equal([replaced, cells(rows(frame.frame)[1], 2, 13)], [" Ask me anything.", ICON_TOP]);
+  assertEquals([replaced, cells(rows(frame.frame)[1], 2, 13)], [" Ask me anything.", ICON_TOP]);
 });
 
 test("the option emptyView false shows nothing in an empty pane", async () => {
@@ -173,7 +173,7 @@ test("the option emptyView false shows nothing in an empty pane", async () => {
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     rows(frame.frame)
       .slice(0, 10)
       .every((row) => row === ""),
@@ -192,5 +192,5 @@ test("a header without the icon shows the lines alone at the top left", () => {
   frame.start();
   frame.draw();
 
-  equal(rows(frame.frame).slice(0, 5), ["", "  yuke 1.2.3", "  m high · /w", "  Type / for commands", ""]);
+  assertEquals(rows(frame.frame).slice(0, 5), ["", "  yuke 1.2.3", "  m high · /w", "  Type / for commands", ""]);
 });

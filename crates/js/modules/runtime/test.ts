@@ -117,36 +117,36 @@ export function assert(condition: unknown, message?: string): asserts condition 
   if (!condition) throw new Error(message ?? "assert: the condition is false");
 }
 
-export function equal(actual: unknown, expected: unknown, message?: string): void {
+export function assertEquals(actual: unknown, expected: unknown, message?: string): void {
   const found = difference(actual, expected, "");
-  if (found !== undefined) throw new Error(`${message === undefined ? "equal" : message}: ${found}`);
+  if (found !== undefined) throw new Error(`${message ?? "assertEquals"}: ${found}`);
 }
 
-export function throws(fn: () => unknown): unknown {
+export function assertThrows(fn: () => unknown, message?: string): unknown {
   try {
     fn();
   } catch (error) {
     return error;
   }
-  throw new Error("throws: the function returned");
+  throw new Error(`${message ?? "assertThrows"}: the function returned`);
 }
 
-export async function rejects(promise: Promise<unknown>): Promise<unknown> {
+export async function assertRejects(fn: () => PromiseLike<unknown>, message?: string): Promise<unknown> {
   try {
-    await promise;
+    await fn();
   } catch (error) {
     return error;
   }
-  throw new Error("rejects: the promise fulfilled");
+  throw new Error(`${message ?? "assertRejects"}: the promise fulfilled`);
 }
 
 // The check against `types/test.d.ts` keeps this code and the declarations of the authors in step.
 const declared = {
   test,
   assert,
-  equal,
-  throws,
-  rejects,
+  assertEquals,
+  assertThrows,
+  assertRejects,
   waitForSettled,
   folder,
   listenOnTemporarySocket,

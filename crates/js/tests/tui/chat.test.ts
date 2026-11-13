@@ -2,7 +2,7 @@
 // drag over the transcript.
 
 import type { StoredEvent } from "yuke:protocol";
-import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { click, commit, EMPTY, fakeSessions, loadChat, mouse, replies, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -10,11 +10,11 @@ test("a split opens a new empty chat with its own draft", async () => {
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start();
-  equal(rows(frame.frame), ["", "─────────────────────", "Message…", "─────────────────────"]);
+  assertEquals(rows(frame.frame), ["", "─────────────────────", "Message…", "─────────────────────"]);
   frame.paste("hi");
   chat.tui.commands.run("core:split-right");
   frame.paste("yo");
-  equal(rows(frame.frame), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
+  assertEquals(rows(frame.frame), ["          │", "──────────│──────────", "hi        │yo", "──────────│──────────"]);
 });
 
 test("a reload keeps the draft of each pane and the focus", async () => {
@@ -29,7 +29,7 @@ test("a reload keeps the draft of each pane and the focus", async () => {
   await loadChat(after);
   after.start(snapshot);
   after.paste("b");
-  equal(rows(after.frame).at(-2), "a         │xb");
+  assertEquals(rows(after.frame).at(-2), "a         │xb");
 });
 
 test("a drag over the transcript copies at the release, and the composer keeps the focus", async () => {
@@ -42,7 +42,10 @@ test("a drag over the transcript copies at the release, and the composer keeps t
   frame.mouse(mouse(5, 1, "release"));
   frame.paste("x");
   frame.draw();
-  equal([frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-2)], [["hello"], false, "x"]);
+  assertEquals(
+    [frame.copies, chat.tui.focused === chat.transcript(), rows(frame.frame).at(-2)],
+    [["hello"], false, "x"],
+  );
 });
 
 test("the start pane holds the session of the startup, and a split opens a new chat without one", async () => {
@@ -50,7 +53,7 @@ test("the start pane holds the session of the startup, and a split opens a new c
   const chat = await loadChat(frame);
   frame.start();
   chat.tui.commands.run("core:split-right");
-  equal(
+  assertEquals(
     chat.opened.map((open) => open.id),
     ["s1"],
   );
@@ -58,8 +61,8 @@ test("the start pane holds the session of the startup, and a split opens a new c
   frame.draw();
   chat.tui.commands.run("core:focus-left");
   chat.tui.commands.run("core:close");
-  equal(chat.opened[0]?.signal.aborted, true);
-  equal(JSON.parse(frame.snapshot()).tree.state.session, undefined);
+  assertEquals(chat.opened[0]?.signal.aborted, true);
+  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, undefined);
 });
 
 test("two panes on one session hold their own handles, and a reload keeps the session of each", async () => {
@@ -68,23 +71,23 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   using frame = createFrame({ width: 21, height: 4 });
   const chat = await loadChat(frame);
   frame.start(saved);
-  equal(
+  assertEquals(
     chat.opened.map((open) => open.id),
     ["s1", "s1"],
   );
   chat.tui.commands.run("core:close");
-  equal(
+  assertEquals(
     chat.opened.map((open) => open.signal.aborted),
     [true, false],
   );
-  equal(JSON.parse(frame.snapshot()).tree.state.session, "s1");
+  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, "s1");
   // A session that does not open gives one notice, and the pane keeps the session for the next reload.
   using other = createFrame({ width: 21, height: 4 });
   const failed = await loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
   await waitForSettled();
-  equal(failed.notices, ["error the session missing did not open: Error: no session missing"]);
-  equal(JSON.parse(other.snapshot()).tree.state.session, "missing");
+  assertEquals(failed.notices, ["error the session missing did not open: Error: no session missing"]);
+  assertEquals(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
 
 test("each kind of entry draws its rows, and a click on a thought opens it", async () => {
@@ -132,7 +135,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   const before = transcriptRows(frame);
   // The blank rows between the entries are a layout choice, so the test reads only the rows with text.
   const texts = (all: readonly string[]) => all.filter((text) => text.trim() !== "");
-  equal(texts(before.slice(0, 21)), [
+  assertEquals(texts(before.slice(0, 21)), [
     " fix the test",
     " thought",
     " Found it",
@@ -146,9 +149,12 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
     " retry in 3 s: overloaded",
   ]);
   click(frame, 2, 3);
-  equal([before.includes(" the test expects 3"), transcriptRows(frame).includes(" the test expects 3")], [false, true]);
+  assertEquals(
+    [before.includes(" the test expects 3"), transcriptRows(frame).includes(" the test expects 3")],
+    [false, true],
+  );
   click(frame, 2, 3);
-  equal(transcriptRows(frame), before);
+  assertEquals(transcriptRows(frame), before);
 });
 
 test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
@@ -156,7 +162,7 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
   const sessions = fakeSessions(replies(250));
   const chat = await loadChat(frame, sessions);
   frame.start();
-  equal(transcriptRows(frame).slice(-2), [" reply 250", ""]);
+  assertEquals(transcriptRows(frame).slice(-2), [" reply 250", ""]);
   for (let visit = 0; visit < 3; visit += 1) {
     chat.transcript().scroll.scrollTo(0);
     frame.draw();
@@ -164,18 +170,18 @@ test("the top loads older pages, keeps the shown rows, and stops at the first ev
     await waitForSettled();
     frame.draw();
     // A prepend keeps the item at the top and its row.
-    equal(transcriptRows(frame), shown);
+    assertEquals(transcriptRows(frame), shown);
   }
   // A live event while the view shows the top asks for no page past the first event.
   const loaded = sessions.pages.length;
   sessions.push(commit(251, [{ kind: "assistantText", text: "reply 251" }]));
   frame.draw();
   await waitForSettled();
-  equal(sessions.pages.length, loaded);
+  assertEquals(sessions.pages.length, loaded);
   const starts = sessions.pages.map((page) => page.before);
   // Each page asks for events before the page that came before it.
   assert(starts.every((start, at) => at === 0 || (start ?? 0) < (starts[at - 1] ?? 0)));
-  equal(chat.transcript().document.items[0]?.id, "2:0");
+  assertEquals(chat.transcript().document.items[0]?.id, "2:0");
 });
 
 test("a failed page shows its error below the transcript and loads no more pages", async () => {
@@ -194,8 +200,8 @@ test("a failed page shows its error below the transcript and loads no more pages
   frame.draw();
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).at(-4), " the history did not load: Error: disk");
-  equal(sessions.pages.length, 1);
+  assertEquals(rows(frame.frame).at(-4), " the history did not load: Error: disk");
+  assertEquals(sessions.pages.length, 1);
 });
 
 test("output below a scrolled transcript shows the hint, and the bottom follows the tail again", async () => {
@@ -206,13 +212,13 @@ test("output below a scrolled transcript shows the hint, and the bottom follows 
   chat.transcript().scroll.scrollBy(-4);
   sessions.push(commit(31, [{ kind: "assistantText", text: "reply 31" }]));
   frame.draw();
-  equal(rows(frame.frame).at(-4), " new output ↓");
+  assertEquals(rows(frame.frame).at(-4), " new output ↓");
   chat.transcript().scroll.followTail();
   frame.draw();
-  equal(rows(frame.frame).at(-4), "");
+  assertEquals(rows(frame.frame).at(-4), "");
   sessions.push(commit(32, [{ kind: "assistantText", text: "reply 32" }]));
   frame.draw();
-  equal(transcriptRows(frame).slice(-2), [" reply 32", ""]);
+  assertEquals(transcriptRows(frame).slice(-2), [" reply 32", ""]);
 });
 
 test("a reload keeps the folds and the scrolled place of a pane", async () => {
@@ -227,14 +233,14 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   chat.transcript().scroll.scrollBy(1);
   before.draw();
   const shown = transcriptRows(before);
-  equal(shown.slice(0, 2), [" thought", " deep"]);
+  assertEquals(shown.slice(0, 2), [" thought", " deep"]);
   using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
   after.draw();
   await waitForSettled();
   after.draw();
-  equal(transcriptRows(after), shown);
+  assertEquals(transcriptRows(after), shown);
 });
 
 test("a live event after a gap loads the missing events, and an unchanged entry keeps its item", async () => {
@@ -250,15 +256,15 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
   frame.draw();
   await waitForSettled();
   frame.draw();
-  equal(sessions.pages, [{ before: 12, limit: 1 }]);
-  equal(
+  assertEquals(sessions.pages, [{ before: 12, limit: 1 }]);
+  assertEquals(
     chat
       .transcript()
       .document.items.slice(-3)
       .map((item) => item.id),
     ["10:0", "11:0", "12:0"],
   );
-  equal(chat.transcript().document.items[0] === first, true);
+  assertEquals(chat.transcript().document.items[0] === first, true);
 });
 
 test("a notification from yuke shows its source without host:, and a plugin keeps its whole name", async () => {
@@ -278,7 +284,7 @@ test("a notification from yuke shows its source without host:, and a plugin keep
   frame.start();
   frame.draw();
 
-  equal(transcriptRows(frame).slice(1, 6), [
+  assertEquals(transcriptRows(frame).slice(1, 6), [
     " notification · jobs",
     " make · exited 0",
     "",

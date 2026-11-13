@@ -2,7 +2,7 @@
 
 import { type ChatPane, composerRows } from "yuke:chat";
 import type { SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -37,7 +37,7 @@ test("views above show below the transcript and above the waiting messages, cut 
   const bold = frame.frame.cells[4]?.[0]?.style.bold;
   remove();
   frame.draw();
-  equal(
+  assertEquals(
     [shown, bold, rows(frame.frame).slice(5, 8)],
     [
       [
@@ -72,7 +72,7 @@ test("views above share at most half the rows above the frame and give way to th
   // Nine rows above the frame give plugins four. A later view gets the rows that remain.
   const half = plugin();
   for (let id = 1; id <= 8; id++) sessions.push(waiting(id, `m${id}`));
-  equal([half, plugin()], [["a1", "a2", "a3", "b1"], ["a1"]]);
+  assertEquals([half, plugin()], [["a1", "a2", "a3", "b1"], ["a1"]]);
 });
 
 test("views below show under the composer in add order, and the composer moves up", async () => {
@@ -88,7 +88,7 @@ test("views below show under the composer in add order, and the composer moves u
   remove();
   frame.draw();
   const rule = "─".repeat(24);
-  equal(
+  assertEquals(
     [shown, rows(frame.frame).slice(5)],
     [
       ["above", rule, "Message…", rule, "first", "second", "third"],
@@ -108,7 +108,7 @@ test("views below share at most half the pane, and views above share half of wha
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     rows(frame.frame).filter((text) => /^[abcd]\d$/.test(text)),
     ["d1", "d2", "a1", "a2", "a3", "a4", "b1", "b2"],
   );
@@ -134,7 +134,7 @@ test("a height of 0 places no view, and the next view gets the rows that remain"
   frame.start();
   await waitForSettled();
   frame.draw();
-  equal([heights.at(-1), drawnEmpty], [4, 0]);
+  assertEquals([heights.at(-1), drawnEmpty], [4, 0]);
 });
 
 test("each pane makes one view per call and gives its live fields, and a close ends each mount", async () => {
@@ -150,7 +150,7 @@ test("each pane makes one view per call and gives its live fields, and a close e
   frame.draw();
   frame.draw();
   const first = made[0]?.pane;
-  equal(
+  assertEquals(
     [made.length, first?.session, first?.running, first?.transcript.settings !== undefined],
     [1, "s1", false, true],
   );
@@ -158,16 +158,16 @@ test("each pane makes one view per call and gives its live fields, and a close e
   chat.tui.commands.run("core:split-right");
   await waitForSettled();
   frame.draw();
-  equal(made.length, 2);
+  assertEquals(made.length, 2);
   // The close of a pane ends only its own mount.
   chat.tui.panes.active?.close();
   frame.draw();
-  equal(
+  assertEquals(
     made.map((entry) => entry.signal.aborted),
     [false, true],
   );
   remove();
-  equal(made[0]?.signal.aborted, true);
+  assertEquals(made[0]?.signal.aborted, true);
 });
 
 test("a view that closes its mount stays closed in the pane, and its factory runs once", async () => {
@@ -187,7 +187,7 @@ test("a view that closes its mount stays closed in the pane, and its factory run
   close();
   frame.draw();
   frame.draw();
-  equal([before, calls, rows(frame.frame).includes("shown")], ["shown", 1, false]);
+  assertEquals([before, calls, rows(frame.frame).includes("shown")], ["shown", 1, false]);
 });
 
 test("a view above sits directly above the working row", async () => {
@@ -201,7 +201,7 @@ test("a view above sits directly above the working row", async () => {
   frame.draw();
   const shown = rows(frame.frame);
   const at = shown.indexOf("view row");
-  equal([at >= 0, shown[at + 1]?.includes("Working"), shown.includes("Message…")], [true, true, true]);
+  assertEquals([at >= 0, shown[at + 1]?.includes("Working"), shown.includes("Message…")], [true, true, true]);
 });
 
 test("a factory that throws gives one notice and runs once, and the pane still draws", async () => {
@@ -216,7 +216,7 @@ test("a factory that throws gives one notice and runs once, and the pane still d
   await waitForSettled();
   frame.draw();
   frame.draw();
-  equal(
+  assertEquals(
     [calls, chat.notices.filter((text) => text.includes("bad view")).length, rows(frame.frame).at(-2)],
     [1, 1, "Message…"],
   );
@@ -239,7 +239,7 @@ test("a press on a view reaches it and leaves the focus on the composer", async 
   frame.draw();
   const focused = chat.tui.focused;
   click(frame, 2, 7);
-  equal([pressed, chat.tui.focused === focused], [[0], true]);
+  assertEquals([pressed, chat.tui.focused === focused], [[0], true]);
 });
 
 test("views below leave the composer half of the rows that remain", async () => {
@@ -252,7 +252,7 @@ test("views below leave the composer half of the rows that remain", async () => 
   frame.draw();
   const shown = rows(frame.frame);
 
-  equal([shown.findIndex((line) => line.startsWith("──")), shown.slice(-4)], [3, ["b1", "b2", "b3", "b4"]]);
+  assertEquals([shown.findIndex((line) => line.startsWith("──")), shown.slice(-4)], [3, ["b1", "b2", "b3", "b4"]]);
 });
 
 test("each call is its own view, and a disposer removes only its own", async () => {
@@ -269,7 +269,7 @@ test("each call is its own view, and a disposer removes only its own", async () 
   const both = count();
   first();
   first();
-  equal([both, count()], [2, 1]);
+  assertEquals([both, count()], [2, 1]);
 });
 
 test("the rule above the composer has a default look that a plugin changes", async () => {
@@ -283,7 +283,7 @@ test("the rule above the composer has a default look that a plugin changes", asy
   };
   const before = look();
   frame.surface("theme").tui.styles.add({ "chat.rule": { fg: 1, dim: null } });
-  equal([before, look()], [{ dim: true }, { fg: 1 }]);
+  assertEquals([before, look()], [{ dim: true }, { fg: 1 }]);
 });
 
 test("a pane without plugin views shows a rule below the composer, in the look of the rule above it", async () => {
@@ -293,7 +293,10 @@ test("a pane without plugin views shows a rule below the composer, in the look o
   await waitForSettled();
   frame.draw();
   const rule = "─".repeat(24);
-  equal([rows(frame.frame), frame.frame.cells[5]?.[23]?.style], [["", "", "", rule, "Message…", rule], { dim: true }]);
+  assertEquals(
+    [rows(frame.frame), frame.frame.cells[5]?.[23]?.style],
+    [["", "", "", rule, "Message…", rule], { dim: true }],
+  );
 });
 
 test("a view below takes a free row from the rule below the composer", async () => {
@@ -306,7 +309,7 @@ test("a view below takes a free row from the rule below the composer", async () 
   const two = rows(frame.frame);
   frame.resize({ width: 24, height: 4 });
   const rule = "─".repeat(24);
-  equal(
+  assertEquals(
     [two, rows(frame.frame)],
     [
       [rule, "Message…", "only"],
@@ -323,7 +326,7 @@ test("a tall draft stays above the rule below the composer, with the caret on it
   frame.paste("1\n2\n3\n4\n5\n6\n7\n8\n9");
   frame.draw();
   const rule = "─".repeat(24);
-  equal(
+  assertEquals(
     [rows(frame.frame), frame.frame.cursor],
     [["", "", "", "", "", rule, "5", "6", "7", "8", "9", rule], { column: 1, row: 10 }],
   );
@@ -346,7 +349,7 @@ test("a tall question stays above the rule below the composer, with the caret on
   frame.key("down");
   frame.draw();
   const rule = "─".repeat(40);
-  equal(
+  assertEquals(
     [rows(frame.frame).slice(5), frame.frame.cursor],
     [
       [rule, " guard · Q", " line 1", "  Yes", "❯ Type your own answer…", " ↑↓ choose · enter send · esc cancel", rule],

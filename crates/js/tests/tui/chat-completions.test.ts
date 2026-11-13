@@ -2,7 +2,7 @@
 // order of the providers, and a late list. The slash commands are the provider of the bundled chat.
 
 import { ChatCompletions, type CompletionProvider, type SlashCommands, slashCompletions } from "yuke:chat";
-import { assert, createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { type CommandItem, TextEditor } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -59,7 +59,10 @@ test("the list needs at most six rows, a shorter place scrolls to the selection,
   frame.draw();
   const scrolled = rows(frame.frame).slice(0, 3);
   frame.key("h enter");
-  equal([needed, scrolled, ran, list.editor.state.text], [6, [" /alpha3", " /alpha4", " /alpha5"], ["alpha1"], ""]);
+  assertEquals(
+    [needed, scrolled, ran, list.editor.state.text],
+    [6, [" /alpha3", " /alpha4", " /alpha5"], ["alpha1"], ""],
+  );
 });
 
 test("only a command with a slash word lists, and a run that gives false keeps the draft", () => {
@@ -80,10 +83,10 @@ test("only a command with a slash word lists, and a run that gives false keeps t
   const shown = rows(frame.frame)[0];
   const count = list.rows();
   frame.key("enter");
-  equal([shown, count, ran, list.editor.state.text], [" /alpha  First", 1, ["core:alpha"], "/al"]);
+  assertEquals([shown, count, ran, list.editor.state.text], [" /alpha  First", 1, ["core:alpha"], "/al"]);
   // A command without a word has no row at all, also for the text of the missing word.
   list.editor.reset({ text: "/un", selection: { anchor: 3, head: 3 }, spans: [] });
-  equal(list.rows(), 0);
+  assertEquals(list.rows(), 0);
 });
 
 test("a word and text run the command with args, and only the whole word of a command with a hint matches", () => {
@@ -103,19 +106,19 @@ test("a word and text run the command with args, and only the whole word of a co
   frame.draw();
   const shown = rows(frame.frame)[0];
   frame.key("enter");
-  equal([shown, ran, list.editor.state.text], [" /mode <name>  Pick", [["demo:pick", "fast"]], ""]);
+  assertEquals([shown, ran, list.editor.state.text], [" /mode <name>  Pick", [["demo:pick", "fast"]], ""]);
 
   // A word alone runs without args, also with a space after it.
   frame.key("/ m o d e space enter");
-  equal(ran.at(-1), ["demo:pick", undefined]);
+  assertEquals(ran.at(-1), ["demo:pick", undefined]);
   const count = ran.length;
 
   // A part of a word, a command without a hint, and an unknown word leave the draft as a message.
   for (const draft of ["/mo x", "/new x", "/usr/bin is slow"]) {
     list.editor.reset({ text: draft, selection: { anchor: draft.length, head: draft.length }, spans: [] });
-    equal(list.rows(), 0);
+    assertEquals(list.rows(), 0);
     frame.key("enter");
-    equal([ran.length, list.editor.state.text.startsWith(draft)], [count, true]);
+    assertEquals([ran.length, list.editor.state.text.startsWith(draft)], [count, true]);
   }
 });
 
@@ -133,20 +136,20 @@ test("tab writes the selected word without a run, with a space when the command 
     },
   });
   frame.key("/ m o d e l tab");
-  equal([list.editor.state.text, list.editor.state.selection.head, ran], ["/model", 6, []]);
+  assertEquals([list.editor.state.text, list.editor.state.selection.head, ran], ["/model", 6, []]);
 
   list.editor.reset({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
   frame.key("/ m o d e tab");
-  equal(list.editor.state.text, "/mode ");
+  assertEquals(list.editor.state.text, "/mode ");
 
   // Tab keeps the text after a word.
   frame.key("x tab");
-  equal([list.editor.state.text, ran], ["/mode x", []]);
+  assertEquals([list.editor.state.text, ran], ["/mode x", []]);
 
   // A draft with no match leaves the key to the editor.
   list.editor.reset({ text: "hello", selection: { anchor: 5, head: 5 }, spans: [] });
   frame.key("tab");
-  equal(list.editor.state.text, "hello");
+  assertEquals(list.editor.state.text, "hello");
 });
 
 test("the selected row has a default look that a plugin changes", () => {
@@ -159,7 +162,7 @@ test("the selected row has a default look that a plugin changes", () => {
   const before = [row()?.[4]?.style.bg, row()?.[29]?.style.bg];
   assert(before[0] !== undefined);
   tui.styles.add({ "picker.selected": { fg: 1, bg: null } });
-  equal([before[1], row()?.[4]?.style], [before[0], { fg: 1 }]);
+  assertEquals([before[1], row()?.[4]?.style], [before[0], { fg: 1 }]);
 });
 
 /** A provider that completes `@` words with `names`, and records each context that it reads. */
@@ -189,7 +192,7 @@ test("the newest provider with an item wins, and a provider without one leaves t
   const first = rows(frame.frame)[0];
   frame.key("backspace s");
   frame.draw();
-  equal([first, rows(frame.frame)[0], list.rows()], [" @docs/", " @src/main.rs", 1]);
+  assertEquals([first, rows(frame.frame)[0], list.rows()], [" @docs/", " @src/main.rs", 1]);
 });
 
 test("tab writes the item in place of the word before the caret, and the next ask lists again from there", () => {
@@ -198,7 +201,7 @@ test("tab writes the item in place of the word before the caret, and the next as
   frame.key("r e a d space @ s tab");
   const written = list.editor.state.text;
   frame.key("m tab");
-  equal([written, list.editor.state.text, list.editor.caret], ["read @src/", "read @src/main.rs", 17]);
+  assertEquals([written, list.editor.state.text, list.editor.caret], ["read @src/", "read @src/main.rs", 17]);
 });
 
 test("enter writes an item without a run, and esc hides the list until the next edit", () => {
@@ -209,7 +212,7 @@ test("enter writes an item without a run, and esc hides the list until the next 
   frame.key("enter");
   const sent = list.editor.state.text;
   frame.key("o enter");
-  equal([hidden, sent, list.editor.state.text], [0, "@n", "@notes.md"]);
+  assertEquals([hidden, sent, list.editor.state.text], [0, "@n", "@notes.md"]);
 });
 
 test("a late list shows when its draft is still current, and a list for an older draft never shows", async () => {
@@ -231,7 +234,7 @@ test("a late list shows when its draft is still current, and a list for an older
   answers[2]?.(["2"]);
   await waitForSettled();
   frame.draw();
-  equal([rows(frame.frame)[0], list.changes()], [" ab2", 1]);
+  assertEquals([rows(frame.frame)[0], list.changes()], [" ab2", 1]);
 });
 
 test("a throw or a rejection of a provider is an error, and the ask goes on to the next provider", async () => {
@@ -246,7 +249,7 @@ test("a throw or a rejection of a provider is an error, and the ask goes on to t
   frame.key("@");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     [list.errors.map((error) => (error as Error).message), rows(frame.frame)[0]],
     [["broken", "broken", "gone"], " @x"],
   );

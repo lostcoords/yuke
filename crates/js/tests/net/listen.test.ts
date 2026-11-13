@@ -3,7 +3,15 @@
 
 import * as fs from "yuke:fs";
 import { ConnectionError, connect, listen, type UnixConnection } from "yuke:net";
-import { assert, equal, rejects, test, listenOnTemporarySocket as testServer, throws, waitForSettled } from "yuke:test";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertThrows,
+  test,
+  listenOnTemporarySocket as testServer,
+  waitForSettled,
+} from "yuke:test";
 
 /** A new short socket path with no file. The scratch folder of a test can be too long for a socket. */
 function freePath(): string {
@@ -40,9 +48,9 @@ test("a connection of a listener exchanges bytes both ways, also after the liste
   using peer = await accepted;
   const exchange = async () => {
     await send(client, "ping");
-    equal(await readChunk(peer), "ping");
+    assertEquals(await readChunk(peer), "ping");
     await send(peer, "pong");
-    equal(await readChunk(client), "pong");
+    assertEquals(await readChunk(client), "pong");
   };
   await exchange();
   listener.close();
@@ -61,24 +69,24 @@ test("two pending accepts each get a client", async () => {
   using right = await pending[1];
   await send(one, "one");
   await send(two, "two");
-  equal([await readChunk(left), await readChunk(right)].sort(), ["one", "two"]);
+  assertEquals([await readChunk(left), await readChunk(right)].sort(), ["one", "two"]);
 });
 
 test("a close rejects each pending and later accept and removes the file, and a second close does nothing", async () => {
   const path = freePath();
   const listener = listen({ path });
-  equal(await fileAt(path), "found");
+  assertEquals(await fileAt(path), "found");
   const pending = [listener.accept(), listener.accept()];
   // The native accepts start to wait, so the close must stop them.
   await waitForSettled();
   listener.close();
   listener.close();
   for (const accept of [...pending, listener.accept()]) {
-    const reason = await rejects(accept);
+    const reason = await assertRejects(() => accept);
     assert(reason instanceof ConnectionError);
-    equal([reason.code, reason.message], ["ERR_CLOSED", "the listener is closed"]);
+    assertEquals([reason.code, reason.message], ["ERR_CLOSED", "the listener is closed"]);
   }
-  equal(await fileAt(path), "ENOENT");
+  assertEquals(await fileAt(path), "ENOENT");
 });
 
 test("an abort rejects each accept, closes an accepted connection with its reason, and removes the file", async () => {
@@ -94,25 +102,25 @@ test("an abort rejects each accept, closes an accepted connection with its reaso
   await waitForSettled();
   const reason = new Error("stop");
   controller.abort(reason);
-  for (const stopped of [pending, read, listener.accept()]) assert((await rejects(stopped)) === reason);
-  equal(await fileAt(path), "ENOENT");
-  equal((await client.readable.getReader().read()).done, true);
+  for (const stopped of [pending, read, listener.accept()]) assert((await assertRejects(() => stopped)) === reason);
+  assertEquals(await fileAt(path), "ENOENT");
+  assertEquals((await client.readable.getReader().read()).done, true);
 });
 
 test("an aborted signal throws its reason and creates no file", async () => {
   const path = freePath();
   const reason = new Error("before");
-  assert(throws(() => listen({ path, signal: AbortSignal.abort(reason) })) === reason);
-  equal(await fileAt(path), "ENOENT");
+  assert(assertThrows(() => listen({ path, signal: AbortSignal.abort(reason) })) === reason);
+  assertEquals(await fileAt(path), "ENOENT");
 });
 
 test("a listen at an occupied path fails with EADDRINUSE and leaves the path as it is", async () => {
   const path = freePath();
   await fs.writeTextFile(path, "kept");
-  const error = throws(() => listen({ path }));
+  const error = assertThrows(() => listen({ path }));
   assert(error instanceof ConnectionError);
-  equal(error.code, "EADDRINUSE");
-  equal(await fs.readTextFile(path), "kept");
+  assertEquals(error.code, "EADDRINUSE");
+  assertEquals(await fs.readTextFile(path), "kept");
   await fs.remove(path);
 });
 
@@ -125,10 +133,10 @@ test("a close succeeds when another owner already removed the socket file", asyn
 
 test("a relative path throws a TypeError, and a failed bind throws a ConnectionError", () => {
   const path = freePath();
-  assert(throws(() => listen({ path: "relative.sock" })) instanceof TypeError);
+  assert(assertThrows(() => listen({ path: "relative.sock" })) instanceof TypeError);
   const missing = `${path}/a`;
-  const noFolder = throws(() => listen({ path: missing }));
+  const noFolder = assertThrows(() => listen({ path: missing }));
   assert(noFolder instanceof ConnectionError);
-  equal(noFolder.code, "ENOENT");
+  assertEquals(noFolder.code, "ENOENT");
   assert(noFolder.message.startsWith(`listen ${missing}: `), noFolder.message);
 });

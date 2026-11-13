@@ -1,6 +1,6 @@
 // The pane watchers of the `chat` service: each chat pane, now and later, with its composer, until it closes.
 
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { loadChat } from "./chat.ts";
 
@@ -23,7 +23,7 @@ test("a pane watcher sees each chat pane now and later, and a close or its remov
   chat.tui.commands.run("core:split-right");
   frame.draw();
 
-  equal(
+  assertEquals(
     [watched, seen.map((entry) => entry.composer), afterClose, seen.length, seen[0]?.signal.aborted],
     [2, [true, true], [false, true], 2, true],
   );
@@ -40,7 +40,7 @@ test("a pane watcher that throws gives a notice, and the pane still opens", asyn
   chat.tui.commands.run("core:split-right");
   frame.draw();
 
-  equal(
+  assertEquals(
     [
       chat.notices.filter((notice) => notice.includes("boom")).map((notice) => notice.split("\n")[0]),
       chat.tui.panes.active?.view !== undefined,

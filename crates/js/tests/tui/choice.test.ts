@@ -2,7 +2,7 @@
 
 import { readTextFile, writeTextFile } from "yuke:fs";
 import { SavedChoice } from "yuke:internal/bundled/chat/choice";
-import { equal, folder, test } from "yuke:test";
+import { assertEquals, folder, test } from "yuke:test";
 
 test("load returns the saved pick and save updates the file and current pick", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"off"}', {
@@ -10,11 +10,11 @@ test("load returns the saved pick and save updates the file and current pick", a
   });
   const errors: unknown[] = [];
   const saved = await SavedChoice.load(folder(), (error) => errors.push(error));
-  equal(saved.current, { model: { provider: "p", model: "m" }, reasoning: "off" });
+  assertEquals(saved.current, { model: { provider: "p", model: "m" }, reasoning: "off" });
 
   await saved.save({ model: { provider: "p", model: "n" }, reasoning: "low" });
 
-  equal(
+  assertEquals(
     [saved.current, JSON.parse(await readTextFile("choice.json", { cwd: folder() })), errors],
     [
       { model: { provider: "p", model: "n" }, reasoning: "low" },

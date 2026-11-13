@@ -2,11 +2,11 @@
 
 import { mkdir, stat, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createHost, folder, test, waitForSettled } from "yuke:test";
 
 /** The lines of a rejected `createHost` that name a failed plugin, in load order. Other lines are stacks. */
 async function failures(host: Promise<unknown>): Promise<string[]> {
-  const error = await rejects(host);
+  const error = await assertRejects(() => host);
   const message = error instanceof Error ? error.message : String(error);
   return message.split("\n").filter((line) => line.startsWith("plugin "));
 }
@@ -36,7 +36,7 @@ test("a folder plugin loads through its manifest, and its options pass its schem
 
   await using host = await createHost({ plugins: [{ folder: root, options: { word: "loaded" } }] });
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => notice.text),
     ["loaded"],
   );
@@ -64,7 +64,7 @@ test("a given plugin uses a service from an earlier folder plugin", async () => 
     plugins: [{ folder: root }, { name: "reader", apply: reader, uses: ["test.words.v1"] }],
   });
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.text]),
     [["reader", "shared"]],
   );
@@ -73,9 +73,9 @@ test("a given plugin uses a service from an earlier folder plugin", async () => 
 test("a list with a folder plugin and a given plugin of the same name rejects the host", async () => {
   const root = await writePlugin("twin", {}, "export function apply() {}");
 
-  const error = await rejects(createHost({ plugins: [{ folder: root }, { name: "twin" }] }));
+  const error = await assertRejects(() => createHost({ plugins: [{ folder: root }, { name: "twin" }] }));
 
-  equal(error instanceof Error ? error.message : error, "plugin twin: another plugin of the list has this name");
+  assertEquals(error instanceof Error ? error.message : error, "plugin twin: another plugin of the list has this name");
 });
 
 test("a given plugin before its folder provider loads after it and gets the service in its apply", async () => {
@@ -93,7 +93,7 @@ test("a given plugin before its folder provider loads after it and gets the serv
     plugins: [{ name: "reader", apply: reader, uses: ["test.words.v1"] }, { folder: root }],
   });
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.text]),
     [["reader", "later"]],
   );
@@ -118,7 +118,7 @@ test("a folder plugin reads a file beside its module through import.meta", async
   await using host = await createHost({ plugins: [{ folder: root }] });
   const session = await host.openSession();
 
-  equal((await session.call("prompt", {})).text, "Be brief.");
+  assertEquals((await session.call("prompt", {})).text, "Be brief.");
 });
 
 test("apply runs once with its context, and session runs for each session", async () => {
@@ -165,10 +165,10 @@ test("apply runs once with its context, and session runs for each session", asyn
   const first = await host.openSession({ cwd: `${folder()}/a` });
   const second = await host.openSession({ cwd: `${folder()}/b` });
 
-  equal([(await first.call("hello", {})).text, (await second.call("hello", {})).text], ["hello", "hello"]);
-  equal(seen, ["one", false, true, [false, true, false], false, "undefined"]);
-  equal([applied, (await stat(dataDir)).isDirectory], [1, true]);
-  equal(sessions, [`${folder()}/a`, `${folder()}/b`]);
+  assertEquals([(await first.call("hello", {})).text, (await second.call("hello", {})).text], ["hello", "hello"]);
+  assertEquals(seen, ["one", false, true, [false, true, false], false, "undefined"]);
+  assertEquals([applied, (await stat(dataDir)).isDirectory], [1, true]);
+  assertEquals(sessions, [`${folder()}/a`, `${folder()}/b`]);
 });
 
 declare global {
@@ -214,18 +214,18 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
     closed = true;
   });
   await waitForSettled();
-  equal(closed, false);
-  equal(events, ["three", "two true,true,true"]);
+  assertEquals(closed, false);
+  assertEquals(events, ["three", "two true,true,true"]);
   cleanup.resolve();
   await closing;
   await host.close();
 
-  equal(events, ["three", "two true,true,true", "one"]);
-  equal(
+  assertEquals(events, ["three", "two true,true,true", "one"]);
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text.split("\n")[0]]),
     [["three", "error", "the cleanup of the plugin failed: Error: broken cleanup"]],
   );
-  equal(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
+  assertEquals(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });
 
 test("a service passes to a later plugin, and a failed provider stops its users before they run", async () => {
@@ -276,18 +276,18 @@ test("a service passes to a later plugin, and a failed provider stops its users 
     ],
   });
 
-  equal(await failures(host), [
+  assertEquals(await failures(host), [
     "plugin broken did not load: Error: no store",
     "plugin middle did not load: it uses 'test.store.v1', and plugin broken that provides it did not load",
     "plugin last did not load: it uses 'test.index.v1', and plugin middle that provides it did not load",
   ]);
-  equal([count, ran], [3, false]);
+  assertEquals([count, ran], [3, false]);
 });
 
 test("a plugin that provides a service of yuke rejects the host", async () => {
-  const error = await rejects(createHost({ plugins: [{ name: "catalogs", provides: ["catalog"] }] }));
+  const error = await assertRejects(() => createHost({ plugins: [{ name: "catalogs", provides: ["catalog"] }] }));
 
-  equal(
+  assertEquals(
     error instanceof Error ? error.message : error,
     "plugin catalogs: 'catalog' is a service of yuke, and no plugin provides it",
   );
@@ -306,7 +306,7 @@ test("a provide of a service that the manifest does not name fails the load of t
     ],
   });
 
-  equal(await failures(host), [
+  assertEquals(await failures(host), [
     "plugin words did not load: TypeError: plugin words provides 'test.words.v1', and its manifest does not name it in provides",
   ]);
 });
@@ -319,7 +319,7 @@ test("sendClientEvent sends an event with the plugin as its extension and its da
   };
   await using host = await createHost({ plugins: [{ name: "todo", apply: todo }] });
 
-  equal(host.events, [
+  assertEquals(host.events, [
     { extension: "todo", event: "changed", data: { version: 1, items: ["milk"] } },
     { extension: "todo", event: "cleared", data: null },
   ]);
@@ -367,8 +367,8 @@ test("the checked options reach apply and each session as one frozen object", as
   await host.openSession();
 
   const tags = (applied as { tags: unknown }).tags;
-  equal(JSON.stringify(applied), '{"folder":"~/notes","tags":["a"]}');
-  equal(
+  assertEquals(JSON.stringify(applied), '{"folder":"~/notes","tags":["a"]}');
+  assertEquals(
     [
       sessions.length,
       sessions.every((options) => options === applied),
@@ -377,7 +377,7 @@ test("the checked options reach apply and each session as one frozen object", as
     ],
     [2, true, true, true],
   );
-  equal([JSON.stringify(plain), Object.isFrozen(plain)], ["{}", true]);
+  assertEquals([JSON.stringify(plain), Object.isFrozen(plain)], ["{}", true]);
 });
 
 test("options that fail the check fail the load of that plugin before its apply", async () => {
@@ -404,12 +404,12 @@ test("options that fail the check fail the load of that plugin before its apply"
   });
 
   const failure = (name: string, text: string) => `plugin ${name} did not load: TypeError: ${text}`;
-  equal(await failures(host), [
+  assertEquals(await failures(host), [
     failure("missing", "the options of the plugin: Set folder to a string."),
     failure("wrong", "the options of the plugin: Set depth to an integer of at least 1."),
     failure("extra", "the options of the plugin: Remove colour. The fields are: folder, depth, tags."),
     failure("unasked", "the plugin gets options, and it exports no optionsSchema"),
     failure("codeless", "the plugin gets options, and it exports no optionsSchema"),
   ]);
-  equal(applied, ["good"]);
+  assertEquals(applied, ["good"]);
 });

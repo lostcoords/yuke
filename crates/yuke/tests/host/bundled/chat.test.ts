@@ -5,7 +5,17 @@ import { writeTextFile } from "yuke:fs";
 import { apply as chat } from "yuke:internal/bundled/chat";
 import type { PluginSession, Sessions } from "yuke:plugins";
 import type { SessionSettings } from "yuke:protocol";
-import { assert, createFrame, createHost, equal, type FrameTest, folder, reply, test, waitForSettled } from "yuke:test";
+import {
+  assert,
+  assertEquals,
+  createFrame,
+  createHost,
+  type FrameTest,
+  folder,
+  reply,
+  test,
+  waitForSettled,
+} from "yuke:test";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
 const greeter: PluginSession = (s) => {
@@ -79,7 +89,7 @@ test("a pane draws the same transcript live and after a reload", async () => {
       `the live pane lacks ${text}`,
     );
   }
-  equal(rows(reloaded), rows(live));
+  assertEquals(rows(reloaded), rows(live));
 });
 
 test("the first send of a pane with a saved choice creates its session and gets the answer", async () => {
@@ -118,8 +128,8 @@ test("the first send of a pane with a saved choice creates its session and gets 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
-  equal(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
+  assertEquals(rows(frame).slice(0, 4), ["", " hello", "", " Hi there."]);
+  assertEquals(host.requests.at(-1)?.messages.at(-1)?.text, "hello");
 });
 
 test("chat.show opens a session with a parent: the pane shows its transcript, and a message goes to it", async () => {
@@ -180,7 +190,7 @@ test("chat.show opens a session with a parent: the pane shows its transcript, an
   await waitForSettled();
   frame.draw();
 
-  equal(text.includes("Two tables."), true);
-  equal(rows(frame).join("\n").includes("Three indexes."), true);
-  equal(host.requests.at(-1)?.messages.at(-1)?.text, "And the indexes?");
+  assertEquals(text.includes("Two tables."), true);
+  assertEquals(rows(frame).join("\n").includes("Three indexes."), true);
+  assertEquals(host.requests.at(-1)?.messages.at(-1)?.text, "And the indexes?");
 });

@@ -1,6 +1,6 @@
 // The fuzzy match and the picker of `yuke:tui`: ranges, ranking, selection by key, and the keys.
 
-import { assert, createFrame, equal, test } from "yuke:test";
+import { assert, assertEquals, createFrame, test } from "yuke:test";
 import { fuzzyMatch, Picker, type PickerOptions } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -25,7 +25,7 @@ function picker(
 }
 
 test("a fuzzy match ignores case, covers whole graphemes, and prefers consecutive letters and word starts", () => {
-  equal(
+  assertEquals(
     [
       fuzzyMatch("e", "AéB")?.ranges,
       fuzzyMatch("💻", "A👩‍💻B")?.ranges,
@@ -48,7 +48,7 @@ test("a fuzzy match ignores case, covers whole graphemes, and prefers consecutiv
   );
   const score = (query: string, text: string): number => fuzzyMatch(query, text)?.score ?? Number.NaN;
   // A letter after a separator, and a letter after a gap at a word start, score higher than the same letter in a word.
-  equal(
+  assertEquals(
     [
       score("sp", "split pane") > score("sp", "dispose"),
       score("b", "a_b") > score("b", "ab"),
@@ -56,7 +56,7 @@ test("a fuzzy match ignores case, covers whole graphemes, and prefers consecutiv
     ],
     [true, true, true],
   );
-  equal(fuzzyMatch("fb", "FooBar")?.ranges, [
+  assertEquals(fuzzyMatch("fb", "FooBar")?.ranges, [
     { from: 0, to: 1 },
     { from: 3, to: 4 },
   ]);
@@ -68,11 +68,11 @@ test("a caller rank stays in its order, and the default rank puts the best match
     rank: (_query, items) => items.toReversed().map((item) => ({ item })),
   });
   using frame = createFrame({ width: 10, height: 3 }, () => reversed);
-  equal(rows(frame.frame), ["", "gamma", "beta"]);
+  assertEquals(rows(frame.frame), ["", "gamma", "beta"]);
   const fuzzy = picker(["dispose", "split pane", "close"], log);
   using second = createFrame({ width: 12, height: 4 }, () => fuzzy);
   second.key("s p");
-  equal(rows(second.frame).slice(1), ["split pane", "dispose", ""]);
+  assertEquals(rows(second.frame).slice(1), ["split pane", "dispose", ""]);
 });
 
 test("the selection follows its key and goes to the first result when its key leaves", () => {
@@ -84,7 +84,7 @@ test("the selection follows its key and goes to the first result when its key le
   view.setItems([{ name: "c" }, replacement, { name: "a" }]);
   const kept = view.selected;
   view.setItems([{ name: "c" }, { name: "a" }]);
-  equal([kept === replacement, view.selected], [true, { name: "c" }]);
+  assertEquals([kept === replacement, view.selected], [true, { name: "c" }]);
   void frame;
 });
 
@@ -98,7 +98,7 @@ test("Esc cancels, Up and Down stop at the ends, and an empty result chooses not
   const bottom = view.selected;
   frame.key("esc");
   frame.key("z z enter");
-  equal(
+  assertEquals(
     [top, bottom, log, view.selected, view.choose()],
     [{ name: "open" }, { name: "close" }, ["cancel"], undefined, false],
   );
@@ -113,13 +113,13 @@ test("the selected row has its look and its matched letters marked, and a click 
   // The matched letter is bold, and the band of the selected row covers the whole row.
   const band = cells[1]?.[1]?.style.bg;
   assert(band !== undefined);
-  equal([cells[1]?.[0]?.style.bold, cells[1]?.[0]?.style.bg, cells[1]?.[5]?.style.bg], [true, band, band]);
+  assertEquals([cells[1]?.[0]?.style.bold, cells[1]?.[0]?.style.bg, cells[1]?.[5]?.style.bg], [true, band, band]);
   // A move gives the old row its plain style back.
   frame.key("down");
-  equal([frame.frame.cells[1]?.[1]?.style, frame.frame.cells[2]?.[1]?.style.bg], [{}, band]);
+  assertEquals([frame.frame.cells[1]?.[1]?.style, frame.frame.cells[2]?.[1]?.style.bg], [{}, band]);
   const modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
   frame.mouse({ type: "mouse", column: 1, row: 2, button: "left", action: "press", modifiers });
-  equal(log, ["choose beta"]);
+  assertEquals(log, ["choose beta"]);
 });
 
 test("a selected row pads by cells, and a picker with its field takes the focus", () => {
@@ -132,7 +132,7 @@ test("a selected row pads by cells, and a picker with its field takes the focus"
   const cells = frame.draw().cells[1];
   // The pad cell has the band of the row.
   assert(cells?.[1]?.style.bg !== undefined);
-  equal(
+  assertEquals(
     [cells?.[2]?.style.bg, surface.tui.focus(view), surface.tui.focused === view.input],
     [cells?.[1]?.style.bg, true, true],
   );
@@ -150,7 +150,7 @@ test("a new query selects its best result, and new items keep the selection", ()
   list.move(1);
   const before = list.selected?.name;
   list.setItems([{ name: "save" }, { name: "send" }, { name: "search" }, { name: "sessions" }, { name: "set" }]);
-  equal([moved, typed, before, list.selected?.name], ["search", "send", "search", "search"]);
+  assertEquals([moved, typed, before, list.selected?.name], ["search", "send", "search", "search"]);
 });
 
 test("the rows of a picker have a default look that a plugin changes", () => {
@@ -168,7 +168,7 @@ test("the rows of a picker have a default look that a plugin changes", () => {
     "picker.selected": { bg: 2, fg: null },
   });
   const after = looks();
-  equal(
+  assertEquals(
     [before.map((style, at) => JSON.stringify(style) !== JSON.stringify(after[at])), after],
     [
       [true, true, true, true, true],
@@ -185,5 +185,5 @@ test("onSelectionChange tells each change of the selection, and a query without 
   frame.key("down");
   frame.key("down");
   frame.key("z");
-  equal([first, seen], [["alpha"], ["alpha", "beta", undefined]]);
+  assertEquals([first, seen], [["alpha"], ["alpha", "beta", undefined]]);
 });

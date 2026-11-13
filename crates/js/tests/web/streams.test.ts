@@ -1,7 +1,7 @@
 // The web class `ReadableStream`: a minimal default stream. Many cases follow the web platform tests (WPT) of
 // `streams/readable-streams`.
 
-import { assert, equal, rejects, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, assertRejects, test, waitForSettled } from "yuke:test";
 import { rejectedName, thrownNames } from "./errors.ts";
 
 /** A stream with `strategy`, and the controller that its source gets at the start. */
@@ -34,8 +34,8 @@ test("a reader gives the queued chunks and then done", async () => {
   const reader = stream.getReader();
   const reads = [await reader.read(), await reader.read(), await reader.read(), await reader.read()];
   await reader.closed;
-  equal(stream.locked, true);
-  equal(reads, [
+  assertEquals(stream.locked, true);
+  assertEquals(reads, [
     { done: false, value: "a" },
     { done: false, value: "b" },
     { done: true, value: undefined },
@@ -74,7 +74,7 @@ test("pull fills the queue up to the high water mark and runs once at a time", a
   const values = (await Promise.all(reads)).map((read) => read.value);
   await waitForSettled();
   // A third pull starts after the two reads take their chunks, because the queue has space again.
-  equal([first, waiting, values, pulls], [1, 1, [1, 2], 3]);
+  assertEquals([first, waiting, values, pulls], [1, 1, [1, 2], 3]);
 });
 
 test("a high water mark of zero pulls only for a read", async () => {
@@ -91,7 +91,7 @@ test("a high water mark of zero pulls only for a read", async () => {
   const before = pulls;
   const read = await stream.getReader().read();
   await waitForSettled();
-  equal([before, read.value, pulls], [0, 1, 1]);
+  assertEquals([before, read.value, pulls], [0, 1, 1]);
 });
 
 test("async iteration gives each chunk and a break cancels the stream", async () => {
@@ -125,16 +125,16 @@ test("async iteration gives each chunk and a break cancels the stream", async ()
     break;
   }
   seen.push((await kept.getReader().read()).value);
-  equal(seen, [1, 2, false, 3, ["cancel", undefined], false, 5, 6]);
+  assertEquals(seen, [1, 2, false, 3, ["cancel", undefined], false, 5, 6]);
 });
 
 test("async iteration releases the stream after a read or cancel fails", async () => {
   const failedRead = controlled<number>();
   const next = failedRead.stream.values().next();
-  equal(failedRead.stream.locked, true);
+  assertEquals(failedRead.stream.locked, true);
   failedRead.controller.error("read failed");
-  equal(await rejects(next), "read failed");
-  equal(failedRead.stream.locked, false);
+  assertEquals(await assertRejects(() => next), "read failed");
+  assertEquals(failedRead.stream.locked, false);
 
   const failedCancel = new ReadableStream<number>({
     start(controller) {
@@ -144,29 +144,29 @@ test("async iteration releases the stream after a read or cancel fails", async (
       throw "cancel failed";
     },
   });
-  equal(
-    await rejects(
+  assertEquals(
+    await assertRejects(() =>
       (async () => {
         for await (const chunk of failedCancel) {
-          equal(chunk, 1);
+          assertEquals(chunk, 1);
           break;
         }
       })(),
     ),
     "cancel failed",
   );
-  equal(failedCancel.locked, false);
+  assertEquals(failedCancel.locked, false);
 });
 
 test("an error rejects each waiting read and the closed promise without a fault", async () => {
   const errored = controlled<string>();
   const reader = errored.stream.getReader();
-  const read = rejects(reader.read());
+  const read = assertRejects(() => reader.read());
   errored.controller.error("boom");
-  equal(await read, "boom");
-  equal(await rejects(reader.closed), "boom");
-  equal(await rejects(reader.read()), "boom");
-  equal(errored.controller.desiredSize, null);
+  assertEquals(await read, "boom");
+  assertEquals(await assertRejects(() => reader.closed), "boom");
+  assertEquals(await assertRejects(() => reader.read()), "boom");
+  assertEquals(errored.controller.desiredSize, null);
   // The closed promise of a reader of an errored stream rejects, and no one reads it.
   new ReadableStream({
     start(controller) {
@@ -184,8 +184,8 @@ test("an error rejects each waiting read and the closed promise without a fault"
     },
   });
   await waitForSettled();
-  equal(await rejects(failedStart.getReader().read()), "start");
-  equal(await rejects(failedPull.getReader().read()), "pull");
+  assertEquals(await assertRejects(() => failedStart.getReader().read()), "start");
+  assertEquals(await assertRejects(() => failedPull.getReader().read()), "pull");
   await waitForSettled();
 });
 
@@ -196,7 +196,7 @@ test("a cancel calls the source once and ends each waiting read", async () => {
       seen.push(["cancel", reason]);
     },
   });
-  equal(await stream.getReader().cancel("first"), undefined);
+  assertEquals(await stream.getReader().cancel("first"), undefined);
   const reader = new ReadableStream({
     cancel(reason) {
       seen.push(["cancel", reason]);
@@ -206,12 +206,12 @@ test("a cancel calls the source once and ends each waiting read", async () => {
   await reader.cancel("second");
   seen.push((await read).done);
   await reader.cancel("third");
-  equal(await new ReadableStream().getReader().cancel(), undefined);
+  assertEquals(await new ReadableStream().getReader().cancel(), undefined);
   const locked = new ReadableStream();
   locked.getReader();
-  equal(await rejectedName(locked.cancel()), "TypeError");
+  assertEquals(await rejectedName(locked.cancel()), "TypeError");
   await waitForSettled();
-  equal(seen, [["cancel", "first"], ["cancel", "second"], true]);
+  assertEquals(seen, [["cancel", "first"], ["cancel", "second"], true]);
 });
 
 test("releaseLock rejects each waiting read and keeps the queued chunks", async () => {
@@ -219,10 +219,10 @@ test("releaseLock rejects each waiting read and keeps the queued chunks", async 
   const reader = stream.getReader();
   const read = rejectedName(reader.read());
   reader.releaseLock();
-  equal(await read, "TypeError");
-  equal(await rejectedName(reader.closed), "TypeError");
-  equal(await rejectedName(reader.read()), "TypeError");
-  equal(stream.locked, false);
+  assertEquals(await read, "TypeError");
+  assertEquals(await rejectedName(reader.closed), "TypeError");
+  assertEquals(await rejectedName(reader.read()), "TypeError");
+  assertEquals(stream.locked, false);
   reader.releaseLock();
   const queued = new ReadableStream<string>({
     start(controller) {
@@ -230,7 +230,7 @@ test("releaseLock rejects each waiting read and keeps the queued chunks", async 
     },
   });
   queued.getReader().releaseLock();
-  equal((await queued.getReader().read()).value, "kept");
+  assertEquals((await queued.getReader().read()).value, "kept");
   await waitForSettled();
 });
 
@@ -241,15 +241,15 @@ test("enqueue counts the size of each chunk against the high water mark", () => 
   sizes.push(counted.controller.desiredSize);
   const failing = controlled<string>({ size: () => -1 });
   const thrown = thrownNames([() => failing.controller.enqueue("x")]);
-  equal(sizes, [5, 2]);
-  equal(thrown, ["RangeError"]);
-  equal(failing.controller.desiredSize, null);
+  assertEquals(sizes, [5, 2]);
+  assertEquals(thrown, ["RangeError"]);
+  assertEquals(failing.controller.desiredSize, null);
 });
 
 test("a throwing start throws from the constructor, and a locked stream refuses a reader", () => {
   const locked = new ReadableStream();
   locked.getReader();
-  equal(
+  assertEquals(
     thrownNames([
       () =>
         new ReadableStream({

@@ -1,7 +1,7 @@
 // A read-only session in a chat pane: the row in place of the composer, the keys that stop working, and the way back.
 
 import type { InteractionRequest, SessionUpdate } from "yuke:protocol";
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -30,7 +30,7 @@ test("a read-only session shows its row with the key back, in place of the compo
   const { frame } = await opened();
   using _frame = frame;
 
-  equal(rows(frame.frame).slice(-3), [RULE, "A child session · esc back", RULE]);
+  assertEquals(rows(frame.frame).slice(-3), [RULE, "A child session · esc back", RULE]);
 });
 
 test("a read-only session takes no message, no recall, no image, and no cancel", async () => {
@@ -47,8 +47,8 @@ test("a read-only session takes no message, no recall, no image, and no cancel",
   await waitForSettled();
   frame.draw();
 
-  equal([sessions.inputs.length, sessions.state.cancels, sessions.state.backgrounds], [0, 0, 0]);
-  equal(rows(frame.frame).at(-2), "A child session · esc back");
+  assertEquals([sessions.inputs.length, sessions.state.cancels, sessions.state.backgrounds], [0, 0, 0]);
+  assertEquals(rows(frame.frame).at(-2), "A child session · esc back");
 });
 
 test("a read-only session turns off the commands that change it, and keeps the commands that show it", async () => {
@@ -57,7 +57,7 @@ test("a read-only session turns off the commands that change it, and keeps the c
 
   const enabled = (name: string) => chat.tui.commands.list().find((command) => command.name === name)?.enabled;
 
-  equal(
+  assertEquals(
     ["model", "send", "clear", "background", "paste-image", "cancel-question", "page-up", "toggle-tools"].map((name) =>
       enabled(`chat:${name}`),
     ),
@@ -79,8 +79,8 @@ test("a read-only session shows no question in its pane", async () => {
   await waitForSettled();
   frame.draw();
 
-  equal(rows(frame.frame).at(-2), "A child session · esc back");
-  equal(rows(frame.frame).join("\n").includes("Delete?"), false);
+  assertEquals(rows(frame.frame).at(-2), "A child session · esc back");
+  assertEquals(rows(frame.frame).join("\n").includes("Delete?"), false);
 });
 
 test("the key back shows the session behind the pane, and the composer gets the focus and the paste", async () => {
@@ -93,9 +93,9 @@ test("the key back shows the session behind the pane, and the composer gets the 
   frame.paste("draft");
   frame.draw();
 
-  equal(chat.opened.at(-1)?.id, "p1");
-  equal(sessions.state.cancels, 0);
-  equal(rows(frame.frame).at(-2), "draft");
+  assertEquals(chat.opened.at(-1)?.id, "p1");
+  assertEquals(sessions.state.cancels, 0);
+  assertEquals(rows(frame.frame).at(-2), "draft");
 });
 
 test("a selection in the transcript goes first, and the next key goes back", async () => {
@@ -113,7 +113,7 @@ test("a selection in the transcript goes first, and the next key goes back", asy
   frame.key("esc");
   await waitForSettled();
 
-  equal([before, chat.opened.at(-1)?.id], ["s1", "p1"]);
+  assertEquals([before, chat.opened.at(-1)?.id], ["s1", "p1"]);
 });
 
 test("the key back gives the composer the focus after a press on the transcript", async () => {
@@ -127,8 +127,8 @@ test("the key back gives the composer the focus after a press on the transcript"
   frame.paste("draft");
   frame.draw();
 
-  equal(chat.opened.at(-1)?.id, "p1");
-  equal(rows(frame.frame).at(-2), "draft");
+  assertEquals(chat.opened.at(-1)?.id, "p1");
+  assertEquals(rows(frame.frame).at(-2), "draft");
 });
 
 test("the sources answer in add order, and a disposer removes only its own source", async () => {
@@ -139,12 +139,12 @@ test("the sources answer in add order, and a disposer removes only its own sourc
   chat.chat.addReadOnly((session) => (session === "s2" ? { text: "Other", back: "p1" } : undefined));
   const second = chat.chat.addReadOnly(() => ({ text: "Second", back: "p1" }));
   const third = chat.chat.addReadOnly(() => ({ text: "Third", back: "p1" }));
-  equal(row(), "A child session · esc back");
+  assertEquals(row(), "A child session · esc back");
   // A later source leaves first, and the first answer stays.
   third();
-  equal(row(), "A child session · esc back");
+  assertEquals(row(), "A child session · esc back");
   end();
-  equal(row(), "Second · esc back");
+  assertEquals(row(), "Second · esc back");
   second();
-  equal(row(), "Message…");
+  assertEquals(row(), "Message…");
 });

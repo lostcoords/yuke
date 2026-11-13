@@ -1,6 +1,6 @@
 // The timers of the runtime, and the stack check of the engine.
 
-import { assert, equal, test } from "yuke:test";
+import { assert, assertEquals, test } from "yuke:test";
 
 /** A promise that fulfills after `delay` milliseconds. */
 function sleep(delay: number): Promise<void> {
@@ -16,7 +16,7 @@ test("a deep recursion throws a catchable range error", () => {
     assert(error instanceof Error);
     name = error.name;
   }
-  equal(name, "RangeError");
+  assertEquals(name, "RangeError");
 });
 
 test("timers with one delay fire in the order of their set", async () => {
@@ -24,7 +24,7 @@ test("timers with one delay fire in the order of their set", async () => {
   for (let index = 0; index < 20; index += 1) setTimeout(() => order.push(index), 5);
   // A timer set later with the same delay fires after them.
   await sleep(5);
-  equal(
+  assertEquals(
     order,
     Array.from({ length: 20 }, (_item, index) => index),
   );
@@ -38,7 +38,7 @@ test("a promise reaction of a timer callback runs before the next callback", asy
   }, 5);
   setTimeout(() => order.push("second"), 5);
   await sleep(5);
-  equal(order, ["first", "job", "second"]);
+  assertEquals(order, ["first", "job", "second"]);
 });
 
 // The first callback clears a timer of the same round.
@@ -53,7 +53,7 @@ test("a cleared timer does not fire", async () => {
   const never = setTimeout(() => fired.push("never"), 10);
   clearTimeout(never);
   await sleep(10);
-  equal(fired, ["first"]);
+  assertEquals(fired, ["first"]);
 });
 
 test("an interval repeats until its own callback clears it", async () => {
@@ -69,7 +69,7 @@ test("an interval repeats until its own callback clears it", async () => {
   });
   // A call after the clear would come within the next delays.
   await sleep(10);
-  equal(count, 3);
+  assertEquals(count, 3);
 });
 
 test("an interval waits its delay between calls", async () => {
@@ -93,5 +93,5 @@ test("a timer callback gets the extra arguments", async () => {
   const values = await new Promise<string[]>((resolve) =>
     setTimeout((...values: string[]) => resolve(values), undefined, "a", "b"),
   );
-  equal(values, ["a", "b"]);
+  assertEquals(values, ["a", "b"]);
 });

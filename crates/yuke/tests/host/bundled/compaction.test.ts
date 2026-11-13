@@ -3,8 +3,8 @@
 import { session as compaction } from "yuke:internal/bundled/compaction";
 import type { Block } from "yuke:protocol";
 import {
+  assertEquals,
   createHost,
-  equal,
   type ModelRequest,
   type Reply,
   type RoundPlan,
@@ -53,7 +53,7 @@ function replaced(plan: RoundPlan): [readonly Block[], number] {
 
 /** The texts of the messages of the only request of `requests`. */
 function sent(requests: readonly ModelRequest[]): string[] {
-  equal(requests.length, 1);
+  assertEquals(requests.length, 1);
   return requests[0]?.messages.map((message) => message.text) ?? [];
 }
 
@@ -65,15 +65,15 @@ test("a context near the window becomes a summary and its newest part", async ()
   ]);
 
   const [head, keep] = replaced(plan);
-  equal(keep, 1);
+  assertEquals(keep, 1);
   const summary = head.length === 1 && head[0]?.kind === "userText" ? head[0].text : "";
-  equal(summary.startsWith("<context_summary>\n## Goal\nThe work.\n</context_summary>\n"), true);
-  equal(notices, [["info", "The context nears the window of the model. A summary replaces its old part."]]);
+  assertEquals(summary.startsWith("<context_summary>\n## Goal\nThe work.\n</context_summary>\n"), true);
+  assertEquals(notices, [["info", "The context nears the window of the model. A summary replaces its old part."]]);
   // The summary request sends the whole context, so it reads the prompt cache of the round.
   const [first, answer, last, ...rest] = sent(requests);
   // The prompt is a text part after the newest input, so it starts on the next line.
   const input = last?.slice(0, 48_000);
-  equal([first, answer, input, rest], ["a".repeat(48_000), "ok", "b".repeat(48_000), []]);
+  assertEquals([first, answer, input, rest], ["a".repeat(48_000), "ok", "b".repeat(48_000), []]);
 });
 
 for (const [name, inputTokens, window] of [
@@ -83,7 +83,7 @@ for (const [name, inputTokens, window] of [
   test(`a context ${name} stays`, async () => {
     const { plan, requests } = await before({ blocks: twoInputs(), inputTokens, contextWindow: window }, []);
 
-    equal([plan.replace, requests.length], [undefined, 0]);
+    assertEquals([plan.replace, requests.length], [undefined, 0]);
   });
 }
 
@@ -99,7 +99,7 @@ test("the cut never starts at a tool result, and the newest input stays exact", 
   ]);
 
   const [head, keep] = replaced(plan);
-  equal([keep, head.slice(1)], [2, [{ kind: "userText", text: "start" }]]);
+  assertEquals([keep, head.slice(1)], [2, [{ kind: "userText", text: "start" }]]);
 });
 
 test("a second compaction merges the old summary", async () => {
@@ -108,8 +108,8 @@ test("a second compaction merges the old summary", async () => {
     [reply.text("summary")],
   );
 
-  equal(replaced(plan)[1], 1);
-  equal(
+  assertEquals(replaced(plan)[1], 1);
+  assertEquals(
     sent(requests).some((text) => text.includes("<context_summary>\nold\n</context_summary>")),
     true,
   );
@@ -121,7 +121,7 @@ test("a cut that covers only the old summary compacts nothing", async () => {
     [],
   );
 
-  equal([plan.replace, requests.length], [undefined, 0]);
+  assertEquals([plan.replace, requests.length], [undefined, 0]);
 });
 
 // After a replacement the host gives no count, so the estimate of each block decides.
@@ -137,7 +137,7 @@ test("without a count the estimate of each block decides", async () => {
   });
   const above = await session.runHook("round.before", { blocks: large, inputTokens: null, contextWindow: WINDOW });
 
-  equal([below.replace, above.replace !== undefined, host.requests.length], [undefined, true, 1]);
+  assertEquals([below.replace, above.replace !== undefined, host.requests.length], [undefined, true, 1]);
 });
 
 test("the old summary never counts as the newest input", async () => {
@@ -149,7 +149,7 @@ test("the old summary never counts as the newest input", async () => {
   ]);
 
   const [head, keep] = replaced(plan);
-  equal([keep, head.slice(1)], [1, [long("a", 12_000)]]);
+  assertEquals([keep, head.slice(1)], [1, [long("a", 12_000)]]);
 });
 
 for (const [name, answer, reason] of [
@@ -162,7 +162,7 @@ for (const [name, answer, reason] of [
       answer,
     ]);
 
-    equal([plan.replace, notices.at(-1)], [undefined, ["warn", `the compaction failed: ${reason}`]]);
+    assertEquals([plan.replace, notices.at(-1)], [undefined, ["warn", `the compaction failed: ${reason}`]]);
   });
 }
 
@@ -177,10 +177,13 @@ test("an overflow sends only the part before the cut, and the plugin stops after
   const third = await session.runHook("round.retry", { ...round, failure: overflow, retries: 2 });
   const other = await session.runHook("round.retry", { ...round, failure: { kind: "transport" }, retries: 0 });
 
-  equal([first === undefined ? -1 : replaced(first)[1], third, other], [1, undefined, undefined]);
+  assertEquals([first === undefined ? -1 : replaced(first)[1], third, other], [1, undefined, undefined]);
   // The cut keeps the newest input, so the first request holds the blocks before it, then the prompt.
-  equal(host.requests.length, 2);
+  assertEquals(host.requests.length, 2);
   const [input, answer, prompt, ...rest] = host.requests[0]?.messages ?? [];
-  equal([input, answer, rest], [{ role: "user", text: "a".repeat(48_000) }, { role: "assistant", text: "ok" }, []]);
-  equal(prompt?.role === "user" && prompt.text.includes("b".repeat(100)), false);
+  assertEquals(
+    [input, answer, rest],
+    [{ role: "user", text: "a".repeat(48_000) }, { role: "assistant", text: "ok" }, []],
+  );
+  assertEquals(prompt?.role === "user" && prompt.text.includes("b".repeat(100)), false);
 });

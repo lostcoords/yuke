@@ -48,7 +48,7 @@ function open(ctx: PluginContext, tui: Tui): void {
       tui.styles.setTheme(before);
     },
   });
-  const dialog = tui.dialog({ title: () => "Theme", body: picker });
+  const dialog = tui.dialog({ title: "Theme", body: picker });
 }
 
 export async function apply(ctx: PluginContext): Promise<undefined> {

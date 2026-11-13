@@ -2,7 +2,7 @@
 // creates a session in the folder of the session before.
 
 import { writeTextFile } from "yuke:fs";
-import { createFrame, equal, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import type { View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -44,7 +44,7 @@ test("/new empties the pane, ends the old handle, and shows the header with the 
   frame.draw();
   const shown = rows(frame.frame).join("\n");
 
-  equal(
+  assertEquals(
     [
       before,
       items(chat),
@@ -84,7 +84,7 @@ test("the next message after /new creates a session in the folder of the old ses
   frame.key("h i enter");
   await waitForSettled();
 
-  equal(
+  assertEquals(
     [sessions.created.map((settings) => settings.cwd), chat.opened.map((open) => open.id), sessions.inputs],
     [["/w"], ["s1", "s-new"], [[{ kind: "userText", text: "hi" }]]],
   );
@@ -99,7 +99,10 @@ test("ctrl+k n empties a draft", async () => {
   frame.key("ctrl+k n");
   frame.draw();
 
-  equal([chat.chat.session(chat.tui.panes.active?.view as View), rows(frame.frame).at(-2)], [undefined, "Message…"]);
+  assertEquals(
+    [chat.chat.session(chat.tui.panes.active?.view as View), rows(frame.frame).at(-2)],
+    [undefined, "Message…"],
+  );
 });
 
 test("a pane with a session lists /new, and a pane without a session does not", async () => {
@@ -115,7 +118,7 @@ test("a pane with a session lists /new, and a pane without a session does not", 
   frame.key("/ n e");
   frame.draw();
 
-  equal([listed, rows(frame.frame).some((text) => text.startsWith(" /new"))], [true, false]);
+  assertEquals([listed, rows(frame.frame).some((text) => text.startsWith(" /new"))], [true, false]);
 });
 
 test("ctrl+k n during a send keeps the session and its handle", async () => {
@@ -132,7 +135,7 @@ test("ctrl+k n during a send keeps the session and its handle", async () => {
   resolve();
   await waitForSettled();
 
-  equal(
+  assertEquals(
     [chat.chat.session(chat.tui.panes.active?.view as View), chat.opened.map((open) => [open.id, open.signal.aborted])],
     ["s1", [["s1", false]]],
   );
@@ -150,7 +153,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
   frame.draw();
   const shown = rows(frame.frame).join("\n");
 
-  equal(
+  assertEquals(
     [
       chat.chat.session(chat.tui.panes.active?.view as View),
       sessions.state.cancels,
@@ -172,7 +175,7 @@ test("/new with a running job of a subagent says that the work goes on", async (
   frame.key("/ n e w enter");
   await waitForSettled();
 
-  equal(chat.notices, ["info the work goes on: /sessions shows it"]);
+  assertEquals(chat.notices, ["info the work goes on: /sessions shows it"]);
 });
 
 test("a reload after /new keeps the folder of the old session", async () => {
@@ -193,7 +196,7 @@ test("a reload after /new keeps the folder of the old session", async () => {
   after.key("h i enter");
   await waitForSettled();
 
-  equal([shown, sessions.created.map((settings) => settings.cwd)], [["chat:folder", "/w"], ["/w"]]);
+  assertEquals([shown, sessions.created.map((settings) => settings.cwd)], [["chat:folder", "/w"], ["/w"]]);
 });
 
 test("a draft that a pane left before /new does not come back after a later return", async () => {
@@ -211,5 +214,5 @@ test("a draft that a pane left before /new does not come back after a later retu
   await chat.chat.show("s1");
   frame.draw();
 
-  equal(rows(frame.frame).at(-2), "Message…");
+  assertEquals(rows(frame.frame).at(-2), "Message…");
 });

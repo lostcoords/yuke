@@ -2,7 +2,7 @@
 
 import { apply as applySessions } from "yuke:internal/bundled/sessions";
 import type { SessionRow } from "yuke:protocol";
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -33,17 +33,17 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   frame.start();
   const composer = chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
   composer.onPaste("draft");
-  equal(chat.tui.commands.run("chat:rename"), true);
+  assertEquals(chat.tui.commands.run("chat:rename"), true);
   await waitForSettled();
   frame.draw();
   const editor = renameEditor(chat.tui);
-  equal(editor.state.text, "old title");
+  assertEquals(editor.state.text, "old title");
   editor.replace(0, editor.state.text.length, "new title");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     [
       sessions.renames,
       sessions.rows[0]?.session.title,
@@ -60,11 +60,11 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
     get: (name: string) => (name === "tui" ? surface.tui : name === "sessions" ? sessions : chat.chat),
     notify: (_level: string, text: string) => notices.push(text),
   } as never);
-  equal(chat.tui.commands.run("sessions:open"), true);
+  assertEquals(chat.tui.commands.run("sessions:open"), true);
   await waitForSettled();
   frame.paste("new title");
   frame.draw();
-  equal([rows(frame.frame).some((line) => line.includes("○ new title")), notices], [true, []]);
+  assertEquals([rows(frame.frame).some((line) => line.includes("○ new title")), notices], [true, []]);
 });
 
 test("a rename failure shows an error and retains the editor", async () => {
@@ -78,19 +78,19 @@ test("a rename failure shows an error and retains the editor", async () => {
   await waitForSettled();
   frame.draw();
   const editor = renameEditor(chat.tui);
-  equal(editor.state.text, "old title");
+  assertEquals(editor.state.text, "old title");
   editor.replace(0, editor.state.text.length, "new title");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
 
-  equal(
+  assertEquals(
     [editor.state.text, rows(frame.frame).some((line) => line.includes("rename failed")), sessions.renames],
     ["new title", true, []],
   );
   frame.key("esc");
   frame.draw();
-  equal(
+  assertEquals(
     rows(frame.frame).some((line) => line.includes("Rename session")),
     false,
   );
@@ -100,7 +100,7 @@ test("Esc cancels rename, and an unbound pane does not expose the command", asyn
   using frame = createFrame({ width: 50, height: 10 }, undefined, { cwd: "/w" });
   const chat = await loadChat(frame);
   frame.start();
-  equal(chat.tui.commands.run("chat:rename"), false);
+  assertEquals(chat.tui.commands.run("chat:rename"), false);
 
   const sessions = fakeSessions();
   sessions.rows.push(session("old title"));
@@ -112,5 +112,5 @@ test("Esc cancels rename, and an unbound pane does not expose the command", asyn
   bound.key("esc");
   await waitForSettled();
   bound.draw();
-  equal([sessions.renames, rows(bound.frame).some((line) => line.includes("Rename session"))], [[], false]);
+  assertEquals([sessions.renames, rows(bound.frame).some((line) => line.includes("Rename session"))], [[], false]);
 });

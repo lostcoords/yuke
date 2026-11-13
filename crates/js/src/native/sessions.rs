@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 use serde::de::DeserializeOwned;
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use yuke_ai::Block;
 use yuke_engine::chain_text;
@@ -27,14 +28,25 @@ use crate::sessions::{FactSink, Sessions, SessionsError, ViewEvent};
 
 use crate::tools::Json;
 
-/// The JSON of an event for JavaScript: `{ snapshot }`, `{ update }`, or `"closed"`.
+/// The JSON of an event for JavaScript: `{ kind: "snapshot", snapshot }`, `{ kind: "update", update }`, or `"closed"`.
 impl Serialize for ViewEvent {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Snapshot(snapshot) => serializer.serialize_newtype_variant("ViewEvent", 0, "snapshot", snapshot),
-            Self::Update(update) => serializer.serialize_newtype_variant("ViewEvent", 1, "update", update),
-            Self::Closed => serializer.serialize_unit_variant("ViewEvent", 2, "closed"),
-        }
+        let event = match self {
+            Self::Snapshot(snapshot) => {
+                let mut event = serializer.serialize_struct("ViewEvent", 2)?;
+                event.serialize_field("kind", "snapshot")?;
+                event.serialize_field("snapshot", snapshot)?;
+                event
+            }
+            Self::Update(update) => {
+                let mut event = serializer.serialize_struct("ViewEvent", 2)?;
+                event.serialize_field("kind", "update")?;
+                event.serialize_field("update", update)?;
+                event
+            }
+            Self::Closed => return serializer.serialize_unit_variant("ViewEvent", 2, "closed"),
+        };
+        event.end()
     }
 }
 

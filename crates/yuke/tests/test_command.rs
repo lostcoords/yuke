@@ -7,9 +7,9 @@ fn yuke_test_prints_each_failure_and_the_counts_and_fails_when_a_test_fails() {
     let place = yuke_testing::folder("command", "yuke_test_prints_each_failure");
     std::fs::write(
         place.join("a.test.ts"),
-        r#"import { equal, test } from "yuke:test";
+        r#"import { assertEquals, test } from "yuke:test";
            test("passes", () => {});
-           test("fails", () => equal(1, 2));"#,
+           test("fails", () => assertEquals(1, 2));"#,
     )
     .unwrap();
 
@@ -21,7 +21,7 @@ fn yuke_test_prints_each_failure_and_the_counts_and_fails_when_a_test_fails() {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(1), "{stdout}");
-    assert!(stdout.contains("a.test.ts: fails\n  Error: equal: "), "{stdout}");
+    assert!(stdout.contains("a.test.ts: fails\n  Error: assertEquals: "), "{stdout}");
     assert!(stdout.ends_with("1 passed, 1 failed\n"), "{stdout}");
 }
 

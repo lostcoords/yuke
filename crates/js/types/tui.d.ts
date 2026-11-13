@@ -786,7 +786,7 @@ declare module "yuke:tui" {
     readonly ranges?: readonly OffsetRange[] | undefined;
   }
 
-  export interface PickerOptions<T extends object> {
+  export interface PickerOptions<T> {
     readonly items: readonly T[];
     /** An id that stays the same for one item. New items keep the selection on it; a new query selects the first result. */
     readonly id: (item: T) => string;
@@ -816,7 +816,7 @@ declare module "yuke:tui" {
    * A search field over a list of ranked items. Up and Down move the selection and stop at the ends. Enter chooses,
    * and Esc cancels. The picker opens no overlay of its own.
    */
-  export class Picker<T extends object> implements View {
+  export class Picker<T> implements View {
     constructor(options: PickerOptions<T>);
     readonly input: TextEditor;
     readonly selected: T | undefined;
@@ -911,33 +911,31 @@ declare module "yuke:tui" {
    * key on `esc` replaces that close.
    */
   export interface DialogOptions {
-    /** Gives the text of the head row at each draw. Without it, the dialog has no head row. */
-    readonly title?: (() => string) | undefined;
+    /** The text of the head row, or a function that gives it at each draw. Without it, the dialog has no head row. */
+    readonly title?: string | (() => string) | undefined;
     /** The view between the head row and the footer. It gets the first focus when it can take it. */
     readonly body: View;
     /** The keys of the dialog, in footer order. */
     readonly keys?: readonly DialogKey[] | undefined;
-    /** The height of the dialog at the bottom of the screen, when `place` is absent. The default is 13. */
+    /** The height of the dialog at the bottom of the screen. The default is 13. */
     readonly rows?: number | undefined;
-    /** The rect of the dialog, as `OverlayOptions.place` gives it. */
-    readonly place?: ((size: Size) => Rect) | undefined;
     /** The dialog closes when this signal aborts, for example at the end of a pane. */
     readonly signal?: AbortSignal | undefined;
   }
 
   /** What `tui.select` shows: a picker in a dialog. For more control, use `Picker` and `tui.dialog`. */
-  export interface SelectOptions<T extends object>
-    extends Pick<PickerOptions<T>, "items" | "label" | "detail" | "rank" | "render"> {
-    /** The text of the head row. Without it, the dialog has no head row. */
-    readonly title?: string | undefined;
+  /** Equal items are one choice. */
+  export interface SelectOptions<T> extends Pick<PickerOptions<T>, "items" | "label" | "detail" | "rank" | "render"> {
+    /** The text of the head row, as in `DialogOptions`. */
+    readonly title?: string | (() => string) | undefined;
     /** The dialog closes when this signal aborts, for example at the end of a pane. */
     readonly signal?: AbortSignal | undefined;
   }
 
   /** What `tui.input` shows: a text field in a dialog. */
   export interface InputOptions {
-    /** The text of the head row. Without it, the dialog has no head row. */
-    readonly title?: string | undefined;
+    /** The text of the head row, as in `DialogOptions`. */
+    readonly title?: string | (() => string) | undefined;
     /** The dim text of an empty field. */
     readonly placeholder?: string | undefined;
     /** The first text of the field. The default is empty. */
@@ -955,8 +953,8 @@ declare module "yuke:tui" {
 
   /** What `tui.confirm` shows: a question in a dialog. Enter confirms, and Esc does not. */
   export interface ConfirmOptions {
-    /** The text of the head row. Without it, the dialog has no head row. */
-    readonly title?: string | undefined;
+    /** The text of the head row, as in `DialogOptions`. */
+    readonly title?: string | (() => string) | undefined;
     /** The question. A long text wraps and scrolls. */
     readonly text: string;
     /** The label of Enter in the footer. The default is `yes`. */
@@ -1077,7 +1075,7 @@ declare module "yuke:tui" {
      * Let the user choose one of `items` in a dialog. Gives the item, or `undefined` for Esc, an abort of `signal`, and
      * a stop of the plugin during the wait. A call after the stop throws, as each call of a stopped plugin does.
      */
-    readonly select: <T extends object>(options: SelectOptions<T>) => Promise<T | undefined>;
+    readonly select: <T>(options: SelectOptions<T>) => Promise<T | undefined>;
     /**
      * Ask the user for a line of text in a dialog. Gives the text that Enter accepts, or `undefined` for Esc, an abort of
      * `signal`, and a stop of the plugin during the wait.

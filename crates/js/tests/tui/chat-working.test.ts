@@ -1,6 +1,6 @@
 // The working row of the bundled chat: a spinner, the phase, the elapsed time, and the cancel key of a running turn.
 
-import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { commit, fakeSessions, fixedClock, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -41,7 +41,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   sessions.push(commit(4, [{ kind: "toolResult", callId: "c1", content: "ok", isError: false }]));
   const done = phase();
   const completedCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
-  equal(
+  assertEquals(
     [pendingCommand, runningCommand, completedCommand],
     [" exec cargo test · waiting", " exec cargo test · running", " exec cargo test"],
   );
@@ -54,7 +54,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   // The retry status stays in the transcript until the next draft, and the next turn shows no old countdown.
   sessions.push({ sessionUpdate: "state", state: "running" });
   const next = phase();
-  equal(
+  assertEquals(
     [idle.includes("to interrupt"), gap, start, later, tool, running, done, retry, ended, next],
     [
       false,
@@ -79,7 +79,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
   await waitForSettled();
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.advance(185_000);
-  equal(
+  assertEquals(
     rows(frame.frame).some((text) => text.includes("(3m 05s · esc to interrupt)")),
     true,
   );
@@ -108,7 +108,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   model({ kind: "textDelta", blockId: 1, text: "Sure" });
   const responding = phase();
   model({ kind: "blockStarted", blockId: 2, content: { kind: "toolCall", name: "bash" } });
-  equal([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
+  assertEquals([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
 });
 
 test("a thought without text to show draws no rows, and the working row still shows the reasoning phase", async () => {
@@ -135,7 +135,7 @@ test("a thought without text to show draws no rows, and the working row still sh
   const blank = shown();
   model({ kind: "reasoningDelta", blockId: 0, text: "Hmm" });
   const thought = shown();
-  equal(
+  assertEquals(
     [empty, blank, [thought[0].slice(-4), thought[1]]],
     [
       [before, "Reasoning…"],
@@ -155,7 +155,7 @@ test("a short pane gives up the empty rows before the last row of the transcript
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
   // The spinner glyph changes with each frame of the spinner, so the test compares the text after it.
-  equal(
+  assertEquals(
     rows(frame.frame).map((text, at) => (at === 1 ? text.slice(2) : text)),
     [" reply 2", "Working… (0s · esc to interrupt)", "─".repeat(50), "Message…", "─".repeat(50)],
   );
@@ -172,7 +172,7 @@ test("a close of the session by another client takes the working row away", asyn
   const running = rows(frame.frame).some((text) => text.includes("to interrupt"));
   sessions.close("s1");
   frame.draw();
-  equal([running, rows(frame.frame).some((text) => text.includes("to interrupt"))], [true, false]);
+  assertEquals([running, rows(frame.frame).some((text) => text.includes("to interrupt"))], [true, false]);
 });
 
 test("the working row shows no cancel key while the command list takes esc", async () => {
@@ -188,7 +188,7 @@ test("the working row shows no cancel key while the command list takes esc", asy
   frame.key("esc");
   frame.draw();
   const hidden = rows(frame.frame).find((text) => text.includes("Working…"));
-  equal([listed?.slice(2), hidden?.slice(2)], ["Working… (0s)", "Working… (0s · esc to interrupt)"]);
+  assertEquals([listed?.slice(2), hidden?.slice(2)], ["Working… (0s)", "Working… (0s · esc to interrupt)"]);
 });
 
 /** A frame of `width` with a chat whose exec of `command` runs. */
@@ -228,10 +228,10 @@ test("movable work shows the background hint after a delay, and the key asks to 
   const late = workingRow(frame);
   frame.key("ctrl+b");
 
-  equal(before.includes("to background"), false, before);
-  equal(early.includes("to background"), false, early);
-  equal(late.includes("ctrl+b to background"), true, late);
-  equal(sessions.state.backgrounds, 1);
+  assertEquals(before.includes("to background"), false, before);
+  assertEquals(early.includes("to background"), false, early);
+  assertEquals(late.includes("ctrl+b to background"), true, late);
+  assertEquals(sessions.state.backgrounds, 1);
 });
 
 test("a long command stays in the transcript and leaves room for the interrupt and background hints", async () => {
@@ -240,8 +240,8 @@ test("a long command stays in the transcript and leaves room for the interrupt a
 
   frame.advance(2000);
 
-  equal(workingRow(frame).slice(2), "Working… (2s · esc to interrupt · ctrl+b to background)");
-  equal(
+  assertEquals(workingRow(frame).slice(2), "Working… (2s · esc to interrupt · ctrl+b to background)");
+  assertEquals(
     rows(frame.frame)
       .find((text) => text.includes("exec cargo test"))
       ?.startsWith(" exec cargo test --flag"),
@@ -258,7 +258,7 @@ test("a narrow row drops the background hint, then the interrupt hint", async ()
   wide.frame.advance(2000);
   narrow.frame.advance(2000);
 
-  equal(
+  assertEquals(
     [workingRow(wide.frame).slice(2), workingRow(narrow.frame).slice(2)],
     ["Working… (2s · esc to interrupt)", "Working… (2s)"],
   );

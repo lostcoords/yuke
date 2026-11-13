@@ -2,7 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/sessions";
 import type { SessionRow, SessionState } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -53,11 +53,11 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
   const every = rows(frame.frame);
   /** Whether one row of `all` holds every text of `texts`, in any column. */
   const shows = (all: string[], ...texts: string[]) => all.some((line) => texts.every((text) => line.includes(text)));
-  equal(
+  assertEquals(
     loaded.sessions.lists.map((list) => list.cwd),
     ["/w", undefined],
   );
-  equal(
+  assertEquals(
     [
       here.some((line) => line.trim() === "/w"),
       shows(here, "tab: every folder · esc: close"),
@@ -66,7 +66,7 @@ test("the list shows the sessions of the folder of the pane, and tab shows every
     ],
     [true, true, true, true],
   );
-  equal(
+  assertEquals(
     [
       shows(here, "refactor"),
       every.some((line) => line.trim() === "every folder"),
@@ -93,7 +93,7 @@ test("a query matches the first prompt, and else the model, the folder, or the i
       drawn.some((line) => line.includes(text)),
     );
   };
-  equal(
+  assertEquals(
     [shown("flaky"), shown("home/oth"), shown("s2"), shown("m")],
     [
       ["fix the flaky test"],
@@ -113,7 +113,7 @@ test("enter shows the chosen session in the focused chat pane and closes the lis
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     [loaded.chat.opened.map((open) => open.id), rows(frame.frame).some((line) => line.includes("tab: every folder"))],
     [["s1", "s2"], false],
   );
@@ -129,7 +129,7 @@ test("a pick that does not open gives a notice", async () => {
   frame.paste("gone");
   frame.key("enter");
   await waitForSettled();
-  equal(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
+  assertEquals(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
 });
 
 test("a list of an earlier scope that loads late keeps the list of the later scope", async () => {
@@ -154,7 +154,7 @@ test("a list of an earlier scope that loads late keeps the list of the later sco
   resolve();
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     rows(frame.frame).some((line) => line.includes("refactor sqlgen")),
     true,
   );
@@ -173,7 +173,7 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   frame.draw();
   const drawn = rows(frame.frame);
   const at = (text: string) => drawn.findIndex((line) => line.includes(text));
-  equal([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
+  assertEquals([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
 });
 
 test("a failed list of an earlier scope leaves the list of the later scope open", async () => {
@@ -197,7 +197,7 @@ test("a failed list of an earlier scope leaves the list of the later scope open"
   reject(new Error("disk"));
   await waitForSettled();
   frame.draw();
-  equal([rows(frame.frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
+  assertEquals([rows(frame.frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
 });
 
 test("the list of a pane whose session is gone starts with the start folder", async () => {
@@ -205,7 +205,7 @@ test("the list of a pane whose session is gone starts with the start folder", as
   const loaded = await load(frame);
   await waitForSettled();
   const drawn = await openList(frame, loaded.chat);
-  equal(
+  assertEquals(
     [drawn.some((line) => line.trim() === "/start"), loaded.sessions.lists],
     [true, [{ cwd: "/start", limit: 100 }]],
   );

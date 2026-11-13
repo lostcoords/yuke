@@ -41,7 +41,7 @@ import {
   sessionsRemove,
   sessionsRename,
 } from "yuke:internal/native";
-import type { Catalog, OpenOptions, SessionHandle, Sessions, ViewEvent } from "yuke:plugins";
+import type { Catalog, OpenOptions, SessionHandle, SessionHandleEvent, Sessions } from "yuke:plugins";
 import type {
   AddPluginParams,
   AddPluginResult,
@@ -57,7 +57,7 @@ import type {
 
 /** Where the events of one view go: its snapshot once, then each update, then the close of its session. */
 interface Route {
-  readonly event: (event: ViewEvent) => void;
+  readonly event: (event: SessionHandleEvent) => void;
   readonly closed: () => void;
 }
 

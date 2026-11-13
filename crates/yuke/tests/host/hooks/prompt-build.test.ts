@@ -1,7 +1,7 @@
 // The `prompt.build` hook: its order, its answers, and its failures.
 
 import type { PluginSession, SessionHooks } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createHost, reply, test, waitForSettled } from "yuke:test";
 
 /** The sections of a new session before any hook. */
 const saved = { base: "You are yuke.", environment: "workspace: /work" };
@@ -21,7 +21,7 @@ const answering =
   };
 
 test("a session without a hook keeps its sections", async () => {
-  equal(await build([{ name: "plain", session: () => undefined }]), Object.entries(saved));
+  assertEquals(await build([{ name: "plain", session: () => undefined }]), Object.entries(saved));
 });
 
 // An answer replaces the sections, and `undefined` keeps them.
@@ -41,7 +41,7 @@ test("the handlers run in plugin order, then in addition order, and each gets th
     });
   };
 
-  equal(
+  assertEquals(
     await build([
       { name: "first", session: first },
       { name: "second", session: second },
@@ -64,7 +64,7 @@ test("the order of the sections reaches the system prompt of a request", async (
   await session.sendMessage("Hi.");
 
   const system = host.requests[0]?.system ?? "";
-  equal(system.startsWith("<first>\nFIRST SECTION\n</first>\n\nYou are yuke"), true);
+  assertEquals(system.startsWith("<first>\nFIRST SECTION\n</first>\n\nYou are yuke"), true);
 });
 
 // The answers of a build stay in that build, so each build starts from the sections of the caller.
@@ -80,7 +80,7 @@ test("each build starts from the sections of the caller", async () => {
   await session.runHook("prompt.build", { sections: saved });
   const second = await session.runHook("prompt.build", { sections: saved });
 
-  equal(second.sections.base, "You are yuke. 2");
+  assertEquals(second.sections.base, "You are yuke. 2");
 });
 
 test("the first build waits for the setup of the session", async () => {
@@ -98,10 +98,10 @@ test("the first build waits for the setup of the session", async () => {
     return result;
   });
   await waitForSettled();
-  equal(built, false);
+  assertEquals(built, false);
   setup.resolve();
 
-  equal(Object.entries((await pending).sections).at(-1), ["late", "here"]);
+  assertEquals(Object.entries((await pending).sections).at(-1), ["late", "here"]);
 });
 
 test("a handler that throws fails the build, and the error names the plugin", async () => {
@@ -109,9 +109,9 @@ test("a handler that throws fails the build, and the error names the plugin", as
     throw new RangeError("no prompt today");
   });
 
-  const error = await rejects(build([{ name: "broken", session: broken }]));
+  const error = await assertRejects(() => build([{ name: "broken", session: broken }]));
 
-  equal(
+  assertEquals(
     [error instanceof Error && error.name, error instanceof Error && error.message],
     ["Error", "prompt.build of plugin broken failed: RangeError: no prompt today"],
   );
@@ -128,7 +128,7 @@ test("a build that fails after a cancel sends no fault", async () => {
   await waitForSettled();
   stop.abort(new Error("stop"));
 
-  await rejects(built);
+  await assertRejects(() => built);
   handler.reject(new Error("stopped"));
   await waitForSettled();
 });
@@ -150,7 +150,7 @@ test("a remover removes one entry once, and the handler of a failed session does
     throw new Error("broken");
   };
 
-  equal(
+  assertEquals(
     await build([
       { name: "removed", session: removed },
       { name: "failed", session: failed },
@@ -175,5 +175,5 @@ test("a closed session refuses a new hook", async () => {
     refusal = error instanceof Error ? error.message : String(error);
   }
 
-  equal(refusal, "plugin refused adds a hook after the end of its session");
+  assertEquals(refusal, "plugin refused adds a hook after the end of its session");
 });

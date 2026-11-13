@@ -3,7 +3,7 @@
 
 import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
-import { assert, createFrame, equal, folder, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
 import { type EditorState, TextEditor } from "yuke:tui";
 import { CATALOG, commit, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -42,7 +42,7 @@ test("a saved choice skips the picker on the first send and sends the draft", as
   frame.paste("hello");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.created, [
+  assertEquals(sessions.created, [
     {
       model: { provider: "p", model: "m" },
       settings: {
@@ -52,13 +52,13 @@ test("a saved choice skips the picker on the first send and sends the draft", as
       cwd: "/launch",
     },
   ]);
-  equal(
+  assertEquals(
     [sessions.opened.map((open) => open.id), sessions.inputs, composerOf(chat).state.text],
     [["s-new"], [[{ kind: "userText", text: "hello" }]], ""],
   );
   frame.draw();
-  equal(JSON.parse(frame.snapshot()).tree.state.session, "s-new");
-  equal(chat.transcript().document.id, "session:s-new");
+  assertEquals(JSON.parse(frame.snapshot()).tree.state.session, "s-new");
+  assertEquals(chat.transcript().document.id, "session:s-new");
 });
 
 test("without a saved choice the first send asks for the model and level, and a cancel keeps the draft", async () => {
@@ -70,35 +70,35 @@ test("without a saved choice the first send asks for the model and level, and a 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     rows(frame.frame).filter((row) => row === "off" || row === "high" || row === "default"),
     ["default", "off", "high"],
   );
   frame.key("esc");
   await waitForSettled();
-  equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
+  assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.key("down down");
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     [sessions.created.map((settings) => settings.settings.reasoning), sessions.inputs],
     [[{ effort: "high" }], [[{ kind: "userText", text: "hi" }]]],
   );
-  equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
+  assertEquals(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
     model: { provider: "p", model: "m" },
     reasoning: "high",
   });
-  equal(chat.notices, []);
+  assertEquals(chat.notices, []);
 });
 
 for (const choice of [
@@ -116,16 +116,16 @@ for (const choice of [
     frame.key("enter");
     await waitForSettled();
     frame.draw();
-    equal([rows(frame.frame).includes("p/m"), chat.notices, composerOf(chat).state.text], [true, [], "hi"]);
+    assertEquals([rows(frame.frame).includes("p/m"), chat.notices, composerOf(chat).state.text], [true, [], "hi"]);
     frame.key("enter");
     await waitForSettled();
     frame.key("enter");
     await waitForSettled();
-    equal(
+    assertEquals(
       [sessions.created.map((settings) => [settings.model, settings.settings.reasoning]), sessions.inputs],
       [[[{ provider: "p", model: "m" }, {}]], [[{ kind: "userText", text: "hi" }]]],
     );
-    equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
+    assertEquals(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
       model: { provider: "p", model: "m" },
       reasoning: "default",
     });
@@ -143,7 +143,7 @@ for (const failure of ["read", "parse"]) {
     frame.key("enter");
     await waitForSettled();
     frame.draw();
-    equal(
+    assertEquals(
       [
         rows(frame.frame).includes("p/m"),
         chat.notices.length,
@@ -164,7 +164,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("enter");
   await waitForSettled();
   frame.key("enter");
@@ -172,7 +172,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
   // A new pane without a session shows no pick, because the pick did not save.
   chat.tui.commands.run("core:split-right");
   frame.draw();
-  equal(
+  assertEquals(
     [
       chat.notices.map((notice) => notice.split(":")[0]),
       sessions.inputs,
@@ -200,11 +200,11 @@ test("a refused input comes back above the newer text with the spans of both, an
   frame.paste("x".repeat(301));
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.inputs.length, composerOf(chat).state.text.length], [1, 301]);
+  assertEquals([sessions.inputs.length, composerOf(chat).state.text.length], [1, 301]);
   refuse.reject(new Error("full"));
   await waitForSettled();
-  equal(draft(composerOf(chat).state), [`first\n${"x".repeat(301)}`, [[6, 307, "[Pasted text · 301 chars]"]]]);
-  equal(chat.notices, ["error the message did not send: Error: full"]);
+  assertEquals(draft(composerOf(chat).state), [`first\n${"x".repeat(301)}`, [[6, 307, "[Pasted text · 301 chars]"]]]);
+  assertEquals(chat.notices, ["error the message did not send: Error: full"]);
 });
 
 test("an accepted input followed by a failed turn does not come back", async () => {
@@ -215,11 +215,11 @@ test("an accepted input followed by a failed turn does not come back", async () 
   frame.paste("go");
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.inputs, composerOf(chat).state.text], [[[{ kind: "userText", text: "go" }]], ""]);
+  assertEquals([sessions.inputs, composerOf(chat).state.text], [[[{ kind: "userText", text: "go" }]], ""]);
   sessions.push(commit(2, [], { end: { kind: "failed", error: "boom" } }));
   await waitForSettled();
   frame.draw();
-  equal([composerOf(chat).state.text, chat.notices], ["", []]);
+  assertEquals([composerOf(chat).state.text, chat.notices], ["", []]);
 });
 
 test("a pane whose open failed opens its session again at the next send", async () => {
@@ -232,7 +232,7 @@ test("a pane whose open failed opens its session again at the next send", async 
   frame.paste("again");
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     [sessions.opened.map((open) => open.id), sessions.inputs, chat.notices],
     [["s1", "s1"], [[{ kind: "userText", text: "again" }]], ["error the session s1 did not open: Error: busy"]],
   );
@@ -246,8 +246,8 @@ test("a send with no ready provider names /login, opens no picker, and keeps the
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
-  equal(chat.notices, ["info no provider is ready: run /login"]);
+  assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
+  assertEquals(chat.notices, ["info no provider is ready: run /login"]);
 });
 
 test("a cancel of the model picker, a catalog that fails, and a pane close each keep the draft and create nothing", async () => {
@@ -259,26 +259,29 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("esc");
   await waitForSettled();
-  equal([sessions.created, composerOf(chat).state.text], [[], "hi"]);
+  assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
   // A close of the pane closes its open picker.
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   chat.tui.commands.run("core:close");
   await waitForSettled();
   frame.draw();
-  equal([rows(frame.frame).includes("p/m"), sessions.created], [false, []]);
+  assertEquals([rows(frame.frame).includes("p/m"), sessions.created], [false, []]);
   using other = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/launch" });
   const failing = await loadChat(other, fakeSessions(), { list: () => Promise.reject(new Error("offline")) });
   other.start();
   other.paste("hi");
   other.key("enter");
   await waitForSettled();
-  equal([composerOf(failing).state.text, failing.notices], ["hi", ["error the models did not load: Error: offline"]]);
+  assertEquals(
+    [composerOf(failing).state.text, failing.notices],
+    ["hi", ["error the models did not load: Error: offline"]],
+  );
 });
 
 test("the edges of a draft trim, and a paste over 300 characters shows a label and sends the whole text", async () => {
@@ -291,20 +294,20 @@ test("the edges of a draft trim, and a paste over 300 characters shows a label a
   frame.paste("  ");
   frame.key("enter");
   await waitForSettled();
-  equal([sessions.inputs, composerOf(chat).state.text], [[], "  "]);
+  assertEquals([sessions.inputs, composerOf(chat).state.text], [[], "  "]);
   // The edges of a draft trim, and the line ends inside it stay.
   frame.paste("\n hi\n\nthere \n\n");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.inputs, [[{ kind: "userText", text: "hi\n\nthere" }]]);
+  assertEquals(sessions.inputs, [[{ kind: "userText", text: "hi\n\nthere" }]]);
   frame.paste("a".repeat(300));
-  equal(composerOf(chat).state.spans, []);
+  assertEquals(composerOf(chat).state.spans, []);
   frame.key("ctrl+c");
   frame.paste("b".repeat(301));
-  equal(rows(frame.frame).at(-2), "[Pasted text · 301 chars]");
+  assertEquals(rows(frame.frame).at(-2), "[Pasted text · 301 chars]");
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.inputs.at(-1), [{ kind: "userText", text: "b".repeat(301) }]);
+  assertEquals(sessions.inputs.at(-1), [{ kind: "userText", text: "b".repeat(301) }]);
 });
 
 test("up in an empty composer shows the older messages of the user, down past the newest empties it, and an edit ends it", async () => {
@@ -333,22 +336,22 @@ test("up in an empty composer shows the older messages of the user, down past th
   frame.start();
   const text = () => composerOf(chat).state.text;
   frame.key("up");
-  equal(text(), "two");
+  assertEquals(text(), "two");
   frame.key("up");
   frame.key("up");
-  equal(text(), "one");
+  assertEquals(text(), "one");
   frame.key("down");
   frame.key("down");
-  equal(text(), "");
+  assertEquals(text(), "");
   // A draft with text keeps the arrows for the caret.
   frame.paste("ab");
   frame.key("up");
-  equal(text(), "ab");
+  assertEquals(text(), "ab");
   frame.key("ctrl+c");
   frame.key("up");
   frame.paste("!");
   frame.key("down");
-  equal(text(), "two!");
+  assertEquals(text(), "two!");
 });
 
 test("ctrl+c clears the draft, then stops the turn, and esc drops the selection before it stops the turn", async () => {
@@ -363,17 +366,17 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
   await waitForSettled();
   frame.paste("draft");
   frame.key("ctrl+c");
-  equal([composerOf(chat).state.text, sessions.state.cancels], ["", 0]);
+  assertEquals([composerOf(chat).state.text, sessions.state.cancels], ["", 0]);
   frame.key("ctrl+c");
-  equal(sessions.state.cancels, 1);
+  assertEquals(sessions.state.cancels, 1);
   chat.transcript().selection = {
     anchor: { item: "2:0", section: "text", offset: 0 },
     head: { item: "2:0", section: "text", offset: 3 },
   };
   frame.key("esc");
-  equal([chat.transcript().selection, sessions.state.cancels], [undefined, 1]);
+  assertEquals([chat.transcript().selection, sessions.state.cancels], [undefined, 1]);
   frame.key("esc");
-  equal(sessions.state.cancels, 2);
+  assertEquals(sessions.state.cancels, 2);
 });
 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
@@ -386,11 +389,11 @@ test("page keys scroll the transcript, and a pane of one row keeps the composer"
   frame.key("pageup");
   assert(chat.transcript().scroll.state.top < bottom);
   frame.key("ctrl+home");
-  equal(transcriptRows(frame)[1], " reply 2");
+  assertEquals(transcriptRows(frame)[1], " reply 2");
   frame.key("ctrl+end");
-  equal(chat.transcript().scroll.state.top, bottom);
+  assertEquals(chat.transcript().scroll.state.top, bottom);
   frame.resize({ width: 20, height: 1 });
-  equal(rows(frame.frame), ["Message…"]);
+  assertEquals(rows(frame.frame), ["Message…"]);
 });
 
 test("a refusal while the user browses the messages ends the browse, so down keeps the restored draft", async () => {
@@ -414,11 +417,11 @@ test("a refusal while the user browses the messages ends the browse, so down kee
   frame.key("enter");
   await waitForSettled();
   frame.key("up");
-  equal(composerOf(chat).state.text, "old");
+  assertEquals(composerOf(chat).state.text, "old");
   refuse.reject(new Error("full"));
   await waitForSettled();
   frame.key("down");
-  equal(composerOf(chat).state.text, "first\nold");
+  assertEquals(composerOf(chat).state.text, "first\nold");
 });
 
 test("ctrl+k m in a new pane saves a new choice for the first send", async () => {
@@ -431,30 +434,30 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
   frame.key("ctrl+k m");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("low"), true);
+  assertEquals(rows(frame.frame).includes("low"), true);
   // A send while the picker is open does nothing.
   chat.tui.commands.run("chat:send");
   frame.key("down");
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     chat.tui.status.list().some((item) => item.id === "chat:model" && item.text === "n low"),
     true,
   );
-  equal(sessions.created, []);
-  equal(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
+  assertEquals(sessions.created, []);
+  assertEquals(JSON.parse(await readTextFile("choice.json", { cwd: folder() })), {
     model: { provider: "p", model: "n" },
     reasoning: "low",
   });
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     [sessions.created.map((settings) => [settings.model, settings.settings.reasoning, settings.cwd]), sessions.inputs],
     [[[{ provider: "p", model: "n" }, { effort: "low" }, "/launch"]], [[{ kind: "userText", text: "hi" }]]],
   );
@@ -479,7 +482,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  equal(sessions.changes, [
+  assertEquals(sessions.changes, [
     {
       model: { provider: "p", model: "m" },
       settings: { ...own.settings, reasoning: {} },
@@ -494,7 +497,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  equal(chat.notices, ["error the model did not change: Error: a turn runs"]);
+  assertEquals(chat.notices, ["error the model did not change: Error: a turn runs"]);
 });
 
 test("a slash word lists the matching commands above the composer, and enter runs the selected one", async () => {
@@ -508,7 +511,10 @@ test("a slash word lists the matching commands above the composer, and enter run
   frame.key("enter");
   await waitForSettled();
   frame.draw();
-  equal([listed[0]?.startsWith(" /model"), rows(frame.frame).includes("p/m"), composer.state.text], [true, true, ""]);
+  assertEquals(
+    [listed[0]?.startsWith(" /model"), rows(frame.frame).includes("p/m"), composer.state.text],
+    [true, true, ""],
+  );
 });
 
 test("up and down move through the enabled commands, and enter runs the selected one", async () => {
@@ -535,7 +541,7 @@ test("up and down move through the enabled commands, and enter runs the selected
   frame.key("up");
   frame.key("down");
   frame.key("enter");
-  equal([ran, composerOf(chat).state.text], [["alpine"], ""]);
+  assertEquals([ran, composerOf(chat).state.text], [["alpine"], ""]);
 });
 
 test("the word of a draft that runs a command has the command style in the composer", async () => {
@@ -557,7 +563,7 @@ test("the word of a draft that runs a command has the command style in the compo
   const styled = ["/mode", "/mode fast"].map((draft) => fgAt(draft, 0));
   // The text after the word, a part of a word, a disabled command, and an unknown word have no command style.
   const plain = [fgAt("/mode fast", 6), fgAt("/mo", 0), fgAt("/off", 0), fgAt("/nothing", 0)];
-  equal(
+  assertEquals(
     [styled, plain.map((fg) => fg === 5)],
     [
       [5, 5],
@@ -574,10 +580,10 @@ test("a command that gives false keeps its slash draft, and a command that runs 
   frame.start();
   frame.paste("/ask why");
   frame.key("enter");
-  equal(composerOf(chat).state.text, "/ask why");
+  assertEquals(composerOf(chat).state.text, "/ask why");
   refuse = false;
   frame.key("enter");
-  equal(composerOf(chat).state.text, "");
+  assertEquals(composerOf(chat).state.text, "");
 });
 
 test("a question in the place of the composer hides the commands", async () => {
@@ -602,7 +608,7 @@ test("a question in the place of the composer hides the commands", async () => {
       questions: [{ id: "go", header: "Go", question: "Go?", options: [{ label: "Yes" }, { label: "No" }] }],
     },
   });
-  equal([before, listed()], [true, false]);
+  assertEquals([before, listed()], [true, false]);
 });
 
 test("esc hides the commands until the draft changes, and a draft with no command sends as a message", async () => {
@@ -626,7 +632,7 @@ test("esc hides the commands until the draft changes, and a draft with no comman
   const path = listed();
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     [hidden, back, path, sessions.inputs],
     [[false, "/mo"], true, false, [[{ kind: "userText", text: "/etc/hosts is wrong" }]]],
   );
@@ -644,7 +650,7 @@ test("the commands of the chat are disabled in a pane of another plugin", async 
   const before = enabled();
   frame.surface("notes").tui.panes.split(() => ({ draw() {}, focusable: true }));
   frame.draw();
-  equal([before, enabled()], [[true], [false]]);
+  assertEquals([before, enabled()], [[true], [false]]);
 });
 
 test("the strip shows the waiting messages of the user oldest first, cut to one row, and no input of a plugin", async () => {
@@ -657,7 +663,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
   sessions.push(accepted(6, [{ kind: "userText", text: "CI failed" }], "plugin"));
   sessions.push(accepted(7, [{ kind: "userText", text: "and the docs\nthen push them" }]));
   frame.draw();
-  equal(rows(frame.frame).slice(3), [
+  assertEquals(rows(frame.frame).slice(3), [
     "",
     " fix the test",
     " and the docs th… ↑ edit",
@@ -666,7 +672,7 @@ test("the strip shows the waiting messages of the user oldest first, cut to one 
     "────────────────────────",
   ]);
   // The transcript gives the strip its rows.
-  equal(chat.transcript().scroll.state.height, 3);
+  assertEquals(chat.transcript().scroll.state.height, 3);
 });
 
 test("up recalls the newest waiting message with its images, the next up puts the older one above, and an edit or a caret move ends it", async () => {
@@ -694,7 +700,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
   const blob = span?.kind === "image" ? span.media : undefined;
   frame.key("up");
   await waitForSettled();
-  equal(
+  assertEquals(
     [recalled, blob, draft(composerOf(chat).state), sessions.removals],
     [["see \uFFFC", [[4, 5, "[image 1]"]]], media, ["one\nsee \uFFFC", [[8, 9, "[image 1]"]]], [9, 5]],
   );
@@ -703,7 +709,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
   frame.key("up");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     [sessions.removals, rows(frame.frame).some((row) => row.includes("CI failed")), rows(frame.frame).at(-5)],
     [[9, 5], false, `${" zero".padEnd(23)} ↑ edit`],
   );
@@ -713,7 +719,7 @@ test("up recalls the newest waiting message with its images, the next up puts th
   await waitForSettled();
   frame.key("left up");
   await waitForSettled();
-  equal([composerOf(chat).state.text, sessions.removals], ["zero", [9, 5, 3]]);
+  assertEquals([composerOf(chat).state.text, sessions.removals], ["zero", [9, 5, 3]]);
 });
 
 test("a message that a turn took stays sent and the next up recalls an older one, up during a recall does nothing, and text typed meanwhile stays", async () => {
@@ -727,7 +733,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
   sessions.state.removed = false;
   frame.key("up");
   await waitForSettled();
-  equal([composerOf(chat).state.text, chat.notices], ["", ["info the message reached the turn already"]]);
+  assertEquals([composerOf(chat).state.text, chat.notices], ["", ["info the message reached the turn already"]]);
   // The next up goes on with the older message, so it never asks for the sent one again.
   sessions.state.removed = true;
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -737,7 +743,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
   frame.paste("x");
   resolve();
   await waitForSettled();
-  equal([composerOf(chat).state.text, sessions.removals], ["zero\nx", [5, 3]]);
+  assertEquals([composerOf(chat).state.text, sessions.removals], ["zero\nx", [5, 3]]);
 });
 
 test("a pane close during a recall leaves the composer and gives no notice", async () => {
@@ -754,7 +760,7 @@ test("a pane close during a recall leaves the composer and gives no notice", asy
   chat.tui.commands.run("core:close");
   resolve();
   await waitForSettled();
-  equal([composer.state.text, chat.notices, sessions.removals], ["", [], [5]]);
+  assertEquals([composer.state.text, chat.notices, sessions.removals], ["", [], [5]]);
 });
 
 test("up during a browse goes on with the history, and the end of the browse gives up to a recall", async () => {
@@ -779,7 +785,7 @@ test("up during a browse goes on with the history, and the end of the browse giv
   const browsed = [composerOf(chat).state.text, [...sessions.removals]];
   frame.key("down up");
   await waitForSettled();
-  equal([browsed, composerOf(chat).state.text, sessions.removals], [["old", []], "wait", [7]]);
+  assertEquals([browsed, composerOf(chat).state.text, sessions.removals], [["old", []], "wait", [7]]);
 });
 
 test("the strip keeps the newest messages when rows run out, and a failed recall keeps the composer", async () => {
@@ -799,7 +805,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
   sessions.state.removal = Promise.reject(new Error("disk"));
   frame.key("up");
   await waitForSettled();
-  equal(
+  assertEquals(
     [strip, composerOf(chat).state.text, chat.notices],
     [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error the message did not come back: Error: disk"]],
   );
@@ -815,7 +821,7 @@ test("a send after a close of the session by another client opens the session ag
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  equal(
+  assertEquals(
     [sessions.opened.map((open) => open.id), sessions.inputs],
     [["s1", "s1"], [[{ kind: "userText", text: "hi" }]]],
   );
@@ -840,7 +846,7 @@ test("ctrl+v puts the image of the clipboard at the caret with the next number, 
   frame.key("enter");
   await waitForSettled();
   const media = (digest: string) => ({ kind: "media", blob: { digest, len: 3 }, mimeType: "image/png" });
-  equal(
+  assertEquals(
     [shown, sessions.blobs, sessions.inputs],
     [
       [
@@ -876,10 +882,10 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
   sessions.state.store = store.promise;
   frame.key("ctrl+v");
   await waitForSettled();
-  equal(sessions.blobs.length, 1);
+  assertEquals(sessions.blobs.length, 1);
   store.reject(new Error("disk full"));
   await waitForSettled();
-  equal(
+  assertEquals(
     [
       none,
       chat.notices.slice(1),
@@ -901,7 +907,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   frame.key("ctrl+v");
   await waitForSettled();
   frame.draw();
-  equal(rows(frame.frame).includes("p/m"), true);
+  assertEquals(rows(frame.frame).includes("p/m"), true);
   frame.key("esc");
   await waitForSettled();
   const cancelled = [sessions.created.length, composer.state.text];
@@ -919,7 +925,7 @@ test("a cancel of the model picker or a pane close during ctrl+v puts nothing in
   closing.tui.commands.run("core:close");
   resolve();
   await waitForSettled();
-  equal([cancelled, held.state.text, closing.notices], [[0, ""], "", []]);
+  assertEquals([cancelled, held.state.text, closing.notices], [[0, ""], "", []]);
 });
 
 test("text typed while the first send sets up the session goes with the message", async () => {
@@ -944,7 +950,7 @@ test("text typed while the first send sets up the session goes with the message"
   frame.paste("test");
   resolve(CATALOG);
   await waitForSettled();
-  equal(sessions.inputs, [[{ kind: "userText", text: "fix the test" }]]);
+  assertEquals(sessions.inputs, [[{ kind: "userText", text: "fix the test" }]]);
 });
 
 test("ctrl+k m after a failed open gives the notice of the open only", async () => {
@@ -960,7 +966,7 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  equal(chat.notices, [
+  assertEquals(chat.notices, [
     "error the session s1 did not open: Error: busy",
     "error the session s1 did not open: Error: busy",
   ]);
@@ -982,5 +988,5 @@ test("an image whose store finishes after an edit goes where the caret is then",
   frame.paste("x");
   resolve();
   await waitForSettled();
-  equal(draft(composerOf(chat).state), ["x\uFFFCab", [[1, 2, "[image 1]"]]]);
+  assertEquals(draft(composerOf(chat).state), ["x\uFFFCab", [[1, 2, "[image 1]"]]]);
 });

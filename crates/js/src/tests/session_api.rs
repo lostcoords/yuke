@@ -435,7 +435,7 @@ async fn idle_preserves_the_order_of_facts_and_view_events_across_batches() {
             "const delivered = [];
              context.addListener('session.update', data => delivered.push(`fact ${{data.update.state}}`));
              const handle = await sessions.open('{}', {{ tail: 5, onEvent(event) {{
-               if ('update' in event) delivered.push(`view ${{event.update.state}}`);
+               if (event.kind === 'update') delivered.push(`view ${{event.update.state}}`);
              }} }});
              await handle.waitForIdle();
              return delivered;",
@@ -465,7 +465,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
              globalThis.handle = await sessions.open('{}', {{ tail: 5, onEvent(event) {{
                recursed ||= delivering;
                delivering = true;
-               if ('update' in event) {{
+               if (event.kind === 'update') {{
                  updates.push(event.update.sessionUpdate === 'state' ? event.update.state : 'follow-up');
                  if (!called) {{ called = true; handle.cancel(); }}
                }}

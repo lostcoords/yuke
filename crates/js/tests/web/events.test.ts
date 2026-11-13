@@ -1,7 +1,7 @@
 // The web classes of `yuke:internal/events`: events, event targets, and abort signals. Many cases follow the web
 // platform tests (WPT) of `dom/events` and `dom/abort`.
 
-import { assert, equal, test, throws, waitForSettled } from "yuke:test";
+import { assert, assertEquals, assertThrows, test, waitForSettled } from "yuke:test";
 import { thrownName } from "./errors.ts";
 
 // Classes, construction, and the shape of an event.
@@ -10,7 +10,7 @@ test("an event takes its flags from the init", () => {
   const plain = new Event("x");
   // @ts-expect-error: the event converts each flag to a boolean.
   const set = new Event("x", { bubbles: 1, cancelable: "yes", composed: {} });
-  equal(
+  assertEquals(
     [plain.bubbles, plain.cancelable, plain.composed, set.bubbles, set.cancelable, set.composed],
     [false, false, false, true, true, true],
   );
@@ -19,20 +19,20 @@ test("an event takes its flags from the init", () => {
 test("a custom event carries its detail", () => {
   const detail = { path: "a" };
   assert(new CustomEvent("x", { detail }).detail === detail, "the detail is the value of the init");
-  equal(new CustomEvent("x").detail, null);
-  equal(new CustomEvent("x", { detail: undefined }).detail, null);
-  equal(new CustomEvent("x", { bubbles: true }).bubbles, true);
+  assertEquals(new CustomEvent("x").detail, null);
+  assertEquals(new CustomEvent("x", { detail: undefined }).detail, null);
+  assertEquals(new CustomEvent("x", { bubbles: true }).bubbles, true);
   assert(new CustomEvent("x") instanceof Event, "a custom event is an event");
 });
 
 test("is trusted is an own property that a script cannot redefine", () => {
   const event = new Event("x");
-  equal(Object.getOwnPropertyDescriptor(event, "isTrusted")?.configurable, false);
-  equal(
+  assertEquals(Object.getOwnPropertyDescriptor(event, "isTrusted")?.configurable, false);
+  assertEquals(
     thrownName(() => Object.defineProperty(event, "isTrusted", { value: true })),
     "TypeError",
   );
-  equal(event.isTrusted, false);
+  assertEquals(event.isTrusted, false);
 });
 
 // Dispatch.
@@ -50,10 +50,10 @@ test("a subclass of event reaches a listener of a subclass of event target", () 
   const seen: Event[] = [];
   notes.addEventListener("saved", (event) => seen.push(event));
   notes.dispatchEvent(new Saved("a.txt"));
-  equal(seen.length, 1);
+  assertEquals(seen.length, 1);
   const event = seen[0];
   assert(event instanceof Saved, "the listener gets the subclass");
-  equal(event.path, "a.txt");
+  assertEquals(event.path, "a.txt");
 });
 
 test("a dispatch sets the targets and the phase only while it runs", () => {
@@ -71,9 +71,9 @@ test("a dispatch sets the targets and the phase only while it runs", () => {
     ]);
   });
   target.dispatchEvent(event);
-  equal(seen, [[true, true, true, 2, true]]);
+  assertEquals(seen, [[true, true, true, 2, true]]);
   assert(event.target === target, "the target stays after the dispatch");
-  equal([event.currentTarget, event.eventPhase, event.composedPath()], [null, 0, []]);
+  assertEquals([event.currentTarget, event.eventPhase, event.composedPath()], [null, 0, []]);
 });
 
 test("capture listeners run before the other listeners", () => {
@@ -83,7 +83,7 @@ test("capture listeners run before the other listeners", () => {
   target.addEventListener("x", () => log.push("capture"), true);
   target.addEventListener("x", () => log.push("capture2"), { capture: true });
   target.dispatchEvent(new Event("x"));
-  equal(log, ["capture", "capture2", "other"]);
+  assertEquals(log, ["capture", "capture2", "other"]);
 });
 
 test("stop propagation ends the dispatch after its pass and resets after a dispatch", () => {
@@ -108,7 +108,7 @@ test("stop propagation ends the dispatch after its pass and resets after a dispa
   target.dispatchEvent(early);
   log.push("|");
   target.dispatchEvent(early);
-  equal(log, ["capture", "capture2", "capture", "capture2", "|", "|", "capture", "capture2"]);
+  assertEquals(log, ["capture", "capture2", "capture", "capture2", "|", "|", "capture", "capture2"]);
 });
 
 test("stop immediate propagation ends the dispatch after its listener", () => {
@@ -127,7 +127,7 @@ test("stop immediate propagation ends the dispatch after its listener", () => {
   const event = new Event("x");
   target.dispatchEvent(event);
   target.dispatchEvent(event);
-  equal(log, ["first", "first"]);
+  assertEquals(log, ["first", "first"]);
 });
 
 test("a listener cancels only a cancelable event", () => {
@@ -135,7 +135,7 @@ test("a listener cancels only a cancelable event", () => {
   target.addEventListener("x", (event) => event.preventDefault());
   const plain = new Event("x");
   const cancelable = new Event("x", { cancelable: true });
-  equal(
+  assertEquals(
     [
       target.dispatchEvent(plain),
       plain.defaultPrevented,
@@ -153,7 +153,7 @@ test("a passive listener cannot cancel and a later call can", () => {
   const first = target.dispatchEvent(event);
   event.preventDefault();
   target.addEventListener("x", (event) => event.preventDefault());
-  equal(
+  assertEquals(
     [first, event.defaultPrevented, target.dispatchEvent(new Event("x", { cancelable: true }))],
     [true, true, false],
   );
@@ -164,16 +164,16 @@ test("an event in a dispatch cannot be dispatched again and another event can", 
   const event = new Event("x");
   const log: unknown[] = [];
   target.addEventListener("x", () => {
-    log.push(throws(() => target.dispatchEvent(event)));
+    log.push(assertThrows(() => target.dispatchEvent(event)));
     target.dispatchEvent(new Event("y"));
   });
   target.addEventListener("y", () => log.push("y"));
   target.dispatchEvent(event);
-  equal(log.length, 2);
+  assertEquals(log.length, 2);
   const error = log[0];
   assert(error instanceof DOMException, "the error is a DOMException");
-  equal(error.name, "InvalidStateError");
-  equal(log[1], "y");
+  assertEquals(error.name, "InvalidStateError");
+  assertEquals(log[1], "y");
 });
 
 // Listeners.
@@ -189,7 +189,7 @@ test("a second add of one listener with one capture flag does nothing", () => {
   target.addEventListener("x", listener, true);
   target.dispatchEvent(new Event("x"));
   target.dispatchEvent(new Event("x"));
-  equal(calls, 4);
+  assertEquals(calls, 4);
 });
 
 test("a remove needs the capture flag of the add", () => {
@@ -208,7 +208,7 @@ test("a remove needs the capture flag of the add", () => {
   target.removeEventListener("x", listener, { capture: true });
   target.removeEventListener("x", other, true);
   target.dispatchEvent(new Event("x"));
-  equal(calls, 11);
+  assertEquals(calls, 11);
 });
 
 test("a once listener is removed before its call", () => {
@@ -224,7 +224,7 @@ test("a once listener is removed before its call", () => {
   );
   target.dispatchEvent(new Event("x"));
   target.dispatchEvent(new Event("x"));
-  equal(calls, 1);
+  assertEquals(calls, 1);
 });
 
 test("a listener that a listener removes does not run and an added one waits for the next pass", () => {
@@ -246,7 +246,7 @@ test("a listener that a listener removes does not run and an added one waits for
   });
   target.addEventListener("x", later);
   target.dispatchEvent(new Event("x"));
-  equal(log, ["capture", "other", "added in capture"]);
+  assertEquals(log, ["capture", "other", "added in capture"]);
 });
 
 test("a listener object reads its handle event at each call", () => {
@@ -261,7 +261,7 @@ test("a listener object reads its handle event at each call", () => {
   target.dispatchEvent(new Event("x"));
   listener.handleEvent = () => log.push("replaced");
   target.dispatchEvent(new Event("x"));
-  equal(log, [[true, "x"], "replaced"]);
+  assertEquals(log, [[true, "x"], "replaced"]);
 });
 
 // Abort signals.
@@ -287,13 +287,13 @@ test("an aborted signal adds no listener and an abort removes one", () => {
   target.dispatchEvent(new Event("x"));
   controller.abort();
   target.dispatchEvent(new Event("x"));
-  equal(calls, 10);
+  assertEquals(calls, 10);
 });
 
 test("a signal has no public constructor", () => {
   // @ts-expect-error: the type of `AbortSignal` has no constructor.
   class Mine extends AbortSignal {}
-  equal(
+  assertEquals(
     [
       // @ts-expect-error: the type of `AbortSignal` has no constructor.
       () => new AbortSignal(),
@@ -315,10 +315,10 @@ test("a controller aborts its signal once with the first reason", () => {
   controller.abort(reason);
   controller.abort("second");
   assert(controller.signal === signal, "each read gives the same signal");
-  equal(before, [false, undefined]);
-  equal(signal.aborted, true);
+  assertEquals(before, [false, undefined]);
+  assertEquals(signal.aborted, true);
   assert(signal.reason === reason, "the reason is the first one");
-  equal(calls, 1);
+  assertEquals(calls, 1);
 });
 
 test("an abort without a reason gives an abort error and null stays null", () => {
@@ -326,19 +326,19 @@ test("an abort without a reason gives an abort error and null stays null", () =>
   controller.abort();
   const reason = controller.signal.reason;
   assert(reason instanceof DOMException, "the reason is a DOMException");
-  equal([reason.name, reason.code], ["AbortError", 20]);
+  assertEquals([reason.name, reason.code], ["AbortError", 20]);
   const nulled = new AbortController();
   nulled.abort(null);
-  equal(nulled.signal.reason, null);
+  assertEquals(nulled.signal.reason, null);
 
   const object = {};
   const withObject = AbortSignal.abort(object);
-  equal(withObject.aborted, true);
+  assertEquals(withObject.aborted, true);
   assert(withObject.reason === object, "the reason is the object");
   const withUndefined = AbortSignal.abort(undefined).reason;
   assert(withUndefined instanceof DOMException, "the reason is a DOMException");
-  equal(withUndefined.name, "AbortError");
-  equal(AbortSignal.abort(null).reason, null);
+  assertEquals(withUndefined.name, "AbortError");
+  assertEquals(AbortSignal.abort(null).reason, null);
 });
 
 test("an abort event is trusted until a script dispatches it", () => {
@@ -346,15 +346,15 @@ test("an abort event is trusted until a script dispatches it", () => {
   const events: Event[] = [];
   controller.signal.addEventListener("abort", (event) => events.push(event));
   controller.abort();
-  equal(events.length, 1);
+  assertEquals(events.length, 1);
   const event = events[0];
   assert(event !== undefined);
-  equal(
+  assertEquals(
     [event.type, event.isTrusted, event.bubbles, event.cancelable, event.target === controller.signal],
     ["abort", true, false, false, true],
   );
   new EventTarget().dispatchEvent(event);
-  equal(event.isTrusted, false);
+  assertEquals(event.isTrusted, false);
 });
 
 test("a listener added after the abort does not run", async () => {
@@ -367,7 +367,7 @@ test("a listener added after the abort does not run", async () => {
     calls += 1;
   };
   await waitForSettled();
-  equal(calls, 0);
+  assertEquals(calls, 0);
 });
 
 test("throw if aborted throws the reason only after the abort", () => {
@@ -375,7 +375,7 @@ test("throw if aborted throws the reason only after the abort", () => {
   const reason = new Error("stop");
   controller.signal.throwIfAborted();
   controller.abort(reason);
-  assert(throws(() => controller.signal.throwIfAborted()) === reason, "the throw is the reason");
+  assert(assertThrows(() => controller.signal.throwIfAborted()) === reason, "the throw is the reason");
 });
 
 test("onabort keeps its place until a clear", () => {
@@ -393,31 +393,31 @@ test("onabort keeps its place until a clear", () => {
   two.signal.onabort = null;
   two.signal.onabort = () => log.push("third");
   two.abort();
-  equal(log, [[true, "abort"], "listener", "second", "third"]);
+  assertEquals(log, [[true, "abort"], "listener", "second", "third"]);
 });
 
 test("timeout aborts with a timeout error after its delay", async () => {
   const started = performance.now();
   const signal = AbortSignal.timeout(20);
   const zero = AbortSignal.timeout(0);
-  equal([signal.aborted, zero.aborted], [false, false]);
+  assertEquals([signal.aborted, zero.aborted], [false, false]);
   await new Promise((resolve) => signal.addEventListener("abort", resolve));
   assert(performance.now() - started >= 20, "the abort waits for the delay");
   const reason = signal.reason;
   assert(reason instanceof DOMException, "the reason is a DOMException");
-  equal([reason.name, reason.code], ["TimeoutError", 23]);
-  equal(zero.aborted, true);
+  assertEquals([reason.name, reason.code], ["TimeoutError", 23]);
+  assertEquals(zero.aborted, true);
 });
 
 test("timeout refuses values outside its range", () => {
   for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
-    equal(
+    assertEquals(
       thrownName(() => AbortSignal.timeout(value)),
       "TypeError",
       String(value),
     );
   }
-  equal(
+  assertEquals(
     [
       // @ts-expect-error: a symbol is no number.
       () => AbortSignal.timeout(Symbol()),
@@ -440,7 +440,7 @@ test("any takes the reason of the first aborted input", () => {
       yield AbortSignal.abort("d");
     },
   });
-  equal([signal.aborted, signal.reason, AbortSignal.any(callable).reason], [true, "b", "d"]);
+  assertEquals([signal.aborted, signal.reason, AbortSignal.any(callable).reason], [true, "b", "d"]);
 });
 
 test("any aborts with the first source that aborts", () => {
@@ -451,8 +451,8 @@ test("any aborts with the first source that aborts", () => {
   signal.addEventListener("abort", () => log.push(signal.reason));
   b.abort("b");
   a.abort("a");
-  equal(log, ["b"]);
-  equal(signal.reason, "b");
+  assertEquals(log, ["b"]);
+  assertEquals(signal.reason, "b");
 });
 
 test("a dependent signal of a dependent aborts before the listeners of the source run", () => {
@@ -464,5 +464,5 @@ test("a dependent signal of a dependent aborts before the listeners of the sourc
   first.addEventListener("abort", () => log.push("first"));
   nested.addEventListener("abort", () => log.push(["nested", nested.reason]));
   controller.abort("why");
-  equal(log, [["source", true, true], "first", ["nested", "why"]]);
+  assertEquals(log, [["source", true, true], "first", ["nested", "why"]]);
 });

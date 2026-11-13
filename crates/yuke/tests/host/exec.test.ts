@@ -3,7 +3,7 @@
 
 import { readTextFile } from "yuke:fs";
 import type { Sessions } from "yuke:plugins";
-import { assert, createHost, equal, folder, type TestSession, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createHost, folder, type TestSession, test, waitForSettled } from "yuke:test";
 
 /** The answer of `exec` for `command`, with the arguments `extra`. */
 function exec(session: TestSession, command: string, extra: object = {}) {
@@ -22,7 +22,7 @@ test("exec answers the output in write order and the exit code", async () => {
 
   const result = await exec(session, "printf 'a\\n'; printf 'b\\n' >&2; printf 'c\\n'; pwd; exit 3");
 
-  equal([result.text, result.isError], [`a\nb\nc\n${folder()}\n[exit code: 3]`, true]);
+  assertEquals([result.text, result.isError], [`a\nb\nc\n${folder()}\n[exit code: 3]`, true]);
 });
 
 test("a command leads its own session without the terminal of yuke", async () => {
@@ -42,7 +42,7 @@ test("exec names the signal that ended the shell, and says when it has no output
   const killed = await exec(session, "kill -9 $$");
   const quiet = await exec(session, "true");
 
-  equal(
+  assertEquals(
     [killed.text, killed.isError, quiet.text, quiet.isError],
     ["[no output]\n[signal: 9]", true, "[no output]\n[exit code: 0]", false],
   );
@@ -57,7 +57,7 @@ test("a background exec and its stop show the user a short row and tell the mode
   const lines = started.text.split("\n");
   const stopped = await session.call("stop", { id });
 
-  equal(
+  assertEquals(
     [lines[0], lines[1]?.startsWith("Log: "), lines[1]?.endsWith(`${id}.log`), lines[2]],
     [
       `${id} runs in the background.`,
@@ -66,8 +66,8 @@ test("a background exec and its stop show the user a short row and tell the mode
       `Its end arrives as a message, so never sleep or poll. Use stop with ${id} to end it.`,
     ],
   );
-  equal(started.display, [{ kind: "markdown", text: `Running in the background as ${id}` }]);
-  equal([stopped.text, stopped.display], [`${id} stopped.`, [{ kind: "markdown", text: "Stopped" }]]);
+  assertEquals(started.display, [{ kind: "markdown", text: `Running in the background as ${id}` }]);
+  assertEquals([stopped.text, stopped.display], [`${id} stopped.`, [{ kind: "markdown", text: "Stopped" }]]);
 });
 
 test("a moved exec shows the user a short row and tells the model the log and the next step", async () => {
@@ -93,7 +93,7 @@ test("a moved exec shows the user a short row and tells the model the log and th
   const id = moved.text.split(" as ")[1]?.split(".")[0] as string;
   const lines = moved.text.split("\n");
 
-  equal(
+  assertEquals(
     [lines[0], lines[1]?.startsWith("Log: "), lines[2]],
     [
       `The user moved the command to the background as ${id}.`,
@@ -101,8 +101,8 @@ test("a moved exec shows the user a short row and tells the model the log and th
       `Its end arrives as a message, so never sleep or poll. Use stop with ${id} to end it.`,
     ],
   );
-  equal(moved.display, [{ kind: "markdown", text: `Moved to the background as ${id}` }]);
-  equal(moved.isError, false);
+  assertEquals(moved.display, [{ kind: "markdown", text: `Moved to the background as ${id}` }]);
+  assertEquals(moved.isError, false);
   await session.call("stop", { id });
 });
 
@@ -112,7 +112,7 @@ test("exec gives its output as live texts", async () => {
 
   const result = await exec(session, "echo one; echo two");
 
-  equal([result.text, result.output.join("")], ["one\ntwo\n[exit code: 0]", "one\ntwo\n"]);
+  assertEquals([result.text, result.output.join("")], ["one\ntwo\n[exit code: 0]", "one\ntwo\n"]);
 });
 
 test("exec stops its live output after the cap and answers the end", async () => {
@@ -134,7 +134,7 @@ test("exec reports its deadline also when the shell exits 0 at the stop", async 
   const result = await exec(session, "trap 'exit 0' TERM; sleep 30 & wait", { timeout_ms: 200 });
 
   assert(result.text.startsWith("[no output]\n[timeout: 200 ms."), result.text);
-  equal(result.isError, true);
+  assertEquals(result.isError, true);
 });
 
 test("exec at its deadline stops the process group", async () => {
@@ -157,7 +157,7 @@ test("each process of a stopped group gets the grace", async () => {
 
   await exec(session, group, { timeout_ms: 300 });
 
-  equal(await readTextFile(`${folder()}/cleaned`), "done\n");
+  assertEquals(await readTextFile(`${folder()}/cleaned`), "done\n");
 });
 
 test("exec ends every process that it starts", async () => {
@@ -168,7 +168,7 @@ test("exec ends every process that it starts", async () => {
   // The background sleep holds the output pipe. Only its end lets the read finish before the grace.
   const result = await exec(session, "sleep 30 & echo started");
 
-  equal(result.text, "started\n[exit code: 0]");
+  assertEquals(result.text, "started\n[exit code: 0]");
   assert(Date.now() - started < 1500, `the call took ${Date.now() - started} ms`);
 });
 
@@ -194,5 +194,5 @@ test("exec output over the cap keeps a head, a tail, and the full file", async (
   const marker = result.text.split("\n").find((line) => line.startsWith("[yuke cut "));
   const path = marker?.split("Full output: ")[1]?.split(". Read it")[0] ?? "";
   const expected = Array.from({ length: 30_000 }, (_item, index) => `${index + 1}\n`).join("");
-  equal(await readTextFile(path), expected);
+  assertEquals(await readTextFile(path), expected);
 });

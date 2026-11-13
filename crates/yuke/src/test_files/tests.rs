@@ -191,7 +191,7 @@ fn a_respond_that_throws_another_error_fails_the_test() {
                      description: "Read a session.",
                      concurrency: "serial",
                      parameters: { type: "object", properties: {} },
-                     execute: (_args, context) => s.request("session.read", null, { signal: context.signal }),
+                     execute: (_args, context) => s.sendClientRequest("session.read", null, { signal: context.signal }),
                    });
                  },
                }],

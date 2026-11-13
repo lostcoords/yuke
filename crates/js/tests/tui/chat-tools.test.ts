@@ -1,7 +1,7 @@
 // The tool calls of the bundled chat: the head line, the previews, the body, the diffs, the folds, and the links.
 
 import type { Block, DisplayBlock, StoredEvent, ToolHints, ToolResult } from "yuke:protocol";
-import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import {
   click,
   commit,
@@ -84,7 +84,7 @@ test("a folded call shows the head line and the preview of its hints, and an err
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 37), [
+  assertEquals(transcriptRows(frame).slice(0, 37), [
     "",
     " read src/main.rs",
     "",
@@ -118,7 +118,7 @@ test("a folded preview counts a line that it cuts as one more line", async () =>
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(1, 21), [
+  assertEquals(transcriptRows(frame).slice(1, 21), [
     " Probe",
     ...lines(" row", 9).split("\n"),
     ` ${"x".repeat(28)}`,
@@ -140,7 +140,7 @@ test("a folded preview keeps a carriage return out of its last line, and a body 
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(1, 21), [
+  assertEquals(transcriptRows(frame).slice(1, 21), [
     " Probe",
     ...lines(" row", 10).split("\n"),
     " … 2 more lines",
@@ -152,7 +152,7 @@ test("a folded preview keeps a carriage return out of its last line, and a body 
   frame.mouse(mouse(1, 11, "press"));
   frame.mouse(mouse(20, 11, "drag"));
   frame.mouse(mouse(20, 11, "release"));
-  equal(frame.copies, ["row 10"]);
+  assertEquals(frame.copies, ["row 10"]);
 });
 
 test("a folded call clips its subject to one row and keeps its state, and an open call shows the whole subject", async () => {
@@ -162,9 +162,9 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   const saved = calls({ name: "exec", args: { command }, hints: EXEC, result: failed });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 3), ["", " exec cd crates/js &… · error", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec cd crates/js &… · error", ""]);
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 6), [
+  assertEquals(transcriptRows(frame).slice(0, 6), [
     "",
     " exec cd crates/js &… · error",
     " cd crates/js &&",
@@ -176,7 +176,7 @@ test("a folded call clips its subject to one row and keeps its state, and an ope
   frame.mouse(mouse(1, 2, "press"));
   frame.mouse(mouse(14, 4, "drag"));
   frame.mouse(mouse(14, 4, "release"));
-  equal(frame.copies, [command]);
+  assertEquals(frame.copies, [command]);
 });
 
 test("a subject that fits in one row copies as it shows, and an open call does not show it twice", async () => {
@@ -185,11 +185,11 @@ test("a subject that fits in one row copies as it shows, and an open call does n
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 3), ["", " exec npm test", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec npm test", ""]);
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(14, 1, "drag"));
   frame.mouse(mouse(14, 1, "release"));
-  equal(frame.copies, ["exec npm test"]);
+  assertEquals(frame.copies, ["exec npm test"]);
 });
 
 test("a drag over a clipped subject copies the shown text, and its source gives the whole subject", async () => {
@@ -201,10 +201,10 @@ test("a drag over a clipped subject copies the shown text, and its source gives 
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(19, 1, "drag"));
   frame.mouse(mouse(19, 1, "release"));
-  equal(frame.copies, ["exec cd crates/js…"]);
+  assertEquals(frame.copies, ["exec cd crates/js…"]);
   const transcript = chat.transcript();
   const selection = transcript.selection;
-  equal(
+  assertEquals(
     selection === undefined ? undefined : transcript.text({ from: selection.anchor, to: selection.head }, "source"),
     `exec ${command}`,
   );
@@ -216,9 +216,9 @@ test("a click on a clipped path copies the whole path", async () => {
   const saved = calls({ name: "read", args: { path }, hints: READ, result: ok("") });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 3), ["", " read crates/js/mo…", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " read crates/js/mo…", ""]);
   click(frame, 7, 1);
-  equal(chat.notices, [`info copied /tools/${path}`]);
+  assertEquals(chat.notices, [`info copied /tools/${path}`]);
 });
 
 test("a subject with a line end that fits in one row still opens below the head line", async () => {
@@ -226,9 +226,9 @@ test("a subject with a line end that fits in one row still opens below the head 
   const saved = calls({ name: "exec", args: { command: "a\nb" }, hints: EXEC, result: ok("") });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 3), ["", " exec a b", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " exec a b", ""]);
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 5), ["", " exec a b", " a", " b", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 5), ["", " exec a b", " a", " b", ""]);
 });
 
 test("a carriage return in a subject stays out of a copy of the head line", async () => {
@@ -239,7 +239,7 @@ test("a carriage return in a subject stays out of a copy of the head line", asyn
   frame.mouse(mouse(1, 1, "press"));
   frame.mouse(mouse(10, 1, "drag"));
   frame.mouse(mouse(10, 1, "release"));
-  equal(frame.copies, ["exec a  b"]);
+  assertEquals(frame.copies, ["exec a  b"]);
 });
 
 test("a long title gives way to the state, and a subject without room stays out of the head line", async () => {
@@ -249,7 +249,7 @@ test("a long title gives way to the state, and a subject without room stays out 
   const saved = calls({ name: "exec", args: { command: "make" }, hints, result: failed });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 3), ["", " A title o… · error", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " A title o… · error", ""]);
 });
 
 test("an open call shows only its subject, and a call without a subject hint shows its raw arguments", async () => {
@@ -262,10 +262,10 @@ test("an open call shows only its subject, and a call without a subject hint sho
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 7), ["", " write a.rs", "", ' Probe {"depth":2}', "", " Probe", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 7), ["", " write a.rs", "", ' Probe {"depth":2}', "", " Probe", ""]);
   // Raw arguments have no link, so a click on them copies nothing.
   click(frame, 10, 3);
-  equal(frame.copies, []);
+  assertEquals(frame.copies, []);
 });
 
 test("a call without a subject hint shows its incomplete raw arguments", async () => {
@@ -279,7 +279,7 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(1, 2), [' Probe {"path":"a · waiting']);
+  assertEquals(transcriptRows(frame).slice(1, 2), [' Probe {"path":"a · waiting']);
 });
 
 test("a streaming call shows its name and raw arguments, and the subject takes their place when the hints come", async () => {
@@ -306,7 +306,7 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
     }),
   );
   sessions.push({ sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
-  equal(
+  assertEquals(
     [streaming, stopped, head()],
     [' exec {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
   );
@@ -322,7 +322,7 @@ test("a tool search that ends well shows no row, and a failed one shows its erro
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 6), [
+  assertEquals(transcriptRows(frame).slice(0, 6), [
     "",
     " read a.rs",
     "",
@@ -346,7 +346,7 @@ test("the tool toggle folds each shown tool when each one is open, and a hidden 
   const opened = transcriptRows(frame).slice(0, 3);
   frame.key("ctrl+o");
   frame.draw();
-  equal(
+  assertEquals(
     [opened, transcriptRows(frame).slice(0, 3)],
     [
       ["", " read a.rs", " x"],
@@ -367,7 +367,7 @@ test("a streaming tool search shows no row from its start", async () => {
   model({ kind: "blockStarted", blockId: 1, content: { kind: "toolCall", name: "tool_search" } });
   model({ kind: "toolInputDelta", blockId: 1, text: '{"query":' });
   frame.draw();
-  equal(transcriptRows(frame), ["", " I look for a tool.", "", "", ""]);
+  assertEquals(transcriptRows(frame), ["", " I look for a tool.", "", "", ""]);
 });
 
 test("a failed call with a display shows the display in place of its text", async () => {
@@ -378,7 +378,12 @@ test("a failed call with a display shows the display in place of its text", asyn
   const saved = calls({ name: "fetch", args: { url: "https://a.b/c" }, hints, result, display });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 4), ["", " Fetch https://a.b/c · error", " Page not found (HTTP 404).", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), [
+    "",
+    " Fetch https://a.b/c · error",
+    " Page not found (HTTP 404).",
+    "",
+  ]);
 });
 
 test("the live output of a call gives way to its result at once", async () => {
@@ -398,11 +403,11 @@ test("the live output of a call gives way to its result at once", async () => {
   sessions.push({ sessionUpdate: "toolStarted", position, call });
   sessions.push({ sessionUpdate: "toolOutput", position, text: "compiling" });
   frame.draw();
-  equal(transcriptRows(frame).slice(0, 4), ["", " exec make · running", " compiling", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), ["", " exec make · running", " compiling", ""]);
   const result = { callId: "c0", content: "built", isError: false };
   sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
-  equal(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
 });
 
 test("a finished call shows its duration, and a call below one second or without a duration shows none", async () => {
@@ -416,7 +421,7 @@ test("a finished call shows its duration, and a call below one second or without
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row.startsWith(" exec")),
     [" exec · 3m 05s", " exec", " exec", " exec · error · 1s"],
   );
@@ -440,15 +445,15 @@ test("a silent running call counts up on its own, and its end shows the measured
   sessions.push({ sessionUpdate: "state", state: "running" });
   sessions.push({ sessionUpdate: "toolStarted", position, call });
   frame.draw();
-  equal(transcriptRows(frame)[1], " exec make · running");
+  assertEquals(transcriptRows(frame)[1], " exec make · running");
   clock.now += 12_000;
   frame.advance(100);
   frame.draw();
-  equal(transcriptRows(frame)[1], " exec make · 12s");
+  assertEquals(transcriptRows(frame)[1], " exec make · 12s");
   const result = { callId: "c0", content: "", isError: false };
   sessions.push({ sessionUpdate: "toolFinished", position, result, display: [], durationMs: 40_000 });
   frame.draw();
-  equal(transcriptRows(frame)[1], " exec make · 40s");
+  assertEquals(transcriptRows(frame)[1], " exec make · 40s");
 });
 
 test("a copy of live output gives its lines", async () => {
@@ -470,7 +475,7 @@ test("a copy of live output gives its lines", async () => {
   frame.mouse(mouse(1, 2, "press"));
   frame.mouse(mouse(4, 3, "drag"));
   frame.mouse(mouse(4, 3, "release"));
-  equal(frame.copies, ["one\ntwo"]);
+  assertEquals(frame.copies, ["one\ntwo"]);
 });
 
 test("a folded call gives no count of the lines that its live output leaves out, and its result gives one", async () => {
@@ -494,7 +499,7 @@ test("a folded call gives no count of the lines that its live output leaves out,
   sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
   const tail = lines(" out", 8).split("\n").slice(3);
-  equal(
+  assertEquals(
     [live, transcriptRows(frame).slice(2, 8)],
     [
       [" … more lines", ...tail],
@@ -512,7 +517,7 @@ test("a result with only media shows a label with the type, the number, and the 
   const saved = calls({ name: "probe", args: {}, hints: PROBE, result: { ...ok(""), media } });
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 5), [
+  assertEquals(transcriptRows(frame).slice(0, 5), [
     "",
     " Probe",
     " [image/png #1 · 2 KiB]",
@@ -532,7 +537,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
   const saved = calls({ name: "edit", args: { path: "src/a.rs" }, hints: edit, result: ok("done"), display });
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(2, 11), [
+  assertEquals(transcriptRows(frame).slice(2, 11), [
     " Edited",
     " src/a.rs",
     " 1 -old",
@@ -547,11 +552,11 @@ test("the display blocks of a result share one preview, and a diff copies its li
   frame.mouse(mouse(1, 3, "press"));
   frame.mouse(mouse(8, 9, "drag"));
   frame.mouse(mouse(8, 9, "release"));
-  equal(frame.copies, ["src/a.rs\n-old\n+new\n same\n-c\n+d"]);
+  assertEquals(frame.copies, ["src/a.rs\n-old\n+new\n same\n-c\n+d"]);
   // The source offsets of the diff rows come after the Markdown block, and the source keeps each header.
   const transcript = chat.transcript();
   const selection = transcript.selection;
-  equal(
+  assertEquals(
     selection === undefined ? undefined : transcript.text({ from: selection.anchor, to: selection.head }, "source"),
     `src/a.rs\n${patch}`,
   );
@@ -559,7 +564,7 @@ test("the display blocks of a result share one preview, and a diff copies its li
   frame.mouse(mouse(1, 2, "press"));
   frame.mouse(mouse(8, 9, "drag"));
   frame.mouse(mouse(8, 9, "release"));
-  equal(frame.copies.at(-1), "Edited\nsrc/a.rs\n-old\n+new\n same\n-c\n+d");
+  assertEquals(frame.copies.at(-1), "Edited\nsrc/a.rs\n-old\n+new\n same\n-c\n+d");
 });
 
 /** A frame with one call `edit` of `patch` at `width`, and the rows of the transcript after the head row. */
@@ -578,7 +583,7 @@ test("a diff numbers each line from its hunk header: old on a removed line, new 
   const { frame, shown } = await diffShown(patch);
   using _frame = frame;
 
-  equal(shown.slice(0, 11), [
+  assertEquals(shown.slice(0, 11), [
     " a.rs",
     "   9  a",
     "  10 -b",
@@ -597,7 +602,7 @@ test("a line of a hunk that starts with dashes or plus signs is a removed line o
   const { frame, shown } = await diffShown("@@ -1,3 +1,2 @@\n--- a comment\n+++b\n x\n");
   using _frame = frame;
 
-  equal(shown.slice(1, 4), [" 1 --- a comment", " 1 +++b", " 2  x"]);
+  assertEquals(shown.slice(1, 4), [" 1 --- a comment", " 1 +++b", " 2  x"]);
   const background = (row: number) => frame.frame.cells[row]?.[3]?.style.bg;
   assert(background(3) !== undefined && background(4) !== undefined);
   assert(background(3) !== background(4));
@@ -607,11 +612,11 @@ test("a wrapped line of a diff shows one number, and a copy joins its rows", asy
   const { frame, shown } = await diffShown("@@ -7,1 +7,1 @@\n-abcdefghijklmnop\n", 14);
   using _frame = frame;
 
-  equal(shown.slice(1, 3), [" 7 -abcdefghi", "   jklmnop"]);
+  assertEquals(shown.slice(1, 3), [" 7 -abcdefghi", "   jklmnop"]);
   frame.mouse(mouse(3, 3, "press"));
   frame.mouse(mouse(10, 4, "drag"));
   frame.mouse(mouse(10, 4, "release"));
-  equal(frame.copies, ["-abcdefghijklmnop"]);
+  assertEquals(frame.copies, ["-abcdefghijklmnop"]);
 });
 
 test("a drag from the ⋮ copies the next hunk without a line end before it", async () => {
@@ -621,7 +626,7 @@ test("a drag from the ⋮ copies the next hunk without a line end before it", as
   frame.mouse(mouse(3, 5, "press"));
   frame.mouse(mouse(8, 7, "drag"));
   frame.mouse(mouse(8, 7, "release"));
-  equal(frame.copies, ["-c\n+d"]);
+  assertEquals(frame.copies, ["-c\n+d"]);
 });
 
 test("a click on a subject copies its path in the folder of the call, and a click on the title opens the call", async () => {
@@ -630,10 +635,10 @@ test("a click on a subject copies its path in the folder of the call, and a clic
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 7, 1);
-  equal([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info copied /tools/src/main.rs"]]);
-  equal(transcriptRows(frame).slice(0, 3), ["", " read src/main.rs", ""]);
+  assertEquals([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info copied /tools/src/main.rs"]]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " read src/main.rs", ""]);
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 4), ["", " read src/main.rs", " fn main() {}", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), ["", " read src/main.rs", " fn main() {}", ""]);
 });
 
 test("a click on a body row, a preview row, or the count row toggles a call, and the row between two items does not", async () => {
@@ -645,20 +650,20 @@ test("a click on a body row, a preview row, or the count row toggles a call, and
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   const folded = transcriptRows(frame).slice(0, 26);
-  equal(folded.slice(11, 15), [" a 10", " … 2 more lines", "", " Probe"]);
-  equal(folded.slice(24, 26), [" b 10", " … 2 more lines"]);
+  assertEquals(folded.slice(11, 15), [" a 10", " … 2 more lines", "", " Probe"]);
+  assertEquals(folded.slice(24, 26), [" b 10", " … 2 more lines"]);
   // A click on the row that counts the rest opens the call.
   click(frame, 3, 12);
-  equal(transcriptRows(frame).slice(12, 15), [" a 11", " a 12", ""]);
+  assertEquals(transcriptRows(frame).slice(12, 15), [" a 11", " a 12", ""]);
   // A click on a row of the body folds it.
   click(frame, 3, 12);
-  equal(transcriptRows(frame).slice(0, 26), folded);
+  assertEquals(transcriptRows(frame).slice(0, 26), folded);
   // The row above the second call has no toggle, so the call stays folded.
   click(frame, 3, 13);
-  equal(transcriptRows(frame).slice(0, 26), folded);
+  assertEquals(transcriptRows(frame).slice(0, 26), folded);
   // A click on a row of a preview opens the call.
   click(frame, 3, 2);
-  equal(transcriptRows(frame).slice(12, 14), [" a 11", " a 12"]);
+  assertEquals(transcriptRows(frame).slice(12, 14), [" a 11", " a 12"]);
 });
 
 test("a click on the text of an open thought folds it", async () => {
@@ -670,9 +675,9 @@ test("a click on the text of an open thought folds it", async () => {
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 4), ["", " thought", " why", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), ["", " thought", " why", ""]);
   click(frame, 2, 2);
-  equal(transcriptRows(frame).slice(0, 3), ["", " thought", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " thought", ""]);
 });
 
 test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
@@ -685,21 +690,21 @@ test("a call that opens at the tail stays on its rows, and the pane follows the 
   frame.start();
   const folded = transcriptRows(frame).slice(0, 12);
   const view = chat.transcript();
-  equal(view.scroll.state.following, true);
+  assertEquals(view.scroll.state.following, true);
   const more = folded.indexOf(" … 30 more lines");
   click(frame, 3, more);
   // The rows above stay, and the next rows of the output take the place of the count.
-  equal(transcriptRows(frame).slice(0, more), folded.slice(0, more));
-  equal(transcriptRows(frame)[more], " b 11");
-  equal(view.scroll.state.following, false);
+  assertEquals(transcriptRows(frame).slice(0, more), folded.slice(0, more));
+  assertEquals(transcriptRows(frame)[more], " b 11");
+  assertEquals(view.scroll.state.following, false);
   click(frame, 3, more);
-  equal(transcriptRows(frame).slice(0, 12), folded);
-  equal(view.scroll.state.following, true);
+  assertEquals(transcriptRows(frame).slice(0, 12), folded);
+  assertEquals(view.scroll.state.following, true);
   // ctrl+o keeps the pane on the tail in both directions.
   frame.key("ctrl+o");
-  equal(view.scroll.state.following, true);
+  assertEquals(view.scroll.state.following, true);
   frame.key("ctrl+o");
-  equal(view.scroll.state.following, true);
+  assertEquals(view.scroll.state.following, true);
 });
 
 test("a call that folds from a row below its hidden head line shows the head line at the top", async () => {
@@ -716,7 +721,7 @@ test("a call that folds from a row below its hidden head line shows the head lin
   frame.draw();
   const row = transcriptRows(frame).indexOf(" b 30");
   click(frame, 3, row);
-  equal(transcriptRows(frame).slice(0, 3), [" Probe", " b 1", " b 2"]);
+  assertEquals(transcriptRows(frame).slice(0, 3), [" Probe", " b 1", " b 2"]);
 });
 
 test("a call that opens in a view away from the tail leaves the rows above it in place", async () => {
@@ -732,8 +737,8 @@ test("a call that opens in a view away from the tail leaves the rows above it in
   frame.draw();
   const before = transcriptRows(frame).slice(0, 12);
   click(frame, 3, 3);
-  equal(transcriptRows(frame).slice(0, 12), before);
-  equal(transcriptRows(frame)[12], " a 11");
+  assertEquals(transcriptRows(frame).slice(0, 12), before);
+  assertEquals(transcriptRows(frame)[12], " a 11");
 });
 
 test("a relative link of a call without a folder starts in the folder of the session, and one in a result in the call folder", async () => {
@@ -744,10 +749,10 @@ test("a relative link of a call without a folder starts in the folder of the ses
   );
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  equal(transcriptRows(frame).slice(0, 5), ["", " read a.rs", "", " Probe", " [b](b.rs)"]);
+  assertEquals(transcriptRows(frame).slice(0, 5), ["", " read a.rs", "", " Probe", " [b](b.rs)"]);
   click(frame, 7, 1);
   click(frame, 2, 4);
-  equal(frame.copies, ["/w/a.rs", "/tools/b.rs"]);
+  assertEquals(frame.copies, ["/w/a.rs", "/tools/b.rs"]);
 });
 
 test("ctrl+o in the composer opens each tool when one is folded, else folds each tool, and it leaves a thought", async () => {
@@ -763,9 +768,22 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
   frame.key("ctrl+o");
   click(frame, 2, 1);
   frame.key("ctrl+o");
-  equal(transcriptRows(frame).slice(0, 12), ["", " read a", " A", "", " read b", " B", "", " thought", "", "", "", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 12), [
+    "",
+    " read a",
+    " A",
+    "",
+    " read b",
+    " B",
+    "",
+    " thought",
+    "",
+    "",
+    "",
+    "",
+  ]);
   frame.key("ctrl+o");
-  equal(transcriptRows(frame).slice(0, 6), ["", " read a", "", " read b", "", " thought"]);
+  assertEquals(transcriptRows(frame).slice(0, 6), ["", " read a", "", " read b", "", " thought"]);
 });
 
 test("a link in a reply copies its target, and a relative target starts in the folder of the session", async () => {
@@ -778,10 +796,10 @@ test("a link in a reply copies its target, and a relative target starts in the f
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   // The Markdown rows show the whole link, and each of its cells carries the target.
-  equal(rows(frame.frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
+  assertEquals(rows(frame.frame).slice(1, 3), [" see [source](src/main.rs#L40-L52) or", " [docs](https://docs.rs)"]);
   click(frame, 7, 1);
   click(frame, 3, 2);
-  equal(frame.copies, ["/w/src/main.rs#L40-L52", "https://docs.rs"]);
+  assertEquals(frame.copies, ["/w/src/main.rs#L40-L52", "https://docs.rs"]);
 });
 
 test("a call that ended well shows a bold name, its subject in accent, dim output, and no band", async () => {
@@ -794,7 +812,7 @@ test("a call that ended well shows a bold name, its subject in accent, dim outpu
   const subject = themeStyle("chat.subject");
   assert(subject.fg !== undefined && subject.fg !== output.fg);
   const omitted = transcriptRows(frame).findIndex((row) => row.includes("more lines"));
-  equal(
+  assertEquals(
     [
       cells[1]?.[1]?.style.bold,
       cells[1]?.[6]?.style.fg,
@@ -814,7 +832,7 @@ test("a failed call has a band behind each row, and its text has the output styl
   const cells = frame.frame.cells;
   const band = themeStyle("chat.tool.failed").bg;
   assert(band !== undefined);
-  equal(
+  assertEquals(
     [
       transcriptRows(frame).slice(1, 3),
       cells[1]?.[1]?.style.bg,
@@ -853,7 +871,10 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   const result = { callId: "c0", content: "built", isError: false };
   sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
   frame.draw();
-  equal([running, copied, frame.frame.cells[1]?.[29]?.style], [[band, band], ["exec make · running\ncompiling"], {}]);
+  assertEquals(
+    [running, copied, frame.frame.cells[1]?.[29]?.style],
+    [[band, band], ["exec make · running\ncompiling"], {}],
+  );
 });
 
 test("a diff shows an added line, a removed line, and its context in their own looks", async () => {
@@ -868,7 +889,7 @@ test("a diff shows an added line, a removed line, and its context in their own l
   const added = background("+new");
   assert(removed !== undefined && added !== undefined);
   assert(removed !== added);
-  equal(background(" same"), undefined);
+  assertEquals(background(" same"), undefined);
 });
 
 test("the failure of a turn shows in bold in the danger color", async () => {
@@ -882,5 +903,5 @@ test("the failure of a turn shows in bold in the danger color", async () => {
   const row = transcriptRows(frame).findIndex((line) => line.includes("failed: boom"));
   const danger = themeStyle("chat.error").fg;
   assert(danger !== undefined);
-  equal(frame.frame.cells[row]?.[1]?.style, { fg: danger, bold: true });
+  assertEquals(frame.frame.cells[row]?.[1]?.style, { fg: danger, bold: true });
 });

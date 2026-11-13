@@ -1,6 +1,6 @@
 // The frame test of `yuke:test`: the real core on a grid of cells, with key specs, surfaces, and resizes.
 
-import { createFrame, equal, test } from "yuke:test";
+import { assertEquals, createFrame, test } from "yuke:test";
 import { TextEditor, type View } from "yuke:tui";
 
 const NO_MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
@@ -22,14 +22,14 @@ test("a frame holds the cells, the styles, and the cursor that the views drew", 
     };
   });
   const red = { fg: 1, bold: true } as const;
-  equal(frame.frame.cells[0]?.slice(0, 4), [
+  assertEquals(frame.frame.cells[0]?.slice(0, 4), [
     { text: "中", width: 2, style: red },
     { text: "", width: 0, style: red },
     { text: "a", width: 1, style: red },
     { text: " ", width: 1, style: {} },
   ]);
-  equal(frame.frame.cells[1]?.[0], { text: "b", width: 1, style: { bg: "#ff0000" } });
-  equal(frame.frame.cursor, { column: 3, row: 0, shape: "bar" });
+  assertEquals(frame.frame.cells[1]?.[0], { text: "b", width: 1, style: { bg: "#ff0000" } });
+  assertEquals(frame.frame.cursor, { column: 3, row: 0, shape: "bar" });
 });
 
 test("a text cut at the edges of a region leaves the cells outside and gives the column after all of it", () => {
@@ -48,7 +48,7 @@ test("a text cut at the edges of a region leaves the cells outside and gives the
     return { draw() {}, layout: () => [{ view, rect: { column: 0, row: 0, width: 6, height: 2 } }] };
   });
   const rows = frame.frame.cells.map((cells) => cells.map((cell) => cell.text).join(""));
-  equal(
+  assertEquals(
     [rows, ends],
     [
       ["ab xyz", "   Z  "],
@@ -97,16 +97,16 @@ test("a view style fills its rect and is the base of each style of the view and 
   }));
   frame.surface("demo").tui.styles.add({ "demo:inner": { fg: 4 } });
   const cells = frame.draw().cells;
-  equal(cells[0]?.[0]?.style, { bg: 2 });
-  equal(cells[0]?.[1]?.style, { fg: 1, bg: 2 });
-  equal(cells[0]?.[2]?.style, { bg: 3 });
+  assertEquals(cells[0]?.[0]?.style, { bg: 2 });
+  assertEquals(cells[0]?.[1]?.style, { fg: 1, bg: 2 });
+  assertEquals(cells[0]?.[2]?.style, { bg: 3 });
   // The fill of the view stays where no child draws.
-  equal(cells[0]?.[3], { text: " ", width: 1, style: { bg: 2 } });
-  equal(cells[1]?.[0]?.style, { fg: 4, bg: 2 });
-  equal(cells[1]?.[3]?.style, { fg: 4, bg: 2 });
-  equal(cells[2]?.[0], { text: "e", width: 1, style: { bg: 2 } });
-  equal(cells[2]?.[3]?.style, { bg: 2 });
-  equal(cells[3]?.[0], { text: "f", width: 1, style: {} });
+  assertEquals(cells[0]?.[3], { text: " ", width: 1, style: { bg: 2 } });
+  assertEquals(cells[1]?.[0]?.style, { fg: 4, bg: 2 });
+  assertEquals(cells[1]?.[3]?.style, { fg: 4, bg: 2 });
+  assertEquals(cells[2]?.[0], { text: "e", width: 1, style: { bg: 2 } });
+  assertEquals(cells[2]?.[3]?.style, { bg: 2 });
+  assertEquals(cells[3]?.[0], { text: "f", width: 1, style: {} });
 });
 
 test("a list of styles merges per field and a later style wins", () => {
@@ -118,7 +118,7 @@ test("a list of styles merges per field and a later style wins", () => {
       canvas.text(0, 0, "a", ["demo:mark", { bold: false, bg: 2 }]);
     },
   }));
-  equal(frame.draw().cells[0]?.[0], { text: "a", width: 1, style: { fg: 1, bg: 2 } });
+  assertEquals(frame.draw().cells[0]?.[0], { text: "a", width: 1, style: { fg: 1, bg: 2 } });
 });
 
 test("a dispose closes the root, so the mounts of its widgets end", () => {
@@ -133,7 +133,7 @@ test("a dispose closes the root, so the mounts of its widgets end", () => {
     return undefined;
   });
   frame[Symbol.dispose]();
-  equal(
+  assertEquals(
     signals.map((signal) => signal.aborted),
     [true],
   );
@@ -156,7 +156,7 @@ test("the palette color bg of a theme fills each cell of the frame, and the defa
     .draw()
     .cells.flat()
     .map((cell) => cell.style.bg);
-  equal([before.every((bg) => bg === undefined), themed], [true, Array.from({ length: 12 }, () => 4)]);
+  assertEquals([before.every((bg) => bg === undefined), themed], [true, Array.from({ length: 12 }, () => 4)]);
 });
 
 test("the pane dividers have a default look that a plugin changes", () => {
@@ -174,7 +174,7 @@ test("the pane dividers have a default look that a plugin changes", () => {
     );
   const before = looks();
   tui.styles.add({ "panes.divider": { fg: 1, dim: null } });
-  equal(
+  assertEquals(
     [before, looks()],
     [
       [{ dim: true }, { dim: true }],
@@ -197,7 +197,7 @@ test("the newest title is the window title, a remover brings back the one before
   first.close();
   shown.push(frame.draw().title);
 
-  equal(shown, ["second", "yuke · review", undefined]);
+  assertEquals(shown, ["second", "yuke · review", undefined]);
 });
 
 test("an input handler sees each event before the focused editor, the newest first, and a true answer takes it", () => {
@@ -221,7 +221,7 @@ test("an input handler sees each event before the focused editor, the newest fir
   removeNewer();
   frame.paste("d");
 
-  equal(
+  assertEquals(
     [editor.state.text, seen],
     ["ad", ["newer key", "older key", "newer key", "newer paste", "newer mouse", "older paste"]],
   );

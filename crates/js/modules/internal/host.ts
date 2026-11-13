@@ -17,7 +17,7 @@ import { give } from "yuke:internal/plugins";
 import { sessionsOf } from "yuke:internal/sessions";
 import { folder } from "yuke:internal/test";
 import { jsonCopy } from "yuke:internal/values";
-import { ExtensionRequestError, type Frozen, type ViewEvent } from "yuke:plugins";
+import { ClientRequestError, type Frozen, type SessionHandleEvent } from "yuke:plugins";
 import type { ExtensionRequestParams, SessionId, SessionSettings, SessionUpdate } from "yuke:protocol";
 import type {
   CallOutcome,
@@ -76,7 +76,7 @@ function responderOf(respond: NonNullable<HostOptions["respond"]>) {
         try {
           resolve(jsonCopy((await respond(request)) ?? null));
         } catch (error) {
-          if (error instanceof ExtensionRequestError) {
+          if (error instanceof ClientRequestError) {
             const data = error.data === undefined ? undefined : jsonCopy(error.data);
             reject({ code: error.code, message: error.message, data });
             return;
@@ -163,9 +163,9 @@ export async function createHost(options: HostOptions): Promise<Host> {
     const handle = await sessions.open(id, {
       tail: 1000,
       signal: stop.signal,
-      onEvent(event: ViewEvent) {
+      onEvent(event: SessionHandleEvent) {
         transcript.apply(event);
-        if ("snapshot" in event) for (const update of event.snapshot.updates) ask(id, update);
+        if (event.kind === "snapshot") for (const update of event.snapshot.updates) ask(id, update);
         else ask(id, event.update);
       },
     });

@@ -1,6 +1,6 @@
 /** The code of the public module `yuke:transcript`. Its declaration is `types/transcript.d.ts`, and the check at the end compares the two. */
 
-import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
+import type { EventsPage, Frozen, SessionHandleEvent } from "yuke:plugins";
 import type {
   Answer,
   Block,
@@ -113,8 +113,8 @@ export class Transcript {
     return this.#gap;
   }
 
-  apply(event: ViewEvent): void {
-    if ("update" in event) {
+  apply(event: SessionHandleEvent): void {
+    if (event.kind === "update") {
       this.#update(event.update);
       return;
     }

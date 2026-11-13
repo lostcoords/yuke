@@ -17,7 +17,7 @@ import type {
   ToolHints,
   ToolResult,
 } from "yuke:protocol";
-import { assert, equal, test } from "yuke:test";
+import { assert, assertEquals, test } from "yuke:test";
 import { type Entry, Transcript } from "yuke:transcript";
 
 const settings: SessionSettings = {
@@ -115,12 +115,12 @@ const saved = turn.filter((update): update is StoredEvent => "seq" in update);
 
 function opened(updates: SessionUpdate[] = []): Transcript {
   const transcript = new Transcript();
-  transcript.apply({ snapshot: { settings, updates } });
+  transcript.apply({ kind: "snapshot", snapshot: { settings, updates } });
   return transcript;
 }
 
 function fed(transcript: Transcript, updates: readonly SessionUpdate[]): Transcript {
-  for (const update of updates) transcript.apply({ update });
+  for (const update of updates) transcript.apply({ kind: "update", update });
   return transcript;
 }
 
@@ -173,13 +173,13 @@ const turnEntries: Entry[] = [
 ];
 
 test("a live transcript ends equal to a replay of its saved events", () => {
-  equal(fed(opened(), turn).entries, turnEntries);
-  equal(opened(saved).entries, turnEntries);
+  assertEquals(fed(opened(), turn).entries, turnEntries);
+  assertEquals(opened(saved).entries, turnEntries);
 });
 
 test("a draft streams its blocks until its saved commit replaces them", () => {
   const transcript = fed(opened(), turn.slice(0, 16));
-  equal(transcript.entries, [
+  assertEquals(transcript.entries, [
     input,
     { kind: "reasoning", id: "draft:d1:0", text: "the test expects 3", draft: true },
     { kind: "text", id: "draft:d1:1", text: "I run the tests.", refusal: false, draft: true },
@@ -200,7 +200,7 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
     },
   ]);
   fed(transcript, turn.slice(16, 18));
-  equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
+  assertEquals(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
 });
 
 test("a tool shows its live output until its saved result", () => {
@@ -209,7 +209,7 @@ test("a tool shows its live output until its saved result", () => {
   fed(transcript, turn.slice(20, 22));
   const finished = tool(transcript, 3);
   fed(transcript, turn.slice(22, 23));
-  equal(
+  assertEquals(
     [running.status, running.output, finished.status, finished.output, tool(transcript, 3).output],
     ["running", "", "done", "running 1 test\n", ""],
   );
@@ -225,7 +225,7 @@ test("tool updates reach their call by position when call ids repeat", () => {
     { sessionUpdate: "toolOutput", position: position(5, 0), text: "lib.rs" },
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
-  equal(
+  assertEquals(
     tools.map((entry) => [entry.id, entry.name, entry.status, entry.output, entry.result?.content]),
     [
       ["3:2", "bash", "done", "", "1 failed"],
@@ -250,7 +250,7 @@ test("saved results pair with the calls of their answer in the same or a later c
     }),
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
-  equal(
+  assertEquals(
     tools.map((entry) => [entry.id, entry.status, entry.result?.content]),
     [
       ["1:0", "done", "cut 1"],
@@ -262,11 +262,11 @@ test("saved results pair with the calls of their answer in the same or a later c
 
 test("a page that starts mid-turn pairs its results after the older page", () => {
   const transcript = opened(saved.slice(3));
-  equal([transcript.first, keys(transcript)], [4, ["5:0", "6:end"]]);
+  assertEquals([transcript.first, keys(transcript)], [4, ["5:0", "6:end"]]);
   const later = transcript.entries[0];
   transcript.insert(saved.slice(0, 3));
-  equal(transcript.first, 1);
-  equal(transcript.entries, turnEntries);
+  assertEquals(transcript.first, 1);
+  assertEquals(transcript.entries, turnEntries);
   assert(transcript.entries[4] === later, "an unchanged entry keeps its object");
   const full = opened(saved.slice(1));
   const finished = full.entries[3];
@@ -276,19 +276,19 @@ test("a page that starts mid-turn pairs its results after the older page", () =>
 
 test("a gap names the missing events and insert fills it", () => {
   const transcript = fed(opened(saved.slice(0, 3)), saved.slice(4));
-  equal(transcript.gap, { before: 5, limit: 1 });
+  assertEquals(transcript.gap, { before: 5, limit: 1 });
   transcript.insert(saved.slice(3, 4));
-  equal(transcript.gap, undefined);
-  equal(transcript.entries, turnEntries);
+  assertEquals(transcript.gap, undefined);
+  assertEquals(transcript.entries, turnEntries);
 });
 
 test("a gap fill removes the inputs that its commits consume", () => {
   const accepted = turn[1];
   assert(accepted !== undefined);
   const transcript = fed(opened(saved.slice(0, 1)), [accepted, ...saved.slice(2)]);
-  equal([...transcript.pending.keys()], [1]);
+  assertEquals([...transcript.pending.keys()], [1]);
   transcript.insert(saved.slice(1, 2));
-  equal([...transcript.pending.keys()], []);
+  assertEquals([...transcript.pending.keys()], []);
 });
 
 test("a cancel mid-draft keeps only what its commit saved", () => {
@@ -297,7 +297,7 @@ test("a cancel mid-draft keeps only what its commit saved", () => {
     commit(3, { blocks: [{ kind: "assistantText", text: "I run " }], end: { kind: "cancelled" } }),
     { sessionUpdate: "draftDiscarded", draftId: "d1", reason: "failed" },
   ]);
-  equal(transcript.entries, [
+  assertEquals(transcript.entries, [
     input,
     { kind: "text", id: "3:0", text: "I run ", refusal: false, draft: false },
     { kind: "end", id: "3:end", end: { kind: "cancelled" }, answer: undefined },
@@ -314,7 +314,7 @@ test("an end keeps the last saved answer before it, and the next end without an 
     commit(4, { end: { kind: "cancelled" } }),
   ]);
   const ends = transcript.entries.filter((entry) => entry.kind === "end");
-  equal(
+  assertEquals(
     ends.map((entry) => entry.answer?.origin.model),
     ["last", undefined],
   );
@@ -326,21 +326,21 @@ test("an older page gives an end its answer, and an end without a change keeps i
   const [end, other] = transcript.entries;
   transcript.insert([saved]);
   const after = transcript.entries.filter((entry) => entry.kind === "end");
-  equal([after[0]?.answer?.origin.model, after[0] === end, after[1] === other], ["m", false, true]);
+  assertEquals([after[0]?.answer?.origin.model, after[0] === end, after[1] === other], ["m", false, true]);
 });
 
 test("a context replacement adds a marker and keeps the entries before it", () => {
   const transcript = fed(opened(saved), [
     commit(7, { replaced: { head: [{ kind: "userText", text: "<context_summary>…" }], keep: 0 } }),
   ]);
-  equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2", "5:0", "6:end", "7:replaced"]);
+  assertEquals(keys(transcript), ["2:0", "3:0", "3:1", "3:2", "5:0", "6:end", "7:replaced"]);
 });
 
 test("a change puts a new object only in the place of its entry", () => {
   const transcript = fed(opened(), turn.slice(0, 11));
   const before = [...transcript.entries];
   fed(transcript, turn.slice(11, 12));
-  equal(
+  assertEquals(
     transcript.entries.map((entry, index) => entry === before[index]),
     [true, true, false],
   );
@@ -348,9 +348,9 @@ test("a change puts a new object only in the place of its entry", () => {
 
 test("the updates of a draft that started before the snapshot add nothing", () => {
   const transcript = fed(opened(saved.slice(0, 2)), turn.slice(9, 12));
-  equal(keys(transcript), ["2:0"]);
+  assertEquals(keys(transcript), ["2:0"]);
   fed(transcript, turn.slice(17, 18));
-  equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
+  assertEquals(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
 });
 
 test("an unconfirmed turn drops its draft and the live state of its tools", () => {
@@ -360,8 +360,8 @@ test("an unconfirmed turn drops its draft and the live state of its tools", () =
     model("d2", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
     { sessionUpdate: "turnUnconfirmed" },
   ]);
-  equal(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
-  equal([tool(transcript, 3).status, tool(transcript, 3).output], ["waiting", ""]);
+  assertEquals(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
+  assertEquals([tool(transcript, 3).status, tool(transcript, 3).output], ["waiting", ""]);
 });
 
 test("a running tool has its start timestamp, and a finished tool has its duration", () => {
@@ -372,7 +372,7 @@ test("a running tool has its start timestamp, and a finished tool has its durati
   fed(transcript, [
     { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
   ]);
-  equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, 40_000]);
+  assertEquals([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, 40_000]);
 });
 
 test("a saved duration without display blocks gives a tool with its duration and no display", () => {
@@ -382,12 +382,12 @@ test("a saved duration without display blocks gives a tool with its duration and
   });
   const transcript = opened([...saved.slice(0, 3), timed]);
   const entry = tool(transcript, 3);
-  equal([entry.durationMs, entry.startedAt, entry.display], [40_000, undefined, []]);
+  assertEquals([entry.durationMs, entry.startedAt, entry.display], [40_000, undefined, []]);
 });
 
 test("a saved result without a duration has no duration", () => {
   const unmeasured = commit(4, { blocks: [{ kind: "toolResult", ...result }] });
-  equal(tool(opened([...saved.slice(0, 3), unmeasured]), 3).durationMs, undefined);
+  assertEquals(tool(opened([...saved.slice(0, 3), unmeasured]), 3).durationMs, undefined);
 });
 
 test("a gap fill keeps the start timestamp of a running tool", () => {
@@ -401,7 +401,7 @@ test("a gap fill keeps the start timestamp of a running tool", () => {
   const started = tool(transcript, 2).startedAt;
   assert(started !== undefined, "the tool has no start timestamp");
   transcript.insert(saved.slice(1, 2));
-  equal(tool(transcript, 3).startedAt, started);
+  assertEquals(tool(transcript, 3).startedAt, started);
 });
 
 test("an unconfirmed turn drops the start timestamps and the durations of its tools", () => {
@@ -410,7 +410,7 @@ test("an unconfirmed turn drops the start timestamps and the durations of its to
     { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
     { sessionUpdate: "turnUnconfirmed" },
   ]);
-  equal([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
+  assertEquals([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
 });
 
 test("the inputs, questions, failure, and settings follow their updates", () => {
@@ -435,36 +435,36 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
     },
     { sessionUpdate: "retryScheduled", afterMs: 3000, error: "overloaded" },
   ]);
-  equal(facts(), ["running", [1], [7], { kind: "retryScheduled", afterMs: 3000, error: "overloaded" }, "m"]);
+  assertEquals(facts(), ["running", [1], [7], { kind: "retryScheduled", afterMs: 3000, error: "overloaded" }, "m"]);
   fed(transcript, [...turn.slice(3, 5), { sessionUpdate: "interactionClosed", interactionId: 7 }]);
-  equal(facts(), ["running", [], [], undefined, "m"]);
+  assertEquals(facts(), ["running", [], [], undefined, "m"]);
   fed(transcript, [{ seq: 3, sessionUpdate: "settings", ...settings, model: { provider: "p", model: "n" } }]);
-  equal(facts(), ["running", [], [], undefined, "n"]);
+  assertEquals(facts(), ["running", [], [], undefined, "n"]);
   // The snapshot and the live events give the settings. An older page holds older settings.
   const paged = opened([{ seq: 7, sessionUpdate: "settings", ...settings, model: { provider: "p", model: "n" } }]);
   paged.insert(saved);
-  equal(paged.settings?.model.model, "n");
+  assertEquals(paged.settings?.model.model, "n");
 });
 
 test("a deferred tool shows the tool that its bridge call names", () => {
   const bridge: ToolCall = { callId: "c", name: "tool_call", arguments: '{"name":"grep","arguments":{"pattern":"x"}}' };
   const transcript = opened([commit(1, { blocks: [{ kind: "toolCall", ...bridge }], answer: answer("toolCalls") })]);
-  equal([tool(transcript, 0).name, tool(transcript, 0).arguments], ["grep", '{"pattern":"x"}']);
+  assertEquals([tool(transcript, 0).name, tool(transcript, 0).arguments], ["grep", '{"pattern":"x"}']);
 });
 
 test("usage is the token counts of the last saved answer, and a replaced context or a snapshot clears it", () => {
   const counts = (input: number) => ({ input, output: 10 });
   const withUsage = (input: number): Answer => ({ ...answer("stop"), usage: counts(input) });
   const transcript = new Transcript();
-  transcript.apply({ snapshot: { settings, updates: [commit(2, { answer: withUsage(100) })] } });
+  transcript.apply({ kind: "snapshot", snapshot: { settings, updates: [commit(2, { answer: withUsage(100) })] } });
   const first = transcript.usage?.input;
-  transcript.apply({ update: commit(3, { answer: withUsage(200) }) });
-  transcript.apply({ update: commit(4, { blocks: [userText] }) });
+  transcript.apply({ kind: "update", update: commit(3, { answer: withUsage(200) }) });
+  transcript.apply({ kind: "update", update: commit(4, { blocks: [userText] }) });
   const last = transcript.usage?.input;
-  transcript.apply({ update: commit(5, { replaced: { head: [userText], keep: 0 } }) });
+  transcript.apply({ kind: "update", update: commit(5, { replaced: { head: [userText], keep: 0 } }) });
   const compacted = transcript.usage;
-  transcript.apply({ update: commit(6, { answer: withUsage(300) }) });
+  transcript.apply({ kind: "update", update: commit(6, { answer: withUsage(300) }) });
   const next = transcript.usage?.input;
-  transcript.apply({ snapshot: { settings, updates: [] } });
-  equal([first, last, compacted, next, transcript.usage], [100, 200, undefined, 300, undefined]);
+  transcript.apply({ kind: "snapshot", snapshot: { settings, updates: [] } });
+  assertEquals([first, last, compacted, next, transcript.usage], [100, 200, undefined, 300, undefined]);
 });

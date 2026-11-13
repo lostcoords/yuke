@@ -1,19 +1,19 @@
 // The built-in tools `read`, `write`, and `edit` of yuke, called in the folder of the test.
 
 import { readFile, readTextFile, writeFile, writeTextFile } from "yuke:fs";
-import { createHost, equal, folder, reply, type TestSession, test } from "yuke:test";
+import { assertEquals, createHost, folder, reply, type TestSession, test } from "yuke:test";
 
 /** The text of a call of `name` with `args` that succeeds. */
 async function text(session: TestSession, name: string, args: unknown): Promise<string> {
   const result = await session.call(name, args);
-  equal(result.isError, false);
+  assertEquals(result.isError, false);
   return result.text;
 }
 
 /** The text of a call of `name` with `args` that fails. */
 async function error(session: TestSession, name: string, args: unknown): Promise<string> {
   const result = await session.call(name, args);
-  equal(result.isError, true);
+  assertEquals(result.isError, true);
   return result.text;
 }
 
@@ -28,7 +28,7 @@ test("read numbers the lines and names the next offset", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  equal(
+  assertEquals(
     await text(session, "read", { path: "notes.txt", offset: 2, limit: 2 }),
     "2: beta\n3: gamma\n[read more: offset 4.]",
   );
@@ -39,7 +39,7 @@ test("a null optional field counts as absent", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  equal(await text(session, "read", { path: "notes.txt", offset: null, limit: null }), "1: one\n2: two");
+  assertEquals(await text(session, "read", { path: "notes.txt", offset: null, limit: null }), "1: one\n2: two");
 });
 
 test("read stops at the output cap after a whole line", async () => {
@@ -54,7 +54,7 @@ test("read stops at the output cap after a whole line", async () => {
   const [shown, marker] = [read.slice(0, cut), read.slice(cut + 1)];
   const last = Number(shown.split("\n").at(-1)?.split(":")[0]);
   const size = new TextEncoder().encode(shown).length;
-  equal([marker, size < 50 * 1024, size + 60 > 50 * 1024], [`[read more: offset ${last + 1}.]`, true, true]);
+  assertEquals([marker, size < 50 * 1024, size + 60 > 50 * 1024], [`[read more: offset ${last + 1}.]`, true, true]);
 });
 
 test("a line longer than the cap is cut", async () => {
@@ -67,8 +67,8 @@ test("a line longer than the cap is cut", async () => {
   const parts = read.split("\n");
   const shown = parts.slice(0, -2).join("\n");
   const size = new TextEncoder().encode(shown).length;
-  equal(parts.slice(-2), ["[read cut: line 1 at 50 KiB.]", "[read more: offset 2.]"]);
-  equal([shown.startsWith("1: éé"), size <= 50 * 1024 && size > 50 * 1024 - 4], [true, true]);
+  assertEquals(parts.slice(-2), ["[read cut: line 1 at 50 KiB.]", "[read more: offset 2.]"]);
+  assertEquals([shown.startsWith("1: éé"), size <= 50 * 1024 && size > 50 * 1024 - 4], [true, true]);
 });
 
 // The texts are the texts of `yuke:fs`, and a FIFO fails before an open that would wait for its other end.
@@ -76,12 +76,12 @@ test("read of a missing file, a binary file, a FIFO, or a folder fails with the 
   await writeFile(`${folder()}/binary.dat`, new Uint8Array([0x61, 0xff, 0xfe, 0x0a]));
   const { host, session } = await opened();
   await using _host = host;
-  equal((await session.call("exec", { command: "mkfifo pipe" })).isError, false);
+  assertEquals((await session.call("exec", { command: "mkfifo pipe" })).isError, false);
 
   const errors = [];
   for (const path of ["gone.txt", "binary.dat", "pipe", "."]) errors.push(await error(session, "read", { path }));
 
-  equal(errors, [
+  assertEquals(errors, [
     `the path does not exist: ${folder()}/gone.txt`,
     `the bytes are not valid UTF-8: ${folder()}/binary.dat`,
     `the path names a special file: ${folder()}/pipe`,
@@ -97,7 +97,7 @@ test("an image read answers media", async () => {
 
   const result = await session.call("read", { path: "dot.png" });
 
-  equal(
+  assertEquals(
     [result.text, result.media.map((item) => [item.mimeType, [...item.bytes]])],
     ["The tool read the image.", [["image/png", [...png]]]],
   );
@@ -107,8 +107,8 @@ test("write makes the missing folders in the workspace", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  equal(await text(session, "write", { path: "src/deep/new.txt", content: "héllo" }), "The tool wrote 6 bytes.");
-  equal(await readTextFile(`${folder()}/src/deep/new.txt`), "héllo");
+  assertEquals(await text(session, "write", { path: "src/deep/new.txt", content: "héllo" }), "The tool wrote 6 bytes.");
+  assertEquals(await readTextFile(`${folder()}/src/deep/new.txt`), "héllo");
 });
 
 test("edit replaces one exact match", async () => {
@@ -118,7 +118,7 @@ test("edit replaces one exact match", async () => {
 
   const edited = await text(session, "edit", { path: "main.rs", old_string: "old();", new_string: "new($&);" });
 
-  equal(
+  assertEquals(
     [edited, await readTextFile(`${folder()}/main.rs`)],
     ["The tool replaced 1 match.", "fn main() {\n    new($&);\n}\n"],
   );
@@ -183,7 +183,7 @@ for (const [name, content, edit, patch] of [
 
     const result = await session.call("edit", { path: "file.txt", ...edit });
 
-    equal(result.display, [{ kind: "diff", path: "file.txt", patch }]);
+    assertEquals(result.display, [{ kind: "diff", path: "file.txt", patch }]);
   });
 }
 
@@ -196,8 +196,11 @@ test("edit of two matches needs replace_all", async () => {
   const unchanged = await readTextFile(`${folder()}/list.txt`);
   const edited = await text(session, "edit", { path: "list.txt", old_string: "a", new_string: "c", replace_all: true });
 
-  equal(refused, "old_string matches more than one place. Add context to old_string, or set replace_all to true.");
-  equal(
+  assertEquals(
+    refused,
+    "old_string matches more than one place. Add context to old_string, or set replace_all to true.",
+  );
+  assertEquals(
     [unchanged, edited, await readTextFile(`${folder()}/list.txt`)],
     ["a, b, a\n", "The tool replaced 2 matches.", "c, b, c\n"],
   );
@@ -208,7 +211,7 @@ test("edit without a match fails", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  equal(
+  assertEquals(
     await error(session, "edit", { path: "list.txt", old_string: "z", new_string: "c" }),
     "The file has no match for old_string. Read the file and copy the exact text.",
   );
@@ -218,7 +221,7 @@ test("edit of a missing file names its path", async () => {
   const { host, session } = await opened();
   await using _host = host;
 
-  equal(
+  assertEquals(
     await error(session, "edit", { path: "gone.txt", old_string: "a", new_string: "b" }),
     `the path does not exist: ${folder()}/gone.txt`,
   );
@@ -232,8 +235,8 @@ test("edit of a file that is not UTF-8 fails and keeps its bytes", async () => {
 
   const refused = await error(session, "edit", { path: "latin1.txt", old_string: "old", new_string: "new" });
 
-  equal(refused, `the bytes are not valid UTF-8: ${folder()}/latin1.txt`);
-  equal([...(await readFile(`${folder()}/latin1.txt`))], [...latin]);
+  assertEquals(refused, `the bytes are not valid UTF-8: ${folder()}/latin1.txt`);
+  assertEquals([...(await readFile(`${folder()}/latin1.txt`))], [...latin]);
 });
 
 // The hints of the built-in tools follow the same public path as a plugin tool.
@@ -255,7 +258,7 @@ test("the built-in tools show their path or command as the subject, and read and
   await session.sendMessage("go");
 
   const hints = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.hints] : []));
-  equal(hints, [
+  assertEquals(hints, [
     { subject: { argument: "path", kind: "file" }, preview: "none" },
     { subject: { argument: "command", kind: "text" }, preview: "tail" },
     { subject: { argument: "path", kind: "file" }, preview: "head" },

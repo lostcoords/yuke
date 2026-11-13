@@ -49,7 +49,8 @@ export function dialogView(options: DialogOptions): View {
       return [{ view: body, rect: { column: 0, row: head, width: size.width, height: bodyHeight } }];
     },
     draw: (canvas) => {
-      if (options.title !== undefined) canvas.text(1, 0, options.title(), TITLE);
+      const title = options.title;
+      if (title !== undefined) canvas.text(1, 0, typeof title === "string" ? title : title(), TITLE);
       const shown = active();
       const hints: { keys: string; label: string }[] = [];
       for (const entry of shown) {

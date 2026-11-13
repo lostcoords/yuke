@@ -1,7 +1,7 @@
 // The `round.retry` hook: its event, its count of retries, its plan, and the kinds of a failure.
 
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, reply, test } from "yuke:test";
+import { assertEquals, createHost, reply, test } from "yuke:test";
 
 // The count belongs to one round, so the round after a call counts from zero again.
 test("an answer sends the round again, and each round counts its retries from zero", async () => {
@@ -39,12 +39,12 @@ test("an answer sends the round again, and each round counts its retries from ze
 
   await session.sendMessage("Greet Ada.");
 
-  equal(seen, ["contextOverflow 0 true", "contextOverflow 1 true", "contextOverflow 0 true"]);
-  equal(
+  assertEquals(seen, ["contextOverflow 0 true", "contextOverflow 1 true", "contextOverflow 0 true"]);
+  assertEquals(
     host.requests.map((request) => request.messages[0]?.text),
     ["Greet Ada.", "summary", "summary", "summary", "summary"],
   );
-  equal(session.transcript.entries.at(-1)?.kind, "end");
+  assertEquals(session.transcript.entries.at(-1)?.kind, "end");
 });
 
 test("without an answer the round does not run again, and the turn fails", async () => {
@@ -58,7 +58,7 @@ test("without an answer the round does not run again, and the turn fails", async
   await session.sendMessage("Hi.");
 
   const end = session.transcript.entries.at(-1);
-  equal([end?.kind, end?.kind === "end" && end.end.kind === "failed", host.requests.length], ["end", true, 1]);
+  assertEquals([end?.kind, end?.kind === "end" && end.end.kind === "failed", host.requests.length], ["end", true, 1]);
 });
 
 test("a handler gets the context window, the tokens, and the blocks of the failed round, and its plan replaces the context", async () => {
@@ -80,8 +80,8 @@ test("a handler gets the context window, the tokens, and the blocks of the faile
     failure: { kind: "contextOverflow" },
   });
 
-  equal(seen, ["contextOverflow 0 1000 900 901 1 1"]);
-  equal(plan, { replace: { head: [{ kind: "userText", text: "summary" }], keep: 0 } });
+  assertEquals(seen, ["contextOverflow 0 1000 900 901 1 1"]);
+  assertEquals(plan, { replace: { head: [{ kind: "userText", text: "summary" }], keep: 0 } });
 });
 
 test("the failure names its kind and its text", async () => {
@@ -99,7 +99,7 @@ test("the failure names its kind and its text", async () => {
     await session.runHook("round.retry", { blocks: [], failure: { kind } });
   }
 
-  equal(seen, [
+  assertEquals(seen, [
     ["rateLimited", true],
     ["transport", true],
     ["incompleteStream", true],

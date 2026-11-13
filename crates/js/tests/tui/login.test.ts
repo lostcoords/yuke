@@ -2,7 +2,7 @@
 
 import { apply } from "yuke:internal/bundled/login";
 import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
-import { createFrame, equal, type FrameTest, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 /** A provider `id` in `state`. */
@@ -102,13 +102,13 @@ test("/login lists each provider with its state and leaves out a provider that t
     ["device", "not connected"],
     ["logged", "connected · login"],
   ] as const) {
-    equal(rowWith(frame, `· ${id}`)?.includes(text), true, shown);
+    assertEquals(rowWith(frame, `· ${id}`)?.includes(text), true, shown);
   }
-  equal(shown.includes("LOCAL"), false);
+  assertEquals(shown.includes("LOCAL"), false);
 
   // A query matches the name and the id, not the state.
   frame.key("c o n n");
-  equal(rowWith(frame, "· device"), undefined);
+  assertEquals(rowWith(frame, "· device"), undefined);
 });
 
 test("a chosen key provider opens a masked field that stores the key and shows no character of it", async () => {
@@ -127,12 +127,12 @@ test("a chosen key provider opens a masked field that stores the key and shows n
   await waitForSettled();
   frame.draw();
 
-  equal(title !== undefined, true);
-  equal(typed.includes("sk-secret"), false);
-  equal(typed.includes("•••"), true);
-  equal(login.calls, ["set env sk-secret"]);
-  equal(login.notices, ["info key saved · env"]);
-  equal(rowWith(frame, "API key · ENV"), undefined);
+  assertEquals(title !== undefined, true);
+  assertEquals(typed.includes("sk-secret"), false);
+  assertEquals(typed.includes("•••"), true);
+  assertEquals(login.calls, ["set env sk-secret"]);
+  assertEquals(login.notices, ["info key saved · env"]);
+  assertEquals(rowWith(frame, "API key · ENV"), undefined);
 });
 
 test("a connected provider can be picked, and esc in the field stores nothing", async () => {
@@ -151,8 +151,8 @@ test("a connected provider can be picked, and esc in the field stores nothing", 
   frame.key("enter");
   await waitForSettled();
 
-  equal([afterEscape, closed], [[], undefined]);
-  equal(login.calls, ["set stored new-key"]);
+  assertEquals([afterEscape, closed], [[], undefined]);
+  assertEquals(login.calls, ["set stored new-key"]);
 });
 
 test("a refused key stays in the field with its error, and an empty field stores nothing", async () => {
@@ -174,11 +174,11 @@ test("a refused key stays in the field with its error, and an empty field stores
   frame.key("enter");
   await waitForSettled();
 
-  equal(afterEmpty, []);
-  equal(refused !== undefined, true);
-  equal(open !== undefined, true);
-  equal(login.notices, ["info key saved · needs-key"]);
-  equal(login.calls, ["set needs-key first", "set needs-key first"]);
+  assertEquals(afterEmpty, []);
+  assertEquals(refused !== undefined, true);
+  assertEquals(open !== undefined, true);
+  assertEquals(login.notices, ["info key saved · needs-key"]);
+  assertEquals(login.calls, ["set needs-key first", "set needs-key first"]);
 });
 
 test("/login with a text that is no provider id stores nothing and repeats no text", async () => {
@@ -190,13 +190,13 @@ test("/login with a text that is no provider id stores nothing and repeats no te
   await login.run("login", "local");
   await login.run("logout", "sk-abc");
 
-  equal(login.calls, []);
-  equal(login.notices.length, 4);
-  equal(
+  assertEquals(login.calls, []);
+  assertEquals(login.notices.length, 4);
+  assertEquals(
     login.notices.some((notice) => notice.includes("sk-abc")),
     false,
   );
-  equal(rowWith(frame, "Log in"), undefined);
+  assertEquals(rowWith(frame, "Log in"), undefined);
 });
 
 test("/logout lists only what yuke stored, removes it, and names the variable of a key in the environment", async () => {
@@ -210,11 +210,11 @@ test("/logout lists only what yuke stored, removes it, and names the variable of
   await login.run("logout", "device");
   await login.run("logout", "logged");
 
-  equal(listed.includes("STORED"), true);
-  equal(listed.includes("LOGGED"), true);
-  for (const absent of ["ENV", "NEEDS-KEY", "DEVICE", "LOCAL"]) equal(listed.includes(absent), false);
-  equal(login.calls, ["logout stored", "logout logged"]);
-  equal(login.notices, [
+  assertEquals(listed.includes("STORED"), true);
+  assertEquals(listed.includes("LOGGED"), true);
+  for (const absent of ["ENV", "NEEDS-KEY", "DEVICE", "LOCAL"]) assertEquals(listed.includes(absent), false);
+  assertEquals(login.calls, ["logout stored", "logout logged"]);
+  assertEquals(login.notices, [
     "info logged out · stored",
     "info env has its key in $ENV_KEY: unset the variable",
     "info yuke stores no credential for device",
@@ -228,8 +228,8 @@ test("/logout with nothing stored gives a notice and opens no list", async () =>
 
   await login.run("logout");
 
-  equal(login.notices, ["info yuke stores no credential"]);
-  equal(rowWith(frame, "Log out"), undefined);
+  assertEquals(login.notices, ["info yuke stores no credential"]);
+  assertEquals(rowWith(frame, "Log out"), undefined);
 });
 
 test("a login provider shows the page and the code, its keys copy each, and a connected one can log in again", async () => {
@@ -240,12 +240,12 @@ test("a login provider shows the page and the code, its keys copy each, and a co
   frame.key("c");
   frame.key("u");
 
-  equal(login.calls, ["login logged"]);
-  equal(shown.includes(URL), true);
-  equal(shown.includes(`Code: ${CODE}`), true);
-  equal(shown.includes("o: open"), true);
-  equal(frame.copies, [CODE, URL]);
-  equal(login.notices, ["info code copied", "info URL copied"]);
+  assertEquals(login.calls, ["login logged"]);
+  assertEquals(shown.includes(URL), true);
+  assertEquals(shown.includes(`Code: ${CODE}`), true);
+  assertEquals(shown.includes("o: open"), true);
+  assertEquals(frame.copies, [CODE, URL]);
+  assertEquals(login.notices, ["info code copied", "info URL copied"]);
   frame.key("esc");
   await waitForSettled();
 });
@@ -264,8 +264,8 @@ test("each end of a device login closes the dialog with its notice, and esc canc
     await waitForSettled();
     frame.draw();
 
-    equal(login.notices, [notice]);
-    equal(rowWith(frame, "Log in · DEVICE"), undefined);
+    assertEquals(login.notices, [notice]);
+    assertEquals(rowWith(frame, "Log in · DEVICE"), undefined);
   }
 
   using frame = createFrame({ width: 70, height: 16 });
@@ -274,8 +274,8 @@ test("each end of a device login closes the dialog with its notice, and esc canc
   frame.key("esc");
   await waitForSettled();
 
-  equal(login.signals[0]?.aborted, true);
-  equal(login.notices, []);
+  assertEquals(login.signals[0]?.aborted, true);
+  assertEquals(login.notices, []);
 });
 
 test("a login that does not start closes the dialog with a notice", async () => {
@@ -285,6 +285,6 @@ test("a login that does not start closes the dialog with a notice", async () => 
 
   await login.run("login", "device");
 
-  equal(login.notices, ["error the login failed: Error: no network"]);
-  equal(rowWith(frame, "Log in · DEVICE"), undefined);
+  assertEquals(login.notices, ["error the login failed: Error: no network"]);
+  assertEquals(rowWith(frame, "Log in · DEVICE"), undefined);
 });

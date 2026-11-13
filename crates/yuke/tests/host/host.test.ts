@@ -2,7 +2,7 @@
 
 import { mkdir } from "yuke:fs";
 import type { PluginApply, PluginSession } from "yuke:plugins";
-import { assert, createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, assertRejects, createHost, folder, reply, test, waitForSettled } from "yuke:test";
 
 const echo: PluginSession = (s) => {
   s.tools.add({
@@ -24,7 +24,7 @@ test("call runs a tool and gives its live texts in order", async () => {
 
   const result = await session.call("echo", { text: "hi" });
 
-  equal(result, { text: "hi", isError: false, media: [], display: [], output: ["one", "two"] });
+  assertEquals(result, { text: "hi", isError: false, media: [], display: [], output: ["one", "two"] });
 });
 
 test("the notices and the events of a plugin are in the records after the operation", async () => {
@@ -40,11 +40,11 @@ test("the notices and the events of a plugin are in the records after the operat
 
   await session.runHook("tool.before", { call: { callId: "c", name: "x", arguments: {} } });
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text]),
     [["loud", "warn", "careful"]],
   );
-  equal(
+  assertEquals(
     host.events.map((event) => [event.extension, event.event, event.data]),
     [["loud", "seen", { n: 1 }]],
   );
@@ -55,21 +55,27 @@ test("a plugin that does not load rejects the host with its reason", async () =>
     throw new Error("no start");
   };
 
-  const error = await rejects(createHost({ plugins: [{ name: "failing", apply: failing }] }));
+  const error = await assertRejects(() => createHost({ plugins: [{ name: "failing", apply: failing }] }));
 
-  equal(error instanceof Error && error.message.includes("plugin failing did not load"), true);
+  assertEquals(error instanceof Error && error.message.includes("plugin failing did not load"), true);
 });
 
 test("a plugin folder must be absolute", async () => {
-  const error = await rejects(createHost({ plugins: [{ folder: "plugins/echo" }] }));
+  const error = await assertRejects(() => createHost({ plugins: [{ folder: "plugins/echo" }] }));
 
-  equal(error instanceof Error ? error.message : error, "plugin folder plugins/echo: the folder is not absolute");
+  assertEquals(
+    error instanceof Error ? error.message : error,
+    "plugin folder plugins/echo: the folder is not absolute",
+  );
 });
 
 test("a given plugin name follows the rule of a manifest name", async () => {
-  const error = await rejects(createHost({ plugins: [{ name: "../outside" }] }));
+  const error = await assertRejects(() => createHost({ plugins: [{ name: "../outside" }] }));
 
-  equal(error instanceof Error && error.message.startsWith("plugin ../outside: name: '../outside' must be"), true);
+  assertEquals(
+    error instanceof Error && error.message.startsWith("plugin ../outside: name: '../outside' must be"),
+    true,
+  );
 });
 
 test("each call gets its own call id", async () => {
@@ -116,22 +122,22 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
   await using host = await createHost({ plugins: [{ name: "waiter", session: waiter }] });
   const session = await host.openSession();
   const callStop = new AbortController();
-  const called = rejects(session.call("wait", {}, { signal: callStop.signal }));
+  const called = assertRejects(() => session.call("wait", {}, { signal: callStop.signal }));
   await waitForSettled();
   callStop.abort(new Error("stop"));
   const callError = await called;
   const hookStop = new AbortController();
-  const ran = rejects(
+  const ran = assertRejects(() =>
     session.runHook("tool.before", { call: { callId: "c", name: "wait", arguments: {} } }, { signal: hookStop.signal }),
   );
   await waitForSettled();
   hookStop.abort(new Error("stop"));
 
-  equal(
+  assertEquals(
     [callError, await ran].map((error) => (error instanceof Error ? error.message : error)),
     ["stop", "stop"],
   );
-  equal(seen, ["tool", "hook"]);
+  assertEquals(seen, ["tool", "hook"]);
 });
 
 test("setSettings changes the folder and the model of an open session", async () => {
@@ -156,8 +162,8 @@ test("setSettings changes the folder and the model of an open session", async ()
   });
   await session.sendMessage("Hi.");
 
-  equal((await session.call("where", {})).text, `${folder()}/other`);
-  equal(
+  assertEquals((await session.call("where", {})).text, `${folder()}/other`);
+  assertEquals(
     host.requests.map((request) => (request.body as { model: string }).model),
     ["gpt-4.1"],
   );
@@ -168,17 +174,19 @@ test("a setSettings that fails during a turn changes nothing", async () => {
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sending = rejects(session.sendMessage("Wait.", { signal: stop.signal }));
+  const sending = assertRejects(() => session.sendMessage("Wait.", { signal: stop.signal }));
   await waitForSettled();
-  equal(host.requests.length, 1);
+  assertEquals(host.requests.length, 1);
 
-  await rejects(session.setSettings({ ...session.settings, model: { provider: "openai", model: "gpt-4.1" } }));
+  await assertRejects(() =>
+    session.setSettings({ ...session.settings, model: { provider: "openai", model: "gpt-4.1" } }),
+  );
   stop.abort(new Error("stop"));
   await sending;
   await session.setSettings({ ...session.settings, cwd: folder() });
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     host.requests.map((request) => (request.body as { model: string }).model),
     ["MiniMax-M3", "MiniMax-M3"],
   );

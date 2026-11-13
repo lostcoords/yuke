@@ -4,7 +4,7 @@
 import { apply } from "yuke:internal/bundled/plugins";
 import type { PluginManager } from "yuke:internal/sessions";
 import type { ManagedPlugin, PluginChange, PluginTarget } from "yuke:protocol";
-import { assert, createFrame, equal, type FrameTest, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, type FrameTest, test, waitForSettled } from "yuke:test";
 import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
@@ -125,7 +125,7 @@ test("the dashboard shows the plugins in sections with their state, and enter sh
   const detailed = await press(frame, "j", "j", "enter");
   const hidden = await press(frame, "enter");
 
-  equal(
+  assertEquals(
     [
       shows(opened, "Plugins · 5"),
       shows(opened, "Needs sync (2)"),
@@ -140,8 +140,11 @@ test("the dashboard shows the plugins in sections with their state, and enter sh
     [true, true, true, true, true, true, true, true, true],
   );
   // The first plugin needs a sync and has no name, so `u` and `d` do not work on it.
-  equal([shows(opened, "S: sync"), shows(opened, "esc: close"), shows(opened, "u: update")], [true, true, false]);
-  equal(
+  assertEquals(
+    [shows(opened, "S: sync"), shows(opened, "esc: close"), shows(opened, "u: update")],
+    [true, true, false],
+  );
+  assertEquals(
     [
       shows(detailed, `${SOURCE} · commit ${OLD} · loaded`),
       shows(detailed, "u: update · a: add · d: remove"),
@@ -160,12 +163,15 @@ test("u reviews the new commits of the selected plugin, and enter writes them an
   const reviewed = await press(frame, "j", "j", "u");
   const after = await press(frame, "enter");
 
-  equal([shows(reviewed, "clock  3f9c1a2 → 8d02e77"), shows(reviewed, "  8d02e77 fix: 12h format")], [true, true]);
-  equal(shows(reviewed, "enter: write plugins.lock · esc: close"), true);
-  equal(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply clock 8d02e77", "list"]);
-  equal(shows(after, "Plugins · 5 · plugins.lock written: R reloads"), true);
+  assertEquals(
+    [shows(reviewed, "clock  3f9c1a2 → 8d02e77"), shows(reviewed, "  8d02e77 fix: 12h format")],
+    [true, true],
+  );
+  assertEquals(shows(reviewed, "enter: write plugins.lock · esc: close"), true);
+  assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["clock"]}', "apply clock 8d02e77", "list"]);
+  assertEquals(shows(after, "Plugins · 5 · plugins.lock written: R reloads"), true);
   // The dashboard tells the result in its title, not in a notice.
-  equal(notices, []);
+  assertEquals(notices, []);
 });
 
 test("S syncs and shows the result in the title, and the actions wait while it runs", async () => {
@@ -181,12 +187,12 @@ test("S syncs and shows the result in the title, and the actions wait while it r
   frame.draw();
   const synced = rows(frame.frame);
 
-  equal(
+  assertEquals(
     [shows(running, "Plugins · 5 · syncing"), shows(running, "S: sync"), shows(running, "/: search")],
     [true, false, false],
   );
-  equal(fake.calls, ["list", "sync undefined with a signal", "list"]);
-  equal(shows(synced, "Plugins · 5 · plugins.lock written: R reloads"), true);
+  assertEquals(fake.calls, ["list", "sync undefined with a signal", "list"]);
+  assertEquals(shows(synced, "Plugins · 5 · plugins.lock written: R reloads"), true);
 });
 
 test("a adds the plugin of a line in the form of yuke plugin add, and a line without a URL says why", async () => {
@@ -202,11 +208,11 @@ test("a adds the plugin of a line in the form of yuke plugin add, and a line wit
   frame.paste("--ref v1");
   const refused = await press(frame, "enter");
 
-  equal(fake.calls, ["list", 'add {"git":"https://h/news","folder":"p","ref":"v1"}', "list"]);
-  equal(shows(added, "news added at 8d02e77: R reloads"), true);
-  equal(shows(refused, "give the URL of the repository first"), true);
+  assertEquals(fake.calls, ["list", 'add {"git":"https://h/news","folder":"p","ref":"v1"}', "list"]);
+  assertEquals(shows(added, "news added at 8d02e77: R reloads"), true);
+  assertEquals(shows(refused, "give the URL of the repository first"), true);
   // The prompt stays open with its draft after the error.
-  equal(shows(refused, "--ref v1"), true);
+  assertEquals(shows(refused, "--ref v1"), true);
 });
 
 test("d asks before it removes the selected plugin, and esc keeps it", async () => {
@@ -219,9 +225,9 @@ test("d asks before it removes the selected plugin, and esc keeps it", async () 
   await press(frame, "esc");
   const removed = await press(frame, "d", "enter");
 
-  equal(shows(asked, "Remove clock from config.json and plugins.lock?"), true);
-  equal(fake.calls, ["list", "remove clock", "list"]);
-  equal(shows(removed, "clock removed: R reloads"), true);
+  assertEquals(shows(asked, "Remove clock from config.json and plugins.lock?"), true);
+  assertEquals(fake.calls, ["list", "remove clock", "list"]);
+  assertEquals(shows(removed, "clock removed: R reloads"), true);
 });
 
 test("/ finds a plugin by its name and selects it", async () => {
@@ -234,7 +240,7 @@ test("/ finds a plugin by its name and selects it", async () => {
   frame.paste("tools");
   await press(frame, "enter", "u");
 
-  equal(fake.calls, ["list", 'check {"kind":"names","names":["tools"]}']);
+  assertEquals(fake.calls, ["list", 'check {"kind":"names","names":["tools"]}']);
 });
 
 test("esc closes the review, stops its check, and keeps the lock", async () => {
@@ -245,12 +251,12 @@ test("esc closes the review, stops its check, and keeps the lock", async () => {
   const checking = await run(frame, "plugins:update");
   const closed = await press(frame, "esc");
 
-  equal(
+  assertEquals(
     [shows(checking, "the check of the Git plugins runs"), shows(closed, "the check of the Git plugins runs")],
     [true, false],
   );
-  equal(fake.calls, ['check {"kind":"all"}', "check stopped"]);
-  equal(notices, []);
+  assertEquals(fake.calls, ['check {"kind":"all"}', "check stopped"]);
+  assertEquals(notices, []);
 });
 
 test("a check without a change says so, and enter writes nothing", async () => {
@@ -261,11 +267,11 @@ test("a check without a change says so, and enter writes nothing", async () => {
   const reviewed = await run(frame, "plugins:update");
   await press(frame, "enter");
 
-  equal(
+  assertEquals(
     [shows(reviewed, "each Git plugin is at the newest commit of its ref"), shows(reviewed, "esc: close")],
     [true, true],
   );
-  equal(fake.calls, ['check {"kind":"all"}']);
+  assertEquals(fake.calls, ['check {"kind":"all"}']);
 });
 
 test("a check that fails closes the review and gives one error notice", async () => {
@@ -275,8 +281,8 @@ test("a check that fails closes the review and gives one error notice", async ()
 
   const after = await run(frame, "plugins:update");
 
-  equal(shows(after, "the check of the Git plugins runs"), false);
-  equal(notices, ["error the update failed: Error: the remote is gone"]);
+  assertEquals(shows(after, "the check of the Git plugins runs"), false);
+  assertEquals(notices, ["error the update failed: Error: the remote is gone"]);
 });
 
 test("the arrow and page keys scroll a long review", async () => {
@@ -289,9 +295,9 @@ test("the arrow and page keys scroll a long review", async () => {
   const paged = await press(frame, "pagedown");
   const back = await press(frame, "up");
 
-  equal([shows(top, "c00 change 0"), shows(top, "c20 change 20")], [true, false]);
-  equal([shows(paged, "c00 change 0"), shows(paged, "c15 change 15")], [false, true]);
-  equal(shows(back, "c09 change 9"), true);
+  assertEquals([shows(top, "c00 change 0"), shows(top, "c20 change 20")], [true, false]);
+  assertEquals([shows(paged, "c00 change 0"), shows(paged, "c15 change 15")], [false, true]);
+  assertEquals(shows(back, "c09 change 9"), true);
 });
 
 test("the sync command tells its start and its result", async () => {
@@ -301,8 +307,8 @@ test("the sync command tells its start and its result", async () => {
 
   await run(frame, "plugins:sync");
 
-  equal(fake.calls, ["sync undefined with a signal"]);
-  equal(notices, ["info the sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
+  assertEquals(fake.calls, ["sync undefined with a signal"]);
+  assertEquals(notices, ["info the sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
 });
 
 test("the command update writes the chosen commits with a notice", async () => {
@@ -313,8 +319,8 @@ test("the command update writes the chosen commits with a notice", async () => {
   await run(frame, "plugins:update");
   await press(frame, "enter");
 
-  equal(fake.calls, ['check {"kind":"all"}', "apply clock 8d02e77"]);
-  equal(notices, ["info plugins.lock written: run /reload to load the new commits"]);
+  assertEquals(fake.calls, ['check {"kind":"all"}', "apply clock 8d02e77"]);
+  assertEquals(notices, ["info plugins.lock written: run /reload to load the new commits"]);
 });
 
 test("the selection stays visible in a dashboard of one body row", async () => {
@@ -327,8 +333,8 @@ test("the selection stays visible in a dashboard of one body row", async () => {
   const shown = await run(frame, "plugins:open");
   const moved = await press(frame, "j", "j", "enter");
 
-  equal(shows(shown, "https://h/weather"), true);
-  equal(shows(moved, "clock"), true);
+  assertEquals(shows(shown, "https://h/weather"), true);
+  assertEquals(shows(moved, "clock"), true);
 });
 
 test("the dashboard has a default look that a plugin changes", async () => {
@@ -357,7 +363,7 @@ test("the dashboard has a default look that a plugin changes", async () => {
   });
   // The band of the selected row reaches the last column.
   assert(before[1]?.bg !== undefined);
-  equal([before[3]?.bg, looks()], [before[1]?.bg, [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }]]);
+  assertEquals([before[3]?.bg, looks()], [before[1]?.bg, [{ fg: 1 }, { fg: 3 }, { fg: 2 }, { fg: 3 }]]);
 });
 
 test("the line of an empty dashboard uses the look of the details", async () => {
@@ -367,5 +373,5 @@ test("the line of an empty dashboard uses the look of the details", async () => 
   const shown = await run(frame, "plugins:open");
   const row = shown.findIndex((line) => line.includes("config.json has no plugins"));
   const column = shown[row]?.indexOf("config.json") ?? 0;
-  equal(frame.draw().cells[row]?.[column]?.style, { fg: 2 });
+  assertEquals(frame.draw().cells[row]?.[column]?.style, { fg: 2 });
 });

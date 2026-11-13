@@ -87,8 +87,8 @@ fn statuses(outcomes: &[TestOutcome]) -> Vec<(String, String)> {
 async fn a_failure_and_a_stray_rejection_fail_only_their_own_tests() {
     let outcomes = ran(
         "a_failure_and_a_stray_rejection_fail_only_their_own_tests",
-        r#"import { equal, test } from "yuke:test";
-           test("first", () => equal(1, 2));
+        r#"import { assertEquals, test } from "yuke:test";
+           test("first", () => assertEquals(1, 2));
            test("second", () => { void Promise.reject(new Error("nobody awaits it")); });
            test("third", () => {});"#,
         TIME_LIMIT,

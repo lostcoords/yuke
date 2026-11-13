@@ -1,12 +1,12 @@
 // The web classes `Request` and `Response`, and their body methods. Many cases follow the web platform tests (WPT) of
 // `fetch/api/request`, `fetch/api/response`, and `fetch/api/body`.
 
-import { assert, equal, test } from "yuke:test";
+import { assert, assertEquals, test } from "yuke:test";
 import { rejectedName, thrownNames } from "./errors.ts";
 
 test("a request has the defaults of the standard", () => {
   const request = new Request(new URL("https://a.example/x?q#f"));
-  equal(
+  assertEquals(
     [
       request.method,
       request.url,
@@ -24,9 +24,9 @@ test("a request has the defaults of the standard", () => {
 
 test("a request normalizes the method and refuses bad input", () => {
   const url = "https://a.example/";
-  equal(new Request(url, { method: "post" }).method, "POST");
-  equal(new Request(url, { method: "patch" }).method, "patch");
-  equal(
+  assertEquals(new Request(url, { method: "post" }).method, "POST");
+  assertEquals(new Request(url, { method: "patch" }).method, "patch");
+  assertEquals(
     thrownNames([
       () => new Request(url, { method: "connect" }),
       () => new Request(url, { method: "bad method" }),
@@ -50,7 +50,7 @@ test("a request body sets its content type and reads once", async () => {
   const type = (init: RequestInit) => new Request(url, { method: "POST", ...init }).headers.get("content-type");
   const request = new Request(url, { method: "POST", body: "hé" });
   const text = await request.text();
-  equal(
+  assertEquals(
     [
       type({ body: "x" }),
       type({ body: new URLSearchParams("a=1") }),
@@ -59,23 +59,23 @@ test("a request body sets its content type and reads once", async () => {
     ],
     ["text/plain;charset=UTF-8", "application/x-www-form-urlencoded;charset=UTF-8", null, "application/json"],
   );
-  equal([text, request.bodyUsed], ["hé", true]);
-  equal(await rejectedName(request.text()), "TypeError");
-  equal(await new Request(url, { method: "PUT", body: new URLSearchParams({ a: "b c" }) }).text(), "a=b+c");
+  assertEquals([text, request.bodyUsed], ["hé", true]);
+  assertEquals(await rejectedName(request.text()), "TypeError");
+  assertEquals(await new Request(url, { method: "PUT", body: new URLSearchParams({ a: "b c" }) }).text(), "a=b+c");
 });
 
 test("a request from a request copies it and takes its body", async () => {
   const original = new Request("https://a.example/", { method: "POST", body: "data", headers: { a: "1" } });
   const copy = new Request(original, { method: "PUT" });
   copy.headers.append("b", "2");
-  equal(
+  assertEquals(
     [copy.url, copy.method, original.method, original.headers.has("b"), copy.headers.get("a"), original.bodyUsed],
     ["https://a.example/", "PUT", "POST", false, "1", true],
   );
-  equal(await copy.text(), "data");
-  equal(await rejectedName(original.text()), "TypeError");
-  equal(thrownNames([() => new Request(original)]), ["TypeError"]);
-  equal(new Request(new Request("https://a.example/", { redirect: "manual" })).redirect, "manual");
+  assertEquals(await copy.text(), "data");
+  assertEquals(await rejectedName(original.text()), "TypeError");
+  assertEquals(thrownNames([() => new Request(original)]), ["TypeError"]);
+  assertEquals(new Request(new Request("https://a.example/", { redirect: "manual" })).redirect, "manual");
 });
 
 test("the signal of a request follows the signal of its init and its input", () => {
@@ -83,9 +83,9 @@ test("the signal of a request follows the signal of its init and its input", () 
   const request = new Request("https://a.example/", { signal: controller.signal });
   const copy = new Request(request);
   const unlinked = new Request(request, { signal: null });
-  equal(request.signal.aborted, false);
+  assertEquals(request.signal.aborted, false);
   controller.abort("stop");
-  equal(
+  assertEquals(
     [request.signal === controller.signal, request.signal.reason, copy.signal.reason, unlinked.signal.aborted],
     [false, "stop", "stop", false],
   );
@@ -94,18 +94,18 @@ test("the signal of a request follows the signal of its init and its input", () 
 test("a response has the defaults of the standard and takes its init", async () => {
   const plain = new Response();
   const made = new Response("hi", { status: 201, statusText: "Created", headers: { "x-a": "1" } });
-  equal(
+  assertEquals(
     [plain.status, plain.ok, plain.statusText, plain.type, plain.url, plain.redirected, plain.body, await plain.text()],
     [200, true, "", "default", "", false, null, ""],
   );
-  equal(
+  assertEquals(
     [made.status, made.statusText, made.headers.get("x-a"), made.headers.get("content-type"), await made.text()],
     [201, "Created", "1", "text/plain;charset=UTF-8", "hi"],
   );
 });
 
 test("a response checks its status and status text", () => {
-  equal(
+  assertEquals(
     thrownNames([
       () => new Response(null, { status: 199 }),
       () => new Response(null, { status: 600 }),
@@ -114,7 +114,7 @@ test("a response checks its status and status text", () => {
     ]),
     ["RangeError", "RangeError", "TypeError", "TypeError"],
   );
-  equal([new Response(null, { status: 204 }).status, new Response(null, { status: 599 }).ok], [204, false]);
+  assertEquals([new Response(null, { status: 204 }).status, new Response(null, { status: 599 }).ok], [204, false]);
 });
 
 test("the body methods read the bytes once", async () => {
@@ -132,19 +132,19 @@ test("the body methods read the bytes once", async () => {
   const cancelled = new Response("x");
   assert(cancelled.body !== null);
   await cancelled.body.cancel();
-  equal(json, { a: [1] });
+  assertEquals(json, { a: [1] });
   assert(buffer instanceof ArrayBuffer);
-  equal(buffer.byteLength, 5);
-  equal(new Uint8Array(await kept.arrayBuffer())[3], 97);
-  equal(await new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff])).text(), "a�");
-  equal(viewed, new Uint8Array([98, 255]));
-  equal(
+  assertEquals(buffer.byteLength, 5);
+  assertEquals(new Uint8Array(await kept.arrayBuffer())[3], 97);
+  assertEquals(await new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff])).text(), "a�");
+  assertEquals(viewed, new Uint8Array([98, 255]));
+  assertEquals(
     [used.bodyUsed, await rejectedName(used.text()), await rejectedName(used.arrayBuffer())],
     [true, "TypeError", "TypeError"],
   );
-  equal([locked.bodyUsed, await rejectedName(locked.text())], [false, "TypeError"]);
-  equal([cancelled.bodyUsed, await rejectedName(cancelled.text())], [true, "TypeError"]);
-  equal(await rejectedName(new Response("{").json()), "SyntaxError");
+  assertEquals([locked.bodyUsed, await rejectedName(locked.text())], [false, "TypeError"]);
+  assertEquals([cancelled.bodyUsed, await rejectedName(cancelled.text())], [true, "TypeError"]);
+  assertEquals(await rejectedName(new Response("{").json()), "SyntaxError");
 });
 
 test("a response reads a stream body and refuses a chunk that is not bytes", async () => {
@@ -175,25 +175,28 @@ test("a response reads a stream body and refuses a chunk that is not bytes", asy
   const response = new Response(body);
   const locked = new ReadableStream<Uint8Array>();
   locked.getReader();
-  equal([response.body === body, response.headers.has("content-type"), await response.text()], [true, false, "ab"]);
-  equal(await new Response(reused).text(), "ab");
+  assertEquals(
+    [response.body === body, response.headers.has("content-type"), await response.text()],
+    [true, false, "ab"],
+  );
+  assertEquals(await new Response(reused).text(), "ab");
   // @ts-expect-error: a chunk of a body is bytes.
-  equal(await rejectedName(new Response(stream(["text"])).text()), "TypeError");
-  equal(thrownNames([() => new Response(locked)]), ["TypeError"]);
+  assertEquals(await rejectedName(new Response(stream(["text"])).text()), "TypeError");
+  assertEquals(thrownNames([() => new Response(locked)]), ["TypeError"]);
 });
 
 test("the static methods make an error, a redirect, and JSON", async () => {
   const error = Response.error();
   const redirect = Response.redirect("https://a.example/x", 307);
   const json = Response.json({ a: 1 }, { status: 201, headers: { "content-type": "text/x" } });
-  equal([error.type, error.status, error.ok, error.body], ["error", 0, false, null]);
-  equal(
+  assertEquals([error.type, error.status, error.ok, error.body], ["error", 0, false, null]);
+  assertEquals(
     [redirect.status, redirect.headers.get("location"), Response.redirect("https://a.example/").status],
     [307, "https://a.example/x", 302],
   );
-  equal([json.status, json.headers.get("content-type"), await json.text()], [201, "text/x", '{"a":1}']);
-  equal(Response.json("x").headers.get("content-type"), "application/json");
-  equal(
+  assertEquals([json.status, json.headers.get("content-type"), await json.text()], [201, "text/x", '{"a":1}']);
+  assertEquals(Response.json("x").headers.get("content-type"), "application/json");
+  assertEquals(
     thrownNames([
       () => Response.redirect("https://a.example/", 200),
       () => Response.redirect("/relative"),

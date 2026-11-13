@@ -2,7 +2,16 @@
 
 import type { PluginSession } from "yuke:plugins";
 import type { Block, RequestSettings } from "yuke:protocol";
-import { createHost, equal, type ModelRequest, type Reply, rejects, reply, test, waitForSettled } from "yuke:test";
+import {
+  assertEquals,
+  assertRejects,
+  createHost,
+  type ModelRequest,
+  type Reply,
+  reply,
+  test,
+  waitForSettled,
+} from "yuke:test";
 
 /** The context of the round: an input, an answer, and a second input. */
 const context: Block[] = [
@@ -41,7 +50,7 @@ async function round(
 
 /** The only request of `requests`. */
 function only(requests: readonly ModelRequest[]): ModelRequest {
-  equal(requests.length, 1);
+  assertEquals(requests.length, 1);
   return requests[0] as ModelRequest;
 }
 
@@ -67,11 +76,11 @@ test("a side request repeats the round with the context that the handler sees, t
     replies,
   );
 
-  equal(answer, ["A summary.", "stop", 900, true]);
+  assertEquals(answer, ["A summary.", "stop", 900, true]);
   const request = only(requests);
   const body = request.body as { temperature: number; max_tokens: number };
-  equal([request.system, request.tools, body.temperature, body.max_tokens], ["Be brief.", ["echo"], 0.5, 100]);
-  equal(request.messages, [{ role: "user", text: "summary\nthree\nSummarize." }]);
+  assertEquals([request.system, request.tools, body.temperature, body.max_tokens], ["Be brief.", ["echo"], 0.5, 100]);
+  assertEquals(request.messages, [{ role: "user", text: "summary\nthree\nSummarize." }]);
 });
 
 test("the blockCount option sends only the oldest blocks of the context", async () => {
@@ -85,7 +94,7 @@ test("the blockCount option sends only the oldest blocks of the context", async 
 
   const requests = await round([{ name: "compact", session: compact }], replies);
 
-  equal(
+  assertEquals(
     only(requests).messages.map((message) => [message.role, message.text]),
     [
       ["user", "one"],
@@ -122,11 +131,11 @@ test("an abort stops the request and rejects with the reason of the signal", asy
     settings,
   });
   await waitForSettled();
-  equal(host.requests.length, 1);
+  assertEquals(host.requests.length, 1);
   controller.abort(new Error("too slow"));
   await pending;
 
-  equal([rejected, host.requests.length], ["too slow", 1]);
+  assertEquals([rejected, host.requests.length], ["too slow", 1]);
 });
 
 test("a failed request rejects with its text", async () => {
@@ -138,9 +147,9 @@ test("a failed request rejects with its text", async () => {
   };
   const replies = [reply.failed("Half")];
 
-  const error = await rejects(round([{ name: "compact", session: compact }], replies));
+  const error = await assertRejects(() => round([{ name: "compact", session: compact }], replies));
 
   const message = error instanceof Error ? error.message : String(error);
-  equal(message.startsWith("round.before of plugin compact failed: Error: "), true);
-  equal(message.includes("overloaded"), true);
+  assertEquals(message.startsWith("round.before of plugin compact failed: Error: "), true);
+  assertEquals(message.includes("overloaded"), true);
 });

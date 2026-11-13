@@ -34,7 +34,7 @@ interface Entry<T> {
   readonly selected: boolean;
 }
 
-export class Picker<T extends object> implements View {
+export class Picker<T> implements View {
   readonly input: TextEditor;
   readonly #options: PickerOptions<T>;
   readonly #list: ScrollList<Entry<T>>;

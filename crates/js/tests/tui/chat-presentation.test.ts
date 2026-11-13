@@ -2,7 +2,7 @@
 
 import { ChatDocument, type ChatPresentation, type ChatPresentationOptions } from "yuke:chat";
 import type { Block, StoredEvent, ToolCall } from "yuke:protocol";
-import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import type { Transcript } from "yuke:transcript";
 import type { TextDocument, View } from "yuke:tui";
 import { click, commit, fakeSessions, fixedClock, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
@@ -85,7 +85,7 @@ test("a plugin shows three tools as one row, and a click opens and folds that ro
   click(frame, 1, transcriptRows(frame).indexOf("● tools: 3"));
   const opened = shown(frame);
   click(frame, 1, transcriptRows(frame).indexOf("● tools: 3"));
-  equal(
+  assertEquals(
     [folded, opened, shown(frame)],
     [["● tools: 3"], ["● tools: 3", " read a", " read b", " read c"], ["● tools: 3"]],
   );
@@ -104,7 +104,7 @@ test("a plugin that loads after the pane mounts changes the open pane and keeps 
   const present = shown(frame);
   remove();
   frame.draw();
-  equal(
+  assertEquals(
     [before, present, shown(frame)],
     [[" read a", " text", " read b"], ["● tools: 2"], [" read a", " text", " read b"]],
   );
@@ -157,7 +157,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   const before = projections;
   frame.advance(400);
   frame.draw();
-  equal([idle, running, projections - before], [0, 1, 0]);
+  assertEquals([idle, running, projections - before], [0, 1, 0]);
 });
 
 test("a disposer of an old factory leaves the look of a later factory", async () => {
@@ -169,7 +169,7 @@ test("a disposer of an old factory leaves the look of a later factory", async ()
   frame.start();
   await waitForSettled();
   frame.draw();
-  equal(shown(frame), ["● tools: 1"]);
+  assertEquals(shown(frame), ["● tools: 1"]);
 });
 
 test("a disposer of a later factory brings back the look of the factory before it", async () => {
@@ -181,7 +181,7 @@ test("a disposer of a later factory brings back the look of the factory before i
   frame.start();
   await waitForSettled();
   frame.draw();
-  equal(shown(frame), ["● tools: 1"]);
+  assertEquals(shown(frame), ["● tools: 1"]);
 });
 
 test("requestUpdate shows new state of a presentation with no session event, and a frame alone does not", async () => {
@@ -203,7 +203,7 @@ test("requestUpdate shows new state of a presentation with no session event, and
   const framed = shown(frame);
   changed();
   frame.draw();
-  equal([framed, shown(frame)], [["● tools: 1"], ["● running: 1"]]);
+  assertEquals([framed, shown(frame)], [["● tools: 1"], ["● running: 1"]]);
 });
 
 test("a session change, a new factory, and a pane close abort the signal, and each presentation gets the key of its session", async () => {
@@ -227,7 +227,7 @@ test("a session change, a new factory, and a pane close abort the signal, and ea
   frame.draw();
   chat.tui.commands.run("core:close");
   frame.draw();
-  equal(
+  assertEquals(
     [
       options.map((given) => given.id),
       afterShow,
@@ -255,5 +255,5 @@ test("a group key in the folds survives a snapshot and a restore", async () => {
   after.start(snapshot);
   await waitForSettled();
   after.draw();
-  equal(shown(after), ["● tools: 1", " read a"]);
+  assertEquals(shown(after), ["● tools: 1", " read a"]);
 });

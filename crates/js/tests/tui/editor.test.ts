@@ -1,7 +1,7 @@
 // The text editor of `yuke:tui`: whole graphemes and spans, its states and changes, its coordinates, its keys, and its
 // frames.
 
-import { assert, createFrame, equal, test, throws } from "yuke:test";
+import { assert, assertEquals, assertThrows, createFrame, test } from "yuke:test";
 import { type EditorChange, type EditorState, TextEditor, type View } from "yuke:tui";
 
 /** A root view that shows `editor` at `width` by `height` cells from (1, 1), and gives it the first focus. */
@@ -31,19 +31,19 @@ test("an edit inside a grapheme or a span takes the whole of it", () => {
   const changes: EditorChange[] = [];
   editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   editor.replace(2, 3, "");
-  equal([editor.state.text, editor.caret], ["AB", 1]);
-  equal(changes[0]?.changes, [{ from: 1, to: 6, text: "", spans: [] }]);
+  assertEquals([editor.state.text, editor.caret], ["AB", 1]);
+  assertEquals(changes[0]?.changes, [{ from: 1, to: 6, text: "", spans: [] }]);
   // A caret inside a grapheme goes to its nearest edge.
   const second = new TextEditor({ state: state("A👩‍💻B") });
   second.caret = 3;
-  equal(second.caret, 1);
+  assertEquals(second.caret, 1);
   const pasted = new TextEditor({ state: state("abcdef", 6, [{ from: 1, to: 5, kind: "paste", label: "[4 chars]" }]) });
   pasted.replace(2, 3, "");
-  equal([pasted.state.text, pasted.state.spans], ["af", []]);
+  assertEquals([pasted.state.text, pasted.state.spans], ["af", []]);
   // An insertion in a span goes to its nearer edge, and a tie goes after it.
   const tie = new TextEditor({ state: state("abcdef", 6, [{ from: 1, to: 5, kind: "paste", label: "[4 chars]" }]) });
   tie.replace(3, 3, "x");
-  equal([tie.state.text, tie.state.spans[0]?.from, tie.caret], ["abcdexf", 1, 6]);
+  assertEquals([tie.state.text, tie.state.spans[0]?.from, tie.caret], ["abcdexf", 1, 6]);
 });
 
 test("a restore brings back an image with its media and a change keeps its states", () => {
@@ -64,9 +64,9 @@ test("a restore brings back an image with its media and a change keeps its state
     text: "",
     modifiers: { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false },
   });
-  equal([editor.state.text, editor.state.spans], ["xy", []]);
+  assertEquals([editor.state.text, editor.state.spans], ["xy", []]);
   editor.restore(saved);
-  equal(editor.state, {
+  assertEquals(editor.state, {
     text: "x￼y",
     selection: { anchor: 3, head: 3 },
     spans: [
@@ -80,17 +80,17 @@ test("a restore brings back an image with its media and a change keeps its state
     ],
   });
   editor.reset(state("new"));
-  equal(
+  assertEquals(
     changes.map((change) => change.kind),
     ["selection", "edit", "restore", "reset"],
   );
   // A change holds frozen states, so a plugin can keep `before` for its undo.
-  equal(
+  assertEquals(
     [Object.isFrozen(changes[1]?.before), Object.isFrozen(changes[1]?.before.spans[0]), changes[1]?.before.text],
     [true, true, "x￼y"],
   );
-  throws(() => editor.replace(0, 9, ""));
-  throws(() => editor.reset(state("ab", 0, [{ from: 0, to: 1, kind: "image", label: "[image]", media }])));
+  assertThrows(() => editor.replace(0, 9, ""));
+  assertThrows(() => editor.reset(state("ab", 0, [{ from: 0, to: 1, kind: "image", label: "[image]", media }])));
 });
 
 test("logical lines and display rows give different moves on a wrapped line", () => {
@@ -100,21 +100,24 @@ test("logical lines and display rows give different moves on a wrapped line", ()
   // Down a logical line goes to the next line; down a display row stays in the same line.
   const line = editor.lines.point(1);
   const display = editor.rows.point(1);
-  equal(
+  assertEquals(
     [line, display],
     [
       { column: 1, row: 0 },
       { column: 1, row: 0 },
     ],
   );
-  equal(editor.lines.at({ column: 1, row: 1 }), 10);
-  equal(editor.rows.at({ column: 1, row: 1 }), 5);
-  equal([editor.lines.count, editor.rows.count, editor.rows.text(1), editor.lines.text(0)], [2, 3, "efgh", "abcdefgh"]);
+  assertEquals(editor.lines.at({ column: 1, row: 1 }), 10);
+  assertEquals(editor.rows.at({ column: 1, row: 1 }), 5);
+  assertEquals(
+    [editor.lines.count, editor.rows.count, editor.rows.text(1), editor.lines.text(0)],
+    [2, 3, "efgh", "abcdefgh"],
+  );
   // The down key moves by display rows and keeps its column across a short row.
   frame.key("down");
-  equal(editor.caret, 5);
+  assertEquals(editor.caret, 5);
   frame.key("down");
-  equal(editor.caret, 10);
+  assertEquals(editor.caret, 10);
 });
 
 test("a frame shows the prompt, the text, a label, the selection, and the cursor with its shape", () => {
@@ -134,14 +137,14 @@ test("a frame shows the prompt, the text, a label, the selection, and the cursor
     return () => extension.dispose();
   });
   const cells = frame.draw().cells[1];
-  equal(row(cells, 1, 11), "> hi [p]  ");
+  assertEquals(row(cells, 1, 11), "> hi [p]  ");
   // The selection reverses "hi", and the label has a color that the plain text has not.
-  equal(cells?.[3]?.style, { reverse: true });
+  assertEquals(cells?.[3]?.style, { reverse: true });
   assert(cells?.[6]?.style.fg !== undefined && cells[6].style.fg !== cells[5]?.style.fg);
-  equal(frame.frame.cursor, { column: 5, row: 1, shape: "block" });
+  assertEquals(frame.frame.cursor, { column: 5, row: 1, shape: "block" });
   // The close of the surface ends the extension, so the cursor takes the shape of the terminal again.
   surface.close();
-  equal(frame.draw().cursor, { column: 5, row: 1 });
+  assertEquals(frame.draw().cursor, { column: 5, row: 1 });
 });
 
 test("the keys type, select, delete, add a line, and submit without a clear", () => {
@@ -150,16 +153,16 @@ test("the keys type, select, delete, add a line, and submit without a clear", ()
   using frame = createFrame({ width: 12, height: 3 }, () => root(editor, 10, 2));
   frame.key("h i");
   frame.key("shift+left");
-  equal(editor.selection, { anchor: 2, head: 1 });
+  assertEquals(editor.selection, { anchor: 2, head: 1 });
   frame.key("backspace");
   frame.key("o shift+enter k");
-  equal(editor.state.text, "ho\nk");
+  assertEquals(editor.state.text, "ho\nk");
   frame.key("enter");
-  equal([submitted, editor.state.text], [["ho\nk"], "ho\nk"]);
+  assertEquals([submitted, editor.state.text], [["ho\nk"], "ho\nk"]);
   frame.key("home");
-  equal(editor.caret, 3);
+  assertEquals(editor.caret, 3);
   frame.paste("x\ny");
-  equal(editor.state.text, "ho\nx\nyk");
+  assertEquals(editor.state.text, "ho\nx\nyk");
 });
 
 test("the word keys step over whole graphemes and spans, stop at a line end, and delete a selection first", () => {
@@ -173,17 +176,17 @@ test("the word keys step over whole graphemes and spans, stop at a line end, and
     frame.key(key);
     carets.push(editor.caret);
   }
-  equal(carets, [17, 6, 3, 5, 15]);
+  assertEquals(carets, [17, 6, 3, 5, 15]);
   frame.key("ctrl+shift+left");
-  equal(editor.selection, { anchor: 15, head: 6 });
+  assertEquals(editor.selection, { anchor: 15, head: 6 });
   frame.key("ctrl+w");
-  equal([editor.state.text, editor.caret], ["ab cd\n  fg", 6]);
+  assertEquals([editor.state.text, editor.caret], ["ab cd\n  fg", 6]);
   frame.key("alt+d");
-  equal(editor.state.text, "ab cd\n");
+  assertEquals(editor.state.text, "ab cd\n");
   frame.key("ctrl+w");
-  equal(editor.state.text, "ab ");
+  assertEquals(editor.state.text, "ab ");
   frame.key("alt+backspace");
-  equal(editor.state.text, "");
+  assertEquals(editor.state.text, "");
 });
 
 test("a word move stops at each end of the text, and a word delete takes a CRLF whole", () => {
@@ -196,7 +199,7 @@ test("a word move stops at each end of the text, and a word delete takes a CRLF 
   frame.key("ctrl+w");
   const word = editor.state.text;
   frame.key("ctrl+w");
-  equal([start, end, word, editor.state.text], [0, 4, "a\r\n", ""]);
+  assertEquals([start, end, word, editor.state.text], [0, 4, "a\r\n", ""]);
 });
 
 test("the line keys reach the ends of a line past its wraps, and a delete at a line start changes nothing", () => {
@@ -209,10 +212,10 @@ test("the line keys reach the ends of a line past its wraps, and a delete at a l
   frame.key("ctrl+e");
   const end = editor.caret;
   frame.key("ctrl+u");
-  equal([start, end, editor.state.text, editor.caret], [0, 10, "\nxy", 0]);
+  assertEquals([start, end, editor.state.text, editor.caret], [0, 10, "\nxy", 0]);
   const seen = changes.length;
   frame.key("ctrl+u ctrl+w");
-  equal(changes.length, seen);
+  assertEquals(changes.length, seen);
 });
 
 test("a masked editor shows one dot for each grapheme and each span, and its caret counts the dots", () => {
@@ -230,8 +233,8 @@ test("a masked editor shows one dot for each grapheme and each span, and its car
   const spanStyle = frame.frame.cells[1]?.[4]?.style;
   frame.key("left left");
   frame.draw();
-  equal(spanStyle, {});
-  equal(
+  assertEquals(spanStyle, {});
+  assertEquals(
     [
       row(frame.frame.cells[1], 1, 9),
       editor.rows.text(0),
@@ -261,7 +264,7 @@ test("a mask covers a span at the start, a span at the end, two spans side by si
     frame.key("end");
     return [editor.rows.text(0), offsets, editor.caret];
   });
-  equal(results, [
+  assertEquals(results, [
     ["••", [0, 2], 3],
     ["••", [0, 1], 3],
     ["••", [0, 2], 4],
@@ -273,22 +276,22 @@ test("a one-line field writes line ends as spaces and passes a newline key on", 
   const field = new TextEditor({ multiline: false });
   using frame = createFrame({ width: 12, height: 3 }, () => root(field, 10, 1));
   frame.paste("a\nb\r\nc");
-  equal(field.state.text, "a b  c");
+  assertEquals(field.state.text, "a b  c");
   frame.key("ctrl+j enter");
-  equal(field.state.text, "a b  c");
+  assertEquals(field.state.text, "a b  c");
 });
 
 test("a full last row gives the caret a row of its own", () => {
   const editor = new TextEditor({ state: state("abcd") });
   using frame = createFrame({ width: 6, height: 4 }, () => root(editor, 4, 3));
-  equal([editor.heightFor(4), editor.heightFor(5), editor.rows.point(4)], [2, 1, { column: 0, row: 1 }]);
-  equal(frame.frame.cursor, { column: 1, row: 2 });
+  assertEquals([editor.heightFor(4), editor.heightFor(5), editor.rows.point(4)], [2, 1, { column: 0, row: 1 }]);
+  assertEquals(frame.frame.cursor, { column: 1, row: 2 });
   // Down from the first row reaches the row of the caret after the full row, and Up goes back to the goal column.
   editor.caret = 1;
   frame.key("down");
-  equal(editor.caret, 4);
+  assertEquals(editor.caret, 4);
   frame.key("up");
-  equal(editor.caret, 1);
+  assertEquals(editor.caret, 1);
 });
 
 test("overlapping decorations merge per field and a whole-row decoration fills its rows", () => {
@@ -302,12 +305,12 @@ test("overlapping decorations merge per field and a whole-row decoration fills i
     { range: { anchor: 5, head: 6 }, style: { bg: 3 }, wholeRows: true },
   ]);
   const cells = frame.draw().cells;
-  equal(
+  assertEquals(
     [1, 2, 3, 4].map((column) => cells[1]?.[column]?.style),
     [{ fg: 1 }, { fg: 1, bg: 2 }, { fg: 1 }, {}],
   );
   // The whole-row decoration covers the row of "x" up to the edge of the editor.
-  equal(
+  assertEquals(
     [1, 2, 6].map((column) => cells[2]?.[column]?.style),
     [{ bg: 3 }, { bg: 3 }, { bg: 3 }],
   );
@@ -328,7 +331,7 @@ test("a press puts the caret, a drag selects, and the wheel scrolls", () => {
   mouse(2, 1, "press");
   mouse(3, 2, "drag");
   mouse(3, 2, "release");
-  equal(editor.selection, { anchor: 1, head: 6 });
+  assertEquals(editor.selection, { anchor: 1, head: 6 });
   frame.mouse({
     type: "mouse",
     column: 2,
@@ -337,8 +340,8 @@ test("a press puts the caret, a drag selects, and the wheel scrolls", () => {
     action: "press",
     modifiers: { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false },
   });
-  equal(editor.visibleRows, { from: 1, to: 3 });
-  equal(row(frame.frame.cells[1], 1, 4), "two");
+  assertEquals(editor.visibleRows, { from: 1, to: 3 });
+  assertEquals(row(frame.frame.cells[1], 1, 4), "two");
 });
 
 test("an arrow steps over a span and up and down keep their column across a short row", () => {
@@ -347,21 +350,21 @@ test("an arrow steps over a span and up and down keep their column across a shor
   });
   using frame = createFrame({ width: 10, height: 5 }, () => root(editor, 8, 4));
   frame.key("right right");
-  equal(editor.caret, 3);
+  assertEquals(editor.caret, 3);
   frame.key("left");
-  equal(editor.caret, 1);
+  assertEquals(editor.caret, 1);
   // The goal column counts display cells: "a[p]d" ends at cell 5, so the last line takes "abcde".
   frame.key("end down");
-  equal(editor.caret, 6);
+  assertEquals(editor.caret, 6);
   frame.key("down");
-  equal(editor.caret, 12);
+  assertEquals(editor.caret, 12);
 });
 
 test("the view follows the caret past the last shown row", () => {
   const editor = new TextEditor();
   using frame = createFrame({ width: 6, height: 2 }, () => root(editor, 4, 1));
   frame.key("a shift+enter b");
-  equal([editor.visibleRows, row(frame.frame.cells[1], 1, 2)], [{ from: 1, to: 2 }, "b"]);
+  assertEquals([editor.visibleRows, row(frame.frame.cells[1], 1, 2)], [{ from: 1, to: 2 }, "b"]);
 });
 
 test("a whole-row decoration styles its rows from edge to edge and stops at a soft break", () => {
@@ -372,7 +375,7 @@ test("a whole-row decoration styles its rows from edge to edge and stops at a so
     .setDecorations([{ range: { anchor: 5, head: 6 }, style: { bg: 3 }, wholeRows: true }]);
   const cells = frame.draw().cells;
   // Offsets 5 to 6 ("f") are on the second row ("ef"): "e" before them takes the style, and "abcd" keeps its own.
-  equal([cells[1]?.[1]?.style, cells[2]?.[1]?.style, cells[2]?.[4]?.style], [{}, { bg: 3 }, { bg: 3 }]);
+  assertEquals([cells[1]?.[1]?.style, cells[2]?.[1]?.style, cells[2]?.[4]?.style], [{}, { bg: 3 }, { bg: 3 }]);
 });
 
 test("reset and restore report one edit over the whole text", () => {
@@ -381,7 +384,7 @@ test("reset and restore report one edit over the whole text", () => {
   editor.extend(new AbortController().signal).addChangeListener((change) => changes.push(change));
   editor.reset(state("new text"));
   editor.restore(state("old"));
-  equal(
+  assertEquals(
     changes.map((change) => change.changes),
     [[{ from: 0, to: 3, text: "new text", spans: [] }], [{ from: 0, to: 8, text: "old", spans: [] }]],
   );
@@ -390,28 +393,28 @@ test("reset and restore report one edit over the whole text", () => {
 test("the editor checks the grapheme edges of its spans and copies its media", () => {
   const media = { blob: { digest: "abc", len: 3 }, mimeType: "image/png" };
   // The astronaut is one grapheme of 5 units, so a span that ends inside it splits it.
-  throws(() => new TextEditor({ state: state("👩‍💻", 0, [{ from: 0, to: 2, kind: "paste", label: "[p]" }]) }));
+  assertThrows(() => new TextEditor({ state: state("👩‍💻", 0, [{ from: 0, to: 2, kind: "paste", label: "[p]" }]) }));
   const image = (value: unknown) =>
     new TextEditor({
       state: state("￼", 0, [{ from: 0, to: 1, kind: "image", label: "[i]", media: value as typeof media }]),
     });
-  equal(image(media).state.spans[0], { from: 0, to: 1, kind: "image", label: "[i]", media });
+  assertEquals(image(media).state.spans[0], { from: 0, to: 1, kind: "image", label: "[i]", media });
 });
 
 test("the scroll follows a new prompt and stays inside the text after a restore", () => {
   const editor = new TextEditor({ state: state("abcdefg") });
   using frame = createFrame({ width: 6, height: 2 }, () => root(editor, 4, 1));
-  equal(editor.visibleRows, { from: 1, to: 2 });
+  assertEquals(editor.visibleRows, { from: 1, to: 2 });
   // The prompt leaves 2 cells for the text: "ab", "cd", "ef", "g" and the caret after "g".
   editor.extend(new AbortController().signal).setAppearance({ prompt: "> " });
   frame.draw();
-  equal(editor.visibleRows, { from: 3, to: 4 });
+  assertEquals(editor.visibleRows, { from: 3, to: 4 });
   const tall = new TextEditor({ state: state("1\n2\n3\n4\n5\n6") });
   using second = createFrame({ width: 6, height: 3 }, () => root(tall, 4, 2));
-  equal(tall.visibleRows, { from: 4, to: 6 });
+  assertEquals(tall.visibleRows, { from: 4, to: 6 });
   tall.restore(state("1\n2\n3"));
   second.draw();
-  equal(tall.visibleRows, { from: 1, to: 3 });
+  assertEquals(tall.visibleRows, { from: 1, to: 3 });
 });
 
 test("a drag above the text selects to its start", () => {
@@ -420,7 +423,7 @@ test("a drag above the text selects to its start", () => {
   const modifiers = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
   frame.mouse({ type: "mouse", column: 5, row: 1, button: "left", action: "press", modifiers });
   frame.mouse({ type: "mouse", column: 5, row: 0, button: "left", action: "drag", modifiers });
-  equal(editor.selection, { anchor: 4, head: 0 });
+  assertEquals(editor.selection, { anchor: 4, head: 0 });
 });
 
 test("the selection, a label, and the placeholder have a default look that a plugin changes", () => {
@@ -450,7 +453,7 @@ test("the selection, a label, and the placeholder have a default look that a plu
     "editor.placeholder": { fg: 3, dim: null },
   });
   const after = looks();
-  equal(
+  assertEquals(
     [before.map((style, at) => JSON.stringify(style) !== JSON.stringify(after[at])), after],
     [
       [true, true, true],

@@ -4,17 +4,17 @@ use super::*;
 
 /// A plugin `boarhat` whose tool `read_session` sends `session.read` and answers with the title of the result, or with the
 /// failure.
-const READER: &str = "import { ExtensionRequestError } from 'yuke:plugins';
+const READER: &str = "import { ClientRequestError } from 'yuke:plugins';
    export function session(s) {
      s.tools.add({
        name: 'read_session', description: 'Read a session.', concurrency: 'serial',
        parameters: { type: 'object', properties: {} },
        async execute(_args, { signal }) {
          try {
-           const found = await s.request('session.read', { id: 'S-42' }, { signal });
+           const found = await s.sendClientRequest('session.read', { id: 'S-42' }, { signal });
            return `title: ${found.title}`;
          } catch (error) {
-           if (error instanceof ExtensionRequestError) return `refused ${error.code} ${error.message} ${error.data.reason}`;
+           if (error instanceof ClientRequestError) return `refused ${error.code} ${error.message} ${error.data.reason}`;
            return `failed ${error.name}: ${error.message}`;
          }
        },
@@ -130,7 +130,7 @@ async fn a_closed_session_cancels_its_pending_requests() {
     place.plugin(
         "watcher",
         "export function session(s) {
-           s.request('watch', null).catch((error) => s.sendClientEvent('ended', error.name));
+           s.sendClientRequest('watch', null).catch((error) => s.sendClientEvent('ended', error.name));
          }",
     );
     std::fs::write(place.paths.config.join("config.json"), r#"{ "plugins": ["watcher"] }"#).unwrap();

@@ -1,7 +1,7 @@
 // The jobs of a plugin: `s.jobs.start`, `context.jobs.run`, the signal of the work, its end, and its report.
 
 import type { JobReport, JobWork, PluginContext, SessionContext, SessionHandle } from "yuke:plugins";
-import { assert, createHost, equal, reply, type TestSession, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createHost, reply, type TestSession, test, waitForSettled } from "yuke:test";
 
 /** Work that ends when a test says so. */
 function held() {
@@ -79,10 +79,10 @@ test("a job lists with the jobs of the session, and its report starts a turn", a
   work.finish(REPORT);
   await waitForSettled();
 
-  equal(listed, [{ id: "explorer", label: "one", state: "running", kind: "plugin", plugin: "agents" }]);
-  equal(handle.jobs(), []);
-  equal(work.signal.aborted, false);
-  equal(host.requests[0]?.messages.at(-1)?.text, SENT);
+  assertEquals(listed, [{ id: "explorer", label: "one", state: "running", kind: "plugin", plugin: "agents" }]);
+  assertEquals(handle.jobs(), []);
+  assertEquals(work.signal.aborted, false);
+  assertEquals(host.requests[0]?.messages.at(-1)?.text, SENT);
 });
 
 test("an id that still runs rejects, and the end of its work frees the id", async () => {
@@ -101,7 +101,7 @@ test("an id that still runs rejects, and the end of its work frees the id", asyn
   await waitForSettled();
 
   assert(String(refusal).includes("the job explorer still runs"), String(refusal));
-  equal(labels, ["three"]);
+  assertEquals(labels, ["three"]);
 });
 
 test("the stop tool aborts the signal, waits for the end, and drops the report", async () => {
@@ -116,15 +116,15 @@ test("the stop tool aborts the signal, waits for the end, and drops the report",
     return answer;
   });
   await waitForSettled();
-  equal([work.signal.aborted, answered], [true, false]);
+  assertEquals([work.signal.aborted, answered], [true, false]);
   work.finish(REPORT);
 
-  equal(await pending, "explorer stopped.");
+  assertEquals(await pending, "explorer stopped.");
   // The stop answered after the end, so the list no longer holds the job.
-  equal(handle.jobs(), []);
+  assertEquals(handle.jobs(), []);
   await waitForSettled();
-  equal(session.transcript.entries, []);
-  equal(host.requests.length, 0);
+  assertEquals(session.transcript.entries, []);
+  assertEquals(host.requests.length, 0);
 });
 
 test("a cancel of the stop tool ends its wait, and the stop goes on", async () => {
@@ -136,7 +136,7 @@ test("a cancel of the stop tool ends its wait, and the stop goes on", async () =
 
   const answer = stop(session, "explorer", cancel.signal);
   await waitForSettled();
-  equal(work.signal.aborted, true);
+  assertEquals(work.signal.aborted, true);
   cancel.abort(new Error("cancelled"));
   const failure = await answer.then(
     () => "answered",
@@ -146,8 +146,8 @@ test("a cancel of the stop tool ends its wait, and the stop goes on", async () =
   work.finish(undefined);
   await waitForSettled();
 
-  equal(failure, "rejected");
-  equal(running, ["explorer"]);
+  assertEquals(failure, "rejected");
+  assertEquals(running, ["explorer"]);
 });
 
 test("the close aborts the work, waits for its end, and refuses a later job", async () => {
@@ -166,8 +166,8 @@ test("the close aborts the work, waits for its end, and refuses a later job", as
   await closing;
   const refusal = await s.jobs.start({ id: "late", label: "two" }, () => undefined).catch(String);
 
-  equal(work.signal.aborted, true);
-  equal(whileWorking, false);
+  assertEquals(work.signal.aborted, true);
+  assertEquals(whileWorking, false);
   assert(String(refusal).includes("after the end of its session"), String(refusal));
 });
 
@@ -179,8 +179,8 @@ test("after its end a job is gone, so a stop finds no job and the report goes ou
   await waitForSettled();
   const stopped = await session.call("stop", { id: "explorer" });
 
-  equal(handle.jobs(), []);
-  equal(host.requests.length, 1);
+  assertEquals(handle.jobs(), []);
+  assertEquals(host.requests.length, 1);
   assert(stopped.text.includes("The id explorer does not exist."), stopped.text);
 });
 
@@ -216,7 +216,7 @@ test("two sessions can run one id, and the end of one job leaves the other", asy
   stays.finish(undefined);
   await waitForSettled();
 
-  equal(listed, ["second"]);
+  assertEquals(listed, ["second"]);
 });
 
 test("a job start rejects while its session closes", async () => {
@@ -252,7 +252,7 @@ test("a job start rejects while its session closes", async () => {
 
   const turn = session.sendMessage("Work.").catch(() => undefined);
   await waitForSettled();
-  equal(session.transcript.state, "running");
+  assertEquals(session.transcript.state, "running");
   await session.close();
   await turn;
 
@@ -269,8 +269,8 @@ test("a label of many lines shows its first line in the list and in the report",
   work.finish(REPORT);
   await waitForSettled();
 
-  equal(listed, ["one..."]);
-  equal(host.requests[0]?.messages.at(-1)?.text, SENT.replace("one:", "one...:"));
+  assertEquals(listed, ["one..."]);
+  assertEquals(host.requests[0]?.messages.at(-1)?.text, SENT.replace("one:", "one...:"));
 });
 
 test("work without a report sends no input, and its signal stays quiet at the close of the session", async () => {
@@ -284,8 +284,8 @@ test("work without a report sends no input, and its signal stays quiet at the cl
   const requests = host.requests.length;
   await session.close();
 
-  equal(work.signal.aborted, false);
-  equal(requests, 0);
+  assertEquals(work.signal.aborted, false);
+  assertEquals(requests, 0);
 });
 
 test("work that throws without a call reports the failure", async () => {
@@ -297,7 +297,7 @@ test("work that throws without a call reports the failure", async () => {
   });
   await waitForSettled();
 
-  equal(handle.jobs(), []);
+  assertEquals(handle.jobs(), []);
   assert(host.requests[0]?.messages.at(-1)?.text.includes("explorer one: failed.") === true, "no report");
   assert(host.requests[0]?.messages.at(-1)?.text.includes("the store is gone") === true, "no failure text");
 });
@@ -316,10 +316,10 @@ test("a job in a call stays hidden, and its report answers the call and not the 
   const result = await call;
   await waitForSettled();
 
-  equal([listed, movable], [[], true]);
-  equal(result.text, REPORT.text);
-  equal(handle.canMoveJobsToBackground(), false);
-  equal(host.requests.length, 0);
+  assertEquals([listed, movable], [[], true]);
+  assertEquals(result.text, REPORT.text);
+  assertEquals(handle.canMoveJobsToBackground(), false);
+  assertEquals(host.requests.length, 0);
 });
 
 test("a throw of the work rejects the call that waits and frees the id", async () => {
@@ -333,8 +333,8 @@ test("a throw of the work rejects the call that waits and frees the id", async (
   await waitForSettled();
   await s.jobs.start({ id: "explorer", label: "again" }, () => undefined);
 
-  equal([result.isError, result.text], [true, "the store is gone"]);
-  equal(host.requests.length, 0);
+  assertEquals([result.isError, result.text], [true, "the store is gone"]);
+  assertEquals(host.requests.length, 0);
 });
 
 test("a cancel of the call aborts the signal of its job", async () => {
@@ -352,7 +352,7 @@ test("a cancel of the call aborts the signal of its job", async () => {
   work.finish(undefined);
   await call;
 
-  equal(aborted, true);
+  assertEquals(aborted, true);
 });
 
 test("a move answers the call, keeps the signal quiet at its end, and the report goes to the session", async () => {
@@ -372,10 +372,10 @@ test("a move answers the call, keeps the signal quiet at its end, and the report
   work.finish(REPORT);
   await waitForSettled();
 
-  equal(result.text, "explorer moved.");
-  equal([listed, aborted, movable], [["explorer"], false, false]);
-  equal(handle.jobs(), []);
-  equal(host.requests[0]?.messages.at(-1)?.text, SENT);
+  assertEquals(result.text, "explorer moved.");
+  assertEquals([listed, aborted, movable], [["explorer"], false, false]);
+  assertEquals(handle.jobs(), []);
+  assertEquals(host.requests[0]?.messages.at(-1)?.text, SENT);
 });
 
 test("a throw of the work after a move reports the failure", async () => {
@@ -409,10 +409,10 @@ test("a stop after a move aborts the signal and drops the report", async () => {
   const aborted = work.signal.aborted;
   work.finish(REPORT);
 
-  equal(await pending, "explorer stopped.");
-  equal(aborted, true);
+  assertEquals(await pending, "explorer stopped.");
+  assertEquals(aborted, true);
   await waitForSettled();
-  equal(host.requests.length, 0);
+  assertEquals(host.requests.length, 0);
 });
 
 test("a hidden job holds its id", async () => {
@@ -443,7 +443,7 @@ test("the option background runs the work without the call", async () => {
   work.finish(REPORT);
   await waitForSettled();
 
-  equal(result.text, "explorer moved.");
-  equal(listed, ["explorer"]);
-  equal(host.requests[0]?.messages.at(-1)?.text, SENT);
+  assertEquals(result.text, "explorer moved.");
+  assertEquals(listed, ["explorer"]);
+  assertEquals(host.requests[0]?.messages.at(-1)?.text, SENT);
 });

@@ -1,7 +1,7 @@
 // The status items of the core and the bundled bar that draws them in the last row.
 
 import { apply } from "yuke:internal/bundled/bar";
-import { createFrame, equal, type FrameTest, test, throws } from "yuke:test";
+import { assertEquals, assertThrows, createFrame, type FrameTest, test } from "yuke:test";
 import type { StatusEntry, View } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -37,9 +37,9 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   });
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });
   vim.tui.status.set("mode", { ...item("NORMAL", "left", 0), style: ["bar"] });
-  equal(throws(() => vim.tui.status.set("chat:model", item("m", "right", 0)))?.constructor, TypeError);
+  assertEquals(assertThrows(() => vim.tui.status.set("chat:model", item("m", "right", 0)))?.constructor, TypeError);
   vim.tui.status.set("vim:count", item("3", "left", 1));
-  equal(
+  assertEquals(
     watcher.tui.status.list().map((entry) => [entry.id, entry.text, entry.priority]),
     [
       ["vim:mode", "NORMAL", 0],
@@ -48,7 +48,7 @@ test("an item gets the prefix of its plugin, a repeat changes nothing, and the s
   );
   vim.tui.status.delete("count");
   vim.close();
-  equal([watcher.tui.status.list(), changes], [[], 4]);
+  assertEquals([watcher.tui.status.list(), changes], [[], 4]);
 });
 
 test("the pending keys of a sequence are the item core:keys until the wait ends", () => {
@@ -59,7 +59,7 @@ test("the pending keys of a sequence are the item core:keys until the wait ends"
   frame.key("g");
   const waiting = surface.tui.status.list().map((entry) => [entry.id, entry.text, entry.side]);
   frame.advance(1000);
-  equal([waiting, surface.tui.status.list()], [[["core:keys", "g", "right"]], []]);
+  assertEquals([waiting, surface.tui.status.list()], [[["core:keys", "g", "right"]], []]);
 });
 
 test("the remover of a set deletes its item, and an older remover leaves a newer entry", () => {
@@ -71,7 +71,7 @@ test("the remover of a set deletes its item, and an older remover leaves a newer
   const afterOld = tui.status.list().map((entry) => entry.text);
   removeSecond();
 
-  equal([afterOld, tui.status.list()], [["INSERT"], []]);
+  assertEquals([afterOld, tui.status.list()], [["INSERT"], []]);
 });
 
 test("the bar takes the last row: the left side from the start and the right side to the end", () => {
@@ -84,10 +84,10 @@ test("the bar takes the last row: the left side from the start and the right sid
   tui.status.set("model", item("luna", "right", 10));
   tui.status.set("jobs", item("jobs 2", "right", 1));
   frame.draw();
-  equal(rows(frame.frame), ["pane", "", "NORMAL     jobs 2 · luna"]);
+  assertEquals(rows(frame.frame), ["pane", "", "NORMAL     jobs 2 · luna"]);
   // The items are dim, and the bar has no background.
   const last = frame.frame.cells[2] ?? [];
-  equal([last[0]?.style, last[7]?.style], [{ dim: true }, {}]);
+  assertEquals([last[0]?.style, last[7]?.style], [{ dim: true }, {}]);
 });
 
 test("a narrow bar drops the lowest priority first, the later item of a tie first, and cuts the last one", () => {
@@ -107,7 +107,7 @@ test("a narrow bar drops the lowest priority first, the later item of a tie firs
   const six = row();
   tui.status.delete("keys");
   frame.resize({ width: 5, height: 2 });
-  equal([twenty, twelve, six, row()], ["NORMAL    g · jobs 2", "NORMAL     g", "     g", "NORM…"]);
+  assertEquals([twenty, twelve, six, row()], ["NORMAL    g · jobs 2", "NORMAL     g", "     g", "NORM…"]);
 });
 
 test("the options hide an item and put named items in their order", () => {
@@ -118,5 +118,5 @@ test("the options hide an item and put named items in their order", () => {
   tui.status.set("jobs", item("jobs 2", "right", 1));
   tui.status.set("model", item("luna", "right", 10));
   frame.draw();
-  equal(rows(frame.frame).at(-1), "                      luna · g");
+  assertEquals(rows(frame.frame).at(-1), "                      luna · g");
 });

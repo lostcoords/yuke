@@ -8,18 +8,19 @@
  * - A test fails when it throws, when its promise rejects, or when the runtime reports a fault while it runs, such as
  *   a rejection that no code handles. A test awaits its work, so a fault belongs to it.
  * - A test runs until it ends. Ctrl+C stops a run with a test that hangs.
- * - Each assertion throws an `Error` when it fails.
+ * - The assertions have the names and the order of the arguments of `@std/assert`. Each one throws an `Error` when it
+ *   fails.
  * - A stack line of a TypeScript file can name an earlier line than the source. The transpiler removes the type
  *   declarations and has no source map yet. Read the code at the failure to find the assertion.
  *
  * ```ts
- * import { assert, equal, rejects, test } from "yuke:test";
+ * import { assert, assertEquals, assertRejects, test } from "yuke:test";
  *
  * test("a page holds its limit", async () => {
- *   equal(await page(2), { items: [1, 2], next: 3 });
- *   const error = await rejects(page(-1));
+ *   assertEquals(await page(2), { items: [1, 2], next: 3 });
+ *   const error = await assertRejects(() => page(-1));
  *   assert(error instanceof RangeError);
- *   equal(error.message, "the limit is negative");
+ *   assertEquals(error.message, "the limit is negative");
  * });
  * ```
  */
@@ -152,13 +153,13 @@ declare module "yuke:test" {
    *
    * The failure names the first path that differs, with both values. `message` comes first in it.
    */
-  export function equal(actual: unknown, expected: unknown, message?: string): void;
+  export function assertEquals(actual: unknown, expected: unknown, message?: string): void;
 
-  /** Call `fn`, and return what it throws. Fail when `fn` returns. */
-  export function throws(fn: () => unknown): unknown;
+  /** Call `fn`, and return what it throws. Fail when `fn` returns. `message` comes first in the failure. */
+  export function assertThrows(fn: () => unknown, message?: string): unknown;
 
-  /** Await `promise`, and return its reason. Fail when `promise` fulfills. */
-  export function rejects(promise: Promise<unknown>): Promise<unknown>;
+  /** Await the promise of `fn`, and return its reason. Fail when it fulfills. `message` comes first in the failure. */
+  export function assertRejects(fn: () => PromiseLike<unknown>, message?: string): Promise<unknown>;
 
   /**
    * Wait until no work of the runtime can go on: each promise, file operation, and host task. The wait moves the clock
@@ -292,7 +293,7 @@ declare module "yuke:test" {
     ) => readonly QuestionAnswer[] | undefined | Promise<readonly QuestionAnswer[] | undefined>;
     /**
      * The answer to each request of a plugin to the client. The plugin gets a JSON copy of the return, and
-     * `undefined` gives `null`. A throw of an `ExtensionRequestError` is the error answer. Another throw or rejection
+     * `undefined` gives `null`. A throw of an `ClientRequestError` is the error answer. Another throw or rejection
      * fails the test. Without the function, each request rejects at once, as with no client. A promise keeps the
      * request open until it settles.
      */

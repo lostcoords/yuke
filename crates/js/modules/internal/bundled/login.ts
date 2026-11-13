@@ -103,7 +103,7 @@ async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provide
     },
   };
   const dialog = tui.dialog({
-    title: () => `Log in · ${provider.name}`,
+    title: `Log in · ${provider.name}`,
     body,
     rows: 5,
     keys: [

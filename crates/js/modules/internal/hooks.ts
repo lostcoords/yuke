@@ -12,12 +12,12 @@ import type {
   AskRequest,
   CallJobOptions,
   Cleanup,
+  ClientRequestOptions,
   JobOptions,
   JobOutcome,
   JobReport,
   JobWork,
   KeptMedia,
-  RequestOptions,
   ResultMedia,
   RoundAfterAnswer,
   RoundAfterEvent,
@@ -30,7 +30,7 @@ import type {
   ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
-import { ExtensionRequestError } from "yuke:plugins";
+import { ClientRequestError } from "yuke:plugins";
 import type {
   Block,
   DisplayBlock,
@@ -614,7 +614,7 @@ function requestFailureOf(error: unknown, signal: AbortSignal): unknown {
   if (record.cancelled === true) return signal.reason;
   const message = record.message as string;
   if (typeof record.code !== "number") return new Error(message);
-  return new ExtensionRequestError(message, { code: record.code, data: record.data });
+  return new ClientRequestError(message, { code: record.code, data: record.data });
 }
 
 /** Run `session(s)` of the plugin of `entry` in its own scope. */
@@ -770,7 +770,7 @@ function start(
     sendClientEvent(event: string, data?: unknown): void {
       emit(plugin, event, data ?? null, sessionId);
     },
-    async request(request: string, data?: unknown, options?: RequestOptions): Promise<unknown> {
+    async sendClientRequest(request: string, data?: unknown, options?: ClientRequestOptions): Promise<unknown> {
       const ended = endedBy(options?.signal);
       ended.throwIfAborted();
       const start = (): Operation<unknown> =>

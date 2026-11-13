@@ -5,7 +5,7 @@ import { mkdir, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/files";
 import type { PluginContext } from "yuke:plugins";
 import { Command } from "yuke:process";
-import { equal, folder, test } from "yuke:test";
+import { assertEquals, folder, test } from "yuke:test";
 
 /** The provider that the plugin adds. */
 function provider(): CompletionProvider {
@@ -44,7 +44,7 @@ test("a walk lists the folders and files shallow first, and leaves out hidden en
   await write(root, ["b.md", "src/main.rs", ".env", ".git-like/x", "node_modules/m/i.js", "target/debug/y", "a b.txt"]);
   const files = provider();
 
-  equal(await complete(files, "read @", root), {
+  assertEquals(await complete(files, "read @", root), {
     from: 5,
     items: [
       ["@b.md", "@b.md "],
@@ -59,7 +59,7 @@ test("a word without @ at its start is not a mention, and a query keeps the matc
   await write(root, ["docs/guide.md", "src/main.rs"]);
   const files = provider();
 
-  equal(
+  assertEquals(
     [await complete(files, "mail@exa", root), await complete(files, "see @mai", root)],
     [undefined, { from: 4, items: [["@src/main.rs", "@src/main.rs "]] }],
   );
@@ -72,7 +72,7 @@ test("a Git folder lists the tracked and the untracked files that no ignore rule
   const init = await new Command("git", { args: ["init", "--quiet"], cwd: root }).output();
   const files = provider();
 
-  equal(
+  assertEquals(
     [init.success, await complete(files, "@", root)],
     [
       true,

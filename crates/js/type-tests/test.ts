@@ -1,6 +1,6 @@
 // Type checks of `yuke:test`. `tsc -p crates/js/tsconfig.json` runs them; nothing executes this file.
 
-import { assert, rejects, test, throws } from "yuke:test";
+import { assert, assertRejects, assertThrows, test } from "yuke:test";
 import type * as Runtime from "../modules/runtime/test.ts";
 
 /** `true` only when `A` and `B` are the same type. */
@@ -14,10 +14,10 @@ check<Equal<keyof typeof Runtime, keyof typeof import("yuke:test")>>();
 
 // `assert` narrows, so a test reads the fields of what `throws` and `rejects` return.
 export async function narrow(): Promise<void> {
-  const error = throws(() => JSON.parse("{"));
+  const error = assertThrows(() => JSON.parse("{"));
   assert(error instanceof SyntaxError);
   check<Equal<typeof error, SyntaxError>>();
-  const reason = await rejects(Promise.reject(new RangeError("low")));
+  const reason = await assertRejects(() => Promise.reject(new RangeError("low")));
   // @ts-expect-error: a reason is unknown until a check narrows it.
   void reason.message;
 }

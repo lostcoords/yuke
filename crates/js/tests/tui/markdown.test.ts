@@ -1,7 +1,7 @@
 // Markdown to styled rows: the blocks, the inline styles, the wrap, the stream, and the map from a segment to its
 // source.
 
-import { assert, createFrame, equal, type FrameTest, test } from "yuke:test";
+import { assert, assertEquals, createFrame, type FrameTest, test } from "yuke:test";
 import { Markdown, type MarkdownBlock, measure, type Segment, type TextRow } from "yuke:tui";
 
 function rowsOf(source: string, width: number): readonly TextRow[] {
@@ -33,7 +33,7 @@ function offsetOf(rows: readonly TextRow[], word: string): number | undefined {
 }
 
 test("inline markup gives strong, emphasis, code, and both", () => {
-  equal(
+  assertEquals(
     [
       has(rowsOf("hello **bold** and `code`", 80), "markdown.strong", "bold"),
       has(rowsOf("x `y` z", 80), "markdown.code", "y"),
@@ -47,7 +47,7 @@ test("inline markup gives strong, emphasis, code, and both", () => {
 
 test("an inner strong span keeps the outer emphasis", () => {
   const rows = rowsOf("*x **y** z*", 80);
-  equal(
+  assertEquals(
     [
       has(rows, "markdown.strongEmphasis", "y"),
       has(rows, "markdown.emphasis", "x "),
@@ -59,11 +59,11 @@ test("an inner strong span keeps the outer emphasis", () => {
 
 test("an underscore inside a word and an escaped marker stay literal", () => {
   const plain = (source: string) => segmentsOf(rowsOf(source, 80)).every((s) => s.style === "markdown.text");
-  equal([plain("call foo_bar_baz now"), plain("not \\*bold\\* here")], [true, true]);
+  assertEquals([plain("call foo_bar_baz now"), plain("not \\*bold\\* here")], [true, true]);
 });
 
 test("each block kind has its style", () => {
-  equal(
+  assertEquals(
     [
       has(rowsOf("# Title", 80), "markdown.heading", "Title"),
       has(rowsOf("```js\nx=1\n```", 80), "markdown.codeBlock", "x=1"),
@@ -82,13 +82,13 @@ test("each block marker still opens its block after three spaces", () => {
       .map((b) => b.kind)
       .join(",");
   };
-  equal(
+  assertEquals(
     ["   ```\nx\n```", "   ~~~\nx\n~~~", "   # H", "   - a", "   * a", "   + a", "p\n   1. a", "   ___", "   > q"].map(
       kinds,
     ),
     ["code", "code", "heading", "list", "list", "list", "paragraph,list", "rule", "quote"],
   );
-  equal([kinds("x\n   ==="), kinds("x\n   ---")], ["heading", "heading"]);
+  assertEquals([kinds("x\n   ==="), kinds("x\n   ---")], ["heading", "heading"]);
 });
 
 test("a nested item shows at its depth, whatever its indent", () => {
@@ -102,7 +102,7 @@ test("a nested item shows at its depth, whatever its indent", () => {
     "        - eight spaces",
     " 3. one space is a sibling",
   ].join("\n");
-  equal(lines(rowsOf(source, 80)), [
+  assertEquals(lines(rowsOf(source, 80)), [
     "1. Fixes:",
     "  • Its cached buffer.",
     "    • Drop SPARE.",
@@ -115,12 +115,12 @@ test("a nested item shows at its depth, whatever its indent", () => {
 });
 
 test("a line without a mark continues the item above it", () => {
-  equal(lines(rowsOf("- one\n  two\nthree\n- four", 80)), ["• one two three", "• four"]);
+  assertEquals(lines(rowsOf("- one\n  two\nthree\n- four", 80)), ["• one two three", "• four"]);
 });
 
 test("after a blank line, a line inside an item keeps the list, and a line outside it ends the list", () => {
   const markdown = new Markdown("1. a\n\n   - b\n\n   more of a\n\n2. c\n\nafter");
-  equal(
+  assertEquals(
     [markdown.blocks().map((b) => b.kind), lines(markdown.rows(80))],
     [
       ["list", "paragraph"],
@@ -133,8 +133,8 @@ test("after a blank line, a line inside an item keeps the list, and a line outsi
 test("a link shows its label and its target, and each piece carries the target", () => {
   const rows = rowsOf("see [the **docs**](http://x/a_b) ok", 80);
 
-  equal(lines(rows), ["see [the docs](http://x/a_b) ok"]);
-  equal(
+  assertEquals(lines(rows), ["see [the docs](http://x/a_b) ok"]);
+  assertEquals(
     segmentsOf(rows).map((s) => [s.text, s.style, s.link]),
     [
       ["see ", "markdown.text", undefined],
@@ -148,7 +148,7 @@ test("a link shows its label and its target, and each piece carries the target",
 });
 
 test("a link label keeps the emphasis around it, and a target with a space is no link", () => {
-  equal(
+  assertEquals(
     [
       has(rowsOf("*[x](u)* y", 80), "markdown.emphasis", "x"),
       lines(rowsOf("[foo](bad url)", 80)),
@@ -159,18 +159,18 @@ test("a link label keeps the emphasis around it, and a target with a space is no
 });
 
 test("a table lines up its columns, and a long cell wraps inside its column", () => {
-  equal(lines(rowsOf("| a | bb |\n|---|---|\n| ccc | d |", 80)), ["a   │ bb", "────┼───", "ccc │ d"]);
+  assertEquals(lines(rowsOf("| a | bb |\n|---|---|\n| ccc | d |", 80)), ["a   │ bb", "────┼───", "ccc │ d"]);
   const wrapped = lines(rowsOf("| k | value |\n|---|---|\n| x | one two three four five six |", 20));
   assert(wrapped.length > 3 && wrapped.every((line) => line.length <= 20), wrapped.join("\n"));
   assert(wrapped[2]?.startsWith("x │ one"), wrapped.join("\n"));
-  equal(
+  assertEquals(
     has(rowsOf("| abcdefghij | klmnopqrst |\n|---|---|", 22), "markdown.tableBorder", "──────────┼───────────"),
     true,
   );
 });
 
 test("a table aligns each column by the colons of its separator", () => {
-  equal(lines(rowsOf("| l | c | r |\n|:--|:-:|--:|\n| a | b | c |\n| aaaa | bbbb | cccc |", 80)), [
+  assertEquals(lines(rowsOf("| l | c | r |\n|:--|:-:|--:|\n| a | b | c |\n| aaaa | bbbb | cccc |", 80)), [
     "l    │  c   │    r",
     "─────┼──────┼─────",
     "a    │  b   │    c",
@@ -179,12 +179,12 @@ test("a table aligns each column by the colons of its separator", () => {
 });
 
 test("a long paragraph wraps to the width and keeps each word", () => {
-  equal(lines(rowsOf("alpha bravo charlie delta", 11)), ["alpha bravo", "charlie", "delta"]);
+  assertEquals(lines(rowsOf("alpha bravo charlie delta", 11)), ["alpha bravo", "charlie", "delta"]);
 });
 
 // A pane can have no width for a moment, and a row then still takes one character.
 test("a code block at width 0 gives one character for each row", () => {
-  equal(lines(rowsOf("```\nab\n```", 0)), ["a", "b"]);
+  assertEquals(lines(rowsOf("```\nab\n```", 0)), ["a", "b"]);
 });
 
 test("an open fence stays code and renders again as it grows", () => {
@@ -192,7 +192,7 @@ test("an open fence stays code and renders again as it grows", () => {
   markdown.setText("# H\n\n```\nx=1");
   const first = has(markdown.rows(80), "markdown.codeBlock", "x=1");
   markdown.setText("# H\n\n```\nx=2");
-  equal([first, has(markdown.rows(80), "markdown.codeBlock", "x=2")], [true, true]);
+  assertEquals([first, has(markdown.rows(80), "markdown.codeBlock", "x=2")], [true, true]);
 });
 
 /** Compare the public block fields without serializing each prefix. */
@@ -272,7 +272,7 @@ for (const part of streamParts) {
     const fresh = new Markdown();
     fresh.setText(`changed\n\n${text}`);
     if (!sameRows(stream.rows(24), fresh.rows(24))) differs.push("rewrite");
-    equal(differs, []);
+    assertEquals(differs, []);
   });
 }
 
@@ -309,14 +309,14 @@ test("each segment maps back to its source at each width", () => {
       }
     }
   }
-  equal(wrong, []);
+  assertEquals(wrong, []);
 });
 
 test("a styled word maps to the word, and the span between two keeps the markup", () => {
   const source = "hello **bold** and `code`";
   const bold = find(rowsOf(source, 80), "markdown.strong", "bold");
   const code = find(rowsOf(source, 80), "markdown.code", "code");
-  equal(
+  assertEquals(
     [
       source.slice(bold?.source?.from, bold?.source?.to),
       source.slice(code?.source?.from, code?.source?.to),
@@ -329,7 +329,7 @@ test("a styled word maps to the word, and the span between two keeps the markup"
 test("an escape shows one character and keeps both characters of its source", () => {
   const source = "a \\*b\\* c";
   const star = segmentsOf(rowsOf(source, 80)).find((s) => s.text === "*");
-  equal(source.slice(star?.source?.from, star?.source?.to), "\\*");
+  assertEquals(source.slice(star?.source?.from, star?.source?.to), "\\*");
 });
 
 test("a wrapped word, a second paragraph line, and a second quote line keep their offsets", () => {
@@ -338,7 +338,7 @@ test("a wrapped word, a second paragraph line, and a second quote line keep thei
   const quote = "> one\n> two";
   const quoted = rowsOf(quote, 80);
   const bar = find(quoted, "markdown.quote", "▏ ");
-  equal(
+  assertEquals(
     [
       find(rowsOf(wrapped, 12), "markdown.text", "delta")?.source?.from,
       offsetOf(rowsOf(paragraph, 80), "three"),
@@ -360,7 +360,7 @@ test("a list mark, a fence line, a rule, and a table cell map to their markup", 
   const rule = rowsOf("---", 10)[0]?.segments[0];
   const table = "| a\\|b | c |\n|---|---|\n| 1 | 2 |";
   const pipe = segmentsOf(rowsOf(table, 80)).find((s) => s.text === "|");
-  equal(
+  assertEquals(
     [
       list.slice(mark?.source?.from, mark?.source?.to),
       fence.slice(line?.source?.from, line?.source?.to),
@@ -373,14 +373,14 @@ test("a list mark, a fence line, a rule, and a table cell map to their markup", 
 });
 
 test("a leftover delimiter keeps its offset", () => {
-  equal(segmentsOf(rowsOf("**x***", 80)).find((s) => s.text === "*")?.source?.from, 5);
+  assertEquals(segmentsOf(rowsOf("**x***", 80)).find((s) => s.text === "*")?.source?.from, 5);
 });
 
 test("a hard break by grapheme keeps each piece on its offset", () => {
   const wide = segmentsOf(rowsOf("日本語", 2)).filter((s) => s.source !== undefined);
   const astral = "a𝄞b";
   const pieces = segmentsOf(rowsOf(astral, 1)).filter((s) => s.source !== undefined);
-  equal(
+  assertEquals(
     [
       wide.map((s) => [s.source?.from, s.source?.to]),
       pieces.map((s) => astral.slice(s.source?.from, s.source?.to) === s.text),
@@ -402,7 +402,7 @@ test("two blocks with the same text keep their own offsets, also after the strea
   markdown.setText("# H\n\npara one");
   markdown.rows(80);
   markdown.setText("# H\n\npara one two");
-  equal(
+  assertEquals(
     [
       segmentsOf(rowsOf(source, 80))
         .filter((s) => s.text === "hi")
@@ -417,13 +417,13 @@ test("an offset indexes the source with each line break as one unit", () => {
   const markdown = new Markdown();
   markdown.setText("one two\r\nthree");
   const at = offsetOf(markdown.rows(80), "three") as number;
-  equal(markdown.source().slice(at, at + "three".length), "three");
+  assertEquals(markdown.source().slice(at, at + "three".length), "three");
 });
 
 // An ASCII word breaks by its cell count, and a word with wide characters breaks between graphemes. A wide word takes
 // its cells, not its length.
 test("a word wider than the row breaks at the width, also with wide characters", () => {
-  equal(
+  assertEquals(
     [lines(rowsOf("abcdefghij", 4)), lines(rowsOf("ab日本cd", 3)), lines(rowsOf("日本 ab", 5))],
     [
       ["abcd", "efgh", "ij"],
@@ -435,14 +435,14 @@ test("a word wider than the row breaks at the width, also with wide characters",
 
 test("the words of a wrapped row form one segment with one source range", () => {
   const rows = rowsOf("one two three four five", 13);
-  equal(
+  assertEquals(
     rows.map((row) => row.segments.map((s) => [s.text, s.source?.kind, s.source?.from, s.source?.to])),
     [[["one two three", "text", 0, 13]], [["four five", "text", 14, 23]]],
   );
 });
 
 test("a joined row splits at a style, at a link, and at a longer blank run", () => {
-  equal(
+  assertEquals(
     segmentsOf(rowsOf("a **b** c [d](http://x) e  f", 80)).map((s) => s.text),
     ["a ", "b", " c ", "[", "d", "](http://x)", " e", " ", "f"],
   );
@@ -462,7 +462,7 @@ function copyOf(rows: readonly TextRow[]): string {
 }
 
 test("a copy joins a wrap at a space with a space and leaves out padding, bars, and indents", () => {
-  equal(
+  assertEquals(
     [
       copyOf(rowsOf("the quick brown fox", 10)),
       copyOf(rowsOf("abcdefghijkl", 10)),
@@ -485,7 +485,7 @@ test("a copy joins a wrap at a space with a space and leaves out padding, bars, 
 });
 
 test("the blocks give their kind, their range, and the language of a fence", () => {
-  equal(new Markdown("```ts\nx\n```\n\n---\n\n```\ny\n```").blocks(), [
+  assertEquals(new Markdown("```ts\nx\n```\n\n---\n\n```\ny\n```").blocks(), [
     { kind: "code", from: 0, to: 11, language: "ts" },
     { kind: "rule", from: 13, to: 16 },
     { kind: "code", from: 18, to: 27, language: "" },
@@ -499,14 +499,14 @@ test("a line break split between two fragments stays one line break", () => {
   const lone = new Markdown("a\r");
   lone.append("\r");
   lone.append("b");
-  equal([split.source(), lone.source()], ["a\nb", "a\n\nb"]);
+  assertEquals([split.source(), lone.source()], ["a\nb", "a\n\nb"]);
 });
 
 test("a limit gives the first rows of a full render and keeps the join of the row it cuts", () => {
   const markdown = new Markdown("alpha bravo charlie delta\n\nsecond");
   const full = markdown.rows(11);
   const cut = markdown.rows(11, 2);
-  equal(
+  assertEquals(
     [cut.map((row) => row.join), full.slice(0, 2).map((row) => row.join), full.at(-1)?.join],
     [[" ", " "], [" ", " "], ""],
   );
@@ -521,7 +521,7 @@ test("an append after a set text and an empty fragment keep the source", () => {
   const split = new Markdown();
   split.setText("one\r");
   split.append("\ntwo");
-  equal([markdown.source(), copyOf(markdown.rows(80)), split.source()], ["one\ntwo", "one two", "one\ntwo"]);
+  assertEquals([markdown.source(), copyOf(markdown.rows(80)), split.source()], ["one\ntwo", "one two", "one\ntwo"]);
 });
 
 test("a gap between two table cells maps to the pipe between them", () => {
@@ -529,7 +529,7 @@ test("a gap between two table cells maps to the pipe between them", () => {
   const gaps = segmentsOf(rowsOf(table, 80))
     .filter((s) => s.text === " │ ")
     .map((s) => table.slice(s.source?.from, s.source?.to));
-  equal(gaps, ["|", "|"]);
+  assertEquals(gaps, ["|", "|"]);
 });
 
 /** The drawn style of the first cell of each segment of `source` that shows more than spaces. */
@@ -557,14 +557,14 @@ function looks(frame: FrameTest, source: string): Record<string, unknown> {
 
 test("a Markdown text draws its look without a plugin", () => {
   using frame = createFrame({ width: 40, height: 12 });
-  equal(looks(frame, "plain **b** *i* ***both*** `c`"), {
+  assertEquals(looks(frame, "plain **b** *i* ***both*** `c`"), {
     "plain ": {},
     b: { bold: true },
     i: { italic: true },
     both: { bold: true, italic: true },
     c: { dim: true },
   });
-  equal(looks(frame, "# head\n\n> said\n\n- item\n\n```\nblock\n```\n\n[go](u)"), {
+  assertEquals(looks(frame, "# head\n\n> said\n\n- item\n\n```\nblock\n```\n\n[go](u)"), {
     head: { bold: true },
     "▏ ": { dim: true },
     said: { dim: true },
@@ -576,13 +576,13 @@ test("a Markdown text draws its look without a plugin", () => {
     "](u)": { dim: true },
   });
   const borders = looks(frame, "---\n\n| a | b |\n|---|---|\n| 1 | 2 |");
-  equal([borders["─".repeat(40)], borders[" │ "], borders.a], [{ dim: true }, { dim: true }, {}]);
+  assertEquals([borders["─".repeat(40)], borders[" │ "], borders.a], [{ dim: true }, { dim: true }, {}]);
 });
 
 test("a plugin changes the look of a Markdown text, and its dispose restores the look", () => {
   using frame = createFrame({ width: 40, height: 1 });
   const undo = frame.surface("theme").tui.styles.add({ "markdown.strong": { bold: null, fg: 1 } });
-  equal(looks(frame, "**b**"), { b: { fg: 1 } });
+  assertEquals(looks(frame, "**b**"), { b: { fg: 1 } });
   undo();
-  equal(looks(frame, "**b**"), { b: { bold: true } });
+  assertEquals(looks(frame, "**b**"), { b: { bold: true } });
 });

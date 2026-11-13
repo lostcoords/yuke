@@ -2,7 +2,7 @@
 
 import type { PluginSession, SessionHooks } from "yuke:plugins";
 import type { Block, RequestSettings } from "yuke:protocol";
-import { createHost, equal, type RoundPlan, rejects, reply, test } from "yuke:test";
+import { assertEquals, assertRejects, createHost, type RoundPlan, reply, test } from "yuke:test";
 
 /** A context of 4 blocks: the input, a call and its result, and a text. */
 const context: Block[] = [
@@ -53,9 +53,9 @@ test("a handler gets the context window, the tokens, and the blocks, and no answ
     });
   };
 
-  equal(await plan([{ name: "watch", session: watch }]), {});
+  assertEquals(await plan([{ name: "watch", session: watch }]), {});
   // Each call of `context` gives a new copy, so the change of the first copy is not in the second.
-  equal(
+  assertEquals(
     seen,
     '{"contextWindow":200000,"inputTokens":1200,"blockCount":4,"blocks":[{"kind":"userText","text":"one"},{"kind":"toolCall","callId":"c1","name":"read","arguments":"{}"},{"kind":"toolResult","callId":"c1","content":"done","isError":false},{"kind":"assistantText","text":"two"}]}',
   );
@@ -82,12 +82,12 @@ test("a later handler gets the replaced context, and the plan combines the repla
   ]);
 
   // The count of the newest answer describes the context before the replacement, so each block counts.
-  equal(
+  assertEquals(
     seen,
     '{"contextTokens":3,"blockCount":2,"tokens":[2,1],"blocks":[{"kind":"userText","text":"summary"},{"kind":"assistantText","text":"two"}]}',
   );
   // The second keeps the head of the first and the text, so the plan keeps 1 block of the context before the round.
-  equal(planned.replace, {
+  assertEquals(planned.replace, {
     head: [
       { kind: "userText", text: "newer" },
       { kind: "userText", text: "summary" },
@@ -128,7 +128,7 @@ for (const [name, first, second, expected] of [
       { name: "second", session: answering(() => ({ replace: second })) },
     ]);
 
-    equal(planned.replace, expected);
+    assertEquals(planned.replace, expected);
   });
 }
 
@@ -147,11 +147,11 @@ test("a later model wins, and the settings of each answer merge field by field",
     { name: "second", session: second },
   ]);
 
-  equal(
+  assertEquals(
     [planned.model, planned.settings?.temperature, planned.settings?.topP, planned.settings?.reasoning.effort],
     ["gpt-4.1-mini", 0.2, 0.9, "high"],
   );
-  equal(planned.replace, undefined);
+  assertEquals(planned.replace, undefined);
 });
 
 for (const [name, answer, expected] of [
@@ -169,11 +169,11 @@ for (const [name, answer, expected] of [
   ],
 ] as const) {
   test(`${name} fails the round and names the plugin`, async () => {
-    const error = await rejects(plan([{ name: "planner", session: answering(answer) }]));
+    const error = await assertRejects(() => plan([{ name: "planner", session: answering(answer) }]));
 
     const message = error instanceof Error ? error.message : String(error);
     const prefix = `round.before of plugin planner failed: ${expected}`;
-    equal(message.slice(0, prefix.length), prefix);
+    assertEquals(message.slice(0, prefix.length), prefix);
   });
 }
 
@@ -182,7 +182,7 @@ test("an unknown setting has no effect, and the known settings apply", async () 
     { name: "planner", session: answering(() => ({ settings: { temprature: 1, topP: 0.9 } }) as never) },
   ]);
 
-  equal([planned.settings?.temperature, planned.settings?.topP], [0.5, 0.9]);
+  assertEquals([planned.settings?.temperature, planned.settings?.topP], [0.5, 0.9]);
 });
 
 test("a round of run has the model of the session, and its window unless the event names one", async () => {
@@ -203,8 +203,8 @@ test("a round of run has the model of the session, and its window unless the eve
   await session.sendMessage("A turn.");
 
   const [run, named, turn] = windows;
-  equal([run === turn, named, typeof turn], [true, 1000, "number"]);
-  equal(
+  assertEquals([run === turn, named, typeof turn], [true, 1000, "number"]);
+  assertEquals(
     host.requests.map((request) => (request.body as { model: string }).model),
     ["gpt-4.1", "gpt-4.1", "gpt-4.1", "gpt-4.1"],
   );

@@ -3,7 +3,7 @@
 
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
-import { equal, test } from "yuke:test";
+import { assertEquals, test } from "yuke:test";
 import type { PaneReason, View } from "yuke:tui";
 import { fakeTerminal } from "./terminal.ts";
 
@@ -26,20 +26,20 @@ test("the start pane comes at the later of the start event and the default pane"
   const first = new Core(terminal.driver);
   first.event({ type: "start" });
   first.commands.run("core:split-right");
-  equal(terminal.screen(first)[0], "          │");
+  assertEquals(terminal.screen(first)[0], "          │");
   const late = counted();
   createSurface(first, "chat", new AbortController().signal).panes.setDefault(late.create);
-  equal(terminal.screen(first)[0], "start 1   │");
+  assertEquals(terminal.screen(first)[0], "start 1   │");
   first.commands.run("core:close");
-  equal(terminal.screen(first)[0], "start 1");
+  assertEquals(terminal.screen(first)[0], "start 1");
   // A reload without saved panes: the plugins load before the start event.
   const second = new Core(terminal.driver);
   const early = counted();
   createSurface(second, "chat", new AbortController().signal).panes.setDefault(early.create);
-  equal(terminal.screen(second)[0], "");
+  assertEquals(terminal.screen(second)[0], "");
   second.event({ type: "start" });
-  equal(terminal.screen(second)[0], "start 1");
-  equal([early.reasons, late.reasons], [["start"], ["start"]]);
+  assertEquals(terminal.screen(second)[0], "start 1");
+  assertEquals([early.reasons, late.reasons], [["start"], ["start"]]);
 });
 
 test("the last default pane makes new panes, and its remover brings back the one before it", () => {
@@ -53,7 +53,7 @@ test("the last default pane makes new panes, and its remover brings back the one
   core.commands.run("core:split-right");
   remove();
   core.commands.run("core:split-right");
-  equal([chat.reasons, other.reasons], [["start", "new"], ["new"]]);
+  assertEquals([chat.reasons, other.reasons], [["start", "new"], ["new"]]);
 });
 
 test("a split and a close of the last pane make new default panes, and a stopping plugin makes none", () => {
@@ -65,19 +65,19 @@ test("a split and a close of the last pane make new default panes, and a stoppin
   tui.panes.setDefault(pane.create);
   core.event({ type: "start" });
   core.commands.run("core:split-right");
-  equal(terminal.screen(core)[0], "start 1   │new 2");
+  assertEquals(terminal.screen(core)[0], "start 1   │new 2");
   core.commands.run("core:close");
   core.commands.run("core:close");
-  equal(terminal.screen(core)[0], "new 3");
+  assertEquals(terminal.screen(core)[0], "new 3");
   // The stop closes each pane of the plugin, and the last close gives an empty pane.
   core.commands.run("core:split-down");
   chat.abort();
-  equal(terminal.screen(core)[0], "");
-  equal(pane.reasons, ["start", "new", "new", "new"]);
+  assertEquals(terminal.screen(core)[0], "");
+  assertEquals(pane.reasons, ["start", "new", "new", "new"]);
   // A default pane of a new plugin follows the stopped one.
   createSurface(core, "next", new AbortController().signal).panes.setDefault(counted().create);
   core.commands.run("core:close");
-  equal(terminal.screen(core)[0], "new 1");
+  assertEquals(terminal.screen(core)[0], "new 1");
 });
 
 test("a saved empty pane comes back as a default pane, and a default pane that throws leaves an empty pane", () => {
@@ -87,12 +87,12 @@ test("a saved empty pane comes back as a default pane, and a default pane that t
   const pane = counted();
   tui.panes.setDefault(pane.create);
   core.event({ type: "start", snapshot: JSON.stringify({ tree: null, focus: 0 }) });
-  equal([terminal.screen(core)[0], pane.reasons], ["new 1", ["new"]]);
+  assertEquals([terminal.screen(core)[0], pane.reasons], ["new 1", ["new"]]);
   const other = new Core(terminal.driver);
   createSurface(other, "broken", new AbortController().signal).panes.setDefault(() => {
     throw new Error("no pane");
   });
   other.event({ type: "start" });
-  equal(terminal.screen(other)[0], "");
-  equal(other.notices.list().at(-1)?.text.split("\n")[0], "a view did not start: Error: no pane");
+  assertEquals(terminal.screen(other)[0], "");
+  assertEquals(other.notices.list().at(-1)?.text.split("\n")[0], "a view did not start: Error: no pane");
 });

@@ -1,6 +1,6 @@
 // Shared reasoning runs in the bundled chat: one fold and source for adjacent provider blocks.
 
-import { assert, createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { click, commit, fakeSessions, loadChat, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -16,12 +16,12 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row !== ""),
     [" thought"],
   );
   click(frame, 2, 1);
-  equal(transcriptRows(frame).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
   const view = chat.transcript();
   const thought = view.document.items.find((item) =>
     item.sections.some((section) => section.text === "first thought\n\nsecond thought"),
@@ -29,15 +29,15 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   assert(thought !== undefined);
   const from = { item: thought.id, section: "text", offset: 0 };
   const to = { ...from, offset: "first thought\n\nsecond thought".length };
-  equal(view.text({ from, to }), "first thought\n\nsecond thought");
+  assertEquals(view.text({ from, to }), "first thought\n\nsecond thought");
   const snapshot = frame.snapshot();
   using restored = createFrame({ width: 60, height: 14 });
   await loadChat(restored, sessions);
   restored.start(snapshot);
   await waitForSettled();
-  equal(transcriptRows(restored).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
+  assertEquals(transcriptRows(restored).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
   click(frame, 2, 4);
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row !== ""),
     [" thought"],
   );
@@ -63,7 +63,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   });
   sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 1, text: " \n\t" } });
   frame.draw();
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [],
   );
@@ -75,12 +75,12 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
     event: { kind: "reasoningDelta", blockId: 1, text: "second" },
   });
   frame.draw();
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [" thinking"],
   );
   click(frame, 2, 1);
-  equal(
+  assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [" thinking", " first", " second"],
   );

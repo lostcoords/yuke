@@ -2,7 +2,7 @@
 
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
-import { equal, test } from "yuke:test";
+import { assertEquals, test } from "yuke:test";
 import { TextEditor, type View, type WidgetMount } from "yuke:tui";
 import { atoms, fakeTerminal, key, named } from "./terminal.ts";
 
@@ -41,7 +41,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   terminal.screen(core);
   panes.split(() => holder(editor));
   terminal.screen(core);
-  equal(log, [
+  assertEquals(log, [
     "early attach pane",
     "late attach pane",
     "early cleanup",
@@ -49,11 +49,11 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
     "early attach pane",
     "late attach pane",
   ]);
-  equal(
+  assertEquals(
     signals.map((signal) => signal.aborted),
     [true, true, false, false],
   );
-  equal(core.widgets.list().length, 1);
+  assertEquals(core.widgets.list().length, 1);
 });
 
 test("a watch that starts inside an attach sees each mount once", () => {
@@ -82,7 +82,7 @@ test("a watch that starts inside an attach sees each mount once", () => {
   terminal.screen(core);
   core.scene.wrapRoot("chat", () => ({ draw() {} }));
   terminal.screen(core);
-  equal(log, ["inner first", "inner second", "inner cleanup first", "inner cleanup second"]);
+  assertEquals(log, ["inner first", "inner second", "inner cleanup first", "inner cleanup second"]);
 });
 
 test("an early handler takes a continuation before the keymap and enter alone reaches the keymap", () => {
@@ -118,14 +118,14 @@ test("an early handler takes a continuation before the keymap and enter alone re
   core.draw();
   core.event(key("r"));
   core.event(named("enter"));
-  equal([replaced, submits], [["enter"], 0]);
+  assertEquals([replaced, submits], [["enter"], 0]);
   core.event(named("enter"));
-  equal(submits, 1);
+  assertEquals(submits, 1);
   // A key that the early phase takes ends a pending sequence of the keymap.
   core.event(key("k", { ctrl: true }));
-  equal(core.keymap.pending(), "ctrl+k");
+  assertEquals(core.keymap.pending(), "ctrl+k");
   core.event(key("r"));
-  equal(core.keymap.pending(), "");
+  assertEquals(core.keymap.pending(), "");
 });
 
 test("a wrap and a close of a root keep the mount of a widget in a pane", () => {
@@ -143,7 +143,7 @@ test("a wrap and a close of a root keep the mount of a widget in a pane", () => 
   terminal.screen(core);
   root.close();
   terminal.screen(core);
-  equal(log, ["attach"]);
+  assertEquals(log, ["attach"]);
 });
 
 test("each extension adds its own part and the stop of one plugin leaves the other", () => {
@@ -164,17 +164,17 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
   };
   core.widgets.addWatcher("other", (mount) => extend(mount, "other", "bar"));
   const stopVim = core.widgets.addWatcher("vim", (mount) => extend(mount, "vim", "block"));
-  equal(terminal.screen(core)[0], "vim>");
+  assertEquals(terminal.screen(core)[0], "vim>");
   core.event(key("a"));
-  equal(atoms(core), ["global", "root", "field", "other-mode", "vim-mode"]);
+  assertEquals(atoms(core), ["global", "root", "field", "other-mode", "vim-mode"]);
   // The newest handler runs first. A handler that returns false only watches.
-  equal([typed, editor.state.text], [["vim a", "other a"], "a"]);
+  assertEquals([typed, editor.state.text], [["vim a", "other a"], "a"]);
   stopVim();
-  equal(terminal.screen(core)[0], "other> a");
-  equal(terminal.cursors.at(-1), { column: 8, row: 0, shape: "bar" });
+  assertEquals(terminal.screen(core)[0], "other> a");
+  assertEquals(terminal.cursors.at(-1), { column: 8, row: 0, shape: "bar" });
   core.event(key("b"));
-  equal(typed.slice(2), ["other b"]);
-  equal(atoms(core).at(-1), "other-mode");
+  assertEquals(typed.slice(2), ["other b"]);
+  assertEquals(atoms(core).at(-1), "other-mode");
 });
 
 test("a contexts change ends a pending sequence", () => {
@@ -187,18 +187,18 @@ test("a contexts change ends a pending sequence", () => {
   core.draw();
   const extension = editor.extend(new AbortController().signal);
   core.event(key("k", { ctrl: true }));
-  equal(core.keymap.pending(), "ctrl+k");
+  assertEquals(core.keymap.pending(), "ctrl+k");
   extension.setContexts(["vim-insert"]);
-  equal(core.keymap.pending(), "");
-  equal(atoms(core).at(-1), "vim-insert");
+  assertEquals(core.keymap.pending(), "");
+  assertEquals(atoms(core).at(-1), "vim-insert");
   extension.dispose();
-  equal(atoms(core).at(-1), "field");
+  assertEquals(atoms(core).at(-1), "field");
   // The abort of its signal removes an extension as its dispose does.
   const controller = new AbortController();
   editor.extend(controller.signal).setContexts(["other-mode"]);
-  equal(atoms(core).at(-1), "other-mode");
+  assertEquals(atoms(core).at(-1), "other-mode");
   controller.abort();
-  equal(atoms(core).at(-1), "field");
+  assertEquals(atoms(core).at(-1), "field");
 });
 
 test("a change of a placed editor by code asks for a frame", () => {
@@ -214,7 +214,7 @@ test("a change of a placed editor by code asks for a frame", () => {
   asked.push(terminal.requests());
   editor.restore({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
   asked.push(terminal.requests());
-  equal(
+  assertEquals(
     asked.slice(1).map((count, at) => count > (asked[at] ?? Number.POSITIVE_INFINITY)),
     [true, true, true],
   );

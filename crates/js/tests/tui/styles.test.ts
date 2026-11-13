@@ -3,7 +3,7 @@
 import { on } from "yuke:internal/facts";
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
-import { createFrame, equal, test } from "yuke:test";
+import { assertEquals, createFrame, test } from "yuke:test";
 import { Markdown } from "yuke:tui";
 import { fakeTerminal } from "./terminal.ts";
 
@@ -18,7 +18,7 @@ test("theme.changed tells each new theme and each new background", () => {
   core.event({ type: "background", background: "light" });
   stop.abort();
   core.styles.setTheme("default");
-  equal(seen, [
+  assertEquals(seen, [
     ["nord", "dark"],
     ["nord", "light"],
   ]);
@@ -42,7 +42,7 @@ test("the abort of a plugin that owns the active theme and listens gives that pl
   stop.abort();
   other.abort();
   // The other plugin still hears of the removal of the theme.
-  equal([own - before, seen], [0, ["nord", "nord"]]);
+  assertEquals([own - before, seen], [0, ["nord", "nord"]]);
 });
 
 test("the palette color fg of a theme reaches the plain text of a Markdown text", () => {
@@ -58,7 +58,7 @@ test("the palette color fg of a theme reaches the plain text of a Markdown text"
   tui.styles.addTheme("nord", { dark: { palette: { fg: 3 } } });
   tui.styles.setTheme("nord");
   const cells = frame.draw().cells[0];
-  equal([cells?.[0]?.style, cells?.[6]?.style], [{ fg: 3 }, { fg: 3, bold: true }]);
+  assertEquals([cells?.[0]?.style, cells?.[6]?.style], [{ fg: 3 }, { fg: 3, bold: true }]);
 });
 
 test("a plugin supports a theme for now, and the theme wins once it names the group", () => {
@@ -85,7 +85,7 @@ test("a plugin supports a theme for now, and the theme wins once it names the gr
   tui.styles.setTheme("default");
   const left = color();
   stop.abort();
-  equal(
+  assertEquals(
     [before, supported, native, left],
     [
       { fg: 9, bold: true },

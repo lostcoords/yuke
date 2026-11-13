@@ -1,7 +1,7 @@
 // The `tool.before` hook: its order, its event, its answers, and its failures.
 
 import type { PluginSession, SessionHooks } from "yuke:plugins";
-import { createHost, equal, test } from "yuke:test";
+import { assertEquals, createHost, test } from "yuke:test";
 
 const call = { callId: "c1", name: "read", arguments: { path: ["src", "main.rs"] } };
 
@@ -39,15 +39,15 @@ test("the first denial in plugin order, then in addition order, stops the call",
   });
   const session = await host.openSession();
 
-  equal(await session.runHook("tool.before", { call }), { deny: "first says no" });
-  equal(seen, ["first one", "first two"]);
+  assertEquals(await session.runHook("tool.before", { call }), { deny: "first says no" });
+  assertEquals(seen, ["first one", "first two"]);
 });
 
 test("the decision is run when no handler denies the call", async () => {
   await using host = await createHost({ plugins: [{ name: "quiet", session: answering(() => undefined) }] });
   const session = await host.openSession();
 
-  equal(await session.runHook("tool.before", { call }), "run");
+  assertEquals(await session.runHook("tool.before", { call }), "run");
 });
 
 test("a handler gets the id, the name, and the parsed arguments of the call", async () => {
@@ -60,7 +60,7 @@ test("a handler gets the id, the name, and the parsed arguments of the call", as
   await using host = await createHost({ plugins: [{ name: "reader", session: reader }] });
   const session = await host.openSession();
 
-  equal(await session.runHook("tool.before", { call }), { deny: "c1 read src/main.rs" });
+  assertEquals(await session.runHook("tool.before", { call }), { deny: "c1 read src/main.rs" });
 });
 
 test("a throw stops the call and names the plugin", async () => {
@@ -70,7 +70,7 @@ test("a throw stops the call and names the plugin", async () => {
   await using host = await createHost({ plugins: [{ name: "check", session: check }] });
   const session = await host.openSession();
 
-  equal(await session.runHook("tool.before", { call }), {
+  assertEquals(await session.runHook("tool.before", { call }), {
     deny: "tool.before of plugin check failed: Error: no check today",
   });
 });

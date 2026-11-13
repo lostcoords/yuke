@@ -2,7 +2,7 @@
 
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
-import type { EventsPage, SessionHandle, ViewEvent } from "yuke:plugins";
+import type { EventsPage, SessionHandle, SessionHandleEvent } from "yuke:plugins";
 import type {
   Block,
   Commit,
@@ -40,7 +40,7 @@ interface Opened {
   readonly id: string;
   readonly tail: number;
   readonly signal: AbortSignal;
-  readonly onEvent: (event: ViewEvent) => void;
+  readonly onEvent: (event: SessionHandleEvent) => void;
 }
 
 export const SETTINGS: SessionSettings = {
@@ -125,7 +125,8 @@ export function fakeSessions(saved: StoredEvent[] = []) {
   };
   /** Give each live handle of session `id` the live update `update`. */
   const deliver = (id: string, update: SessionUpdate): void => {
-    for (const [entry, end] of ends) if (entry.id === id && !end.signal.aborted) entry.onEvent({ update });
+    for (const [entry, end] of ends)
+      if (entry.id === id && !end.signal.aborted) entry.onEvent({ kind: "update", update });
   };
   return {
     opened,
@@ -176,7 +177,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         state.openFails -= 1;
         return Promise.reject(new Error("busy"));
       }
-      open.onEvent({ snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
+      open.onEvent({ kind: "snapshot", snapshot: { settings: SETTINGS, updates: saved.slice(-open.tail) } });
       return Promise.resolve({
         signal: end.signal,
         async sendMessage(message: { readonly content: readonly Block[] }) {

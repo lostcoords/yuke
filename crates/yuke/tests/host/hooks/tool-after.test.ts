@@ -2,7 +2,7 @@
 
 import { writeFile, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
+import { assertEquals, createHost, folder, reply, type TestMedia, type ToolOutcome, test } from "yuke:test";
 
 const call = { callId: "c1", name: "read", arguments: { path: "notes.md" } };
 const png = new Uint8Array([1, 2, 3]);
@@ -45,7 +45,7 @@ test("the result stays when no handler answers", async () => {
     s.addHook("tool.after", () => undefined);
   };
 
-  equal(await after([{ name: "quiet", session: quiet }]), {
+  assertEquals(await after([{ name: "quiet", session: quiet }]), {
     text: original.text,
     isError: false,
     media: [
@@ -69,7 +69,7 @@ test("each handler gets the call and the result after the answers before it", as
     s.addHook("tool.after", (event) => ({ text: `${event.result.text} (${event.result.isError})`, isError: true }));
   };
 
-  equal(
+  assertEquals(
     await after([
       { name: "redact", session: redact },
       { name: "flag", session: flag },
@@ -107,7 +107,7 @@ test("an answer keeps, reorders, removes, and adds media", async () => {
   };
   await writeTextFile(`${folder()}/pics.txt`, "a picture");
 
-  equal(await after([{ name: "pics", session: pics }]), {
+  assertEquals(await after([{ name: "pics", session: pics }]), {
     text: "0 image/png 3, 1 image/jpeg 5",
     isError: false,
     media: [
@@ -142,7 +142,7 @@ test("an answer keeps the second of two items with the same bytes", async () => 
     },
   });
 
-  equal(plain(result.media), [["image/webp", [...png]]]);
+  assertEquals(plain(result.media), [["image/webp", [...png]]]);
 });
 
 test("a media item of the event can name a file, and the handler sees the size of each item", async () => {
@@ -168,11 +168,11 @@ test("a media item of the event can name a file, and the handler sees the size o
     },
   });
 
-  equal(sizes, [
+  assertEquals(sizes, [
     ["image/png", 3],
     ["image/png", 2],
   ]);
-  equal(plain(result.media), [
+  assertEquals(plain(result.media), [
     ["image/png", [...png]],
     ["image/png", [4, 5]],
   ]);
@@ -207,7 +207,7 @@ test("a change of the handlers during a run changes only the next run", async ()
     await session.runHook("tool.after", { call, result: original }),
   ];
 
-  equal(
+  assertEquals(
     runs.map((result) => result.text),
     ["secret: hunter2 old", "secret: hunter2 new"],
   );
@@ -238,7 +238,7 @@ test("each of two overlapping calls gets its own answer", async () => {
   await session.sendMessage("Echo.");
 
   const results = session.transcript.entries.flatMap((entry) => (entry.kind === "tool" ? [entry.result] : []));
-  equal(
+  assertEquals(
     results.map((result) => result?.content),
     ["first", "second"].map((text, index) => `${results[index]?.callId}: ${text}`),
   );
@@ -251,7 +251,7 @@ test("a throw gives an error result that names the plugin", async () => {
     });
   };
 
-  equal(
+  assertEquals(
     await after([{ name: "check", session: check }]),
     failed("tool.after of plugin check failed: Error: no redaction today"),
   );
@@ -268,7 +268,7 @@ test("a new media item that cannot be read gives an error result", async () => {
     media: unknown[];
   };
 
-  equal(
+  assertEquals(
     [result.text.startsWith("the tool.after hooks failed: missing.png: "), result.isError, result.media],
     [true, true, []],
   );
@@ -295,6 +295,6 @@ for (const [name, answer, expected] of [
 
     const result = await session.runHook("tool.after", { call, result: { ...original, display: [diff] } });
 
-    equal(result.display, expected);
+    assertEquals(result.display, expected);
   });
 }

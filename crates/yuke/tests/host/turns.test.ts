@@ -2,7 +2,16 @@
 
 import { mkdir, writeTextFile } from "yuke:fs";
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, type TestSession, test, waitForSettled } from "yuke:test";
+import {
+  assertEquals,
+  assertRejects,
+  createHost,
+  folder,
+  reply,
+  type TestSession,
+  test,
+  waitForSettled,
+} from "yuke:test";
 
 /** The text of the last answer in the transcript of `session`. */
 function finalText(session: TestSession): string | undefined {
@@ -38,7 +47,7 @@ test("a create, a reopen, and a fork each run the session of a plugin once, and 
   await sessions.open(fork, watch);
   await sessions.open(fork, watch);
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => notice.text),
     ["open 1", "open 2", "open 3"],
   );
@@ -50,22 +59,22 @@ test("a cancel and a close end a turn that waits for the plugins of its session"
   await using host = await createHost({ plugins: [{ name: "slow", session: slow }] });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sent = rejects(session.sendMessage("hi", { signal: stop.signal }));
+  const sent = assertRejects(() => session.sendMessage("hi", { signal: stop.signal }));
   // The turn runs before the cancel, so the cancel reaches a turn that waits for the plugins.
   await waitForSettled();
-  equal(session.transcript.state, "running");
+  assertEquals(session.transcript.state, "running");
   stop.abort(new Error("stop"));
 
   await sent;
   const cancelled = session.transcript.entries.at(-1);
   const again = session.sendMessage("again");
   await waitForSettled();
-  equal(session.transcript.state, "running");
+  assertEquals(session.transcript.state, "running");
   await session.close();
   // The close ends the waiting turn, so the second send settles too.
   await Promise.allSettled([again]);
 
-  equal(cancelled?.kind === "end" && cancelled.end, { kind: "cancelled" });
+  assertEquals(cancelled?.kind === "end" && cancelled.end, { kind: "cancelled" });
 });
 
 test("the prompt hook edits the request of each turn from the saved sections", async () => {
@@ -84,7 +93,7 @@ test("the prompt hook edits the request of each turn from the saved sections", a
   await session.sendMessage("second");
 
   const [first, second] = host.requests.map((request) => request.system);
-  equal(
+  assertEquals(
     [
       first?.includes("<turn>\nnumber 1\n</turn>"),
       second?.includes("<turn>\nnumber 2\n</turn>"),
@@ -106,8 +115,8 @@ test("a failed prompt hook sends a notice, starts no request, and leaves the inp
   await session.sendMessage("hi");
 
   const [notice] = host.notices;
-  equal(notice?.text.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
-  equal([host.requests.length, session.transcript.pending.size], [0, 1]);
+  assertEquals(notice?.text.includes("prompt.build of plugin broken failed: Error: no prompt"), true);
+  assertEquals([host.requests.length, session.transcript.pending.size], [0, 1]);
 });
 
 // The model gets the reason of a denial as the error result of that call, and the turn goes on.
@@ -128,16 +137,16 @@ test("a plugin denies one of two tool calls in an answer, and the other tool cal
   await session.sendMessage("read both");
 
   const results = host.requests[1]?.messages.map((message) => message.text).join("\n") ?? "";
-  equal(
+  assertEquals(
     [results.includes("the notes"), results.includes("secret.txt is private"), results.includes("the secret")],
     [true, true, false],
   );
   const denied = session.transcript.entries.find(
     (entry) => entry.kind === "tool" && entry.result?.content.includes("secret.txt is private") === true,
   );
-  equal(denied?.kind === "tool" && denied.result?.isError, true);
+  assertEquals(denied?.kind === "tool" && denied.result?.isError, true);
   const end = session.transcript.entries.at(-1);
-  equal(end?.kind === "end" && end.end, { kind: "completed", finishReason: "stop" });
+  assertEquals(end?.kind === "end" && end.end, { kind: "completed", finishReason: "stop" });
 });
 
 // The model and the transcript both get the patched result. Only the hook sees the original text.
@@ -168,12 +177,12 @@ test("a plugin patches a tool result before the model reads it, and the session 
   await sessions?.open(session.id, {
     tail: 20,
     onEvent: (event) => {
-      if ("snapshot" in event) saved = JSON.stringify(event.snapshot);
+      if (event.kind === "snapshot") saved = JSON.stringify(event.snapshot);
     },
   });
 
   const seen = [JSON.stringify(host.requests[1]?.messages), JSON.stringify(session.transcript.entries), saved];
-  equal(
+  assertEquals(
     seen.map((text) => [text.includes("password: ***"), text.includes("hunter2")]),
     [
       [true, false],
@@ -205,8 +214,8 @@ test("an input.before handler asks the user, and a refusal removes the input", a
 
   await session.sendMessage("rm -rf");
 
-  equal([host.requests.length, session.transcript.pending.size], [0, 0]);
-  equal(
+  assertEquals([host.requests.length, session.transcript.pending.size], [0, 0]);
+  assertEquals(
     host.questions.map((question) => question.request.questions[0]?.question),
     ["Send this input?"],
   );
@@ -233,7 +242,7 @@ test("a plugin creates a session, sends input, and sees the turn of that session
       const handle = await sessions.open(id, {
         tail: 10,
         onEvent: (event) => {
-          if ("snapshot" in event) {
+          if (event.kind === "snapshot") {
             used = event.snapshot.settings.model.model;
             return;
           }
@@ -256,10 +265,10 @@ test("a plugin creates a session, sends input, and sees the turn of that session
 
   await drive();
   await waitForSettled();
-  equal(host.events.length, 1);
+  assertEquals(host.events.length, 1);
 
-  equal(host.events[0]?.data, { states: ["running", "idle"], texts: ["hello"], used: "MiniMax-M3", jobs: 0 });
-  equal(host.requests[0]?.messages, [{ role: "user", text: "hi" }]);
+  assertEquals(host.events[0]?.data, { states: ["running", "idle"], texts: ["hello"], used: "MiniMax-M3", jobs: 0 });
+  assertEquals(host.requests[0]?.messages, [{ role: "user", text: "hi" }]);
 });
 
 test("a plugin summarizes the context with the model of the session and replaces the context", async () => {
@@ -282,11 +291,11 @@ test("a plugin summarizes the context with the model of the session and replaces
   const session = await host.openSession();
 
   await session.sendMessage("Hi.");
-  equal(finalText(session), "Done.");
+  assertEquals(finalText(session), "Done.");
 
   const [, side, last] = host.requests;
-  equal([side?.system, side?.tools, side?.messages[0]?.text], ["Summarize the conversation.", [], "Hi."]);
-  equal(last?.messages, [{ role: "user", text: "Summary: They said hi." }]);
+  assertEquals([side?.system, side?.tools, side?.messages[0]?.text], ["Summarize the conversation.", [], "Hi."]);
+  assertEquals(last?.messages, [{ role: "user", text: "Summary: They said hi." }]);
 });
 
 test("a side request repeats the body of the request of the round with one more block", async () => {
@@ -304,12 +313,12 @@ test("a side request repeats the body of the request of the round with one more 
   const session = await host.openSession();
 
   await session.sendMessage("Hi.");
-  equal(finalText(session), "Done.");
+  assertEquals(finalText(session), "Done.");
 
   const [side, round] = host.requests.map((request) => request.body as { messages: { content: unknown[] }[] });
   const expected = JSON.parse(JSON.stringify(round)) as typeof round;
   expected?.messages[0]?.content.push({ text: "Summarize.", type: "text" });
-  equal(JSON.stringify(side), JSON.stringify(expected));
+  assertEquals(JSON.stringify(side), JSON.stringify(expected));
 });
 
 test("an input that a plugin replaces reaches the model as the new blocks", async () => {
@@ -327,9 +336,9 @@ test("an input that a plugin replaces reaches the model as the new blocks", asyn
   const session = await host.openSession();
 
   await session.sendMessage("/skill:pdf");
-  equal(finalText(session), "Done.");
+  assertEquals(finalText(session), "Done.");
 
-  equal(host.requests[0]?.messages, [{ role: "user", text: "Read PDF files with care." }]);
+  assertEquals(host.requests[0]?.messages, [{ role: "user", text: "Read PDF files with care." }]);
 });
 
 test("an input that a plugin handles starts no turn", async () => {
@@ -341,7 +350,7 @@ test("an input that a plugin handles starts no turn", async () => {
 
   await session.sendMessage("/compact");
 
-  equal([host.requests.length, session.transcript.pending.size], [0, 0]);
+  assertEquals([host.requests.length, session.transcript.pending.size], [0, 0]);
 });
 
 test("the skills of a plugin folder come before the skills of the workspace in the system prompt", async () => {
@@ -359,7 +368,7 @@ test("the skills of a plugin folder come before the skills of the workspace in t
 
   const system = host.requests[0]?.system ?? "";
   const at = (text: string): number => system.indexOf(text);
-  equal(
+  assertEquals(
     [
       at("<name>charts</name>") >= 0,
       at("<name>charts</name>") < at("Draw charts."),
@@ -367,5 +376,5 @@ test("the skills of a plugin folder come before the skills of the workspace in t
     ],
     [true, true, true],
   );
-  equal(at("Read PDF files.") < at("<environment>") && at("Read PDF files.") >= 0, true);
+  assertEquals(at("Read PDF files.") < at("<environment>") && at("Read PDF files.") >= 0, true);
 });

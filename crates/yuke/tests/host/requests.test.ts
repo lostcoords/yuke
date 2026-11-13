@@ -1,8 +1,8 @@
 // The requests of the plugins to the client in a session of the test host.
 
-import { ExtensionRequestError, type PluginSession } from "yuke:plugins";
+import { ClientRequestError, type PluginSession } from "yuke:plugins";
 import type { ExtensionRequestParams } from "yuke:protocol";
-import { createHost, equal, rejects, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createHost, test, waitForSettled } from "yuke:test";
 
 /** A plugin whose tool `read_session` sends a request. It gives the result, the error, or an event of a failure. */
 const requester: PluginSession = (s) => {
@@ -13,12 +13,12 @@ const requester: PluginSession = (s) => {
     parameters: { type: "object", properties: {} },
     execute: async (_args, context) => {
       try {
-        const found = (await s.request("session.read", { id: "S-42" }, { signal: context.signal })) as {
+        const found = (await s.sendClientRequest("session.read", { id: "S-42" }, { signal: context.signal })) as {
           title: string;
         };
         return `title: ${found.title}`;
       } catch (error) {
-        if (error instanceof ExtensionRequestError) return `refused ${error.code} ${error.message} ${error.data}`;
+        if (error instanceof ClientRequestError) return `refused ${error.code} ${error.message} ${error.data}`;
         s.sendClientEvent("failed", String(error));
         throw error;
       }
@@ -32,11 +32,11 @@ test("without a client, a request rejects at once with an Error", async () => {
 
   const outcome = await session.call("read_session", {});
 
-  equal(
+  assertEquals(
     host.events.map((event) => event.data),
     ["Error: no client can answer the request"],
   );
-  equal(outcome.isError, true);
+  assertEquals(outcome.isError, true);
 });
 
 test("the result of respond reaches the plugin, and respond gets the request", async () => {
@@ -50,20 +50,22 @@ test("the result of respond reaches the plugin, and respond gets the request", a
   });
   const session = await host.openSession();
 
-  equal((await session.call("read_session", {})).text, "title: fix the login");
-  equal(requests, [{ sessionId: session.id, extension: "requester", request: "session.read", data: { id: "S-42" } }]);
+  assertEquals((await session.call("read_session", {})).text, "title: fix the login");
+  assertEquals(requests, [
+    { sessionId: session.id, extension: "requester", request: "session.read", data: { id: "S-42" } },
+  ]);
 });
 
-test("a thrown ExtensionRequestError of respond is the error answer", async () => {
+test("a thrown ClientRequestError of respond is the error answer", async () => {
   await using host = await createHost({
     plugins: [{ name: "requester", session: requester }],
     respond: async () => {
-      throw new ExtensionRequestError("no such session", { code: -32_001, data: "deleted" });
+      throw new ClientRequestError("no such session", { code: -32_001, data: "deleted" });
     },
   });
   const session = await host.openSession();
 
-  equal((await session.call("read_session", {})).text, "refused -32001 no such session deleted");
+  assertEquals((await session.call("read_session", {})).text, "refused -32001 no such session deleted");
 });
 
 test("a cancel of the plugin ends its wait while respond still runs", async () => {
@@ -80,11 +82,11 @@ test("a cancel of the plugin ends its wait while respond still runs", async () =
 
   const called = session.call("read_session", {}, { signal: stop.signal });
   await waitForSettled();
-  equal(responding, true);
+  assertEquals(responding, true);
   stop.abort(new Error("stop"));
 
-  await rejects(called);
-  equal(
+  await assertRejects(() => called);
+  assertEquals(
     host.events.map((event) => String(event.data).split(":")[0]),
     ["AbortError"],
   );

@@ -1,7 +1,7 @@
 // The turns of a session of the test host: the fake replies, the transcript, and the hooks and the tools of a plugin.
 
 import type { PluginSession } from "yuke:plugins";
-import { assert, createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
+import { assert, assertEquals, assertRejects, createHost, folder, reply, test, waitForSettled } from "yuke:test";
 import type { Entry } from "yuke:transcript";
 
 /** A plugin whose session defines the tool `greet`, which answers `hello` and its argument. */
@@ -29,12 +29,12 @@ test("a turn sends the message to the fake model and shows its answer", async ()
 
   await session.sendMessage("Hi.");
 
-  equal(
+  assertEquals(
     session.transcript.entries.map((entry) => entry.kind),
     ["input", "text", "end"],
   );
-  equal(host.requests.length, 1);
-  equal(host.requests[0]?.messages.at(-1)?.text, "Hi.");
+  assertEquals(host.requests.length, 1);
+  assertEquals(host.requests[0]?.messages.at(-1)?.text, "Hi.");
 });
 
 test("an overloaded answer gets a retry without a wait", async () => {
@@ -45,7 +45,7 @@ test("an overloaded answer gets a retry without a wait", async () => {
 
   await session.sendMessage("Hi.");
 
-  equal(host.requests.length, 2);
+  assertEquals(host.requests.length, 2);
   assert(Date.now() - start < 1000, "the retry waited");
 });
 
@@ -57,8 +57,11 @@ test("a cut answer does not run its calls, and the model gets an error result", 
   await session.sendMessage("Greet Ada.");
 
   const call = tool(session.transcript.entries, 1);
-  equal([call.name, call.result?.isError, call.result?.content.includes("output token limit")], ["greet", true, true]);
-  equal(host.requests.length, 2);
+  assertEquals(
+    [call.name, call.result?.isError, call.result?.content.includes("output token limit")],
+    ["greet", true, true],
+  );
+  assertEquals(host.requests.length, 2);
 });
 
 test("an answer that fails after its first text ends the turn without a retry", async () => {
@@ -70,7 +73,7 @@ test("an answer that fails after its first text ends the turn without a retry", 
 
   const end = session.transcript.entries.at(-1);
   assert(end?.kind === "end" && end.end.kind === "failed", "the turn did not fail");
-  equal(host.requests.length, 1);
+  assertEquals(host.requests.length, 1);
 });
 
 test("an abort of the signal cancels a turn that waits for the replies, and send rejects", async () => {
@@ -78,26 +81,28 @@ test("an abort of the signal cancels a turn that waits for the replies, and send
   await using host = await createHost({ plugins: [], replies });
   const session = await host.openSession();
   const stop = new AbortController();
-  const sent = rejects(session.sendMessage("Hi.", { signal: stop.signal }));
+  const sent = assertRejects(() => session.sendMessage("Hi.", { signal: stop.signal }));
   await waitForSettled();
-  equal(host.requests.length, 1);
+  assertEquals(host.requests.length, 1);
   stop.abort(new Error("stop"));
 
   const error = await sent;
 
-  equal(error instanceof Error ? error.message : error, "stop");
+  assertEquals(error instanceof Error ? error.message : error, "stop");
   const last = session.transcript.entries.at(-1);
-  equal([last?.kind === "end" && last.end], [{ kind: "cancelled" }]);
+  assertEquals([last?.kind === "end" && last.end], [{ kind: "cancelled" }]);
 });
 
 test("send with an aborted signal rejects and sends nothing", async () => {
   await using host = await createHost({ plugins: [] });
   const session = await host.openSession();
 
-  const error = await rejects(session.sendMessage("Hi.", { signal: AbortSignal.abort(new Error("early")) }));
+  const error = await assertRejects(() =>
+    session.sendMessage("Hi.", { signal: AbortSignal.abort(new Error("early")) }),
+  );
 
-  equal(error instanceof Error ? error.message : error, "early");
-  equal(session.transcript.entries, []);
+  assertEquals(error instanceof Error ? error.message : error, "early");
+  assertEquals(session.transcript.entries, []);
 });
 
 test("a session without settings uses the test model in the folder of the test", async () => {
@@ -109,10 +114,10 @@ test("a session without settings uses the test model in the folder of the test",
 
   const request = host.requests[0];
   assert(request !== undefined, "no request");
-  equal(request.messages, [{ role: "user", text: "Hi." }]);
+  assertEquals(request.messages, [{ role: "user", text: "Hi." }]);
   assert(request.system.includes(folder()), "the system text names no workspace");
   const body = request.body as Record<string, unknown>;
-  equal(body.model, "MiniMax-M3");
+  assertEquals(body.model, "MiniMax-M3");
 });
 
 // Each catalog model gets the fake answers in the stream format of its protocol.
@@ -128,18 +133,21 @@ for (const model of [
 
     await session.sendMessage("Greet Ada.");
 
-    equal(
+    assertEquals(
       session.transcript.entries.map((entry) => entry.kind),
       ["input", "tool", "text", "end"],
     );
     const call = tool(session.transcript.entries, 1);
-    equal([call.name, call.status, call.result?.content, call.result?.isError], ["greet", "done", "hello Ada", false]);
-    equal(host.requests.length, 2);
+    assertEquals(
+      [call.name, call.status, call.result?.content, call.result?.isError],
+      ["greet", "done", "hello Ada", false],
+    );
+    assertEquals(host.requests.length, 2);
     const [first, second] = host.requests;
     assert(first !== undefined && second !== undefined, "the model got no two requests");
-    equal(first.messages, [{ role: "user", text: "Greet Ada." }]);
-    equal([first.tools.includes("greet"), first.system.includes(folder())], [true, true]);
-    equal(second.messages.at(-1)?.text, "hello Ada");
-    equal((second.body as { model?: string }).model, model.model);
+    assertEquals(first.messages, [{ role: "user", text: "Greet Ada." }]);
+    assertEquals([first.tools.includes("greet"), first.system.includes(folder())], [true, true]);
+    assertEquals(second.messages.at(-1)?.text, "hello Ada");
+    assertEquals((second.body as { model?: string }).model, model.model);
   });
 }

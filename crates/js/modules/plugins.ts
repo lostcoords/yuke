@@ -118,11 +118,13 @@ export interface OpenOptions {
   /** Ends the handle: `onEvent` gets no more calls, and the hold ends. The session stays open for its other holders. */
   readonly signal?: AbortSignal;
   /** Gets the snapshot, then each later update, in order. A throw is a fault of the plugin, and the next event still comes. */
-  readonly onEvent: (event: ViewEvent) => void;
+  readonly onEvent: (event: SessionHandleEvent) => void;
 }
 
 /** One event of an open session: its snapshot first, then each later update. */
-export type ViewEvent = { readonly snapshot: Frozen<SessionSnapshot> } | { readonly update: Frozen<SessionUpdate> };
+export type SessionHandleEvent =
+  | { readonly kind: "snapshot"; readonly snapshot: Frozen<SessionSnapshot> }
+  | { readonly kind: "update"; readonly update: Frozen<SessionUpdate> };
 
 /** A page of the saved events of a session. */
 export interface EventsPage {
@@ -653,14 +655,14 @@ export interface SessionHooks {
   "round.after": (event: RoundAfterEvent) => undefined | RoundAfterAnswer | Promise<undefined | RoundAfterAnswer>;
 }
 
-/** The options of `request`. */
-export interface RequestOptions {
+/** The options of `sendClientRequest`. */
+export interface ClientRequestOptions {
   /** An abort of this signal ends the wait, and the request rejects with the abort reason. */
   readonly signal?: AbortSignal | undefined;
 }
 
-/** The error answer of the client to `request`. `message` is the message of the client. */
-export class ExtensionRequestError extends Error {
+/** The error answer of the client to `sendClientRequest`. `message` is the message of the client. */
+export class ClientRequestError extends Error {
   /** The JSON-RPC error code of the client. */
   readonly code: number;
   /** More facts about the error, when the client gave them. */
@@ -672,7 +674,7 @@ export class ExtensionRequestError extends Error {
     this.data = details.data;
   }
 }
-ExtensionRequestError.prototype.name = "ExtensionRequestError";
+ClientRequestError.prototype.name = "ClientRequestError";
 
 /** The options of `ask`. */
 export interface AskOptions {
@@ -786,14 +788,14 @@ export interface SessionContext<O = Record<string, never>> {
    * - The extension of the request is the name of this plugin. A client answers an extension that it does not know
    *   with the code -32601.
    * - `data` follows `JSON.stringify`, as for `sendClientEvent`. The promise gives the result of the client.
-   * - An error answer of the client rejects with an `ExtensionRequestError`.
+   * - An error answer of the client rejects with an `ClientRequestError`.
    * - With no client, as in `yuke -p` and in the interface, the request rejects with an `Error` at once. A disconnect of
    *   the client rejects with an `Error` too.
    * - An abort of the signal or the close of the session rejects with the abort reason. A request that the client got
    *   and did not answer sends a cancel to the client.
    * - The host sets no time limit. Pass the signal of the tool or the hook, so that a cancel of the turn ends the wait.
    */
-  readonly request: (request: string, data?: unknown, options?: RequestOptions) => Promise<unknown>;
+  readonly sendClientRequest: (request: string, data?: unknown, options?: ClientRequestOptions) => Promise<unknown>;
   /**
    * Ask the user `request` with this plugin as its source, and wait for the answers: one per question, in question
    * order.

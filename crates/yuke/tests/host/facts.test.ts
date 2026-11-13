@@ -3,7 +3,7 @@
 import { auth } from "yuke:internal/sessions";
 import type { HostEvents, PluginContext, PluginSession, SessionContext } from "yuke:plugins";
 import type { QuestionAnswer } from "yuke:protocol";
-import { createHost, equal, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, createHost, reply, test, waitForSettled } from "yuke:test";
 
 /** A plugin that keeps its context for the test. */
 function watcher(): { readonly apply: (ctx: PluginContext) => undefined; readonly ctx: () => PluginContext } {
@@ -65,7 +65,7 @@ test("a listener gets each open session first, then the states of a turn, a late
   await host.openSession();
   await ctx.get("sessions").closeForAll(first.id);
 
-  equal(
+  assertEquals(
     [seen, frozen, early],
     [["opened first idle", "state running", "state idle", "opened second idle", "closed first"], true, false],
   );
@@ -92,7 +92,7 @@ test("an open during a turn gives its state and interactions, and a later listen
   };
   const turn = session.sendMessage("Ask me.");
   await waitForSettled();
-  equal(host.questions.length, 1);
+  assertEquals(host.questions.length, 1);
   // The first listener starts the watch, so the host gives the open as the session is now.
   const during = opens();
   await waitForSettled();
@@ -101,7 +101,7 @@ test("an open during a turn gives its state and interactions, and a later listen
   // The watch runs already, so this listener gets the open as the facts of the turn left it.
   const after = opens();
 
-  equal([during, after], [["running 1"], ["idle 0"]]);
+  assertEquals([during, after], [["running 1"], ["idle 0"]]);
 });
 
 test("a listener that comes during a question of a running watch gets the open as the facts made it", async () => {
@@ -122,13 +122,13 @@ test("a listener that comes during a question of a running watch gets the open a
   await waitForSettled();
   const turn = session.sendMessage("Ask me.");
   await waitForSettled();
-  equal(host.questions.length, 1);
+  assertEquals(host.questions.length, 1);
   const later: string[] = [];
   ctx.addListener("session.opened", (data) => later.push(`${data.state} ${data.interactions.length}`));
   answered.resolve(yes);
   await turn;
 
-  equal([first, later], [["idle 0"], ["running 1"]]);
+  assertEquals([first, later], [["idle 0"], ["running 1"]]);
 });
 
 test("an open gives the parent and the running jobs, and a later listener gets the jobs as the updates left them", async () => {
@@ -168,7 +168,7 @@ test("an open gives the parent and the running jobs, and a later listener gets t
   // The watch runs already, so this listener gets each open as the job updates left it.
   const after = opens();
 
-  equal(
+  assertEquals(
     [during.toSorted(), after.toSorted()],
     [
       ["child of parent []", "parent top [explorer]"],
@@ -191,7 +191,7 @@ test("a stored API key and a logout each tell the listeners that the catalog cha
   await auth.logout("anthropic");
   await waitForSettled();
 
-  equal(changes, 2);
+  assertEquals(changes, 2);
 });
 
 test("a listener that throws gives a notice for each throw, and it and the other listeners stay", async () => {
@@ -211,7 +211,7 @@ test("a listener that throws gives a notice for each throw, and it and the other
   await waitForSettled();
   await host.openSession();
 
-  equal(
+  assertEquals(
     [
       throws,
       others,
@@ -244,7 +244,7 @@ test("a notice of a plugin reaches the notice listeners of another plugin, until
   sender.ctx().notify("info", "second");
   await waitForSettled();
 
-  equal(
+  assertEquals(
     [got.map((notice) => [notice.source, notice.level, notice.text]), delivered],
     [[["sender", "info", "first"]], ["first", "second"]],
   );
@@ -263,6 +263,6 @@ test("the last removal ends the watch, and a new listener gets the open sessions
   ctx.addListener("session.opened", (data) => again.push(data.sessionId));
   await waitForSettled();
 
-  equal(first.length, 1);
-  equal(again, first);
+  assertEquals(first.length, 1);
+  assertEquals(again, first);
 });

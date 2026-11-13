@@ -49,6 +49,10 @@ Write commit messages in imperative English.
 - Do not discard a fallible result with `let _ =`. Propagate with `?` or handle it.
 - In TypeScript, give each parameter a plain name. Prefer dot notation to preserve context.
   Destructure only when it improves clarity or captures values that must stay fixed. Do not destructure parameters.
+- When a plugin API has a familiar model (Deno, the web, Node, `@std`, the Vercel AI SDK), copy its names and shapes,
+  also its `null`. AI agents know these APIs and write correct code without our docs.
+  Other APIs follow the rules of this file.
+- Do not police plugins. Check a plugin value only where yuke needs its shape. A bad plugin is not a fault of yuke.
 - Validate unknown values once at the boundary that owns them. Pass typed values inward.
   Do not repeat checks that a schema, constructor, or internal type already guarantees.
 - Do not extract single-use helpers preemptively. Inline the logic at the call site unless the helper is reused,

@@ -1,6 +1,6 @@
 // The paste of a large image into the composer: the session stores and sends the scaled image.
 
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { fakeSessions, loadChat } from "./chat.ts";
 
@@ -90,7 +90,7 @@ async function pasteAndSend(bytes: Uint8Array) {
 test("ctrl+v stores a PNG above 2000 pixels scaled down and sends the scaled image", async () => {
   const result = await pasteAndSend(grayPng(4000, 2, new Uint8Array(8000).fill(7)));
   const header = new DataView(result.stored.buffer);
-  equal(
+  assertEquals(
     [result.shown, [header.getUint32(16), header.getUint32(20)], result.inputs, result.notices],
     [
       ["[image 1]"],

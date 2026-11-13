@@ -10,7 +10,7 @@
  * ```
  */
 declare module "yuke:transcript" {
-  import type { EventsPage, Frozen, ViewEvent } from "yuke:plugins";
+  import type { EventsPage, Frozen, SessionHandleEvent } from "yuke:plugins";
   import type {
     Answer,
     Block,
@@ -133,7 +133,7 @@ declare module "yuke:transcript" {
     /** Saved events that are missing between the held ones. Give the result of `sessions.events` to `insert`. */
     get gap(): EventsPage | undefined;
     /** Add one event. A snapshot starts the transcript again. */
-    apply(event: ViewEvent): void;
+    apply(event: SessionHandleEvent): void;
     /** Add saved events that did not come live: an older page, or the events of a gap. */
     insert(events: readonly Frozen<StoredEvent>[]): void;
   }

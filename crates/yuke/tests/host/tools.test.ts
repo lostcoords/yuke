@@ -2,7 +2,7 @@
 
 import { mkdir, readDir, writeTextFile } from "yuke:fs";
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, rejects, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createHost, folder, reply, test, waitForSettled } from "yuke:test";
 import type { Tool } from "yuke:tools";
 
 const empty = { type: "object", properties: {} } as const;
@@ -44,7 +44,10 @@ test("a change of a tool after its definition changes neither its schema nor its
   const runs = await session.call("fixed", { n: 2 });
   const missing = await session.call("fixed", {});
 
-  equal([runs.text, runs.isError, missing.isError, missing.text.startsWith("Set n to ")], ["n=2", false, true, true]);
+  assertEquals(
+    [runs.text, runs.isError, missing.isError, missing.text.startsWith("Set n to ")],
+    ["n=2", false, true, true],
+  );
 });
 
 test("a deferred tool waits for the tool search of the replies, and the other tools load at once", async () => {
@@ -67,7 +70,7 @@ test("a deferred tool waits for the tool search of the replies, and the other to
 
   const body = host.requests[0]?.body as { tools: { name?: string; defer_loading?: boolean }[] } | undefined;
   const tools = body?.tools ?? [];
-  equal(
+  assertEquals(
     tools
       .filter((entry) => entry.name === "rare" || entry.name === "common")
       .map((entry) => [entry.name, entry.defer_loading]),
@@ -91,8 +94,8 @@ test("the system prompt names each deferred tool after the saved sections", asyn
   await (await host.openSession()).sendMessage("Hi.");
 
   const system = host.requests[0]?.system ?? "";
-  equal((system.split("<deferred_tools>")[1] ?? "").includes("- rare"), true);
-  equal(system.includes("- common"), false);
+  assertEquals((system.split("<deferred_tools>")[1] ?? "").includes("- rare"), true);
+  assertEquals(system.includes("- common"), false);
 });
 
 test("a session without a deferred tool has no deferred_tools section", async () => {
@@ -104,7 +107,7 @@ test("a session without a deferred tool has no deferred_tools section", async ()
 
   await (await host.openSession()).sendMessage("Hi.");
 
-  equal(host.requests[0]?.system.includes("<deferred_tools>"), false);
+  assertEquals(host.requests[0]?.system.includes("<deferred_tools>"), false);
 });
 
 for (const [name, definition, expected] of [
@@ -138,12 +141,15 @@ for (const [name, definition, expected] of [
     const { host, session } = await opened(definition as unknown as Tool);
     await using _host = host;
 
-    const missing = await rejects(session.call(definition.name, {}));
+    const missing = await assertRejects(() => session.call(definition.name, {}));
 
     const [notice] = host.notices;
     const prefix = "the session setup failed, and its tools and hooks are gone: TypeError: ";
-    equal([host.notices.length, notice?.text.startsWith(prefix), notice?.text.includes(expected)], [1, true, true]);
-    equal(missing instanceof Error && missing.message, `the session has no tool ${definition.name}`);
+    assertEquals(
+      [host.notices.length, notice?.text.startsWith(prefix), notice?.text.includes(expected)],
+      [1, true, true],
+    );
+    assertEquals(missing instanceof Error && missing.message, `the session has no tool ${definition.name}`);
   });
 }
 
@@ -164,7 +170,7 @@ test("arguments that do not fit the schema fail before the tool runs", async () 
     errors.push([result.isError, result.text]);
   }
 
-  equal(errors, [
+  assertEquals(errors, [
     [true, "Pass the arguments as a JSON object."],
     [true, "Remove mode. The fields are: path, content."],
     [true, "Set path to a string."],
@@ -172,7 +178,7 @@ test("arguments that do not fit the schema fail before the tool runs", async () 
     [true, "Remove toString. The fields are: path, content."],
     [true, "Set offset to an integer from 1 to 4294967295."],
   ]);
-  equal((await readDir(folder())).length, 0);
+  assertEquals((await readDir(folder())).length, 0);
 });
 
 test("a value outside the enum fails with the list, and a value in it runs the tool", async () => {
@@ -195,7 +201,7 @@ test("a value outside the enum fails with the list, and a value in it runs the t
     await session.call("sort", { order: "desc", size: 0.5 }),
   ];
 
-  equal(
+  assertEquals(
     results.map((result) => [result.isError, result.text]),
     [
       [true, 'Set order to one of "asc", "desc".'],
@@ -217,7 +223,7 @@ test("an argument named __proto__ is an own field", async () => {
   const { host, session } = await opened(proto);
   await using _host = host;
 
-  equal((await session.call("proto", JSON.parse('{"__proto__": "x"}'))).text, "x");
+  assertEquals((await session.call("proto", JSON.parse('{"__proto__": "x"}'))).text, "x");
 });
 
 test("a throw of a tool is an error with its message", async () => {
@@ -230,7 +236,7 @@ test("a throw of a tool is an error with its message", async () => {
 
   const result = await session.call("fail", {});
 
-  equal([result.isError, result.text], [true, "the disk is full"]);
+  assertEquals([result.isError, result.text], [true, "the disk is full"]);
 });
 
 test("a cancel aborts the signal, and the tool still answers", async () => {
@@ -255,7 +261,7 @@ test("a cancel aborts the signal, and the tool still answers", async () => {
   stop.abort(new Error("stop"));
   await pending;
 
-  equal(reason, "AbortError");
+  assertEquals(reason, "AbortError");
 });
 
 test("the signal aborts when the call ends, and the context names the folder", async () => {
@@ -270,7 +276,7 @@ test("the signal aborts when the call ends, and the context names the folder", a
 
   const result = await session.call("keep", {});
 
-  equal([result.text, kept?.aborted], [folder(), true]);
+  assertEquals([result.text, kept?.aborted], [folder(), true]);
 });
 
 test("a call gets the id of its session, its call id, and its folder", async () => {
@@ -288,14 +294,14 @@ test("a call gets the id of its session, its call id, and its folder", async () 
   await session.call("facts", {});
   await other.call("facts", {});
 
-  equal(
+  assertEquals(
     seen.map(([id, , where]) => [id, where]),
     [
       [session.id, folder()],
       [other.id, `${folder()}/other`],
     ],
   );
-  equal(
+  assertEquals(
     seen.every(([, callId]) => (callId ?? "").length > 0),
     true,
   );
@@ -319,7 +325,7 @@ test("an error result keeps its text and its media", async () => {
 
   const result = await session.call("failed", {});
 
-  equal(
+  assertEquals(
     [result.isError, result.text, plain(result.media)],
     [true, "the render failed", [["image/png", [112, 110, 103]]]],
   );
@@ -349,8 +355,8 @@ test("media bytes reach the store as the view held them at the return", async ()
   const drawn = await session.call("drawn", {});
   const own = await session.call("own", {});
 
-  equal([drawn.isError, own.isError], [false, false]);
-  equal([plain(drawn.media), plain(own.media)], [[["image/png", [1, 2]]], [["image/png", [1, 2]]]]);
+  assertEquals([drawn.isError, own.isError], [false, false]);
+  assertEquals([plain(drawn.media), plain(own.media)], [[["image/png", [1, 2]]], [["image/png", [1, 2]]]]);
 });
 
 // The answer commit saves the hints and the folder before the call runs, so the saved transcript shows them too.
@@ -369,7 +375,7 @@ test("a call in a turn shows the hints of its tool, the folder of the session, a
   await session.sendMessage("show it");
 
   const entry = session.transcript.entries.find((item) => item.kind === "tool");
-  equal(entry?.kind === "tool" && [entry.hints, entry.cwd, entry.result?.content, entry.display], [
+  assertEquals(entry?.kind === "tool" && [entry.hints, entry.cwd, entry.result?.content, entry.display], [
     { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
     folder(),
     "ok",
@@ -400,5 +406,5 @@ test("a media path starts in the folder of the start of the call", async () => {
   await session.setSettings({ ...session.settings, cwd: `${folder()}/second` });
   release();
 
-  equal(plain((await pending).media), [["image/png", [...new TextEncoder().encode("first")]]]);
+  assertEquals(plain((await pending).media), [["image/png", [...new TextEncoder().encode("first")]]]);
 });

@@ -2,7 +2,7 @@
 
 import { readTextFile, writeTextFile } from "yuke:fs";
 import { apply } from "yuke:internal/bundled/themes";
-import { createFrame, equal, type FrameTest, folder, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, type FrameTest, folder, test, waitForSettled } from "yuke:test";
 import type { Tui } from "yuke:tui";
 import { rows } from "./rows.ts";
 
@@ -55,8 +55,8 @@ test("the picker shows a theme at once, esc gives the old one back, and enter sa
   open();
   frame.key("n o r d enter");
   await waitForSettled();
-  equal(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"nord"}');
-  equal(
+  assertEquals(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"nord"}');
+  assertEquals(
     [
       ["default", "nord", "dawn"].every((name) => listed.includes(name)),
       preview,
@@ -82,8 +82,8 @@ test("a saved theme applies at the load, also when its plugin comes later, and d
   frame.draw();
   frame.key("d e f enter");
   await waitForSettled();
-  equal(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"default"}');
-  equal([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
+  assertEquals(await readTextFile("theme.json", { cwd: dataDir }), '{"name":"default"}');
+  assertEquals([active, color, tui.styles.theme, notices], ["nord", 1, "default", []]);
 });
 
 test("a saved file without a name gives the default theme and no notice", async () => {
@@ -91,7 +91,7 @@ test("a saved file without a name gives the default theme and no notice", async 
   const dataDir = folder();
   await writeTextFile("theme.json", "{}", { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
-  equal([tui.styles.theme, notices], ["default", []]);
+  assertEquals([tui.styles.theme, notices], ["default", []]);
 });
 
 test("the picker opens on the active theme, so its first selection changes nothing", async () => {
@@ -101,7 +101,7 @@ test("the picker opens on the active theme, so its first selection changes nothi
   tui.styles.setTheme("nord");
   frame.surface("themes").tui.commands.run("themes:open");
   frame.draw();
-  equal(tui.styles.theme, "nord");
+  assertEquals(tui.styles.theme, "nord");
 });
 
 test("a bad saved file is a notice, and yuke starts on the default theme", async () => {
@@ -109,5 +109,8 @@ test("a bad saved file is a notice, and yuke starts on the default theme", async
   const dataDir = folder();
   await writeTextFile("theme.json", "{", { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
-  equal([tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")], ["default", 1, true]);
+  assertEquals(
+    [tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")],
+    ["default", 1, true],
+  );
 });

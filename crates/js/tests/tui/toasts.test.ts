@@ -1,7 +1,7 @@
 // The bundled toasts show the notices of the core as a stack at the top right.
 
 import { apply } from "yuke:internal/bundled/toasts";
-import { assert, createFrame, equal, type FrameNotice, type FrameTest, test } from "yuke:test";
+import { assert, assertEquals, createFrame, type FrameNotice, type FrameTest, test } from "yuke:test";
 import { mouse } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -33,7 +33,7 @@ test("an info toast shows at the top right with its level bar and leaves after 4
   frame.advance(3999);
   const before = stack(frame);
   frame.advance(1);
-  equal([shown, before, stack(frame)], [["▌ lint", "▌ all clean"], ["▌ lint", "▌ all clean"], []]);
+  assertEquals([shown, before, stack(frame)], [["▌ lint", "▌ all clean"], ["▌ lint", "▌ all clean"], []]);
 });
 
 test("a warning and an error stay, and debug shows no toast", () => {
@@ -43,7 +43,7 @@ test("a warning and an error stay, and debug shows no toast", () => {
   frame.notice(notice("warn", "lint", "3 errors"));
   frame.notice(notice("error", "host:session", "the turn failed"));
   frame.advance(60_000);
-  equal(stack(frame), ["▌ lint", "▌ 3 errors", "▌ session", "▌ the turn failed"]);
+  assertEquals(stack(frame), ["▌ lint", "▌ 3 errors", "▌ session", "▌ the turn failed"]);
 });
 
 test("an equal notice raises the count of its toast and starts its wait again, also with others between", () => {
@@ -57,7 +57,7 @@ test("an equal notice raises the count of its toast and starts its wait again, a
   const merged = stack(frame);
   frame.notice(notice("warn", "lint", "3 errors", "a"));
   frame.notice(notice("warn", "lint", "3 errors", "b"));
-  equal(
+  assertEquals(
     [merged, stack(frame).filter((row) => row.startsWith("▌ lint"))],
     [
       ["▌ lint ×2", "▌ all clean", "▌ other", "▌ between"],
@@ -77,7 +77,7 @@ test("a full stack drops its oldest info toast, else its oldest toast", () => {
   const titles = (): string[] => stack(frame).filter((_, at) => at % 2 === 0);
   const first = titles();
   frame.notice(notice("error", "e2", "f"));
-  equal(
+  assertEquals(
     [first, titles()],
     [
       ["▌ w1", "▌ w2", "▌ w3", "▌ e1"],
@@ -97,7 +97,7 @@ test("a click dismisses its toast and ctrl+l dismisses all", () => {
   press("left");
   const clicked = stack(frame);
   frame.key("ctrl+l");
-  equal([right, clicked, stack(frame)], [4, ["▌ first", "▌ a"], []]);
+  assertEquals([right, clicked, stack(frame)], [4, ["▌ first", "▌ a"], []]);
 });
 
 test("the history shows a source from yuke without host:", () => {
@@ -107,7 +107,7 @@ test("the history shows a source from yuke without host:", () => {
   frame.surface("demo").tui.commands.run("toasts:history");
   frame.draw();
 
-  equal(
+  assertEquals(
     rows(frame.frame).filter((row) => row.startsWith("error ")),
     ["error session: the turn failed"],
   );
@@ -125,7 +125,7 @@ test("the warnings and errors before the load show, and the history lists each n
   frame.surface("demo").tui.commands.run("toasts:history");
   frame.draw();
   const listed = rows(frame.frame).filter((row) => /^(info|error) /.test(row));
-  equal(
+  assertEquals(
     [shown, listed],
     [
       ["▌ plugin ×2", "▌ did not load"],
@@ -154,7 +154,7 @@ test("a toast has a default look per level that a plugin changes", () => {
   });
   // The level sets the color of the bar, and the body has a background.
   assert(before[0]?.fg !== undefined && before[5]?.fg !== undefined && before[2]?.bg !== undefined);
-  equal(
+  assertEquals(
     [before[0]?.fg !== before[5]?.fg, looks()],
     [
       true,

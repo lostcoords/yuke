@@ -2,7 +2,7 @@
 
 import { writeFile } from "yuke:fs";
 import type { InputBeforeAnswer, PluginSession } from "yuke:plugins";
-import { createHost, equal, folder, test } from "yuke:test";
+import { assertEquals, createHost, folder, test } from "yuke:test";
 
 const typed = (text: string) =>
   ({ source: { kind: "user" }, kind: "message", blocks: [{ kind: "userText", text: text }] }) as const;
@@ -18,7 +18,7 @@ test("an input without an answer stays as it is", async () => {
   await using host = await createHost({ plugins: [{ name: "quiet", session: answering(undefined) }] });
   const session = await host.openSession();
 
-  equal(await session.runHook("input.before", typed("hi")), "keep");
+  assertEquals(await session.runHook("input.before", typed("hi")), "keep");
 });
 
 test("a replace feeds the next handler, and the decision holds the last blocks", async () => {
@@ -45,8 +45,8 @@ test("a replace feeds the next handler, and the decision holds the last blocks",
 
   const decision = await session.runHook("input.before", typed("/skill:pdf"));
 
-  equal(decision, { replace: { blocks: [{ kind: "userText", text: "expanded" }] } });
-  equal(seen, [
+  assertEquals(decision, { replace: { blocks: [{ kind: "userText", text: "expanded" }] } });
+  assertEquals(seen, [
     '{"source":{"kind":"user"},"kind":"message","blocks":[{"kind":"userText","text":"/skill:pdf"}]}',
     '[{"kind":"userText","text":"expanded"}]',
   ]);
@@ -71,20 +71,20 @@ test("a denial removes the input with a notice, and the later handlers do not ru
 
   const decision = await session.runHook("input.before", typed("my key is 123"));
 
-  equal(decision, "remove");
-  equal(
+  assertEquals(decision, "remove");
+  assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text]),
     [["guard", "warn", "the plugin denied the input: it names a secret"]],
   );
-  equal(later, false);
+  assertEquals(later, false);
 });
 
 test("handled removes the input with no notice", async () => {
   await using host = await createHost({ plugins: [{ name: "commands", session: answering({ handled: true }) }] });
   const session = await host.openSession();
 
-  equal(await session.runHook("input.before", typed("/compact")), "remove");
-  equal(host.notices, []);
+  assertEquals(await session.runHook("input.before", typed("/compact")), "remove");
+  assertEquals(host.notices, []);
 });
 
 test("a throw removes the input, and an error notice names the plugin", async () => {
@@ -98,7 +98,7 @@ test("a throw removes the input, and an error notice names the plugin", async ()
 
   const decision = await session.runHook("input.before", typed("hi"));
 
-  equal(
+  assertEquals(
     [decision, host.notices.map((notice) => [notice.source, notice.level, notice.text])],
     ["remove", [["host:plugins", "error", "input.before of plugin check failed: Error: boom"]]],
   );
@@ -137,11 +137,11 @@ test("a replace keeps blocks in order and stores media from bytes and a path", a
   });
 
   const blocks = typeof decision === "object" ? decision.replace.blocks : [];
-  equal(
+  assertEquals(
     blocks.map((block) => ("bytes" in block ? [block.mimeType, [...block.bytes]] : block)),
     [["image/jpeg", [9, 9, 9, 9]], ["image/png", [1, 2, 3]], { kind: "userText", text: "look" }, ["image/png", [4, 5]]],
   );
-  equal(size, 3);
+  assertEquals(size, 3);
 });
 
 test("the event gives the blocks in order, and a media block can name a file", async () => {
@@ -166,7 +166,7 @@ test("the event gives the blocks in order, and a media block can name a file", a
     ],
   });
 
-  equal([decision, kinds], ["keep", ["media", "userText", "media"]]);
+  assertEquals([decision, kinds], ["keep", ["media", "userText", "media"]]);
 });
 
 test("a notification shows its plugin source and its kind", async () => {
@@ -186,5 +186,5 @@ test("a notification shows its plugin source and its kind", async () => {
     blocks: [{ kind: "userText", text: "the job ended" }],
   });
 
-  equal(seen, ["plugin host:jobs notification"]);
+  assertEquals(seen, ["plugin host:jobs notification"]);
 });

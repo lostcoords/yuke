@@ -2,7 +2,7 @@
 // answer, and two panes on one session.
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor } from "yuke:tui";
 import { EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -53,7 +53,7 @@ test("a single question takes the place of the composer, enter picks the cursor 
   frame.key("down enter enter");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     [shown, off, sessions.responses, sessions.inputs, rows(frame.frame).at(-2), chat.tui.focused === composerOf(chat)],
     [
       [" guard · Branch", " Delete branch?", " feat/x", "❯ Yes", "  No", " ↑↓ choose · enter send · esc cancel"],
@@ -75,7 +75,7 @@ test("a question from yuke shows its source without host:", async () => {
   sessions.push({ ...asked(1, DELETE), source: "host:mcp" } as SessionUpdate);
   frame.draw();
 
-  equal(rows(frame.frame).at(-7), " mcp · Branch");
+  assertEquals(rows(frame.frame).at(-7), " mcp · Branch");
 });
 
 test("a request of several questions shows one page each, with ticks and typed answers, and the last enter sends", async () => {
@@ -116,7 +116,7 @@ test("a request of several questions shows one page each, with ticks and typed a
   frame.key("enter");
   const last = shows("· 3/3");
   frame.key("enter");
-  equal(
+  assertEquals(
     [first, secret, last, sessions.responses],
     [
       true,
@@ -164,7 +164,7 @@ test("shift+tab or left goes back, and enter answers the page again", async () =
   frame.key("space down enter left right");
   const again = shown();
   frame.key("enter");
-  equal(
+  assertEquals(
     [field, back, again, sessions.responses],
     [
       [" guard · b · 2/2", " enter send · shift+tab back · esc cancel"],
@@ -199,7 +199,7 @@ test("a press on the field row keeps the page keys with the question", async () 
   frame.mouse(mouse(3, 11, "press"));
   frame.mouse(mouse(3, 11, "release"));
   frame.key("up enter");
-  equal(sessions.responses, [[14, answered(["X"])]]);
+  assertEquals(sessions.responses, [[14, answered(["X"])]]);
 });
 
 test("a tall question keeps its options in view and counts the lines that do not show", async () => {
@@ -211,7 +211,14 @@ test("a tall question keeps its options in view and counts the lines that do not
   const text = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   sessions.push(asked(13, one({ question: text, options: [{ label: "Yes" }, { label: "No" }] })));
   frame.draw();
-  equal(rows(frame.frame).slice(-8, -2), [" guard · Q", " line 1", " line 2", " … 8 more lines", "❯ Yes", "  No"]);
+  assertEquals(rows(frame.frame).slice(-8, -2), [
+    " guard · Q",
+    " line 1",
+    " line 2",
+    " … 8 more lines",
+    "❯ Yes",
+    "  No",
+  ]);
 });
 
 test("a short pane keeps the first line of a tall question above its options", async () => {
@@ -224,7 +231,12 @@ test("a short pane keeps the first line of a tall question above its options", a
   const options = ["A", "B", "C", "D"].map((label) => ({ label }));
   sessions.push(asked(15, one({ question: text, options })));
   frame.draw();
-  equal(rows(frame.frame).slice(-5, -1), [" guard · Q", " line 1", "❯ A", " ↑↓ choose · enter send · esc cancel"]);
+  assertEquals(rows(frame.frame).slice(-5, -1), [
+    " guard · Q",
+    " line 1",
+    "❯ A",
+    " ↑↓ choose · enter send · esc cancel",
+  ]);
 });
 
 test("Esc and Ctrl+C cancel the question and leave the turn and the draft", async () => {
@@ -242,7 +254,7 @@ test("Esc and Ctrl+C cancel the question and leave the turn and the draft", asyn
   frame.key("ctrl+c");
   await waitForSettled();
   frame.draw();
-  equal(
+  assertEquals(
     [sessions.responses, sessions.state.cancels, composerOf(chat).state.text],
     [
       [
@@ -268,7 +280,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   const stays = rows(frame.frame).at(-7);
   sessions.push({ sessionUpdate: "interactionClosed", interactionId: 6 });
   frame.draw();
-  equal(
+  assertEquals(
     [chat.notices, stays, rows(frame.frame).at(-2)],
     [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
@@ -286,7 +298,10 @@ test("each pane of a session shows its question, and the focused pane takes the 
   frame.draw();
   const both = rows(frame.frame).at(-3);
   frame.key("enter");
-  equal([both, sessions.responses], [` guard · Branch${" ".repeat(15)}│ guard · Branch`, [[7, answered(["Yes"])]]]);
+  assertEquals(
+    [both, sessions.responses],
+    [` guard · Branch${" ".repeat(15)}│ guard · Branch`, [[7, answered(["Yes"])]]],
+  );
 });
 
 test("a close of the session by another client drops its question, and the next send opens the session again", async () => {
@@ -302,7 +317,7 @@ test("a close of the session by another client drops its question, and the next 
   const shown = rows(frame.frame).at(-2);
   frame.key("enter");
   await waitForSettled();
-  equal([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ kind: "userText", text: "draft" }]]]);
+  assertEquals([shown, sessions.opened.length, sessions.inputs], ["draft", 2, [[{ kind: "userText", text: "draft" }]]]);
 });
 
 test("a browse of the messages stops while a question shows", async () => {
@@ -324,5 +339,5 @@ test("a browse of the messages stops while a question shows", async () => {
   const enabled = () => chat.tui.commands.list().find((command) => command.name === "chat:newer-message")?.enabled;
   const browsing = enabled();
   sessions.push(asked(11, DELETE));
-  equal([browsing, enabled()], [true, false]);
+  assertEquals([browsing, enabled()], [true, false]);
 });

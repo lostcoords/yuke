@@ -3,7 +3,7 @@
 import * as fs from "yuke:fs";
 import { folder } from "yuke:internal/test";
 import { Command, env } from "yuke:process";
-import { assert, equal, rejects, test, throws } from "yuke:test";
+import { assert, assertEquals, assertRejects, assertThrows, test } from "yuke:test";
 
 /** `bytes` as UTF-8 text. */
 function text(bytes: Uint8Array): string {
@@ -39,7 +39,7 @@ test("each argument reaches the program as it is and the streams stay apart", as
     args: ["-c", 'printf "%s|" "$1" "$2"; echo err >&2; exit 3', "sh", "a b", "$HOME"],
     cwd: base,
   }).output();
-  equal(
+  assertEquals(
     [text(out.stdout), text(out.stderr), out.code, out.success, out.signal],
     ["a b|$HOME|", "err\n", 3, false, null],
   );
@@ -51,7 +51,7 @@ test("env adds variables clear env leaves only env and a null stream is empty", 
   const only = await new Command("/usr/bin/env", { cwd: base, env: { YUKE_A: "1" }, clearEnv: true }).output();
   const dropped = await new Command("/usr/bin/env", { cwd: base, stdout: "null" }).output();
   const lines = text(added.stdout).split("\n");
-  equal(
+  assertEquals(
     [
       lines.includes("YUKE_A=1"),
       lines.some((line) => line.startsWith("PATH=")),
@@ -64,8 +64,8 @@ test("env adds variables clear env leaves only env and a null stream is empty", 
 });
 
 test("a relative cwd throws a type error before any start", () => {
-  equal(
-    throws(() => new Command("ls", { cwd: "relative" })),
+  assertEquals(
+    assertThrows(() => new Command("ls", { cwd: "relative" })),
     new TypeError("the option cwd is not an absolute path"),
   );
 });
@@ -74,7 +74,10 @@ test("an abort before the start rejects and an abort during the run stops the gr
   const base = folder();
   const early = new AbortController();
   early.abort(new Error("too early"));
-  equal(await rejects(new Command("sh", { cwd: base, signal: early.signal }).output()), new Error("too early"));
+  assertEquals(
+    await assertRejects(() => new Command("sh", { cwd: base, signal: early.signal }).output()),
+    new Error("too early"),
+  );
   const late = new AbortController();
   // The background child writes its id, so the test sees that the stop reached the whole group.
   const running = new Command("sh", {
@@ -85,7 +88,7 @@ test("an abort before the start rejects and an abort during the run stops the gr
   await pidOf(base, "child");
   late.abort();
   const out = await running;
-  equal([out.success, out.code, out.signal], [false, 143, "SIGTERM"]);
+  assertEquals([out.success, out.code, out.signal], [false, 143, "SIGTERM"]);
   assert(await gone(base, "child"), "the child of the program still runs");
 });
 
@@ -101,14 +104,14 @@ test("an abort after the exit stops a left process that holds the output", async
   assert(await gone(base, "shell"), "the shell still runs");
   controller.abort();
   const out = await running;
-  equal([text(out.stdout), out.code, out.signal], ["done\n", 0, null]);
+  assertEquals([text(out.stdout), out.code, out.signal], ["done\n", 0, null]);
   assert(await gone(base, "child"), "the left process still runs");
 });
 
 test("a program that does not start rejects with its name", async () => {
   const base = folder();
-  equal(
-    await rejects(new Command("/no/such/program", { cwd: base }).output()),
+  assertEquals(
+    await assertRejects(() => new Command("/no/such/program", { cwd: base }).output()),
     new Error("/no/such/program did not start: No such file or directory (os error 2)"),
   );
 });
@@ -121,5 +124,5 @@ test("env.get gives a variable of the environment of yuke, and undefined for a m
     .split("\n")
     .find((line) => line.startsWith("PATH="))
     ?.slice("PATH=".length);
-  equal([env.get("PATH"), env.get("YUKE_TEST_NO_SUCH_VARIABLE"), env.get("")], [path, undefined, undefined]);
+  assertEquals([env.get("PATH"), env.get("YUKE_TEST_NO_SUCH_VARIABLE"), env.get("")], [path, undefined, undefined]);
 });

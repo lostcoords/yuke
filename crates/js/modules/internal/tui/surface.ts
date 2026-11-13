@@ -155,7 +155,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     const view = dialogView(options);
     const mount = mounted(
       core.scene.overlay(owner, () => view, {
-        place: options.place ?? ((size) => bottom(size, rows)),
+        place: (size) => bottom(size, rows),
       }),
     );
     const signal = options.signal;
@@ -171,13 +171,14 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
     return mount;
   });
   const select = live(
-    <T extends object>(options: SelectOptions<T>): Promise<T | undefined> =>
+    <T>(options: SelectOptions<T>): Promise<T | undefined> =>
       new Promise((resolve) => {
         let picked: T | undefined;
+        // Two equal items are one choice, so each item has one place, and that place is its id.
+        const items = [...new Set(options.items)];
         const picker = new Picker<T>({
-          items: options.items,
-          // Two items can have one label, so the place of an item is its id.
-          id: (item) => String(options.items.indexOf(item)),
+          items,
+          id: (item) => String(items.indexOf(item)),
           label: options.label,
           detail: options.detail,
           rank: options.rank,
@@ -190,7 +191,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         });
         const title = options.title;
         const mount = dialog({
-          title: title === undefined ? undefined : () => title,
+          title,
           body: picker,
           signal: options.signal,
         });
@@ -246,7 +247,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         };
         const title = options.title;
         const mount = dialog({
-          title: title === undefined ? undefined : () => title,
+          title,
           body,
           rows: (title === undefined ? 0 : 1) + 3,
           signal: options.signal,
@@ -271,7 +272,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           .reduce((sum, line) => sum + Math.max(1, Math.ceil(measure(line) / Math.max(1, core.driver.width() - 2))), 0);
         const title = options.title;
         const mount = dialog({
-          title: title === undefined ? undefined : () => title,
+          title,
           body: new TextView({ document }),
           keys: [
             {

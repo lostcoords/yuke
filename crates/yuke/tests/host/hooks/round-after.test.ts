@@ -1,7 +1,7 @@
 // The `round.after` hook: its event, its answers, its count, and its failures.
 
 import type { PluginSession } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test } from "yuke:test";
+import { assertEquals, assertRejects, createHost, reply, test } from "yuke:test";
 
 // After a round of calls, the turn goes on, so the event has no reason, and the text is the text before the calls.
 test("a handler gets the text, the reason, and the count of each round of a turn", async () => {
@@ -33,11 +33,11 @@ test("a handler gets the text, the reason, and the count of each round of a turn
 
   await session.sendMessage("Greet Ada.");
 
-  equal(seen, [
+  assertEquals(seen, [
     ["checking", undefined, 0],
     ["Done.", "stop", 0],
   ]);
-  equal(
+  assertEquals(
     session.transcript.entries.map((entry) => entry.kind),
     ["input", "text", "tool", "text", "end"],
   );
@@ -69,7 +69,7 @@ test("the first answer decides, and a continue is a counted notification of its 
   await session.sendMessage("More.");
 
   const notice = '<system_notification plugin="tests-guard">Run the tests.</system_notification>';
-  equal(
+  assertEquals(
     host.requests.map((request) => request.messages.at(-1)?.text),
     ["Work.", notice, "More.", notice],
   );
@@ -81,13 +81,13 @@ test("the first answer decides, and a continue is a counted notification of its 
     "notification",
     [{ kind: "userText", text: "Run the tests." }],
   ];
-  equal(inputs, [
+  assertEquals(inputs, [
     [{ kind: "user" }, "message", [{ kind: "userText", text: "Work." }]],
     continued,
     [{ kind: "user" }, "message", [{ kind: "userText", text: "More." }]],
     continued,
   ]);
-  equal(second, 2);
+  assertEquals(second, 2);
 });
 
 test("round.after stops the turn, and a continue answer adds its input to the session", async () => {
@@ -98,14 +98,14 @@ test("round.after stops the turn, and a continue answer adds its input to the se
   await using host = await createHost({ plugins: [{ name: "after", session: after }], replies: [reply.text("Done.")] });
   const session = await host.openSession();
 
-  equal(await session.runHook("round.after", { text: "stop", finishReason: "stop" }), "stop");
-  equal(await session.runHook("round.after", { text: "more", continues: 2 }), "proceed");
+  assertEquals(await session.runHook("round.after", { text: "stop", finishReason: "stop" }), "stop");
+  assertEquals(await session.runHook("round.after", { text: "more", continues: 2 }), "proceed");
   // The input of the continue answer starts a turn in the idle session, and the turn takes it.
-  equal(
+  assertEquals(
     session.transcript.entries.some((entry) => entry.kind === "end"),
     true,
   );
-  equal(
+  assertEquals(
     session.transcript.entries.flatMap((entry) => (entry.kind === "input" ? [[entry.inputKind, entry.content]] : [])),
     [["notification", [{ kind: "userText", text: "go on" }]]],
   );
@@ -120,7 +120,12 @@ test("a throw fails the turn and names the plugin", async () => {
   await using host = await createHost({ plugins: [{ name: "judge", session: judge }] });
   const session = await host.openSession();
 
-  const failure = await rejects(session.runHook("round.after", { text: "first part", finishReason: "stop" }));
+  const failure = await assertRejects(() =>
+    session.runHook("round.after", { text: "first part", finishReason: "stop" }),
+  );
 
-  equal(failure instanceof Error ? failure.message : failure, "round.after of plugin judge failed: Error: no verdict");
+  assertEquals(
+    failure instanceof Error ? failure.message : failure,
+    "round.after of plugin judge failed: Error: no verdict",
+  );
 });

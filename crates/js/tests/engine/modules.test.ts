@@ -1,11 +1,11 @@
 // The built-in modules that a module imports by name.
 
 import { mkdir, writeTextFile } from "yuke:fs";
-import { assert, equal, folder, rejects, test } from "yuke:test";
+import { assert, assertEquals, assertRejects, folder, test } from "yuke:test";
 
 test("an unknown built-in name does not load", async () => {
   const name: string = "yuke:nothing";
-  const error = await rejects(import(name));
+  const error = await assertRejects(() => import(name));
   assert(error instanceof TypeError);
   assert(error.message.includes("no built-in module has the name 'yuke:nothing'"), error.message);
 });
@@ -19,7 +19,7 @@ test("a file module knows its URL, its file, and its folder", async () => {
 
   const imported: { meta: ImportMeta } = await import(filename);
 
-  equal(
+  assertEquals(
     [imported.meta.url, imported.meta.filename, imported.meta.dirname],
     [`file://${dirname.replaceAll(" ", "%20")}/meta.ts`, filename, dirname],
   );

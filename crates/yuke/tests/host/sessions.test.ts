@@ -1,7 +1,7 @@
 // The `sessions` service of a plugin: its handles on the sessions of the host.
 
 import type { PluginApply, PluginSession, Sessions } from "yuke:plugins";
-import { createHost, equal, rejects, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createHost, reply, test, waitForSettled } from "yuke:test";
 
 test("the close of a session ends each handle on it", async () => {
   let sessions: Sessions | undefined;
@@ -17,13 +17,16 @@ test("the close of a session ends each handle on it", async () => {
 
   await sessions.closeForAll(session.id);
 
-  equal([first.signal.aborted, second.signal.aborted], [true, true]);
+  assertEquals([first.signal.aborted, second.signal.aborted], [true, true]);
   const reason = first.signal.reason;
-  equal(reason instanceof Error ? reason.message : reason, `the session ${session.id} closed`);
-  const refused = await rejects(second.sendMessage({ content: [{ kind: "userText", text: "late" }] }));
-  equal(refused instanceof Error ? refused.message : refused, `the handle of the session ${session.id} has ended`);
-  const blob = await rejects(second.putBlob(new Uint8Array([1])));
-  equal(blob instanceof Error ? blob.message : blob, `the handle of the session ${session.id} has ended`);
+  assertEquals(reason instanceof Error ? reason.message : reason, `the session ${session.id} closed`);
+  const refused = await assertRejects(() => second.sendMessage({ content: [{ kind: "userText", text: "late" }] }));
+  assertEquals(
+    refused instanceof Error ? refused.message : refused,
+    `the handle of the session ${session.id} has ended`,
+  );
+  const blob = await assertRejects(() => second.putBlob(new Uint8Array([1])));
+  assertEquals(blob instanceof Error ? blob.message : blob, `the handle of the session ${session.id} has ended`);
 });
 
 test("a removal of a waiting input gives true and one update, and a second removal gives false", async () => {
@@ -47,7 +50,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
   const handle = await sessions.open(session.id, {
     tail: 0,
     onEvent: (event) => {
-      if ("update" in event && event.update.sessionUpdate === "inputRemoved") removed.push(event.update.inputId);
+      if (event.kind === "update" && event.update.sessionUpdate === "inputRemoved") removed.push(event.update.inputId);
     },
   });
 
@@ -58,7 +61,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
   release();
   await handle.waitForIdle();
 
-  equal([first, second, removed, host.requests.length], [true, false, [input], 0]);
+  assertEquals([first, second, removed, host.requests.length], [true, false, [input], 0]);
 });
 
 test("a blob that a plugin saves reaches the model as the image of an input", async () => {
@@ -82,7 +85,7 @@ test("a blob that a plugin saves reaches the model as the image of an input", as
   await handle.waitForIdle();
 
   // "AQID" is the base64 of the bytes 1, 2, 3.
-  equal([blob.len, JSON.stringify(host.requests[0]?.body).includes("AQID")], [3, true]);
+  assertEquals([blob.len, JSON.stringify(host.requests[0]?.body).includes("AQID")], [3, true]);
 });
 
 test("a child session names its parent, stays out of the default list, and leaves with its parent", async () => {
@@ -106,18 +109,18 @@ test("a child session names its parent, stays out of the default list, and leave
   await session.close();
   await sessions.closeForAll(child);
   await sessions.remove(session.id);
-  const failure = await rejects(sessions.get(child));
+  const failure = await assertRejects(() => (sessions as Sessions).get(child));
 
-  equal(parents, [undefined, session.id]);
-  equal(
+  assertEquals(parents, [undefined, session.id]);
+  assertEquals(
     roots.sessions.map((row) => row.session.sessionId),
     [session.id],
   );
-  equal(
+  assertEquals(
     children.sessions.map((row) => [row.session.sessionId, row.session.parent]),
     [[child, session.id]],
   );
-  equal(String(failure), "Error: the store has no such session");
+  assertEquals(String(failure), "Error: the store has no such session");
 });
 
 test("a child that opens again names its saved parent", async () => {
@@ -140,7 +143,7 @@ test("a child that opens again names its saved parent", async () => {
   contexts.length = 0;
   await sessions.open(child, { tail: 0, onEvent: () => undefined });
 
-  equal(
+  assertEquals(
     contexts.map((context) => context.parent),
     [session.id],
   );

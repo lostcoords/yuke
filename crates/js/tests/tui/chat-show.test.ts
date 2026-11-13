@@ -2,7 +2,7 @@
 
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
-import { createFrame, equal, rejects, test, waitForSettled } from "yuke:test";
+import { assertEquals, assertRejects, createFrame, test, waitForSettled } from "yuke:test";
 import { TextEditor, type View } from "yuke:tui";
 import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -30,7 +30,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
   const away = composerOf(chat).state.text;
   frame.paste("draft of s2");
   await chat.chat.show("s1");
-  equal(
+  assertEquals(
     [chat.opened.map((open) => [open.id, open.signal.aborted]), moves, shown, away, composerOf(chat).state.text],
     [
       [
@@ -44,7 +44,7 @@ test("show puts another session in the pane, ends the old handle, and the draft 
       "draft of s1",
     ],
   );
-  equal(chat.chat.session(view), "s1");
+  assertEquals(chat.chat.session(view), "s1");
 });
 
 test("a failed show keeps the session, the handle, and the draft of the pane", async () => {
@@ -53,8 +53,8 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
   frame.start();
   await waitForSettled();
   frame.paste("keep");
-  const error = String(await rejects(chat.chat.show("missing")));
-  equal(
+  const error = String(await assertRejects(() => chat.chat.show("missing")));
+  assertEquals(
     [
       error,
       chat.chat.session(chat.tui.panes.active?.view as View),
@@ -69,7 +69,7 @@ test("a failed show keeps the session, the handle, and the draft of the pane", a
       ],
     ],
   );
-  equal(composerOf(chat).state.text, "keep");
+  assertEquals(composerOf(chat).state.text, "keep");
 });
 
 test("show rejects during a send and succeeds after the send ends", async () => {
@@ -83,11 +83,11 @@ test("show rejects during a send and succeeds after the send ends", async () => 
   frame.paste("hi");
   frame.key("enter");
   await waitForSettled();
-  const refused = String(await rejects(chat.chat.show("s2")));
+  const refused = String(await assertRejects(() => chat.chat.show("s2")));
   resolve();
   await waitForSettled();
   await chat.chat.show("s2");
-  equal([refused, chat.opened.map((open) => open.id)], ["Error: the pane is busy", ["s1", "s2"]]);
+  assertEquals([refused, chat.opened.map((open) => open.id)], ["Error: the pane is busy", ["s1", "s2"]]);
 });
 
 test("show in a pane of another plugin opens a new chat pane, and a pane without a session keeps its draft", async () => {
@@ -100,7 +100,10 @@ test("show in a pane of another plugin opens a new chat pane, and a pane without
   frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   await chat.chat.show("s2");
   const active = chat.tui.panes.active?.view as View;
-  equal([kept, chat.opened.map((open) => open.id), chat.chat.session(active)], ["first words", ["s1", "s2"], "s2"]);
+  assertEquals(
+    [kept, chat.opened.map((open) => open.id), chat.chat.session(active)],
+    ["first words", ["s1", "s2"], "s2"],
+  );
 });
 
 test("a failed show from a pane of another plugin closes the new chat pane again", async () => {
@@ -108,9 +111,9 @@ test("a failed show from a pane of another plugin closes the new chat pane again
   const chat = await loadChat(frame, fakeSessions(replies(2)));
   frame.start();
   const other = frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
-  const error = String(await rejects(chat.chat.show("missing")));
-  equal([error, chat.tui.panes.active?.view === other.view], ["Error: no session missing", true]);
-  equal(JSON.parse(frame.snapshot()).tree.split, "row");
+  const error = String(await assertRejects(() => chat.chat.show("missing")));
+  assertEquals([error, chat.tui.panes.active?.view === other.view], ["Error: no session missing", true]);
+  assertEquals(JSON.parse(frame.snapshot()).tree.split, "row");
 });
 
 test("a show of the shown session opens it again after a close by another client", async () => {
@@ -122,7 +125,7 @@ test("a show of the shown session opens it again after a close by another client
   frame.paste("keep");
   sessions.close("s1");
   await chat.chat.show("s1");
-  equal(
+  assertEquals(
     [chat.opened.map((open) => [open.id, open.signal.aborted]), composerOf(chat).state.text],
     [
       [
@@ -151,7 +154,7 @@ test("each pane keeps its own draft of a session that it leaves", async () => {
   const left = composerOf(chat).state.text;
   chat.tui.commands.run("core:focus-right");
   await chat.chat.show("s1");
-  equal([left, composerOf(chat).state.text], ["left", "right"]);
+  assertEquals([left, composerOf(chat).state.text], ["left", "right"]);
 });
 
 test("without the terminal interface the service shows no pane", async () => {
@@ -164,8 +167,8 @@ test("without the terminal interface the service shows no pane", async () => {
     notify() {},
   } as never);
   const service = provided.get("chat") as ChatService;
-  const error = String(await rejects(service.show("s1")));
-  equal(
+  const error = String(await assertRejects(() => service.show("s1")));
+  assertEquals(
     [error, service.session({ draw() {} })],
     ["Error: no chat pane: yuke runs without the terminal interface", undefined],
   );

@@ -2,7 +2,7 @@
 
 import type { PluginSession } from "yuke:plugins";
 import type { Question, QuestionAnswer } from "yuke:protocol";
-import { createHost, equal, reply, test, waitForSettled } from "yuke:test";
+import { assertEquals, createHost, reply, test, waitForSettled } from "yuke:test";
 
 /** A yes or no question. */
 const yesNo = (id: string, question: string): Question => ({
@@ -40,8 +40,8 @@ test("the answer function answers each request, and the host records it", async 
 
   const result = await session.call("ask", {});
 
-  equal(JSON.parse(result.text), picked("go", "Yes"));
-  equal(
+  assertEquals(JSON.parse(result.text), picked("go", "Yes"));
+  assertEquals(
     host.questions.map((question) => [question.source, question.request.kind, question.sessionId === session.id]),
     [["asker", "questions", true]],
   );
@@ -51,8 +51,8 @@ test("without an answer function, each request gets undefined as with no client"
   await using host = await createHost({ plugins: [{ name: "asker", session: asker }] });
   const session = await host.openSession();
 
-  equal((await session.call("ask", {})).text, "undefined");
-  equal(host.questions.length, 1);
+  assertEquals((await session.call("ask", {})).text, "undefined");
+  assertEquals(host.questions.length, 1);
 });
 
 test("a request during a turn gets its answer before the turn goes on", async () => {
@@ -66,7 +66,7 @@ test("a request during a turn gets its answer before the turn goes on", async ()
 
   await session.sendMessage("Ask me.");
 
-  equal(
+  assertEquals(
     host.requests[1]?.messages.some((message) => message.text.includes('"values":["No"]')),
     true,
   );
@@ -98,8 +98,8 @@ test("a request of several questions gets one answer per question, and yuke send
 
   const result = await session.call("ask", {});
 
-  equal(JSON.parse(result.text), answers);
-  equal(host.questions[0]?.request, {
+  assertEquals(JSON.parse(result.text), answers);
+  assertEquals(host.questions[0]?.request, {
     kind: "questions",
     questions: [
       { ...questions[0], secret: false },
@@ -121,7 +121,7 @@ test("a request in the setup of a session gets its answer", async () => {
 
   await host.openSession();
 
-  equal(
+  assertEquals(
     host.notices.map((notice) => notice.text),
     ["the answer is Yes"],
   );
@@ -140,10 +140,10 @@ test("an answer promise keeps the request open until it settles", async () => {
 
   const pending = session.call("ask", {});
   await waitForSettled();
-  equal(host.questions.length, 1);
+  assertEquals(host.questions.length, 1);
   release(picked("go", "Yes"));
 
-  equal(JSON.parse((await pending).text), picked("go", "Yes"));
+  assertEquals(JSON.parse((await pending).text), picked("go", "Yes"));
 });
 
 test("the close of a session ends its open request with undefined", async () => {
@@ -156,12 +156,12 @@ test("the close of a session ends its open request with undefined", async () => 
     answer: () => new Promise<QuestionAnswer[]>(() => {}),
   });
   const session = await host.openSession();
-  equal(host.questions.length, 1);
+  assertEquals(host.questions.length, 1);
 
   await session.close();
 
-  equal(answered, undefined);
-  equal(
+  assertEquals(answered, undefined);
+  assertEquals(
     host.questions.map((question) => question.source),
     ["early"],
   );
@@ -185,13 +185,13 @@ for (const [name, settle] of [
         }),
     });
     const session = await host.openSession();
-    equal(host.questions.length, 1);
+    assertEquals(host.questions.length, 1);
     await session.close();
 
     release();
     await waitForSettled();
 
-    equal(host.questions.length, 1);
+    assertEquals(host.questions.length, 1);
   });
 }
 
@@ -214,8 +214,8 @@ test("a cancel or an abort answers undefined, and an aborted signal asks nothing
 
   const result = await session.call("ask", {});
 
-  equal(result.text, "[true,true,true]");
-  equal(
+  assertEquals(result.text, "[true,true,true]");
+  assertEquals(
     host.questions.map((question) => question.request.questions[0]?.id),
     ["first", "second"],
   );

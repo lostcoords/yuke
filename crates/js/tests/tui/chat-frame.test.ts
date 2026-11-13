@@ -2,7 +2,7 @@
 
 import { ChatDocument, type ComposerFrameContext, composerRows } from "yuke:chat";
 import type { InteractionRequest } from "yuke:protocol";
-import { createFrame, equal, test, waitForSettled } from "yuke:test";
+import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
 import { type Canvas, TextEditor } from "yuke:tui";
 import { click, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
@@ -30,12 +30,12 @@ test("the height, the cursor, and a click of the input follow the side insets", 
   frame.paste("abcdefghij");
   frame.draw();
   // The input has 8 columns, so the text takes two rows.
-  equal(rows(frame.frame).slice(-4), ["t", "| abcdefgh", "| ij", "b"]);
-  equal(frame.frame.cursor?.column, 4);
-  equal(frame.frame.cursor?.row, 6);
+  assertEquals(rows(frame.frame).slice(-4), ["t", "| abcdefgh", "| ij", "b"]);
+  assertEquals(frame.frame.cursor?.column, 4);
+  assertEquals(frame.frame.cursor?.row, 6);
   click(frame, 3, 5);
   frame.draw();
-  equal([frame.frame.cursor?.column, frame.frame.cursor?.row], [3, 5]);
+  assertEquals([frame.frame.cursor?.column, frame.frame.cursor?.row], [3, 5]);
 });
 
 test("a frame without insets leaves each row to the transcript and the input", async () => {
@@ -46,14 +46,14 @@ test("a frame without insets leaves each row to the transcript and the input", a
   await waitForSettled();
   frame.draw();
   const shown = rows(frame.frame);
-  equal(shown.at(-1), "Message…");
-  equal(shown.at(-2), "");
-  equal(
+  assertEquals(shown.at(-1), "Message…");
+  assertEquals(shown.at(-2), "");
+  assertEquals(
     shown.some((row) => row.startsWith("─")),
     false,
   );
   // The input takes one row and the empty row takes one. The two rules of the default frame would take two more.
-  equal(chat.transcript().scroll.state.height, 4);
+  assertEquals(chat.transcript().scroll.state.height, 4);
 });
 
 test("a short pane gives up the rows below the input first, then the rows above it", async () => {
@@ -68,13 +68,13 @@ test("a short pane gives up the rows below the input first, then the rows above 
     },
   });
   frame.start();
-  equal(rows(frame.frame), ["t", "Message…", "b"]);
+  assertEquals(rows(frame.frame), ["t", "Message…", "b"]);
   frame.resize({ width: 10, height: 2 });
   frame.draw();
-  equal(rows(frame.frame), ["t", "Message…"]);
+  assertEquals(rows(frame.frame), ["t", "Message…"]);
   frame.resize({ width: 10, height: 1 });
   frame.draw();
-  equal([rows(frame.frame), inputRow], [["Message…"], 0]);
+  assertEquals([rows(frame.frame), inputRow], [["Message…"], 0]);
 });
 
 test("the style of a frame stays under the text of the input and the empty cells", async () => {
@@ -91,13 +91,13 @@ test("the style of a frame stays under the text of the input and the empty cells
   frame.paste("hi");
   const cells = frame.draw().cells;
   // The top row, the bar, the text, the empty cell of the input, and the right inset.
-  equal(cells[2]?.[3]?.style, { bg: 2 });
-  equal(cells[3]?.[0], { text: "┃", width: 1, style: { fg: 1, bg: 3 } });
-  equal(cells[3]?.[1], { text: "h", width: 1, style: { bg: 2 } });
-  equal(cells[3]?.[5]?.style, { bg: 2 });
-  equal(cells[3]?.[7]?.style, { bg: 2 });
+  assertEquals(cells[2]?.[3]?.style, { bg: 2 });
+  assertEquals(cells[3]?.[0], { text: "┃", width: 1, style: { fg: 1, bg: 3 } });
+  assertEquals(cells[3]?.[1], { text: "h", width: 1, style: { bg: 2 } });
+  assertEquals(cells[3]?.[5]?.style, { bg: 2 });
+  assertEquals(cells[3]?.[7]?.style, { bg: 2 });
   // The row above the frame is not in the frame.
-  equal(cells[1]?.[3]?.style, {});
+  assertEquals(cells[1]?.[3]?.style, {});
 });
 
 test("a frame gets the view in the input area, the focus, and the state of the turn", async () => {
@@ -114,23 +114,23 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   frame.start();
   await waitForSettled();
   frame.draw();
-  equal(seen.at(-1), "composer true false 1 s1");
+  assertEquals(seen.at(-1), "composer true false 1 s1");
   sessions.push({ sessionUpdate: "state", state: "running" });
   frame.draw();
-  equal(seen.at(-1), "composer true true 1 s1");
+  assertEquals(seen.at(-1), "composer true true 1 s1");
   sessions.push({ sessionUpdate: "state", state: "idle" });
   frame.draw();
   sessions.push({ sessionUpdate: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION });
   await waitForSettled();
   frame.draw();
-  equal(seen.at(-1), "question true false 0 s1");
+  assertEquals(seen.at(-1), "question true false 0 s1");
   const end = chat.chat.addReadOnly(() => ({ text: "A child session", back: "p1" }));
   frame.draw();
-  equal(seen.at(-1), "readOnly true false 0 s1");
+  assertEquals(seen.at(-1), "readOnly true false 0 s1");
   end();
   chat.tui.panes.split(() => ({ draw() {} }));
   frame.draw();
-  equal(seen.at(-1)?.split(" ")[1], "false");
+  assertEquals(seen.at(-1)?.split(" ")[1], "false");
 });
 
 test("the composer stays the same widget in a frame, and the last frame wins until its disposer", async () => {
@@ -145,20 +145,20 @@ test("the composer stays the same widget in a frame, and the last frame wins unt
   const first = chat.chat.setComposerFrame(label("one"));
   const second = chat.chat.setComposerFrame(label("two"));
   frame.start();
-  equal(rows(frame.frame)[1], "two");
+  assertEquals(rows(frame.frame)[1], "two");
   const composer = chat.tui.widgets.list().find((mount) => mount.widget.role === "composer")?.widget;
-  equal(composer instanceof TextEditor, true);
-  equal(chat.tui.focused, composer);
+  assertEquals(composer instanceof TextEditor, true);
+  assertEquals(chat.tui.focused, composer);
   // A press on the frame leaves the focus on the input.
   click(frame, 0, 1);
-  equal(chat.tui.focused, composer);
+  assertEquals(chat.tui.focused, composer);
   // The disposer of an earlier frame leaves the current one, and the disposer of the last frame gives the rules back.
   first();
   frame.draw();
-  equal(rows(frame.frame)[1], "two");
+  assertEquals(rows(frame.frame)[1], "two");
   second();
   frame.draw();
-  equal(rows(frame.frame).slice(-3), ["─".repeat(10), "Message…", "─".repeat(10)]);
+  assertEquals(rows(frame.frame).slice(-3), ["─".repeat(10), "Message…", "─".repeat(10)]);
 });
 
 test("a disposer of the chat service runs after the chat plugin stops", async () => {

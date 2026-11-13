@@ -480,7 +480,10 @@ declare module "yuke:internal/native" {
   export function termWrap(text: string, width: number, head: number): Int32Array;
 
   /** One event of a view: its snapshot first, then each later update, then the close of its session. */
-  export type ViewEvent = { readonly snapshot: SessionSnapshot } | { readonly update: SessionUpdate } | "closed";
+  export type ViewEvent =
+    | { readonly kind: "snapshot"; readonly snapshot: SessionSnapshot }
+    | { readonly kind: "update"; readonly update: SessionUpdate }
+    | "closed";
   /** Deliver the events of the views of this runtime to `deliver` with each view key. Call it once. */
   export function sessionsListen(deliver: (key: number, event: ViewEvent) => void): void;
   /** Open the session `id` when it is not open, hold it, and watch it as the view `key` with its last `tail` events. */

@@ -479,7 +479,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     const text = `${counts.join(" and ")} ${turns + jobs === 1 ? "is" : "are"} running.`;
     const stay = (): void => asked?.close();
     asked = tui.dialog({
-      title: () => "Stop everything and quit?",
+      title: "Stop everything and quit?",
       body: { draw: (canvas) => canvas.text(1, 0, clipped(text, Math.max(0, canvas.width - 1))) },
       keys: [
         { key: "enter", label: "stop and quit", run: leave },

@@ -1,7 +1,7 @@
 // The text view of `yuke:tui`: positions on sections, copy, the mouse, hidden sections, Markdown rows, extensions,
 // and its scroll control.
 
-import { createFrame, equal, test, throws, waitForSettled } from "yuke:test";
+import { assertEquals, assertThrows, createFrame, test, waitForSettled } from "yuke:test";
 import {
   Markdown,
   type MouseEvent,
@@ -43,7 +43,7 @@ test("a drag copies both end graphemes in either direction", () => {
   frame.mouse(mouse(4, 0, "press"));
   frame.mouse(mouse(1, 0, "drag"));
   frame.mouse(mouse(1, 0, "release"));
-  equal(frame.copies, ["A👩‍💻B", "A👩‍💻B"]);
+  assertEquals(frame.copies, ["A👩‍💻B", "A👩‍💻B"]);
 });
 
 test("a position stays on its section when an earlier item grows and when an item comes first", () => {
@@ -52,7 +52,7 @@ test("a position stays on its section when an earlier item grows and when an ite
   });
   using frame = createFrame({ width: 20, height: 6 }, () => view);
   view.caret = at("two", "body", 2);
-  equal(frame.draw().cursor, { column: 2, row: 1 });
+  assertEquals(frame.draw().cursor, { column: 2, row: 1 });
   view.setDocument(
     document(
       "d",
@@ -61,7 +61,7 @@ test("a position stays on its section when an earlier item grows and when an ite
       item("two", ["body", "hello world"]),
     ),
   );
-  equal(
+  assertEquals(
     [view.caret, frame.draw().cursor, view.rows.text(4)],
     [at("two", "body", 2), { column: 2, row: 4 }, "hello world"],
   );
@@ -73,7 +73,7 @@ test("a copy puts a line end between two sections and between two items, in disp
   });
   using frame = createFrame({ width: 20, height: 4 }, () => view);
   const range = { from: at("tool", "title", 5), to: at("next", "s", 2) };
-  equal([view.text(range), view.text(range, "source")], ["a.rs\nfn main() {}\nok", "a.rs\nfn main() {}\nok"]);
+  assertEquals([view.text(range), view.text(range, "source")], ["a.rs\nfn main() {}\nok", "a.rs\nfn main() {}\nok"]);
   void frame;
 });
 
@@ -84,7 +84,7 @@ test("a Markdown row maps each cell to its source across a paragraph line break"
   const view = new TextView({ document: document("d", { id: "i", sections: [section] }) });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
   frame.draw();
-  equal(
+  assertEquals(
     [view.rows.text(0), view.rows.at({ column: 5, row: 0 }), view.rows.point(at("i", "s", 5))],
     ["one two", at("i", "s", 5), { column: 5, row: 0 }],
   );
@@ -100,14 +100,14 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
     },
   });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
-  equal(rows(frame.frame)[0], "• bold item");
+  assertEquals(rows(frame.frame)[0], "• bold item");
   // "b" of "bold" is at source offset 4 and shows at cell 2, after the mark "• ".
-  equal(
+  assertEquals(
     [view.rows.point(at("i", "s", 4)), view.rows.at({ column: 2, row: 0 })],
     [{ column: 2, row: 0 }, at("i", "s", 4)],
   );
   // The mark "• " stands for "- ": a cell inside it maps to an end of that source.
-  equal(
+  assertEquals(
     [view.rows.at({ column: 1, row: 0 }), view.rows.at({ column: 1, row: 0 }, "cell", "after")],
     [at("i", "s", 0), at("i", "s", 2)],
   );
@@ -130,7 +130,7 @@ test("a hidden section has no place, and the caret on it shows no cursor", () =>
   });
   using frame = createFrame({ width: 20, height: 2 }, () => view);
   view.caret = at("i", "body", 1);
-  equal(
+  assertEquals(
     [view.rows.point(at("i", "body", 1)), view.ensureVisible(at("i", "body", 1)), frame.draw().cursor],
     [undefined, false, undefined],
   );
@@ -149,7 +149,7 @@ test("a press on an item that the document drops activates nothing at the releas
   frame.mouse(mouse(2, 0, "drag"));
   frame.mouse(mouse(2, 0, "release"));
   // A drag from the removed item would throw in the view, and the core would report a fault.
-  equal([activated, view.selection, frame.copies, notices.list()], [[], undefined, [], []]);
+  assertEquals([activated, view.selection, frame.copies, notices.list()], [[], undefined, [], []]);
 });
 
 test("a click gives activate the link of the segment under it, or none", () => {
@@ -173,7 +173,7 @@ test("a click gives activate the link of the segment under it, or none", () => {
     frame.mouse(mouse(column, 0, "press"));
     frame.mouse(mouse(column, 0, "release"));
   }
-  equal(activated, [
+  assertEquals(activated, [
     ["i:5", "https://docs.rs"],
     ["i:1", undefined],
   ]);
@@ -188,7 +188,7 @@ test("a click without a drag activates its position and copies nothing", () => {
   using frame = createFrame({ width: 10, height: 1 }, () => view);
   frame.mouse(mouse(2, 0, "press"));
   frame.mouse(mouse(2, 0, "release"));
-  equal([activated, frame.copies], [[at("i", "s", 2)], []]);
+  assertEquals([activated, frame.copies], [[at("i", "s", 2)], []]);
 });
 
 test("a widget watcher gets the view, and an extension draws its decoration and its cursor shape", () => {
@@ -204,7 +204,7 @@ test("a widget watcher gets the view, and an extension draws its decoration and 
   });
   view.caret = at("i", "s", 4);
   const drawn = frame.draw();
-  equal(
+  assertEquals(
     [[0, 1, 2, 3].map((column) => drawn.cells[0]?.[column]?.style), drawn.cursor],
     [[{}, { bg: 2 }, { bg: 2 }, {}], { column: 4, row: 0, shape: "block" }],
   );
@@ -233,7 +233,7 @@ test("a plugin sees a motion with no button and marks the row under the mouse, a
   const selection = view.selection;
   frame.mouse({ ...mouse(2, 0, "motion"), button: "none" });
   const drawn = frame.draw();
-  equal(
+  assertEquals(
     [[0, 1, 2].map((column) => drawn.cells[0]?.[column]?.style), view.selection, selection === undefined],
     [[{ bg: 2 }, { bg: 2 }, {}], selection, false],
   );
@@ -249,9 +249,9 @@ test("a new document key clears the caret, a failed render keeps the document, a
   const start = view.revision;
   view.caret = at("i", "s", 1);
   view.setDocument(document("other", item("i", ["s", "abc"])));
-  equal(view.caret, undefined);
+  assertEquals(view.caret, undefined);
   const before = view.document;
-  throws(() =>
+  assertThrows(() =>
     view.setDocument({
       id: "other",
       items: [
@@ -271,8 +271,8 @@ test("a new document key clears the caret, a failed render keeps the document, a
       ],
     }),
   );
-  equal([view.document === before, kinds], [true, [`selection ${start + 1}`, `document ${start + 2}`]]);
-  throws(() => view.compare(at("i", "s", 0), at("missing", "s", 0)));
+  assertEquals([view.document === before, kinds], [true, [`selection ${start + 1}`, `document ${start + 2}`]]);
+  assertThrows(() => view.compare(at("i", "s", 0), at("missing", "s", 0)));
   void frame;
 });
 
@@ -287,11 +287,11 @@ test("the scroll control follows the tail and asks for older items", async () =>
     },
   });
   using frame = createFrame({ width: 10, height: 2 }, () => view);
-  equal(rows(frame.frame), ["line 3", "line 4"]);
+  assertEquals(rows(frame.frame), ["line 3", "line 4"]);
   view.scroll.scrollTo(0);
   frame.draw();
   await waitForSettled();
-  equal(asked, 1);
+  assertEquals(asked, 1);
 });
 
 test("a copy over Markdown leaves out the quote bar and ends the section with a line end", () => {
@@ -311,14 +311,14 @@ test("a copy over Markdown leaves out the quote bar and ends the section with a 
     },
   });
   using frame = createFrame({ width: 20, height: 3 }, () => view);
-  equal(view.text({ from: at("i", "quote", 0), to: at("i", "after", 4) }), "one two\nnext");
+  assertEquals(view.text({ from: at("i", "quote", 0), to: at("i", "after", 4) }), "one two\nnext");
   void frame;
 });
 
 test("a position at a soft wrap takes the earlier row before it and the later row after it", () => {
   const view = new TextView({ document: document("d", item("i", ["s", "abcd efgh"])) });
   using frame = createFrame({ width: 5, height: 2 }, () => view);
-  equal(
+  assertEquals(
     [view.rows.point(at("i", "s", 5), "cell", "before"), view.rows.point(at("i", "s", 5), "cell", "after")],
     [
       { column: 5, row: 0 },
@@ -334,7 +334,7 @@ test("a scroll of the view gives a scroll change", () => {
   const kinds: string[] = [];
   view.extend(new AbortController().signal).addChangeListener((change) => kinds.push(change.kind));
   view.scroll.scrollBy(1);
-  equal(kinds, ["scroll"]);
+  assertEquals(kinds, ["scroll"]);
   void frame;
 });
 
@@ -355,7 +355,7 @@ test("a drag from a wide grapheme or inside a list mark keeps the whole of it", 
   second.mouse(mouse(0, 0, "press"));
   second.mouse(mouse(1, 0, "drag"));
   second.mouse(mouse(1, 0, "release"));
-  equal([frame.copies, second.copies], [["A👩‍💻"], ["• "]]);
+  assertEquals([frame.copies, second.copies], [["A👩‍💻"], ["• "]]);
 });
 
 test("a blank row between two Markdown blocks maps to the source next to it", () => {
@@ -368,7 +368,7 @@ test("a blank row between two Markdown blocks maps to the source next to it", ()
     },
   });
   using frame = createFrame({ width: 5, height: 3 }, () => view);
-  equal(
+  assertEquals(
     [view.rows.at({ column: 0, row: 1 }), view.rows.at({ column: 0, row: 1 }, "cell", "after")],
     [at("i", "s", 1), at("i", "s", 3)],
   );
@@ -382,8 +382,8 @@ test("the same document or selection gives no change, and compare checks its off
   const revision = view.revision;
   view.setDocument(view.document);
   view.selection = { anchor: at("i", "s", 0), head: at("i", "s", 2) };
-  equal(view.revision, revision);
-  throws(() => view.compare(at("i", "s", 9), at("i", "s", 0)));
+  assertEquals(view.revision, revision);
+  assertThrows(() => view.compare(at("i", "s", 9), at("i", "s", 0)));
   void frame;
 });
 
@@ -393,8 +393,8 @@ test("the selection has a default look that a plugin changes", () => {
   view.selection = { anchor: at("i", "s", 0), head: at("i", "s", 2) };
   const before = frame.draw().cells[0];
   // The default look marks the selected cell and leaves the next cell plain.
-  equal([before?.[1]?.style.bg !== undefined, before?.[2]?.style], [true, {}]);
+  assertEquals([before?.[1]?.style.bg !== undefined, before?.[2]?.style], [true, {}]);
   frame.surface("theme").tui.styles.add({ "textView.selection": { fg: 1, bg: null } });
   const cells = frame.draw().cells[0];
-  equal([cells?.[1]?.style, cells?.[2]?.style], [{ fg: 1 }, {}]);
+  assertEquals([cells?.[1]?.style, cells?.[2]?.style], [{ fg: 1 }, {}]);
 });

@@ -12,7 +12,7 @@ import type {
   StoredEvent,
   ToolCall,
 } from "yuke:protocol";
-import { assert, equal, test } from "yuke:test";
+import { assert, assertEquals, test } from "yuke:test";
 import { Transcript, type Entry as TranscriptEntry } from "yuke:transcript";
 
 const settings: SessionSettings = {
@@ -39,12 +39,12 @@ function model(draftId: DraftId, event: ModelUpdate): LiveUpdate {
 
 function opened(updates: SessionUpdate[] = []): Transcript {
   const transcript = new Transcript();
-  transcript.apply({ snapshot: { settings, updates } });
+  transcript.apply({ kind: "snapshot", snapshot: { settings, updates } });
   return transcript;
 }
 
 function fed(transcript: Transcript, updates: readonly SessionUpdate[]): Transcript {
-  for (const update of updates) transcript.apply({ update });
+  for (const update of updates) transcript.apply({ kind: "update", update });
   return transcript;
 }
 
@@ -92,7 +92,7 @@ test("saved consecutive reasoning blocks group within a commit and stop at bound
   const original = JSON.stringify([first, second]);
   const transcript = opened([first, second]);
 
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [
       ["1:0", "  first  \n\nsecond"],
@@ -101,7 +101,7 @@ test("saved consecutive reasoning blocks group within a commit and stop at bound
       ["2:0", "next\n\nlast"],
     ],
   );
-  equal(JSON.stringify([first, second]), original);
+  assertEquals(JSON.stringify([first, second]), original);
 });
 
 test("saved all-empty reasoning runs are omitted, while a live run remains visible", () => {
@@ -113,14 +113,14 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
       ],
     }),
   ]);
-  equal(reasoning(transcript), []);
+  assertEquals(reasoning(transcript), []);
 
   fed(transcript, [
     { sessionUpdate: "draftStarted", draftId: "empty" },
     model("empty", { kind: "blockStarted", blockId: 4, content: { kind: "reasoning" } }),
   ]);
   const entry = reasoning(transcript)[0];
-  equal(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
+  assertEquals(entry, { kind: "reasoning", id: "draft:empty:4", text: "", draft: true });
   assert(entry !== undefined, "the live empty reasoning run is missing");
 });
 
@@ -139,16 +139,16 @@ test("a live group keeps its first key and only changes when its retained text c
     model("d1", { kind: "reasoningDelta", blockId: 1, text: " \t" }),
   ]);
   assert(reasoning(transcript)[0] === first, "starting an empty source block replaced the group");
-  equal(reasoning(transcript)[0]?.text, "  first  ");
+  assertEquals(reasoning(transcript)[0]?.text, "  first  ");
 
   fed(transcript, [model("d1", { kind: "reasoningDelta", blockId: 1, text: "second" })]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["draft:d1:0", "  first  \n\n \tsecond"]],
   );
 
   fed(transcript, [model("d1", { kind: "reasoningDelta", blockId: 1, text: "tail" })]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["draft:d1:0", "  first  \n\n \tsecondtail"]],
   );
@@ -166,7 +166,7 @@ test("interleaved reasoning deltas route back to their source group", () => {
     model("interleaved", { kind: "reasoningDelta", blockId: 0, text: " late" }),
   ]);
 
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["draft:interleaved:0", "one late\n\ntwo"]],
   );
@@ -194,8 +194,8 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
   const live = fed(opened(), updates);
   const replay = opened([saved]);
 
-  equal(live.entries, replay.entries);
-  equal(
+  assertEquals(live.entries, replay.entries);
+  assertEquals(
     reasoning(live).map((entry) => entry.id),
     ["4:0"],
   );
@@ -210,7 +210,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
     model("discarded", { kind: "reasoningDelta", blockId: 1, text: "not saved" }),
     { sessionUpdate: "draftDiscarded", draftId: "discarded", reason: "failed" },
   ]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [["1:0", "saved"]],
   );
@@ -222,7 +222,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
     commit(2, { blocks: [{ kind: "reasoning", text: "cancelled" }], end: { kind: "cancelled" } }),
     { sessionUpdate: "draftDiscarded", draftId: "cancelled", reason: "failed" },
   ]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [
       ["1:0", "saved"],
@@ -237,7 +237,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
     commit(3, { blocks: [{ kind: "reasoning", text: "replacement" }] }),
     { sessionUpdate: "draftCommitted", draftId: "replacement", eventNumber: 3, blocks: [0] },
   ]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [
       ["1:0", "saved"],
@@ -251,7 +251,7 @@ test("draft discard and replacement do not remove saved neighbors", () => {
     model("unconfirmed", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     { sessionUpdate: "turnUnconfirmed" },
   ]);
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => entry.id),
     ["1:0", "2:0", "3:0"],
   );
@@ -283,7 +283,7 @@ test("input, end, compaction, refusal, and tools keep reasoning runs apart", () 
     }),
   ]);
 
-  equal(
+  assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
     [
       ["1:1", "before"],
@@ -293,7 +293,7 @@ test("input, end, compaction, refusal, and tools keep reasoning runs apart", () 
       ["4:0", "next\n\npart"],
     ],
   );
-  equal(
+  assertEquals(
     transcript.entries.map((entry) => entry.kind),
     ["input", "reasoning", "reasoning", "text", "reasoning", "tool", "reasoning", "end", "compaction", "reasoning"],
   );
@@ -327,12 +327,12 @@ test("inserting older and gap events preserves a live group and tool state", () 
   assert(startedAt !== undefined, "the running tool has no start timestamp");
 
   transcript.insert([commit(1, { blocks: [{ kind: "assistantText", text: "older" }] })]);
-  equal(transcript.gap, { before: 3, limit: 1 });
+  assertEquals(transcript.gap, { before: 3, limit: 1 });
   transcript.insert([commit(2, { blocks: [{ kind: "assistantText", text: "gap" }] })]);
-  equal(transcript.gap, undefined);
+  assertEquals(transcript.gap, undefined);
 
   fed(transcript, [model("live", { kind: "reasoningDelta", blockId: 0, text: " late" })]);
-  equal(reasoning(transcript).at(-1), {
+  assertEquals(reasoning(transcript).at(-1), {
     kind: "reasoning",
     id: "draft:live:0",
     text: "draft one late\n\ndraft two",
@@ -340,5 +340,8 @@ test("inserting older and gap events preserves a live group and tool state", () 
   });
   const savedToolAfter = transcript.entries.find((entry) => entry.id === "3:2");
   assert(savedToolAfter?.kind === "tool", "the saved tool disappeared after insertion");
-  equal([savedToolAfter.status, savedToolAfter.output, savedToolAfter.startedAt], ["running", "running", startedAt]);
+  assertEquals(
+    [savedToolAfter.status, savedToolAfter.output, savedToolAfter.startedAt],
+    ["running", "running", startedAt],
+  );
 });
