@@ -22,6 +22,8 @@ oxc_parser = "=0.153.0"
 oxc_semantic = "=0.153.0"
 oxc_span = "=0.153.0"
 oxc_transformer = "=0.153.0"
+# image decodes a whole PNG at once. The rows of png let a large PNG shrink while it decodes. image depends on it too.
+png = "0.18.1"
 rquickjs = { version = "0.14.0", default-features = false, features = ["std", "classes", "futures", "loader", "macro"] }
 sha2 = { version = "0.11.0", default-features = false }
 # rustix sends process group signals and shuts down sockets through safe system calls.
