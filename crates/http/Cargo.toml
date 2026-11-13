@@ -17,7 +17,7 @@ bytes = "1.12"
 http = "1.5"
 hyper = { version = "1.11", features = ["client", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-rustls = { version = "0.23.45", default-features = false, features = ["aws-lc-rs", "prefer-post-quantum", "std", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["aws-lc-rs", "prefer-post-quantum", "std", "tls12"] }
 tokio = { version = "1.53", features = ["net", "time"] }
 tokio-rustls = { version = "0.26.6", default-features = false }
 
