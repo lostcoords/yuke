@@ -4,10 +4,13 @@ use yuke_sql::rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 /// The pragmas of each open. The busy timeout comes first, so a change of the journal mode waits for another process.
 /// The page size comes before the first write of a new file, because that write fixes it. The journal mode stays WAL
-/// in the file. A returned commit survives a crash, but on macOS not always a power loss (plain `fsync`).
+/// in the file. A returned commit survives a crash, but on macOS not always a power loss (plain `fsync`). The page
+/// cache holds 512 KiB, not the default 2 MiB: a session with large tool results fills the default cache in about 25
+/// turns, and the operating system caches the file too.
 const PRAGMAS: &str = "
     PRAGMA busy_timeout = 5000;
     PRAGMA page_size = 8192;
+    PRAGMA cache_size = -512;
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = FULL;
     PRAGMA journal_size_limit = 67108864;
