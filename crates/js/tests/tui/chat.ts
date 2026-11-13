@@ -16,7 +16,7 @@ import type {
   StoredEvent,
 } from "yuke:protocol";
 import { createFrame, type FrameTest, folder } from "yuke:test";
-import { type MouseEvent, TextView } from "yuke:tui";
+import { type MouseEvent, TextEditor, TextView } from "yuke:tui";
 import { rows } from "./rows.ts";
 
 const MODIFIERS = { shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false };
@@ -327,4 +327,16 @@ export function transcriptRows(frame: FrameTest): string[] {
 export function click(frame: FrameTest, column: number, row: number): void {
   frame.mouse(mouse(column, row, "press"));
   frame.mouse(mouse(column, row, "release"));
+}
+
+/** The composer of the active pane of `chat`. */
+export function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
+  return chat.tui.widgets
+    .list()
+    .find(
+      (mount) =>
+        mount.widget instanceof TextEditor &&
+        mount.widget.role === "composer" &&
+        mount.pane?.view === chat.tui.panes.active?.view,
+    )?.widget as TextEditor;
 }

@@ -148,7 +148,7 @@ test("a stop cancels the child, and the parent gets no report", async () => {
 
 test("a question of the child reaches the parent, and its answer returns to the child", async () => {
   const { host, parent } = await opened(
-    [reply.toolCall("ask", {}), reply.text("It said yes."), reply.text("Thanks.")],
+    [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("It said yes."), reply.text("Thanks.")],
     () => [{ id: "go", values: ["Yes"] }],
   );
   await using _host = host;
@@ -180,7 +180,7 @@ test("a foreground child answers as the tool result, shows no job, and sends no 
 
 test("ctrl+b moves a foreground child: the call answers, the child goes on, and its report reaches the parent", async () => {
   const { host, parent, list, state } = await opened([
-    reply.toolCall("gate", {}),
+    reply.toolCalls([{ name: "gate", args: {} }]),
     reply.text("Two tables."),
     reply.text("Thanks."),
   ]);

@@ -72,7 +72,7 @@ test("a pane draws the same transcript live and after a reload", async () => {
       },
       { name: "greeter", session: greeter },
     ],
-    replies: [reply.toolCall("greet", { who: "Ada" }), reply.text("**Done**.")],
+    replies: [reply.toolCalls([{ name: "greet", args: { who: "Ada" } }]), reply.text("**Done**.")],
   });
   const session = await host.openSession();
   const service = sessions as Sessions;

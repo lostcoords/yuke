@@ -21,7 +21,10 @@ test("a handler gets the text, the reason, and the count of each round of a turn
       return undefined;
     });
   };
-  const replies = [reply.toolCall("greet", { who: "Ada" }, { text: "checking" }), reply.text("Done.")];
+  const replies = [
+    reply.toolCalls([{ name: "greet", args: { who: "Ada" } }], { text: "checking" }),
+    reply.text("Done."),
+  ];
   await using host = await createHost({
     plugins: [
       { name: "greeter", session: greeter },

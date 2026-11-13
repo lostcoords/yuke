@@ -3,15 +3,9 @@
 import type { ChatService } from "yuke:chat";
 import { apply } from "yuke:internal/bundled/chat";
 import { assertEquals, assertRejects, createFrame, test, waitForSettled } from "yuke:test";
-import { TextEditor, type View } from "yuke:tui";
-import { commit, fakeSessions, loadChat, replies } from "./chat.ts";
+import type { View } from "yuke:tui";
+import { commit, composerOf, fakeSessions, loadChat, replies } from "./chat.ts";
 import { rows } from "./rows.ts";
-
-/** The composer of the focused chat pane of `chat`. */
-function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
-  const mounts = chat.tui.widgets.list().filter((mount) => mount.widget instanceof TextEditor);
-  return mounts.find((mount) => mount.pane?.view === chat.tui.panes.active?.view)?.widget as TextEditor;
-}
 
 test("show puts another session in the pane, ends the old handle, and the draft waits for the return", async () => {
   using frame = createFrame({ width: 30, height: 6 }, undefined, { cwd: "/w", session: "s1" });

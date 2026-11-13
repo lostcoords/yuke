@@ -3,14 +3,7 @@
 import type {
   Answer,
   Block,
-  Commit,
-  ConsumedInput,
   DisplayBlock,
-  DraftId,
-  FinishReason,
-  LiveUpdate,
-  ModelUpdate,
-  SessionSettings,
   SessionUpdate,
   StoredEvent,
   ToolCall,
@@ -19,33 +12,7 @@ import type {
 } from "yuke:protocol";
 import { assert, assertEquals, test } from "yuke:test";
 import { type Entry, Transcript } from "yuke:transcript";
-
-const settings: SessionSettings = {
-  model: { provider: "p", model: "m" },
-  settings: {
-    reasoning: {},
-    toolChoice: "auto",
-  },
-  cwd: "/w",
-};
-
-function commit(seq: number, fields: Partial<Commit>, consumed: ConsumedInput[] = []): StoredEvent {
-  return {
-    seq,
-    sessionUpdate: "commit",
-    commit: { blocks: [], ...fields },
-    consumed,
-  };
-}
-
-function answer(finishReason: FinishReason): Answer {
-  const usage = {};
-  return { origin: { model: "m", baseUrl: "https://p" }, usage, finishReason };
-}
-
-function model(draftId: DraftId, event: ModelUpdate): LiveUpdate {
-  return { sessionUpdate: "model", draftId, event };
-}
+import { answer, commit, fed, model, opened, settings } from "./transcript-fixtures.ts";
 
 function position(seq: number, index: number): { eventNumber: number; blockIndex: number } {
   return { eventNumber: seq, blockIndex: index };
@@ -112,17 +79,6 @@ const turn: SessionUpdate[] = [
   { sessionUpdate: "state", state: "idle" },
 ];
 const saved = turn.filter((update): update is StoredEvent => "seq" in update);
-
-function opened(updates: SessionUpdate[] = []): Transcript {
-  const transcript = new Transcript();
-  transcript.apply({ kind: "snapshot", snapshot: { settings, updates } });
-  return transcript;
-}
-
-function fed(transcript: Transcript, updates: readonly SessionUpdate[]): Transcript {
-  for (const update of updates) transcript.apply({ kind: "update", update });
-  return transcript;
-}
 
 function keys(transcript: Transcript): string[] {
   return transcript.entries.map((entry) => entry.id);

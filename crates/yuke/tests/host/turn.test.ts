@@ -127,7 +127,7 @@ for (const model of [
   { provider: "openai", model: "gpt-4.1" },
 ]) {
   test(`a turn with a tool call runs on ${model.provider}/${model.model}`, async () => {
-    const replies = [reply.toolCall("greet", { who: "Ada" }), reply.text("Done.")];
+    const replies = [reply.toolCalls([{ name: "greet", args: { who: "Ada" } }]), reply.text("Done.")];
     await using host = await createHost({ plugins: [{ name: "greeter", session: greeter }], replies });
     const session = await host.openSession({ model });
 

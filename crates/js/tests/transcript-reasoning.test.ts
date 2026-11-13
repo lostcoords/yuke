@@ -1,65 +1,12 @@
-import type {
-  Answer,
-  Block,
-  Commit,
-  ConsumedInput,
-  DraftId,
-  FinishReason,
-  LiveUpdate,
-  ModelUpdate,
-  SessionSettings,
-  SessionUpdate,
-  StoredEvent,
-  ToolCall,
-} from "yuke:protocol";
+import type { Block, SessionUpdate, ToolCall } from "yuke:protocol";
 import { assert, assertEquals, test } from "yuke:test";
-import { Transcript, type Entry as TranscriptEntry } from "yuke:transcript";
-
-const settings: SessionSettings = {
-  model: { provider: "p", model: "m" },
-  settings: {
-    reasoning: {},
-    toolChoice: "auto",
-  },
-  cwd: "/w",
-};
-
-function commit(seq: number, fields: Partial<Commit>, consumed: ConsumedInput[] = []): StoredEvent {
-  return {
-    seq,
-    sessionUpdate: "commit",
-    commit: { blocks: [], ...fields },
-    consumed,
-  };
-}
-
-function model(draftId: DraftId, event: ModelUpdate): LiveUpdate {
-  return { sessionUpdate: "model", draftId, event };
-}
-
-function opened(updates: SessionUpdate[] = []): Transcript {
-  const transcript = new Transcript();
-  transcript.apply({ kind: "snapshot", snapshot: { settings, updates } });
-  return transcript;
-}
-
-function fed(transcript: Transcript, updates: readonly SessionUpdate[]): Transcript {
-  for (const update of updates) transcript.apply({ kind: "update", update });
-  return transcript;
-}
+import type { Transcript, Entry as TranscriptEntry } from "yuke:transcript";
+import { answer, commit, fed, model, opened } from "./transcript-fixtures.ts";
 
 function reasoning(transcript: Transcript): Extract<TranscriptEntry, { kind: "reasoning" }>[] {
   return transcript.entries.filter(
     (entry): entry is Extract<TranscriptEntry, { kind: "reasoning" }> => entry.kind === "reasoning",
   );
-}
-
-function answer(finishReason: FinishReason): Answer {
-  return {
-    origin: { model: "m", baseUrl: "https://p" },
-    usage: {},
-    finishReason,
-  };
 }
 
 const call: ToolCall = { callId: "call_0", name: "bash", arguments: '{"command":"true"}' };

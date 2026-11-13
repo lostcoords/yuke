@@ -246,7 +246,7 @@ test("a job start rejects while its session closes", async () => {
         },
       },
     ],
-    replies: [reply.toolCall("wait", {})],
+    replies: [reply.toolCalls([{ name: "wait", args: {} }])],
   });
   const session = await host.openSession();
 

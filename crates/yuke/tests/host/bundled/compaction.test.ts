@@ -130,12 +130,8 @@ test("without a count the estimate of each block decides", async () => {
   const { host, session } = await compacting([reply.text("summary")]);
   await using _host = host;
 
-  const below = await session.runHook("round.before", {
-    blocks: twoInputs(),
-    inputTokens: null,
-    contextWindow: WINDOW,
-  });
-  const above = await session.runHook("round.before", { blocks: large, inputTokens: null, contextWindow: WINDOW });
+  const below = await session.runHook("round.before", { blocks: twoInputs(), contextWindow: WINDOW });
+  const above = await session.runHook("round.before", { blocks: large, contextWindow: WINDOW });
 
   assertEquals([below.replace, above.replace !== undefined, host.requests.length], [undefined, true, 1]);
 });
@@ -154,7 +150,11 @@ test("the old summary never counts as the newest input", async () => {
 
 for (const [name, answer, reason] of [
   ["a failed summary", reply.failed(""), FAILED],
-  ["a summary that stops for a call", reply.toolCall("read", { path: "a" }), "the summary stopped with toolCalls"],
+  [
+    "a summary that stops for a call",
+    reply.toolCalls([{ name: "read", args: { path: "a" } }]),
+    "the summary stopped with toolCalls",
+  ],
   ["an empty summary", reply.text(" \n"), "the summary is empty"],
 ] as const) {
   test(`${name} sends a warning, and the round keeps its context`, async () => {

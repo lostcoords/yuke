@@ -79,7 +79,7 @@ test("an open during a turn gives its state and interactions, and a later listen
       { name: "watcher", apply: plugin.apply },
       { name: "asker", session: asker },
     ],
-    replies: [reply.toolCall("ask", {}), reply.text("Done.")],
+    replies: [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("Done.")],
     answer: () => answered.promise,
   });
   const session = await host.openSession();
@@ -112,7 +112,7 @@ test("a listener that comes during a question of a running watch gets the open a
       { name: "watcher", apply: plugin.apply },
       { name: "asker", session: asker },
     ],
-    replies: [reply.toolCall("ask", {}), reply.text("Done.")],
+    replies: [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("Done.")],
     answer: () => answered.promise,
   });
   const session = await host.openSession();

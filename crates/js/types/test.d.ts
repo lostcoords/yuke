@@ -198,7 +198,10 @@ declare module "yuke:test" {
         readonly provides?: readonly string[];
       }
     | {
-        /** The absolute folder of the plugin. The host reads its `plugin.json`, as for a plugin in `config.json`. */
+        /**
+         * The folder of the plugin. A relative folder starts in the working folder of `yuke test`. The host reads its
+         * `plugin.json`, as for a plugin in `config.json`.
+         */
         readonly folder: string;
         readonly options?: Readonly<Record<string, unknown>>;
       };
@@ -239,9 +242,7 @@ declare module "yuke:test" {
   export const reply: {
     /** A complete answer with the text `text`. */
     readonly text: (text: string, options?: ReplyOptions) => Reply;
-    /** A complete answer that calls the tool `name` with `args`. */
-    readonly toolCall: (name: string, args: unknown, options?: CallsOptions) => Reply;
-    /** A complete answer with several calls. */
+    /** A complete answer with calls, such as `toolCalls([{ name: "read", args: { path: "a.ts" } }])`. */
     readonly toolCalls: (calls: readonly ScriptedCall[], options?: CallsOptions) => Reply;
     /** An answer with calls that the output limit cut. */
     readonly cut: (calls: readonly ScriptedCall[]) => Reply;
@@ -340,7 +341,7 @@ declare module "yuke:test" {
      * window of the model of the session.
      */
     readonly contextWindow?: number | null;
-    readonly inputTokens?: number | null;
+    readonly inputTokens?: number;
     readonly system?: string;
     readonly tools?: readonly ToolDefinition[];
     readonly settings?: RequestSettings;
@@ -366,7 +367,7 @@ declare module "yuke:test" {
     };
     readonly "round.after": {
       readonly text: string;
-      readonly finishReason?: FinishReason | null;
+      readonly finishReason?: FinishReason;
       readonly continues?: number;
     };
     readonly "input.before": {

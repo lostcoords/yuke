@@ -44,12 +44,6 @@ export const reply = Object.freeze({
     text,
     inputTokens: options?.inputTokens ?? 0,
   }),
-  toolCall: (name: string, args: unknown, options?: CallsOptions): Reply => ({
-    kind: "toolCalls",
-    text: options?.text ?? "",
-    calls: [{ name, args }],
-    inputTokens: options?.inputTokens ?? 0,
-  }),
   toolCalls: (calls: readonly ScriptedCall[], options?: CallsOptions): Reply => ({
     kind: "toolCalls",
     text: options?.text ?? "",

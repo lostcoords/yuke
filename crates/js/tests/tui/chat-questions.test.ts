@@ -3,19 +3,12 @@
 
 import type { InteractionRequest, InteractionResponse, Question, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { assertEquals, createFrame, test, waitForSettled } from "yuke:test";
-import { TextEditor } from "yuke:tui";
-import { EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
+import { composerOf, EMPTY, fakeSessions, loadChat, mouse, SETTINGS } from "./chat.ts";
 import { rows } from "./rows.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
   return { sessionUpdate: "interactionRequested", interactionId: id, source: "guard", request };
-}
-
-/** The composer of the chat in `frame`. */
-function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
-  return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor && mount.widget.role === "composer")
-    ?.widget as TextEditor;
 }
 
 /** A request of one question with `options`. */

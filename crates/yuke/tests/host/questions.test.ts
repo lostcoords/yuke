@@ -56,7 +56,7 @@ test("without an answer function, each request gets undefined as with no client"
 });
 
 test("a request during a turn gets its answer before the turn goes on", async () => {
-  const replies = [reply.toolCall("ask", {}), reply.text("Done.")];
+  const replies = [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("Done.")];
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
     replies,

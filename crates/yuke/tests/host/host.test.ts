@@ -60,15 +60,6 @@ test("a plugin that does not load rejects the host with its reason", async () =>
   assertEquals(error instanceof Error && error.message.includes("plugin failing did not load"), true);
 });
 
-test("a plugin folder must be absolute", async () => {
-  const error = await assertRejects(() => createHost({ plugins: [{ folder: "plugins/echo" }] }));
-
-  assertEquals(
-    error instanceof Error ? error.message : error,
-    "plugin folder plugins/echo: the folder is not absolute",
-  );
-});
-
 test("a given plugin name follows the rule of a manifest name", async () => {
   const error = await assertRejects(() => createHost({ plugins: [{ name: "../outside" }] }));
 

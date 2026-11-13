@@ -143,7 +143,7 @@ impl<'js> FromJs<'js> for RunRequest {
             }
             "round.after" => Point::RoundAfter {
                 text: field(&event, "text")?,
-                finish_reason: field::<Option<Json<_>>>(&event, "finishReason")?.and_then(|reason| reason.0),
+                finish_reason: field::<Option<Json<_>>>(&event, "finishReason")?.map(|reason| reason.0),
                 continues: field::<Option<u64>>(&event, "continues")?.unwrap_or(0),
             },
             "input.before" => Point::InputBefore {

@@ -24,7 +24,7 @@ test("an answer sends the round again, and each round counts its retries from ze
   const replies = [
     reply.overflow(),
     reply.overflow(),
-    reply.toolCall("greet", { who: "Ada" }),
+    reply.toolCalls([{ name: "greet", args: { who: "Ada" } }]),
     reply.overflow(),
     reply.text("Done."),
   ];

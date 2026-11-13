@@ -294,10 +294,6 @@ impl TestHost for AppTestHost {
         for requested in request.plugins {
             plugins.push(match requested {
                 PluginRequest::Folder { folder, options } => {
-                    // A relative folder would depend on the folder that started `yuke test`.
-                    if folder.is_relative() {
-                        return Err(format!("plugin folder {}: the folder is not absolute", folder.display()).into());
-                    }
                     let root = folder
                         .canonicalize()
                         .map_err(|error| format!("plugin folder {}: {error}", folder.display()))?;

@@ -368,7 +368,7 @@ test("a call in a turn shows the hints of its tool, the folder of the session, a
   } as unknown as Tool;
   await using host = await createHost({
     plugins: [{ name: "tools", session: defining(show) }],
-    replies: [reply.toolCall("show", { path: "a.md" }), reply.text("done")],
+    replies: [reply.toolCalls([{ name: "show", args: { path: "a.md" } }]), reply.text("done")],
   });
   const session = await host.openSession();
 

@@ -4,14 +4,9 @@
 import { mkdir, readTextFile, writeTextFile } from "yuke:fs";
 import type { Block, ListCatalogResult, SessionUpdate, StoredEvent } from "yuke:protocol";
 import { assert, assertEquals, createFrame, folder, test, waitForSettled } from "yuke:test";
-import { type EditorState, TextEditor } from "yuke:tui";
-import { CATALOG, commit, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
+import type { EditorState } from "yuke:tui";
+import { CATALOG, commit, composerOf, fakeSessions, loadChat, replies, SETTINGS, transcriptRows } from "./chat.ts";
 import { rows } from "./rows.ts";
-
-/** The composer of the chat in `frame`. */
-function composerOf(chat: Awaited<ReturnType<typeof loadChat>>): TextEditor {
-  return chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
-}
 
 /** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
 function accepted(id: number, content: Block[], source: "user" | "plugin" = "user"): SessionUpdate {

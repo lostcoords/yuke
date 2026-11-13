@@ -160,7 +160,7 @@ test("a plugin patches a tool result before the model reads it, and the session 
     sessions = ctx.get("sessions");
     return undefined;
   };
-  const replies = [reply.toolCall("read", { path: "notes.txt" }), reply.text("done")];
+  const replies = [reply.toolCalls([{ name: "read", args: { path: "notes.txt" } }]), reply.text("done")];
   await using host = await createHost({
     plugins: [
       { name: "redact", session: redact },
@@ -286,7 +286,11 @@ test("a plugin summarizes the context with the model of the session and replaces
       return { replace: { head: [{ kind: "userText", text: `Summary: ${answer.text}` }], keep: 0 } };
     });
   };
-  const replies = [reply.toolCall("read", { path: "missing.txt" }), reply.text("They said hi."), reply.text("Done.")];
+  const replies = [
+    reply.toolCalls([{ name: "read", args: { path: "missing.txt" } }]),
+    reply.text("They said hi."),
+    reply.text("Done."),
+  ];
   await using host = await createHost({ plugins: [{ name: "summary", session: summary }], replies });
   const session = await host.openSession();
 
