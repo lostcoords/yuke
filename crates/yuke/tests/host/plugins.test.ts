@@ -399,11 +399,6 @@ test("options that fail the check fail the load of that plugin before its apply"
       checked("extra", { folder: "x", colour: "red" }),
       { name: "unasked", options: { a: 1 }, apply: () => undefined },
       { folder: codeless, options: { a: 1 } },
-      {
-        name: "unchecked",
-        optionsSchema: { type: "object", properties: { a: { type: "string", default: "b" } } } as never,
-        apply: () => undefined,
-      },
       checked("good", { folder: "x" }),
     ],
   });
@@ -415,7 +410,6 @@ test("options that fail the check fail the load of that plugin before its apply"
     failure("extra", "the options of the plugin: Remove colour. The fields are: folder, depth, tags."),
     failure("unasked", "the plugin gets options, and it exports no optionsSchema"),
     failure("codeless", "the plugin gets options, and it exports no optionsSchema"),
-    failure("unchecked", "optionsSchema.properties.a: yuke does not check the keyword 'default'"),
   ]);
   equal(applied, ["good"]);
 });

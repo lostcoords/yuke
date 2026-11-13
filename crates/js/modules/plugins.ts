@@ -475,7 +475,7 @@ export interface SideRequestOptions {
  * - `replace` makes the context `head`, then the last `keep` blocks of the context. The session keeps the replacement.
  * - `model` sends this round to another model of the catalog. An unknown model fails the turn.
  * - `settings` replaces these settings for this round. Each field replaces its whole value, so a field that a new
- *   `reasoning` leaves out has no value. An unknown field or a value of another shape fails the turn.
+ *   `reasoning` leaves out has no value. An unknown field has no effect. A value of another shape fails the turn.
  */
 export interface RoundBeforeAnswer {
   readonly replace?: { readonly head: readonly Block[]; readonly keep: number } | undefined;

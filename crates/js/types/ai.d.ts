@@ -9,8 +9,7 @@
  * - A media block of the prompt fails the request, because the request cannot read the store of a session. Pass new
  *   media as `attachments`.
  * - An abort of the `signal` stops the request, and `generateText` rejects with the reason of the signal.
- * - A misuse throws a `TypeError`: an unknown option, an option of another type, a block of another shape, or a
- *   setting that JSON cannot hold.
+ * - A block of another shape or a setting of another type throws a `TypeError`. yuke ignores an unknown option.
  */
 declare module "yuke:ai" {
   import type { Block, FinishReason, ModelReference, ReasoningSettings, RequestSettings, Usage } from "yuke:protocol";
@@ -35,8 +34,8 @@ declare module "yuke:ai" {
   export const Output: {
     /**
      * Request a JSON object that matches `schema`. An inline schema keeps its types, and a schema in a constant needs
-     * `as const`. A schema that yuke does not check throws a `TypeError`. The default `name` is `response`. A name
-     * holds 1 to 64 letters, digits, `_`, or `-`.
+     * `as const`. yuke checks the answer against the keywords of `Schema` and ignores others. The default `name`
+     * is `response`. OpenAI takes a name of 1 to 64 letters, digits, `_`, or `-`.
      */
     readonly object: <const S extends ObjectSchema>(options: { schema: S; name?: string }) => ObjectOutput<Infer<S>>;
   };

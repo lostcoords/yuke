@@ -113,58 +113,11 @@ for (const [name, definition, expected] of [
     { name: "bad", description: "d", execute: () => "x", parameters: empty },
     "the concurrency 'undefined' is not 'serial' or 'parallel'",
   ],
-  [
-    "an unchecked keyword",
-    {
-      ...tool("bad", () => "x"),
-      parameters: { type: "object", properties: { mode: { type: "string", pattern: "a" } } },
-    },
-    "parameters.properties.mode: yuke does not check the keyword 'pattern'",
-  ],
-  [
-    "a minimum that is no number",
-    {
-      ...tool("bad", () => "x"),
-      parameters: { type: "object", properties: { n: { type: "integer", minimum: null } } },
-    },
-    "parameters.properties.n.minimum is not a finite number",
-  ],
-  [
-    "an empty enum",
-    { ...tool("bad", () => "x"), parameters: { type: "object", properties: { o: { type: "string", enum: [] } } } },
-    "parameters.properties.o.enum is not a non-empty array",
-  ],
-  [
-    "an enum of integers with a fraction",
-    {
-      ...tool("bad", () => "x"),
-      parameters: { type: "object", properties: { n: { type: "integer", enum: [1, 1.5] } } },
-    },
-    "parameters.properties.n.enum has a value that is not an integer",
-  ],
-  [
-    "an enum with a value twice",
-    {
-      ...tool("bad", () => "x"),
-      parameters: { type: "object", properties: { o: { type: "string", enum: ["a", "a"] } } },
-    },
-    "parameters.properties.o.enum has a value twice",
-  ],
-  [
-    "an enum of booleans",
-    { ...tool("bad", () => "x"), parameters: { type: "object", properties: { f: { type: "boolean", enum: [true] } } } },
-    "parameters.properties.f: yuke does not check the keyword 'enum'",
-  ],
   ["the name of the tool search", tool("tool_search", () => "x"), 'the engine reserves the tool name "tool_search"'],
   [
     "a name with a dot",
     tool("notes.search", () => "x"),
     'the tool name "notes.search" does not match ^[a-zA-Z0-9_-]{1,64}$',
-  ],
-  [
-    "parameters of another type",
-    { ...tool("bad", () => "x"), parameters: { type: "string" } },
-    "parameters.type is not object",
   ],
   [
     "a subject of an unknown kind",
@@ -179,15 +132,6 @@ for (const [name, definition, expected] of [
     "an unknown preview",
     { ...tool("bad", () => "x"), hints: { preview: "all" } },
     "unknown variant `all`, expected one of `head`, `tail`, `none`",
-  ],
-  // The check reads the copy that the model gets, so a `toJSON` cannot hide a keyword from it.
-  [
-    "a keyword behind toJSON",
-    {
-      ...tool("bad", () => "x"),
-      parameters: { ...empty, toJSON: () => ({ type: "object", properties: { m: { type: "string", pattern: "a" } } }) },
-    },
-    "parameters.properties.m: yuke does not check the keyword 'pattern'",
   ],
 ] as const) {
   test(`a definition with ${name} fails the session with a notice that names the problem`, async () => {

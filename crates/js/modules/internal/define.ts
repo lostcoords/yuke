@@ -1,4 +1,4 @@
-import { checkArguments, checkParameters } from "yuke:internal/arguments";
+import { checkArguments } from "yuke:internal/arguments";
 import { bindCall } from "yuke:internal/call";
 import { hostOperation } from "yuke:internal/events";
 import { type Answer, type Registration, register, type ToolOwner } from "yuke:internal/native";
@@ -19,10 +19,8 @@ export function defineTool<const S extends ObjectSchema>(
   jobsOf: (signal: AbortSignal) => ToolContext["jobs"] = () => NO_JOBS,
 ): Registration {
   const execute = tool.execute;
-  // The model and the argument check use this one checked copy, so a later change of `tool` changes neither.
-  const text = JSON.stringify(tool.parameters) as string | undefined;
-  const parameters: unknown = text === undefined ? undefined : JSON.parse(text);
-  checkParameters(parameters);
+  // The model and the argument check use this one copy, so a later change of `tool` changes neither.
+  const parameters = JSON.parse(JSON.stringify(tool.parameters)) as S;
   // Rust validates the hints. The default of `preview` is here because the stored form requires it.
   const hints = {
     ...(tool.hints?.title === undefined ? {} : { title: tool.hints.title }),

@@ -3,7 +3,7 @@ import type { DisplayBlock, Preview, SessionId } from "yuke:protocol";
 
 /**
  * A JSON schema of a value, in the subset that yuke checks:
- * - Each type takes only the keywords of its schema below. Another keyword fails the definition of the tool.
+ * - yuke checks the keywords of each schema below. The model still gets another keyword, and yuke ignores it.
  * - An object is closed: a field outside `properties` is an error.
  * - A `null` field that `required` does not name counts as absent, because a model sends `null` for a field that it
  *   leaves out.

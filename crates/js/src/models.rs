@@ -90,52 +90,15 @@ pub trait Models {
     ) -> Result<CompleteAnswer, Box<dyn Error + Send + Sync>>;
 }
 
-/// The JSON fields of [`RequestSettings`].
-const SETTINGS_FIELDS: [&str; 6] = [
-    "maxOutputTokens",
-    "reasoning",
-    "temperature",
-    "topP",
-    "toolChoice",
-    "outputSchema",
-];
-
 /// `base` with the fields of `changes`, a part of the JSON of [`RequestSettings`]. A field replaces the whole value of `base`.
 ///
 /// # Errors
 ///
-/// Returns a text when `changes` has an unknown field, or a value of another shape.
+/// Returns a text when a field of `changes` has a value of another shape. An unknown field has no effect.
 pub(crate) fn merge_settings(base: &RequestSettings, changes: Map<String, Value>) -> Result<RequestSettings, String> {
-    // The wire ignores an unknown field for compatibility, but a plugin learns of its misspelt setting.
-    if let Some(unknown) = changes.keys().find(|key| !SETTINGS_FIELDS.contains(&key.as_str())) {
-        return Err(format!("the settings have the unknown field '{unknown}'"));
-    }
     let mut settings = serde_json::to_value(base).map_err(|error| error.to_string())?;
     if let Some(fields) = settings.as_object_mut() {
         fields.extend(changes);
     }
     serde_json::from_value(settings).map_err(|error| format!("the settings are not valid: {error}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use yuke_ai::{OutputSchema, RequestSettings};
-
-    use super::SETTINGS_FIELDS;
-
-    // The check of a plugin answer must know each field of the settings, and no other.
-    #[test]
-    fn the_settings_fields_are_the_fields_of_full_settings() {
-        let full = RequestSettings::new()
-            .max_output_tokens(1)
-            .temperature(0.5)
-            .top_p(0.5)
-            .output_schema(OutputSchema::new("{}"));
-        let json = serde_json::to_value(full).unwrap();
-        let mut fields: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
-        let mut expected = SETTINGS_FIELDS.to_vec();
-        fields.sort_unstable();
-        expected.sort_unstable();
-        assert_eq!(fields, expected);
-    }
 }

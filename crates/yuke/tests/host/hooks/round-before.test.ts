@@ -167,11 +167,6 @@ for (const [name, answer, expected] of [
     },
     "Error: no plan",
   ],
-  [
-    "a misspelt setting",
-    () => ({ settings: { temprature: 1 } }) as never,
-    "the settings have the unknown field 'temprature'",
-  ],
 ] as const) {
   test(`${name} fails the round and names the plugin`, async () => {
     const error = await rejects(plan([{ name: "planner", session: answering(answer) }]));
@@ -181,6 +176,14 @@ for (const [name, answer, expected] of [
     equal(message.slice(0, prefix.length), prefix);
   });
 }
+
+test("an unknown setting has no effect, and the known settings apply", async () => {
+  const planned = await plan([
+    { name: "planner", session: answering(() => ({ settings: { temprature: 1, topP: 0.9 } }) as never) },
+  ]);
+
+  equal([planned.settings?.temperature, planned.settings?.topP], [0.5, 0.9]);
+});
 
 test("a round of run has the model of the session, and its window unless the event names one", async () => {
   const windows: (number | undefined)[] = [];

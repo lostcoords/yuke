@@ -74,10 +74,10 @@ function responderOf(respond: NonNullable<HostOptions["respond"]>) {
       cancel = () => reject({ cancelled: true });
       void (async () => {
         try {
-          resolve(jsonCopy((await respond(request)) ?? null, "the result of respond"));
+          resolve(jsonCopy((await respond(request)) ?? null));
         } catch (error) {
           if (error instanceof ExtensionRequestError) {
-            const data = error.data === undefined ? undefined : jsonCopy(error.data, "the error data of respond");
+            const data = error.data === undefined ? undefined : jsonCopy(error.data);
             reject({ code: error.code, message: error.message, data });
             return;
           }

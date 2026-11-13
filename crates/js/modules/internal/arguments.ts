@@ -1,72 +1,5 @@
 import type { ObjectSchema, Schema } from "yuke:tools";
 
-/** The keywords of each type. A schema with another keyword has a part that no check covers, so it fails. */
-const KEYWORDS: Readonly<Record<Schema["type"], readonly string[]>> = {
-  string: ["type", "description", "enum"],
-  integer: ["type", "description", "minimum", "maximum", "enum"],
-  number: ["type", "description", "minimum", "maximum", "enum"],
-  boolean: ["type", "description"],
-  array: ["type", "description", "items"],
-  object: ["type", "description", "properties", "required", "additionalProperties"],
-};
-
-/**
- * Throw a `TypeError` when `schema` is not an object schema, or uses a part of JSON schema that `checkArguments` does
- * not check. The error names the schema `place`.
- */
-export function checkParameters(schema: unknown, place = "parameters"): asserts schema is ObjectSchema {
-  checkSchema(schema, place);
-  if (schema.type !== "object") throw new TypeError(`${place}.type is not object`);
-}
-
-function checkSchema(schema: unknown, place: string): asserts schema is Schema {
-  if (!isRecord(schema)) throw new TypeError(`${place} is not a schema object`);
-  const type = schema.type;
-  if (typeof type !== "string" || !Object.hasOwn(KEYWORDS, type)) {
-    throw new TypeError(`${place}.type is not one of ${Object.keys(KEYWORDS).join(", ")}`);
-  }
-  const keywords = KEYWORDS[type as Schema["type"]];
-  for (const keyword of Object.keys(schema)) {
-    if (!keywords.includes(keyword)) throw new TypeError(`${place}: yuke does not check the keyword '${keyword}'`);
-  }
-  if (schema.description !== undefined && typeof schema.description !== "string") {
-    throw new TypeError(`${place}.description is not a string`);
-  }
-  for (const bound of ["minimum", "maximum"]) {
-    if (schema[bound] !== undefined && !Number.isFinite(schema[bound])) {
-      throw new TypeError(`${place}.${bound} is not a finite number`);
-    }
-  }
-  if (schema.enum !== undefined) checkEnum(schema.enum, type as Schema["type"], place);
-  if (type === "array") checkSchema(schema.items, `${place}.items`);
-  if (type === "object") {
-    const properties = schema.properties;
-    if (!isRecord(properties)) throw new TypeError(`${place}.properties is not an object`);
-    for (const [name, property] of Object.entries(properties)) checkSchema(property, `${place}.properties.${name}`);
-    const required = schema.required === undefined ? [] : schema.required;
-    if (
-      !Array.isArray(required) ||
-      !required.every((name) => typeof name === "string" && Object.hasOwn(properties, name))
-    ) {
-      throw new TypeError(`${place}.required names a field that properties does not have`);
-    }
-    if (schema.additionalProperties !== undefined && schema.additionalProperties !== false) {
-      throw new TypeError(`${place}.additionalProperties is not false`);
-    }
-  }
-}
-
-/** Throw a `TypeError` when `values` is not a non-empty list of values of `type`, each once. */
-function checkEnum(values: unknown, type: Schema["type"], place: string): void {
-  if (!Array.isArray(values) || values.length === 0) throw new TypeError(`${place}.enum is not a non-empty array`);
-  const fits = (value: unknown) =>
-    type === "string"
-      ? typeof value === "string"
-      : typeof value === "number" && Number.isFinite(value) && (type === "number" || Number.isInteger(value));
-  if (!values.every(fits)) throw new TypeError(`${place}.enum has a value that is not ${expected({ type } as Schema)}`);
-  if (new Set(values).size !== values.length) throw new TypeError(`${place}.enum has a value twice`);
-}
-
 /**
  * The arguments `value` after a check against `schema`. A `null` field that is not required counts as absent, because
  * a model sends `null` for a field that it leaves out. A failure throws an error whose message tells the model what
@@ -97,7 +30,7 @@ function checkObject(schema: ObjectSchema, value: Record<string, unknown>, prefi
     });
   }
   for (const name of required) {
-    // The schema check makes each required name a property.
+    // A required name that the properties lack has nothing to check.
     const property = schema.properties[name];
     if (property !== undefined && !Object.hasOwn(checked, name)) {
       throw new Error(`Set ${prefix}${name} to ${expected(property)}.`);

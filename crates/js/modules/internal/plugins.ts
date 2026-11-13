@@ -1,4 +1,4 @@
-import { checkArguments, checkParameters } from "yuke:internal/arguments";
+import { checkArguments } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
 import { on } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
@@ -17,6 +17,7 @@ import type {
   Sessions,
 } from "yuke:plugins";
 import type { NoticeLevel } from "yuke:protocol";
+import type { ObjectSchema } from "yuke:tools";
 import type { Tui } from "yuke:tui";
 
 /** One plugin as the host gives it. The host checked the manifest, the order, and the providers before any plugin code. */
@@ -40,14 +41,13 @@ export type Options = Readonly<Record<string, unknown>>;
  * Check the options `given` against `schema`, the `optionsSchema` export, and return them frozen. A plugin without a
  * schema takes no options.
  */
-function optionsOf(given: Options, schema: unknown): Options {
+function optionsOf(given: Options, schema: ObjectSchema | undefined): Options {
   if (schema === undefined) {
     if (Object.keys(given).length > 0) {
       throw new TypeError("the plugin gets options, and it exports no optionsSchema");
     }
     return Object.freeze({});
   }
-  checkParameters(schema, "optionsSchema");
   try {
     return frozen(checkArguments(schema, given));
   } catch (error) {
@@ -97,7 +97,7 @@ export async function load(spec: PluginSpec): Promise<void> {
   try {
     let apply: PluginApply<Options> | undefined;
     let session: PluginSession<Options> | undefined;
-    let optionsSchema: unknown;
+    let optionsSchema: ObjectSchema | undefined;
     // Each source waits one step, as an entry import does, so a failure of the load rejects after the caller waits.
     const source = await (spec.given
       ? given.get(spec.name)
@@ -108,7 +108,7 @@ export async function load(spec: PluginSpec): Promise<void> {
       const exports = source as {
         readonly apply?: PluginApply<Options>;
         readonly session?: PluginSession<Options>;
-        readonly optionsSchema?: unknown;
+        readonly optionsSchema?: ObjectSchema;
       };
       apply = exports.apply;
       session = exports.session;

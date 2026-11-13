@@ -262,7 +262,7 @@ export function startInputBefore(
               ? item.path !== undefined
                 ? { mimeType: item.mimeType, path: item.path }
                 : { mimeType: item.mimeType, bytes: new Uint8Array(item.bytes) }
-              : jsonCopy(item, "the answer"),
+              : jsonCopy(item),
           );
           replaced = true;
           return false;
@@ -318,7 +318,7 @@ async function sideRequest(
   options: SideRequestOptions,
 ): Promise<TextAnswer> {
   const { prompt, blockCount: blocks = head.length + kept, maxOutputTokens, signal } = options;
-  const request = { head: jsonCopy(head, "the answer"), kept, blocks, prompt, maxOutputTokens };
+  const request = { head: jsonCopy(head), kept, blocks, prompt, maxOutputTokens };
   return Object.freeze(await underStop(signal, () => round.sideRequest(request)));
 }
 
@@ -356,7 +356,7 @@ function startRoundPlan<K extends RoundPoint>(
       (handler) => {
         // The event shows the context that this handler sees, also after the answers of the later handlers.
         const seen = { head, kept };
-        const tokens = () => round.tokens(jsonCopy(seen.head, "the answer"), seen.kept);
+        const tokens = () => round.tokens(jsonCopy(seen.head), seen.kept);
         // `inputTokens` counts the old context, so after a replacement only the estimate of each block holds.
         const replaced = seen.head.length > 0 || seen.kept !== blocks;
         const event = Object.freeze({
@@ -368,7 +368,7 @@ function startRoundPlan<K extends RoundPoint>(
           blockTokens: tokens,
           blocks: () => {
             const before = round.context();
-            return [...jsonCopy(seen.head, "the answer"), ...before.slice(before.length - seen.kept)];
+            return [...jsonCopy(seen.head), ...before.slice(before.length - seen.kept)];
           },
           sideRequest: (options: SideRequestOptions) => sideRequest(round, seen.head, seen.kept, options),
           signal,
@@ -378,7 +378,7 @@ function startRoundPlan<K extends RoundPoint>(
       (answer, plugin) => {
         if (answer.replace !== undefined) {
           const keep = answer.replace.keep;
-          const given = jsonCopy(answer.replace.head, "the answer");
+          const given = jsonCopy(answer.replace.head);
           // A keep past the kept blocks also keeps the end of the earlier head.
           const keeps = Math.min(keep, head.length + kept);
           head = keeps <= kept ? given : [...given, ...head.slice(head.length - (keeps - kept))];
@@ -391,7 +391,7 @@ function startRoundPlan<K extends RoundPoint>(
         if (answer.settings !== undefined) {
           plan.settings = {
             plugin,
-            changes: { ...plan.settings?.changes, ...jsonCopy(answer.settings, "the answer") },
+            changes: { ...plan.settings?.changes, ...jsonCopy(answer.settings) },
           };
         }
         answered = true;

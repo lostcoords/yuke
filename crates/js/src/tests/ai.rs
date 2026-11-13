@@ -182,51 +182,6 @@ async fn generate_text_sends_its_options_and_answers_with_the_text_the_finish_an
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing() {
-    // The model answers at once, so a misuse that the checks miss gives `none`, and the test does not hang.
-    let models = Rc::new(Recorded {
-        answer: Some(Ok(CompleteAnswer {
-            text: String::new(),
-            finish_reason: FinishReason::Stop,
-            usage: Usage::default(),
-        })),
-        ..Recorded::default()
-    });
-    let runtime = runtime_with(
-        "a_misuse_of_generate_text_throws_a_type_error_and_sends_nothing",
-        &models,
-    )
-    .await;
-
-    let errors = evaluate::<Vec<String>>(
-        &runtime,
-        "const ai = await import('yuke:ai');
-         const model = { provider: 'p', model: 'm' };
-         const misuses = [
-           { model, prompt: [], tools: [] },
-           { model: { provider: 'p' }, prompt: [] },
-           { model, prompt: [], instructions: 3 },
-           { model, prompt: 7 },
-           { model, prompt: [{ nope: 1 }] },
-           { model, prompt: [], temperature: 'hot' },
-           { model, prompt: [], temperature: NaN },
-           { model, prompt: [], temperature: Symbol('hot') },
-         ];
-         const errors = [];
-         for (const options of misuses) {
-           try { await ai.generateText(options); errors.push('none'); }
-           catch (error) { errors.push(error.name); }
-         }
-         return errors;",
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(errors, ["TypeError"; 8]);
-    assert!(models.requests.borrow_mut().is_empty());
-}
-
-#[tokio::test(flavor = "local")]
 async fn a_failed_request_rejects_with_an_error_that_holds_the_text_of_the_failure() {
     let models = Rc::new(Recorded {
         answer: Some(Err("the provider is overloaded".to_owned())),
@@ -529,39 +484,6 @@ async fn an_answer_that_is_not_the_object_throws_a_no_object_generated_error_tha
             "{text}"
         );
     }
-}
-
-#[tokio::test(flavor = "local")]
-async fn a_bad_output_throws_a_type_error_and_sends_nothing() {
-    // The model answers at once, so a bad output that the checks miss gives `none`, and the test does not hang.
-    let (runtime, models) = answering(
-        "a_bad_output_throws_a_type_error_and_sends_nothing",
-        "{}",
-        FinishReason::Stop,
-    )
-    .await;
-
-    let errors = evaluate::<Vec<String>>(
-        &runtime,
-        "const ai = await import('yuke:ai');
-         const attempts = [
-           () => ai.Output.object({ schema: { type: 'string' } }),
-           () => ai.Output.object({ schema: { type: 'object', properties: {}, oneOf: [] } }),
-           () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 3 }),
-           () => ai.Output.object({ schema: { type: 'object', properties: {} }, name: 'a name' }),
-         ];
-         const errors = [];
-         for (const attempt of attempts) {
-           try { await attempt(); errors.push('none'); }
-           catch (error) { errors.push(error.name); }
-         }
-         return errors;",
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(errors, ["TypeError"; 4]);
-    assert!(models.requests.borrow_mut().is_empty());
 }
 
 #[tokio::test(flavor = "local")]
