@@ -94,7 +94,7 @@ struct Cli {
 }
 
 /// A command of `yuke`.
-#[derive(Debug, PartialEq, Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Log in to PROVIDER, and save the grant.
     Login {
@@ -121,7 +121,7 @@ enum Command {
 }
 
 /// A command of `yuke plugin`.
-#[derive(Debug, PartialEq, Subcommand)]
+#[derive(Debug, Subcommand)]
 enum PluginCommand {
     /// Show each plugin of config.json, its locked commit, and whether it is installed. It uses no network.
     List,
@@ -343,7 +343,7 @@ async fn plugin(command: PluginCommand) -> Result<ExitCode, String> {
                 say(&format!(
                     "{}  {}  {state}",
                     plugin.name.as_deref().unwrap_or("?"),
-                    plugin.item
+                    plugin.source
                 ))?;
             }
         }
@@ -630,10 +630,6 @@ mod tests {
         parse(arguments).map(Cli::into_mode)
     }
 
-    fn command(arguments: &[&str]) -> Result<Option<Command>, ErrorKind> {
-        parse(arguments).map(|cli| cli.command)
-    }
-
     #[tokio::test(flavor = "local")]
     async fn a_second_signal_stops_an_operation_that_does_not_end() {
         let cancellation_token = CancellationToken::new();
@@ -710,46 +706,6 @@ mod tests {
         assert_eq!(
             mode(&["-p", "Hi.", "--reasoning", "extreme"]),
             Err(ErrorKind::ValueValidation)
-        );
-    }
-
-    #[test]
-    fn login_takes_one_provider() {
-        assert_eq!(
-            command(&["login", "xai-grok"]),
-            Ok(Some(Command::Login {
-                provider: "xai-grok".to_owned()
-            }))
-        );
-    }
-
-    #[test]
-    fn plugin_add_takes_a_url_with_a_folder_and_a_ref_and_remove_takes_a_name() {
-        assert_eq!(
-            command(&[
-                "plugin",
-                "add",
-                "https://h/r",
-                "--folder",
-                "plugins/clock",
-                "--ref",
-                "v1"
-            ]),
-            Ok(Some(Command::Plugin {
-                command: PluginCommand::Add {
-                    url: "https://h/r".to_owned(),
-                    folder: Some("plugins/clock".to_owned()),
-                    reference: Some("v1".to_owned()),
-                },
-            }))
-        );
-        assert_eq!(
-            command(&["plugin", "remove", "clock"]),
-            Ok(Some(Command::Plugin {
-                command: PluginCommand::Remove {
-                    name: "clock".to_owned()
-                },
-            }))
         );
     }
 

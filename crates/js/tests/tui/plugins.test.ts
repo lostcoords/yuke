@@ -9,14 +9,21 @@ import { rows } from "./rows.ts";
 
 const OLD = "3f9c1a2".padEnd(40, "0");
 const NEW = "8d02e77".padEnd(40, "0");
+/** The text of the source of the plugin `clock`, as a row shows it. */
 const SOURCE = "https://h/r (folder plugins/clock)";
 
 const LISTED: readonly ManagedPlugin[] = [
-  { item: SOURCE, name: "clock", loaded: true, state: "installed", commit: OLD },
-  { item: "./notes", name: "notes", loaded: true, state: "local" },
-  { item: "https://h/tools", name: "tools", loaded: false, state: "installed", commit: OLD },
-  { item: "https://h/weather", loaded: false, state: "notLocked" },
-  { item: "https://h/maps", loaded: false, state: "notInstalled", commit: NEW },
+  {
+    source: { git: "https://h/r", folder: "plugins/clock" },
+    name: "clock",
+    loaded: true,
+    state: "installed",
+    commit: OLD,
+  },
+  { source: "./notes", name: "notes", loaded: true, state: "local" },
+  { source: { git: "https://h/tools" }, name: "tools", loaded: false, state: "installed", commit: OLD },
+  { source: { git: "https://h/weather" }, loaded: false, state: "notLocked" },
+  { source: { git: "https://h/maps" }, loaded: false, state: "notInstalled", commit: NEW },
 ];
 
 const CHANGE: PluginChange = {

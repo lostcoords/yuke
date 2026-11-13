@@ -190,7 +190,7 @@ struct Flags {
     reasoning_replay: Option<ReasoningReplayMode>,
     max_tokens_field: Option<MaxTokensField>,
     anthropic_thinking: Option<ThinkingShape>,
-    reasoning_budget_min: Option<i64>,
+    reasoning_budget_min: Option<u64>,
     reasoning_budget_max: Option<u64>,
 }
 

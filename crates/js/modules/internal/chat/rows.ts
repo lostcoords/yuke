@@ -3,7 +3,8 @@
  * row. It wraps a text with a style and a link for each range of its source.
  */
 
-import { fit, measure, type Segment, type TextItem, type TextRow, type TextSection, wrap } from "yuke:tui";
+import { wrap } from "yuke:internal/tui/text";
+import { fit, measure, type Segment, type TextItem, type TextRow, type TextSection } from "yuke:tui";
 
 /** The style groups of the chat. The default theme gives their look. */
 export const STYLE = {

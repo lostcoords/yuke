@@ -151,9 +151,10 @@ impl Observer for Updates<'_> {
                     }
                     draft.id
                 };
-                if let Some(event) = ModelUpdate::from_event(*event) {
-                    self.live(LiveUpdate::Model { draft_id, event });
-                }
+                self.live(LiveUpdate::Model {
+                    draft_id,
+                    event: ModelUpdate::from_event(*event),
+                });
             }
             TurnEvent::ToolStarted { block_index, call } => self.live(LiveUpdate::ToolStarted {
                 position: self.position(*block_index),

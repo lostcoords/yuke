@@ -405,8 +405,7 @@ pub struct InitializeParams {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResult {
-    /// The protocol version that the server selects: the version of the client when the server speaks it, or else
-    /// the newest version of the server.
+    /// The protocol version of the server. The server speaks one version, so it answers that one for any client.
     pub protocol_version: u32,
     /// The server.
     pub agent_info: Implementation,
@@ -535,8 +534,8 @@ pub struct ListJobsResult {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
-    /// The id of the job, for example `job-1a2b`.
-    pub id: String,
+    /// The id of the job.
+    pub id: crate::JobId,
     /// A short text for display.
     pub label: String,
     /// Whether the job runs, and how it ended.
@@ -589,7 +588,7 @@ pub struct StopJobParams {
     /// The open session of the job.
     pub session_id: SessionId,
     /// The running job.
-    pub job_id: String,
+    pub job_id: crate::JobId,
 }
 
 /// The params of `credential/update`.

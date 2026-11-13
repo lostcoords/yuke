@@ -182,7 +182,7 @@ test("read dir gives the entries by name and stat and lstat tell a link from its
   await fs.writeTextFile("dir/b.txt", "four", { cwd: base });
   await fs.writeTextFile("dir/a.txt", "", { cwd: base });
   await run(base, "ln", "-s", "b.txt", "dir/link");
-  assertEquals(await fs.readDir("dir", { cwd: base }), [
+  assertEquals(await Array.fromAsync(fs.readDir("dir", { cwd: base })), [
     { name: "a.txt", isFile: true, isDirectory: false, isSymlink: false },
     { name: "b.txt", isFile: true, isDirectory: false, isSymlink: false },
     { name: "link", isFile: false, isDirectory: false, isSymlink: true },
@@ -197,6 +197,16 @@ test("read dir gives the entries by name and stat and lstat tell a link from its
   assertEquals({ isFile: link.isFile, isSymlink: link.isSymlink }, { isFile: false, isSymlink: true });
   assert(target.mtime instanceof Date && Math.abs(target.mtime.getTime() - Date.now()) < 60_000);
   assertEquals(await exists(base, "dir/link"), true);
+});
+
+test("read dir gives an async iterable that rejects at its first step for a missing folder", async () => {
+  const base = folder();
+  await fs.mkdir("dir", { cwd: base });
+  await fs.writeTextFile("dir/a.txt", "", { cwd: base });
+  const names: string[] = [];
+  for await (const entry of fs.readDir("dir", { cwd: base })) names.push(entry.name);
+  const error = await failure(fs.readDir("missing", { cwd: base })[Symbol.asyncIterator]().next());
+  assertEquals([names, error.code], [["a.txt"], "ENOENT"]);
 });
 
 test("remove needs recursive for a full folder and force accepts a missing path", async () => {

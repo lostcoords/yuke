@@ -359,7 +359,6 @@ fn round_error(kind: &str) -> Result<RoundError, TestError> {
     Ok(RoundError::Model(yuke_ai::Error::Attempt(AttemptError {
         cause,
         info: AttemptInfo::default(),
-        partial: Vec::new(),
     })))
 }
 

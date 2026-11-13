@@ -96,10 +96,10 @@ export async function writeTextFile(path: string, text: string, options?: WriteF
   await writeData(path, usvString(text), options);
 }
 
-export async function readDir(path: string, options: FileOptions = {}): Promise<DirEntry[]> {
+export async function* readDir(path: string, options: FileOptions = {}): AsyncGenerator<DirEntry, void> {
   const { cwd, signal } = options;
   const entries = await run(signal, () => fsReadDir(path, cwd));
-  return entries.sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0));
+  yield* entries.sort((first, second) => (first.name < second.name ? -1 : first.name > second.name ? 1 : 0));
 }
 
 /** The facts of `path`, through or without a follow of a symbolic link. */

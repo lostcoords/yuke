@@ -12,7 +12,7 @@ test("send returns after the transcript got each update of the turn", async () =
       name: "noop",
       description: "Do nothing.",
       concurrency: "parallel",
-      parameters: { type: "object", properties: { index: { type: "number" } } },
+      inputSchema: { type: "object", properties: { index: { type: "number" } } },
       execute: () => "ok",
     });
   };

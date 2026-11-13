@@ -36,7 +36,7 @@ pub struct Startup {
 
 /// What the host gives the display.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Input {
+pub enum DisplayInput {
     /// An event of the terminal.
     Event(Event),
     /// The terminal has this size, or its content is unknown, as after a suspend. The next frame writes every cell.
@@ -49,7 +49,7 @@ pub enum Input {
 
 /// What the JavaScript asks of the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Request {
+pub enum DisplayRequest {
     /// `term.quit(text)` ran. The host writes the text, when there is one, after it restores the terminal.
     Quit(Option<String>),
     /// `term.suspend()` ran: give the terminal to the shell until the shell resumes yuke.
@@ -58,14 +58,14 @@ pub enum Request {
     Reload(String),
 }
 
-/// The cell grid of the terminal interface, its output, the queue of [`Input`], and the sender of [`Request`]. Give it
+/// The cell grid of the terminal interface, its output, the queue of [`DisplayInput`], and the sender of [`DisplayRequest`]. Give it
 /// to the runtimes in [`Options::interface`](crate::Options::interface).
 pub struct Display {
     frame: Mutex<Frame>,
-    inputs: Mutex<VecDeque<Input>>,
+    inputs: Mutex<VecDeque<DisplayInput>>,
     /// A new input wakes the frame loop of the runtime.
     pub(crate) arrived: Notify,
-    requests: mpsc::UnboundedSender<Request>,
+    requests: mpsc::UnboundedSender<DisplayRequest>,
 }
 
 /// The light or dark class of a terminal background.
@@ -104,7 +104,7 @@ impl Display {
         background: Option<Rgb>,
         truecolor: bool,
         tmux: bool,
-    ) -> (Arc<Self>, mpsc::UnboundedReceiver<Request>) {
+    ) -> (Arc<Self>, mpsc::UnboundedReceiver<DisplayRequest>) {
         let (requests, received) = mpsc::unbounded_channel();
         let display = Arc::new(Self {
             frame: Mutex::new(Frame {
@@ -123,7 +123,7 @@ impl Display {
     }
 
     /// Give `input` to the frame loop. A call from any thread works.
-    pub fn send(&self, input: Input) {
+    pub fn send(&self, input: DisplayInput) {
         lock(&self.inputs).push_back(input);
         self.arrived.notify_one();
     }
@@ -140,19 +140,19 @@ impl Display {
         self.take_inputs()
             .into_iter()
             .filter_map(|input| match input {
-                Input::Notice(notice) => Some(notice),
-                Input::Event(_) | Input::Resize(_) | Input::Redraw => None,
+                DisplayInput::Notice(notice) => Some(notice),
+                DisplayInput::Event(_) | DisplayInput::Resize(_) | DisplayInput::Redraw => None,
             })
             .collect()
     }
 
-    pub(crate) fn ask(&self, request: Request) {
+    pub(crate) fn ask(&self, request: DisplayRequest) {
         if self.requests.send(request).is_err() {
             // The host dropped the receiver, so it answers no request.
         }
     }
 
-    pub(crate) fn take_inputs(&self) -> VecDeque<Input> {
+    pub(crate) fn take_inputs(&self) -> VecDeque<DisplayInput> {
         std::mem::take(&mut *lock(&self.inputs))
     }
 

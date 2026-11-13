@@ -286,7 +286,7 @@ fn job_plugin(place: &Place, wait_ms: u32) {
         "export function session(s) {{
            s.tools.add({{
              name: 'work', description: 'work', concurrency: 'serial',
-             parameters: {{ type: 'object', properties: {{}} }},
+             inputSchema: {{ type: 'object', properties: {{}} }},
              async execute() {{
                await s.jobs.start({{ id: 'explorer', label: 'explore' }}, (signal) => new Promise((resolve) =>
                  signal.addEventListener('abort', () => setTimeout(resolve, {wait_ms}))));

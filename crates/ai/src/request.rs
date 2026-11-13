@@ -72,7 +72,6 @@ impl OutputSchema {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 #[expect(missing_docs, reason = "each variant is the wire name of one effort")]
-#[non_exhaustive]
 pub enum Effort {
     Minimal,
     Low,
@@ -115,7 +114,6 @@ impl FromStr for Effort {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase")]
-#[non_exhaustive]
 pub enum Thinking {
     /// Ask for no reasoning. Some hosts accept the field and reason again.
     Off,
@@ -138,7 +136,6 @@ pub enum Thinking {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ThinkingDisplay {
     /// `summarized`.
     Summarized,
@@ -398,7 +395,6 @@ impl fmt::Debug for Request<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ToolChoice {
     /// The model decides.
     #[default]

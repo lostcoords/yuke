@@ -3,7 +3,6 @@
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use yuke_http::http::header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE, HeaderName, MaxSizeReached};
@@ -86,7 +85,7 @@ async fn round_trip(
         return Err(Fault::RedirectRefused);
     }
     check_content_encoding(&response.headers)?;
-    let head = read_head(&response.headers, status, wall_clock_seconds());
+    let head = read_head(&response.headers, status);
     Ok((head, Box::pin(ProviderBody(response.body))))
 }
 
@@ -111,7 +110,6 @@ fn headers(plan: &Plan<'_>) -> Result<HeaderMap, Fault> {
     )?;
     for header in plan.headers {
         let name = HeaderName::from_bytes(header.name.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
-        // Any byte but a control byte is valid, as `target::valid_header_value` checks.
         let value = HeaderValue::from_bytes(header.value.as_bytes()).map_err(|_| Fault::InvalidRequest)?;
         full(headers.try_append(name, value).map(drop))?;
     }
@@ -157,15 +155,8 @@ impl Body for ProviderBody {
     }
 }
 
-fn wall_clock_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| i64::try_from(since.as_secs()).unwrap_or(i64::MAX))
-}
-
-/// Read the status, the retry hints, and the request id. `now` is the wall-clock time in seconds since the epoch,
-/// for an HTTP-date retry hint.
-fn read_head(headers: &HeaderMap, status: u16, now: i64) -> Head {
+/// Read the status, the retry hints, and the request id. A `retry-after` in the HTTP-date form gives no hint.
+fn read_head(headers: &HeaderMap, status: u16) -> Head {
     let mut head = Head::new(status);
     for (name, value) in headers {
         let value = value.as_bytes();
@@ -184,7 +175,7 @@ fn read_head(headers: &HeaderMap, status: u16, now: i64) -> Head {
             }
             "retry-after" => {
                 if head.retry_after_ms.is_none() {
-                    head.retry_after_ms = text.and_then(|text| retry_after_ms(text, now));
+                    head.retry_after_ms = text.and_then(|text| decimal_ms(text, 1000.0));
                 }
             }
             "x-should-retry" => {
@@ -201,17 +192,6 @@ fn read_head(headers: &HeaderMap, status: u16, now: i64) -> Head {
     head
 }
 
-fn retry_after_ms(value: &str, now: i64) -> Option<u64> {
-    if let Some(ms) = decimal_ms(value, 1000.0) {
-        return Some(ms);
-    }
-    let at = imf_fixdate(value)?;
-    if at <= now {
-        return Some(0);
-    }
-    Some(u64::try_from(at - now).ok()?.saturating_mul(1000))
-}
-
 fn decimal_ms(value: &str, ms_per_unit: f64) -> Option<u64> {
     let units: f64 = value.parse().ok()?;
     if !units.is_finite() || units < 0.0 {
@@ -224,59 +204,6 @@ fn decimal_ms(value: &str, ms_per_unit: f64) -> Option<u64> {
     )]
     let ms = (units * ms_per_unit).ceil() as u64;
     Some(ms)
-}
-
-fn imf_fixdate(value: &str) -> Option<i64> {
-    const DAYS: [&[u8]; 7] = [b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat", b"Sun"];
-    const MONTHS: [&[u8]; 12] = [
-        b"Jan", b"Feb", b"Mar", b"Apr", b"May", b"Jun", b"Jul", b"Aug", b"Sep", b"Oct", b"Nov", b"Dec",
-    ];
-    let bytes = value.as_bytes();
-    if bytes.len() != 29 || &bytes[3..5] != b", " || &bytes[25..] != b" GMT" {
-        return None;
-    }
-    if [7, 11, 16].iter().any(|&i| bytes[i] != b' ') || bytes[19] != b':' || bytes[22] != b':' {
-        return None;
-    }
-    if !DAYS.contains(&&bytes[0..3]) {
-        return None;
-    }
-    let month = u8::try_from(MONTHS.iter().position(|name| *name == &bytes[8..11])? + 1).ok()?;
-    let number = |range: std::ops::Range<usize>| value.get(range)?.parse::<u16>().ok();
-    let day = number(5..7)?;
-    let year = number(12..16)?;
-    let hour = number(17..19)?;
-    let minute = number(20..22)?;
-    let second = number(23..25)?;
-    if day == 0 || day > days_in_month(year, month) || hour > 23 || minute > 59 || second > 60 {
-        return None;
-    }
-    Some(
-        days_from_civil(year, month, day) * 86_400
-            + i64::from(hour) * 3600
-            + i64::from(minute) * 60
-            + i64::from(second),
-    )
-}
-
-fn days_in_month(year: u16, month: u8) -> u16 {
-    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    match month {
-        2 if leap => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
-fn days_from_civil(year: u16, month: u8, day: u16) -> i64 {
-    let y = i64::from(year) - i64::from(month <= 2);
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let m = i64::from(month);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2).div_euclid(5) + i64::from(day) - 1;
-    let doe = yoe * 365 + yoe.div_euclid(4) - yoe.div_euclid(100) + doy;
-    era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]

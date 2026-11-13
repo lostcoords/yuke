@@ -14,7 +14,6 @@ use crate::{AssistantText, Block, ParseError, Reasoning, ReasoningReplayRef, Tex
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-#[non_exhaustive]
 pub enum FinishReason {
     /// The model finished its answer.
     Stop,
@@ -147,7 +146,6 @@ pub(crate) enum BlockKind {
 
 /// One event of a stream. Its text borrows the stream until the next call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Event<'a> {
     /// A block starts. Ids are dense from 0, in start order.
     BlockStarted(BlockStarted<'a>),
@@ -179,7 +177,6 @@ pub struct BlockStarted<'a> {
 /// What a block holds when it starts. A refusal is the text of a model that declined the request. The library keeps
 /// the refusal apart from the answer text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum StartedBlock<'a> {
     /// Answer text.
     Text,
@@ -226,7 +223,6 @@ pub struct Done<'a> {
 
 /// The block-stop result carries provider-only state that deltas cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum BlockResult<'a> {
     /// A text block, and its phase when the provider gave one.
     Text(Option<TextPhase>),
@@ -240,7 +236,6 @@ pub enum BlockResult<'a> {
 
 /// One part of a completed answer: a block that stopped.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Content {
     /// Answer text and its phase.
     Text(AssistantText),
@@ -276,7 +271,6 @@ pub struct PartialBlock {
 /// One output part of a failed attempt, in start order. It holds text and complete tool calls, but no replay
 /// state. A reasoning part replays as text only.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Partial {
     /// Answer text, cut off where the attempt failed when its block never stopped.
     Text(String),
@@ -349,16 +343,13 @@ pub struct Response {
     pub completion: Completion,
 }
 
-/// An attempt that failed: why, the attempt facts, and what it produced before the failure.
+/// An attempt that failed: why, and the attempt facts.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AttemptError {
     /// Why the attempt failed.
     pub cause: Failure,
     /// The attempt facts, which the retry decision reads.
     pub info: AttemptInfo,
-    /// What the attempt produced before it failed. The caller decides whether the context keeps it.
-    // @todo(xyaman): No caller reads this yet. A failed turn could keep this text, as a cancelled turn does.
-    pub partial: Vec<Partial>,
 }
 
 impl fmt::Display for AttemptError {
@@ -388,7 +379,6 @@ impl std::error::Error for AttemptError {
 
 /// The errors of [`crate::generate`]: a request that cannot be encoded, or an attempt that failed.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum Error {
     /// The request cannot be encoded. Nothing was sent.
     Encode(EncodeError),
@@ -444,7 +434,6 @@ mod tests {
                     error_body: body.map(<[u8]>::to_vec),
                     ..AttemptInfo::default()
                 },
-                partial: Vec::new(),
             }
             .to_string()
         };

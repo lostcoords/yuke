@@ -1,4 +1,4 @@
-//! Session, server process, input, and ephemeral draft identities, and session-local event numbers.
+//! Session, server process, input, job, and ephemeral draft identities, and session-local event numbers.
 
 use std::fmt;
 use std::str::FromStr;
@@ -81,6 +81,18 @@ pub struct LoginId(pub u64);
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(transparent)]
 pub struct InteractionId(pub u64);
+
+/// The id of a background job, for example `job-1a2b`. A job id is unique among the jobs of one session.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(transparent)]
+pub struct JobId(pub String);
+
+impl fmt::Display for JobId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// The ephemeral identity of one live provider attempt. The store never saves it.
 /// A reconnect cannot resume this draft. The client replaces prior drafts with saved history.

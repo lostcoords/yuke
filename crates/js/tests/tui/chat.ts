@@ -145,21 +145,21 @@ export function fakeSessions(saved: StoredEvent[] = []) {
     async list(params: ListSessionsParams = {}): Promise<{ sessions: SessionRow[] }> {
       lists.push(params);
       const cwd = params.cwd;
-      const shown = rows.filter((row) => cwd === undefined || cwd === null || row.session.cwd === cwd);
+      const shown = rows.filter((row) => cwd === undefined || cwd === null || row.cwd === cwd);
       return { sessions: shown.slice(0, params.limit ?? 50) };
     },
     async get(id: string): Promise<SessionRow> {
-      const row = rows.find((candidate) => candidate.session.sessionId === id);
+      const row = rows.find((candidate) => candidate.sessionId === id);
       if (row === undefined) throw new Error(`no session ${id}`);
       return row;
     },
     async rename(id: string, title: string): Promise<void> {
       if (state.renameFails) throw new Error("rename failed");
-      const index = rows.findIndex((candidate) => candidate.session.sessionId === id);
+      const index = rows.findIndex((candidate) => candidate.sessionId === id);
       if (index < 0) throw new Error(`no session ${id}`);
       const row = rows[index];
       if (row === undefined) throw new Error(`no session ${id}`);
-      rows[index] = { ...row, session: { ...row.session, title } };
+      rows[index] = { ...row, title };
       renames.push([id, title]);
     },
     async create(settings: SessionSettings): Promise<string> {

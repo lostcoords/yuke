@@ -167,7 +167,7 @@ fn observer_receives_every_event_of_each_round_in_source_order() {
 }
 
 #[test]
-fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
+fn failed_reply_delivers_its_events_then_fails_with_the_cause() {
     let transport = ScriptedTransport::new([failed_reply("cut")]);
     let model = model();
     let driver = Driver::new(&transport, &model, &NoWait);
@@ -194,7 +194,10 @@ fn failed_reply_delivers_its_events_then_fails_with_the_partial_output() {
     let Err(TurnError::Round(RoundError::Model(yuke_ai::Error::Attempt(error)))) = outcome else {
         panic!("expected a failed attempt, got {outcome:?}");
     };
-    assert_eq!(error.partial, [yuke_ai::Partial::Text("cut".to_owned())]);
+    assert_eq!(
+        error.cause,
+        yuke_ai::Failure::Provider(yuke_ai::ProviderKind::ServerError)
+    );
     assert_eq!(context, [Block::user_text("go")]);
 }
 

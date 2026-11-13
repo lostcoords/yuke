@@ -16,7 +16,7 @@ use yuke_protocol::{
 
 use crate::store::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
-    check_consumed_blocks, fork_title_of, title_of,
+    fork_title_of, title_of,
 };
 
 /// A [`Store`] that keeps its sessions in memory, for tests and for a caller that saves nothing. It refuses a second
@@ -343,7 +343,6 @@ impl Store for MemoryStore {
         commit: &Commit<'_>,
         consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
-        check_consumed_blocks(commit, consumed)?;
         let mut state = lock(&self.state);
         let saved = state.sessions.get(&id).ok_or(StoreError::NotFound)?;
         // Each check comes before the first change, so a refused commit changes nothing.

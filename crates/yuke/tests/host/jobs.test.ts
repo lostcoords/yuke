@@ -45,7 +45,7 @@ async function opened(replies: readonly string[] = []) {
             name: "work",
             description: "d",
             concurrency: "parallel",
-            parameters: { type: "object", properties: {} },
+            inputSchema: { type: "object", properties: {} },
             async execute(_args, call) {
               const job = { id: "explorer", label: "one", background: tool.background };
               const outcome = await call.jobs.run(job, tool.work);
@@ -230,7 +230,7 @@ test("a job start rejects while its session closes", async () => {
             name: "wait",
             description: "d",
             concurrency: "serial",
-            parameters: { type: "object", properties: {} },
+            inputSchema: { type: "object", properties: {} },
             async execute(_args, context) {
               await new Promise((resolve) => context.signal.addEventListener("abort", resolve));
               // The close of the session cancels this call before the close of the plugin scope.

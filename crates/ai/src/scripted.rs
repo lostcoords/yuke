@@ -135,7 +135,6 @@ const OVERFLOW_TEXT: &str = "prompt is too long: the scripted context overflow";
 
 /// One scripted answer of the model. The transport writes it in the stream format of the protocol of the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Answer {
     /// A complete answer with a text.
     Text {
@@ -701,7 +700,7 @@ mod tests {
 
     use super::*;
     use crate::failure::{Failure, ProviderKind};
-    use crate::response::{Completion, FinishReason, Partial};
+    use crate::response::{Completion, FinishReason};
     use crate::stream::ReplyOptions;
     use crate::stream::testing::Harness;
     use crate::testing::{block_on, generate_with, target};
@@ -870,23 +869,16 @@ mod tests {
                 "{context}"
             );
             assert_eq!(
-                (overflow.cause, overflow.partial),
-                (Failure::Provider(ProviderKind::ContextOverflow), Vec::new()),
+                overflow.cause,
+                Failure::Provider(ProviderKind::ContextOverflow),
                 "{context}"
             );
             assert_eq!(
-                (overloaded.cause, overloaded.partial),
-                (Failure::Provider(ProviderKind::ServerError), Vec::new()),
+                overloaded.cause,
+                Failure::Provider(ProviderKind::ServerError),
                 "{context}"
             );
-            assert_eq!(
-                (failed.cause, failed.partial),
-                (
-                    Failure::Provider(ProviderKind::ServerError),
-                    vec![Partial::Text("part".to_owned())]
-                ),
-                "{context}"
-            );
+            assert_eq!(failed.cause, Failure::Provider(ProviderKind::ServerError), "{context}");
             assert_eq!(transport.check(), Ok(()), "{context}");
         }
     }

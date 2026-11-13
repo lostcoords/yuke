@@ -3,7 +3,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::Path;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,9 +11,9 @@ use yuke_agent::{EventPage, ListPosition, Session};
 use yuke_engine::chain_text;
 use yuke_js::{FactSink, Handle, ViewSink};
 use yuke_protocol::{
-    EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, ListSessionsParams, ListSessionsResult,
-    NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow, SessionSettings, SessionState,
-    SessionSummary, SessionTitle, StoredEvent,
+    EventNumber, Input, InputId, InteractionId, InteractionResponse, Job, JobId, ListSessionsParams,
+    ListSessionsResult, NoticeLevel, NoticeParams, ServerNotification, SessionId, SessionRow, SessionSettings,
+    SessionState, SessionSummary, SessionTitle, StoredEvent,
 };
 
 use super::facts::Watch;
@@ -409,7 +408,12 @@ impl SessionService {
         }
         let after = cursor
             .as_deref()
-            .map(|cursor| position_of(cursor, cwd.as_deref(), parent))
+            .map(|cursor| {
+                cursor
+                    .parse()
+                    .map(ListPosition)
+                    .map_err(|_| AppError::Invalid(format!("the cursor '{cursor}' is invalid")))
+            })
             .transpose()?;
         let page = self
             .shared
@@ -418,7 +422,7 @@ impl SessionService {
             .await?;
         Ok(ListSessionsResult {
             sessions: page.sessions.into_iter().map(|session| self.row(session)).collect(),
-            next_cursor: page.next.map(|next| cursor_of(next, cwd.as_deref(), parent)),
+            next_cursor: page.next.map(|next| next.0.to_string()),
         })
     }
 
@@ -679,11 +683,11 @@ impl SessionService {
     /// # Errors
     ///
     /// Returns [`AppError::NotOpen`], and [`AppError::NoJob`] when the session runs no such job.
-    pub(crate) async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), AppError> {
+    pub(crate) async fn stop_job(&self, id: SessionId, job_id: &JobId) -> Result<(), AppError> {
         if self.live(id)?.stop_job(job_id).await {
             Ok(())
         } else {
-            Err(AppError::NoJob(job_id.to_owned()))
+            Err(AppError::NoJob(job_id.clone()))
         }
     }
 
@@ -797,37 +801,6 @@ const MOST_PAGE_ROWS: u32 = 100;
 
 /// The limit of a read of all children of a session.
 const ALL_CHILDREN: usize = u32::MAX as usize;
-
-/// The cursor of the page after `next` in the list of `cwd` and `parent`. It holds both, so a cursor of another list does
-/// not read.
-fn cursor_of(next: ListPosition, cwd: Option<&Path>, parent: Option<SessionId>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut cursor = format!("{}.", next.0);
-    if let Some(parent) = parent {
-        cursor.push_str(&parent.to_string());
-        cursor.push('.');
-    }
-    for byte in cwd.map_or(&[][..], |cwd| cwd.as_os_str().as_encoded_bytes()) {
-        cursor.push(char::from(HEX[usize::from(byte >> 4)]));
-        cursor.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    cursor
-}
-
-/// The position that `cursor`, a cursor of the list of `cwd` and `parent`, names.
-fn position_of(cursor: &str, cwd: Option<&Path>, parent: Option<SessionId>) -> Result<ListPosition, AppError> {
-    let invalid = || AppError::Invalid(format!("the cursor '{cursor}' is invalid for this list"));
-    let (position, _) = cursor.split_once('.').ok_or_else(invalid)?;
-    // A store gives no position above `i64::MAX`, the largest SQLite integer.
-    let position: i64 = position.parse().map_err(|_| invalid())?;
-    let position = ListPosition(position.unsigned_abs());
-    // A cursor of this list encodes to the same text again.
-    if cursor_of(position, cwd, parent) == cursor {
-        Ok(position)
-    } else {
-        Err(invalid())
-    }
-}
 
 #[cfg(test)]
 mod tests;

@@ -7,8 +7,7 @@ import type { InstanceId } from "./InstanceId";
  */
 export type InitializeResult = { 
 /**
- * The protocol version that the server selects: the version of the client when the server speaks it, or else
- * the newest version of the server.
+ * The protocol version of the server. The server speaks one version, so it answers that one for any client.
  */
 protocolVersion: number, 
 /**

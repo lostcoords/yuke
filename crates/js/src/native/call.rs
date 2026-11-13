@@ -110,7 +110,7 @@ pub(crate) fn object<'js>(
                 .jobs()
                 .running(running_host.session_id())
                 .into_iter()
-                .map(|job| job.id)
+                .map(|job| job.id.0)
                 .collect::<Vec<_>>()
         })?,
     )?;

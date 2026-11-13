@@ -49,7 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match reply.finish().await {
             Ok(response) => context.extend(response.completion.into_blocks()),
-            // This chat drops a failed reply. Another application could keep `error.partial` as text.
             Err(error) => eprintln!("{error}"),
         }
     }

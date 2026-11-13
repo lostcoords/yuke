@@ -9,11 +9,11 @@ use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::{Notify, mpsc};
 use yuke_agent::Store;
 use yuke_engine::{CancellationToken, chain_text};
-use yuke_js::{Display, Input, Interface, Request, Startup};
+use yuke_js::{Display, DisplayInput, DisplayRequest, Interface, Startup};
 use yuke_protocol::{NoticeLevel, NoticeParams, ServerNotification};
 use yuke_term::Terminal;
 
-use crate::app::{App, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
+use crate::app::{App, Machine, Observer, RunMode, SOURCE, TokioTimer, open_store, warn};
 use crate::print::{SessionChoice, newest_session};
 
 /// Gives each notice to the display. The chat reads session updates through the session service, and plugins share data
@@ -23,7 +23,7 @@ struct Notices(Arc<Display>);
 impl Observer for Notices {
     fn notify(&self, notification: ServerNotification) {
         match notification {
-            ServerNotification::Notice(notice) => self.0.send(Input::Notice(notice)),
+            ServerNotification::Notice(notice) => self.0.send(DisplayInput::Notice(notice)),
             ServerNotification::SessionUpdate(_)
             | ServerNotification::ExtensionEvent(_)
             | ServerNotification::ExtensionCancel(_)
@@ -111,14 +111,14 @@ async fn serve(
         ..machine
     };
     let observer = Rc::new(Notices(Arc::clone(&host.display)));
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Rc::new(TokioTimer)).await?;
+    let (mut app, plugins) = App::prepare(machine, RunMode::Server, observer, store, Rc::new(TokioTimer)).await?;
     app.show(None);
     // The host answers quit and suspend while the plugins load. A quit drops the load, so a slow plugin does not hold
     // the terminal, and the app shuts down before the terminal restores.
     let ended = tokio::select! {
         () = app.load_plugins(&plugins) => {
             // The empty start frame is new, so the first frame of the plugins would wait for the frame limit.
-            host.display.send(Input::Redraw);
+            host.display.send(DisplayInput::Redraw);
             host.serve(shutdown, Some(&mut app)).await
         }
         ended = host.serve(shutdown, None) => ended,
@@ -131,7 +131,7 @@ async fn serve(
 struct Host {
     terminal: Terminal,
     display: Arc<Display>,
-    requests: mpsc::UnboundedReceiver<Request>,
+    requests: mpsc::UnboundedReceiver<DisplayRequest>,
     resizes: Signal,
     /// The current reader wakes it when the input ends. Each reader gets a new one, so a late wake of a stopped reader
     /// stops no later reader.
@@ -151,10 +151,10 @@ impl Host {
                 () = shutdown.cancelled() => return Ok(None),
                 // The host keeps the display, so the requests never end.
                 request = self.requests.recv() => match request {
-                    Some(Request::Quit(text)) => return Ok(text),
+                    Some(DisplayRequest::Quit(text)) => return Ok(text),
                     None => return Ok(None),
-                    Some(Request::Suspend) => self.suspend(),
-                    Some(Request::Reload(snapshot)) => {
+                    Some(DisplayRequest::Suspend) => self.suspend(),
+                    Some(DisplayRequest::Reload(snapshot)) => {
                         // A quit drops the reload, as it drops the first load, and the app shuts down after it.
                         tokio::select! {
                             () = reload(app.as_deref_mut(), &self.display, snapshot) => Ok(()),
@@ -167,7 +167,7 @@ impl Host {
                     Ok(()) => "the terminal input ended".to_owned(),
                     Err(error) => format!("the terminal input: {}", chain_text(&error)),
                 }),
-                _ = self.resizes.recv() => self.terminal.size().map(|size| self.display.send(Input::Resize(size))),
+                _ = self.resizes.recv() => self.terminal.size().map(|size| self.display.send(DisplayInput::Resize(size))),
             };
             answered.map_err(|error| format!("the terminal: {}", chain_text(&error)))?;
         }
@@ -178,7 +178,7 @@ impl Host {
     fn suspend(&mut self) -> io::Result<()> {
         self.display.hold(|| self.terminal.suspend())?;
         self.start_reader()?;
-        self.display.send(Input::Resize(self.terminal.size()?));
+        self.display.send(DisplayInput::Resize(self.terminal.size()?));
         Ok(())
     }
 
@@ -187,7 +187,7 @@ impl Host {
         self.ended = Arc::new(Notify::new());
         let ended = Arc::clone(&self.ended);
         self.terminal.start_reader(
-            move |event| display.send(Input::Event(event)),
+            move |event| display.send(DisplayInput::Event(event)),
             move || ended.notify_one(),
         )
     }
@@ -195,11 +195,11 @@ impl Host {
 
 /// Wait for a quit or the end of `requests`, and return the quit text, if any. Drop the other requests, so a second
 /// ctrl+r during a reload does nothing.
-async fn quit(requests: &mut mpsc::UnboundedReceiver<Request>) -> Option<String> {
+async fn quit(requests: &mut mpsc::UnboundedReceiver<DisplayRequest>) -> Option<String> {
     while let Some(request) = requests.recv().await {
         match request {
-            Request::Quit(text) => return text,
-            Request::Suspend | Request::Reload(_) => {}
+            DisplayRequest::Quit(text) => return text,
+            DisplayRequest::Suspend | DisplayRequest::Reload(_) => {}
         }
     }
     None
@@ -218,7 +218,7 @@ async fn reload(app: Option<&mut App>, display: &Display, snapshot: String) {
         },
         None => "yuke is still loading the plugins".to_owned(),
     };
-    display.send(Input::Notice(NoticeParams {
+    display.send(DisplayInput::Notice(NoticeParams {
         session_id: None,
         level: NoticeLevel::Error,
         source: SOURCE.to_owned(),

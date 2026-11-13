@@ -1,6 +1,6 @@
 // The styles of the core: the event `theme.changed`, and a theme against the palette, the plugin styles, and Markdown.
 
-import { on } from "yuke:internal/facts";
+import { addListener } from "yuke:internal/facts";
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { assertEquals, createFrame, test } from "yuke:test";
@@ -11,8 +11,8 @@ test("theme.changed tells each new theme and each new background", () => {
   const core = new Core(fakeTerminal().driver);
   const stop = new AbortController();
   const seen: unknown[] = [];
-  on("author", stop.signal, "theme.changed", (data) => seen.push([data.name, data.background]));
-  on("author", stop.signal, "notice", () => seen.push("a notice"));
+  addListener("author", stop.signal, "theme.changed", (data) => seen.push([data.name, data.background]));
+  addListener("author", stop.signal, "notice", () => seen.push("a notice"));
   core.styles.setTheme("nord");
   core.styles.setTheme("nord");
   core.event({ type: "background", background: "light" });
@@ -31,11 +31,11 @@ test("the abort of a plugin that owns the active theme and listens gives that pl
   const other = new AbortController();
   const seen: string[] = [];
   let own = 0;
-  on("pack", stop.signal, "theme.changed", () => {
+  addListener("pack", stop.signal, "theme.changed", () => {
     own += 1;
     return tui.styles.theme;
   });
-  on("other", other.signal, "theme.changed", (data) => seen.push(data.name));
+  addListener("other", other.signal, "theme.changed", (data) => seen.push(data.name));
   tui.styles.addTheme("nord", {});
   tui.styles.setTheme("nord");
   const before = own;
@@ -71,7 +71,7 @@ test("a plugin supports a theme for now, and the theme wins once it names the gr
     undo();
     undo = tui.styles.theme === "nord" ? tui.styles.add({ "b.title": { fg: 3 } }) : () => {};
   };
-  on("b", stop.signal, "theme.changed", look);
+  addListener("b", stop.signal, "theme.changed", look);
   const color = (): unknown => {
     tui.wrapRoot(() => ({ draw: (canvas) => canvas.text(0, 0, "x", "b.title") }));
     return frame.draw().cells[0]?.[0]?.style;

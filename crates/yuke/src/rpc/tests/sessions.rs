@@ -580,7 +580,7 @@ fn states(listed: &Value) -> BTreeMap<String, String> {
         .unwrap()
         .iter()
         .map(|row| {
-            let id = row["session"]["sessionId"].as_str().unwrap().to_owned();
+            let id = row["sessionId"].as_str().unwrap().to_owned();
             (id, row["state"].as_str().unwrap().to_owned())
         })
         .collect()
@@ -614,8 +614,8 @@ async fn the_list_and_a_get_give_each_saved_session_with_its_state() {
     ]);
     assert_eq!(states(&listed), expected);
     assert_eq!(row["state"], "closed");
-    assert_eq!(row["session"]["title"], "waiting");
-    assert_eq!(row["session"]["cwd"], json!(place.work));
+    assert_eq!(row["title"], "waiting");
+    assert_eq!(row["cwd"], json!(place.work));
     assert_eq!(unknown.unwrap_err()["code"], json!(ResponseError::SESSION_NOT_FOUND));
 }
 
@@ -656,8 +656,8 @@ async fn a_session_can_be_renamed_before_its_first_message_and_after_close() {
     client.end().await;
 
     assert_eq!(renamed.unwrap(), json!({}));
-    assert_eq!(row["session"]["title"], "first title");
-    assert_eq!(closed_row["session"]["title"], "closed title");
+    assert_eq!(row["title"], "first title");
+    assert_eq!(closed_row["title"], "closed title");
 }
 
 #[tokio::test(flavor = "local")]
@@ -687,9 +687,9 @@ async fn a_list_pages_by_cursor_in_one_folder_and_refuses_a_bad_cursor_or_limit(
         .unwrap();
     let mut refused = Vec::new();
     for params in [
-        json!({ "cursor": cursor }),
+        json!({ "cursor": "-1" }),
         json!({ "cwd": work, "cursor": "not a cursor" }),
-        json!({ "cursor": "18446744073709551615." }),
+        json!({ "cursor": "18446744073709551616" }),
         json!({ "limit": 0 }),
         json!({ "limit": 101 }),
     ] {
@@ -745,7 +745,7 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
         (held.to_string(), "closed".to_owned()),
     ]);
     assert_eq!(states(&listed), expected);
-    assert_eq!(fork_row["session"]["forkOf"], json!(source));
+    assert_eq!(fork_row["forkOf"], json!(source));
 }
 
 #[tokio::test(flavor = "local")]

@@ -124,8 +124,11 @@ declare module "yuke:fs" {
   export function writeFile(path: string, data: Uint8Array, options?: WriteFileOptions): Promise<void>;
   /** Create, replace, or add to a file with the UTF-8 bytes of `text`. A lone surrogate becomes U+FFFD. */
   export function writeTextFile(path: string, text: string, options?: WriteFileOptions): Promise<void>;
-  /** The entries of a directory, without `.` and `..`, by name in JavaScript string order. */
-  export function readDir(path: string, options?: FileOptions): Promise<DirEntry[]>;
+  /**
+   * The entries of a directory, without `.` and `..`, by name in JavaScript string order. As in Deno, use
+   * `for await`. A failure rejects the first step. Use `Array.fromAsync` for an array.
+   */
+  export function readDir(path: string, options?: FileOptions): AsyncIterable<DirEntry>;
   /** The facts of a path. A symbolic link gives the facts of its target. */
   export function stat(path: string, options?: FileOptions): Promise<FileInfo>;
   /** The facts of a path. A symbolic link gives the facts of the link. */

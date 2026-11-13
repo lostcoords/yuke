@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use yuke_js::{Origin, Plugin};
+use yuke_js::{Plugin, PluginCode};
 
 use self::lock::Lock;
 use crate::config::{Config, ConfigPlugin, Source, read_json};
@@ -162,7 +162,7 @@ fn with_bundled(
         .filter(|plugin| !config.disable.iter().any(|disabled| disabled == plugin.name))
         .map(|plugin| Plugin {
             name: plugin.name.to_owned(),
-            origin: Origin::Bundled {
+            origin: PluginCode::Bundled {
                 module: plugin.module.to_owned(),
             },
             data_dir: data.join("plugins").join(plugin.name),
@@ -239,7 +239,7 @@ pub(crate) fn load_order(plugins: Vec<Plugin>) -> Result<Vec<Plugin>, String> {
         let fail = |message: String| format!("plugin {}: {message}", plugin.name);
         match plugins[..index].iter().find(|other| other.name == plugin.name) {
             Some(Plugin {
-                origin: Origin::Bundled { .. },
+                origin: PluginCode::Bundled { .. },
                 ..
             }) => {
                 return Err(fail(format!(
@@ -332,7 +332,7 @@ pub(crate) fn manifest_plugin(root: &Path, data: &Path, options: Map<String, Val
     Ok(Plugin {
         data_dir: data.join("plugins").join(&manifest.name),
         name: manifest.name,
-        origin: Origin::Folder {
+        origin: PluginCode::Folder {
             root: root.to_owned(),
             entry,
         },

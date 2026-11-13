@@ -23,7 +23,7 @@ const asking =
       name: "ask",
       description: "Ask the user.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: async (_args, context) => JSON.stringify(await body(s, context.signal)) ?? "undefined",
     });
   };
@@ -34,7 +34,7 @@ const asker = asking((s, signal) => s.ask({ questions: [yesNo("go", "Go on?")] }
 test("the answer function answers each request, and the host records it", async () => {
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
-    answer: () => picked("go", "Yes"),
+    onQuestion: () => picked("go", "Yes"),
   });
   const session = await host.openSession();
 
@@ -60,7 +60,7 @@ test("a request during a turn gets its answer before the turn goes on", async ()
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
     replies,
-    answer: () => picked("go", "No"),
+    onQuestion: () => picked("go", "No"),
   });
   const session = await host.openSession();
 
@@ -92,7 +92,7 @@ test("a request of several questions gets one answer per question, and yuke send
   ];
   await using host = await createHost({
     plugins: [{ name: "asker", session: asking((s, signal) => s.ask({ questions }, { signal })) }],
-    answer: () => answers,
+    onQuestion: () => answers,
   });
   const session = await host.openSession();
 
@@ -116,7 +116,7 @@ test("a request in the setup of a session gets its answer", async () => {
   };
   await using host = await createHost({
     plugins: [{ name: "early", session: early }],
-    answer: () => picked("start", "Yes"),
+    onQuestion: () => picked("start", "Yes"),
   });
 
   await host.openSession();
@@ -131,7 +131,7 @@ test("an answer promise keeps the request open until it settles", async () => {
   let release = (_value: QuestionAnswer[]): void => {};
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
-    answer: () =>
+    onQuestion: () =>
       new Promise<QuestionAnswer[]>((resolve) => {
         release = resolve;
       }),
@@ -153,7 +153,7 @@ test("the close of a session ends its open request with undefined", async () => 
   };
   await using host = await createHost({
     plugins: [{ name: "early", session: early }],
-    answer: () => new Promise<QuestionAnswer[]>(() => {}),
+    onQuestion: () => new Promise<QuestionAnswer[]>(() => {}),
   });
   const session = await host.openSession();
   assertEquals(host.questions.length, 1);
@@ -179,7 +179,7 @@ for (const [name, settle] of [
     };
     await using host = await createHost({
       plugins: [{ name: "early", session: early }],
-      answer: () =>
+      onQuestion: () =>
         new Promise<QuestionAnswer[]>((resolve, reject) => {
           release = () => settle(resolve, reject);
         }),
@@ -207,7 +207,7 @@ test("a cancel or an abort answers undefined, and an aborted signal asks nothing
   });
   await using host = await createHost({
     plugins: [{ name: "asker", session: asker }],
-    answer: (question) =>
+    onQuestion: (question) =>
       question.request.questions[0]?.id === "first" ? undefined : new Promise<QuestionAnswer[]>(() => {}),
   });
   const session = await host.openSession();

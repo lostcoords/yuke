@@ -83,6 +83,6 @@ fn modality(kind: AiModality) -> Option<Modality> {
         AiModality::Audio => Some(Modality::Audio),
         AiModality::Video => Some(Modality::Video),
         AiModality::Pdf => Some(Modality::Pdf),
-        _ => None,
+        AiModality::Other => None,
     }
 }

@@ -58,6 +58,17 @@ function markOf(plugin: ManagedPlugin): string {
   return plugin.loaded ? "●" : "○";
 }
 
+/** The source of `plugin` as text, as `yuke plugin list` prints it: the folder, or the Git URL with its folder and ref. */
+function sourceOf(plugin: ManagedPlugin): string {
+  const source = plugin.source;
+  if (typeof source === "string") return source;
+  const parts = [
+    ...(source.folder === undefined ? [] : [`folder ${source.folder}`]),
+    ...(source.ref === undefined ? [] : [`ref ${source.ref}`]),
+  ];
+  return parts.length === 0 ? source.git : `${source.git} (${parts.join(", ")})`;
+}
+
 /** The state of `plugin` after its source on its row. */
 function stateOf(plugin: ManagedPlugin): string {
   switch (plugin.state) {
@@ -75,7 +86,7 @@ function stateOf(plugin: ManagedPlugin): string {
 /** The details of `plugin` under its row. */
 function detailsOf(plugin: ManagedPlugin): string {
   const commit = "commit" in plugin ? ` · commit ${plugin.commit}` : "";
-  return `${plugin.item}${commit} · ${plugin.loaded ? "loaded" : "not loaded"}`;
+  return `${sourceOf(plugin)}${commit} · ${plugin.loaded ? "loaded" : "not loaded"}`;
 }
 
 /** One row of the dashboard: a section title, a plugin, or the details of a plugin. */
@@ -109,14 +120,14 @@ class PluginList implements View {
 
   /** Replace the plugins. The selection stays on the same item when the item is still there. */
   setPlugins(plugins: readonly ManagedPlugin[]): void {
-    const kept = this.selected?.item;
+    const kept = this.selected === undefined ? undefined : sourceOf(this.selected);
     this.#plugins = SECTIONS.flatMap((section) => plugins.filter(section.has));
     this.select(kept);
   }
 
   /** Select the plugin of `item`, else keep the place in the list. */
-  select(item: string | undefined): void {
-    const index = this.#plugins.findIndex((plugin) => plugin.item === item);
+  select(source: string | undefined): void {
+    const index = this.#plugins.findIndex((plugin) => sourceOf(plugin) === source);
     this.#selected = index >= 0 ? index : Math.min(this.#selected, Math.max(0, this.#plugins.length - 1));
   }
 
@@ -128,7 +139,7 @@ class PluginList implements View {
       rows.push({ kind: "title", text: `${section.title} (${plugins.length})` });
       for (const plugin of plugins) {
         rows.push({ kind: "plugin", plugin });
-        if (this.#open.has(plugin.item)) rows.push({ kind: "details", plugin });
+        if (this.#open.has(sourceOf(plugin))) rows.push({ kind: "details", plugin });
       }
     }
     return rows;
@@ -139,7 +150,7 @@ class PluginList implements View {
     const selected = this.selected;
     if (rows.length === 0) canvas.text(1, 0, "config.json has no plugins: a adds one", DETAIL);
     const at = rows.findIndex((row) => row.kind === "plugin" && row.plugin === selected);
-    const below = selected !== undefined && this.#open.has(selected.item) ? 1 : 0;
+    const below = selected !== undefined && this.#open.has(sourceOf(selected)) ? 1 : 0;
     // The view starts at the top, and it moves down only as far as the selection and its details need.
     const top = Math.max(0, Math.min(at, at + below - canvas.height + 1, rows.length - canvas.height));
     for (const [index, row] of rows.slice(top, top + canvas.height).entries()) {
@@ -149,7 +160,7 @@ class PluginList implements View {
         canvas.text(6, index, detailsOf(row.plugin), DETAIL);
       } else {
         const plugin = row.plugin;
-        const text = `${markOf(plugin)} ${(plugin.name ?? "?").padEnd(12)} ${plugin.item}  ${stateOf(plugin)}`;
+        const text = `${markOf(plugin)} ${(plugin.name ?? "?").padEnd(12)} ${sourceOf(plugin)}  ${stateOf(plugin)}`;
         if (plugin === selected) canvas.fill(0, index, canvas.width, 1, SELECTED);
         canvas.text(2, index, text.trimEnd(), plugin === selected ? SELECTED : undefined);
       }
@@ -163,9 +174,9 @@ class PluginList implements View {
       this.#selected = Math.max(0, Math.min(this.#plugins.length - 1, this.#selected + move));
       return true;
     }
-    const item = this.selected?.item;
-    if (stroke !== "enter" || item === undefined) return false;
-    if (!this.#open.delete(item)) this.#open.add(item);
+    const source = this.selected === undefined ? undefined : sourceOf(this.selected);
+    if (stroke !== "enter" || source === undefined) return false;
+    if (!this.#open.delete(source)) this.#open.add(source);
     return true;
   }
 }
@@ -295,10 +306,10 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
     const plugin = await tui.select({
       title: "Search the plugins",
       items: list.plugins,
-      label: (item) => `${item.name ?? "?"}  ${item.item}`,
+      label: (item) => `${item.name ?? "?"}  ${sourceOf(item)}`,
       signal: dialog.signal,
     });
-    if (plugin !== undefined) list.select(plugin.item);
+    if (plugin !== undefined) list.select(sourceOf(plugin));
   };
 }
 
@@ -362,6 +373,7 @@ async function review(
   const text = new TextView({ document: documentOf([{ label: "the check of the Git plugins runs", lines: [] }]) });
   const dialog = tui.dialog({
     body: text,
+    scroll: text.scroll,
     signal,
     keys: [
       {

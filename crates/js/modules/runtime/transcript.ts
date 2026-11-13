@@ -73,7 +73,7 @@ export class Transcript {
   #settings: Frozen<SessionSettings> | undefined;
   #status: TurnFailure | undefined;
   #usage: Frozen<Usage> | undefined;
-  #gap: EventsPage | undefined;
+  #missingEvents: EventsPage | undefined;
   /** The saved events, by number. */
   #saved: Saved[] = [];
   /** The position of each entry, by key. */
@@ -105,16 +105,16 @@ export class Transcript {
     return this.#usage;
   }
 
-  get first(): number | undefined {
+  get firstEventNumber(): number | undefined {
     return this.#saved[0]?.seq;
   }
 
-  get held(): number {
+  get eventCount(): number {
     return this.#saved.length;
   }
 
-  get gap(): EventsPage | undefined {
-    return this.#gap;
+  get missingEvents(): EventsPage | undefined {
+    return this.#missingEvents;
   }
 
   apply(event: SessionHandleEvent): void {
@@ -129,7 +129,7 @@ export class Transcript {
     this.#settings = event.snapshot.settings;
     this.#status = undefined;
     this.#usage = undefined;
-    this.#gap = undefined;
+    this.#missingEvents = undefined;
     this.#saved = [];
     this.#index.clear();
     this.#draft = undefined;
@@ -156,11 +156,11 @@ export class Transcript {
   /** Hold the saved events `saved`, in order, and fold them again. The entries of the draft stay at the end. */
   #refold(saved: Saved[]): void {
     this.#saved = saved;
-    this.#gap = undefined;
+    this.#missingEvents = undefined;
     for (const [index, event] of this.#saved.entries()) {
       const before = this.#saved[index - 1];
       if (before !== undefined && event.seq > before.seq + 1) {
-        this.#gap = { before: event.seq, limit: event.seq - before.seq - 1 };
+        this.#missingEvents = { before: event.seq, limit: event.seq - before.seq - 1 };
         break;
       }
     }
@@ -181,7 +181,7 @@ export class Transcript {
       const last = this.#saved.at(-1)?.seq;
       if (last !== undefined && update.seq <= last) return;
       if (last !== undefined && update.seq > last + 1) {
-        this.#gap ??= { before: update.seq, limit: update.seq - last - 1 };
+        this.#missingEvents ??= { before: update.seq, limit: update.seq - last - 1 };
       }
       this.#saved.push(update);
       if (update.sessionUpdate === "settings") {

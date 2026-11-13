@@ -9,12 +9,13 @@ import type {
   KeyEvent,
   MouseEvent,
   Pane,
+  PasteEvent,
+  PlacedWidget,
   TextAppearance,
   TextEditor,
   TextExtension,
   TextView,
   View,
-  WidgetMount,
 } from "yuke:tui";
 
 /** What a placed widget asks of the core. */
@@ -58,7 +59,7 @@ export class TextSupport<P, E> {
     beforeDefault: [],
   };
   readonly #mice: Handler<P, (event: MouseEvent) => boolean>[] = [];
-  readonly #pastes: Handler<P, (text: string) => boolean>[] = [];
+  readonly #pastes: Handler<P, (event: PasteEvent) => boolean>[] = [];
   readonly #listeners: Handler<P, (event: E) => void>[] = [];
 
   /** Without `group` the widget gets a group of its own. */
@@ -124,7 +125,7 @@ export class TextSupport<P, E> {
         return add(this.#keys[phase], handler);
       },
       addMouseHandler: (handler: (event: MouseEvent) => boolean): (() => void) => add(this.#mice, handler),
-      addPasteHandler: (handler: (text: string) => boolean): (() => void) => add(this.#pastes, handler),
+      addPasteHandler: (handler: (event: PasteEvent) => boolean): (() => void) => add(this.#pastes, handler),
       addChangeListener: (listener: (event: E) => void): (() => void) => add(this.#listeners, listener),
       dispose: part.dispose,
     });
@@ -164,8 +165,8 @@ export class TextSupport<P, E> {
     return this.#offer(this.#mice, event);
   }
 
-  paste(text: string): boolean {
-    return this.#offer(this.#pastes, text);
+  paste(event: PasteEvent): boolean {
+    return this.#offer(this.#pastes, event);
   }
 
   /** Give a change to each listener, the oldest first. */
@@ -223,20 +224,20 @@ export function supportOf(view: View): WidgetSupport | undefined {
 }
 
 interface Mounted {
-  readonly mount: WidgetMount;
+  readonly mount: PlacedWidget;
   readonly controller: AbortController;
   readonly layer: object;
 }
 
 interface Watch {
   readonly owner: string;
-  readonly attach: (mount: WidgetMount) => (() => void) | undefined;
+  readonly attach: (mount: PlacedWidget) => (() => void) | undefined;
   /** Each mount that the watch saw, with its cleanup when `attach` gave one. */
-  readonly cleanups: Map<WidgetMount, (() => void) | undefined>;
+  readonly cleanups: Map<PlacedWidget, (() => void) | undefined>;
 }
 
 /** The core host of each placed hosted view, and the mounts of the placed text widgets. */
-export class WidgetMounts {
+export class PlacedWidgets {
   readonly #host: WidgetHost;
   readonly #report: (source: string, text: string) => void;
   /** The views that hold the host now. */
@@ -277,7 +278,7 @@ export class WidgetMounts {
         if (cleanup !== undefined) this.#run(watch.owner, cleanup);
       }
     }
-    const added: WidgetMount[] = [];
+    const added: PlacedWidget[] = [];
     for (const entry of now.values()) {
       const found = registered.get(entry.view);
       if (found === undefined || this.#mounted.has(entry.view)) continue;
@@ -296,12 +297,12 @@ export class WidgetMounts {
     }
   }
 
-  list(): WidgetMount[] {
+  list(): PlacedWidget[] {
     return [...this.#mounted.values()].map((mounted) => mounted.mount);
   }
 
   /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
-  addWatcher(owner: string, attach: (mount: WidgetMount) => (() => void) | undefined): () => void {
+  addWatcher(owner: string, attach: (mount: PlacedWidget) => (() => void) | undefined): () => void {
     const watch: Watch = { owner, attach, cleanups: new Map() };
     this.#watches.add(watch);
     for (const mount of this.list()) this.#visit(watch, mount);
@@ -312,7 +313,7 @@ export class WidgetMounts {
     };
   }
 
-  #visit(watch: Watch, mount: WidgetMount): void {
+  #visit(watch: Watch, mount: PlacedWidget): void {
     // A watch that starts inside an attach sees the mounts of the running update already.
     if (!this.#watches.has(watch) || mount.signal.aborted || watch.cleanups.has(mount)) return;
     watch.cleanups.set(mount, undefined);

@@ -109,7 +109,7 @@ test("a folder plugin reads a file beside its module through import.meta", async
          name: "prompt",
          description: "Read the prompt.",
          concurrency: "serial",
-         parameters: { type: "object", properties: {} },
+         inputSchema: { type: "object", properties: {} },
          execute: () => readTextFile("prompt.md", { cwd: import.meta.dirname }),
        });
      };`,
@@ -149,7 +149,7 @@ test("apply runs once with its context, and session runs for each session", asyn
       name: "hello",
       description: "Say hello.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: () => "hello",
     });
   };

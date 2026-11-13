@@ -30,7 +30,7 @@ use yuke_protocol::{
     Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
 };
 
-use crate::app::{Answer, App, AppError, Attachment, Machine, Mode, Observer, TokioTimer, open_store, warn};
+use crate::app::{Answer, App, AppError, Attachment, Machine, Observer, RunMode, TokioTimer, open_store, warn};
 use yuke_engine::chain_text;
 
 /// The most messages that wait in the queue to the client. A client that falls further behind loses its connection.
@@ -163,7 +163,7 @@ pub(crate) async fn serve(
     let observer = Rc::clone(&active) as Rc<dyn Observer>;
     let started = async {
         let store = open_store(&machine.paths.data).await?;
-        App::start(machine, Mode::Server, observer, store, Rc::new(TokioTimer)).await
+        App::start(machine, RunMode::Server, observer, store, Rc::new(TokioTimer)).await
     };
     let app = match started.await {
         Ok(app) => app,
@@ -737,9 +737,7 @@ fn response_error(error: &AppError) -> ResponseError {
         AppError::Store(error) => match error {
             StoreError::NotFound => ResponseError::SESSION_NOT_FOUND,
             StoreError::Owned => ResponseError::SESSION_OWNED,
-            StoreError::NotACompletedTurn | StoreError::InputNotPending(_) | StoreError::InputBlocksExceedCommit => {
-                ResponseError::INVALID_PARAMS
-            }
+            StoreError::NotACompletedTurn | StoreError::InputNotPending(_) => ResponseError::INVALID_PARAMS,
             StoreError::Failed(_) => ResponseError::INTERNAL_ERROR,
         },
         AppError::Internal(_) => ResponseError::INTERNAL_ERROR,

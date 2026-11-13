@@ -15,7 +15,6 @@ use crate::{Block, Credential, Modality, OriginRef, Protocol, Request, Target, W
 
 /// The part of a request that a protocol or a target cannot carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Unsupported {
     /// The request defers a tool, and the target or its protocol has no native tool search.
     DeferredTool,
@@ -52,11 +51,10 @@ impl fmt::Display for Unsupported {
 
 /// A request that cannot be encoded. The encoder sends nothing then.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum EncodeError {
     /// The protocol or the target cannot carry a part of the request.
     Unsupported(Unsupported),
-    /// The blob store lacks a blob, or answers bytes of another length.
+    /// The blob store lacks a blob.
     UnresolvedBlob {
         /// The digest of the blob.
         digest: crate::Digest,
@@ -70,14 +68,6 @@ pub enum EncodeError {
     },
     /// The credential does not match the credential header of the route.
     CredentialMismatch,
-    /// A route or identity header is not a valid HTTP field, or the transport or the encoder writes it. Or the
-    /// credential or the session id is not a valid header value.
-    InvalidHeader {
-        /// The header name. The error never holds a header value, because a value can be a credential.
-        name: String,
-    },
-    /// The temperature or the nucleus sampling mass is NaN or infinite. JSON has no such number.
-    InvalidSampling,
 }
 
 impl fmt::Display for EncodeError {
@@ -88,9 +78,6 @@ impl fmt::Display for EncodeError {
             // The text names no cause, because `source` returns it.
             Self::BlobRead { digest, .. } => write!(f, "the blob store failed to read the attachment blob {digest}"),
             Self::CredentialMismatch => f.write_str("the credential does not match the route"),
-            // A rejected name can hold a control byte, so it prints escaped.
-            Self::InvalidHeader { name } => write!(f, "the request header {name:?} is invalid"),
-            Self::InvalidSampling => f.write_str("the sampling values must be finite numbers"),
         }
     }
 }
@@ -167,21 +154,14 @@ impl Encoder {
     ///
     /// # Errors
     ///
-    /// Returns [`EncodeError`] if the protocol cannot carry the content, a blob does not resolve, the route is invalid,
-    /// or a sampling value is not finite.
+    /// Returns [`EncodeError`] if the protocol cannot carry the content, a blob does not resolve, or the route is
+    /// invalid.
     pub fn encode(
         &mut self,
         target: &Target,
         credential: &Credential,
         request: Request<'_>,
     ) -> Result<Encoded<'_>, EncodeError> {
-        if ![request.settings.temperature, request.settings.top_p]
-            .into_iter()
-            .flatten()
-            .all(f64::is_finite)
-        {
-            return Err(EncodeError::InvalidSampling);
-        }
         // Chat Completions has no search of deferred tools, so its target flag does not count.
         let searches = target.tool_search && target.wire.protocol() != Protocol::OpenaiChat;
         if !searches && wire::defers_tools(request.tools) {
@@ -883,34 +863,6 @@ mod tests {
             let source = std::error::Error::source(&error).and_then(|source| source.downcast_ref::<Locked>());
             assert_eq!(source.map(|locked| locked.code), Some(5));
             encode_checked(&mut encoder, "m", wire, request).unwrap();
-        }
-    }
-
-    // JSON has no NaN or infinity, so the request fails before any byte is written.
-    #[test]
-    fn non_finite_sampling_value_is_rejected() {
-        let blocks = [Block::user_text("hi")];
-        for wire in ALL_WIRES {
-            for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-                let target = target_of("m", wire);
-                let mut encoder = Encoder::new();
-                for request in [
-                    Request::new(&blocks).settings(&RequestSettings::new().temperature(value)),
-                    Request::new(&blocks).settings(&RequestSettings::new().top_p(value)),
-                ] {
-                    assert!(matches!(
-                        encoder.encode(&target, &Credential::None, request),
-                        Err(EncodeError::InvalidSampling)
-                    ));
-                }
-                encoder
-                    .encode(
-                        &target,
-                        &Credential::None,
-                        Request::new(&blocks).settings(&RequestSettings::new().temperature(0.5)),
-                    )
-                    .unwrap();
-            }
         }
     }
 

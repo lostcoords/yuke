@@ -32,7 +32,7 @@ async function compacting(replies: readonly Reply[]) {
   const host = await createHost({
     plugins: [{ name: "compaction", session: compaction }],
     replies,
-    answer: () => undefined,
+    onQuestion: () => undefined,
   });
   return { host, session: await host.openSession() };
 }

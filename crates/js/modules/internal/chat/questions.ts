@@ -14,6 +14,7 @@ import {
   type Canvas,
   type Cursor,
   type KeyEvent,
+  type PasteEvent,
   type Placement,
   type Size,
   strokeOf,
@@ -180,7 +181,7 @@ function ask(
       fieldRow = row + at;
       return [{ view: field, rect: { column: INDENT, row: fieldRow, width: size.width - INDENT, height: 1 } }];
     },
-    onPaste: (text: string): boolean => typing()?.onPaste(text) ?? false,
+    onPaste: (event: PasteEvent): boolean => typing()?.onPaste(event) ?? false,
     cursor(): Cursor | undefined {
       const at = fieldRow === undefined ? undefined : typing()?.cursor();
       return at === undefined || fieldRow === undefined

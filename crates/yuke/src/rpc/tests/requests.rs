@@ -8,7 +8,7 @@ const READER: &str = "import { ClientRequestError } from 'yuke:plugins';
    export function session(s) {
      s.tools.add({
        name: 'read_session', description: 'Read a session.', concurrency: 'serial',
-       parameters: { type: 'object', properties: {} },
+       inputSchema: { type: 'object', properties: {} },
        async execute(_args, { signal }) {
          try {
            const found = await s.sendClientRequest('session.read', { id: 'S-42' }, { signal });

@@ -626,7 +626,7 @@ async fn the_model_calls_a_tool_of_a_plugin_from_the_config() {
          export function session(s) {
            s.tools.add({
              name: 'greet', description: 'Greet.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              execute: () => `hello from ${name}`,
            });
          }",
@@ -653,7 +653,7 @@ async fn a_question_of_a_plugin_gets_no_answer_because_the_run_has_no_client() {
         "export function session(s) {
            s.tools.add({
              name: 'ask', description: 'Ask.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              async execute() {
                const question = { id: 'run', header: 'Migration', question: 'Run the migration?', options: [{ label: 'Yes' }, { label: 'No' }] };
                return `answer: ${await s.ask({ questions: [question] })}`;
@@ -696,7 +696,7 @@ async fn a_job_in_a_call_runs_and_answers_in_print() {
         "export function session(s) {
            s.tools.add({
              name: 'work', description: 'work', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              execute: async (args, context) => {
                const job = { id: 'explorer', label: 'explore' };
                const outcome = await context.jobs.run(job, () => ({ status: 'completed', text: 'the answer' }));
@@ -725,7 +725,7 @@ async fn a_plugin_job_fails_because_the_run_ends_with_its_turn() {
         "export function session(s) {
            s.tools.add({
              name: 'work', description: 'work', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              execute: async () => {
                await s.jobs.start({ id: 'explorer', label: 'explore' }, () => undefined);
                return 'started';

@@ -32,7 +32,6 @@ const JSON: &str = "application/json";
 
 /// An OAuth flow of the catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Flow {
     /// The xAI device login.
     Xai,
@@ -179,7 +178,6 @@ impl fmt::Debug for Grant {
 
 /// Why an OAuth step failed. A failed exchange gives its fault as the source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum OAuthError {
     /// The step failed for now. A repeat is safe, also with the same refresh token.
     Transient(Option<Fault>),

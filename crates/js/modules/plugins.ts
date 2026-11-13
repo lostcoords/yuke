@@ -77,8 +77,8 @@ export interface Sessions {
    * parent removes it. An unknown parent rejects.
    */
   readonly create: (settings: SessionSettings, options?: { readonly parent?: SessionId }) => Promise<SessionId>;
-  /** Fork session `id` through the end of the completed turn `through`, or its newest one, and open the fork. */
-  readonly fork: (id: SessionId, through?: EventNumber) => Promise<SessionId>;
+  /** Fork session `id` through the end of the completed turn `options.through`, or its newest one, and open the fork. */
+  readonly fork: (id: SessionId, options?: { readonly through?: EventNumber }) => Promise<SessionId>;
   /**
    * A page of the saved sessions, newest first. `nextCursor` continues the list. Without `parent`, the page holds only
    * the sessions without a parent. With `parent`, it holds the sessions of that parent.
@@ -327,8 +327,8 @@ export interface PromptBuildAnswer {
   readonly sections: Readonly<Record<string, string>>;
 }
 
-/** One tool call of the model. */
-export interface ToolCall {
+/** One tool call of the model, with its arguments parsed. `yuke:protocol` has the call as stored, with JSON text. */
+export interface ParsedToolCall {
   /** The id of the call, from the model. */
   readonly callId: string;
   /** The name of the tool. A call of a deferred tool through `tool_call` has the name of the deferred tool. */
@@ -377,7 +377,7 @@ export interface ToolCallResult {
 
 /** What a `tool.before` handler gets. */
 export interface ToolBeforeEvent {
-  readonly call: ToolCall;
+  readonly call: ParsedToolCall;
   /**
    * The host aborts this signal when the turn is cancelled. After the abort, the host does not wait for the handler,
    * and it ignores the answer of the handler.
@@ -393,7 +393,7 @@ export interface ToolBeforeAnswer {
 
 /** What a `tool.after` handler gets. */
 export interface ToolAfterEvent {
-  readonly call: ToolCall;
+  readonly call: ParsedToolCall;
   /** The result after the answers of the handlers before. */
   readonly result: ToolCallResult;
   /**
@@ -707,7 +707,10 @@ export interface CallJobOptions extends JobOptions {
 
 /** The report of a job. */
 export interface JobReport {
-  /** The end in words, for example `completed`. A notification shows the user `{label} · {status}`. */
+  /**
+   * A free word for the user, such as `completed`. It is not a state of the job. A notification shows
+   * `{label} · {status}`.
+   */
   readonly status: string;
   /** The text for the model. A notification puts the id, the label, and the status before it. */
   readonly text: string;
@@ -747,7 +750,7 @@ export interface SessionContext<O = Record<string, never>> {
    */
   readonly tools: {
     /**
-     * Define or replace `tool` for this session. `execute` gets the arguments with the types of `parameters`.
+     * Define or replace `tool` for this session. `execute` gets the arguments with the types of `inputSchema`.
      * - The returned function removes only this definition and reveals the previous definition or name removal.
      * - A replacement of another plugin's tool sends an info notice. A built-in or same-plugin replacement sends none.
      * - The next turn uses the new tool list. A change can invalidate the provider's prompt cache.
@@ -788,7 +791,7 @@ export interface SessionContext<O = Record<string, never>> {
    * - The extension of the request is the name of this plugin. A client answers an extension that it does not know
    *   with the code -32601.
    * - `data` follows `JSON.stringify`, as for `sendClientEvent`. The promise gives the result of the client.
-   * - An error answer of the client rejects with an `ClientRequestError`.
+   * - An error answer of the client rejects with a `ClientRequestError`.
    * - With no client, as in `yuke -p` and in the interface, the request rejects with an `Error` at once. A disconnect of
    *   the client rejects with an `Error` too.
    * - An abort of the signal or the close of the session rejects with the abort reason. A request that the client got

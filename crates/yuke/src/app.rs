@@ -32,12 +32,12 @@ use yuke_ai::catalog::Auth;
 use yuke_ai::oauth::Flow;
 use yuke_ai::transport::{Exchange, Transport};
 use yuke_engine::{CancellationToken, CredentialSource, Model, Timer, chain_text};
-use yuke_js::{Options, Origin, Processes, Report, Runtime};
+use yuke_js::{Options, PluginCode, Processes, Report, Runtime};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, ExtensionRequestParams,
-    InteractionId, ListCatalogResult, ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome, LoginResult,
-    ModelReference, NoticeLevel, NoticeParams, ProviderCredential, ProviderState, ResponseError, ServerNotification,
-    SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    InteractionId, JobId, ListCatalogResult, ListPluginsResult, LoginFinishedParams, LoginId, LoginOutcome,
+    LoginResult, ModelReference, NoticeLevel, NoticeParams, ProviderCredential, ProviderState, ResponseError,
+    ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult,
     UpdateCredentialParams,
 };
 use yuke_store::SqliteStore;
@@ -84,7 +84,7 @@ pub(crate) struct Machine {
 
 /// How the app runs: as a server that clients come to (`yuke --rpc`), or for one task with no client (`yuke -p`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
+pub(crate) enum RunMode {
     /// A background job runs until it ends, until a stop, or until the close of its session. A question waits for an
     /// answer, also while no client is connected.
     Server,
@@ -121,7 +121,7 @@ pub(crate) struct Shared {
     timer: Rc<dyn Timer>,
     processes: Rc<Processes>,
     observer: Rc<dyn Observer>,
-    mode: Mode,
+    mode: RunMode,
     /// The MCP servers of the user, from `mcp.json` in the config folder.
     mcp: yuke_mcp::Config,
     /// The id of the last question of any session.
@@ -186,8 +186,8 @@ impl Profile {
         plugins
             .iter()
             .filter_map(|plugin| match &plugin.origin {
-                Origin::Folder { root, .. } => Some(root.clone()),
-                Origin::Bundled { .. } | Origin::Given => None,
+                PluginCode::Folder { root, .. } => Some(root.clone()),
+                PluginCode::Bundled { .. } | PluginCode::Given => None,
             })
             .collect()
     }
@@ -262,8 +262,6 @@ impl Shared {
                             ProviderState::NeedsLogin
                         }
                     }
-                    // yuke cannot authenticate with a scheme that it does not know, so the provider is not usable.
-                    _ => return None,
                 };
                 (all || matches!(state, ProviderState::Ready { .. })).then(|| catalog::provider_info(provider, state))
             })
@@ -417,7 +415,6 @@ impl Shared {
                     "{provider} takes a login, not an API key: send auth/login"
                 )));
             }
-            _ => return Err(AppError::Invalid(format!("yuke cannot authenticate with {provider}"))),
         }
         // A model request sends the key in a header, and a header holds no control character.
         if api_key.is_empty() || api_key.chars().any(char::is_control) {
@@ -509,7 +506,7 @@ impl App {
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn start(
         machine: Machine,
-        mode: Mode,
+        mode: RunMode,
         observer: Rc<dyn Observer>,
         store: Arc<dyn Store>,
         timer: Rc<dyn Timer>,
@@ -527,7 +524,7 @@ impl App {
     /// Returns a text for the user when a part does not start.
     pub(crate) async fn prepare(
         machine: Machine,
-        mode: Mode,
+        mode: RunMode,
         observer: Rc<dyn Observer>,
         store: Arc<dyn Store>,
         timer: Rc<dyn Timer>,
@@ -539,7 +536,7 @@ impl App {
             facts: Rc::clone(&facts),
         });
         // A one-task run without the plugins of the user is a wrong run, so it fails instead.
-        let (profile, plugins, failed) = Profile::load(&machine.paths, mode == Mode::Server)?;
+        let (profile, plugins, failed) = Profile::load(&machine.paths, mode == RunMode::Server)?;
         // The full outputs of the commands and the logs of the jobs go to a folder of this process, which the shutdown
         // removes. A test keeps the folder in its own place.
         let processes_folder = match &machine.test {
@@ -551,8 +548,8 @@ impl App {
             )),
         };
         let processes = Rc::new(match mode {
-            Mode::Server => Processes::new(processes_folder.clone()),
-            Mode::Print => Processes::without_jobs(processes_folder.clone()),
+            RunMode::Server => Processes::new(processes_folder.clone()),
+            RunMode::Print => Processes::without_jobs(processes_folder.clone()),
         });
         let shared = Rc::new(Shared {
             machine,
@@ -771,7 +768,7 @@ pub(crate) enum AppError {
     /// A turn runs in an open session, so the plugins cannot reload.
     TurnRuns,
     /// The session runs no job with this id.
-    NoJob(String),
+    NoJob(JobId),
     /// The session has no open question with this id.
     NoInteraction(InteractionId),
     /// No login with this id is in progress.
@@ -903,12 +900,6 @@ fn model_of(reference: &ModelReference, shared: &Shared) -> Result<Model, AppErr
         }
         Auth::ApiKey(None) => Arc::new(Credential::None),
         Auth::OAuth(flow) => Arc::new(login_source(shared, &provider.id, *flow)),
-        _ => {
-            return Err(AppError::Invalid(format!(
-                "yuke cannot authenticate with {}",
-                provider.name
-            )));
-        }
     };
     let target = entry
         .bind()

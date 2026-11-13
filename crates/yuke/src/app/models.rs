@@ -134,7 +134,7 @@ mod tests {
     use yuke_testing::assert_in_order;
 
     use super::*;
-    use crate::app::{App, Mode, Observer};
+    use crate::app::{App, Observer, RunMode};
     use crate::testing::{CountedWaits, Place, with_key};
 
     /// Drops each notification.
@@ -154,7 +154,7 @@ mod tests {
         let place = Place::new("models", name);
         App::start(
             place.machine(Box::new(with_key), transport),
-            Mode::Print,
+            RunMode::Print,
             Rc::new(Silent),
             open_store(&place.paths.data).await.unwrap(),
             timer,

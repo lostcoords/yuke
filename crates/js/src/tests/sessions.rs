@@ -86,11 +86,11 @@ async fn a_replacement_changes_new_snapshots_but_keeps_existing_handles() {
         "a_replacement_changes_new_snapshots_but_keeps_existing_handles",
         "export function session(s) {
            s.tools.add({ name: 'held', description: 'original', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} }, execute: () => 'old' });
+             inputSchema: { type: 'object', properties: {} }, execute: () => 'old' });
            globalThis.replace = () => s.tools.add({
              name: 'held', description: 'replacement', concurrency: 'parallel',
              hints: { preview: 'tail' }, deferLoading: true,
-             parameters: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] },
+             inputSchema: { type: 'object', properties: { value: { type: 'number' } }, required: ['value'] },
              execute: (args) => `new ${args.value}` });
          }",
     )

@@ -9,7 +9,7 @@ const echo: PluginSession = (s) => {
     name: "echo",
     description: "Echo the text.",
     concurrency: "serial",
-    parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     execute: (args, context) => {
       context.output("one");
       context.output("two");
@@ -75,7 +75,7 @@ test("each call gets its own call id", async () => {
       name: "id",
       description: "Give the call id.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: (_args, context) => context.callId,
     });
   };
@@ -102,7 +102,7 @@ test("an abort of the signal cancels a call and a hook point, and each rejects w
       name: "wait",
       description: "Wait for the cancel.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: (_args, context) => waits(context.signal, "tool"),
     });
     s.addHook("tool.before", async (event) => {
@@ -137,7 +137,7 @@ test("setSettings changes the folder and the model of an open session", async ()
       name: "where",
       description: "Give the folder.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: (_args, context) => context.cwd,
     });
   };

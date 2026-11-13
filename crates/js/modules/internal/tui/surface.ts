@@ -14,7 +14,7 @@ import type {
   Command,
   CommandItem,
   ConfirmOptions,
-  DefaultPane,
+  DefaultPaneFactory,
   DialogOptions,
   Direction,
   FocusChange,
@@ -26,6 +26,7 @@ import type {
   OverlayOptions,
   Pane,
   Panes,
+  PlacedWidget,
   RestoreView,
   RootFactory,
   SelectOptions,
@@ -38,7 +39,6 @@ import type {
   Tui,
   View,
   ViewFactory,
-  WidgetMount,
 } from "yuke:tui";
 
 /** The rows of a dialog at the bottom of the screen without `rows` or `place`. */
@@ -137,9 +137,9 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       (create: ViewFactory, options?: { readonly direction?: Direction | undefined }): Pane =>
         mounted(core.panes.split(owner, create, options?.direction ?? "row")),
     ),
-    focus: live((direction: FocusDirection): boolean => core.panes.focus(direction)),
+    moveFocus: live((direction: FocusDirection): boolean => core.panes.moveFocus(direction)),
     focusNext: live((): void => core.panes.focusNext()),
-    setDefault: live((create: DefaultPane): (() => void) => {
+    setDefault: live((create: DefaultPaneFactory): (() => void) => {
       return scope.own(core.setDefaultPane({ owner, create, adopt: (mount) => scope.ownMount(mount), signal }));
     }),
   });
@@ -271,9 +271,11 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
           .split("\n")
           .reduce((sum, line) => sum + Math.max(1, Math.ceil(measure(line) / Math.max(1, core.driver.width() - 2))), 0);
         const title = options.title;
+        const view = new TextView({ document });
         const mount = dialog({
           title,
-          body: new TextView({ document }),
+          body: view,
+          scroll: view.scroll,
           keys: [
             {
               key: "enter",
@@ -355,7 +357,7 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
         scope.own(core.keymap.add(spec, lookup(command), options?.in === undefined ? {} : { in: options.in })),
       ),
       pending: live((): string => core.keymap.pending()),
-      keysOf: live((name: string): readonly string[] => core.keymap.keysOf(lookup(name))),
+      list: live((command: string): readonly string[] => core.keymap.list(lookup(command))),
     }),
     styles: Object.freeze({
       add: live((groups: Readonly<Record<string, StylePatch>>): (() => void) => scope.own(core.styles.add(groups))),
@@ -382,8 +384,8 @@ export function createSurface(core: Core, owner: string, signal: AbortSignal): T
       ),
     }),
     widgets: Object.freeze({
-      list: live((): readonly WidgetMount[] => core.widgets.list()),
-      addWatcher: live((attach: (mount: WidgetMount) => (() => void) | undefined): (() => void) =>
+      list: live((): readonly PlacedWidget[] => core.widgets.list()),
+      addWatcher: live((attach: (mount: PlacedWidget) => (() => void) | undefined): (() => void) =>
         scope.own(core.widgets.addWatcher(owner, attach)),
       ),
     }),

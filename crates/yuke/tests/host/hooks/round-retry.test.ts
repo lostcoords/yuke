@@ -10,7 +10,7 @@ test("an answer sends the round again, and each round counts its retries from ze
       name: "greet",
       description: "Greet someone.",
       concurrency: "serial",
-      parameters: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
+      inputSchema: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
       execute: (args) => `hello ${args.who}`,
     });
   };

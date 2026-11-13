@@ -23,7 +23,7 @@ pub use catalog::{
     ProviderState, ReasoningChoice, ReasoningLevel,
 };
 pub use event::{SessionEvent, StoredEvent};
-pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, LoginId, SessionId};
+pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, JobId, LoginId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
 pub use interaction::{
     InteractionRequest, InteractionRespondParams, InteractionResponse, Question, QuestionAnswer, QuestionOption,
@@ -40,7 +40,7 @@ pub use message::{
 };
 pub use plugin::{
     AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,
-    ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
+    ListPluginsResult, ManagedPlugin, PluginChange, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget,
     RemovePluginParams, SyncPluginsParams, SyncPluginsResult, SyncedPlugin,
 };
 pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};

@@ -28,7 +28,7 @@ defineTool({
   description:
     "Read a file with 1-indexed line numbers. Pass offset and limit for a line range. One read returns at most " +
     `${OUTPUT_BYTES / 1024} KiB. A capped read gives the next offset. A PNG, JPEG, GIF, or WebP file returns the image.`,
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       path: { type: "string", description: PATH },
@@ -54,7 +54,7 @@ defineTool({
 defineTool({
   name: "write",
   description: "Create a file or replace its content. Pass the complete content. Missing parent folders are created.",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       path: { type: "string", description: PATH },
@@ -77,7 +77,7 @@ defineTool({
 defineTool({
   name: "edit",
   description: "Replace an exact string in a file. old_string must appear exactly once unless replace_all is true.",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       path: { type: "string", description: PATH },
@@ -211,7 +211,7 @@ defineTool({
     "Each call starts a fresh shell and ends every process it starts, unless the user moves the running command to " +
     "the background: the result then names the job. For a server or watcher, set background to " +
     "true. Do not use &, nohup, or setsid.",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       command: { type: "string" },
@@ -276,7 +276,7 @@ defineTool({
   name: "stop",
   description:
     "Stop background work by the id that its start result names. A job ends in the result, and no report follows.",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       id: { type: "string" },

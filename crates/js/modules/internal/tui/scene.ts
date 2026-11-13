@@ -15,6 +15,7 @@ import type {
   MouseEvent,
   OverlayOptions,
   Pane,
+  PasteEvent,
   Point,
   Rect,
   RootFactory,
@@ -200,8 +201,8 @@ export class Scene {
   }
 
   /** Give a paste along the focus path of the input layer. */
-  paste(text: string): void {
-    this.#bubble(this.#inputLayer(), (view) => view.onPaste, text);
+  paste(event: PasteEvent): void {
+    this.#bubble(this.#inputLayer(), (view) => view.onPaste, event);
   }
 
   /**

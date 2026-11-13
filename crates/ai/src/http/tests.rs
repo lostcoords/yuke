@@ -231,30 +231,19 @@ async fn redirect_is_refused() {
 }
 
 #[test]
-fn retry_after_reads_seconds_or_http_date() {
-    let now = 784_111_777; // Sun, 06 Nov 1994 08:49:37 GMT
-    assert_eq!(imf_fixdate("Sun, 06 Nov 1994 08:49:37 GMT"), Some(now));
-    assert_eq!(imf_fixdate("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
-    assert_eq!(imf_fixdate("Tue, 29 Feb 2000 00:00:00 GMT"), Some(951_782_400));
-    assert_eq!(retry_after_ms("120", now), Some(120_000));
+fn retry_after_reads_the_seconds_form_only() {
+    let delay = |value: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", HeaderValue::from_str(value).unwrap());
+        read_head(&headers, 429).retry_after_ms
+    };
+    assert_eq!(delay("120"), Some(120_000));
     // Both SDKs read the delay with `parseFloat`, so a decimal and a sign count.
-    assert_eq!(retry_after_ms("1.5", now), Some(1_500));
-    assert_eq!(retry_after_ms("+5", now), Some(5_000));
-    assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:50:07 GMT", now), Some(30_000));
-    // A date in the past is no delay.
-    assert_eq!(retry_after_ms("Sun, 06 Nov 1994 08:00:00 GMT", now), Some(0));
-    // Malformed values leave the delay to the caller.
-    for value in [
-        "Sun, 06 Nov 1994 08:49:37 UTC",
-        "Wed, 30 Feb 2000 00:00:00 GMT",
-        "Sun, 06 Nov 1994 24:00:00 GMT",
-        "Xyz, 06 Nov 1994 08:49:37 GMT",
-        "-5",
-        "inf",
-        "nan",
-        "",
-    ] {
-        assert_eq!(retry_after_ms(value, now), None, "{value}");
+    assert_eq!(delay("1.5"), Some(1_500));
+    assert_eq!(delay("+5"), Some(5_000));
+    // An HTTP date and a malformed value leave the delay to the caller.
+    for value in ["Sun, 06 Nov 1994 08:50:07 GMT", "-5", "inf", "nan", ""] {
+        assert_eq!(delay(value), None, "{value}");
     }
 }
 

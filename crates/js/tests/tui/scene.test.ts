@@ -518,8 +518,8 @@ test("a view beside the panes gets the mouse and leaves the focus on the active 
   assertEquals(tui.panes.active, right);
   assertEquals(tui.focused, right.view);
   // No pane is to the right. The focus stays.
-  assertEquals(tui.panes.focus("right"), false);
-  assertEquals(tui.panes.focus("left"), true);
+  assertEquals(tui.panes.moveFocus("right"), false);
+  assertEquals(tui.panes.moveFocus("left"), true);
   assertEquals(tui.panes.active, left);
   root.close();
   terminal.screen(core);
@@ -674,7 +674,7 @@ test("a bare name gets the plugin prefix and a foreign prefix throws", () => {
       .filter((name) => name.startsWith("notes:")),
     ["notes:open", "notes:close"],
   );
-  assertEquals(tui.keys.keysOf("open"), ["ctrl+n"]);
+  assertEquals(tui.keys.list("open"), ["ctrl+n"]);
   assert(core.views.get("notes:note") !== undefined, "the view type has the plugin prefix");
 });
 
@@ -723,7 +723,7 @@ test("the stop of a plugin removes its registrations and mounts and later calls 
     core.commands.list().some((item) => item.name.startsWith("notes:")),
     false,
   );
-  assertEquals(core.keymap.keysOf("notes:open"), []);
+  assertEquals(core.keymap.list("notes:open"), []);
   assertEquals(core.styles.resolve("notes.title"), {});
   assertEquals(core.views.get("notes:note"), undefined);
   assertEquals(heard, []);

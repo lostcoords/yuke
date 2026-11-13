@@ -17,6 +17,7 @@ import type {
   KeyEvent,
   MouseEvent,
   OffsetRange,
+  PasteEvent,
   Placement,
   Point,
   ScrollControl,
@@ -394,8 +395,8 @@ export class TextView implements TextWidget<TextPosition, TextViewChange> {
     );
   }
 
-  onPaste(text: string): boolean {
-    return this.#support.paste(text);
+  onPaste(event: PasteEvent): boolean {
+    return this.#support.paste(event);
   }
 
   #emit(kind: TextViewChange["kind"]): void {

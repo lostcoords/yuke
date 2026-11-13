@@ -3,7 +3,7 @@
 import { Core } from "yuke:internal/tui/core";
 import { createSurface } from "yuke:internal/tui/surface";
 import { assertEquals, test } from "yuke:test";
-import { TextEditor, type View, type WidgetMount } from "yuke:tui";
+import { type PlacedWidget, TextEditor, type View } from "yuke:tui";
 import { atoms, fakeTerminal, key, named } from "./terminal.ts";
 
 /** A pane that shows `widget` on its first row. */
@@ -22,7 +22,7 @@ test("a watch gets each mount once and its cleanup when the widget leaves", () =
   const editor = new TextEditor();
   const log: string[] = [];
   const signals: AbortSignal[] = [];
-  const watcher = (name: string) => (mount: WidgetMount) => {
+  const watcher = (name: string) => (mount: PlacedWidget) => {
     log.push(`${name} attach ${mount.pane === undefined ? "no pane" : "pane"}`);
     signals.push(mount.signal);
     return () => log.push(`${name} cleanup`);
@@ -69,7 +69,7 @@ test("a watch that starts inside an attach sees each mount once", () => {
     ],
   }));
   const log: string[] = [];
-  const name = (mount: WidgetMount): string => (mount.widget === first ? "first" : "second");
+  const name = (mount: PlacedWidget): string => (mount.widget === first ? "first" : "second");
   core.widgets.addWatcher("outer", () => {
     if (log.length === 0) {
       core.widgets.addWatcher("inner", (mount) => {
@@ -152,7 +152,7 @@ test("each extension adds its own part and the stop of one plugin leaves the oth
   const editor = new TextEditor();
   core.scene.wrapRoot("chat", () => holder(editor));
   const typed: string[] = [];
-  const extend = (mount: WidgetMount, name: string, shape: "block" | "bar"): (() => void) => {
+  const extend = (mount: PlacedWidget, name: string, shape: "block" | "bar"): (() => void) => {
     const extension = mount.widget.extend(mount.signal);
     extension.setContexts([`${name}-mode`]);
     extension.setAppearance({ cursorShape: shape, prompt: `${name}> ` });

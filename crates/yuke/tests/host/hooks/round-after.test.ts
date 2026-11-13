@@ -10,7 +10,7 @@ test("a handler gets the text, the reason, and the count of each round of a turn
       name: "greet",
       description: "Greet someone.",
       concurrency: "serial",
-      parameters: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
+      inputSchema: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
       execute: (args) => `hello ${args.who}`,
     });
   };

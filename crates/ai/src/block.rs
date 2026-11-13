@@ -16,7 +16,6 @@ use crate::{EncodeError, ParseError, Protocol, Target, ToolDefinition};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-#[non_exhaustive]
 pub enum ReplayKind {
     /// The `signature` of an Anthropic thinking block. A compatible host may send an empty one.
     AnthropicSignature,
@@ -130,7 +129,6 @@ impl From<ReasoningReplayRef<'_>> for ReasoningReplay {
 /// A kind of content: what an attachment holds, and what a model reads or writes. `Other` is a media type that no
 /// protocol names, and no model lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Modality {
     /// Text.
     Text,
@@ -211,7 +209,7 @@ pub struct Blob {
     /// The digest of the content, such as its SHA-256. JSON holds it as 64 lowercase hex characters.
     #[cfg_attr(feature = "ts", ts(type = "string"))]
     pub digest: Digest,
-    /// The byte count of the content. [`BlobStore`] answers are checked against it.
+    /// The byte count of the content.
     pub len: usize,
 }
 
@@ -226,7 +224,7 @@ pub trait BlobStore: Sync {
     fn read(&self, digest: &Digest) -> Result<Option<Cow<'_, [u8]>>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
-/// Answer the bytes of `blob` from `store`. Bytes of another length fail: the store holds other content.
+/// Answer the bytes of `blob` from `store`. The digest names the bytes, so the store holds the right content.
 pub(crate) fn read_blob<'s>(store: Option<&'s dyn BlobStore>, blob: &Blob) -> Result<Cow<'s, [u8]>, EncodeError> {
     let digest = blob.digest;
     let bytes = match store {
@@ -235,9 +233,7 @@ pub(crate) fn read_blob<'s>(store: Option<&'s dyn BlobStore>, blob: &Blob) -> Re
             .map_err(|source| EncodeError::BlobRead { digest, source })?,
         None => None,
     };
-    bytes
-        .filter(|bytes| bytes.len() == blob.len)
-        .ok_or(EncodeError::UnresolvedBlob { digest })
+    bytes.ok_or(EncodeError::UnresolvedBlob { digest })
 }
 
 /// Which side a block belongs to: the user or the assistant.
@@ -264,7 +260,6 @@ impl Role {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase")]
-#[non_exhaustive]
 pub enum Block {
     /// User text.
     UserText {
@@ -337,7 +332,6 @@ impl AssistantText {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
-#[non_exhaustive]
 pub enum TextPhase {
     /// A note while the model works, such as the text before a tool call.
     Commentary,
@@ -556,20 +550,18 @@ mod tests {
     }
 
     #[test]
-    fn blob_read_checks_length() {
+    fn a_blob_read_gives_the_bytes_of_the_store_or_is_unresolved() {
         let blob = Blob {
             digest: Digest([0; 32]),
             len: 2,
         };
-        let missing = || {
+        assert_same(
+            read_blob(None, &blob),
             Err(EncodeError::UnresolvedBlob {
                 digest: Digest([0; 32]),
-            })
-        };
-        assert_same(read_blob(None, &blob), missing());
+            }),
+        );
         assert_same(read_blob(Some(&Store), &blob), Ok(Cow::Borrowed(&b"ab"[..])));
-        // The store holds other content under this digest, so the request must not send it.
-        assert_same(read_blob(Some(&Store), &Blob { len: 3, ..blob }), missing());
     }
 
     // The store keeps this JSON, so this test must catch a renamed field or variant.

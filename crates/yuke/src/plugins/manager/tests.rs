@@ -80,7 +80,7 @@ async fn sync_keeps_a_locked_commit_after_its_branch_moves_and_an_applied_update
     let clock_plugin = loaded.iter().find(|plugin| plugin.name == "clock").unwrap();
     assert_eq!(
         clock_plugin.origin,
-        yuke_js::Origin::Folder {
+        yuke_js::PluginCode::Folder {
             root: git_folder(&paths.data, &url, &first).join("plugins/clock"),
             entry: None,
         }
@@ -347,7 +347,7 @@ async fn a_plugin_with_an_invalid_entry_keeps_its_name_for_list_and_remove() {
     assert_eq!(
         listed,
         [ManagedPlugin {
-            item: "./clock".to_owned(),
+            source: PluginOrigin::Folder("./clock".to_owned()),
             name: Some("clock".to_owned()),
             loaded: false,
             state: PluginState::Local,

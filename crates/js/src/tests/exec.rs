@@ -300,7 +300,7 @@ async fn closing_a_session_stops_only_its_jobs_and_refuses_its_later_jobs() {
     assert_eq!(
         running
             .iter()
-            .map(|job| (job.id.as_str(), job.label.as_str()))
+            .map(|job| (job.id.0.as_str(), job.label.as_str()))
             .collect::<Vec<_>>(),
         [(kept.as_str(), "sleep 31")]
     );
@@ -452,7 +452,7 @@ async fn the_host_sees_each_start_and_end_of_a_job_before_a_stop_answers() {
     // The host has the end of the stopped job before the stop answers.
     assert_eq!(changed_at_answer, 6);
     let job = |id: &str, command: &str, state, exit_code| yuke_protocol::Job {
-        id: id.to_owned(),
+        id: yuke_protocol::JobId(id.to_owned()),
         label: command.to_owned(),
         state,
         kind: yuke_protocol::JobKind::Process {
@@ -518,7 +518,7 @@ async fn a_job_label_is_the_first_line_of_its_command_and_at_most_60_characters(
             let arguments = serde_json::json!({ "command": command, "background": true }).to_string();
             let id = job_id(&text_of(exec, &arguments).await);
             let jobs = processes.jobs().running(host.session);
-            jobs.into_iter().find(|job| job.id == id).unwrap().label
+            jobs.into_iter().find(|job| job.id.0 == id).unwrap().label
         }
     };
     let comment = |length: usize| format!("exit 0 # {}", "é".repeat(length - 9));
@@ -574,7 +574,7 @@ async fn a_moved_command_becomes_a_job_keeps_its_whole_output_and_reports_its_en
     );
     let listed = processes.jobs().running(host.session);
     assert_eq!(
-        listed.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+        listed.iter().map(|job| job.id.0.as_str()).collect::<Vec<_>>(),
         [id.as_str()]
     );
     tokio::time::timeout(WAIT, host.input_received.notified())
@@ -699,7 +699,7 @@ async fn a_call_dropped_after_a_move_leaves_a_job_that_a_stop_ends() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     drop(running);
     let listed = processes.jobs().running(host.session);
-    let stopped = tokio::time::timeout(WAIT, processes.jobs().stop(host.session, &listed[0].id))
+    let stopped = tokio::time::timeout(WAIT, processes.jobs().stop(host.session, &listed[0].id.0))
         .await
         .unwrap();
 

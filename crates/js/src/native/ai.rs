@@ -116,7 +116,7 @@ const BYTES_PER_TOKEN: u64 = 4;
 
 /// The estimated tokens of `block`. Its text bytes divide by [`BYTES_PER_TOKEN`] and round up. A tool call counts its
 /// name and its arguments. Reasoning counts the larger of its text and its provider state. Each media item adds
-/// [`MEDIA_TOKENS`]. Any other block counts the bytes of its JSON.
+/// [`MEDIA_TOKENS`].
 pub(crate) fn block_tokens(block: &Block) -> u64 {
     match block {
         Block::Media(_) => MEDIA_TOKENS,
@@ -127,7 +127,6 @@ pub(crate) fn block_tokens(block: &Block) -> u64 {
             text_tokens(reasoning.text.len().max(state))
         }
         Block::ToolCall(call) => text_tokens(call.name.len() + call.arguments.len()),
-        other => text_tokens(serde_json::to_vec(other).map_or(0, |json| json.len())),
     }
 }
 

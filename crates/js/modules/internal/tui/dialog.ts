@@ -15,15 +15,6 @@ const STEPS: Readonly<Record<string, (page: number) => number>> = {
   pagedown: (page) => page,
 };
 
-/** The scroll of `body`: a text view has a scroll control, and a scroll list scrolls itself. */
-function scrollOf(body: View): ((rows: number) => void) | undefined {
-  const view = body as { readonly scroll?: { readonly scrollBy?: unknown }; readonly scrollBy?: unknown };
-  const control = view.scroll?.scrollBy;
-  if (typeof control === "function") return (rows) => control.call(view.scroll, rows);
-  const own = view.scrollBy;
-  return typeof own === "function" ? (rows) => own.call(view, rows) : undefined;
-}
-
 /** The stroke of the key spec of `key`. A dialog key is one stroke. */
 function strokeOfSpec(key: DialogKey): string {
   const strokes = parseKeys(key.key);
@@ -35,7 +26,7 @@ function strokeOfSpec(key: DialogKey): string {
 export function dialogView(options: DialogOptions): View {
   const keys = (options.keys ?? []).map((key) => ({ key, stroke: strokeOfSpec(key) }));
   const active = () => keys.filter((entry) => entry.key.when?.() ?? true);
-  const scroll = scrollOf(options.body);
+  const scroll = options.scroll;
   const head = options.title === undefined ? 0 : 1;
   let bodyHeight = 0;
   const body = options.body;
@@ -70,7 +61,7 @@ export function dialogView(options: DialogOptions): View {
       }
       const step = STEPS[stroke];
       if (scroll === undefined || step === undefined) return false;
-      scroll(step(Math.max(1, bodyHeight - 1)));
+      scroll.scrollBy(step(Math.max(1, bodyHeight - 1)));
       return true;
     },
   };

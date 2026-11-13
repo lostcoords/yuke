@@ -218,10 +218,10 @@ test("saved results pair with the calls of their answer in the same or a later c
 
 test("a page that starts mid-turn pairs its results after the older page", () => {
   const transcript = opened(saved.slice(3));
-  assertEquals([transcript.first, keys(transcript)], [4, ["5:0", "6:end"]]);
+  assertEquals([transcript.firstEventNumber, keys(transcript)], [4, ["5:0", "6:end"]]);
   const later = transcript.entries[0];
   transcript.insert(saved.slice(0, 3));
-  assertEquals(transcript.first, 1);
+  assertEquals(transcript.firstEventNumber, 1);
   assertEquals(transcript.entries, turnEntries);
   assert(transcript.entries[4] === later, "an unchanged entry keeps its object");
   const full = opened(saved.slice(1));
@@ -238,11 +238,11 @@ test("a trim holds the newest events and keeps the draft, the usage, and each ke
   ]);
   const fixed = transcript.entries.find((entry) => entry.id === "5:0");
   transcript.trim(3);
-  assertEquals([transcript.first, transcript.held, keys(transcript)], [5, 3, ["5:0", "draft:d3:0"]]);
+  assertEquals([transcript.firstEventNumber, transcript.eventCount, keys(transcript)], [5, 3, ["5:0", "draft:d3:0"]]);
   assert(transcript.entries[0] === fixed, "a kept entry keeps its object");
   transcript.trim(1);
   assertEquals(
-    [transcript.first, transcript.held, keys(transcript), transcript.usage?.input],
+    [transcript.firstEventNumber, transcript.eventCount, keys(transcript), transcript.usage?.input],
     [7, 1, ["draft:d3:0"], 100],
   );
 });
@@ -252,14 +252,14 @@ test("an older page after a trim gives back the dropped entries", () => {
   transcript.trim(2);
   assertEquals(keys(transcript), ["5:0", "6:end"]);
   transcript.insert(saved.slice(0, 4));
-  assertEquals([transcript.first, transcript.held, transcript.entries], [1, 6, turnEntries]);
+  assertEquals([transcript.firstEventNumber, transcript.eventCount, transcript.entries], [1, 6, turnEntries]);
 });
 
 test("a gap names the missing events and insert fills it", () => {
   const transcript = fed(opened(saved.slice(0, 3)), saved.slice(4));
-  assertEquals(transcript.gap, { before: 5, limit: 1 });
+  assertEquals(transcript.missingEvents, { before: 5, limit: 1 });
   transcript.insert(saved.slice(3, 4));
-  assertEquals(transcript.gap, undefined);
+  assertEquals(transcript.missingEvents, undefined);
   assertEquals(transcript.entries, turnEntries);
 });
 

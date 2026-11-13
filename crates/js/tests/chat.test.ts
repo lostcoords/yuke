@@ -88,13 +88,18 @@ test("trimHistory drops the history older than an open one page late, and a page
   const reply = (seq: number) => commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]);
   for (let seq = 202; seq <= 300; seq += 1) sessions.push(reply(seq));
   chat.trimHistory();
-  const within = [chat.transcript.held, chat.historyComplete];
+  const within = [chat.transcript.eventCount, chat.historyComplete];
   sessions.push(reply(301));
   chat.trimHistory();
-  const trimmed = [chat.transcript.held, chat.transcript.first, chat.historyComplete, texts(chat).at(0)];
+  const trimmed = [
+    chat.transcript.eventCount,
+    chat.transcript.firstEventNumber,
+    chat.historyComplete,
+    texts(chat).at(0),
+  ];
   await chat.loadOlderHistory();
   assertEquals(
-    [within, trimmed, chat.transcript.held, texts(chat).at(0)],
+    [within, trimmed, chat.transcript.eventCount, texts(chat).at(0)],
     [[300, true], [200, 102, false, "reply 102"], 300, "reply 2"],
   );
 });
@@ -174,14 +179,14 @@ test("a composer makes one span of a long paste, and a paste handler added later
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   const editor = new TextEditor();
   new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
-  editor.onPaste("a".repeat(301));
+  editor.onPaste({ type: "paste", text: "a".repeat(301) });
   const spanCount = editor.state.spans.length;
   editor.reset({ text: "", selection: { anchor: 0, head: 0 }, spans: [] });
-  editor.extend(owner.signal).addPasteHandler((text) => {
+  editor.extend(owner.signal).addPasteHandler((event) => {
     editor.replace(0, 0, "claimed");
-    return text.length > 0;
+    return event.text.length > 0;
   });
-  editor.onPaste("b".repeat(301));
+  editor.onPaste({ type: "paste", text: "b".repeat(301) });
   assertEquals([spanCount, editor.state.text, editor.state.spans], [1, "claimed", []]);
 });
 

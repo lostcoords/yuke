@@ -122,11 +122,7 @@ mod tests {
     use crate::response::AttemptInfo;
 
     fn attempt_error(cause: Failure, info: AttemptInfo) -> AttemptError {
-        AttemptError {
-            cause,
-            info,
-            partial: Vec::new(),
-        }
+        AttemptError { cause, info }
     }
 
     fn nth(number: u32) -> NonZeroU32 {

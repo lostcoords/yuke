@@ -58,17 +58,17 @@ export const reply = Object.freeze({
 });
 
 /**
- * The operation of a plugin request that `respond` answers. It gives a JSON copy of the result, or a failure record as
+ * The operation of a plugin request that `onClientRequest` answers. It gives a JSON copy of the result, or a failure record as
  * the native does. A cancel ends the wait of the plugin, and a late answer has no effect.
  */
-function responderOf(respond: NonNullable<HostOptions["respond"]>) {
+function responderOf(onClientRequest: NonNullable<HostOptions["onClientRequest"]>) {
   return (request: ExtensionRequestParams): Operation<unknown> => {
     let cancel = (): void => undefined;
     const promise = new Promise<unknown>((resolve, reject) => {
       cancel = () => reject({ cancelled: true });
       void (async () => {
         try {
-          resolve(jsonCopy((await respond(request)) ?? null));
+          resolve(jsonCopy((await onClientRequest(request)) ?? null));
         } catch (error) {
           if (error instanceof ClientRequestError) {
             const data = error.data === undefined ? undefined : jsonCopy(error.data);
@@ -76,7 +76,7 @@ function responderOf(respond: NonNullable<HostOptions["respond"]>) {
             return;
           }
           reject({ code: -32_603, message: String(error) });
-          // A rejection that no code handles is a fault, so a failed respond fails the test.
+          // A rejection that no code handles is a fault, so a failed `onClientRequest` fails the test.
           throw error;
         }
       })();
@@ -105,7 +105,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
     };
   });
   // A plugin can send a request while the host loads it.
-  if (options.respond !== undefined) setResponder(responderOf(options.respond));
+  if (options.onClientRequest !== undefined) setResponder(responderOf(options.onClientRequest));
   await testHostCreate({ plugins, replies: options.replies ?? [] }).promise;
   await testWaitForSettled();
 
@@ -121,12 +121,12 @@ export async function createHost(options: HostOptions): Promise<Host> {
     if (update.sessionUpdate !== "interactionRequested") return;
     const question: TestQuestion = Object.freeze({ sessionId: id, source: update.source, request: update.request });
     questions.push(question);
-    // A rejection that no code handles is a fault, so a failed answer fails the test.
+    // A rejection that no code handles is a fault, so a failed `onQuestion` fails the test.
     void (async () => {
       // A close ends the question, so a later answer or failure has no question to reach.
       const open = (): boolean => !closed.has(id) && !stop.signal.aborted;
       try {
-        const answers = await options.answer?.(question);
+        const answers = await options.onQuestion?.(question);
         if (open()) {
           sessionRespond([
             id,

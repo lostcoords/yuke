@@ -1,6 +1,6 @@
 import { checkArguments } from "yuke:internal/arguments";
 import { hostSignal } from "yuke:internal/events";
-import { on } from "yuke:internal/facts";
+import { addListener } from "yuke:internal/facts";
 import { failureOf } from "yuke:internal/failure";
 import { emit, notify } from "yuke:internal/native";
 import { catalog, sessionsOf } from "yuke:internal/sessions";
@@ -138,14 +138,14 @@ export async function load(spec: PluginSpec): Promise<void> {
         if (name === "catalog") return catalog as ServiceOf<K>;
         return services.get(name) as ServiceOf<K>;
       },
-      notify(level: NoticeLevel, message: string): void {
-        notify(spec.name, level, message, undefined);
+      notify(level: NoticeLevel, text: string): void {
+        notify(spec.name, level, text, undefined);
       },
       sendClientEvent(event: string, data?: unknown): void {
         emit(spec.name, event, data ?? null, undefined);
       },
       addListener<K extends keyof HostEvents>(event: K, listener: (data: HostEvents[K]) => void): () => void {
-        return on(spec.name, signal, event, listener);
+        return addListener(spec.name, signal, event, listener);
       },
     });
     if (apply !== undefined) cleanup = await apply(ctx);

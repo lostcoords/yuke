@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use yuke_engine::{Commit, CommitDisplay, TurnEnd};
 use yuke_protocol::{
     ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionCancelParams, ExtensionEventParams,
-    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobKind, JobState,
+    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobId, JobKind, JobState,
     ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
     NoticeParams, Notification, ReasoningLevel, Request, Response, ServerNotification, ServerRequest, SessionEvent,
     SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StoredEvent,
@@ -202,7 +202,7 @@ fn each_job_request_reads_and_writes_its_json() {
                 9,
                 ClientRequest::StopJob(yuke_protocol::StopJobParams {
                     session_id: session(),
-                    job_id: "job-1a2b".to_owned(),
+                    job_id: JobId("job-1a2b".to_owned()),
                 }),
             ),
         ),
@@ -446,7 +446,7 @@ fn a_new_session_takes_the_settings_and_its_parent_in_one_object() {
 
 fn process_job(state: JobState, exit_code: Option<i32>) -> yuke_protocol::Job {
     yuke_protocol::Job {
-        id: "job-1a2b".to_owned(),
+        id: JobId("job-1a2b".to_owned()),
         label: "sleep 30".to_owned(),
         state,
         kind: JobKind::Process {
@@ -484,7 +484,7 @@ fn a_job_update_holds_the_whole_job_and_its_end() {
             "kind": "plugin", "plugin": "agents"
         } } }),
         &update(yuke_protocol::Job {
-            id: "explorer".to_owned(),
+            id: JobId("explorer".to_owned()),
             label: "explore the store".to_owned(),
             state: JobState::Running,
             kind: JobKind::Plugin {

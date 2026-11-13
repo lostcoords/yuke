@@ -218,7 +218,7 @@ else:
 import type { ClientRequest } from "yuke:protocol/ClientRequest";
 import type { Response } from "yuke:protocol/Response";
 const tool: Tool = {
-  name: "example", description: "An editor example", parameters: { type: "object", properties: {} },
+  name: "example", description: "An editor example", inputSchema: { type: "object", properties: {} },
   concurrency: "serial", execute: () => new Promise<string>((resolve) => setTimeout(() => resolve("done"), 1)),
 };
 void tool;

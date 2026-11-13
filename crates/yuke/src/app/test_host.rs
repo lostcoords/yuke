@@ -16,11 +16,11 @@ use yuke_agent::MemoryStore;
 use yuke_ai::scripted::{Answer, Call, ScriptedTransport, Sent};
 use yuke_ai::{Blob, Protocol};
 use yuke_engine::NoWait;
-use yuke_js::{Origin, Plugin, Report, Runtime, ScriptError, ScriptSession, TestError, TestHost, TestRuntime};
+use yuke_js::{Plugin, PluginCode, Report, Runtime, ScriptError, ScriptSession, TestError, TestHost, TestRuntime};
 use yuke_protocol::{ExtensionEventParams, NoticeParams, ServerNotification, SessionId};
 
 use super::sessions::SessionService;
-use super::{App, Machine, Mode, Observer, Profile, Shared};
+use super::{App, Machine, Observer, Profile, RunMode, Shared};
 use crate::paths::Paths;
 use crate::plugins::{create_data_folders, load_order, manifest_plugin, valid_name};
 
@@ -311,7 +311,7 @@ impl TestHost for AppTestHost {
                     Plugin {
                         data_dir: data.join("plugins").join(&name),
                         name,
-                        origin: Origin::Given,
+                        origin: PluginCode::Given,
                         options,
                         uses,
                         provides,
@@ -438,7 +438,7 @@ impl TestPlace {
         // The plugins under test come from `createHost`, so the bundled plugins do not load.
         let (app, _bundled) = App::prepare(
             machine,
-            Mode::Server,
+            RunMode::Server,
             observer,
             Arc::new(MemoryStore::default()),
             Rc::new(NoWait),

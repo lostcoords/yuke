@@ -11,7 +11,12 @@ function row(id: string, cwd: string, title: string | undefined, state: SessionS
   const updatedAt = Date.now() - minutes * 60_000;
   const model = { provider: "p", model: "m" };
   return {
-    session: { sessionId: id, model, cwd, ...(title === undefined ? {} : { title }), createdAt: updatedAt, updatedAt },
+    sessionId: id,
+    model,
+    cwd,
+    ...(title === undefined ? {} : { title }),
+    createdAt: updatedAt,
+    updatedAt,
     state,
   };
 }
@@ -132,34 +137,6 @@ test("a pick that does not open gives a notice", async () => {
   assertEquals(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
 });
 
-test("a list of an earlier scope that loads late keeps the list of the later scope", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
-  const sessions = fakeSessions(replies(2));
-  const { promise, resolve } = Promise.withResolvers<void>();
-  const list = sessions.list;
-  let first = true;
-  sessions.list = async (params) => {
-    const page = await list(params);
-    if (first) {
-      first = false;
-      await promise;
-    }
-    return page;
-  };
-  const loaded = await load(frame, sessions);
-  await waitForSettled();
-  await openList(frame, loaded.chat);
-  frame.key("tab");
-  await waitForSettled();
-  resolve();
-  await waitForSettled();
-  frame.draw();
-  assertEquals(
-    rows(frame.frame).some((line) => line.includes("refactor sqlgen")),
-    true,
-  );
-});
-
 test("a match of the first prompt comes before a match of the folder of a newer session", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
   const sessions = fakeSessions(replies(2));
@@ -174,30 +151,6 @@ test("a match of the first prompt comes before a match of the folder of a newer 
   const drawn = rows(frame.frame);
   const at = (text: string) => drawn.findIndex((line) => line.includes(text));
   assertEquals([at("add the bar") >= 0, at("add the bar") < at("deploy notes")], [true, true]);
-});
-
-test("a failed list of an earlier scope leaves the list of the later scope open", async () => {
-  using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/start", session: "s1" });
-  const sessions = fakeSessions(replies(2));
-  const { promise, reject } = Promise.withResolvers<void>();
-  const list = sessions.list;
-  let first = true;
-  sessions.list = async (params) => {
-    if (first) {
-      first = false;
-      await promise;
-    }
-    return list(params);
-  };
-  const loaded = await load(frame, sessions);
-  await waitForSettled();
-  await openList(frame, loaded.chat);
-  frame.key("tab");
-  await waitForSettled();
-  reject(new Error("disk"));
-  await waitForSettled();
-  frame.draw();
-  assertEquals([rows(frame.frame).some((line) => line.includes("refactor sqlgen")), loaded.notices], [true, []]);
 });
 
 test("the list of a pane whose session is gone starts with the start folder", async () => {

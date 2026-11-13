@@ -94,7 +94,7 @@ const CELLS = Array.from({ length: ICON_ROWS }, (_, row) =>
 type Part = readonly [string, CanvasStyle];
 
 /** What the header shows of one pane. Each read gives the state now. */
-export interface EmptyHeaderSource {
+interface EmptyHeaderSource {
   readonly version: string;
   /** The model with its level, and the folder, of the first message of the pane. */
   readonly target: () => { readonly model?: string | undefined; readonly folder?: string | undefined };

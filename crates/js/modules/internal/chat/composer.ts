@@ -102,12 +102,15 @@ export class ChatComposer {
       if (change.kind === "edit" || change.kind === "selection") this.#recalled = undefined;
     });
     // The label covers the text on the screen only, so a send takes the whole text.
-    extension.addPasteHandler((text) => {
-      if (text.length <= PASTE_SPAN) return false;
+    extension.addPasteHandler((event) => {
+      if (event.text.length <= PASTE_SPAN) return false;
       const selection = editor.selection;
-      editor.replace(Math.min(selection.anchor, selection.head), Math.max(selection.anchor, selection.head), text, [
-        { from: 0, to: text.length, kind: "paste", label: `[Pasted text · ${text.length} chars]` },
-      ]);
+      editor.replace(
+        Math.min(selection.anchor, selection.head),
+        Math.max(selection.anchor, selection.head),
+        event.text,
+        [{ from: 0, to: event.text.length, kind: "paste", label: `[Pasted text · ${event.text.length} chars]` }],
+      );
       return true;
     });
   }

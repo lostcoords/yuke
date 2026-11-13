@@ -10,7 +10,7 @@ const greeter: PluginSession = (s) => {
     name: "greet",
     description: "Greet someone.",
     concurrency: "serial",
-    parameters: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
+    inputSchema: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
     execute: (args) => `hello ${args.who}`,
   });
 };

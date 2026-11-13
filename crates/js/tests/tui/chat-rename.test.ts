@@ -9,14 +9,12 @@ import { rows } from "./rows.ts";
 
 function session(title: string | undefined): SessionRow {
   return {
-    session: {
-      sessionId: "s1",
-      model: { provider: "p", model: "m" },
-      cwd: "/w",
-      ...(title === undefined ? {} : { title }),
-      createdAt: 0,
-      updatedAt: 0,
-    },
+    sessionId: "s1",
+    model: { provider: "p", model: "m" },
+    cwd: "/w",
+    ...(title === undefined ? {} : { title }),
+    createdAt: 0,
+    updatedAt: 0,
     state: "idle",
   };
 }
@@ -32,7 +30,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   const chat = await loadChat(frame, sessions);
   frame.start();
   const composer = chat.tui.widgets.list().find((mount) => mount.widget instanceof TextEditor)?.widget as TextEditor;
-  composer.onPaste("draft");
+  composer.onPaste({ type: "paste", text: "draft" });
   assertEquals(chat.tui.commands.run("chat:rename"), true);
   await waitForSettled();
   frame.draw();
@@ -46,7 +44,7 @@ test("Enter renames the fetched title, keeps the draft, and does not cancel", as
   assertEquals(
     [
       sessions.renames,
-      sessions.rows[0]?.session.title,
+      sessions.rows[0]?.title,
       composer.state.text,
       sessions.state.cancels,
       rows(frame.frame).some((line) => line.includes("Rename session")),

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use yuke_agent::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
-    check_consumed_blocks, fork_title_of, title_of,
+    fork_title_of, title_of,
 };
 use yuke_engine::{Commit, TurnEnd};
 use yuke_protocol::{
@@ -413,7 +413,6 @@ impl Store for SqliteStore {
         commit: &Commit<'_>,
         consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
-        check_consumed_blocks(commit, consumed)?;
         let owner = self.owner(id);
         let params = commit_params(id, commit, consumed).map_err(failed)?;
         let consumed: Vec<InputId> = consumed.iter().map(|input| input.id).collect();

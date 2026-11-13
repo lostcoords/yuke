@@ -148,12 +148,12 @@ fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
                      name: "ask",
                      description: "Ask the user.",
                      concurrency: "serial",
-                     parameters: { type: "object", properties: {} },
+                     inputSchema: { type: "object", properties: {} },
                      execute: (_args, context) => question(s, context.signal),
                    });
                  },
                }],
-               answer: typeof answer === "function" ? answer : () => answer,
+               onQuestion: typeof answer === "function" ? answer : () => answer,
              });
              const session = await host.openSession();
              await session.call("ask", {});
@@ -177,9 +177,9 @@ fn an_answer_that_does_not_fit_the_question_fails_the_test_at_once() {
 }
 
 #[test]
-fn a_respond_that_throws_another_error_fails_the_test() {
+fn an_on_client_request_that_throws_another_error_fails_the_test() {
     let summary = ran(
-        "a_respond_that_throws_another_error_fails_the_test",
+        "an_on_client_request_that_throws_another_error_fails_the_test",
         r#"import { createHost, test } from "yuke:test";
            test("thrown", async () => {
              await using host = await createHost({
@@ -190,12 +190,12 @@ fn a_respond_that_throws_another_error_fails_the_test() {
                      name: "read_session",
                      description: "Read a session.",
                      concurrency: "serial",
-                     parameters: { type: "object", properties: {} },
+                     inputSchema: { type: "object", properties: {} },
                      execute: (_args, context) => s.sendClientRequest("session.read", null, { signal: context.signal }),
                    });
                  },
                }],
-               respond: () => { throw new TypeError("no fixture"); },
+               onClientRequest: () => { throw new TypeError("no fixture"); },
              });
              const session = await host.openSession();
              await session.call("read_session", {});

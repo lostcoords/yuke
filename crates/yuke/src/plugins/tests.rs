@@ -81,7 +81,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
         [
             Plugin {
                 name: "notes".to_owned(),
-                origin: Origin::Folder {
+                origin: PluginCode::Folder {
                     root: root.join("config/notes"),
                     entry: Some(root.join("config/notes/./index.ts")),
                 },
@@ -92,7 +92,7 @@ fn the_list_gives_each_plugin_in_its_order_with_the_fields_of_its_manifest() {
             },
             Plugin {
                 name: "reader".to_owned(),
-                origin: Origin::Folder {
+                origin: PluginCode::Folder {
                     root: reader,
                     entry: None,
                 },
@@ -274,7 +274,7 @@ fn the_bundled_plugins_load_first_and_disable_leaves_one_out() {
         plugins[0],
         Plugin {
             name: "second".to_owned(),
-            origin: Origin::Bundled {
+            origin: PluginCode::Bundled {
                 module: "yuke:internal/bundled/second".to_owned(),
             },
             data_dir: root.join("data/plugins/second"),
@@ -353,7 +353,7 @@ fn a_profile_plugin_takes_the_name_of_a_bundled_plugin_only_after_its_disable() 
     );
     let origins: Vec<bool> = replaced
         .iter()
-        .map(|plugin| matches!(plugin.origin, Origin::Folder { .. }))
+        .map(|plugin| matches!(plugin.origin, PluginCode::Folder { .. }))
         .collect();
     assert_eq!(origins, [false, true]);
     assert_eq!(replaced[1].name, "first");
@@ -414,7 +414,7 @@ fn a_git_plugin_loads_from_the_install_of_the_commit_that_the_lock_gives_its_fol
 
     assert_eq!(
         plugins[0].origin,
-        Origin::Folder {
+        PluginCode::Folder {
             root: installed.join("plugins/clock"),
             entry: None,
         }

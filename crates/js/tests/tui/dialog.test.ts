@@ -68,9 +68,10 @@ test("the body takes a key first, and the dialog takes what the body leaves", ()
   assertEquals(runs, ["y"]);
 });
 
-test("the arrow and page keys scroll a body that scrolls", () => {
+test("the arrow and page keys scroll a body with a scroll", () => {
   using frame = createFrame({ width: 60, height: 12 });
-  frame.surface("test").tui.dialog({ body: lines(40), rows: 8 });
+  const view = lines(40);
+  frame.surface("test").tui.dialog({ body: view, scroll: view.scroll, rows: 8 });
   frame.draw();
   const top = shows(frame, "line 0");
   frame.key("pagedown");

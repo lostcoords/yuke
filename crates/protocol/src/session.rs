@@ -135,7 +135,8 @@ pub struct SessionSummary {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRow {
-    /// The saved facts.
+    /// The saved facts. JSON holds them in the row itself, next to `state`.
+    #[serde(flatten)]
     pub session: SessionSummary,
     /// Whether the session is open in this server, and whether a turn runs in it.
     pub state: crate::SessionState,

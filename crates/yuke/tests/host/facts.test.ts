@@ -26,7 +26,7 @@ const asker: PluginSession = (s) => {
     name: "ask",
     description: "Ask the user.",
     concurrency: "serial",
-    parameters: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: {} },
     execute: async (_args, context) => {
       const question = { id: "go", header: "Go", question: "Go on?", options: [{ label: "Yes" }, { label: "No" }] };
       return JSON.stringify(await s.ask({ questions: [question] }, { signal: context.signal })) ?? "undefined";
@@ -80,7 +80,7 @@ test("an open during a turn gives its state and interactions, and a later listen
       { name: "asker", session: asker },
     ],
     replies: [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("Done.")],
-    answer: () => answered.promise,
+    onQuestion: () => answered.promise,
   });
   const session = await host.openSession();
   const ctx = plugin.ctx();
@@ -113,7 +113,7 @@ test("a listener that comes during a question of a running watch gets the open a
       { name: "asker", session: asker },
     ],
     replies: [reply.toolCalls([{ name: "ask", args: {} }]), reply.text("Done.")],
-    answer: () => answered.promise,
+    onQuestion: () => answered.promise,
   });
   const session = await host.openSession();
   const ctx = plugin.ctx();

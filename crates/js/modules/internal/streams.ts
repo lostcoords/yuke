@@ -39,9 +39,6 @@ const streams = new WeakMap<ReadableStream, StreamState>();
 const readers = new WeakMap<ReadableStreamDefaultReader, ReaderState>();
 const controllers = new WeakMap<ReadableStreamDefaultController, ControllerState>();
 
-/** The key that only this module gives to the `ReadableStreamDefaultController` constructor. */
-const CREATE = Symbol("create");
-
 function streamState(value: unknown): StreamState {
   const state = streams.get(value as ReadableStream);
   if (state === undefined) throw new TypeError("the value is not a ReadableStream");
@@ -99,7 +96,7 @@ export class ReadableStream<R = unknown> {
     };
     stream.controller = state;
     streams.set(this, stream);
-    const controller = new ReadableStreamDefaultController(CREATE);
+    const controller = Object.create(ReadableStreamDefaultController.prototype) as ReadableStreamDefaultController;
     controllers.set(controller, state);
     state.pull = pull === undefined ? undefined : () => Promise.try(() => pull.call(underlyingSource, controller));
     state.cancel =
@@ -166,9 +163,9 @@ async function* chunksOf<R>(
 }
 
 export class ReadableStreamDefaultController<R = unknown> {
-  /** Only `ReadableStream` makes a controller. */
-  constructor(key?: unknown) {
-    if (key !== CREATE) throw new TypeError("ReadableStreamDefaultController has no public constructor");
+  /** Only `ReadableStream` makes a controller, without this constructor. */
+  constructor() {
+    throw new TypeError("ReadableStreamDefaultController has no public constructor");
   }
 
   /** The high water mark less the queued size. It can be negative, it is 0 when closed, and `null` when errored. */

@@ -38,7 +38,7 @@ function age(at: number, now: number): string {
 
 /** The label of `row`: its state mark and its title. */
 function labelOf(row: SessionRow): string {
-  return `${MARK[row.state]} ${row.session.title ?? "(untitled)"}`;
+  return `${MARK[row.state]} ${row.title ?? "(untitled)"}`;
 }
 
 /**
@@ -52,9 +52,8 @@ function rank(query: string, rows: readonly SessionRow[]): readonly PickerMatch<
   const plain: PickerMatch<SessionRow>[] = [];
   for (const item of rows) {
     const match = fuzzyMatch(query, labelOf(item));
-    const session = item.session;
     if (match !== undefined) fuzzy.push({ match: { item, ranges: match.ranges }, score: match.score });
-    else if ([session.model.model, session.cwd, session.sessionId].some((text) => text.toLowerCase().includes(lower))) {
+    else if ([item.model.model, item.cwd, item.sessionId].some((text) => text.toLowerCase().includes(lower))) {
       plain.push({ item });
     }
   }
@@ -77,26 +76,23 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     shown === undefined
       ? tui.startup.cwd
       : await sessions.get(shown).then(
-          (row) => row.session.cwd,
+          (row) => row.cwd,
           () => tui.startup.cwd,
         );
   let all = false;
-  // Each load counts, so the answer of an earlier scope does not replace the list of a later one.
-  let loads = 0;
   let loadedAt = Date.now();
   const picker = new Picker<SessionRow>({
     items: [],
-    id: (row) => row.session.sessionId,
+    id: (row) => row.sessionId,
     label: labelOf,
     detail: (row) => {
-      const session = row.session;
-      const place = all ? ` · ${session.cwd.split("/").findLast((part) => part !== "") ?? session.cwd}` : "";
-      return `${age(session.updatedAt, loadedAt)} · ${session.model.model}${place}`;
+      const place = all ? ` · ${row.cwd.split("/").findLast((part) => part !== "") ?? row.cwd}` : "";
+      return `${age(row.updatedAt, loadedAt)} · ${row.model.model}${place}`;
     },
     rank,
     onChoose: (row) => {
       dialog.close();
-      const id = row.session.sessionId;
+      const id = row.sessionId;
       chat.show(id).catch((error: unknown) => ctx.notify("error", `the session ${id} did not show: ${String(error)}`));
     },
     onCancel: () => dialog.close(),
@@ -116,18 +112,16 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
   });
   /** Load the list of the scope. A failure closes the list and gives a notice. */
   const load = async (): Promise<void> => {
-    loads += 1;
-    const current = loads;
     let page: Awaited<ReturnType<typeof sessions.list>>;
     try {
       page = await sessions.list(all ? { limit: PAGE } : { cwd: folder, limit: PAGE });
     } catch (error) {
-      if (current !== loads || dialog.signal.aborted) return;
+      if (dialog.signal.aborted) return;
       dialog.close();
       ctx.notify("error", `the sessions did not load: ${String(error)}`);
       return;
     }
-    if (current !== loads || dialog.signal.aborted) return;
+    if (dialog.signal.aborted) return;
     loadedAt = Date.now();
     picker.setItems(page.sessions);
     tui.requestFrame();

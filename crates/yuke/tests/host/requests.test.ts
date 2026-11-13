@@ -10,7 +10,7 @@ const requester: PluginSession = (s) => {
     name: "read_session",
     description: "Read a session.",
     concurrency: "serial",
-    parameters: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: {} },
     execute: async (_args, context) => {
       try {
         const found = (await s.sendClientRequest("session.read", { id: "S-42" }, { signal: context.signal })) as {
@@ -39,11 +39,11 @@ test("without a client, a request rejects at once with an Error", async () => {
   assertEquals(outcome.isError, true);
 });
 
-test("the result of respond reaches the plugin, and respond gets the request", async () => {
+test("the result of onClientRequest reaches the plugin, and onClientRequest gets the request", async () => {
   const requests: ExtensionRequestParams[] = [];
   await using host = await createHost({
     plugins: [{ name: "requester", session: requester }],
-    respond: (request) => {
+    onClientRequest: (request) => {
       requests.push(request);
       return { title: "fix the login" };
     },
@@ -56,10 +56,10 @@ test("the result of respond reaches the plugin, and respond gets the request", a
   ]);
 });
 
-test("a thrown ClientRequestError of respond is the error answer", async () => {
+test("a thrown ClientRequestError of onClientRequest is the error answer", async () => {
   await using host = await createHost({
     plugins: [{ name: "requester", session: requester }],
-    respond: async () => {
+    onClientRequest: async () => {
       throw new ClientRequestError("no such session", { code: -32_001, data: "deleted" });
     },
   });
@@ -68,11 +68,11 @@ test("a thrown ClientRequestError of respond is the error answer", async () => {
   assertEquals((await session.call("read_session", {})).text, "refused -32001 no such session deleted");
 });
 
-test("a cancel of the plugin ends its wait while respond still runs", async () => {
+test("a cancel of the plugin ends its wait while onClientRequest still runs", async () => {
   let responding = false;
   await using host = await createHost({
     plugins: [{ name: "requester", session: requester }],
-    respond: () => {
+    onClientRequest: () => {
       responding = true;
       return new Promise(() => undefined);
     },

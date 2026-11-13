@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use super::tools::{TestHost, Tools};
 use super::{descriptor, evaluate, folder, start, write};
-use crate::{Origin, Plugin, PluginFailure, Runtime};
+use crate::{Plugin, PluginCode, PluginFailure, Runtime};
 
 /// A plugin `name` in `folder` whose entry is `source`, or a plugin without code when `source` is `None`.
 pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&str], provides: &[&str]) -> Plugin {
@@ -23,7 +23,7 @@ pub(super) fn plugin(folder: &Path, name: &str, source: Option<&str>, uses: &[&s
 /// A tool definition with `name` for a plugin entry.
 pub(super) fn tool(name: &str) -> String {
     format!(
-        "{{ name: '{name}', description: 'd', concurrency: 'serial', parameters: {{ type: 'object', properties: {{}} }}, execute: () => 'x' }}"
+        "{{ name: '{name}', description: 'd', concurrency: 'serial', inputSchema: {{ type: 'object', properties: {{}} }}, execute: () => 'x' }}"
     )
 }
 
@@ -162,7 +162,7 @@ async fn a_bundled_plugin_runs_from_its_module_and_its_context_has_no_root() {
     let bundled = Plugin {
         name: "bundled".to_owned(),
         // This test names a file. A bundled plugin of the app names a baked `yuke:` module.
-        origin: Origin::Bundled {
+        origin: PluginCode::Bundled {
             module: folder.join("bundled.ts").to_str().unwrap().to_owned(),
         },
         data_dir: data_dir.clone(),

@@ -26,7 +26,7 @@
  */
 declare module "yuke:test" {
   import type { UnixListener } from "yuke:net";
-  import type { PluginApply, PluginSession, RoundFailureKind, ToolCall } from "yuke:plugins";
+  import type { ParsedToolCall, PluginApply, PluginSession, RoundFailureKind } from "yuke:plugins";
   import type {
     Block,
     DisplayBlock,
@@ -35,7 +35,6 @@ declare module "yuke:test" {
     FinishReason,
     InputKind,
     InputSource,
-    NoticeLevel,
     NoticeParams,
     QuestionAnswer,
     RequestSettings,
@@ -82,14 +81,6 @@ declare module "yuke:test" {
     readonly tui: Tui;
   }
 
-  /** `FrameTest.notice` sends this notice. */
-  export interface FrameNotice {
-    readonly level: NoticeLevel;
-    readonly source: string;
-    readonly text: string;
-    readonly sessionId?: SessionId | undefined;
-  }
-
   /**
    * A terminal interface in a test: the real core, keymap, scene, and styles on a grid of cells. Each input method
    * handles its event, then draws a frame. `[Symbol.dispose]()` closes each surface.
@@ -117,7 +108,7 @@ declare module "yuke:test" {
     /** The saved panes that a reload gives the start event of the next runtime. */
     snapshot: () => string;
     /** Send a notice of the host or of a plugin, as the terminal does. */
-    notice: (notice: FrameNotice) => void;
+    notice: (notice: NoticeParams) => void;
     /**
      * Move the clock of the frame by `ms` milliseconds. Each due `tui.addTimer` callback and key sequence timeout runs in
      * time order. Then the frame draws. Other timers run on real time.
@@ -289,16 +280,16 @@ declare module "yuke:test" {
      * The answers to each request, one per question. `undefined` cancels the request. Without the function, each
      * request gets `undefined`, as with no client. A promise keeps the request open until it settles.
      */
-    readonly answer?: (
+    readonly onQuestion?: (
       question: TestQuestion,
     ) => readonly QuestionAnswer[] | undefined | Promise<readonly QuestionAnswer[] | undefined>;
     /**
      * The answer to each request of a plugin to the client. The plugin gets a JSON copy of the return, and
-     * `undefined` gives `null`. A throw of an `ClientRequestError` is the error answer. Another throw or rejection
+     * `undefined` gives `null`. A throw of a `ClientRequestError` is the error answer. Another throw or rejection
      * fails the test. Without the function, each request rejects at once, as with no client. A promise keeps the
      * request open until it settles.
      */
-    readonly respond?: (request: ExtensionRequestParams) => unknown;
+    readonly onClientRequest?: (request: ExtensionRequestParams) => unknown;
   }
 
   /**
@@ -349,9 +340,9 @@ declare module "yuke:test" {
 
   /** The event of each hook point for `runHook`, as plain data. */
   export interface HookEvents {
-    readonly "tool.before": { readonly call: ToolCall };
+    readonly "tool.before": { readonly call: ParsedToolCall };
     readonly "tool.after": {
-      readonly call: ToolCall;
+      readonly call: ParsedToolCall;
       /** The result of the call. The host stores each media item, as for the result of a tool. */
       readonly result: {
         readonly text: string;

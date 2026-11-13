@@ -322,7 +322,7 @@ declare module "yuke:tui" {
     /** True when the view takes the key. */
     readonly onKey?: ((event: KeyEvent) => boolean) | undefined;
     readonly onMouse?: ((event: MouseEvent) => boolean) | undefined;
-    readonly onPaste?: ((text: string) => boolean) | undefined;
+    readonly onPaste?: ((event: PasteEvent) => boolean) | undefined;
     /** The cursor of the focused view, or `undefined` for none. */
     readonly cursor?: (() => Cursor | undefined) | undefined;
     /** The view inside this one that takes the first focus of this view. A later focus returns to the last one. */
@@ -369,7 +369,7 @@ declare module "yuke:tui" {
     addKeyHandler: (handler: (event: KeyEvent) => boolean, phase?: "beforeDefault" | "beforeKeymap") => () => void;
     /** Take a mouse event before the widget: `true` stops it. A handler can return `false` to only watch. */
     addMouseHandler: (handler: (event: MouseEvent) => boolean) => () => void;
-    addPasteHandler: (handler: (text: string) => boolean) => () => void;
+    addPasteHandler: (handler: (event: PasteEvent) => boolean) => () => void;
     addChangeListener: (listener: (event: E) => void) => () => void;
     dispose: () => void;
   }
@@ -513,7 +513,7 @@ declare module "yuke:tui" {
     cursor(): Cursor | undefined;
     onKey(event: KeyEvent): boolean;
     onMouse(event: MouseEvent): boolean;
-    onPaste(text: string): boolean;
+    onPaste(event: PasteEvent): boolean;
   }
 
   /** A place in a text document: an offset in the text of one section of one item. */
@@ -559,7 +559,6 @@ declare module "yuke:tui" {
     readonly revision: number;
   }
 
-  /** The scroll state and moves of a text view. The content changes only through `setDocument`. */
   /** The scroll of a list of items, such as a `ScrollList` or the list of a `TextView`. */
   export interface ScrollControl {
     readonly state: ScrollState;
@@ -627,11 +626,11 @@ declare module "yuke:tui" {
     cursor(): Cursor | undefined;
     onKey(event: KeyEvent): boolean;
     onMouse(event: MouseEvent): boolean;
-    onPaste(text: string): boolean;
+    onPaste(event: PasteEvent): boolean;
   }
 
   /** A placed text widget. `signal` aborts when the widget leaves the tree. */
-  export interface WidgetMount {
+  export interface PlacedWidget {
     readonly widget: TextEditor | TextView;
     readonly pane: Pane | undefined;
     readonly group: object;
@@ -640,9 +639,9 @@ declare module "yuke:tui" {
 
   /** The placed text widgets of all plugins. */
   export interface WidgetRegistry {
-    readonly list: () => readonly WidgetMount[];
+    readonly list: () => readonly PlacedWidget[];
     /** Give `attach` the current mounts, then each new mount. Run a cleanup when its mount leaves or the watch ends. */
-    readonly addWatcher: (attach: (mount: WidgetMount) => (() => void) | undefined) => () => void;
+    readonly addWatcher: (attach: (mount: PlacedWidget) => (() => void) | undefined) => () => void;
   }
 
   /**
@@ -867,7 +866,7 @@ declare module "yuke:tui" {
   export type PaneReason = "start" | "new";
 
   /** Make the view of a pane that the core opens. A throw closes the mount, gives one fault, and leaves the pane empty. */
-  export type DefaultPane = (mount: Mount, reason: PaneReason) => View;
+  export type DefaultPaneFactory = (mount: Mount, reason: PaneReason) => View;
 
   export interface Pane extends Mount {
     readonly view: View;
@@ -886,8 +885,8 @@ declare module "yuke:tui" {
      * Make the view of each pane that the core opens. `PaneReason` names the cases. The last call wins, and the
      * returned function brings back the view before it. Without one, such a pane is empty.
      */
-    readonly setDefault: (create: DefaultPane) => () => void;
-    readonly focus: (direction: FocusDirection) => boolean;
+    readonly setDefault: (create: DefaultPaneFactory) => () => void;
+    readonly moveFocus: (direction: FocusDirection) => boolean;
     readonly focusNext: () => void;
   }
 
@@ -906,15 +905,16 @@ declare module "yuke:tui" {
   /**
    * A dialog: a modal overlay with an optional head row, a body, and a footer of the keys that work now. A keymap
    * binding of a key wins over a dialog key. Then the body gets each key, and the dialog gets what the body leaves. Up,
-   * down, page up, and page down scroll a body with `scroll.scrollBy` or `scrollBy`, such as a text view or a scroll
-   * list. An Esc that the body leaves closes the dialog; a picker body takes Esc and closes it in its `onCancel`. A dialog
-   * key on `esc` replaces that close.
+   * down, page up, and page down move `scroll`, when the option is set. An Esc that the body leaves closes the dialog;
+   * a picker body takes Esc and closes it in its `onCancel`. A dialog key on `esc` replaces that close.
    */
   export interface DialogOptions {
     /** The text of the head row, or a function that gives it at each draw. Without it, the dialog has no head row. */
     readonly title?: string | (() => string) | undefined;
     /** The view between the head row and the footer. It gets the first focus when it can take it. */
     readonly body: View;
+    /** The scroll of the body, such as `textView.scroll` or a `ScrollList`. Without it, the dialog does not scroll. */
+    readonly scroll?: ScrollControl | undefined;
     /** The keys of the dialog, in footer order. */
     readonly keys?: readonly DialogKey[] | undefined;
     /** The height of the dialog at the bottom of the screen. The default is 13. */
@@ -923,8 +923,10 @@ declare module "yuke:tui" {
     readonly signal?: AbortSignal | undefined;
   }
 
-  /** What `tui.select` shows: a picker in a dialog. For more control, use `Picker` and `tui.dialog`. */
-  /** Equal items are one choice. */
+  /**
+   * What `tui.select` shows: a picker in a dialog. Equal items are one choice. For more control, use `Picker` and
+   * `tui.dialog`.
+   */
   export interface SelectOptions<T> extends Pick<PickerOptions<T>, "items" | "label" | "detail" | "rank" | "render"> {
     /** The text of the head row, as in `DialogOptions`. */
     readonly title?: string | (() => string) | undefined;
@@ -1093,7 +1095,8 @@ declare module "yuke:tui" {
       readonly add: (spec: string, command: string, options?: { readonly in?: string | undefined }) => () => void;
       /** The keys of the pending sequence, such as `ctrl+k`, or "". */
       readonly pending: () => string;
-      readonly keysOf: (name: string) => readonly string[];
+      /** The key specs bound to `command`, each one once, the newest first. */
+      readonly list: (command: string) => readonly string[];
     };
     readonly styles: {
       /** Change style groups, and return the disposer of the change. A later call wins per field. */
@@ -1160,16 +1163,26 @@ declare module "yuke:tui" {
 
   /** The cells of `text`. */
   export function measure(text: string): number;
-  /** The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`, three numbers each. */
+  /**
+   * The UTF-16 offset, the UTF-16 length, and the cells of each grapheme of `text`, three numbers each: grapheme `n` is
+   * at `3 * n`. The packed form keeps a long text fast; an object for each grapheme costs about 15 times more.
+   */
   export function graphemes(text: string): Int32Array;
   /** The UTF-16 length of the longest grapheme prefix of `text` that fits in `cells`. */
   export function fit(text: string, cells: number): number;
+  /** One row of `wrap`: the UTF-16 range of the row in the text, and `soft` when a wrap ends it, not a line end. */
+  export interface WrappedRow {
+    readonly start: number;
+    readonly end: number;
+    readonly soft: boolean;
+  }
+
   /**
-   * The rows of `text` at `width` cells, as `[start, end, soft]` triples. A line end ends a row (soft 0). A soft break
-   * (soft 1) comes after the last space when the text from that space fits, else before the grapheme that does not
-   * fit. With `head`, only the first `head` rows stay.
+   * The rows of `text` at `width` cells. A line end ends a row. A soft break comes after the last space when the text
+   * from that space fits, else before the grapheme that does not fit. A tab counts as a space. With `head`, only the
+   * first `head` rows stay.
    */
-  export function wrap(text: string, width: number, head?: number): Int32Array;
+  export function wrap(text: string, width: number, head?: number): WrappedRow[];
   /**
    * The strokes of the key spec `spec`, in the form that `strokeOf` gives. White space separates the strokes. A stroke
    * is `ctrl+alt+super+shift+key`: a named key in lower case (`enter`, `esc`, `space`, `pagedown`, `f5`), or one

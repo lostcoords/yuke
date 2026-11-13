@@ -398,7 +398,7 @@ impl CommandTask {
     /// The job in `state`, for its owner.
     fn protocol_job(&self, state: JobState, exit_code: Option<i32>) -> yuke_protocol::Job {
         yuke_protocol::Job {
-            id: self.job.id.clone(),
+            id: yuke_protocol::JobId(self.job.id.clone()),
             label: self.label.clone(),
             state,
             kind: JobKind::Process {

@@ -8,7 +8,6 @@ use serde::Deserialize;
 /// The wire protocol of one endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum Protocol {
     /// Anthropic Messages.
     AnthropicMessages,
@@ -20,7 +19,6 @@ pub enum Protocol {
 
 /// The wire facts of one protocol. Its variant selects the serializer. The model and the route fill it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Wire {
     /// Anthropic Messages.
     AnthropicMessages(AnthropicWire),
@@ -91,7 +89,6 @@ pub struct Target {
 /// Select the Responses endpoint shape. The Codex backend refuses the sampling members and the output limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ResponsesDialect {
     /// The OpenAI API.
     #[default]
@@ -104,7 +101,6 @@ pub enum ResponsesDialect {
 /// `stream_options` among them, and reports the usage of a stream without a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ChatDialect {
     /// The OpenAI shape.
     #[default]
@@ -116,7 +112,6 @@ pub enum ChatDialect {
 /// Select the output-token member an OpenAI-chat host accepts. Only OpenAI itself renamed it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum MaxTokensField {
     /// `max_tokens`.
     #[default]
@@ -128,7 +123,6 @@ pub enum MaxTokensField {
 /// Select how a prior assistant turn returns its reasoning, which DeepSeek requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum ReasoningReplayMode {
     /// Return no reasoning.
     #[default]
@@ -146,7 +140,6 @@ pub enum ReasoningReplayMode {
     missing_docs,
     reason = "each variant names the host whose reasoning control it writes"
 )]
-#[non_exhaustive]
 pub enum ThinkingFormat {
     #[default]
     None,
@@ -197,7 +190,6 @@ impl Header {
 /// Select the HTTP header and value format. This type holds no credential bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum CredentialHeader {
     /// `x-api-key: <key>`.
     XApiKey,
@@ -232,7 +224,7 @@ fn valid_header_name(name: &str) -> bool {
 }
 
 /// Return true when a header value holds no control byte except a tab. This rejects CR and LF.
-pub(crate) fn valid_header_value(value: &str) -> bool {
+fn valid_header_value(value: &str) -> bool {
     value.bytes().all(|c| c == b'\t' || !c.is_ascii_control())
 }
 
@@ -268,7 +260,6 @@ pub fn invalid_header<'h>(headers: &'h [Header], written: &[&str]) -> Option<&'h
 /// Select the header that carries the session id. Each value names one header, so a second host can reuse it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[non_exhaustive]
 pub enum SessionHeader {
     /// The route carries the session id in no header.
     #[default]
@@ -297,8 +288,8 @@ pub struct Route {
     pub base_url: Cow<'static, str>,
     /// The header that carries the credential. `None` means that the route takes no credential.
     pub credential_header: Option<CredentialHeader>,
-    /// The encoder rejects a header that repeats the credential header, the session header, an identity header of the
-    /// credential, or a transport header.
+    /// The caller checks these with [`invalid_header`]. A header that repeats the credential header, the session header,
+    /// or a transport header is invalid. The encoder sends the headers as they are.
     pub headers: Cow<'static, [Header]>,
     /// The header that carries the session id.
     pub session_header: SessionHeader,
@@ -306,7 +297,6 @@ pub struct Route {
 
 /// The credential of a route. Presence must match [`Route::credential_header`]. `Debug` writes no secret.
 #[derive(Clone, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
 pub enum Credential {
     /// The route takes no credential.
     #[default]

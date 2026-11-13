@@ -19,7 +19,7 @@ import { type SavedPane, type SavedPanes, ViewTypes } from "yuke:internal/tui/re
 import { Scene } from "yuke:internal/tui/scene";
 import { StatusItems } from "yuke:internal/tui/status";
 import { Styles } from "yuke:internal/tui/styles";
-import { WidgetMounts } from "yuke:internal/tui/widgets";
+import { PlacedWidgets } from "yuke:internal/tui/widgets";
 import { frozen } from "yuke:internal/values";
 import type { CanvasStyle, ClipboardImage, Cursor, FocusChange, InputEvent, Startup, View } from "yuke:tui";
 
@@ -79,7 +79,7 @@ export class Core {
   readonly keymap: Keymap;
   readonly panes: PaneTree;
   readonly scene: Scene;
-  readonly widgets: WidgetMounts;
+  readonly widgets: PlacedWidgets;
   readonly driver: Driver;
   readonly startup: Startup;
   readonly #defaultPanes = new Stack<DefaultPaneSlot>();
@@ -118,7 +118,7 @@ export class Core {
       },
       driver.after,
     );
-    this.widgets = new WidgetMounts(
+    this.widgets = new PlacedWidgets(
       {
         requestFrame: frame,
         // A key sequence belongs to the contexts where it started.
@@ -241,7 +241,7 @@ export class Core {
         return;
       case "paste":
         this.scene.layout();
-        if (!this.#takenByHandler(event)) this.scene.paste(event.text);
+        if (!this.#takenByHandler(event)) this.scene.paste(event);
         return;
       case "focus":
         if (!event.focused) {
@@ -348,7 +348,7 @@ export class Core {
         `focus-${direction}`,
         `Focus the pane ${direction === "up" || direction === "down" ? direction : `on the ${direction}`}`,
         () => {
-          this.panes.focus(direction);
+          this.panes.moveFocus(direction);
         },
       );
     }

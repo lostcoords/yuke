@@ -128,15 +128,18 @@ declare module "yuke:transcript" {
      * clears them until the next answer. An older page that loads later does not change them.
      */
     get usage(): Frozen<Usage> | undefined;
-    /** The first saved event that the transcript holds: the `before` of the next older page. */
-    get first(): EventNumber | undefined;
+    /** The number of the first saved event that the transcript holds: the `before` of the next older page. */
+    get firstEventNumber(): EventNumber | undefined;
     /** The count of saved events that the transcript holds. */
-    get held(): number;
-    /** Saved events that are missing between the held ones. Give the result of `sessions.events` to `insert`. */
-    get gap(): EventsPage | undefined;
+    get eventCount(): number;
+    /**
+     * The page of saved events that are missing between the held ones. Give the result of `sessions.events` to
+     * `insert`.
+     */
+    get missingEvents(): EventsPage | undefined;
     /** Add one event. A snapshot starts the transcript again. */
     apply(event: SessionHandleEvent): void;
-    /** Add saved events that did not come live: an older page, or the events of a gap. */
+    /** Add saved events that did not come live: an older page, or the events of `missingEvents`. */
     insert(events: readonly Frozen<StoredEvent>[]): void;
     /**
      * Hold only the newest `limit` saved events, and drop the entries of the older ones. The entries of the draft, the

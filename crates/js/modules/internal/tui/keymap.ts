@@ -84,10 +84,10 @@ export class Keymap {
     return this.#pending.join(" ");
   }
 
-  /** The specs bound to the command `name`, each one once, the newest first. */
-  keysOf(name: string): string[] {
+  /** The specs bound to `command`, each one once, the newest first. */
+  list(command: string): string[] {
     const specs = this.#bindings
-      .filter((binding) => binding.command === name)
+      .filter((binding) => binding.command === command)
       .toReversed()
       .map((binding) => binding.strokes.join(" "));
     return [...new Set(specs)];

@@ -16,7 +16,7 @@ const defining =
 
 /** A tool `name` with no parameters that runs `execute`. */
 function tool(name: string, execute: Tool["execute"]): Tool {
-  return { name, description: "d", concurrency: "serial", parameters: empty, execute } as Tool;
+  return { name, description: "d", concurrency: "serial", inputSchema: empty, execute } as Tool;
 }
 
 /** A host with one plugin that defines `tools`, and an open session of that host. */
@@ -30,12 +30,12 @@ test("a change of a tool after its definition changes neither its schema nor its
     name: "fixed",
     description: "d",
     concurrency: "serial",
-    parameters: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] },
+    inputSchema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"] },
     execute: (args: { n: number }) => `n=${args.n}`,
-  } as unknown as Tool & { parameters: { required: string[] }; execute: unknown };
+  } as unknown as Tool & { inputSchema: { required: string[] }; execute: unknown };
   const changer: PluginSession = (s) => {
     s.tools.add(fixed);
-    fixed.parameters.required = [];
+    fixed.inputSchema.required = [];
     fixed.execute = () => "changed";
   };
   await using host = await createHost({ plugins: [{ name: "changer", session: changer }] });
@@ -113,7 +113,7 @@ test("a session without a deferred tool has no deferred_tools section", async ()
 for (const [name, definition, expected] of [
   [
     "no concurrency",
-    { name: "bad", description: "d", execute: () => "x", parameters: empty },
+    { name: "bad", description: "d", execute: () => "x", inputSchema: empty },
     "the concurrency 'undefined' is not 'serial' or 'parallel'",
   ],
   ["the name of the tool search", tool("tool_search", () => "x"), 'the engine reserves the tool name "tool_search"'],
@@ -126,7 +126,7 @@ for (const [name, definition, expected] of [
     "a subject of an unknown kind",
     {
       ...tool("bad", () => "x"),
-      parameters: { type: "object", properties: { path: { type: "string" } } },
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
       hints: { subject: { argument: "path", kind: "folder" } },
     },
     "unknown variant `folder`, expected one of `text`, `file`, `uri`",
@@ -178,7 +178,7 @@ test("arguments that do not fit the schema fail before the tool runs", async () 
     [true, "Remove toString. The fields are: path, content."],
     [true, "Set offset to an integer from 1 to 4294967295."],
   ]);
-  assertEquals((await readDir(folder())).length, 0);
+  assertEquals((await Array.fromAsync(readDir(folder()))).length, 0);
 });
 
 test("a value outside the enum fails with the list, and a value in it runs the tool", async () => {
@@ -186,7 +186,7 @@ test("a value outside the enum fails with the list, and a value in it runs the t
     name: "sort",
     description: "d",
     concurrency: "serial",
-    parameters: {
+    inputSchema: {
       type: "object",
       properties: { order: { type: "string", enum: ["asc", "desc"] }, size: { type: "number", enum: [0.5, 2] } },
     },
@@ -216,7 +216,7 @@ test("an argument named __proto__ is an own field", async () => {
     name: "proto",
     description: "d",
     concurrency: "serial",
-    parameters: { type: "object", properties: { ["__proto__"]: { type: "string" } }, required: ["__proto__"] },
+    inputSchema: { type: "object", properties: { ["__proto__"]: { type: "string" } }, required: ["__proto__"] },
     // biome-ignore lint/suspicious/noProto: an own field named __proto__ is the case under test.
     execute: (args: Record<string, unknown>) => String(Object.hasOwn(args, "__proto__") && args.__proto__),
   } as unknown as Tool;
@@ -363,7 +363,7 @@ test("media bytes reach the store as the view held them at the return", async ()
 test("a call in a turn shows the hints of its tool, the folder of the session, and the display of its result", async () => {
   const show = {
     ...tool("show", () => ({ text: "ok", display: [{ kind: "markdown", text: "*a*" }] })),
-    parameters: { type: "object", properties: { path: { type: "string" } } },
+    inputSchema: { type: "object", properties: { path: { type: "string" } } },
     hints: { title: "Show", subject: { argument: "path", kind: "file" }, preview: "tail" },
   } as unknown as Tool;
   await using host = await createHost({

@@ -1,7 +1,8 @@
 // The bundled toasts show the notices of the core as a stack at the top right.
 
 import { apply } from "yuke:internal/bundled/toasts";
-import { assert, assertEquals, createFrame, type FrameNotice, type FrameTest, test } from "yuke:test";
+import type { NoticeParams } from "yuke:protocol";
+import { assert, assertEquals, createFrame, type FrameTest, test } from "yuke:test";
 import { mouse } from "./chat.ts";
 import { rows } from "./rows.ts";
 
@@ -18,7 +19,7 @@ function stack(frame: FrameTest, column = 25): string[] {
     .filter((row) => row !== "");
 }
 
-const notice = (level: FrameNotice["level"], source: string, text: string, sessionId?: string): FrameNotice => ({
+const notice = (level: NoticeParams["level"], source: string, text: string, sessionId?: string): NoticeParams => ({
   level,
   source,
   text,

@@ -22,7 +22,7 @@ function agents() {
       name: "ask",
       description: "Ask the user.",
       concurrency: "serial",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: async () =>
         JSON.stringify(
           await s.ask({
@@ -35,7 +35,7 @@ function agents() {
       name: "gate",
       description: "Wait for the test.",
       concurrency: "parallel",
-      parameters: { type: "object", properties: {} },
+      inputSchema: { type: "object", properties: {} },
       execute: async () => {
         await state.gate;
         return "open";
@@ -45,7 +45,7 @@ function agents() {
       name: "spawn_subagent",
       description: "Run a child.",
       concurrency: "parallel",
-      parameters: {
+      inputSchema: {
         type: "object",
         properties: { message: { type: "string" }, background: { type: "boolean" } },
         required: ["message", "background"],
@@ -116,8 +116,8 @@ test("a child reports to its parent, stays out of the list, and takes a follow-u
   await parent.call("spawn_subagent", { message: "Read the store.", background: true });
   assertEquals(host.requests.length, 2);
   const first = newest(host);
-  const roots = (await list().list()).sessions.map((row) => row.session.sessionId);
-  const children = (await list().list({ parent: parent.id })).sessions.map((row) => row.session.sessionId);
+  const roots = (await list().list()).sessions.map((row) => row.sessionId);
+  const children = (await list().list({ parent: parent.id })).sessions.map((row) => row.sessionId);
   const followup = await parent.call("spawn_subagent", { message: "And the indexes?", background: true });
   assertEquals(followup.isError, false);
   assertEquals(host.requests.length, 4);

@@ -42,11 +42,11 @@ mod timers;
 mod tools;
 mod typescript;
 
-pub use display::{Display, Input, Interface, Request, Startup};
+pub use display::{Display, DisplayInput, DisplayRequest, Interface, Startup};
 pub use error::{Error, Report, ScriptError};
 pub use jobs::Jobs;
 pub use models::{Attachment, CompleteAnswer, CompleteRequest, Models, SideRequest};
-pub use plugins::{Origin, Plugin, PluginFailure};
+pub use plugins::{Plugin, PluginCode, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime, THREAD_STACK};
 pub use session::{ScriptHooks, ScriptSession};

@@ -32,13 +32,34 @@ impl fmt::Display for PluginSource {
     }
 }
 
+/// Where a plugin of `config.json` comes from: a local folder, or a Git plugin. JSON holds a folder as a string, and a
+/// Git plugin as its `PluginSource` object.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
+#[serde(untagged)]
+pub enum PluginOrigin {
+    /// The folder as `config.json` writes it. A relative folder starts in the folder of `config.json`.
+    Folder(String),
+    /// A folder of a Git repository.
+    Git(PluginSource),
+}
+
+impl fmt::Display for PluginOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Folder(folder) => f.write_str(folder),
+            Self::Git(source) => fmt::Display::fmt(source, f),
+        }
+    }
+}
+
 /// One plugin of `config.json` in `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ManagedPlugin {
-    /// The folder of a local plugin, or the URL, folder, and ref of a Git plugin.
-    pub item: String,
+    /// The folder of a local plugin, or the source of a Git plugin.
+    pub source: PluginOrigin,
     /// The name of its `plugin.json`, when the server can read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

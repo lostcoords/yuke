@@ -59,7 +59,7 @@ pub(super) fn add<'js>(
                 let definition = yuke_ai::ToolDefinition {
                     name: tool.get("name")?,
                     description: tool.get("description")?,
-                    input_schema: tool.get("parameters")?,
+                    input_schema: tool.get("inputSchema")?,
                     defer_loading: tool.get("deferLoading")?,
                 };
                 let Json(hints) = tool.get("hints")?;

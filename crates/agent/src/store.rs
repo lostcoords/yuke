@@ -118,8 +118,7 @@ pub trait Store: Send + Sync {
     /// # Errors
     ///
     /// Returns [`StoreError::NotFound`] for an unknown session. Returns [`StoreError::InputNotPending`] when a consumed
-    /// input is not pending. Returns [`StoreError::InputBlocksExceedCommit`] when the consumed inputs have more blocks
-    /// than the commit. Returns [`StoreError::Failed`] when the save fails. A failed commit saves nothing.
+    /// input is not pending. Returns [`StoreError::Failed`] when the save fails. A failed commit saves nothing.
     async fn commit(
         &self,
         id: SessionId,
@@ -208,22 +207,6 @@ pub fn blob_of(bytes: &[u8]) -> yuke_ai::Blob {
     yuke_ai::Blob {
         digest: yuke_ai::Digest(sha2::Sha256::digest(bytes).into()),
         len: bytes.len(),
-    }
-}
-
-/// Check that the model blocks of the `consumed` inputs fit in `commit`. A commit starts with those blocks, so their
-/// counts sum to at most its block count. A store calls this before it saves a commit.
-///
-/// # Errors
-///
-/// Returns [`StoreError::InputBlocksExceedCommit`] when the counts sum to more than the blocks of `commit`.
-pub fn check_consumed_blocks(commit: &Commit<'_>, consumed: &[ConsumedInput]) -> Result<(), StoreError> {
-    let sum = consumed
-        .iter()
-        .try_fold(0_usize, |sum, input| sum.checked_add(input.block_count));
-    match sum {
-        Some(sum) if sum <= commit.blocks.len() => Ok(()),
-        _ => Err(StoreError::InputBlocksExceedCommit),
     }
 }
 
@@ -329,8 +312,6 @@ pub enum StoreError {
     NotACompletedTurn,
     /// A commit consumes this input, or a caller removes it, but the input is not pending.
     InputNotPending(InputId),
-    /// The consumed inputs of a commit have more model blocks than the commit.
-    InputBlocksExceedCommit,
     /// The store failed to save or load.
     Failed(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -342,7 +323,6 @@ impl fmt::Display for StoreError {
             Self::NotFound => f.write_str("the store has no such session"),
             Self::NotACompletedTurn => f.write_str("the event does not end a completed turn"),
             Self::InputNotPending(InputId(id)) => write!(f, "input {id} is not pending"),
-            Self::InputBlocksExceedCommit => f.write_str("the consumed inputs have more blocks than the commit"),
             // The text names no cause, because `source` returns it.
             Self::Failed(_) => f.write_str("the store failed"),
         }
@@ -353,11 +333,7 @@ impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Failed(error) => Some(error.as_ref()),
-            Self::Owned
-            | Self::NotFound
-            | Self::NotACompletedTurn
-            | Self::InputNotPending(_)
-            | Self::InputBlocksExceedCommit => None,
+            Self::Owned | Self::NotFound | Self::NotACompletedTurn | Self::InputNotPending(_) => None,
         }
     }
 }

@@ -83,7 +83,7 @@ impl<'b> JsonWriter<'b> {
         self.value_done();
     }
 
-    /// Write a finite float in its shortest decimal form. The encoder rejects a NaN or an infinity first.
+    /// Write a float in its shortest decimal form. A NaN or an infinity is no JSON, and the provider refuses it.
     pub(crate) fn float(&mut self, value: f64) {
         self.number(value);
     }

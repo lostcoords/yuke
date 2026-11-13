@@ -108,7 +108,7 @@ export class ChatSession {
             }
             transcript.apply(event);
             this.#changed();
-            if (transcript.gap !== undefined) void this.loadOlderHistory();
+            if (transcript.missingEvents !== undefined) void this.loadOlderHistory();
           },
         });
       } catch (error) {
@@ -172,15 +172,15 @@ export class ChatSession {
 
   async loadOlderHistory(): Promise<void> {
     const id = this.#id;
-    // Before a snapshot, the transcript has no first event and no gap, so no page loads.
+    // Before a snapshot, the transcript has no first event and no missing events, so no page loads.
     if (id === undefined || this.#loading || this.#historyError !== undefined) return;
     const transcript = this.#transcript;
-    const gap = transcript.gap;
-    const first = transcript.first;
+    const missing = transcript.missingEvents;
+    const firstEventNumber = transcript.firstEventNumber;
     let page: EventsPage;
-    if (gap !== undefined) page = { ...gap, limit: Math.min(PAGE, gap.limit) };
-    else if (this.#complete || first === undefined) return;
-    else page = { before: first, limit: PAGE };
+    if (missing !== undefined) page = { ...missing, limit: Math.min(PAGE, missing.limit) };
+    else if (this.#complete || firstEventNumber === undefined) return;
+    else page = { before: firstEventNumber, limit: PAGE };
     this.#loading = true;
     let failure: { readonly error: unknown } | undefined;
     let events: Awaited<ReturnType<Sessions["events"]>> = [];
@@ -196,7 +196,7 @@ export class ChatSession {
     else {
       transcript.insert(events);
       // A page that adds nothing older ends the history, so a load never repeats it.
-      if (gap === undefined && transcript.first === first) this.#complete = true;
+      if (missing === undefined && transcript.firstEventNumber === firstEventNumber) this.#complete = true;
     }
     this.#changed();
   }
@@ -204,7 +204,7 @@ export class ChatSession {
   trimHistory(): void {
     const transcript = this.#transcript;
     // A page that loads now would add the dropped events again. The slack of one page keeps a trim rare.
-    if (this.#loading || transcript.held <= TAIL + PAGE) return;
+    if (this.#loading || transcript.eventCount <= TAIL + PAGE) return;
     transcript.trim(TAIL);
     this.#complete = false;
     this.#changed();

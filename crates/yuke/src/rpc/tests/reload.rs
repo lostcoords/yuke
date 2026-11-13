@@ -8,7 +8,7 @@ fn tool_plugin(name: &str) -> String {
         "export function session(s) {{
            s.tools.add({{
              name: '{name}', description: 'A tool.', concurrency: 'serial',
-             parameters: {{ type: 'object', properties: {{}} }},
+             inputSchema: {{ type: 'object', properties: {{}} }},
              execute: async () => 'done',
            }});
          }}"
@@ -53,7 +53,7 @@ async fn a_plugin_gets_the_options_of_its_config_item_and_a_reload_reads_them_ag
          export function session(s) {
            s.tools.add({
              name: s.options.name, description: 'A tool.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              execute: async () => 'done',
            });
          }",

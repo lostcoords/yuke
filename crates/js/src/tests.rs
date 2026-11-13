@@ -27,8 +27,8 @@ use self::plugins::plugin;
 use self::tools::TestHost;
 use crate::error::caught;
 use crate::{
-    CompleteAnswer, CompleteRequest, Error, Models, Options, Origin, Plugin, Processes, Report, Runtime, ScriptError,
-    ScriptSession, SideRequest,
+    CompleteAnswer, CompleteRequest, Error, Models, Options, Plugin, PluginCode, Processes, Report, Runtime,
+    ScriptError, ScriptSession, SideRequest,
 };
 
 /// A new empty folder for the test `name`.
@@ -283,7 +283,7 @@ fn descriptor(
 ) -> Plugin {
     Plugin {
         name: name.to_owned(),
-        origin: Origin::Folder { root, entry },
+        origin: PluginCode::Folder { root, entry },
         data_dir,
         options: serde_json::Map::new(),
         uses: uses.iter().map(|&service| service.to_owned()).collect(),

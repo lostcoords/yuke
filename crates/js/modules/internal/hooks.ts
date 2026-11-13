@@ -3,7 +3,7 @@
 import type { TextAnswer } from "yuke:ai";
 import { defineTool } from "yuke:internal/define";
 import { hostOperation, hostSignal, underSignal, underStop } from "yuke:internal/events";
-import { failureOf, stackOf, textOf } from "yuke:internal/failure";
+import { failureOf, stackOf } from "yuke:internal/failure";
 import { emit, notify, type Operation, type RoundNatives, removeTool, unregister } from "yuke:internal/native";
 import { type Options, sessionExports } from "yuke:internal/plugins";
 import { frozen, jsonCopy } from "yuke:internal/values";
@@ -18,6 +18,7 @@ import type {
   JobReport,
   JobWork,
   KeptMedia,
+  ParsedToolCall,
   ResultMedia,
   RoundAfterAnswer,
   RoundAfterEvent,
@@ -27,7 +28,6 @@ import type {
   SessionHooks,
   SideRequestOptions,
   ToolAfterAnswer,
-  ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
 import { ClientRequestError } from "yuke:plugins";
@@ -194,7 +194,7 @@ export function startPromptBuild(request: PromptBuildRequest): Operation<Section
 /** What `startToolBefore` gets. The host gives the arguments of the call as their parsed JSON. */
 interface ToolBeforeRequest {
   readonly open: number;
-  readonly call: ToolCall;
+  readonly call: ParsedToolCall;
 }
 
 /**
@@ -269,7 +269,7 @@ export function startInputBefore(
         },
       );
     } catch (error) {
-      notify("host:plugins", "error", error instanceof Error ? error.message : textOf(error), sessionId);
+      notify("host:plugins", "error", error instanceof Error ? error.message : String(error), sessionId);
       return { blocks: undefined };
     }
     if (removed) return { blocks: undefined };
@@ -461,7 +461,7 @@ interface ChangedResult {
 /** What `startToolAfter` gets: the call as for `startToolBefore`, and its result with each media item as its facts. */
 interface ToolAfterRequest {
   readonly open: number;
-  readonly call: ToolCall;
+  readonly call: ParsedToolCall;
   readonly result: {
     readonly text: string;
     readonly isError: boolean;
@@ -575,7 +575,7 @@ function keptOf(value: KeptMedia, originals: readonly ResultMedia[]): ResultMedi
 
 /** The error of a `point` handler of `plugin` that failed with `error`. It keeps the stack of `error`. */
 function hookFailure(point: string, plugin: string, error: unknown): Error {
-  const failure = new Error(`${point} of plugin ${plugin} failed: ${textOf(error)}`);
+  const failure = new Error(`${point} of plugin ${plugin} failed: ${String(error)}`);
   // The stack of the host code tells the author nothing.
   const stack = stackOf(error);
   if (stack !== undefined) failure.stack = stack;

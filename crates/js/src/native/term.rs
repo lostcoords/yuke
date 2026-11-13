@@ -19,7 +19,7 @@ use yuke_term::{
     Style, graphemes,
 };
 
-use crate::display::{Display, Frame, Input, Interface, Request, Scheme, scheme_of};
+use crate::display::{Display, DisplayInput, DisplayRequest, Frame, Interface, Scheme, scheme_of};
 use crate::error::{Error, ErrorClass, Report, caught, throw};
 
 /// The shortest time between two asked frames: at most 60 frames each second. A frame after input does not wait.
@@ -227,7 +227,7 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, text: Option<String>| -> rquickjs::Result<_> {
-                held.display(&ctx)?.ask(Request::Quit(text));
+                held.display(&ctx)?.ask(DisplayRequest::Quit(text));
                 Ok(())
             },
         )?,
@@ -237,7 +237,7 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
     set(
         "termSuspend",
         Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<_> {
-            held.display(&ctx)?.ask(Request::Suspend);
+            held.display(&ctx)?.ask(DisplayRequest::Suspend);
             Ok(())
         })?,
     )?;
@@ -248,7 +248,7 @@ fn add_loop<'js>(ctx: &Ctx<'js>, object: &Object<'js>, frames: &Rc<Frames>) -> r
         Function::new(
             ctx.clone(),
             move |ctx: Ctx<'js>, snapshot: String| -> rquickjs::Result<_> {
-                held.display(&ctx)?.ask(Request::Reload(snapshot));
+                held.display(&ctx)?.ask(DisplayRequest::Reload(snapshot));
                 Ok(())
             },
         )?,
@@ -384,7 +384,7 @@ pub(crate) async fn drive(
         // Mouse motion comes often. A handler that changes the look asks for its frame.
         redraw |= inputs
             .iter()
-            .any(|input| !matches!(input, Input::Event(Event::Mouse(mouse)) if mouse.kind == MouseKind::Motion));
+            .any(|input| !matches!(input, DisplayInput::Event(Event::Mouse(mouse)) if mouse.kind == MouseKind::Motion));
         // Each input changes the display state when its event comes, so a handler reads the state of its own event.
         for input in inputs {
             if let Some(value) = event_object(&ctx, &display, input) {
@@ -460,9 +460,9 @@ fn report(ctx: &Ctx<'_>, result: rquickjs::Result<()>, faults: &mpsc::UnboundedS
 }
 
 /// The JavaScript event of `input`, or `None` for an input that gives none, such as an unchanged background.
-fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<rquickjs::Result<Object<'js>>> {
+fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: DisplayInput) -> Option<rquickjs::Result<Object<'js>>> {
     let value = match input {
-        Input::Resize(size) => {
+        DisplayInput::Resize(size) => {
             display.frame().screen.resize(size);
             kind(ctx, "resize").and_then(|object| {
                 object.set("w", size.columns)?;
@@ -470,7 +470,7 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
                 Ok(object)
             })
         }
-        Input::Event(Event::Key(key)) => kind(ctx, "key").and_then(|object| {
+        DisplayInput::Event(Event::Key(key)) => kind(ctx, "key").and_then(|object| {
             let character = match key.code {
                 Code::Char(character) => character.to_string(),
                 _ => String::new(),
@@ -483,8 +483,8 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             object.set("modifiers", modifiers_object(ctx, key.modifiers)?)?;
             Ok(object)
         }),
-        Input::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
-        Input::Notice(notice) => kind(ctx, "notice").and_then(|object| {
+        DisplayInput::Event(Event::Mouse(mouse)) => mouse_object(ctx, mouse),
+        DisplayInput::Notice(notice) => kind(ctx, "notice").and_then(|object| {
             object.set("level", Json(notice.level))?;
             object.set("source", notice.source)?;
             object.set("text", notice.text)?;
@@ -493,15 +493,15 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
             }
             Ok(object)
         }),
-        Input::Event(Event::Paste(text)) => kind(ctx, "paste").and_then(|object| {
+        DisplayInput::Event(Event::Paste(text)) => kind(ctx, "paste").and_then(|object| {
             object.set("text", text)?;
             Ok(object)
         }),
-        Input::Event(event @ (Event::FocusGained | Event::FocusLost)) => kind(ctx, "focus").and_then(|object| {
+        DisplayInput::Event(event @ (Event::FocusGained | Event::FocusLost)) => kind(ctx, "focus").and_then(|object| {
             object.set("focused", event == Event::FocusGained)?;
             Ok(object)
         }),
-        Input::Event(Event::Background(color)) => {
+        DisplayInput::Event(Event::Background(color)) => {
             let scheme = scheme_of(color);
             if std::mem::replace(&mut display.frame().scheme, scheme) == scheme {
                 return None;
@@ -511,8 +511,8 @@ fn event_object<'js>(ctx: &Ctx<'js>, display: &Display, input: Input) -> Option<
                 Ok(object)
             })
         }
-        Input::Redraw => return None,
-        Input::Event(Event::SchemeChanged) => {
+        DisplayInput::Redraw => return None,
+        DisplayInput::Event(Event::SchemeChanged) => {
             let mut frame = display.frame();
             if frame
                 .output

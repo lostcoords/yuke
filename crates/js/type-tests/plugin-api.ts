@@ -4,6 +4,7 @@ import type { GenerateTextOptions } from "yuke:ai";
 import type {
   Catalog,
   Frozen,
+  ParsedToolCall,
   PluginApply,
   PluginContext,
   PluginSession,
@@ -16,11 +17,10 @@ import type {
   ToolAfterAnswer,
   ToolBeforeAnswer,
   ToolBeforeEvent,
-  ToolCall,
   ToolCallResult,
 } from "yuke:plugins";
 import type { Block, FinishReason } from "yuke:protocol";
-import type { Infer, ObjectSchema, ToolResult } from "yuke:tools";
+import type { Infer, ObjectSchema, ToolExecuteResult } from "yuke:tools";
 
 /** `true` only when `A` and `B` are the same type. */
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -42,7 +42,7 @@ s.tools.add({
   name: "summarize",
   description: "d",
   concurrency: "parallel",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: {
       path: { type: "string" },
@@ -105,7 +105,7 @@ s.tools.add({
   name: "sort",
   description: "d",
   concurrency: "parallel",
-  parameters: {
+  inputSchema: {
     type: "object",
     properties: { order: { type: "string", enum: ["asc", "desc"] }, size: { type: "integer", enum: [1, 2] } },
     required: ["order"],
@@ -130,7 +130,7 @@ const numberInStringEnum: ObjectSchema = { type: "object", properties: { order: 
 void [booleanEnum, numberInStringEnum];
 
 // A result is a string, or text with media and an error flag. A media file has a path or bytes, never both.
-const results: ToolResult[] = [
+const results: ToolExecuteResult[] = [
   "done",
   { text: "", media: [{ mimeType: "image/png", bytes: new Uint8Array(1) }], isError: true },
   { text: "x", media: [{ mimeType: "image/png", path: "a.png" }] },
@@ -340,7 +340,7 @@ s.addHook("turn.start", () => undefined);
 // A `tool.before` handler gets the call and denies it with a reason, or returns nothing.
 s.addHook("tool.before", (event) => {
   assert<Equal<typeof event, ToolBeforeEvent>>();
-  assert<Equal<typeof event.call, ToolCall>>();
+  assert<Equal<typeof event.call, ParsedToolCall>>();
   assert<Equal<typeof event.call.arguments, unknown>>();
   // @ts-expect-error: the call belongs to the model.
   event.call.name = "write";
@@ -380,7 +380,7 @@ s.tools.add({
   description: "d",
   concurrency: "serial",
   deferLoading: maybe,
-  parameters: { type: "object", properties: {} },
+  inputSchema: { type: "object", properties: {} },
   execute: () => ({ text: "x", isError: maybe, media: undefined }),
 });
 // A copy of an item keeps it, and so does its id alone.

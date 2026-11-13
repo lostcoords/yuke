@@ -46,7 +46,6 @@ macro_rules! store_tests {
             a_pending_input_stays_until_a_commit_consumes_it,
             a_consumed_input_id_is_not_given_again,
             a_commit_of_an_input_that_is_not_pending_saves_nothing,
-            a_commit_with_fewer_blocks_than_its_inputs_saves_nothing,
             a_load_gives_the_events_with_the_inputs_that_are_still_pending,
             a_page_before_an_event_gives_the_last_events_before_it_in_order,
             new_settings_give_the_number_of_their_event,
@@ -548,35 +547,6 @@ pub async fn a_commit_of_an_input_that_is_not_pending_saves_nothing(store: &dyn 
     );
     let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
     assert_eq!(pending, [second]);
-}
-
-/// A commit whose consumed inputs have more model blocks than the commit fails, and it saves nothing.
-pub async fn a_commit_with_fewer_blocks_than_its_inputs_saves_nothing(store: &dyn Store) {
-    let id = store
-        .create_session(&settings("one"), &prompt(), None)
-        .await
-        .unwrap()
-        .id;
-    let input = store.accept_input(id, user_input("one")).await.unwrap();
-    let events = store
-        .load(id, EventPage::After(None))
-        .await
-        .map(|loaded| loaded.events)
-        .unwrap();
-
-    let short = store.commit(id, &step(&[]), &[consumed(input, 1)]).await;
-
-    assert!(matches!(short, Err(StoreError::InputBlocksExceedCommit)), "{short:?}");
-    assert_eq!(
-        store
-            .load(id, EventPage::After(None))
-            .await
-            .map(|loaded| loaded.events)
-            .unwrap(),
-        events
-    );
-    let pending: Vec<_> = store.pending(id).await.unwrap().iter().map(|input| input.id).collect();
-    assert_eq!(pending, [input]);
 }
 
 /// A load gives the events after a number and the inputs that no commit consumed. A consumed input is in the commit

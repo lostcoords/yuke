@@ -8,7 +8,7 @@ import { createMount, startView } from "yuke:internal/tui/mount";
 import type { SavedPane, SavedPanes, ViewType } from "yuke:internal/tui/restore";
 import type {
   Canvas,
-  DefaultPane,
+  DefaultPaneFactory,
   Direction,
   FocusDirection,
   Mount,
@@ -42,7 +42,7 @@ type Node = Leaf | Split;
 /** The default pane of a plugin, and the hand-over of each of its panes to that plugin. */
 export interface DefaultPaneEntry {
   readonly owner: string;
-  readonly create: DefaultPane;
+  readonly create: DefaultPaneFactory;
   readonly adopt: (mount: Mount) => void;
 }
 
@@ -172,7 +172,7 @@ export class PaneTree {
    * Move the focus to the nearest pane in `direction`: the centers strictly ahead, scored by the distance along plus
    * twice the distance across; the first in tree order wins a tie.
    */
-  focus(direction: FocusDirection): boolean {
+  moveFocus(direction: FocusDirection): boolean {
     const from = this.#leafRects.get(this.#active);
     if (from === undefined) return false;
     const center = (rect: Rect) => ({ x: rect.column + rect.width / 2, y: rect.row + rect.height / 2 });

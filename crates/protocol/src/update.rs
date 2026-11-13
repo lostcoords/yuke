@@ -284,9 +284,9 @@ pub enum ModelUpdate {
 }
 
 impl ModelUpdate {
-    /// The owned update of `event`, or `None` for an event that the protocol has no update for.
-    pub fn from_event(event: yuke_ai::Event<'_>) -> Option<Self> {
-        Some(match event {
+    /// The owned update of `event`.
+    pub fn from_event(event: yuke_ai::Event<'_>) -> Self {
+        match event {
             yuke_ai::Event::BlockStarted(started) => Self::BlockStarted {
                 block_id: started.block,
                 content: match started.content {
@@ -294,7 +294,6 @@ impl ModelUpdate {
                     yuke_ai::StartedBlock::Refusal => StartedBlock::Refusal,
                     yuke_ai::StartedBlock::Reasoning => StartedBlock::Reasoning,
                     yuke_ai::StartedBlock::ToolCall { name } => StartedBlock::ToolCall { name: name.to_owned() },
-                    _ => return None,
                 },
             },
             yuke_ai::Event::TextDelta(delta) => Self::TextDelta {
@@ -326,7 +325,6 @@ impl ModelUpdate {
                 raw_finish_reason: done.raw_finish_reason.to_owned(),
                 usage: done.usage,
             },
-            _ => return None,
-        })
+        }
     }
 }

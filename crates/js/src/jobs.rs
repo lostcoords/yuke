@@ -274,7 +274,7 @@ impl Jobs {
             .iter()
             .filter(|job| job.runs() && job.session == session)
             .map(|job| yuke_protocol::Job {
-                id: job.id.clone(),
+                id: yuke_protocol::JobId(job.id.clone()),
                 label: job.label.clone(),
                 state: JobState::Running,
                 kind: match &job.work {
@@ -424,7 +424,7 @@ impl PluginJob {
 
     fn protocol_job(&self, state: JobState) -> yuke_protocol::Job {
         yuke_protocol::Job {
-            id: self.job.id.clone(),
+            id: yuke_protocol::JobId(self.job.id.clone()),
             label: self.label.clone(),
             state,
             kind: JobKind::Plugin {

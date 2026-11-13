@@ -234,12 +234,12 @@ test("keys of a command and each disposer remove only their own binding", () => 
   const second = keymap.add("ctrl+o", "open");
   keymap.add("alt+x  o", "open");
   keymap.add("ctrl+q", "quit");
-  assertEquals(keymap.keysOf("open"), ["alt+x o", "ctrl+o"]);
+  assertEquals(keymap.list("open"), ["alt+x o", "ctrl+o"]);
   first();
   first();
-  assertEquals(keymap.keysOf("open"), ["alt+x o", "ctrl+o"]);
+  assertEquals(keymap.list("open"), ["alt+x o", "ctrl+o"]);
   second();
-  assertEquals(keymap.keysOf("open"), ["alt+x o"]);
+  assertEquals(keymap.list("open"), ["alt+x o"]);
 });
 
 test("commands check their names and run with args", () => {

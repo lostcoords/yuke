@@ -90,7 +90,7 @@ export type Blob = {
  */
 digest: string, 
 /**
- * The byte count of the content. [`BlobStore`] answers are checked against it.
+ * The byte count of the content.
  */
 len: number, };
 
@@ -375,9 +375,9 @@ answers: Array<QuestionAnswer>, } | { "kind": "cancelled" };
  */
 export type Job = { 
 /**
- * The id of the job, for example `job-1a2b`.
+ * The id of the job.
  */
-id: string, 
+id: JobId, 
 /**
  * A short text for display.
  */
@@ -402,6 +402,11 @@ exitCode?: number, } | { "kind": "plugin",
  * The name of the plugin.
  */
 plugin: string, });
+
+/**
+ * The id of a background job, for example `job-1a2b`. A job id is unique among the jobs of one session.
+ */
+export type JobId = string;
 
 /**
  * Whether a job runs, and how it ended.
@@ -631,9 +636,9 @@ userCode: string, };
  */
 export type ManagedPlugin = { 
 /**
- * The folder of a local plugin, or the URL, folder, and ref of a Git plugin.
+ * The folder of a local plugin, or the source of a Git plugin.
  */
-item: string, 
+source: PluginOrigin, 
 /**
  * The name of its `plugin.json`, when the server can read it.
  */
@@ -918,6 +923,12 @@ commits: Array<string>, } | { "kind": "failed",
  * Why.
  */
 error: string, };
+
+/**
+ * Where a plugin of `config.json` comes from: a local folder, or a Git plugin. JSON holds a folder as a string, and a
+ * Git plugin as its `PluginSource` object.
+ */
+export type PluginOrigin = string | PluginSource;
 
 /**
  * A Git plugin of `config.json`, as `plugins.lock` keys it.
@@ -1239,13 +1250,41 @@ export type SessionId = string;
  */
 export type SessionRow = { 
 /**
- * The saved facts.
- */
-session: SessionSummary, 
-/**
  * Whether the session is open in this server, and whether a turn runs in it.
  */
-state: SessionState, };
+state: SessionState, 
+/**
+ * The session.
+ */
+sessionId: SessionId, 
+/**
+ * The model of the newest settings.
+ */
+model: ModelReference, 
+/**
+ * The working folder of the newest settings.
+ */
+cwd: string, 
+/**
+ * The display title from a message, an explicit rename, or a fork of a titled session.
+ */
+title?: SessionTitle, 
+/**
+ * The creation time, in milliseconds since the Unix epoch.
+ */
+createdAt: number, 
+/**
+ * The time of the newest event, in milliseconds since the Unix epoch. A fork starts at its creation time.
+ */
+updatedAt: number, 
+/**
+ * The source of a fork. The source can be gone.
+ */
+forkOf?: SessionId, 
+/**
+ * The parent session. A removal of the parent removes this session.
+ */
+parent?: SessionId, };
 
 /**
  * The current choice of a session: the model, the request settings, and the working folder. It holds no credential
@@ -1284,43 +1323,6 @@ updates: Array<SessionUpdate>, };
  * `idle` or `running`.
  */
 export type SessionState = "closed" | "idle" | "running";
-
-/**
- * The saved facts of a session, as `session/list` and `session/get` give them.
- */
-export type SessionSummary = { 
-/**
- * The session.
- */
-sessionId: SessionId, 
-/**
- * The model of the newest settings.
- */
-model: ModelReference, 
-/**
- * The working folder of the newest settings.
- */
-cwd: string, 
-/**
- * The display title from a message, an explicit rename, or a fork of a titled session.
- */
-title?: SessionTitle, 
-/**
- * The creation time, in milliseconds since the Unix epoch.
- */
-createdAt: number, 
-/**
- * The time of the newest event, in milliseconds since the Unix epoch. A fork starts at its creation time.
- */
-updatedAt: number, 
-/**
- * The source of a fork. The source can be gone.
- */
-forkOf?: SessionId, 
-/**
- * The parent session. A removal of the parent removes this session.
- */
-parent?: SessionId, };
 
 /**
  * A non-empty session title with normalized whitespace and at most 200 Unicode scalar values.

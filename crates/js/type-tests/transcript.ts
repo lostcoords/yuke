@@ -16,7 +16,8 @@ assert<Equal<keyof typeof Runtime, keyof typeof import("yuke:transcript")>>();
 // The events of an open feed a transcript, and a gap goes back to the sessions.
 export async function follow(sessions: Sessions, transcript: Transcript): Promise<void> {
   const handle = await sessions.open("id", { tail: 50, onEvent: (event) => transcript.apply(event) });
-  if (transcript.gap !== undefined) transcript.insert(await sessions.events(handle.id, transcript.gap));
+  if (transcript.missingEvents !== undefined)
+    transcript.insert(await sessions.events(handle.id, transcript.missingEvents));
   // @ts-expect-error: the snapshot is the first event, not a field of the handle.
   void handle.snapshot;
   // @ts-expect-error: `event` gets the snapshot and the updates.

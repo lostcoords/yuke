@@ -221,7 +221,7 @@ test("each of two overlapping calls gets its own answer", async () => {
       name: "echo",
       description: "Echo the text.",
       concurrency: "parallel",
-      parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+      inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
       execute: (args) => args.text,
     });
     s.addHook("tool.after", async (event) => {
@@ -290,7 +290,10 @@ for (const [name, answer, expected] of [
     const redact: PluginSession = (s) => {
       s.addHook("tool.after", () => answer);
     };
-    await using host = await createHost({ plugins: [{ name: "redact", session: redact }], answer: () => undefined });
+    await using host = await createHost({
+      plugins: [{ name: "redact", session: redact }],
+      onQuestion: () => undefined,
+    });
     const session = await host.openSession();
 
     const result = await session.runHook("tool.after", { call, result: { ...original, display: [diff] } });

@@ -14,7 +14,7 @@ async fn a_plugin_asks_the_user_and_the_answer_of_the_client_reaches_its_tool() 
         "export function session(s) {
            s.tools.add({
              name: 'deploy', description: 'Deploy.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
                const question = { id: 'target', header: 'Target', question: 'Deploy to?', options: [{ label: 'staging' }, { label: 'production' }] };
                const answers = await s.ask({ questions: [question] }, { signal });
@@ -77,7 +77,7 @@ async fn a_load_sends_an_open_question_again() {
         "export function session(s) {
            s.tools.add({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
                const question = { id: 'keep', header: 'Branch', question: 'Keep the branch?\\nIt has no merge.', options: [{ label: 'Yes' }, { label: 'No' }] };
                return `kept: ${(await s.ask({ questions: [question] }, { signal }))?.[0].values[0]}`;
@@ -134,7 +134,7 @@ async fn a_question_after_a_close_and_a_load_has_a_new_id() {
         "export function session(s) {
            s.tools.add({
              name: 'keep', description: 'Keep.', concurrency: 'serial',
-             parameters: { type: 'object', properties: {} },
+             inputSchema: { type: 'object', properties: {} },
              async execute(_args, { signal }) {
                const question = { id: 'keep', header: 'Branch', question: 'Keep the branch?', options: [{ label: 'Yes' }, { label: 'No' }] };
                return `kept: ${(await s.ask({ questions: [question] }, { signal }))?.[0].values[0]}`;

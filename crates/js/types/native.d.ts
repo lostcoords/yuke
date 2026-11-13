@@ -127,7 +127,7 @@ declare module "yuke:internal/native" {
       readonly name: string;
       readonly description: string;
       /** The JSON text of the schema of the arguments. */
-      readonly parameters: string;
+      readonly inputSchema: string;
       readonly concurrency: "serial" | "parallel";
       readonly deferLoading: boolean;
       readonly hints: ToolHints;

@@ -57,7 +57,7 @@ test("a test leaves a global and a file behind", async () => {
 
 test("the next test runs in a fresh runtime with an empty folder of its own", async () => {
   assertEquals(Reflect.has(globalThis, "leftover"), false);
-  assertEquals(await readDir(".", { cwd: folder() }), []);
+  assertEquals(await Array.fromAsync(readDir(".", { cwd: folder() })), []);
 });
 
 test("a host needs the runner of yuke test", async () => {

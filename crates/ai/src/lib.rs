@@ -163,7 +163,6 @@ mod tests {
             Error::Attempt(AttemptError {
                 cause,
                 info: AttemptInfo::default(),
-                partial: Vec::new(),
             })
         };
         let store_error: Box<dyn std::error::Error + Send + Sync> = "the store is locked".into();

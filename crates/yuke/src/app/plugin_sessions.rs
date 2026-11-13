@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use yuke_js::{FactSink, Sessions, SessionsError, ViewSink};
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
-    InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult, ListSessionsParams,
+    InteractionId, InteractionResponse, Job, JobId, ListCatalogResult, ListPluginsResult, ListSessionsParams,
     ListSessionsResult, LoginId, LoginOutcome, LoginResult, McpServer, SessionId, SessionRow, SessionSettings,
     SessionTitle, SetApiKeyParams, StoredEvent, SyncPluginsParams, SyncPluginsResult,
 };
@@ -139,7 +139,7 @@ impl Sessions for PluginSessions {
     }
 
     async fn stop_job(&self, id: SessionId, job_id: &str) -> Result<(), SessionsError> {
-        Ok(self.service()?.stop_job(id, job_id).await?)
+        Ok(self.service()?.stop_job(id, &JobId(job_id.to_owned())).await?)
     }
 
     fn mcp_servers(&self, id: SessionId) -> Result<Vec<McpServer>, SessionsError> {

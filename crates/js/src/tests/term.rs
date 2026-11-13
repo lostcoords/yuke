@@ -12,7 +12,7 @@ use yuke_term::{Button, Code, Event, Key, Modifiers, Mouse, MouseKind, Rgb, Size
 
 use super::{NAMES, evaluate, folder, next_fault, options, start};
 use crate::error::caught;
-use crate::{Display, Input, Interface, Processes, Report, Request, Runtime, Startup};
+use crate::{Display, DisplayInput, DisplayRequest, Interface, Processes, Report, Runtime, Startup};
 
 /// An output that keeps what the frames write, and wakes a waiter at each flush.
 #[derive(Clone, Default)]
@@ -94,7 +94,7 @@ type Started = (
     mpsc::UnboundedReceiver<Report>,
     Arc<Display>,
     Output,
-    mpsc::UnboundedReceiver<Request>,
+    mpsc::UnboundedReceiver<DisplayRequest>,
 );
 
 /// Start a hidden runtime on a 20×3 display, with the global `term`, and run its frame loop. The handler keeps each event
@@ -131,8 +131,8 @@ async fn started(name: &str) -> Started {
     (runtime, reports, display, output, requests)
 }
 
-fn notice(level: NoticeLevel, source: &str, text: &str) -> Input {
-    Input::Notice(NoticeParams {
+fn notice(level: NoticeLevel, source: &str, text: &str) -> DisplayInput {
+    DisplayInput::Notice(NoticeParams {
         session_id: None,
         level,
         source: source.to_owned(),
@@ -140,14 +140,14 @@ fn notice(level: NoticeLevel, source: &str, text: &str) -> Input {
     })
 }
 
-fn key(character: char) -> Input {
+fn key(character: char) -> DisplayInput {
     let mut key = Key::new(Code::Char(character));
     key.text = character.to_string();
-    Input::Event(Event::Key(key))
+    DisplayInput::Event(Event::Key(key))
 }
 
-fn wheel(button: Button, column: u16) -> Input {
-    Input::Event(Event::Mouse(Mouse {
+fn wheel(button: Button, column: u16) -> DisplayInput {
+    DisplayInput::Event(Event::Mouse(Mouse {
         column,
         row: 0,
         button,
@@ -234,7 +234,7 @@ async fn a_notice_comes_as_an_event_with_its_level_source_and_text() {
 async fn a_notice_of_a_session_keeps_its_session_id() {
     let (runtime, _reports, display, _output, _requests) = started("a_notice_of_a_session_keeps_its_session_id").await;
     let session = SessionId::generate();
-    display.send(Input::Notice(NoticeParams {
+    display.send(DisplayInput::Notice(NoticeParams {
         session_id: Some(session),
         level: NoticeLevel::Error,
         source: "host:session".to_owned(),
@@ -259,7 +259,7 @@ async fn take_notices_gives_the_waiting_notices_and_drops_the_other_inputs() {
     );
     display.send(key('a'));
     display.send(notice(NoticeLevel::Error, "host:yuke", "first"));
-    display.send(Input::Resize(Size { columns: 30, rows: 4 }));
+    display.send(DisplayInput::Resize(Size { columns: 30, rows: 4 }));
     display.send(notice(NoticeLevel::Debug, "console", "second"));
 
     let messages: Vec<String> = display.take_notices().into_iter().map(|notice| notice.text).collect();
@@ -288,7 +288,7 @@ async fn a_batch_of_inputs_draws_one_frame() {
 async fn a_redraw_draws_a_frame_at_once_and_gives_the_handler_no_event() {
     let (runtime, _reports, display, _output, _requests) = started("a_redraw_draws_a_frame_at_once").await;
     // The start frame was just drawn, so an asked frame would wait for the frame limit.
-    display.send(Input::Redraw);
+    display.send(DisplayInput::Redraw);
     crate::wait_for_settled().await;
     let text = evaluate::<String>(&runtime, "return `${frames} ${seen.length}`;")
         .await
@@ -351,8 +351,8 @@ async fn an_ask_of_the_draw_gives_the_next_frame() {
 #[tokio::test(flavor = "local")]
 async fn a_focus_event_says_whether_the_window_has_the_focus() {
     let (runtime, _reports, display, _output, _requests) = started("a_focus_event_says_whether").await;
-    display.send(Input::Event(Event::FocusLost));
-    display.send(Input::Event(Event::FocusGained));
+    display.send(DisplayInput::Event(Event::FocusLost));
+    display.send(DisplayInput::Event(Event::FocusGained));
     crate::wait_for_settled().await;
     assert!(evaluate::<bool>(&runtime, "return seen.length === 3;").await.unwrap());
     let text = evaluate::<String>(
@@ -368,7 +368,7 @@ async fn a_focus_event_says_whether_the_window_has_the_focus() {
 async fn a_motion_with_no_button_reaches_the_handler_and_draws_only_when_it_asks() {
     let (runtime, _reports, display, output, _requests) = started("a_motion_with_no_button").await;
     let motion = || {
-        Input::Event(Event::Mouse(Mouse {
+        DisplayInput::Event(Event::Mouse(Mouse {
             column: 3,
             row: 1,
             button: Button::None,
@@ -400,7 +400,7 @@ async fn a_motion_with_no_button_reaches_the_handler_and_draws_only_when_it_asks
 #[tokio::test(flavor = "local")]
 async fn a_mouse_event_gives_column_row_button_action_and_modifiers() {
     let (runtime, _reports, display, _output, _requests) = started("a_mouse_event_gives_column_row").await;
-    display.send(Input::Event(Event::Mouse(Mouse {
+    display.send(DisplayInput::Event(Event::Mouse(Mouse {
         column: 3,
         row: 1,
         button: Button::Left,
@@ -460,8 +460,8 @@ async fn each_event_of_a_batch_comes_alone_with_the_state_of_its_time() {
     for input in [
         wheel(Button::WheelUp, 1),
         wheel(Button::WheelUp, 1),
-        Input::Resize(Size { columns: 30, rows: 4 }),
-        Input::Resize(Size { columns: 40, rows: 5 }),
+        DisplayInput::Resize(Size { columns: 30, rows: 4 }),
+        DisplayInput::Resize(Size { columns: 40, rows: 5 }),
     ] {
         display.send(input);
     }
@@ -485,7 +485,7 @@ async fn a_resize_sets_the_size_before_its_event_and_writes_every_cell() {
         .await
         .unwrap();
     output.clear();
-    display.send(Input::Resize(Size { columns: 30, rows: 4 }));
+    display.send(DisplayInput::Resize(Size { columns: 30, rows: 4 }));
     crate::wait_for_settled().await;
     assert!(
         evaluate::<bool>(&runtime, "return seen.length === 2 && frames === 2;")
@@ -514,15 +514,18 @@ async fn quit_suspend_and_reload_reach_the_host_and_a_scheme_change_asks_for_the
     )
     .await
     .unwrap();
-    assert_eq!(requests.recv().await, Some(Request::Quit(None)));
-    assert_eq!(requests.recv().await, Some(Request::Quit(Some("bye".to_owned()))));
-    assert_eq!(requests.recv().await, Some(Request::Suspend));
+    assert_eq!(requests.recv().await, Some(DisplayRequest::Quit(None)));
     assert_eq!(
         requests.recv().await,
-        Some(Request::Reload(r#"{"panes":2}"#.to_owned()))
+        Some(DisplayRequest::Quit(Some("bye".to_owned())))
+    );
+    assert_eq!(requests.recv().await, Some(DisplayRequest::Suspend));
+    assert_eq!(
+        requests.recv().await,
+        Some(DisplayRequest::Reload(r#"{"panes":2}"#.to_owned()))
     );
     output.clear();
-    display.send(Input::Event(Event::SchemeChanged));
+    display.send(DisplayInput::Event(Event::SchemeChanged));
     // The scheme change gives the handler no event, so the key is the next event.
     display.send(key('x'));
     crate::wait_for_settled().await;
@@ -549,7 +552,7 @@ async fn a_background_event_comes_only_when_the_class_changes() {
         blue: 255,
     };
     for color in [black, white, white] {
-        display.send(Input::Event(Event::Background(color)));
+        display.send(DisplayInput::Event(Event::Background(color)));
     }
     display.send(key('x'));
     crate::wait_for_settled().await;

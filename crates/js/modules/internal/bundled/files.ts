@@ -63,7 +63,7 @@ async function walkedFiles(cwd: string, signal: AbortSignal): Promise<string[]> 
   let walked = 0;
   for (let folder = folders.shift(); folder !== undefined && walked < MOST_WALKED; folder = folders.shift()) {
     if (signal.aborted) break;
-    const entries = await readDir(`${cwd}/${folder}`).catch(() => []);
+    const entries = await Array.fromAsync(readDir(`${cwd}/${folder}`)).catch(() => []);
     for (const entry of entries) {
       if (entry.name.startsWith(".") || SKIPPED.has(entry.name)) continue;
       walked += 1;

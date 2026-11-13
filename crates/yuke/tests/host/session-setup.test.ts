@@ -11,7 +11,7 @@ function tool(name: string, answer = "x"): Tool {
     name,
     description: "d",
     concurrency: "serial",
-    parameters: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: {} },
     execute: () => answer,
   } as Tool;
 }

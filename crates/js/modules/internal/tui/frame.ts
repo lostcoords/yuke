@@ -8,7 +8,8 @@ import { Core } from "yuke:internal/tui/core";
 import { parseKeys, splitStroke } from "yuke:internal/tui/keys";
 import { createMount } from "yuke:internal/tui/mount";
 import { createSurface } from "yuke:internal/tui/surface";
-import type { Frame, FrameNotice, FrameTest, TestSurface } from "yuke:test";
+import type { NoticeParams } from "yuke:protocol";
+import type { Frame, FrameTest, TestSurface } from "yuke:test";
 import type { ClipboardImage, KeyCode, KeyEvent, MouseEvent, Size, Startup, ViewFactory } from "yuke:tui";
 
 const NONE = Object.freeze({ shift: false, alt: false, ctrl: false, super: false, hyper: false, meta: false });
@@ -119,7 +120,7 @@ export function createFrame(
       draw();
     },
     snapshot: () => core.snapshot(),
-    notice(notice: FrameNotice): void {
+    notice(notice: NoticeParams): void {
       core.event({ type: "notice", ...notice });
       draw();
     },

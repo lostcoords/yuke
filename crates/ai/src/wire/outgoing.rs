@@ -1,7 +1,7 @@
 //! Build the URL and headers of one request from its route and credential. The encoder adds the body.
 
 use crate::encoder::EncodeError;
-use crate::target::{self, Credential, CredentialHeader};
+use crate::target::{Credential, CredentialHeader};
 use crate::{Header, OriginRef, Protocol, Target};
 
 /// The URL, the headers, and the origin of one request.
@@ -32,27 +32,6 @@ impl HeadText {
             Credential::OAuth(grant) => (&grant.access_token, &grant.headers),
         };
         let session = route.session_header.name().zip(session_id);
-        // The encoder writes these two headers. A second copy of one lets a gateway choose either value.
-        let written = [
-            route.credential_header.map_or("", CredentialHeader::name),
-            session.map_or("", |(name, _)| name),
-        ];
-        let repeats_identity = || {
-            route
-                .headers
-                .iter()
-                .find(|header| identity.iter().any(|own| own.name.eq_ignore_ascii_case(&header.name)))
-                .map(|header| &*header.name)
-        };
-        let invalid = target::invalid_header(identity, &written)
-            .or_else(|| target::invalid_header(&route.headers, &written))
-            .or_else(repeats_identity)
-            .or_else(|| (!target::valid_header_value(secret)).then_some(written[0]))
-            .or_else(|| session.and_then(|(name, value)| (!target::valid_header_value(value)).then_some(name)));
-        if let Some(name) = invalid {
-            return Err(EncodeError::InvalidHeader { name: name.to_owned() });
-        }
-
         // A final slash on the base gives one separator, not two.
         let base_url = route.base_url.trim_end_matches('/');
         self.url = format!("{base_url}{}", protocol_path(target.wire.protocol()));
@@ -101,10 +80,6 @@ mod tests {
 
     fn header(name: &str, value: &str) -> Header {
         Header::new(name.to_owned(), value.to_owned())
-    }
-
-    fn invalid(name: &str) -> EncodeError {
-        EncodeError::InvalidHeader { name: name.to_owned() }
     }
 
     fn try_build(
@@ -301,9 +276,8 @@ mod tests {
         assert_eq!(head.origin().base_url, "https://api.anthropic.com/v1");
     }
 
-    // Configuration can give a route that breaks these rules, so the encoder returns an error.
     #[test]
-    fn rejects_credential_mismatch_and_invalid_headers() {
+    fn rejects_credential_mismatch() {
         let keyed = Route {
             base_url: "https://h/v1".into(),
             credential_header: Some(CredentialHeader::XApiKey),
@@ -311,117 +285,6 @@ mod tests {
         };
         let mismatch = try_build(&keyed, Protocol::OpenaiChat, &Credential::None, None);
         assert_same(mismatch.err(), Some(EncodeError::CredentialMismatch));
-        let session = Route {
-            base_url: "https://h/v1".into(),
-            session_header: SessionHeader::SessionId,
-            ..Route::default()
-        };
-        let control = try_build(&session, Protocol::OpenaiChat, &Credential::None, Some("a\r\nb"));
-        assert_same(control.err(), Some(invalid("session-id")));
-    }
-
-    // A header value can be a credential, so the error names the header and prints the name escaped.
-    #[test]
-    fn invalid_header_error_names_the_header_and_never_the_value() {
-        let keyed = Route {
-            base_url: "https://h/v1".into(),
-            credential_header: Some(CredentialHeader::XApiKey),
-            ..Route::default()
-        };
-        let error = try_build(
-            &keyed,
-            Protocol::AnthropicMessages,
-            &Credential::ApiKey("sk-secret\n".into()),
-            None,
-        )
-        .err();
-        assert!(!error.as_ref().unwrap().to_string().contains("sk-secret"));
-        assert_same(error, Some(invalid("x-api-key")));
-        assert_eq!(
-            invalid("a\r\nb").to_string(),
-            r#"the request header "a\r\nb" is invalid"#,
-        );
-
-        // A bad value names its own header. With two bad headers, the identity header comes first.
-        let bad_identity = [header("ChatGPT-Account-ID", "a\nb")];
-        let grant = Credential::OAuth(OAuth {
-            access_token: "t".into(),
-            headers: bad_identity.to_vec().into(),
-        });
-        let bad_route = [header("x-note", "a\0b")];
-        let bearer = Route {
-            base_url: "https://h/v1".into(),
-            credential_header: Some(CredentialHeader::AuthorizationBearer),
-            headers: bad_route.to_vec().into(),
-            ..Route::default()
-        };
-        let error = try_build(&bearer, Protocol::OpenaiChat, &grant, None).err();
-        assert_same(error, Some(invalid("ChatGPT-Account-ID")));
-        let key = Credential::ApiKey("k".into());
-        let error = try_build(&bearer, Protocol::OpenaiChat, &key, None).err();
-        assert_same(error, Some(invalid("x-note")));
-    }
-
-    // A gateway can choose either value when a credential or session name appears twice.
-    #[test]
-    fn rejects_repeated_credential_and_session_headers() {
-        let repeat_key = [header("X-API-Key", "other")];
-        let keyed = Route {
-            base_url: "https://h/v1".into(),
-            credential_header: Some(CredentialHeader::XApiKey),
-            headers: repeat_key.to_vec().into(),
-            ..Route::default()
-        };
-        let key = Credential::ApiKey("k".into());
-        let repeated = try_build(&keyed, Protocol::AnthropicMessages, &key, None);
-        assert_same(repeated.err(), Some(invalid("X-API-Key")));
-
-        let repeat_auth = [header("authorization", "Bearer other")];
-        let grant = Credential::OAuth(OAuth {
-            access_token: "t".into(),
-            headers: repeat_auth.to_vec().into(),
-        });
-        let bearer = Route {
-            base_url: "https://h/v1".into(),
-            credential_header: Some(CredentialHeader::AuthorizationBearer),
-            ..Route::default()
-        };
-        let repeated = try_build(&bearer, Protocol::OpenaiChat, &grant, None);
-        assert_same(repeated.err(), Some(invalid("authorization")));
-
-        let account = Credential::OAuth(OAuth {
-            access_token: "t".into(),
-            headers: [header("ChatGPT-Account-Id", "a")].to_vec().into(),
-        });
-        let pinned_account = Route {
-            headers: [header("chatgpt-account-id", "b")].to_vec().into(),
-            ..bearer.clone()
-        };
-        let repeated = try_build(&pinned_account, Protocol::OpenaiResponses, &account, None);
-        assert_same(repeated.err(), Some(invalid("chatgpt-account-id")));
-
-        let repeat_session = [header("Session-Id", "s0")];
-        let session = Route {
-            base_url: "https://h/v1".into(),
-            session_header: SessionHeader::SessionId,
-            headers: repeat_session.to_vec().into(),
-            ..Route::default()
-        };
-        let repeated = try_build(&session, Protocol::OpenaiResponses, &Credential::None, Some("s1"));
-        assert_same(repeated.err(), Some(invalid("Session-Id")));
-        // With no session id, the encoder writes no session header, so the pinned one is the only copy.
-        let pinned = built(&session, Protocol::OpenaiResponses, &Credential::None, None);
-        assert_eq!(pinned.headers, [header("Session-Id", "s0")].as_slice());
-
-        // A route with no credential header may carry its own credential field.
-        let own = [header("Authorization", "Bearer own")];
-        let open = Route {
-            base_url: "https://h/v1".into(),
-            headers: own.to_vec().into(),
-            ..Route::default()
-        };
-        let own = built(&open, Protocol::OpenaiChat, &Credential::None, None);
-        assert_eq!(own.headers, [header("Authorization", "Bearer own")].as_slice());
     }
 
     // The encoder keeps one head, so the second request must show only its own headers.

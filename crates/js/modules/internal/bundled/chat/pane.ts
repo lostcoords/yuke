@@ -454,7 +454,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const lockedRow: View = {
     focusable: true,
     draw(canvas: Canvas): void {
-      const key = tui.keys.keysOf("chat:interrupt")[0];
+      const key = tui.keys.list("chat:interrupt")[0];
       const text = locked()?.text ?? "";
       canvas.text(0, 0, clipped(key === undefined ? text : `${text} · ${key} back`, canvas.width), STYLE.meta);
     },
@@ -487,7 +487,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       // A refused title stays in the field with its error.
       await tui.input({
         title: "Rename session",
-        text: row.session.title ?? "",
+        text: row.title ?? "",
         signal: mount.signal,
         onSubmit: (text) => ctx.get("sessions").rename(id, text),
       });
@@ -722,12 +722,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         if (hint !== "") canvas.text(canvas.width - measure(hint), row, hint, STYLE.hint);
       }
       // While the list shows, Esc hides the list, so the row shows no cancel key.
-      const key = listRows > 0 || locked() !== undefined ? undefined : tui.keys.keysOf("chat:interrupt")[0];
+      const key = listRows > 0 || locked() !== undefined ? undefined : tui.keys.list("chat:interrupt")[0];
       const row =
         workingRows > 0
           ? working.text({
               cancelKey: key,
-              backgroundKey: locked() === undefined ? tui.keys.keysOf("chat:background")[0] : undefined,
+              backgroundKey: locked() === undefined ? tui.keys.list("chat:background")[0] : undefined,
               width: Math.max(0, canvas.width - 2),
             })
           : undefined;

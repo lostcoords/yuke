@@ -22,7 +22,7 @@ pub struct Plugin {
     /// The name of the plugin. It is the source of its notices.
     pub name: String,
     /// Where the code of the plugin comes from.
-    pub origin: Origin,
+    pub origin: PluginCode,
     /// The data folder of the plugin. It must exist.
     pub data_dir: PathBuf,
     /// The options of the plugin. They are empty when the user gives none. The loader checks them against the
@@ -36,7 +36,7 @@ pub struct Plugin {
 
 /// Where the code of a plugin comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Origin {
+pub enum PluginCode {
     /// A folder of the profile.
     Folder {
         /// The folder of the plugin.
@@ -182,15 +182,15 @@ impl Handle {
                 let load: Function<'_> = caught(&ctx, loader(&ctx).await?.get("load"))?;
                 let path = |path: &PathBuf| path.to_string_lossy().into_owned();
                 let entry = match &plugin.origin {
-                    Origin::Folder { entry, .. } => entry.as_ref().map(path),
-                    Origin::Bundled { module } => Some(module.clone()),
-                    Origin::Given => None,
+                    PluginCode::Folder { entry, .. } => entry.as_ref().map(path),
+                    PluginCode::Bundled { module } => Some(module.clone()),
+                    PluginCode::Given => None,
                 };
                 let spec = PluginSpec {
                     name: plugin.name,
                     data_dir: path(&plugin.data_dir),
                     options: Json(plugin.options),
-                    given: matches!(plugin.origin, Origin::Given),
+                    given: matches!(plugin.origin, PluginCode::Given),
                     entry,
                     provides: plugin.provides,
                 };

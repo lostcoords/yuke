@@ -19,6 +19,7 @@ import type {
   KeyEvent,
   MouseEvent,
   OffsetRange,
+  PasteEvent,
   Placement,
   Point,
   Selection,
@@ -391,10 +392,10 @@ export class TextEditor implements TextWidget<number, EditorChange> {
     return true;
   }
 
-  onPaste(text: string): boolean {
-    if (this.#support.paste(text)) return true;
+  onPaste(event: PasteEvent): boolean {
+    if (this.#support.paste(event)) return true;
     const { anchor, head } = this.#state.selection;
-    this.replace(Math.min(anchor, head), Math.max(anchor, head), text);
+    this.replace(Math.min(anchor, head), Math.max(anchor, head), event.text);
     return true;
   }
 

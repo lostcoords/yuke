@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use yuke_ai::scripted::ScriptedTransport;
-use yuke_js::{Display, Input, Interface, Startup};
+use yuke_js::{Display, DisplayInput, Interface, Startup};
 use yuke_protocol::{ModelReference, SessionId, SessionSettings, SessionState, SessionTitle};
 use yuke_term::{Code, Event, Key, Size};
 
 use super::{Notices, reload};
-use crate::app::{App, Mode};
+use crate::app::{App, RunMode};
 use crate::testing::{Place, with_key};
 
 /// An output that keeps what the frames write.
@@ -129,9 +129,15 @@ async fn started_on(place: &Place, display: &Arc<Display>, session: Option<Sessi
     };
     let store = crate::app::open_store(&place.paths.data).await.unwrap();
     let observer = Rc::new(Notices(Arc::clone(display)));
-    let (mut app, plugins) = App::prepare(machine, Mode::Server, observer, store, Rc::new(crate::app::TokioTimer))
-        .await
-        .unwrap();
+    let (mut app, plugins) = App::prepare(
+        machine,
+        RunMode::Server,
+        observer,
+        store,
+        Rc::new(crate::app::TokioTimer),
+    )
+    .await
+    .unwrap();
     app.show(None);
     app.load_plugins(&plugins).await;
     app
@@ -357,15 +363,15 @@ async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_rest
         .unwrap();
     output.shows("Message").await;
 
-    display.send(Input::Event(Event::Paste("/rename".to_owned())));
-    display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    display.send(DisplayInput::Event(Event::Paste("/rename".to_owned())));
+    display.send(DisplayInput::Event(Event::Key(Key::new(Code::Enter))));
     output.contains("Before rename").await;
-    display.send(Input::Event(Event::Key(Key::new(Code::Home))));
+    display.send(DisplayInput::Event(Event::Key(Key::new(Code::Home))));
     for _ in 0..13 {
-        display.send(Input::Event(Event::Key(Key::new(Code::Delete))));
+        display.send(DisplayInput::Event(Event::Key(Key::new(Code::Delete))));
     }
-    display.send(Input::Event(Event::Paste("Saved from TUI".to_owned())));
-    display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    display.send(DisplayInput::Event(Event::Paste("Saved from TUI".to_owned())));
+    display.send(DisplayInput::Event(Event::Key(Key::new(Code::Enter))));
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if app.sessions().get(id).await.unwrap().session.title.as_deref() == Some("Saved from TUI") {
@@ -381,8 +387,8 @@ async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_rest
     let (restarted_display, restarted_output) = self::display();
     let restarted = started_on(&place, &restarted_display, Some(id)).await;
     restarted_output.shows("Message").await;
-    restarted_display.send(Input::Event(Event::Paste("/sessions".to_owned())));
-    restarted_display.send(Input::Event(Event::Key(Key::new(Code::Enter))));
+    restarted_display.send(DisplayInput::Event(Event::Paste("/sessions".to_owned())));
+    restarted_display.send(DisplayInput::Event(Event::Key(Key::new(Code::Enter))));
     restarted_output.contains("Saved from TUI").await;
     assert_eq!(
         restarted.sessions().get(id).await.unwrap().session.title.as_deref(),
@@ -395,9 +401,9 @@ async fn a_title_renamed_through_the_terminal_appears_in_the_picker_after_a_rest
 async fn a_quit_during_a_reload_keeps_its_text_and_drops_the_other_requests() {
     let (sender, mut requests) = tokio::sync::mpsc::unbounded_channel();
     for request in [
-        yuke_js::Request::Suspend,
-        yuke_js::Request::Reload("{}".to_owned()),
-        yuke_js::Request::Quit(Some("bye".to_owned())),
+        yuke_js::DisplayRequest::Suspend,
+        yuke_js::DisplayRequest::Reload("{}".to_owned()),
+        yuke_js::DisplayRequest::Quit(Some("bye".to_owned())),
     ] {
         sender.send(request).unwrap();
     }

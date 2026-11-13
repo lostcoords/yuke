@@ -17,14 +17,14 @@ use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, Vi
 use yuke_mcp::{McpTool, OnChange, Servers};
 use yuke_protocol::{
     EventNumber, ExtensionRequestParams, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job,
-    LiveUpdate, McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId,
-    SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
+    JobId, LiveUpdate, McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
+    SessionId, SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
 };
 
 use super::facts::Facts;
 use super::sessions::SessionService;
 use super::trust;
-use super::{AppError, Mode, Observer, SOURCE, Shared, model_of, save_settings};
+use super::{AppError, Observer, RunMode, SOURCE, Shared, model_of, save_settings};
 use crate::config::read_json;
 use crate::prompt::deferred_tools;
 
@@ -281,13 +281,13 @@ impl LiveSession {
     }
 
     /// Stop the running job `id`, and wait for its end. Answer `false` when no such job runs.
-    pub(super) async fn stop_job(&self, id: &str) -> bool {
+    pub(super) async fn stop_job(&self, id: &JobId) -> bool {
         self.parts
             .host
             .shared
             .processes
             .jobs()
-            .stop(self.parts.host.output.session, id)
+            .stop(self.parts.host.output.session, &id.0)
             .await
     }
 
@@ -1095,7 +1095,7 @@ impl SessionHost for Host {
 
     async fn ask(&self, source: &str, request: InteractionRequest, cancel: CancellationToken) -> InteractionResponse {
         let output = &self.output;
-        if self.shared.mode == Mode::Print {
+        if self.shared.mode == RunMode::Print {
             let InteractionRequest::Questions { questions } = &request;
             let headers = questions.iter().map(|question| question.header.as_str());
             output.notice(
@@ -1245,7 +1245,7 @@ mod tests {
 
     fn running_job() -> Job {
         Job {
-            id: "job-1a2b".to_owned(),
+            id: JobId("job-1a2b".to_owned()),
             label: "sleep 30".to_owned(),
             state: yuke_protocol::JobState::Running,
             kind: yuke_protocol::JobKind::Process {
@@ -1618,7 +1618,7 @@ mod tests {
         let store = open_store(&place.paths.data).await.unwrap();
         let app = App::start(
             machine,
-            Mode::Print,
+            RunMode::Print,
             Rc::new(Recorder::default()),
             store,
             Rc::new(TokioTimer),

@@ -8,7 +8,6 @@ use crate::transport::Fault;
 
 /// The provider answered with an error. A status and a stream event map into this one set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum ProviderKind {
     /// The provider returned status 401.
     AuthFailed,
@@ -54,7 +53,6 @@ impl fmt::Display for ProviderKind {
 
 /// One failed attempt. It holds no strings. The attempt facts live in [`crate::AttemptInfo`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Failure {
     /// The provider answered with an error.
     Provider(ProviderKind),

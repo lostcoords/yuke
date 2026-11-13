@@ -113,11 +113,11 @@ test("a child session names its parent, stays out of the default list, and leave
 
   assertEquals(parents, [undefined, session.id]);
   assertEquals(
-    roots.sessions.map((row) => row.session.sessionId),
+    roots.sessions.map((row) => row.sessionId),
     [session.id],
   );
   assertEquals(
-    children.sessions.map((row) => [row.session.sessionId, row.session.parent]),
+    children.sessions.map((row) => [row.sessionId, row.parent]),
     [[child, session.id]],
   );
   assertEquals(String(failure), "Error: the store has no such session");

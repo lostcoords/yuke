@@ -34,10 +34,10 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
             && text.ends_with("plugins.lock has no commit for this plugin: run `yuke plugin sync`"),
         "{text}"
     );
-    let item = format!("{url} (folder plugins/clock)");
+    let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(
         listed,
-        Ok(json!({ "plugins": [{ "item": item, "loaded": false, "state": "notLocked" }] }))
+        Ok(json!({ "plugins": [{ "source": source, "loaded": false, "state": "notLocked" }] }))
     );
     assert_eq!(synced["plugins"][0]["commit"], json!(commit));
     assert_eq!(synced["written"], json!(true));
@@ -45,7 +45,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     assert_eq!(
         loaded,
         Ok(
-            json!({ "plugins": [{ "item": item, "name": "clock", "loaded": true, "state": "installed", "commit": commit }] })
+            json!({ "plugins": [{ "source": source, "name": "clock", "loaded": true, "state": "installed", "commit": commit }] })
         )
     );
     client.end().await;

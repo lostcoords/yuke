@@ -100,7 +100,7 @@ function remove(listener: Listener): void {
 }
 
 /** Add `listener` of the plugin `plugin` for `event`, until the remover runs or `signal` aborts. */
-export function on<K extends Event>(
+export function addListener<K extends Event>(
   plugin: string,
   signal: AbortSignal,
   event: K,

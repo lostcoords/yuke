@@ -208,7 +208,7 @@ test("an input.before handler asks the user, and a refusal removes the input", a
   };
   await using host = await createHost({
     plugins: [{ name: "guard", session: guard }],
-    answer: () => [{ id: "send", values: ["No"] }],
+    onQuestion: () => [{ id: "send", values: ["No"] }],
   });
   const session = await host.openSession();
 

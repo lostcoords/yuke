@@ -18,7 +18,7 @@ use yuke_protocol::{
     StoredEvent,
 };
 
-use crate::app::{App, AppError, Machine, Mode, Observer, SOURCE, TokioTimer, open_store, warn};
+use crate::app::{App, AppError, Machine, Observer, RunMode, SOURCE, TokioTimer, open_store, warn};
 use crate::providers::Providers;
 
 /// What one run of `yuke -p` does.
@@ -86,7 +86,7 @@ pub(crate) async fn run(
     let store = open_store(&machine.paths.data).await?;
     let app = App::start(
         machine,
-        Mode::Print,
+        RunMode::Print,
         Rc::clone(&watcher) as Rc<dyn Observer>,
         store,
         Rc::new(TokioTimer),

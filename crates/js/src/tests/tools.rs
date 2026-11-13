@@ -255,7 +255,7 @@ async fn host_errors_keep_their_causes_in_tool_and_hook_results() {
             "tools.ts",
             "export function session(s) {
         s.tools.add({ name: 'image', description: 'd', concurrency: 'serial',
-            parameters: { type: 'object', properties: {} },
+            inputSchema: { type: 'object', properties: {} },
             execute() { return { text: 'image', media: [{ bytes: new Uint8Array([1]), mimeType: 'image/png' }] }; } });
         s.addHook('round.before', () => ({ model: { provider: 'test', model: 'other-model' } }));
     }",
@@ -400,7 +400,7 @@ async fn a_throw_of_an_abort_listener_is_a_fault_and_the_next_listener_runs() {
         &[(
             "tools.ts",
             "export function session({ tools: { add } }) {\n\
-             add({ name: 'listen', description: 'd', concurrency: 'serial', parameters: { type: 'object', properties: {} },\n\
+             add({ name: 'listen', description: 'd', concurrency: 'serial', inputSchema: { type: 'object', properties: {} },\n\
                execute(_args, context) {\n\
                  context.signal.addEventListener('abort', () => { throw new Error('the listener broke'); });\n\
                  context.signal.addEventListener('abort', () => { (globalThis as Record<string, unknown>).second = true; });\n\

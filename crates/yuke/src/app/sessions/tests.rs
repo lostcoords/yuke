@@ -7,7 +7,7 @@ use yuke_protocol::{
 };
 
 use super::*;
-use crate::app::{App, Mode, Observer, TokioTimer, open_store};
+use crate::app::{App, Observer, RunMode, TokioTimer, open_store};
 use crate::testing::{CountedWaits, Place, with_key};
 use yuke_agent::StoreError;
 
@@ -25,7 +25,7 @@ async fn started(place: &Place) -> App {
 async fn started_with(place: &Place, transport: Box<dyn Transport>) -> App {
     let machine = place.machine(Box::new(with_key), transport);
     let store = open_store(&place.paths.data).await.unwrap();
-    App::start(machine, Mode::Server, Rc::new(Silent), store, Rc::new(TokioTimer))
+    App::start(machine, RunMode::Server, Rc::new(Silent), store, Rc::new(TokioTimer))
         .await
         .unwrap()
 }
@@ -309,7 +309,7 @@ async fn a_retry_of_the_model_request_of_a_turn_waits_with_the_timer_of_the_app(
     let timer = Rc::new(CountedWaits::default());
     let machine = place.machine(Box::new(with_key), Box::new(transport.clone()));
     let store = open_store(&place.paths.data).await.unwrap();
-    let app = App::start(machine, Mode::Server, Rc::new(Silent), store, Rc::clone(&timer) as _)
+    let app = App::start(machine, RunMode::Server, Rc::new(Silent), store, Rc::clone(&timer) as _)
         .await
         .unwrap();
     let sessions = app.sessions();
@@ -638,8 +638,8 @@ async fn a_create_with_an_unknown_parent_fails_and_saves_nothing() {
 }
 
 #[tokio::test(flavor = "local")]
-async fn a_cursor_reads_only_in_the_list_of_its_parent() {
-    let place = Place::new("sessions", "a_cursor_reads_only_in_the_list_of_its_parent");
+async fn a_cursor_continues_the_list_and_a_text_that_is_no_position_fails() {
+    let place = Place::new("sessions", "a_cursor_continues_the_list");
     let app = started(&place).await;
     let sessions = app.sessions();
     let parent = sessions.create(settings(&place), None).await.unwrap();
@@ -653,14 +653,8 @@ async fn a_cursor_reads_only_in_the_list_of_its_parent() {
     };
 
     let first = sessions.list(of_parent(Some(1), None)).await.unwrap();
-    let cursor = first.next_cursor.clone().unwrap();
-    let second = sessions.list(of_parent(None, Some(cursor.clone()))).await.unwrap();
-    let wrong = sessions
-        .list(ListSessionsParams {
-            cursor: Some(cursor),
-            ..ListSessionsParams::default()
-        })
-        .await;
+    let second = sessions.list(of_parent(None, first.next_cursor.clone())).await.unwrap();
+    let wrong = sessions.list(of_parent(None, Some("-1.zz".to_owned()))).await;
 
     let ids = |page: &ListSessionsResult| {
         page.sessions
@@ -669,6 +663,7 @@ async fn a_cursor_reads_only_in_the_list_of_its_parent() {
             .collect::<Vec<_>>()
     };
     assert_eq!((ids(&first), ids(&second)), (vec![newer], vec![older]));
+    assert_eq!(second.next_cursor, None);
     assert!(matches!(wrong, Err(AppError::Invalid(_))), "{wrong:?}");
     app.shutdown().await;
 }

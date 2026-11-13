@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 use yuke_protocol::{
-    AddPluginResult, ManagedPlugin, PluginChange, PluginLog, PluginSource, PluginState, PluginTarget,
+    AddPluginResult, ManagedPlugin, PluginChange, PluginLog, PluginOrigin, PluginSource, PluginState, PluginTarget,
     SyncPluginsResult, SyncedPlugin,
 };
 
@@ -29,19 +29,19 @@ pub(crate) fn list(paths: &Paths, loaded: &[String]) -> Result<Vec<ManagedPlugin
         .iter()
         .map(|plugin| {
             let name = name_of(paths, &lock, &plugin.source);
-            let (item, state) = match &plugin.source {
-                Source::Folder(folder) => (folder.clone(), PluginState::Local),
+            let (source, state) = match &plugin.source {
+                Source::Folder(folder) => (PluginOrigin::Folder(folder.clone()), PluginState::Local),
                 Source::Git(source) => {
                     let state = match (lock.commits.get(source), &name) {
                         (None, _) => PluginState::NotLocked,
                         (Some(commit), Some(_)) => PluginState::Installed { commit: commit.clone() },
                         (Some(commit), None) => PluginState::NotInstalled { commit: commit.clone() },
                     };
-                    (source.to_string(), state)
+                    (PluginOrigin::Git(source.clone()), state)
                 }
             };
             ManagedPlugin {
-                item,
+                source,
                 loaded: name.as_ref().is_some_and(|name| loaded.contains(name)),
                 name,
                 state,

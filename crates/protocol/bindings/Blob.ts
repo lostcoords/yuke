@@ -10,6 +10,6 @@ export type Blob = {
  */
 digest: string, 
 /**
- * The byte count of the content. [`BlobStore`] answers are checked against it.
+ * The byte count of the content.
  */
 len: number, };

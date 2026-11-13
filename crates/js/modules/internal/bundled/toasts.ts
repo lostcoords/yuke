@@ -5,8 +5,9 @@
 
 import { sourceName } from "yuke:internal/source-name";
 import { bottom } from "yuke:internal/tui/layout";
+import { wrap } from "yuke:internal/tui/text";
 import type { PluginContext } from "yuke:plugins";
-import { fit, type Notice, Picker, type Size, type View, wrap } from "yuke:tui";
+import { fit, type Notice, Picker, type Size, type View } from "yuke:tui";
 
 /** The screen shows at most this many toasts. A new one drops the oldest info toast, else the oldest toast. */
 const MOST = 4;

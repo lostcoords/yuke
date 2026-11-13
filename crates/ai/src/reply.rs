@@ -62,7 +62,7 @@ impl Reply {
     ///
     /// # Errors
     ///
-    /// Returns [`AttemptError`] if the attempt failed. It holds the cause, the attempt facts, and the partial output.
+    /// Returns [`AttemptError`] if the attempt failed. It holds the cause and the attempt facts.
     pub async fn finish(mut self) -> Result<Response, AttemptError> {
         while self.next().await.is_some() {}
         let info = self.stream.take_info();
@@ -74,11 +74,7 @@ impl Reply {
                     ..completion
                 },
             }),
-            End::Failed(cause) => Err(AttemptError {
-                cause,
-                info,
-                partial: partial(self.parts).map(|block| block.content).collect(),
-            }),
+            End::Failed(cause) => Err(AttemptError { cause, info }),
             End::Open => unreachable!("a stream ends with `done` or a failure"),
         }
     }
@@ -250,8 +246,9 @@ mod tests {
         assert_eq!(canned.closes(), 1);
     }
 
-    #[test]
-    fn failed_reply_keeps_text_and_complete_calls() {
+    /// An answer that has a stopped reasoning block, a complete call, a call cut off in its arguments, a text, two
+    /// empty blocks, and then a failure.
+    fn failing_reply() -> String {
         let mut bytes = sse(&[
             r#"{"type":"message_start","message":{"usage":{}}}"#,
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"why","signature":"sig"}}"#,
@@ -269,7 +266,12 @@ mod tests {
             r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
         ]);
         bytes.push_str(&canned_reply()); // The reader never reaches the complete response after the failure.
-        let canned = CannedTransport::new(bytes);
+        bytes
+    }
+
+    #[test]
+    fn a_failed_reply_ends_with_the_cause_and_the_facts_of_the_attempt() {
+        let canned = CannedTransport::new(failing_reply());
         let response = block_on(open_canned(&canned).finish());
         assert_eq!(canned.closes(), 1);
         let failed = failed(&response);
@@ -278,27 +280,47 @@ mod tests {
         assert_eq!(failed.info.error_body.as_deref(), Some(OVERLOAD_EVENT.as_bytes()));
         // The reply drained the events, so the failure records that output reached the library caller.
         assert!(info(&response).output_seen);
-        // A failed reply keeps the stopped reasoning without its signature, the complete call, and the text. It drops the
-        // call that the failure cut off.
+    }
+
+    #[test]
+    fn cancel_after_a_failure_keeps_text_and_complete_calls() {
+        let canned = CannedTransport::new(failing_reply());
+        let mut reply = open_canned(&canned);
+        while block_on(reply.next()).is_some() {}
+
+        // The partial output keeps the stopped reasoning without its signature, the complete call, and the text. It
+        // drops the call that the failure cut off and the empty blocks.
+        let partial = reply.cancel();
+
         assert_eq!(
-            failed.partial,
+            partial,
             [
-                Partial::Reasoning("why".into()),
-                Partial::ToolCall(ToolCall {
-                    call_id: "toolu_1".into(),
-                    name: "run".into(),
-                    arguments: "{}".into()
-                }),
-                Partial::Text("draft".into()),
+                PartialBlock {
+                    block: 0,
+                    content: Partial::Reasoning("why".into())
+                },
+                PartialBlock {
+                    block: 1,
+                    content: Partial::ToolCall(ToolCall {
+                        call_id: "toolu_1".into(),
+                        name: "run".into(),
+                        arguments: "{}".into()
+                    })
+                },
+                PartialBlock {
+                    block: 3,
+                    content: Partial::Text("draft".into())
+                },
             ]
         );
         assert_eq!(
-            Block::from(failed.partial[0].clone()),
+            Block::from(partial[0].content.clone()),
             Block::Reasoning(Reasoning {
                 text: "why".to_string(),
                 replay: None
             })
         );
+        assert_eq!(canned.closes(), 1);
     }
 
     // Interleaved blocks stop out of order. Final arguments replace fragments, and one tool is dropped.
@@ -489,7 +511,6 @@ mod tests {
             );
             if max_tool_arg_bytes == 8 {
                 assert_eq!(failed(&response).cause, Failure::ResponseTooLarge);
-                assert_eq!(failed(&response).partial, []);
             } else {
                 assert_eq!(
                     completion(&response).content,

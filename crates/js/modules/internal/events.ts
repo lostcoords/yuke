@@ -5,9 +5,6 @@
 import type { Operation } from "yuke:internal/native";
 import { dictionary, domString, webClass } from "yuke:internal/webidl";
 
-/** The longest delay of one timer. A longer timeout uses a chain of timers with this delay. */
-const LONGEST_DELAY = 2 ** 31 - 1;
-
 interface EventState {
   readonly type: string;
   readonly bubbles: boolean;
@@ -68,9 +65,6 @@ const collected = new FinalizationRegistry<{
   readonly dependents: Set<WeakRef<AbortSignal>>;
   readonly ref: WeakRef<AbortSignal>;
 }>((held) => held.dependents.delete(held.ref));
-
-/** The key that only the internal calls of the `AbortSignal` constructor give. */
-const CREATE = Symbol("create");
 
 function eventState(value: unknown): EventState {
   const state = events.get(value as Event);
@@ -327,26 +321,33 @@ function invoke(target: EventTarget, event: Event, state: EventState, capture: b
   }
 }
 
+/** Make a signal without its constructor, which throws for a script. */
+function newSignal(): AbortSignal {
+  const signal: AbortSignal = Object.create(AbortSignal.prototype);
+  targets.set(signal, []);
+  signals.set(signal, {
+    aborted: false,
+    reason: undefined,
+    steps: new Set(),
+    dependent: false,
+    sources: [],
+    dependents: new Set(),
+    retained: new Set(),
+    handler: undefined,
+  });
+  return signal;
+}
+
 export class AbortSignal extends EventTarget {
   /** Only this module makes a signal: use an `AbortController` or a static method. */
-  constructor(key?: typeof CREATE) {
-    if (key !== CREATE) throw new TypeError("AbortSignal has no public constructor: use AbortController");
+  constructor() {
     super();
-    signals.set(this, {
-      aborted: false,
-      reason: undefined,
-      steps: new Set(),
-      dependent: false,
-      sources: [],
-      dependents: new Set(),
-      retained: new Set(),
-      handler: undefined,
-    });
+    throw new TypeError("AbortSignal has no public constructor: use AbortController");
   }
 
   /** A signal that has aborted with `reason`. `undefined` gives an `AbortError`. */
   static abort(reason?: unknown): AbortSignal {
-    const signal = new AbortSignal(CREATE);
+    const signal = newSignal();
     const state = signalState(signal);
     state.aborted = true;
     state.reason = reason === undefined ? abortError() : reason;
@@ -369,7 +370,7 @@ export class AbortSignal extends EventTarget {
       const item = next.value;
       sources.push({ signal: item as AbortSignal, state: signalState(item) });
     }
-    const signal = new AbortSignal(CREATE);
+    const signal = newSignal();
     const state = signalState(signal);
     const aborted = sources.find((source) => source.state.aborted);
     if (aborted !== undefined) {
@@ -396,8 +397,9 @@ export class AbortSignal extends EventTarget {
     if (!Number.isFinite(milliseconds) || milliseconds < 0 || milliseconds > Number.MAX_SAFE_INTEGER) {
       throw new TypeError("the timeout is not a whole number in 0..2^53-1");
     }
-    const signal = new AbortSignal(CREATE);
-    wait(milliseconds, () => signalAbort(signal, new DOMException("the signal timed out", "TimeoutError")));
+    const signal = newSignal();
+    // Like `setTimeout`, a delay above 2^31 - 1 ms counts as that delay.
+    setTimeout(() => signalAbort(signal, new DOMException("the signal timed out", "TimeoutError")), milliseconds);
     return signal;
   }
 
@@ -451,7 +453,7 @@ export class AbortSignal extends EventTarget {
 }
 
 export class AbortController {
-  readonly #signal = new AbortSignal(CREATE);
+  readonly #signal = newSignal();
 
   /** The signal of this controller. Each read gives the same signal. */
   get signal(): AbortSignal {
@@ -484,7 +486,7 @@ function abortError(message = "the signal is aborted without reason"): DOMExcept
 
 /** A signal that only the host aborts, with its abort function. The abort reason is an `AbortError` with `message`. */
 export function hostSignal(): { readonly signal: AbortSignal; readonly abort: (message: string) => void } {
-  const signal = new AbortSignal(CREATE);
+  const signal = newSignal();
   return { signal, abort: (message) => signalAbort(signal, abortError(message)) };
 }
 
@@ -599,15 +601,6 @@ function signalAbort(signal: AbortSignal, reason: unknown): void {
     abortState.trusted = true;
     dispatch(each, event, abortState);
   }
-}
-
-/** Call `done` after `milliseconds`. A delay longer than one timer waits in several timers. */
-function wait(milliseconds: number, done: () => void): void {
-  const delay = Math.min(milliseconds, LONGEST_DELAY);
-  setTimeout(() => {
-    if (milliseconds > delay) wait(milliseconds - delay, done);
-    else done();
-  }, delay);
 }
 
 // The DOM puts each phase constant on the interface and on its prototype: enumerable, and neither writable nor

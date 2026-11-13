@@ -8,5 +8,8 @@ test("text functions count utf16 units and cells", () => {
   assertEquals([measure(""), measure("a\tb"), measure("\u4e2d"), measure("\ud834")], [0, 6, 2, 1]);
   assertEquals(graphemes(text), new Int32Array([0, 1, 1, 1, 1, 2, 2, 2, 1, 4, 2, 1]));
   assertEquals(fit(text, 3), 2);
-  assertEquals(wrap("hello world", 5), new Int32Array([0, 6, 1, 6, 11, 0]));
+  assertEquals(wrap("hello world", 5), [
+    { start: 0, end: 6, soft: true },
+    { start: 6, end: 11, soft: false },
+  ]);
 });

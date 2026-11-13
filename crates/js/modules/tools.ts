@@ -108,7 +108,7 @@ export type ToolMedia = {
 );
 
 /** The result of a call: the text for the model, with media or without, and a display for the user. */
-export type ToolResult =
+export type ToolExecuteResult =
   | string
   | {
       /** The text for the model. It can be empty when the result has media. */
@@ -131,8 +131,8 @@ type StringArgument<S extends ObjectSchema> = string extends keyof S["properties
     }[keyof S["properties"]] &
       string;
 
-/** How a chat shows the calls of a tool. The model never sees the hints. */
-export interface ToolHints<S extends ObjectSchema = ObjectSchema> {
+/** How a chat shows the calls of a tool. The model never sees the hints. `yuke:protocol` has them as stored. */
+export interface ToolDisplayHints<S extends ObjectSchema = ObjectSchema> {
   /** The name of the summary line in place of the tool name. */
   readonly title?: string | undefined;
   /**
@@ -177,7 +177,7 @@ export interface ToolContext {
 }
 
 /**
- * A tool that the model can call. yuke checks the arguments against `parameters` before `execute`. A throw of `execute`
+ * A tool that the model can call. yuke checks the arguments against `inputSchema` before `execute`. A throw of `execute`
  * is an error result with the message of the error.
  */
 export interface Tool<S extends ObjectSchema = ObjectSchema> {
@@ -189,7 +189,7 @@ export interface Tool<S extends ObjectSchema = ObjectSchema> {
   /** When the model uses the tool, and what the tool does. */
   readonly description: string;
   /** The schema of the arguments. */
-  readonly parameters: S;
+  readonly inputSchema: S;
   /**
    * `serial` runs each call alone among the calls of one model answer. `parallel` runs the call together with the
    * other parallel calls of that answer. Neither waits for the calls of other sessions.
@@ -201,6 +201,10 @@ export interface Tool<S extends ObjectSchema = ObjectSchema> {
    */
   readonly deferLoading?: boolean | undefined;
   /** How a chat shows the calls of the tool. */
-  readonly hints?: ToolHints<S> | undefined;
-  readonly execute: (this: void, args: Infer<S>, context: ToolContext) => ToolResult | Promise<ToolResult>;
+  readonly hints?: ToolDisplayHints<S> | undefined;
+  readonly execute: (
+    this: void,
+    args: Infer<S>,
+    context: ToolContext,
+  ) => ToolExecuteResult | Promise<ToolExecuteResult>;
 }

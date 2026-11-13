@@ -23,7 +23,7 @@ declare module "yuke:ai" {
 
   /** A request for a JSON object of a schema. */
   export interface ObjectOutput<T> {
-    /** The schema of the object, in the dialect of the parameters of a tool. */
+    /** The schema of the object, in the dialect of the `inputSchema` of a tool. */
     readonly schema: ObjectSchema;
     /** The name of the schema. OpenAI needs it, and Anthropic ignores it. */
     readonly name: string;

@@ -57,7 +57,6 @@ pub struct Endpoint {
 
 /// The authentication scheme of a provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Auth {
     /// The environment variable name of the key, or `None` when none is known.
     ApiKey(Option<Cow<'static, str>>),
@@ -73,17 +72,6 @@ pub struct Modalities {
     pub input: Cow<'static, [Modality]>,
     /// The kinds the model writes.
     pub output: Cow<'static, [Modality]>,
-}
-
-impl Modalities {
-    /// Report whether the model takes this kind, or `None` when the source lists none.
-    pub fn takes_input(&self, kind: Modality) -> Option<bool> {
-        if self.input.is_empty() {
-            None
-        } else {
-            Some(self.input.contains(&kind))
-        }
-    }
 }
 
 // What a source knows. `None` is unknown, and never zero, false, or an empty string.
@@ -154,7 +142,6 @@ pub fn valid_cost(bands: &[PriceBand]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Caps {
     /// Whether the model calls tools.
-    // @todo(xyaman): No request reads this yet. Leave out the tools for a model that cannot call them.
     pub tools: Option<bool>,
     /// Deferred tools and tool references need explicit support for the resolved model and endpoint.
     pub tool_search: Option<bool>,
@@ -166,7 +153,6 @@ pub struct Caps {
 
 /// The request shape a named reasoning level takes on an Anthropic Messages model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
 pub enum AnthropicThinking {
     /// No thinking control: the level is an effort.
     #[default]
@@ -178,7 +164,7 @@ pub enum AnthropicThinking {
     /// A thinking-token budget within the bounds a source states. A published zero is a value. `None` is unknown.
     Budget {
         /// The smallest budget.
-        min: Option<i64>,
+        min: Option<u64>,
         /// The largest budget.
         max: Option<u64>,
     },
@@ -227,7 +213,6 @@ pub struct Model {
     /// How a request asks the model to reason.
     pub dialect: Dialect,
     /// The kinds the model reads and writes.
-    // @todo(xyaman): No request reads this yet. Replace the media that a model cannot read with a note.
     pub modalities: Modalities,
 }
 
@@ -289,10 +274,9 @@ impl Model {
                 effort: Some(effort),
             },
             AnthropicThinking::Budget { min, max } => {
-                let smallest = min.and_then(|min| u64::try_from(min).ok()).unwrap_or(0);
                 let budget = THINKING_BUDGET
                     .min(max.unwrap_or(u64::MAX))
-                    .max(smallest)
+                    .max(min.unwrap_or(0))
                     .max(SMALLEST_THINKING_BUDGET);
                 if self.limits.max_output_tokens.is_some_and(|limit| budget < limit) {
                     ReasoningSettings {
@@ -310,7 +294,6 @@ impl Model {
 /// A selector that names nothing, an entry that cannot bind, or a reasoning level that a model does not support.
 /// Every baked entry binds, so only an entry built from caller configuration can fail to bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Error {
     /// The selector is not `provider/model`.
     MalformedSelector,
@@ -718,26 +701,6 @@ mod tests {
     }
 
     #[test]
-    fn input_kind_is_unknown_until_listed() {
-        let none = Modalities::default();
-        assert_eq!(none.takes_input(Modality::Image), None); // A source that lists nothing blocks nothing.
-
-        let text_only = Modalities {
-            input: Cow::Borrowed(&[Modality::Text]),
-            output: Cow::Borrowed(&[Modality::Text]),
-        };
-        assert_eq!(text_only.takes_input(Modality::Image), Some(false));
-        assert_eq!(text_only.takes_input(Modality::Text), Some(true));
-
-        let media = Modalities {
-            input: Cow::Borrowed(&[Modality::Text, Modality::Image, Modality::Pdf]),
-            output: Cow::Borrowed(&[]),
-        };
-        assert_eq!(media.takes_input(Modality::Pdf), Some(true));
-        assert_eq!(media.takes_input(Modality::Audio), Some(false));
-    }
-
-    #[test]
     fn cost_starts_at_zero_and_never_goes_negative() {
         assert!(valid_cost(UNKNOWN_COST));
         assert!(valid_cost(&[
@@ -800,7 +763,7 @@ mod tests {
 
     const HIGH: ReasoningLevel = ReasoningLevel::Effort(Effort::High);
 
-    fn budget(min: Option<i64>, max: Option<u64>) -> AnthropicThinking {
+    fn budget(min: Option<u64>, max: Option<u64>) -> AnthropicThinking {
         AnthropicThinking::Budget { min, max }
     }
 
@@ -860,10 +823,6 @@ mod tests {
         assert_eq!(
             budget_of(budget(None, Some(10))),
             Some(Thinking::Budget { tokens: 1024 })
-        );
-        assert_eq!(
-            budget_of(budget(Some(-5), None)),
-            Some(Thinking::Budget { tokens: 16_000 })
         );
     }
 

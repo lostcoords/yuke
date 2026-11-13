@@ -274,9 +274,9 @@ test("inserting older and gap events preserves a live group and tool state", () 
   assert(startedAt !== undefined, "the running tool has no start timestamp");
 
   transcript.insert([commit(1, { blocks: [{ kind: "assistantText", text: "older" }] })]);
-  assertEquals(transcript.gap, { before: 3, limit: 1 });
+  assertEquals(transcript.missingEvents, { before: 3, limit: 1 });
   transcript.insert([commit(2, { blocks: [{ kind: "assistantText", text: "gap" }] })]);
-  assertEquals(transcript.gap, undefined);
+  assertEquals(transcript.missingEvents, undefined);
 
   fed(transcript, [model("live", { kind: "reasoningDelta", blockId: 0, text: " late" })]);
   assertEquals(reasoning(transcript).at(-1), {

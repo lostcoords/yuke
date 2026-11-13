@@ -184,7 +184,7 @@ async function open(
 export function sessionsOf(plugin: string, signal: AbortSignal): Sessions {
   return Object.freeze({
     create: (settings, options) => sessionsCreate([settings, options?.parent ?? null]),
-    fork: (id, through) => sessionsFork([id, through ?? null]),
+    fork: (id, options) => sessionsFork([id, options?.through ?? null]),
     list: (params) => sessionsList(params ?? {}),
     get: (id) => sessionsGet(id),
     async rename(id, title) {
