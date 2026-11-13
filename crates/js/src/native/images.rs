@@ -6,7 +6,6 @@ use std::io::Cursor;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
-use image::imageops::FilterType;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, ImageResult};
 use rquickjs::{Ctx, Function, IntoJs, Object, Promise, TypedArray};
 
@@ -94,9 +93,10 @@ fn scale(bytes: &[u8], format: ImageFormat) -> ImageResult<(Vec<u8>, &'static st
     let orientation = decoder.orientation()?;
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
-    // `resize` also enlarges, so a small image keeps its size.
+    // `thumbnail` also enlarges, so a small image keeps its size. It makes no float copy of the image, as `resize`
+    // does, so a large screenshot takes less memory. Near the limit, a thin line can lose half its contrast.
     if image.width().max(image.height()) > LONGEST_SIDE {
-        image = image.resize(LONGEST_SIDE, LONGEST_SIDE, FilterType::Triangle);
+        image = image.thumbnail(LONGEST_SIDE, LONGEST_SIDE);
     }
 
     if format != ImageFormat::Jpeg {
@@ -121,7 +121,7 @@ fn scale(bytes: &[u8], format: ImageFormat) -> ImageResult<(Vec<u8>, &'static st
         }
     }
     if rgb.width() > LAST_WIDTH {
-        rgb = rgb.resize(LAST_WIDTH, u32::MAX, FilterType::Triangle);
+        rgb = rgb.thumbnail(LAST_WIDTH, u32::MAX);
     }
     let [.., lowest] = JPEG_QUALITIES;
     Ok((encode_jpeg(&rgb, lowest)?, "image/jpeg"))
