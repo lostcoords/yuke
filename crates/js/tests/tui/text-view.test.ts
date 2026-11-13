@@ -46,6 +46,16 @@ test("a drag copies both end graphemes in either direction", () => {
   assertEquals(frame.copies, ["A👩‍💻B", "A👩‍💻B"]);
 });
 
+test("a tab takes four cells, a wrap breaks after it, and a copy keeps it", () => {
+  const view = new TextView({ document: document("d", item("i", ["a", "a\tb"], ["t", "Test (linux)\tpass\t3m9s"])) });
+  using frame = createFrame({ width: 14, height: 4 }, () => view);
+  assertEquals(rows(frame.frame), ["a    b", "Test (linux)", "pass    3m9s", ""]);
+  frame.mouse(mouse(0, 0, "press"));
+  frame.mouse(mouse(5, 0, "drag"));
+  frame.mouse(mouse(5, 0, "release"));
+  assertEquals(frame.copies, ["a\tb"]);
+});
+
 test("a position stays on its section when an earlier item grows and when an item comes first", () => {
   const view = new TextView({
     document: document("d", item("one", ["s", "aaa"]), item("two", ["body", "hello world"])),

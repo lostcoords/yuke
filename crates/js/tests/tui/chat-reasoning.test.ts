@@ -82,6 +82,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   click(frame, 2, 1);
   assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
-    [" thinking", " first", " second"],
+    // The tab of the second block takes four cells.
+    [" thinking", " first", "     second"],
   );
 });

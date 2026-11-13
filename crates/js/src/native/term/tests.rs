@@ -28,6 +28,14 @@ fn wrap_breaks_at_the_space_only_when_the_rest_fits() {
 }
 
 #[test]
+fn a_tab_takes_four_cells_and_wrap_breaks_after_it() {
+    // "ab" and the tab fill 6 cells, so "cd" starts the next row.
+    assert_eq!(rows("ab\tcd", 6), [0, 3, 1, 3, 5, 0]);
+    assert_eq!(rows("ab\tcd", 8), [0, 5, 0]);
+    assert_eq!([fit("a\tb", 4), fit("a\tb", 5), fit("a\tb", 6)], [1, 2, 3]);
+}
+
+#[test]
 fn wrap_without_a_width_gives_one_row() {
     assert_eq!(wrap("a\nb", None, 0), [0, 3, 0]);
 }

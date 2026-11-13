@@ -19,7 +19,7 @@ fn graphemes_take_the_cells_that_terminals_draw() {
         // A ZWJ sequence that is no emoji sums to 4 cells. The grid caps a grapheme at 2, as libvaxis does.
         ("😀\u{200d}😀", 2),
         ("क्क्क", 2),
-        ("\t", 0),
+        ("\t", 4),
         ("\u{1b}", 0),
     ];
     for (grapheme, cells) in cases {

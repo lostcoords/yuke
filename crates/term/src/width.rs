@@ -4,6 +4,10 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// The cells of a tab. Codex, Gemini CLI, and opentui also give a tab a fixed width: a tab stop would make the width of
+/// text depend on its column, and each measure would need that column.
+pub(crate) const TAB_CELLS: usize = 4;
+
 /// Each grapheme of `text` with its cells, as the grid places them.
 pub fn graphemes(text: &str) -> impl Iterator<Item = (&str, usize)> {
     if text.is_ascii() {
@@ -30,19 +34,25 @@ impl<'a> Iterator for Graphemes<'a> {
                 let length = if rest.starts_with("\r\n") { 2 } else { 1 };
                 let (grapheme, after) = rest.split_at_checked(length)?;
                 *rest = after;
-                Some((
-                    grapheme,
-                    usize::from(!grapheme.starts_with(|c: char| c.is_ascii_control())),
-                ))
+                let cells = if grapheme == "\t" {
+                    TAB_CELLS
+                } else {
+                    usize::from(!grapheme.starts_with(|c: char| c.is_ascii_control()))
+                };
+                Some((grapheme, cells))
             }
             Self::Unicode(inner) => inner.next().map(|grapheme| (grapheme, grapheme_width(grapheme))),
         }
     }
 }
 
-/// The cells of one grapheme: 0, 1, or 2. A control character gives 0, so the grid never stores one. An emoji
-/// sequence, a flag, and an emoji presentation give 2; a text presentation of a narrow base gives 1.
+/// The cells of one grapheme: 0, 1, or 2, and [`TAB_CELLS`] for a tab. Another control character gives 0, so the grid
+/// never stores one. An emoji sequence, a flag, and an emoji presentation give 2; a text presentation of a narrow base
+/// gives 1.
 pub(crate) fn grapheme_width(grapheme: &str) -> usize {
+    if grapheme == "\t" {
+        return TAB_CELLS;
+    }
     if grapheme.chars().any(char::is_control) {
         return 0;
     }

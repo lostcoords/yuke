@@ -290,10 +290,26 @@ fn a_wide_grapheme_past_the_right_edge_leaves_a_blank() {
 #[test]
 fn text_drops_control_characters_and_returns_the_column_after_it() {
     let mut screen = Screen::new(size(6, 1));
-    assert_eq!(screen.text(1, 0, "a\tb\u{1b}中", Style::default()), 5);
+    assert_eq!(screen.text(1, 0, "ab\u{1b}中", Style::default()), 5);
     let mut model = Model::new(size(6, 1), "#");
     model.replay(&render(&mut screen));
     assert_eq!(model.glyphs(), [" ", "a", "b", "中", "", " "]);
+}
+
+#[test]
+fn a_tab_takes_four_blank_cells_and_clips_at_the_right_edge() {
+    let mut screen = Screen::new(size(8, 2));
+    assert_eq!(screen.text(1, 0, "a\tb", red()), 7);
+    assert_eq!(screen.text(5, 1, "\tz", red()), 8);
+    let mut model = Model::new(size(8, 2), "#");
+    model.replay(&render(&mut screen));
+    assert_eq!(
+        model.glyphs(),
+        [
+            " ", "a", " ", " ", " ", " ", "b", " ", " ", " ", " ", " ", " ", " ", " ", " "
+        ]
+    );
+    assert_eq!(model.cells[3].1, red());
 }
 
 #[test]

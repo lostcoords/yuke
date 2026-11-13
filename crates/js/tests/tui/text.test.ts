@@ -5,7 +5,7 @@ import { fit, graphemes, measure, wrap } from "yuke:tui";
 
 test("text functions count utf16 units and cells", () => {
   const text = "a\u4e2de\u0301\ud834\udd1e";
-  assertEquals([measure(""), measure("a\tb"), measure("\u4e2d"), measure("\ud834")], [0, 2, 2, 1]);
+  assertEquals([measure(""), measure("a\tb"), measure("\u4e2d"), measure("\ud834")], [0, 6, 2, 1]);
   assertEquals(graphemes(text), new Int32Array([0, 1, 1, 1, 1, 2, 2, 2, 1, 4, 2, 1]));
   assertEquals(fit(text, 3), 2);
   assertEquals(wrap("hello world", 5), new Int32Array([0, 6, 1, 6, 11, 0]));

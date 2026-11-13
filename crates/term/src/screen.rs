@@ -257,21 +257,29 @@ impl Screen {
         }
     }
 
-    /// Write `text` on `row` from `column`, and return the column after it. The grid drops control characters and
-    /// clips at the right edge; a wide grapheme that does not fit leaves a blank cell.
+    /// Write `text` on `row` from `column`, and return the column after it. A tab gives blank cells. The grid drops other
+    /// control characters and clips at the right edge; a wide grapheme that does not fit leaves a blank cell.
     pub fn text(&mut self, mut column: u16, row: u16, text: &str, style: Style) -> u16 {
         if row >= self.size.rows {
             return column;
         }
         for (grapheme, cells) in graphemes(text) {
+            if column >= self.size.columns {
+                break;
+            }
+            if grapheme == "\t" {
+                // A tab fills its cells with blanks, so the grid stores no control character.
+                for _ in 0..cells.min(usize::from(self.size.columns - column)) {
+                    self.put(column, row, Cell::blank(style));
+                    column += 1;
+                }
+                continue;
+            }
             let width: u8 = match cells {
                 0 => continue,
                 1 => 1,
                 _ => 2,
             };
-            if column >= self.size.columns {
-                break;
-            }
             if u32::from(column) + u32::from(width) > u32::from(self.size.columns) {
                 self.put(column, row, Cell::blank(style));
                 column = self.size.columns;

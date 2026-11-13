@@ -796,10 +796,10 @@ fn fit(text: &str, cells: usize) -> i32 {
 }
 
 /// Wrap `text` at `width` cells, as `[start, end, soft]` triples of UTF-16 offsets. A line end (`\n` or `\r\n`) ends
-/// a row (soft 0). A soft break (soft 1) comes before a grapheme that is no space and does not fit. The break goes
-/// after the last space when the text from that space to the grapheme fits, else before the grapheme. Spaces never
-/// break, and one wide grapheme can exceed `width`. Without a width, the text is one row. A nonzero `head` keeps
-/// only the first `head` rows.
+/// a row (soft 0). A soft break (soft 1) comes before a grapheme that is no space and does not fit. A tab counts as a
+/// space. The break goes after the last space when the text from that space to the grapheme fits, else before the
+/// grapheme. Spaces never break, and one wide grapheme can exceed `width`. Without a width, the text is one row. A
+/// nonzero `head` keeps only the first `head` rows.
 fn wrap(text: &str, width: Option<usize>, head: usize) -> Vec<i32> {
     let Some(width) = width else {
         return vec![0, units(text), 0];
@@ -819,7 +819,7 @@ fn wrap(text: &str, width: Option<usize>, head: usize) -> Vec<i32> {
             cells = 0;
             break_at = None;
         } else {
-            let space = grapheme == " ";
+            let space = grapheme == " " || grapheme == "\t";
             if !space && cells + grapheme_cells > width && offset > start {
                 let broke = break_at.filter(|&at| at > start && cells - break_cells + grapheme_cells <= width);
                 let end = broke.unwrap_or(offset);
