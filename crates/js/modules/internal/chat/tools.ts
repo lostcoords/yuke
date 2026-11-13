@@ -196,7 +196,8 @@ function bodyOf(entry: ToolEntry): Body | undefined {
   for (const block of blocks) {
     if (text !== "") text += "\n";
     starts.push(text.length);
-    text += block.text;
+    // QuickJS makes `"" + long` a rope, and the first search of that rope keeps a second copy of the text.
+    text = text === "" ? block.text : text + block.text;
   }
   return {
     id: result === undefined ? "output" : "result",

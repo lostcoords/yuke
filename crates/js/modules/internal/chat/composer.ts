@@ -48,7 +48,8 @@ function draftOf(content: Extract<Entry, { kind: "input" }>["content"]): EditorS
   let text = "";
   const spans: EditorSpan[] = [];
   for (const block of content) {
-    if (block.kind === "userText") text += block.text;
+    // QuickJS makes `"" + long` a rope, and the first search of that rope keeps a second copy of the text.
+    if (block.kind === "userText") text = text === "" ? block.text : text + block.text;
     else if (block.kind === "media") {
       const { kind, ...media } = block;
       spans.push({
