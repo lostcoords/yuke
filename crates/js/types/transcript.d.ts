@@ -130,11 +130,18 @@ declare module "yuke:transcript" {
     get usage(): Frozen<Usage> | undefined;
     /** The first saved event that the transcript holds: the `before` of the next older page. */
     get first(): EventNumber | undefined;
+    /** The count of saved events that the transcript holds. */
+    get held(): number;
     /** Saved events that are missing between the held ones. Give the result of `sessions.events` to `insert`. */
     get gap(): EventsPage | undefined;
     /** Add one event. A snapshot starts the transcript again. */
     apply(event: SessionHandleEvent): void;
     /** Add saved events that did not come live: an older page, or the events of a gap. */
     insert(events: readonly Frozen<StoredEvent>[]): void;
+    /**
+     * Hold only the newest `limit` saved events, and drop the entries of the older ones. The entries of the draft, the
+     * live state of each tool, and `usage` stay. `insert` of an older page adds the dropped events again.
+     */
+    trim(limit: number): void;
   }
 }

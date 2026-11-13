@@ -79,6 +79,26 @@ test("a page that fails after the open of another session leaves the history of 
   assertEquals([chat.historyError, chat.transcript.entries.length > before], [undefined, true]);
 });
 
+test("trimHistory drops the history older than an open one page late, and a page loads it again", async () => {
+  const sessions = fakeSessions(replies(201));
+  const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal, id: "s1" });
+  await chat.open("s1");
+  await chat.loadOlderHistory();
+  await chat.loadOlderHistory();
+  const reply = (seq: number) => commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]);
+  for (let seq = 202; seq <= 300; seq += 1) sessions.push(reply(seq));
+  chat.trimHistory();
+  const within = [chat.transcript.held, chat.historyComplete];
+  sessions.push(reply(301));
+  chat.trimHistory();
+  const trimmed = [chat.transcript.held, chat.transcript.first, chat.historyComplete, texts(chat).at(0)];
+  await chat.loadOlderHistory();
+  assertEquals(
+    [within, trimmed, chat.transcript.held, texts(chat).at(0)],
+    [[300, true], [200, 102, false, "reply 102"], 300, "reply 2"],
+  );
+});
+
 test("two calls of ensure without a session create one session", async () => {
   const sessions = fakeSessions(replies(2));
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: new AbortController().signal });

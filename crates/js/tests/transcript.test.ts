@@ -230,6 +230,31 @@ test("a page that starts mid-turn pairs its results after the older page", () =>
   assert(full.entries[3] === finished, "a tool with the same saved result keeps its object");
 });
 
+test("a trim holds the newest events and keeps the draft, the usage, and each kept entry object", () => {
+  const withUsage: Answer = { ...answer("stop"), usage: { input: 100, output: 10 } };
+  const transcript = fed(opened([...saved.slice(0, 5), commit(6, { answer: withUsage }), commit(7, {})]), [
+    { sessionUpdate: "draftStarted", draftId: "d3" },
+    model("d3", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
+  ]);
+  const fixed = transcript.entries.find((entry) => entry.id === "5:0");
+  transcript.trim(3);
+  assertEquals([transcript.first, transcript.held, keys(transcript)], [5, 3, ["5:0", "draft:d3:0"]]);
+  assert(transcript.entries[0] === fixed, "a kept entry keeps its object");
+  transcript.trim(1);
+  assertEquals(
+    [transcript.first, transcript.held, keys(transcript), transcript.usage?.input],
+    [7, 1, ["draft:d3:0"], 100],
+  );
+});
+
+test("an older page after a trim gives back the dropped entries", () => {
+  const transcript = opened(saved);
+  transcript.trim(2);
+  assertEquals(keys(transcript), ["5:0", "6:end"]);
+  transcript.insert(saved.slice(0, 4));
+  assertEquals([transcript.first, transcript.held, transcript.entries], [1, 6, turnEntries]);
+});
+
 test("a gap names the missing events and insert fills it", () => {
   const transcript = fed(opened(saved.slice(0, 3)), saved.slice(4));
   assertEquals(transcript.gap, { before: 5, limit: 1 });

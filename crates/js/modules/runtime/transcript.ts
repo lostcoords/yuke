@@ -109,6 +109,10 @@ export class Transcript {
     return this.#saved[0]?.seq;
   }
 
+  get held(): number {
+    return this.#saved.length;
+  }
+
   get gap(): EventsPage | undefined {
     return this.#gap;
   }
@@ -141,7 +145,17 @@ export class Transcript {
     // A commit of a gap can consume an input that waits.
     for (const event of added)
       if (event.sessionUpdate === "commit") for (const input of event.consumed) this.pending.delete(input.id);
-    this.#saved = [...this.#saved, ...added].sort((a, b) => a.seq - b.seq);
+    this.#refold([...this.#saved, ...added].sort((a, b) => a.seq - b.seq));
+  }
+
+  trim(limit: number): void {
+    if (this.#saved.length <= limit) return;
+    this.#refold(this.#saved.slice(this.#saved.length - limit));
+  }
+
+  /** Hold the saved events `saved`, in order, and fold them again. The entries of the draft stay at the end. */
+  #refold(saved: Saved[]): void {
+    this.#saved = saved;
     this.#gap = undefined;
     for (const [index, event] of this.#saved.entries()) {
       const before = this.#saved[index - 1];

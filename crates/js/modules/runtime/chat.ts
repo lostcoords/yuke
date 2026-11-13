@@ -201,6 +201,15 @@ export class ChatSession {
     this.#changed();
   }
 
+  trimHistory(): void {
+    const transcript = this.#transcript;
+    // A page that loads now would add the dropped events again. The slack of one page keeps a trim rare.
+    if (this.#loading || transcript.held <= TAIL + PAGE) return;
+    transcript.trim(TAIL);
+    this.#complete = false;
+    this.#changed();
+  }
+
   addChangeListener(listener: () => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);

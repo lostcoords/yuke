@@ -637,6 +637,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         dirty = true;
       }
       if (dirty) {
+        // A view at the tail shows none of the older history, so memory keeps only the newest events. A saved place
+        // waits for its item, so the history stays until that item shows.
+        if (restore === undefined && view.scroll.state.following) chatSession.trimHistory();
         dirty = false;
         view.setDocument(document.project(chatSession.transcript));
       }

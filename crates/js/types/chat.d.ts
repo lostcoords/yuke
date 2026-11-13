@@ -72,6 +72,12 @@ declare module "yuke:chat" {
      */
     loadOlderHistory(): Promise<void>;
     /**
+     * Drop the older history from memory, so that the transcript holds the newest events, as after an open. It does
+     * nothing until the transcript holds one page more than that, or while a page loads. `loadOlderHistory` loads the
+     * dropped events again. Call it while the view shows the newest entries.
+     */
+    trimHistory(): void;
+    /**
      * Call `listener` after each change: an open, an event, the end of the handle, or a page.
      */
     addChangeListener(listener: () => void): () => void;
