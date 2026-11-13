@@ -2,7 +2,7 @@
  * The bundled plugin `files`: the `@` completion of the paths in the folder of a chat session. A word that starts with
  * `@` lists the files and folders that match it. A Git folder lists what `git ls-files` gives, so ignored files stay
  * out. Another folder lists a walk that skips hidden entries, `node_modules`, and `target`. The draft keeps the path as
- * plain text, and the model reads the file with its tools.
+ * plain text, and the model reads the file with its tools. A path with whitespace goes in double quotes.
  */
 
 import type { CompletionItem, CompletionList } from "yuke:chat";
@@ -11,8 +11,8 @@ import type { PluginContext } from "yuke:plugins";
 import { Command } from "yuke:process";
 import { fuzzyMatch } from "yuke:tui";
 
-/** An `@` word at the start of the draft or after a space, up to the caret. */
-const MENTION = /(?:^|\s)@(\S*)$/;
+/** An `@` word at the start of the draft or after whitespace, up to the caret: an open quote with a path, or a word. */
+const MENTION = /(?:^|\s)@(?:"([^"]*)|(\S*))$/;
 
 /** The list keeps the best of the matches. */
 const MOST_ITEMS = 50;
@@ -105,12 +105,14 @@ function listOf(entries: readonly Entry[], query: string, from: number): Complet
   return {
     from,
     items: ranked.map(({ entry, ranges }): CompletionItem => {
-      const label = `@${entry.path}`;
+      const quoted = /\s/.test(entry.path);
+      const label = quoted ? `@"${entry.path}"` : `@${entry.path}`;
+      const shift = quoted ? 2 : 1;
       return {
         label,
-        ranges: ranges?.map((range) => ({ from: range.from + 1, to: range.to + 1 })),
-        // A folder takes no space, so the list goes on into it.
-        insert: entry.folder ? label : `${label} `,
+        ranges: ranges?.map((range) => ({ from: range.from + shift, to: range.to + shift })),
+        // A folder takes no space and keeps its quote open, so the list goes on into it.
+        insert: entry.folder ? (quoted ? label.slice(0, -1) : label) : `${label} `,
       };
     }),
   };
@@ -126,8 +128,8 @@ export function apply(ctx: PluginContext): undefined {
     // The build serves the next asks too, so a change of the draft does not stop it. The stop of the plugin does.
     const ready = (async () => {
       const files = (await gitFiles(cwd, ctx.signal)) ?? (await walkedFiles(cwd, ctx.signal));
-      // Whitespace ends an `@` word, so a path with whitespace cannot complete.
-      return entriesOf(files.filter((file) => !/\s/.test(file)));
+      // Quotes hold a path with whitespace, and no escape lets them hold a quote too.
+      return entriesOf(files.filter((file) => !(/\s/.test(file) && file.includes('"'))));
     })();
     const index: Index = { time: now, entries: known?.entries, ready };
     void ready.then((entries) => {
@@ -140,8 +142,8 @@ export function apply(ctx: PluginContext): undefined {
     complete: (context) => {
       const word = MENTION.exec(context.text.slice(0, context.caret));
       if (word === null) return undefined;
-      const query = word[1] as string;
-      const from = context.caret - query.length - 1;
+      const query = word[1] ?? word[2] ?? "";
+      const from = context.caret - word[0].trimStart().length;
       const index = indexOf(context.cwd);
       if (index.entries !== undefined) return listOf(index.entries, query, from);
       return index.ready.then((entries) => listOf(entries, query, from));

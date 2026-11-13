@@ -41,7 +41,7 @@ async function write(root: string, paths: readonly string[]): Promise<void> {
 
 test("a walk lists the folders and files shallow first, and leaves out hidden entries, node_modules, and target", async () => {
   const root = folder();
-  await write(root, ["b.md", "src/main.rs", ".env", ".git-like/x", "node_modules/m/i.js", "target/debug/y", "a b.txt"]);
+  await write(root, ["b.md", "src/main.rs", ".env", ".git-like/x", "node_modules/m/i.js", "target/debug/y"]);
   const files = provider();
 
   assertEquals(await complete(files, "read @", root), {
@@ -87,4 +87,41 @@ test("a Git folder lists the tracked and the untracked files that no ignore rule
       },
     ],
   );
+});
+
+test("a path with whitespace goes in quotes, a quoted word finds it, and a closed quote ends the mention", async () => {
+  const root = folder();
+  await write(root, ["my notes.md", "my dir/a.md", 'a "b".md', 'a"b.md']);
+  const files = provider();
+
+  assertEquals(
+    [
+      await complete(files, "@notes", root),
+      await complete(files, 'see @"my n', root),
+      await complete(files, '@"my di', root),
+      await complete(files, '@"my notes.md"', root),
+      await complete(files, '@"my notes.md" ', root),
+    ],
+    [
+      { from: 0, items: [['@"my notes.md"', '@"my notes.md" ']] },
+      { from: 4, items: [['@"my notes.md"', '@"my notes.md" ']] },
+      {
+        from: 0,
+        items: [
+          ['@"my dir/"', '@"my dir/'],
+          ['@"my dir/a.md"', '@"my dir/a.md" '],
+        ],
+      },
+      undefined,
+      undefined,
+    ],
+  );
+});
+
+test("a path with a quote stays plain, and a path with whitespace and a quote stays out", async () => {
+  const root = folder();
+  await write(root, ['a "b".md', 'a"b.md']);
+  const files = provider();
+
+  assertEquals(await complete(files, "@b.m", root), { from: 0, items: [['@a"b.md', '@a"b.md ']] });
 });
