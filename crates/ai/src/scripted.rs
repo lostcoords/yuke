@@ -891,7 +891,7 @@ mod tests {
                 text: "part".to_owned(),
             });
             let url = format!("https://example.test/v1{}", protocol_path(protocol));
-            let request = Outgoing::from_parts(&url, &[], [Bytes::from_static(b"{}"), Bytes::new(), Bytes::new()]);
+            let request = Outgoing::from_parts(&url, &[], vec![Bytes::from_static(b"{}")]);
 
             let (_, mut body) = block_on(transport.open(&request, None)).unwrap();
             let mut context = Context::from_waker(Waker::noop());
@@ -915,11 +915,7 @@ mod tests {
     #[test]
     fn a_stalled_reply_sends_its_body_and_never_ends() {
         let transport = ScriptedTransport::default().then_stall(text_reply("part"));
-        let request = Outgoing::from_parts(
-            "https://example.test/v1/messages",
-            &[],
-            [Bytes::from_static(b"{}"), Bytes::new(), Bytes::new()],
-        );
+        let request = Outgoing::from_parts("https://example.test/v1/messages", &[], vec![Bytes::from_static(b"{}")]);
 
         let (head, mut body) = block_on(transport.open(&request, None)).unwrap();
         let mut context = Context::from_waker(Waker::noop());

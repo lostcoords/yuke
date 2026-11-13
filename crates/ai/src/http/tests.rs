@@ -37,7 +37,7 @@ async fn run_client(client: &Client, port: u16) -> ClientOut {
         let url = format!("http://127.0.0.1:{port}/messages");
         let headers = source_headers();
         let body = b"{}".to_vec();
-        let request = Outgoing::from_parts(&url, &headers, [Bytes::from(body), Bytes::new(), Bytes::new()]);
+        let request = Outgoing::from_parts(&url, &headers, vec![Bytes::from(body)]);
         client.open(&request, None).await
     };
     let mut body = match opened {

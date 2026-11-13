@@ -297,7 +297,7 @@ mod tests {
 
     fn open_with(canned: &CannedTransport, protocol: Protocol) -> Stream {
         let request = Encoded {
-            http: Outgoing::from_parts("https://example.test/v1/messages", &[], Default::default()),
+            http: Outgoing::from_parts("https://example.test/v1/messages", &[], Vec::new()),
             protocol,
             origin: OriginRef {
                 model: "m",

@@ -156,13 +156,14 @@ impl std::error::Error for Fault {}
 pub struct Outgoing<'a> {
     url: &'a str,
     headers: &'a [Header],
-    /// The body in parts, sent in order. A long context stays in one part across requests.
-    body: [Bytes; 3],
+    /// The body in parts, sent in order. A part that holds an unchanged element of the context is the same across
+    /// requests.
+    body: Vec<Bytes>,
 }
 
 impl<'a> Outgoing<'a> {
-    /// A request whose body is three parts, sent in order.
-    pub(crate) fn from_parts(url: &'a str, headers: &'a [Header], body: [Bytes; 3]) -> Self {
+    /// A request whose body is `body`, sent in order.
+    pub(crate) fn from_parts(url: &'a str, headers: &'a [Header], body: Vec<Bytes>) -> Self {
         Outgoing { url, headers, body }
     }
 
