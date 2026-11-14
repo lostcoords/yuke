@@ -50,7 +50,7 @@ pub use plugins::{Plugin, PluginCode, PluginFailure};
 pub use processes::{Processes, shell};
 pub use runtime::{Handle, Options, Runtime, THREAD_STACK};
 pub use session::{ScriptHooks, ScriptSession};
-pub use sessions::{Fact, FactSink, Sessions, SessionsError, ViewEvent, ViewSink};
+pub use sessions::{Fact, FactSink, SessionInspection, Sessions, SessionsError, ViewEvent, ViewSink};
 pub use settled::wait_for_settled;
 pub use test_host::TestHost;
 pub use test_runner::{

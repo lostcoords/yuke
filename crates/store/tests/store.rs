@@ -196,7 +196,7 @@ async fn a_fork_keeps_the_token_usage_and_the_creation_time_of_each_copied_commi
     let connection = rusqlite::Connection::open(folder.join("yuke.db")).unwrap();
     connection.execute("UPDATE events SET created_at = 1000", []).unwrap();
 
-    let fork = store.fork_session(source, None).await.unwrap().id;
+    let fork = store.fork_session(source, None, None).await.unwrap().id;
 
     assert_eq!(
         commit_rows(&folder, fork),
@@ -222,7 +222,7 @@ async fn a_failed_copy_of_the_blobs_leaves_no_fork() {
     // A folder in place of a blob file makes the copy fail.
     std::fs::create_dir(source_folder.join("f".repeat(64))).unwrap();
 
-    let fork = store.fork_session(source, None).await;
+    let fork = store.fork_session(source, None, None).await;
 
     assert!(matches!(fork, Err(StoreError::Failed(_))), "{fork:?}");
     assert_eq!(std::fs::read_dir(&sessions).unwrap().count(), 1);
@@ -248,7 +248,7 @@ async fn a_fork_copies_only_the_blob_files() {
     // A file manager can add a file of its own to the folder.
     std::fs::write(source_folder.join(".DS_Store"), b"x").unwrap();
 
-    store.fork_session(source, None).await.unwrap();
+    store.fork_session(source, None, None).await.unwrap();
 
     let fork_folder = std::fs::read_dir(&sessions)
         .unwrap()
@@ -277,7 +277,7 @@ async fn a_refused_fork_point_leaves_no_session_row_and_no_folder() {
         .await
         .unwrap();
 
-    let fork = store.fork_session(source, Some(EventNumber(2))).await;
+    let fork = store.fork_session(source, Some(EventNumber(2)), None).await;
 
     assert!(matches!(fork, Err(StoreError::NotACompletedTurn)), "{fork:?}");
     assert_eq!(std::fs::read_dir(folder.join("sessions")).unwrap().count(), 1);

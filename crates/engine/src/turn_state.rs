@@ -369,12 +369,13 @@ impl<'c> TurnState<'c> {
 
     /// Continue after [`Action::AfterRound`], and send `input` after the round. After an answer that needs no other
     /// request, an empty `input` ends the turn as [`Outcome::Completed`].
-    pub(crate) fn proceed(&mut self, input: Vec<Block>) -> Action<'_> {
+    pub(crate) fn proceed(&mut self, input: crate::InputBatch) -> Action<'_> {
         // Input that arrived during the final answer continues the turn.
-        if self.turn_end.is_some() && input.is_empty() {
+        if self.turn_end.is_some() && !input.reply {
+            self.context.extend(input.blocks);
             return self.stop();
         }
-        self.send(input)
+        self.send(input.blocks)
     }
 
     /// Send a request at the start of the turn or after [`Action::AfterRound`]. `input`, such as a text and its

@@ -137,13 +137,18 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     request.add(
         object,
         "sessionsFork",
-        |sessions, (id, through): (SessionId, Option<EventNumber>)| async move { sessions.fork(id, through).await },
+        |sessions, (id, through, cwd): (SessionId, Option<EventNumber>, Option<std::path::PathBuf>)| async move {
+            sessions.fork(id, through, cwd).await
+        },
     )?;
     request.add(
         object,
         "sessionsList",
         |sessions, params: ListSessionsParams| async move { sessions.list(params).await },
     )?;
+    request.add(object, "sessionsInspect", |sessions, id: SessionId| async move {
+        sessions.inspect(id).await
+    })?;
     request.add(object, "sessionsGet", |sessions, id: SessionId| async move {
         sessions.get(id).await
     })?;
@@ -157,6 +162,29 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
             sessions.events_before(id, before, limit).await
         },
     )?;
+    add_session_requests(&request, object)?;
+    request.add(object, "catalogList", |sessions, all: bool| async move {
+        sessions.catalog(all).await
+    })?;
+    request.add(object, "authLogin", |sessions, provider: String| async move {
+        sessions.login(provider).await
+    })?;
+    request.add(object, "authWaitForLogin", |sessions, id: LoginId| async move {
+        sessions.wait_for_login(id).await
+    })?;
+    request.add(
+        object,
+        "authSetApiKey",
+        |sessions, params: SetApiKeyParams| async move { sessions.set_api_key(params).await },
+    )?;
+    request.add(object, "authLogout", |sessions, provider: String| async move {
+        sessions.logout(provider).await
+    })?;
+    add_plugin_requests(&request, object)
+}
+
+/// Add the requests on one open session: its input, its settings, its queue, its jobs, and its close.
+fn add_session_requests(request: &Requests, object: &Object<'_>) -> rquickjs::Result<()> {
     request.add(
         object,
         "sessionInput",
@@ -174,6 +202,15 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
         "sessionNotify",
         |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
             sessions.input(id, Input::notification(&plugin, &display, &text)).await
+        },
+    )?;
+    request.add(
+        object,
+        "sessionRecord",
+        |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
+            sessions
+                .input(id, Input::notification(&plugin, &display, &text).recorded())
+                .await
         },
     )?;
     request.add(object, "sessionIdle", |sessions, id: SessionId| async move {
@@ -201,25 +238,7 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
     )?;
     request.add(object, "sessionClose", |sessions, id: SessionId| async move {
         sessions.close(id).await
-    })?;
-    request.add(object, "catalogList", |sessions, all: bool| async move {
-        sessions.catalog(all).await
-    })?;
-    request.add(object, "authLogin", |sessions, provider: String| async move {
-        sessions.login(provider).await
-    })?;
-    request.add(object, "authWaitForLogin", |sessions, id: LoginId| async move {
-        sessions.wait_for_login(id).await
-    })?;
-    request.add(
-        object,
-        "authSetApiKey",
-        |sessions, params: SetApiKeyParams| async move { sessions.set_api_key(params).await },
-    )?;
-    request.add(object, "authLogout", |sessions, provider: String| async move {
-        sessions.logout(provider).await
-    })?;
-    add_plugin_requests(&request, object)
+    })
 }
 
 /// Add the requests of the plugin manager of `yuke:internal/sessions`. A sync, a check, and an add fetch, so each one

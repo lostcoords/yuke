@@ -780,6 +780,7 @@ impl<'js> IntoJs<'js> for RoundNatives {
 /// The plan of the `round.before` handlers. Each part names the plugin of its last change.
 #[derive(FromJs)]
 struct PlannedRound {
+    tools: Option<Vec<String>>,
     replace: Option<PlannedReplace>,
     model: Option<PlannedModel>,
     settings: Option<PlannedSettings>,
@@ -843,6 +844,7 @@ impl PlannedRound {
             None => None,
         };
         Ok(RoundPlan {
+            tools: self.tools,
             replace,
             model,
             settings,

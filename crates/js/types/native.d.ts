@@ -1,6 +1,7 @@
 // The native module: Rust functions for the built-in modules (crates/js/src/native).
 
 declare module "yuke:internal/native" {
+  import type { SessionInspection } from "yuke:plugins";
   import type {
     AddPluginParams,
     AddPluginResult,
@@ -518,8 +519,11 @@ declare module "yuke:internal/native" {
   export function sessionsCreate(
     request: readonly [settings: SessionSettings, parent: SessionId | null],
   ): Promise<SessionId>;
-  export function sessionsFork(request: readonly [id: SessionId, through: EventNumber | null]): Promise<SessionId>;
+  export function sessionsFork(
+    request: readonly [id: SessionId, through: EventNumber | null, cwd: string | null],
+  ): Promise<SessionId>;
   export function sessionsList(params: ListSessionsParams): Promise<ListSessionsResult>;
+  export function sessionsInspect(id: SessionId): Promise<SessionInspection>;
   export function sessionsGet(id: SessionId): Promise<SessionRow>;
   export function sessionsRemove(id: SessionId): Promise<null>;
   export function sessionsRename(request: readonly [id: SessionId, title: SessionTitle]): Promise<null>;
@@ -532,6 +536,10 @@ declare module "yuke:internal/native" {
   ): Promise<InputId>;
   /** Send a notification of `plugin`: the user sees `display`, and the model reads `text`. */
   export function sessionNotify(
+    request: readonly [id: SessionId, plugin: string, display: string, text: string],
+  ): Promise<InputId>;
+  /** Record completed work without requesting a model response. */
+  export function sessionRecord(
     request: readonly [id: SessionId, plugin: string, display: string, text: string],
   ): Promise<InputId>;
   export function sessionIdle(id: SessionId): Promise<null>;

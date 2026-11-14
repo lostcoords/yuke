@@ -231,13 +231,22 @@ impl Store for MemoryStore {
         Ok(opened)
     }
 
-    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
+    #[expect(
+        clippy::expect_used,
+        reason = "the fork cut always includes the first settings event"
+    )]
+    async fn fork_session(
+        &self,
+        source: SessionId,
+        through: Option<EventNumber>,
+        destination: Option<crate::ForkDestination>,
+    ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let mut state = lock(&self.state);
         let write = state.next_write();
         let saved = state.sessions.get(&source).ok_or(StoreError::NotFound)?;
         let now = now_ms();
-        let fork = Saved {
+        let mut fork = Saved {
             prompt: saved.prompt.clone(),
             events: saved.events[..fork_cut(&saved.events, through)?].to_vec(),
             pending: Vec::new(),
@@ -249,6 +258,15 @@ impl Store for MemoryStore {
             created_at: now,
             updated_at: now,
         };
+        if let Some(destination) = destination {
+            let mut settings = fork
+                .settings()
+                .expect("the fork includes its first settings event")
+                .clone();
+            settings.cwd = destination.cwd;
+            fork.prompt = destination.prompt;
+            fork.push_event(SessionEvent::Settings(settings), write);
+        }
         let opened = fork.to_opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, fork);
         Ok(opened)

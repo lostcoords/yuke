@@ -11,7 +11,15 @@
  */
 declare module "yuke:chat" {
   import type { Frozen, SessionHandle, Sessions } from "yuke:plugins";
-  import type { Input, InputId, SessionId, SessionSettings } from "yuke:protocol";
+  import type {
+    Input,
+    InputId,
+    ModelReference,
+    ProviderInfo,
+    ReasoningLevel,
+    SessionId,
+    SessionSettings,
+  } from "yuke:protocol";
   import type { Transcript } from "yuke:transcript";
   import type {
     Canvas,
@@ -458,6 +466,27 @@ declare module "yuke:chat" {
     readonly back: SessionId;
   }
 
+  /** The model and the reasoning level of a chat. */
+  export interface ChatModelChoice {
+    readonly model: ModelReference;
+    readonly reasoning: ReasoningLevel;
+  }
+
+  /** What a model picker reads. */
+  export interface ChatModelPickerContext {
+    /** The ready providers and their models. */
+    readonly providers: readonly ProviderInfo[];
+    /** The settings of the session of the pane, or `undefined` for a pane without a session. */
+    readonly current: Frozen<SessionSettings> | undefined;
+    /** The saved choice for a new session, or `undefined` before the first choice. */
+    readonly saved: ChatModelChoice | undefined;
+    /** It aborts when the pane closes. */
+    readonly signal: AbortSignal;
+  }
+
+  /** A model picker. `undefined` cancels the choice. */
+  export type ChatModelPicker = (context: ChatModelPickerContext) => Promise<ChatModelChoice | undefined>;
+
   /**
    * The service `chat` of the chat plugin: which chat pane shows which session. Without the terminal interface, no
    * pane exists.
@@ -471,6 +500,34 @@ declare module "yuke:chat" {
     readonly show: (id: SessionId) => Promise<void>;
     /** The session of the chat pane `view`, or `undefined` for a pane without a session or no chat pane. */
     readonly session: (view: View) => SessionId | undefined;
+    /**
+     * The folder of the chat pane `view`: the folder of its session, else the folder of its next session. `undefined`
+     * for no chat pane.
+     */
+    readonly folder: (view: View) => string | undefined;
+    /**
+     * Show no session in the focused chat pane, as `/new` does. The session before keeps its work. `options.cwd` is
+     * the folder of the next session. Without it, the next session starts in the folder of the session before. A busy
+     * pane does nothing. It throws when the focused pane is no chat pane.
+     */
+    readonly newSession: (options?: { readonly cwd?: string | undefined }) => void;
+    /**
+     * Create the session of the focused chat pane, or open it again after the end of its handle, and give its id. It
+     * sends no message, and the draft and the attachments stay. `undefined` after a cancel of the model choice. It
+     * rejects when the focused pane is no chat pane or is busy.
+     */
+    readonly ensureSession: () => Promise<SessionId | undefined>;
+    /**
+     * Let the user choose the model and the reasoning of the focused chat pane, with `picker` or the picker of
+     * `setModelPicker`. The chat checks the choice against the ready providers, saves it for new sessions, and saves it
+     * in the session of the pane. A busy pane does nothing. It rejects when the focused pane is no chat pane.
+     */
+    readonly chooseModel: (picker?: ChatModelPicker) => Promise<void>;
+    /**
+     * Replace the model picker of each chat pane: of `/model`, and of the first message without a saved choice. The
+     * last call wins, and the returned function brings back the picker before it.
+     */
+    readonly setModelPicker: (picker: ChatModelPicker) => () => void;
     /**
      * Call `listener` after a chat pane moves to another session or to no session. It gets no call for a pane that starts on a session,
      * or for a close.

@@ -42,6 +42,7 @@ import type {
   SessionState,
   SessionUpdate,
   StoredEvent,
+  ToolDefinition,
 } from "yuke:protocol";
 import type { ObjectSchema, Tool, ToolMedia } from "yuke:tools";
 
@@ -66,6 +67,20 @@ export interface Services {
   readonly chat: ChatService;
 }
 
+/** What `Sessions.inspect` gives: the saved context of a session and the parts of its next request. */
+export interface SessionInspection {
+  /** The estimate of the context tokens, as a `round.before` handler gets it. */
+  readonly contextTokens: number;
+  /** The input tokens of the newest answer, or `null` before an answer or after a replacement of the context. */
+  readonly inputTokens: number | null;
+  readonly settings: SessionSettings;
+  readonly context: readonly Block[];
+  /** The sections of the system prompt after the `prompt.build` handlers, in order. */
+  readonly prompt: readonly { readonly key: string; readonly text: string }[];
+  /** Each registered tool. A `round.before` handler can offer fewer. */
+  readonly tools: readonly ToolDefinition[];
+}
+
 /**
  * The sessions of yuke. A session that a plugin creates is an ordinary session: each client can load it and send it
  * input. A session with a parent stays out of the default list. A failed request rejects with an `Error` that tells why.
@@ -77,13 +92,26 @@ export interface Sessions {
    * parent removes it. An unknown parent rejects.
    */
   readonly create: (settings: SessionSettings, options?: { readonly parent?: SessionId }) => Promise<SessionId>;
-  /** Fork session `id` through the end of the completed turn `options.through`, or its newest one, and open the fork. */
-  readonly fork: (id: SessionId, options?: { readonly through?: EventNumber }) => Promise<SessionId>;
+  /**
+   * Fork session `id` through the end of the completed turn `options.through`, or its newest one, and open the fork.
+   * With `options.cwd`, the fork works in that folder, and its system prompt comes from the instructions and the skills
+   * of that folder. The source session does not change. A folder that is not a directory rejects.
+   */
+  readonly fork: (
+    id: SessionId,
+    options?: { readonly through?: EventNumber; readonly cwd?: string },
+  ) => Promise<SessionId>;
   /**
    * A page of the saved sessions, newest first. `nextCursor` continues the list. Without `parent`, the page holds only
    * the sessions without a parent. With `parent`, it holds the sessions of that parent.
    */
   readonly list: (params?: ListSessionsParams) => Promise<ListSessionsResult>;
+  /**
+   * The saved context of the open session `id`, as the next round sees it: the settings, the blocks, the token
+   * counts, the sections of the system prompt, and the registered tools. It runs the `prompt.build` handlers, but no
+   * round handler, no tool, and no model request. A draft and pending input stay out of it.
+   */
+  readonly inspect: (id: SessionId) => Promise<SessionInspection>;
   /** The row of the saved session `id`, with its state now. */
   readonly get: (id: SessionId) => Promise<SessionRow>;
   /**
@@ -153,6 +181,12 @@ export interface SessionHandle extends Disposable {
     readonly content: readonly Block[];
     readonly modelContent?: readonly Block[] | undefined;
   }) => Promise<InputId>;
+  /**
+   * Save `action.text` as the record of a completed local action, such as a command that the user ran. The user sees
+   * `action.display`. It requests no answer of the model, and no `input.before` handler runs. An idle session saves
+   * it at once. A running turn reads it at its next round. The promise resolves when the session accepts it.
+   */
+  readonly record: (action: { readonly display: string; readonly text: string }) => Promise<InputId>;
   /** Send a notification of this plugin: the user sees `display`, and the model reads `text`. */
   readonly notifyModel: (notification: { readonly display: string; readonly text: string }) => Promise<InputId>;
   /**
@@ -478,8 +512,11 @@ export interface SideRequestOptions {
  * - `model` sends this round to another model of the catalog. An unknown model fails the turn.
  * - `settings` replaces these settings for this round. Each field replaces its whole value, so a field that a new
  *   `reasoning` leaves out has no value. An unknown field has no effect. A value of another shape fails the turn.
+ * - `tools` offers only the registered tools with these names in this round. An empty list offers no tool. It limits
+ *   the request, not the calls: a `tool.before` handler refuses a call.
  */
 export interface RoundBeforeAnswer {
+  readonly tools?: readonly string[] | undefined;
   readonly replace?: { readonly head: readonly Block[]; readonly keep: number } | undefined;
   readonly model?: ModelReference | undefined;
   readonly settings?: Partial<RequestSettings> | undefined;

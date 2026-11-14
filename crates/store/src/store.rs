@@ -187,7 +187,12 @@ impl Store for SqliteStore {
         })
     }
 
-    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
+    async fn fork_session(
+        &self,
+        source: SessionId,
+        through: Option<EventNumber>,
+        destination: Option<yuke_agent::ForkDestination>,
+    ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let fork = *id.as_bytes();
         let source_bytes = *source.as_bytes();
@@ -209,7 +214,7 @@ impl Store for SqliteStore {
                     // A crash must not lose the new folder entry. The fork syncs its parent folder.
                     files::sync_folder(&sessions_folder).map_err(failed)?;
                     files::copy_blobs(&source_folder, &folder).map_err(failed)?;
-                    copy_rows(connection, &rows)?;
+                    copy_rows(connection, &rows, destination.as_ref())?;
                     let opened = read(connection, |connection| context::load(connection, id).map_err(failed))?;
                     Ok((opened.ok_or(StoreError::NotFound)?, lock))
                 });
@@ -632,7 +637,11 @@ fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<Eve
 }
 
 /// Add session `rows.session_id`. Copy events from `rows.source` through `rows.cut` in the same transaction.
-fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Result<(), StoreError> {
+fn copy_rows(
+    connection: &mut Connection,
+    rows: &events::CopyEventsParams,
+    destination: Option<&yuke_agent::ForkDestination>,
+) -> Result<(), StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(failed)?;
@@ -652,6 +661,39 @@ fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Re
     };
     sessions::copy_session(&transaction, &session).map_err(failed)?;
     events::copy_events(&transaction, rows).map_err(failed)?;
+    if let Some(destination) = destination {
+        let saved = sessions::session_context(&transaction, rows.session_id)
+            .one()
+            .map_err(failed)?;
+        let mut settings = saved.settings.0;
+        settings.cwd.clone_from(&destination.cwd);
+        let settings = serde_json::to_string(&settings).map_err(failed)?;
+        events::insert_settings(
+            &transaction,
+            &events::InsertSettingsParams {
+                session_id: rows.session_id,
+                settings: settings.clone(),
+            },
+        )
+        .one()
+        .map_err(failed)?;
+        sessions::set_session_settings(
+            &transaction,
+            &sessions::SetSessionSettingsParams {
+                id: rows.session_id,
+                settings,
+            },
+        )
+        .map_err(failed)?;
+        sessions::set_session_prompt(
+            &transaction,
+            &sessions::SetSessionPromptParams {
+                id: rows.session_id,
+                prompt: serde_json::to_string(&destination.prompt).map_err(failed)?,
+            },
+        )
+        .map_err(failed)?;
+    }
     sessions::place_fork(&transaction, rows.session_id).map_err(failed)?;
     transaction.commit().map_err(failed)
 }

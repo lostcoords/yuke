@@ -101,6 +101,7 @@ impl crate::Sessions for NoSessions {
         &self,
         _: yuke_protocol::SessionId,
         _: Option<yuke_protocol::EventNumber>,
+        _: Option<PathBuf>,
     ) -> Result<yuke_protocol::SessionId, crate::SessionsError> {
         no_sessions()
     }
@@ -116,6 +117,10 @@ impl crate::Sessions for NoSessions {
         _title: yuke_protocol::SessionTitle,
     ) -> Result<(), crate::SessionsError> {
         Err("no sessions".into())
+    }
+
+    async fn inspect(&self, _: yuke_protocol::SessionId) -> Result<crate::SessionInspection, crate::SessionsError> {
+        no_sessions()
     }
 
     async fn get(&self, _: yuke_protocol::SessionId) -> Result<yuke_protocol::SessionRow, crate::SessionsError> {

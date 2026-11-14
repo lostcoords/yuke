@@ -28,6 +28,8 @@ pub enum InputSource {
 pub enum InputKind {
     /// A message of a person: the text of the user, or a text that a plugin passes on from a person.
     Message,
+    /// A completed local action. It adds context without requesting a reply and bypasses admission hooks.
+    Record,
     /// A notice that no person wrote, for example the end of a job or a request of a hook to go on.
     Notification,
 }
@@ -96,6 +98,20 @@ impl Input {
         }
         let model_content = (model_content != self.content).then_some(model_content);
         Ok(Input { model_content, ..self })
+    }
+
+    /// Record this completed action without asking the model to reply. Admission hooks do not run for records.
+    #[must_use]
+    pub fn recorded(self) -> Self {
+        Self {
+            kind: InputKind::Record,
+            ..self
+        }
+    }
+
+    /// Whether the input asks the model to reply.
+    pub fn needs_reply(&self) -> bool {
+        self.kind != InputKind::Record
     }
 
     /// Who sent the input.

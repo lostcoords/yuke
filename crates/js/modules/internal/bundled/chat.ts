@@ -6,6 +6,7 @@
  */
 
 import type {
+  ChatModelPicker,
   ChatPane,
   ChatPresentation,
   ChatPresentationOptions,
@@ -220,6 +221,14 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   const emptyViews = new Stack<(mount: Mount, pane: ChatPane) => View>();
   // The default view of an empty pane comes after the state that it reads, and the option can turn it off.
   let defaultEmptyView: ((mount: Mount, pane: ChatPane) => View) | undefined;
+  const modelPickers = new Stack<ChatModelPicker>();
+  const focused = (): PaneActions => {
+    if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
+    const view = tui.panes.active?.view;
+    const pane = view === undefined ? undefined : panes.get(view);
+    if (pane === undefined) throw new Error("the focused pane is no chat pane");
+    return pane;
+  };
   ctx.provide("chat", {
     show: async (id) => {
       if (tui === undefined) throw new Error("no chat pane: yuke runs without the terminal interface");
@@ -238,6 +247,11 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       }
     },
     session: (view) => panes.get(view)?.session(),
+    folder: (view) => panes.get(view)?.folder(),
+    newSession: (options) => focused().newSession(options?.cwd),
+    ensureSession: async () => focused().ensureSession(),
+    chooseModel: async (picker) => focused().chooseModel(picker),
+    setModelPicker: (picker) => modelPickers.add(picker),
     addChangeListener: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -308,6 +322,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     presenter: () => presenters.top(),
     frame: () => frames.top(),
     emptyView: () => emptyViews.top() ?? defaultEmptyView,
+    modelPicker: () => modelPickers.top(),
     readOnly: (session) => {
       for (const entry of readOnlySources) {
         const answer = entry.source(session);

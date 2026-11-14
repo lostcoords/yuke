@@ -334,7 +334,7 @@ export type InputId = number;
 /**
  * What an input is. A client shows a message in the conversation, and a notification as a notice.
  */
-export type InputKind = "message" | "notification";
+export type InputKind = "message" | "record" | "notification";
 
 /**
  * Who sent an input. It records the sender only. It grants no permission and sets no visibility.

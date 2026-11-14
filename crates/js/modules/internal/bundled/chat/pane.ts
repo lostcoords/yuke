@@ -9,6 +9,7 @@ import {
   ChatCompletions,
   ChatComposer,
   ChatDocument,
+  type ChatModelPicker,
   type ChatPane,
   type ChatPresentation,
   type ChatPresentationOptions,
@@ -83,8 +84,15 @@ export interface PaneActions {
   readonly signal: AbortSignal;
   readonly toggleTools: () => void;
   readonly send: () => Promise<void>;
-  /** Let the user choose the model and the reasoning of the pane. */
-  readonly chooseModel: () => Promise<void>;
+  /** Let the user choose the model and the reasoning of the pane, with `picker` or the picker of the `chat` service. */
+  readonly chooseModel: (picker?: ChatModelPicker) => Promise<void>;
+  /** The folder of the session of the pane, else of its next session. */
+  readonly folder: () => string;
+  /**
+   * Create the session of the pane, or open it again after the end of its handle, and give its id. The draft and the
+   * attachments stay. `undefined` after a cancel of the model choice. It rejects while the pane is busy.
+   */
+  readonly ensureSession: () => Promise<SessionId | undefined>;
   /** Put the image of the clipboard at the caret of the composer. */
   readonly pasteImage: () => Promise<void>;
   /**
@@ -124,9 +132,9 @@ export interface PaneActions {
   readonly show: (id: SessionId) => Promise<void>;
   /**
    * Show no session, with an empty composer. The next message creates a session in the folder of the session before.
-   * The session before keeps its work. A busy pane does nothing.
+   * The session before keeps its work. A busy pane does nothing. `cwd` is the folder of the next session.
    */
-  readonly newSession: () => void;
+  readonly newSession: (cwd?: string) => void;
   /**
    * What the status bar shows of the session of the pane. `bound` is true when the pane has a session. `nextFolder`
    * is the folder of a session that the pane creates.
@@ -166,6 +174,8 @@ export interface Chat {
   readonly composerViews: (place: ComposerPlace) => readonly ComposerViewEntry[];
   /** The frame of the `chat` service around the input. Without one, a pane draws two rules. */
   readonly frame: () => ComposerFrame | undefined;
+  /** The model picker of the `chat` service. Without one, a pane asks with two lists. */
+  readonly modelPicker: () => ChatModelPicker | undefined;
   /** The factory of the view of an empty pane, or `undefined` when an empty pane shows nothing. */
   readonly emptyView: () => ((mount: Mount, pane: ChatPane) => View) | undefined;
   /** Tell the listeners of the `chat` service that the pane `view` shows another session. */
@@ -189,6 +199,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   let bound = chatSession.id;
   // The folder that `/new` left keeps the next session there, also after a reload.
   let nextFolder = state.nextFolder;
+  const folder = (): string => chatSession.transcript.settings?.cwd ?? nextFolder ?? tui.startup.cwd;
   // The events of the session change the transcript, and the next layout projects it once.
   let dirty = true;
   const changed = (): void => {
@@ -290,7 +301,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   // A question takes the place of the list, and a pane without a row above the frame shows no list.
   const completions = new ChatCompletions(composer, {
     providers: () => chat.completionProviders(),
-    cwd: () => chatSession.transcript.settings?.cwd ?? nextFolder ?? tui.startup.cwd,
+    cwd: () => folder(),
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
     onChange: () => tui.requestFrame(),
@@ -312,9 +323,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   /**
    * Return the settings of the saved choice, else the settings that the user picks.
-   * With `pick`, the picker opens and the saved choice does not count.
+   * With `pick`, the picker opens and the saved choice does not count. `picker` replaces the picker of the service.
    */
-  const settingsOf = async (pick: boolean): Promise<SessionSettings | undefined> => {
+  const settingsOf = async (pick: boolean, picker?: ChatModelPicker): Promise<SessionSettings | undefined> => {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
     if (models.length === 0) {
@@ -327,18 +338,36 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     );
     let reasoning = chosen?.model.reasoning.find((choice) => choice.level === saved?.reasoning);
     if (chosen === undefined || reasoning === undefined) {
-      chosen = await tui.select({
-        items: models,
-        label: (entry) => `${entry.provider}/${entry.model.id}`,
-        signal: mount.signal,
-      });
-      if (chosen === undefined) return undefined;
-      reasoning = await tui.select({
-        items: chosen.model.reasoning,
-        label: (choice) => choice.level,
-        signal: mount.signal,
-      });
-      if (reasoning === undefined) return undefined;
+      const custom = picker ?? chat.modelPicker();
+      if (custom !== undefined) {
+        const answer = await custom({
+          providers,
+          current: chatSession.transcript.settings,
+          saved: chat.choice.current,
+          signal: mount.signal,
+        });
+        if (answer === undefined || mount.signal.aborted) return undefined;
+        chosen = models.find(
+          (entry) => entry.provider === answer.model.provider && entry.model.id === answer.model.model,
+        );
+        reasoning = chosen?.model.reasoning.find((choice) => choice.level === answer.reasoning);
+        if (chosen === undefined || reasoning === undefined) {
+          throw new Error(`${answer.model.provider}/${answer.model.model} at ${answer.reasoning} is not ready`);
+        }
+      } else {
+        chosen = await tui.select({
+          items: models,
+          label: (entry) => `${entry.provider}/${entry.model.id}`,
+          signal: mount.signal,
+        });
+        if (chosen === undefined) return undefined;
+        reasoning = await tui.select({
+          items: chosen.model.reasoning,
+          label: (choice) => choice.level,
+          signal: mount.signal,
+        });
+        if (reasoning === undefined) return undefined;
+      }
       const choice = { model: { provider: chosen.provider, model: chosen.model.id }, reasoning: reasoning.level };
       try {
         await chat.choice.save(choice);
@@ -361,11 +390,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
    * A pane with a session also saves them in the session.
    * The session keeps its folder and the rest of its settings.
    */
-  const chooseModel = async (): Promise<void> => {
+  const chooseModel = async (picker?: ChatModelPicker): Promise<void> => {
     if (busy) return;
     busy = true;
     try {
-      const settings = await settingsOf(true);
+      const settings = await settingsOf(true, picker);
       if (settings === undefined || mount.signal.aborted) return;
       const id = chatSession.id;
       if (id === undefined) return;
@@ -789,11 +818,11 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     if (mount.signal.aborted || id === before) return;
     swapDraft(before, id);
   };
-  const newSession = (): void => {
+  const newSession = (cwd?: string): void => {
     if (occupied()) return;
     // The server keeps a session with a turn or a job open after the pane lets go of it.
     const running = working.active || (chatSession.handle?.jobs().length ?? 0) > 0;
-    nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
+    nextFolder = cwd ?? chatSession.transcript.settings?.cwd ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
     if (running) ctx.notify("info", "the work goes on: /sessions shows it");
@@ -804,6 +833,16 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     session: () => chatSession.id,
     show,
     newSession,
+    folder: () => folder(),
+    ensureSession: async () => {
+      if (occupied()) throw new Error("the pane is busy");
+      busy = true;
+      try {
+        return (await sessionHandle()) === undefined ? undefined : chatSession.id;
+      } finally {
+        busy = false;
+      }
+    },
     status: () => ({
       bound: chatSession.id !== undefined,
       nextFolder: nextFolder ?? tui.startup.cwd,

@@ -15,7 +15,7 @@ mod search;
 mod tool;
 mod turn_state;
 
-pub use drive::{Driver, Inbox, Journal, NoWait, Observer, Timer, Turn, TurnError, TurnEvent};
+pub use drive::{Driver, Inbox, InputBatch, Journal, NoWait, Observer, Timer, Turn, TurnError, TurnEvent};
 pub use hooks::{Hooks, RoundDecision, RoundPlan, RoundStart, ToolDecision};
 pub use model::{CredentialSource, Model, RoundError};
 pub use tokio_util::sync::CancellationToken;

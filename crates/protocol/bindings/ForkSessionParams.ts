@@ -14,4 +14,9 @@ sessionId: SessionId,
  * The event number of the end of a completed turn. None takes the newest completed turn, or the settings before
  * the first commit when no turn completed.
  */
-through?: EventNumber, };
+through?: EventNumber, 
+/**
+ * The working folder of the fork. The destination supplies its instructions, skills, and MCP configuration.
+ * None keeps the folder and prompt at the fork point.
+ */
+cwd?: string, };
