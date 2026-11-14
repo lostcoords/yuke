@@ -19,7 +19,7 @@ onBeforeUnmount(() => clearTimeout(timer));
 <template>
   <div class="install">
     <code><span class="prompt" aria-hidden="true">$ </span>{{ command }}</code>
-    <button type="button" class="copy" :class="{ copied }" :aria-label="copied ? 'Copied' : 'Copy the install command'" @click="copy">
+    <button type="button" class="copy" data-umami-event="install-copy" :class="{ copied }" :aria-label="copied ? 'Copied' : 'Copy the install command'" @click="copy">
       <svg v-if="!copied" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
       <svg v-else viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
     </button>

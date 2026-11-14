@@ -11,7 +11,7 @@ const { frontmatter } = useData();
       <p>© 2026 LOST COORDS</p>
       <nav aria-label="Footer">
         <a :href="withBase('/docs/')">Docs</a>
-        <a :href="repository">GitHub</a>
+        <a :href="repository" data-umami-event="github" data-umami-event-place="footer">GitHub</a>
         <a :href="`${repository}/releases`">Releases</a>
       </nav>
     </div>
