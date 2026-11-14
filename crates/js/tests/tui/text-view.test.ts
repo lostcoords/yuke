@@ -123,6 +123,38 @@ test("a Markdown section maps rows to its source, a replacement as a whole", () 
   );
 });
 
+test("an elision maps visible characters individually and keeps the hidden source available for copying", () => {
+  const view = new TextView({
+    document: {
+      id: "d",
+      items: [
+        {
+          id: "i",
+          sections: [
+            {
+              id: "s",
+              kind: "label",
+              text: "abcdef",
+              render: () => [{ segments: [{ text: "ab…", source: { kind: "elision", from: 0, to: 6 } }], join: "" }],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  using frame = createFrame({ width: 10, height: 2 }, () => view);
+  for (let column = 0; column < 3; column += 1) {
+    const position = at("i", "s", column);
+    assertEquals(view.rows.at({ row: 0, column }), position);
+    assertEquals(view.rows.point(position), { row: 0, column });
+  }
+  assertEquals(view.rows.point(at("i", "s", 4), "cell", "before"), { row: 0, column: 2 });
+  assertEquals(view.rows.point(at("i", "s", 4), "cell", "after"), { row: 0, column: 3 });
+  const range = { from: at("i", "s", 0), to: at("i", "s", 6) };
+  assertEquals([view.text(range), view.text(range, "source")], ["ab…", "abcdef"]);
+  void frame;
+});
+
 test("a hidden section has no place, and the caret on it shows no cursor", () => {
   const view = new TextView({
     document: {
