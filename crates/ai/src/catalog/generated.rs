@@ -12,7 +12,7 @@ use crate::{
 };
 
 /// The identifier of this catalog snapshot.
-pub const REVISION: &str = "e52200c861e784ef7d8404d505f16f931e774a56828ec09426a4bcfae58804d3182c0bbaaa85e77105f168fd6c0a10c2507af72dc6f4c446f77a06d487dbe5fb";
+pub const REVISION: &str = "e04ae879758e742b7ff0ddf237ba5220062d0673991c4677e8986b447ca71d2363614b52f76305315a683fee5cd737f5a4002c467acfc04ec7a113821cab6373";
 
 /// The provider table. Each row borrows static storage.
 pub static PROVIDERS: &[Provider] = &[
@@ -13256,80 +13256,6 @@ pub static PROVIDERS: &[Provider] = &[
                 },
             },
             Model {
-                id: Cow::Borrowed("liquid/lfm-2.5-2.6b"),
-                upstream_id: Cow::Borrowed("liquid/lfm-2.5-2.6b"),
-                name: Cow::Borrowed("LFM2.5-2.6B"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(128000),
-                    max_output_tokens: Some(8192),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.35),
-                    output: Some(0.5),
-                    reasoning: Some(0.5),
-                    cache_read: Some(0.04),
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
-                id: Cow::Borrowed("liquid/lfm-2.5-2.6b:free"),
-                upstream_id: Cow::Borrowed("liquid/lfm-2.5-2.6b:free"),
-                name: Cow::Borrowed("LFM2.5-2.6B (free)"),
-                protocol: Protocol::OpenaiChat,
-                limits: Limits {
-                    context_window: Some(65536),
-                    max_output_tokens: Some(8192),
-                },
-                cost: Cow::Borrowed(&[PriceBand {
-                    min_prompt_tokens: 0,
-                    input: Some(0.0),
-                    output: Some(0.0),
-                    reasoning: Some(0.0),
-                    cache_read: None,
-                    cache_write: None,
-                }]),
-                caps: Caps {
-                    tools: Some(true),
-                    tool_search: None,
-                    disable_reasoning: None,
-                    cache_breakpoint: None,
-                },
-                reasoning_levels: Cow::Borrowed(&[]),
-                dialect: Dialect {
-                    chat: ChatFlags {
-                        thinking_format: ThinkingFormat::None,
-                        reasoning_replay: ReasoningReplayMode::None,
-                        max_tokens_field: MaxTokensField::MaxTokens,
-                    },
-                    anthropic_thinking: AnthropicThinking::None,
-                },
-                modalities: Modalities {
-                    input: Cow::Borrowed(&[Modality::Text]),
-                    output: Cow::Borrowed(&[Modality::Text]),
-                },
-            },
-            Model {
                 id: Cow::Borrowed("liquid/lfm-2.5-24b-a2b"),
                 upstream_id: Cow::Borrowed("liquid/lfm-2.5-24b-a2b"),
                 name: Cow::Borrowed("LFM2.5-24B-A2B"),
@@ -14376,10 +14302,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.15),
-                    output: Some(0.6),
-                    reasoning: Some(0.6),
-                    cache_read: Some(0.015),
+                    input: Some(0.075),
+                    output: Some(0.3),
+                    reasoning: Some(0.3),
+                    cache_read: Some(0.0075),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -21515,10 +21441,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.132),
-                    output: Some(0.528),
-                    reasoning: Some(0.528),
-                    cache_read: Some(0.033),
+                    input: Some(0.0825),
+                    output: Some(0.33),
+                    reasoning: Some(0.33),
+                    cache_read: Some(0.020625),
                     cache_write: None,
                 }]),
                 caps: Caps {
@@ -21626,10 +21552,10 @@ pub static PROVIDERS: &[Provider] = &[
                 },
                 cost: Cow::Borrowed(&[PriceBand {
                     min_prompt_tokens: 0,
-                    input: Some(0.834),
-                    output: Some(2.501),
-                    reasoning: Some(2.501),
-                    cache_read: Some(0.042),
+                    input: Some(0.7506),
+                    output: Some(2.2509),
+                    reasoning: Some(2.2509),
+                    cache_read: Some(0.0378),
                     cache_write: None,
                 }]),
                 caps: Caps {
