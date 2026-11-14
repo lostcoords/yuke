@@ -299,22 +299,46 @@ impl Store for FileStore {
         })
     }
 
-    async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
+    async fn fork_session(
+        &self,
+        source: SessionId,
+        through: Option<EventNumber>,
+        destination: Option<yuke_agent::ForkDestination>,
+    ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let source_folder = self.folder(source);
         let folder = self.folder(id);
 
-        let (opened, lock, cut) = self
+        let (opened, lock, next) = self
             .call(move |state| {
                 let source_meta = meta_of(state.index()?, source)?;
                 let title = source_meta.title.as_deref().and_then(fork_title_of);
-                let source_log = log::read(&source_folder).map_err(failed)?;
+                let mut source_log = log::read(&source_folder).map_err(failed)?;
                 let cut = match through {
                     Some(EventNumber(through)) if source_log.ends_completed_turn(through) => through,
                     Some(_) => return Err(StoreError::NotACompletedTurn),
                     None => source_log.fork_cut(),
                 };
-                let settings = settings_of(&source_log, cut)?;
+                let copied = source_log.prefix_len(cut);
+                let source_settings = settings_of(&source_log, cut)?;
+                // A destination replaces the prompt in the first line and adds a settings event with its folder.
+                let (settings, prompt, rewrite) = match destination {
+                    None => (source_settings, std::mem::take(&mut source_log.prompt), None),
+                    Some(destination) => {
+                        let settings = SessionSettings {
+                            folder: destination.folder,
+                            ..source_settings
+                        };
+                        let first = settings_of(&source_log, 1)?;
+                        let first_line = log::line(
+                            1,
+                            &log::settings_body(&first, Some(&destination.prompt)).map_err(failed)?,
+                        );
+                        let settings_line = log::line(cut + 1, &log::settings_body(&settings, None).map_err(failed)?);
+                        (settings, destination.prompt, Some((first_line, settings_line)))
+                    }
+                };
+                let next = cut + 1 + u64::from(rewrite.is_some());
                 let meta = Meta {
                     model: settings.model.clone(),
                     folder: settings.folder.clone(),
@@ -330,8 +354,15 @@ impl Store for FileStore {
                     id,
                     &folder,
                     || {
-                        files::copy_blobs(&source_folder, &folder)
-                            .and_then(|()| log::copy_prefix(&source_folder, &folder, source_log.prefix_len(cut)))
+                        files::copy_blobs(&source_folder, &folder)?;
+                        match &rewrite {
+                            None => log::copy_range(&source_folder, &folder, 0..copied),
+                            Some((first_line, settings_line)) => {
+                                log::append(&folder, first_line, false)?;
+                                log::copy_range(&source_folder, &folder, source_log.prefix_len(1)..copied)?;
+                                log::append(&folder, settings_line, true)
+                            }
+                        }
                     },
                     meta,
                 )?;
@@ -340,7 +371,7 @@ impl Store for FileStore {
                     Opened {
                         id,
                         settings,
-                        prompt: source_log.prompt,
+                        prompt,
                         parent: None,
                         context,
                         newest_turn,
@@ -348,12 +379,12 @@ impl Store for FileStore {
                         lease: None,
                     },
                     lock,
-                    cut,
+                    next,
                 ))
             })
             .await?;
         Ok(Opened {
-            lease: Some(self.lease(id, lock, cut + 1)),
+            lease: Some(self.lease(id, lock, next)),
             ..opened
         })
     }

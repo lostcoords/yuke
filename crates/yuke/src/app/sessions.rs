@@ -378,8 +378,36 @@ impl SessionService {
     ///
     /// Returns [`AppError::Store`] when the store fails, [`AppError::Invalid`] for a model that cannot run,
     /// [`AppError::Internal`] when the plugins do not open, [`AppError::Reloading`], and [`AppError::Stopped`].
-    pub(crate) async fn fork(&self, id: SessionId, through: Option<EventNumber>) -> Result<SessionId, AppError> {
-        let session = Session::fork(Arc::clone(&self.shared.store), id, through).await?;
+    pub(crate) async fn fork(
+        &self,
+        id: SessionId,
+        through: Option<EventNumber>,
+        folder: Option<std::path::PathBuf>,
+    ) -> Result<SessionId, AppError> {
+        let destination = if let Some(folder) = folder {
+            let folder = canonical(folder).await?;
+            let prompt = system_prompt(
+                folder.clone(),
+                self.shared.machine.home.clone(),
+                self.shared.plugin_folders().to_vec(),
+            )
+            .await?;
+            for warning in prompt.warnings {
+                self.shared.observer.notify(ServerNotification::Notice(NoticeParams {
+                    session_id: None,
+                    level: NoticeLevel::Warn,
+                    source: SOURCE.to_owned(),
+                    text: warning,
+                }));
+            }
+            Some(yuke_agent::ForkDestination {
+                folder,
+                prompt: prompt.sections,
+            })
+        } else {
+            None
+        };
+        let session = Session::fork(Arc::clone(&self.shared.store), id, through, destination).await?;
         self.start_new(session).await
     }
 

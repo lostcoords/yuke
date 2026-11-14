@@ -715,7 +715,7 @@ async fn a_remove_deletes_a_closed_session_keeps_its_fork_and_refuses_an_open_or
     let source = saved_session(&place, "minimax", "MiniMax-M3").await;
     let held = saved_session(&place, "minimax", "MiniMax-M3").await;
     let store = place.store().await;
-    let fork = store.fork_session(source, None).await.unwrap().id;
+    let fork = store.fork_session(source, None, None).await.unwrap().id;
     // This lease stands for another process that writes the session.
     let lease = store.open(held, Access::Write).await.unwrap();
     let mut client = Client::initialized(&place, Box::new(ScriptedTransport::default())).await;

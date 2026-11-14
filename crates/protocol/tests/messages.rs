@@ -99,6 +99,7 @@ fn each_request_reads_and_writes_its_json() {
                 ClientRequest::ForkSession(yuke_protocol::ForkSessionParams {
                     session_id: session(),
                     through: Some(EventNumber(4)),
+                    folder: None,
                 }),
             ),
         ),
@@ -150,7 +151,10 @@ fn each_request_reads_and_writes_its_json() {
     for (json, message) in cases {
         assert_json(&json, &message);
     }
+}
 
+#[test]
+fn a_settings_request_reads_and_writes_its_json() {
     let mut set_settings = settings_json();
     set_settings["sessionId"] = json!(SESSION);
     assert_json(

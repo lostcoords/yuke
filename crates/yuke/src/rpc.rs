@@ -387,7 +387,10 @@ impl Server {
                 Ok(ServerResult::NewSession(SessionResult { session_id }))
             }
             ClientRequest::ForkSession(params) => {
-                let session_id = app.sessions().fork(params.session_id, params.through).await?;
+                let session_id = app
+                    .sessions()
+                    .fork(params.session_id, params.through, params.folder)
+                    .await?;
                 self.attachments.insert(session_id, app.sessions().attach(session_id)?);
                 Ok(ServerResult::ForkSession(SessionResult { session_id }))
             }

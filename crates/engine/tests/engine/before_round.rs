@@ -329,3 +329,26 @@ fn retry_round_gets_the_model_window_and_the_settings_of_the_failed_round() {
         ]
     );
 }
+
+#[test]
+fn a_tool_filter_applies_to_its_round_only() {
+    let transport = ScriptedTransport::new([tool_reply(&[("c1", "echo", "{}")]), text_reply("done")]);
+    let model = model();
+    let mut toolset = Toolset::new();
+    toolset.add(definition("echo"), Recorder::default()).unwrap();
+    toolset.add(definition("excluded"), Recorder::default()).unwrap();
+    let hooks = Script::default().plans([
+        RoundPlan {
+            tools: Some(vec!["echo".into()]),
+            ..RoundPlan::default()
+        },
+        RoundPlan::default(),
+    ]);
+    let driver = Driver::new(&transport, &model, &NoWait).toolset(&toolset).hooks(&hooks);
+    block_on(driver.turn(&mut Vec::new(), vec![Block::user_text("go")]).run()).unwrap();
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].contains(r#""name":"echo""#), "{}", requests[0]);
+    assert!(!requests[0].contains(r#""name":"excluded""#), "{}", requests[0]);
+    assert!(requests[1].contains(r#""name":"excluded""#), "{}", requests[1]);
+}

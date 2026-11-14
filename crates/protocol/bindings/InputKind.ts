@@ -3,4 +3,4 @@
 /**
  * What an input is. A client shows a message in the conversation, and a notification as a notice.
  */
-export type InputKind = "message" | "notification";
+export type InputKind = "message" | "record" | "notification";

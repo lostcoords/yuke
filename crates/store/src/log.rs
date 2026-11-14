@@ -7,7 +7,8 @@
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -249,9 +250,11 @@ pub(crate) fn line(seq: u64, body: &[u8]) -> Vec<u8> {
     line
 }
 
-/// Copy the first `len` bytes of the log in `source` to the log in `folder`, and make them durable.
-pub(crate) fn copy_prefix(source: &Path, folder: &Path, len: u64) -> io::Result<()> {
-    let mut from = File::open(path(source))?.take(len);
+/// Copy the bytes `range` of the log in `source` to the end of the log in `folder`, and make them durable.
+pub(crate) fn copy_range(source: &Path, folder: &Path, range: Range<u64>) -> io::Result<()> {
+    let mut from = File::open(path(source))?;
+    from.seek(SeekFrom::Start(range.start))?;
+    let mut from = from.take(range.end.saturating_sub(range.start));
     let mut file = OpenOptions::new().append(true).create(true).open(path(folder))?;
     io::copy(&mut from, &mut file)?;
     file.sync_data()
