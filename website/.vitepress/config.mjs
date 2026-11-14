@@ -72,6 +72,18 @@ export default defineConfig({
     ['link', { rel: 'apple-touch-icon', href: `${base}apple-touch-icon.png` }],
     ['meta', { name: 'theme-color', content: '#0c0d0c' }],
     ['meta', { name: 'msvalidate.01', content: '9D4695D7762BCF14C9D7263762C8EECB' }],
+    // Umami page views, served from this origin so the install command's page runs no outside code.
+    // data-domains keeps local builds and previews out of the counts.
+    [
+      'script',
+      {
+        defer: '',
+        src: `${base}lc.js`,
+        'data-host-url': 'https://t.lostcoords.com',
+        'data-website-id': 'e0531c90-fbd1-4977-a089-c21e9e4d553c',
+        'data-domains': 'yuke.sh',
+      },
+    ],
   ],
   transformHead({ pageData, title, description }) {
     if (pageData.isNotFound) return [['meta', { name: 'robots', content: 'noindex' }]];
