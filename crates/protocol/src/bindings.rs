@@ -7,11 +7,10 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
+use crate::message::ClientRequestResults;
 use crate::{
-    AddPluginResult, ApplyPluginsResult, CheckPluginsResult, ClientNotification, ClientRequest, EmptyResult,
-    GetBlobResult, InitializeResult, InputResult, ListCatalogResult, ListJobsResult, ListMcpServersResult,
-    ListPluginsResult, ListSessionsResult, LoginResult, Notification, RemoveInputResult, Request, Response,
-    ServerNotification, ServerRequest, SessionResult, SessionRow, SessionSnapshot, SyncPluginsResult,
+    ClientNotification, ClientRequest, Notification, Request, Response, ServerNotification, ServerRequest,
+    SessionSnapshot,
 };
 
 /// The types that plugins use. The plugin module holds them and each type that they use.
@@ -105,23 +104,8 @@ fn export(folder: &Path) {
     // The export of the generic `Notification` writes no file for its argument.
     ClientNotification::export_all(&config).unwrap();
     ServerNotification::export_all(&config).unwrap();
-    InitializeResult::export_all(&config).unwrap();
-    SessionResult::export_all(&config).unwrap();
-    InputResult::export_all(&config).unwrap();
-    ListJobsResult::export_all(&config).unwrap();
-    ListSessionsResult::export_all(&config).unwrap();
-    ListCatalogResult::export_all(&config).unwrap();
-    LoginResult::export_all(&config).unwrap();
-    SessionRow::export_all(&config).unwrap();
-    ListMcpServersResult::export_all(&config).unwrap();
-    ListPluginsResult::export_all(&config).unwrap();
-    SyncPluginsResult::export_all(&config).unwrap();
-    CheckPluginsResult::export_all(&config).unwrap();
-    ApplyPluginsResult::export_all(&config).unwrap();
-    AddPluginResult::export_all(&config).unwrap();
-    EmptyResult::export_all(&config).unwrap();
-    RemoveInputResult::export_all(&config).unwrap();
-    GetBlobResult::export_all(&config).unwrap();
+    // The map of the results by method also writes each result type.
+    ClientRequestResults::export_all(&config).unwrap();
     // The plugins see a session as a snapshot, then updates.
     SessionSnapshot::export_all(&config).unwrap();
 }

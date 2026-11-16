@@ -203,6 +203,10 @@ files differ from the types. Write them again after a change of a type:
 YUKE_WRITE_BINDINGS=1 mise exec -- cargo test -p yuke-protocol
 ```
 
+`ClientRequestResults.ts` maps each client method to its result type, from the same table as `ClientRequest`. A
+`Response` holds a bare `result`, so a client reads its type from the method of the request. In Rust, the server
+answers with a `ServerResult`, so the compiler checks each answer against the table.
+
 The test exports a `u64` as a TypeScript `number`, because serde writes it as a JSON number. A `number` keeps an
 integer exact up to 2^53; event numbers and ids stay far below that. The `ts` feature of `yuke-ai` and `yuke-engine`
 gives their types to ts-rs. It is off by default, so only this test builds ts-rs.

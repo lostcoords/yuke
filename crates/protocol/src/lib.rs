@@ -36,7 +36,8 @@ pub use message::{
     ListSessionsParams, ListSessionsResult, LoadSessionParams, NewSessionParams, NoticeLevel, NoticeParams,
     Notification, PROTOCOL_VERSION, PutBlobParams, RemoveInputParams, RemoveInputResult, RemoveSessionParams,
     RenameSessionParams, Request, RequestId, Response, ResponseError, ResponseOutcome, ServerNotification,
-    ServerRequest, SessionParams, SessionResult, SetSettingsParams, StopJobParams, UpdateCredentialParams,
+    ServerRequest, ServerResult, SessionParams, SessionResult, SetSettingsParams, StopJobParams,
+    UpdateCredentialParams,
 };
 pub use plugin::{
     AddPluginParams, AddPluginResult, ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult,

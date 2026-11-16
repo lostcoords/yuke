@@ -9,9 +9,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use yuke_ai::Blob;
+
 use crate::{
-    EventNumber, InputId, InstanceId, InteractionRespondParams, SessionId, SessionSettings, SessionTitle,
-    SessionUpdateParams,
+    AddPluginResult, ApplyPluginsResult, CheckPluginsResult, EventNumber, InputId, InstanceId,
+    InteractionRespondParams, ListCatalogResult, ListMcpServersResult, ListPluginsResult, LoginResult, SessionId,
+    SessionRow, SessionSettings, SessionTitle, SessionUpdateParams, SyncPluginsResult,
 };
 
 /// The protocol version that this crate speaks.
@@ -50,121 +53,139 @@ pub struct Request<Call> {
     pub call: Call,
 }
 
-/// Define [`ClientRequest`] and [`ClientRequest::METHODS`] from one table, so the two name the same methods.
+/// Define [`ClientRequest`], [`ClientRequest::METHODS`], [`ServerResult`], and the TypeScript map of the results from
+/// one table, so they name the same methods. Each entry names a result type with a bare name, for its doc link.
 macro_rules! client_requests {
-    ($($(#[doc = $doc:literal])* $method:literal => $variant:ident($params:ty),)*) => {
+    ($($(#[doc = $doc:literal])* $method:literal => $variant:ident($params:ty) -> $result:ident,)*) => {
         /// The method and the params of a client request.
         #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
         #[cfg_attr(test, derive(ts_rs::TS))]
         #[serde(tag = "method", content = "params")]
         pub enum ClientRequest {
-            $($(#[doc = $doc])* #[serde(rename = $method)] $variant($params),)*
+            $(
+                $(#[doc = $doc])*
+                #[doc = ""]
+                #[doc = concat!("Result: [`", stringify!($result), "`].")]
+                #[serde(rename = $method)]
+                $variant($params),
+            )*
         }
 
         impl ClientRequest {
             /// The method of each request. A server tells an unknown method from bad params with it.
             pub const METHODS: &[&str] = &[$($method),*];
         }
+
+        /// The result of a client request, one variant for each method. Its JSON is the JSON of the result type.
+        #[derive(Debug, Serialize)]
+        #[serde(untagged)]
+        pub enum ServerResult {
+            $($(#[doc = $doc])* $variant($result),)*
+        }
+
+        /// The result type of each client request, by its method. A client reads the type of a response from it.
+        // Only the bindings test uses this type: it writes the TypeScript map.
+        #[cfg(test)]
+        #[derive(ts_rs::TS)]
+        #[expect(dead_code, non_snake_case, reason = "only ts-rs reads this type, and its fields are the variants")]
+        pub(crate) struct ClientRequestResults {
+            $($(#[doc = $doc])* #[ts(rename = $method)] $variant: $result,)*
+        }
     };
 }
 
 client_requests!(
     /// Agree on the protocol version. The first request of a connection.
-    "initialize" => Initialize(InitializeParams),
-    /// Create a session with these settings. Each field of the settings is required. The server builds the system prompt of the session
-    /// from its folder. Result: [`SessionResult`].
-    "session/new" => NewSession(NewSessionParams),
-    /// Fork a session at the end of a completed turn. Result: [`SessionResult`].
-    "session/fork" => ForkSession(ForkSessionParams),
+    "initialize" => Initialize(InitializeParams) -> InitializeResult,
+    /// Create a session with these settings. Each field of the settings is required. The server builds the system
+    /// prompt of the session from its folder.
+    "session/new" => NewSession(NewSessionParams) -> SessionResult,
+    /// Fork a session at the end of a completed turn.
+    "session/fork" => ForkSession(ForkSessionParams) -> SessionResult,
     /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
     /// `input_accepted` update for each pending input, a `job` update for each running job, an `mcp_server` update for
     /// each MCP server, and an `interaction_requested` update for each open question. The live updates that come during
-    /// the load and that these updates do not hold follow them. The result comes last. A load starts no turn, also when input waits. Result:
-    /// [`EmptyResult`].
-    "session/load" => LoadSession(LoadSessionParams),
+    /// the load and that these updates do not hold follow them. The result comes last. A load starts no turn, also when
+    /// input waits.
+    "session/load" => LoadSession(LoadSessionParams) -> EmptyResult,
     /// Stop the running turn and the background jobs of a session, and free the session. The session stays saved, and
-    /// a load opens it again. Result: [`EmptyResult`].
-    "session/close" => CloseSession(SessionParams),
+    /// a load opens it again.
+    "session/close" => CloseSession(SessionParams) -> EmptyResult,
     /// Add input to a session. An idle session starts a turn. During a turn, the input joins the turn at its next
-    /// round. Result: [`InputResult`].
-    "session/input" => Input(InputParams),
+    /// round.
+    "session/input" => Input(InputParams) -> InputResult,
     /// Replace the settings of a session from its next turn on. It fails while a turn runs or input waits, because
-    /// the settings of a turn do not change. Result: [`EmptyResult`].
-    "session/set_settings" => SetSettings(SetSettingsParams),
-    /// Rename a saved session. Result: [`EmptyResult`].
-    "session/rename" => RenameSession(RenameSessionParams),
+    /// the settings of a turn do not change.
+    "session/set_settings" => SetSettings(SetSettingsParams) -> EmptyResult,
+    /// Rename a saved session.
+    "session/rename" => RenameSession(RenameSessionParams) -> EmptyResult,
     /// Remove a pending input of a session. A turn saves its input before the model reads it, so the model never reads
-    /// a removed input. Result: [`RemoveInputResult`].
-    "session/remove_input" => RemoveInput(RemoveInputParams),
-    /// List the saved sessions, newest first, in pages. Result: [`ListSessionsResult`].
-    "session/list" => ListSessions(ListSessionsParams),
-    /// The row of one saved session. Result: [`SessionRow`](crate::SessionRow).
-    "session/get" => GetSession(GetSessionParams),
+    /// a removed input.
+    "session/remove_input" => RemoveInput(RemoveInputParams) -> RemoveInputResult,
+    /// List the saved sessions, newest first, in pages.
+    "session/list" => ListSessions(ListSessionsParams) -> ListSessionsResult,
+    /// The row of one saved session.
+    "session/get" => GetSession(GetSessionParams) -> SessionRow,
     /// Delete a saved session and its descendants, with their events, pending inputs, and blobs. Its forks stay. It fails
-    /// while one of these sessions is open: close them first with `session/close`. Result: [`EmptyResult`].
-    "session/remove" => RemoveSession(RemoveSessionParams),
+    /// while one of these sessions is open: close them first with `session/close`.
+    "session/remove" => RemoveSession(RemoveSessionParams) -> EmptyResult,
     /// Start a device login of a provider, and give its code at once. A login in progress of the provider ends as
-    /// cancelled first. The server polls the provider, saves the login, and sends `auth/login_finished`. Result:
-    /// [`LoginResult`](crate::LoginResult).
-    "auth/login" => Login(crate::LoginParams),
+    /// cancelled first. The server polls the provider, saves the login, and sends `auth/login_finished`.
+    "auth/login" => Login(crate::LoginParams) -> LoginResult,
     /// Ask a login in progress to stop. Its `auth/login_finished` tells how it ended: a poll that got the approval
-    /// still saves the login. Result: [`EmptyResult`].
-    "auth/cancel_login" => CancelLogin(crate::CancelLoginParams),
+    /// still saves the login.
+    "auth/cancel_login" => CancelLogin(crate::CancelLoginParams) -> EmptyResult,
     /// Remove what yuke stored for a provider: its login or its API key in `auth.json`, and the token of
     /// `credential/update`. A login in progress of the provider ends first. yuke revokes no token at the provider.
-    /// Result: [`EmptyResult`].
-    "auth/logout" => Logout(crate::LogoutParams),
+    "auth/logout" => Logout(crate::LogoutParams) -> EmptyResult,
     /// Store an API key in `auth.json` for a provider with an API key variable. The new key replaces the stored key and
-    /// wins over the variable. Each session takes the key at its next turn. Result: [`EmptyResult`].
-    "auth/set_api_key" => SetApiKey(crate::SetApiKeyParams),
-    /// List the providers and their models. Result: [`ListCatalogResult`](crate::ListCatalogResult).
-    "catalog/list" => ListCatalog(crate::ListCatalogParams),
-    /// List the running background jobs of an open session. Result: [`ListJobsResult`].
-    "job/list" => ListJobs(SessionParams),
+    /// wins over the variable. Each session takes the key at its next turn.
+    "auth/set_api_key" => SetApiKey(crate::SetApiKeyParams) -> EmptyResult,
+    /// List the providers and their models.
+    "catalog/list" => ListCatalog(crate::ListCatalogParams) -> ListCatalogResult,
+    /// List the running background jobs of an open session.
+    "job/list" => ListJobs(SessionParams) -> ListJobsResult,
     /// Stop a running background job, and wait for its end. The `job` update with the end comes before the answer. A
-    /// stopped job sends no report. Result: [`EmptyResult`].
-    "job/stop" => StopJob(StopJobParams),
+    /// stopped job sends no report.
+    "job/stop" => StopJob(StopJobParams) -> EmptyResult,
     /// Use `accessToken` for each model request of a provider with a login flow, from the next attempt on, also in a
     /// running turn. The server keeps it only in memory and never refreshes it. After the first update, the server never
-    /// uses the stored login of the provider. An expired token fails each attempt until the next update. Result:
-    /// [`EmptyResult`].
-    "credential/update" => UpdateCredential(UpdateCredentialParams),
+    /// uses the stored login of the provider. An expired token fails each attempt until the next update.
+    "credential/update" => UpdateCredential(UpdateCredentialParams) -> EmptyResult,
     /// Answer an open question of a session. The `interaction_closed` update of the question comes before the answer.
-    /// Result: [`EmptyResult`].
-    "interaction/respond" => InteractionRespond(InteractionRespondParams),
-    /// List the MCP servers of an open session. Result: [`crate::ListMcpServersResult`].
-    "mcp/list" => ListMcpServers(SessionParams),
-    /// List the plugins of `config.json` with their state on disk and whether they run. It uses no network. Result:
-    /// [`crate::ListPluginsResult`].
-    "plugin/list" => ListPlugins(EmptyParams),
+    "interaction/respond" => InteractionRespond(InteractionRespondParams) -> EmptyResult,
+    /// List the MCP servers of an open session.
+    "mcp/list" => ListMcpServers(SessionParams) -> ListMcpServersResult,
+    /// List the plugins of `config.json` with their state on disk and whether they run. It uses no network.
+    "plugin/list" => ListPlugins(EmptyParams) -> ListPluginsResult,
     /// Install the commit of `plugins.lock` of each Git plugin, and lock each new one at the commit of its ref. The lock
     /// keeps only the plugins of `config.json`. Git asks for no password: the credential helper and the ssh agent of
-    /// the user serve. No plugin code runs. Result: [`crate::SyncPluginsResult`].
-    "plugin/sync" => SyncPlugins(crate::SyncPluginsParams),
+    /// the user serve. No plugin code runs.
+    "plugin/sync" => SyncPlugins(crate::SyncPluginsParams) -> SyncPluginsResult,
     /// Resolve the ref of each Git plugin of the target again, and install each new commit. `plugins.lock` stays as it
-    /// is until `plugin/apply`. Result: [`crate::CheckPluginsResult`].
-    "plugin/check" => CheckPlugins(crate::CheckPluginsParams),
+    /// is until `plugin/apply`.
+    "plugin/check" => CheckPlugins(crate::CheckPluginsParams) -> CheckPluginsResult,
     /// Write the new commits of changes of `plugin/check` into `plugins.lock`. The running plugins keep their commits
-    /// until `profile/reload`. Result: [`crate::ApplyPluginsResult`].
-    "plugin/apply" => ApplyPlugins(crate::ApplyPluginsParams),
+    /// until `profile/reload`.
+    "plugin/apply" => ApplyPlugins(crate::ApplyPluginsParams) -> ApplyPluginsResult,
     /// Add a Git plugin to `config.json`, install it, and lock it at the commit of its ref. The comments and the layout of
-    /// `config.json` stay. It fails when `config.json` has the plugin already. Result: [`crate::AddPluginResult`].
-    "plugin/add" => AddPlugin(crate::AddPluginParams),
+    /// `config.json` stay. It fails when `config.json` has the plugin already.
+    "plugin/add" => AddPlugin(crate::AddPluginParams) -> AddPluginResult,
     /// Remove a plugin of `config.json` by the name of its `plugin.json`, and its entry of `plugins.lock`. Its install
-    /// stays on disk. Result: [`EmptyResult`].
-    "plugin/remove" => RemovePlugin(crate::RemovePluginParams),
+    /// stays on disk.
+    "plugin/remove" => RemovePlugin(crate::RemovePluginParams) -> EmptyResult,
     /// Load the plugins of `config.json` and the providers of `providers.json` again. Each open session stays open, and
-    /// its next turn takes the tools and hooks of the new plugins. Result: [`EmptyResult`].
+    /// its next turn takes the tools and hooks of the new plugins.
     /// - It fails while a turn runs. Then nothing changes.
     /// - It fails when the server cannot read or check a file. Then the old plugins and providers stay.
     /// - A plugin that does not load sends a notice, and the other plugins load.
     /// - The next request of an open session can miss the prompt cache when the reload changes the tools of that session.
-    "profile/reload" => ReloadProfile(EmptyParams),
+    "profile/reload" => ReloadProfile(EmptyParams) -> EmptyResult,
     /// Save bytes in the store of a saved session, as for the image of an input. The same bytes give the same blob.
-    /// The blob stays until `session/remove`. Result: [`Blob`](yuke_ai::Blob).
-    "blob/put" => PutBlob(PutBlobParams),
-    /// The bytes of a blob of a saved session, which can be closed. Result: [`GetBlobResult`].
-    "blob/get" => GetBlob(GetBlobParams),
+    /// The blob stays until `session/remove`.
+    "blob/put" => PutBlob(PutBlobParams) -> Blob,
+    /// The bytes of a blob of a saved session, which can be closed.
+    "blob/get" => GetBlob(GetBlobParams) -> GetBlobResult,
 );
 
 /// A notification: a message that a server or a client sends with no id. It gets no response.
@@ -486,7 +507,7 @@ pub struct ListSessionsParams {
 pub struct ListSessionsResult {
     /// The sessions of the page, newest first by their newest event. The pages are no snapshot: a session that a new
     /// event moves to the front between two pages comes only in a new list.
-    pub sessions: Vec<crate::SessionRow>,
+    pub sessions: Vec<SessionRow>,
     /// The cursor of the next page. None when no older session exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
@@ -706,7 +727,7 @@ pub struct GetBlobParams {
     /// The saved session of the blob.
     pub session_id: SessionId,
     /// The blob of a media block. The server reads it by its digest.
-    pub blob: yuke_ai::Blob,
+    pub blob: Blob,
 }
 
 /// The result of `blob/get`.

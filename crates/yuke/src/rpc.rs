@@ -27,7 +27,8 @@ use yuke_protocol::{
     ClientNotification, ClientRequest, EmptyParams, EmptyResult, ExtensionCancelParams, ExtensionRequestParams,
     GetBlobResult, Implementation, InitializeResult, Input, InputKind, InputResult, InputSource, InstanceId, JsonRpc,
     ListJobsResult, ListMcpServersResult, Notification, PROTOCOL_VERSION, RemoveInputResult, Request, RequestId,
-    Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, SessionId, SessionResult,
+    Response, ResponseError, ResponseOutcome, ServerNotification, ServerRequest, ServerResult, SessionId,
+    SessionResult,
 };
 
 use crate::app::{Answer, App, AppError, Attachment, Machine, Observer, RunMode, TokioTimer, open_store, warn};
@@ -353,7 +354,7 @@ impl Server {
             tokio::task::spawn_local(async move {
                 let stopped = sessions.stop_job(params.session_id, &params.job_id).await;
                 let answer = stopped
-                    .and_then(|()| result(&EmptyResult {}))
+                    .map(|()| ServerResult::StopJob(EmptyResult {}))
                     .map_err(|error| response_error(&error));
                 writer.respond(Some(request.id), answer);
             });
@@ -369,12 +370,12 @@ impl Server {
 
     /// Do what `call` asks of the app, and answer its result.
     #[expect(clippy::too_many_lines, reason = "one short arm per method of the protocol")]
-    async fn dispatch(&mut self, call: ClientRequest) -> Result<serde_json::Value, AppError> {
+    async fn dispatch(&mut self, call: ClientRequest) -> Result<ServerResult, AppError> {
         let app = &self.app;
         match call {
             ClientRequest::Initialize(_) => {
                 // The server speaks one version, so it answers that one.
-                result(&InitializeResult {
+                Ok(ServerResult::Initialize(InitializeResult {
                     protocol_version: PROTOCOL_VERSION,
                     agent_info: Implementation {
                         name: "yuke".to_owned(),
@@ -382,53 +383,57 @@ impl Server {
                         version: env!("YUKE_VERSION").to_owned(),
                     },
                     instance_id: self.instance_id,
-                })
+                }))
             }
             ClientRequest::NewSession(params) => {
                 let session_id = app.sessions().create(params.settings, params.parent).await?;
                 self.attachments.insert(session_id, app.sessions().attach(session_id)?);
-                result(&SessionResult { session_id })
+                Ok(ServerResult::NewSession(SessionResult { session_id }))
             }
             ClientRequest::ForkSession(params) => {
                 let session_id = app.sessions().fork(params.session_id, params.through).await?;
                 self.attachments.insert(session_id, app.sessions().attach(session_id)?);
-                result(&SessionResult { session_id })
+                Ok(ServerResult::ForkSession(SessionResult { session_id }))
             }
             ClientRequest::LoadSession(params) => {
                 app.sessions().load(params.session_id, params.after).await?;
                 // A new attachment replaces the one of an earlier open of the same id.
                 let attachment = app.sessions().attach(params.session_id)?;
                 self.attachments.insert(params.session_id, attachment);
-                result(&EmptyResult {})
+                Ok(ServerResult::LoadSession(EmptyResult {}))
             }
             ClientRequest::CloseSession(params) => {
                 app.sessions().close(params.session_id).await?;
                 self.attachments.remove(&params.session_id);
-                result(&EmptyResult {})
+                Ok(ServerResult::CloseSession(EmptyResult {}))
             }
-            ClientRequest::ListSessions(params) => result(&app.sessions().list(params).await?),
-            ClientRequest::GetSession(params) => result(&app.sessions().get(params.session_id).await?),
-            ClientRequest::Login(params) => result(&app.shared().login(params.provider).await?.0),
+            ClientRequest::ListSessions(params) => Ok(ServerResult::ListSessions(app.sessions().list(params).await?)),
+            ClientRequest::GetSession(params) => {
+                Ok(ServerResult::GetSession(app.sessions().get(params.session_id).await?))
+            }
+            ClientRequest::Login(params) => Ok(ServerResult::Login(app.shared().login(params.provider).await?.0)),
             ClientRequest::CancelLogin(params) => {
                 app.shared().cancel_login(params.login_id)?;
-                result(&EmptyResult {})
+                Ok(ServerResult::CancelLogin(EmptyResult {}))
             }
             ClientRequest::Logout(params) => {
                 app.shared().logout(&params.provider).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::Logout(EmptyResult {}))
             }
             ClientRequest::SetApiKey(params) => {
                 app.shared().set_api_key(&params.provider, params.api_key).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::SetApiKey(EmptyResult {}))
             }
-            ClientRequest::ListCatalog(params) => result(&app.shared().catalog(params.all).await?),
+            ClientRequest::ListCatalog(params) => {
+                Ok(ServerResult::ListCatalog(app.shared().catalog(params.all).await?))
+            }
             ClientRequest::RemoveSession(params) => {
                 app.sessions().remove(params.session_id).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::RemoveSession(EmptyResult {}))
             }
-            ClientRequest::ListJobs(params) => result(&ListJobsResult {
+            ClientRequest::ListJobs(params) => Ok(ServerResult::ListJobs(ListJobsResult {
                 jobs: app.sessions().jobs(params.session_id)?,
-            }),
+            })),
             ClientRequest::StopJob(_) => unreachable!("`handle` answers this request"),
             ClientRequest::Input(params) => {
                 let input = Input::new(InputSource::User, InputKind::Message, params.content);
@@ -437,50 +442,58 @@ impl Server {
                     None => input,
                 }
                 .map_err(|error| AppError::Invalid(chain_text(&error)))?;
-                result(&InputResult {
+                Ok(ServerResult::Input(InputResult {
                     input_id: app.sessions().input(params.session_id, input).await?,
-                })
+                }))
             }
-            ClientRequest::ListMcpServers(params) => result(&ListMcpServersResult {
+            ClientRequest::ListMcpServers(params) => Ok(ServerResult::ListMcpServers(ListMcpServersResult {
                 servers: app.sessions().mcp_servers(params.session_id)?,
-            }),
+            })),
             ClientRequest::InteractionRespond(params) => {
                 app.sessions()
                     .respond(params.session_id, params.interaction_id, params.response)?;
-                result(&EmptyResult {})
+                Ok(ServerResult::InteractionRespond(EmptyResult {}))
             }
-            ClientRequest::RemoveInput(params) => result(&RemoveInputResult {
+            ClientRequest::RemoveInput(params) => Ok(ServerResult::RemoveInput(RemoveInputResult {
                 removed: app.sessions().remove_input(params.session_id, params.input_id).await?,
-            }),
+            })),
             ClientRequest::SetSettings(params) => {
                 app.sessions().set_settings(params.session_id, params.settings).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::SetSettings(EmptyResult {}))
             }
             ClientRequest::RenameSession(params) => {
                 app.sessions().rename(params.session_id, params.title).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::RenameSession(EmptyResult {}))
             }
             ClientRequest::UpdateCredential(params) => {
                 app.update_credential(params)?;
-                result(&EmptyResult {})
+                Ok(ServerResult::UpdateCredential(EmptyResult {}))
             }
-            ClientRequest::ListPlugins(EmptyParams {}) => result(&app.shared().list_plugins()?),
-            ClientRequest::SyncPlugins(params) => result(&app.shared().sync_plugins(params).await?),
-            ClientRequest::CheckPlugins(params) => result(&app.shared().check_plugins(params).await?),
-            ClientRequest::ApplyPlugins(params) => result(&app.shared().apply_plugins(params).await?),
-            ClientRequest::AddPlugin(params) => result(&app.shared().add_plugin(params).await?),
+            ClientRequest::ListPlugins(EmptyParams {}) => Ok(ServerResult::ListPlugins(app.shared().list_plugins()?)),
+            ClientRequest::SyncPlugins(params) => {
+                Ok(ServerResult::SyncPlugins(app.shared().sync_plugins(params).await?))
+            }
+            ClientRequest::CheckPlugins(params) => {
+                Ok(ServerResult::CheckPlugins(app.shared().check_plugins(params).await?))
+            }
+            ClientRequest::ApplyPlugins(params) => {
+                Ok(ServerResult::ApplyPlugins(app.shared().apply_plugins(params).await?))
+            }
+            ClientRequest::AddPlugin(params) => Ok(ServerResult::AddPlugin(app.shared().add_plugin(params).await?)),
             ClientRequest::RemovePlugin(params) => {
                 app.shared().remove_plugin(params).await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::RemovePlugin(EmptyResult {}))
             }
             ClientRequest::ReloadProfile(EmptyParams {}) => {
                 self.app.reload().await?;
-                result(&EmptyResult {})
+                Ok(ServerResult::ReloadProfile(EmptyResult {}))
             }
-            ClientRequest::PutBlob(params) => result(&app.sessions().put_blob(params.session_id, params.data).await?),
-            ClientRequest::GetBlob(params) => result(&GetBlobResult {
+            ClientRequest::PutBlob(params) => Ok(ServerResult::PutBlob(
+                app.sessions().put_blob(params.session_id, params.data).await?,
+            )),
+            ClientRequest::GetBlob(params) => Ok(ServerResult::GetBlob(GetBlobResult {
                 data: app.sessions().read_blob(params.session_id, params.blob).await?,
-            }),
+            })),
         }
     }
 }
@@ -506,7 +519,7 @@ impl Connection {
         }
     }
 
-    fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
+    fn respond(&self, id: Option<RequestId>, result: Result<ServerResult, ResponseError>) {
         self.writer.respond(id, result);
     }
 
@@ -681,14 +694,18 @@ impl Writer {
         (writer, task)
     }
 
-    fn respond(&self, id: Option<RequestId>, result: Result<serde_json::Value, ResponseError>) {
+    fn respond(&self, id: Option<RequestId>, result: Result<ServerResult, ResponseError>) {
+        let json = result.and_then(|result| {
+            serde_json::to_value(result).map_err(|error| error_with(ResponseError::INTERNAL_ERROR, &error.to_string()))
+        });
+        let outcome = match json {
+            Ok(value) => ResponseOutcome::Result(value),
+            Err(error) => ResponseOutcome::Error(error),
+        };
         self.send(&Response {
             jsonrpc: JsonRpc::V2,
             id,
-            outcome: match result {
-                Ok(value) => ResponseOutcome::Result(value),
-                Err(error) => ResponseOutcome::Error(error),
-            },
+            outcome,
         });
     }
 
@@ -706,11 +723,6 @@ impl Writer {
             self.task.abort();
         }
     }
-}
-
-/// The JSON of `value` as a result.
-fn result(value: &impl Serialize) -> Result<serde_json::Value, AppError> {
-    serde_json::to_value(value).map_err(|error| AppError::Internal(error.to_string()))
 }
 
 fn error_with(code: i32, message: &str) -> ResponseError {
