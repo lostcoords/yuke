@@ -22,7 +22,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   /** The row without its spinner glyph, which changes with each frame of the spinner. */
   const phase = (): string => row().slice(2);
   const idle = row();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   const start = phase();
   const gap = rows(frame.frame)[rows(frame.frame).findIndex((text) => text.startsWith("──")) - 1];
   frame.advance(1080);
@@ -35,7 +35,7 @@ test("a running turn shows its phase and time above an empty row before the rule
   );
   const tool = phase();
   const pendingCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
-  sessions.push({ sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
+  sessions.push({ kind: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
   const running = phase();
   const runningCommand = rows(frame.frame).find((text) => text.includes("exec cargo test"));
   sessions.push(commit(4, [{ kind: "toolResult", callId: "c1", content: "ok", isError: false }]));
@@ -45,14 +45,14 @@ test("a running turn shows its phase and time above an empty row before the rule
     [pendingCommand, runningCommand, completedCommand],
     [" exec cargo test · waiting", " exec cargo test · running", " exec cargo test"],
   );
-  sessions.push({ sessionUpdate: "retryScheduled", afterMs: 5000, error: "overloaded" });
+  sessions.push({ kind: "retryScheduled", afterMs: 5000, error: "overloaded" });
   frame.advance(2000);
   const retry = phase();
-  sessions.push({ sessionUpdate: "state", state: "idle" });
+  sessions.push({ kind: "state", state: "idle" });
   frame.draw();
   const ended = rows(frame.frame).some((text) => text.includes("to interrupt"));
   // The retry status stays in the transcript until the next draft, and the next turn shows no old countdown.
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   const next = phase();
   assertEquals(
     [idle.includes("to interrupt"), gap, start, later, tool, running, done, retry, ended, next],
@@ -77,7 +77,7 @@ test("the elapsed time of a long turn shows minutes", async () => {
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.advance(185_000);
   assertEquals(
     rows(frame.frame).some((text) => text.includes("(3m 05s · esc to interrupt)")),
@@ -91,8 +91,8 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
+  sessions.push({ kind: "state", state: "running" });
+  sessions.push({ kind: "draftStarted", draftId: "d1" });
   const phase = (): string | undefined => {
     frame.draw();
     return rows(frame.frame)
@@ -100,7 +100,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
       ?.slice(2)
       .split(" (")[0];
   };
-  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  const model = (event: object) => sessions.push({ kind: "model", draftId: "d1", event } as never);
   model({ kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } });
   model({ kind: "reasoningDelta", blockId: 0, text: "Hmm" });
   const reasoning = phase();
@@ -117,9 +117,9 @@ test("a thought without text to show draws no rows, and the working row still sh
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
-  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  sessions.push({ kind: "state", state: "running" });
+  sessions.push({ kind: "draftStarted", draftId: "d1" });
+  const model = (event: object) => sessions.push({ kind: "model", draftId: "d1", event } as never);
   /** Draw the frame. Return the rows above the working row and the phase of the working row. */
   const shown = (): [string[], string | undefined] => {
     frame.draw();
@@ -152,7 +152,7 @@ test("a short pane gives up the empty rows before the last row of the transcript
   frame.start();
   await waitForSettled();
   using _clock = fixedClock();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.draw();
   // The spinner glyph changes with each frame of the spinner, so the test compares the text after it.
   assertEquals(
@@ -167,7 +167,7 @@ test("a close of the session by another client takes the working row away", asyn
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.draw();
   const running = rows(frame.frame).some((text) => text.includes("to interrupt"));
   sessions.close("s1");
@@ -181,7 +181,7 @@ test("the working row shows no cancel key while the command list takes esc", asy
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.key("/ m o d e l");
   frame.draw();
   const listed = rows(frame.frame).find((text) => text.includes("Working…"));
@@ -198,7 +198,7 @@ async function runningExec(width: number, command: string) {
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   const call = { callId: "c1", name: "exec", arguments: JSON.stringify({ command }) };
   sessions.push(
     commit(3, [{ kind: "toolCall", ...call }], {
@@ -206,7 +206,7 @@ async function runningExec(width: number, command: string) {
     }),
   );
   const before = workingRow(frame);
-  sessions.push({ sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
+  sessions.push({ kind: "toolStarted", position: { eventNumber: 3, blockIndex: 0 }, call });
   sessions.state.movable = true;
   // A frame draws each spinner step, and the row counts the delay from the first draw of the movable work.
   frame.draw();

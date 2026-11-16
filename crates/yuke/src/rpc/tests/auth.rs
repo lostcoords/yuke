@@ -260,9 +260,9 @@ async fn each_reasoning_choice_of_the_catalog_gives_the_settings_of_its_level() 
 const LOGIN_START: &str =
     r#"{"device_code":"dc","user_code":"UC","verification_uri_complete":"https://x.ai/d?c=UC","interval":1}"#;
 
-/// Whether `message` has the method `auth/login_finished` and the login id `id`.
+/// Whether `message` has the method `auth/loginFinished` and the login id `id`.
 fn finished(message: &Value, id: &Value) -> bool {
-    message["method"] == "auth/login_finished" && message["params"]["loginId"] == *id
+    message["method"] == "auth/loginFinished" && message["params"]["loginId"] == *id
 }
 
 #[tokio::test(flavor = "local")]
@@ -313,13 +313,13 @@ async fn a_second_login_cancels_the_first_and_a_cancel_ends_a_login_once() {
         messages.extend(client.until(|message| finished(message, &first_id)).await);
     }
     let cancel = client
-        .request("auth/cancel_login", json!({ "loginId": second_id }))
+        .request("auth/cancelLogin", json!({ "loginId": second_id }))
         .await;
     let mut after = client.until(|message| finished(message, &second_id)).await;
     if !after.iter().any(|message| message["id"] == json!(cancel)) {
         after.extend(client.until(|message| message["id"] == json!(cancel)).await);
     }
-    let again = client.call("auth/cancel_login", json!({ "loginId": second_id })).await;
+    let again = client.call("auth/cancelLogin", json!({ "loginId": second_id })).await;
     client.end().await;
 
     let outcome = |messages: &[Value], id: &Value| {
@@ -440,9 +440,9 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
     let mut client = Client::initialized(&place, Box::new(transport.clone())).await;
     let key = |provider: &str, key: &str| json!({ "provider": provider, "apiKey": key });
 
-    let stored = client.call("auth/set_api_key", key("anthropic", "first-key")).await;
+    let stored = client.call("auth/setApiKey", key("anthropic", "first-key")).await;
     client
-        .call("auth/set_api_key", key("minimax", "stored-key"))
+        .call("auth/setApiKey", key("minimax", "stored-key"))
         .await
         .unwrap();
     let saved = saved_auth(&place);
@@ -458,7 +458,7 @@ async fn a_stored_api_key_wins_over_the_variable_at_the_next_turn_and_a_logout_f
     let anthropic = new_session(&mut client, &place, "anthropic", anthropic_model).await;
     run_turn(&mut client, &anthropic).await;
     client
-        .call("auth/set_api_key", key("anthropic", "second-key"))
+        .call("auth/setApiKey", key("anthropic", "second-key"))
         .await
         .unwrap();
     run_turn(&mut client, &anthropic).await;
@@ -621,7 +621,7 @@ async fn an_api_key_for_a_provider_without_a_key_variable_or_a_bad_key_is_refuse
         key("anthropic", ""),
         key("anthropic", "k\n"),
     ] {
-        refusals.push(client.call("auth/set_api_key", params).await.unwrap_err());
+        refusals.push(client.call("auth/setApiKey", params).await.unwrap_err());
     }
     client.end().await;
 

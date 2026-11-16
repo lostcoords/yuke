@@ -10,7 +10,7 @@ export type AddPluginParams = {
  */
 source: PluginSource, 
 /**
- * The options of the plugin. None gives it no options.
+ * The options of the plugin. Without them, the plugin gets no options.
  */
 options?: Record<string, unknown>, };
 
@@ -95,8 +95,8 @@ digest: string,
 len: number, };
 
 /**
- * One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
- * The serializer groups the blocks into the messages of each protocol.
+ * One block of the context. Its kind fixes its role, so it holds only content of that role.
+ * yuke groups the blocks into the messages of each provider protocol.
  */
 export type Block = { "kind": "userText", 
 /**
@@ -116,6 +116,32 @@ eventNumber: EventNumber,
  * The zero-based index within the commit's blocks, not within the current context.
  */
 blockIndex: number, };
+
+/**
+ * A block starts.
+ */
+export type BlockStarted = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * What the block holds.
+ */
+content: StartedBlock, };
+
+/**
+ * A block stops. Reasoning signatures and encrypted replay data stay outside this update.
+ */
+export type BlockStopped = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * The complete call of a tool block. Another block has none.
+ */
+call?: ToolCall, };
 
 /**
  * The hints of one tool call of a commit, and its working folder.
@@ -154,8 +180,7 @@ changes: Array<PluginChange>, };
 
 /**
  * The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
- * of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
- * blocks, and a store that reads a commit back owns them.
+ * of the context: apply `replaced`, then append `blocks`. The copy then equals the context.
  */
 export type Commit = { 
 /**
@@ -167,11 +192,11 @@ replaced?: Replaced,
  */
 blocks: Array<Block>, 
 /**
- * The facts of the answer in `blocks`. A commit without an answer has `None`.
+ * The facts of the answer in `blocks`. A commit without an answer has none.
  */
 answer?: Answer, 
 /**
- * How the turn ended. A commit in the middle of a turn has `None`.
+ * How the turn ended. A commit in the middle of a turn has none.
  */
 end?: TurnEnd, 
 /**
@@ -193,12 +218,26 @@ calls: Array<CallDisplay>,
 results: Array<ResultDisplay>, };
 
 /**
+ * A `commit` event: a commit of a turn, and the inputs that it consumed. The blocks of the commit start with the model
+ * blocks of those inputs.
+ */
+export type CommitEvent = { 
+/**
+ * The commit, with its own blocks.
+ */
+commit: Commit, 
+/**
+ * The inputs that the commit consumed, in input order.
+ */
+consumed: Array<ConsumedInput>, };
+
+/**
  * An input that a commit consumed. The commit starts with the model blocks of its consumed inputs, in input order.
  * This input has the next `blockCount` blocks.
  */
 export type ConsumedInput = { 
 /**
- * The id that `Store::accept_input` of `yuke-agent` gave.
+ * The id that the session gave the input when it accepted it.
  */
 id: InputId, 
 /**
@@ -236,15 +275,68 @@ path: string,
 patch: string, };
 
 /**
+ * Replace the draft with blocks from the named saved commit. The array supplies source ids in destination order.
+ */
+export type DraftCommitted = { 
+/**
+ * The draft to replace, including any blocks absent from `blocks`.
+ */
+draftId: DraftId, 
+/**
+ * The saved commit that holds every retained block.
+ */
+eventNumber: EventNumber, 
+/**
+ * Original draft block ids in saved block order. Array index `i` maps to commit block index `i`.
+ * Draft blocks absent from this array do not enter history.
+ */
+blocks: Array<number>, };
+
+/**
  * Why a client must remove a draft without a confirmed saved replacement.
  */
 export type DraftDiscardReason = "failed" | "unconfirmed";
+
+/**
+ * Remove a draft. This does not remove any saved history.
+ */
+export type DraftDiscarded = { 
+/**
+ * The draft to remove.
+ */
+draftId: DraftId, 
+/**
+ * Why the draft has no confirmed replacement.
+ */
+reason: DraftDiscardReason, };
 
 /**
  * The ephemeral identity of one live provider attempt. The store never saves it.
  * A reconnect cannot resume this draft. The client replaces prior drafts with saved history.
  */
 export type DraftId = string;
+
+/**
+ * A `model` update: one fact of the model in a draft. It holds no provider replay state.
+ */
+export type DraftModelUpdate = { 
+/**
+ * The draft of this fact.
+ */
+draftId: DraftId, 
+/**
+ * The model fact.
+ */
+event: ModelUpdate, };
+
+/**
+ * A provider attempt starts a new draft.
+ */
+export type DraftStarted = { 
+/**
+ * The identity of this attempt, distinct across turns and process restarts.
+ */
+draftId: DraftId, };
 
 /**
  * A named reasoning effort from the portable set.
@@ -327,6 +419,20 @@ content: Array<Block>,
 modelContent?: Array<Block>, };
 
 /**
+ * The session accepted an input. It is pending until a saved commit names it in `consumed`, or until an
+ * `inputRemoved` update names it.
+ */
+export type InputAccepted = { 
+/**
+ * The id of the input.
+ */
+inputId: InputId, 
+/**
+ * The input.
+ */
+input: Input, };
+
+/**
  * The id of a pending input. A store gives each input of a session a larger id than the inputs before it.
  */
 export type InputId = number;
@@ -337,6 +443,15 @@ export type InputId = number;
 export type InputKind = "message" | "notification";
 
 /**
+ * A pending input was removed. The model never reads it.
+ */
+export type InputRemoved = { 
+/**
+ * The id of the input.
+ */
+inputId: InputId, };
+
+/**
  * Who sent an input. It records the sender only. It grants no permission and sets no visibility.
  */
 export type InputSource = { "kind": "user" } | { "kind": "plugin", 
@@ -344,6 +459,15 @@ export type InputSource = { "kind": "user" } | { "kind": "plugin",
  * The name of the plugin.
  */
 name: string, };
+
+/**
+ * A question ended: the user answered it, its asker stopped waiting, or its session closed. The client removes it.
+ */
+export type InteractionClosed = { 
+/**
+ * The question.
+ */
+interactionId: InteractionId, };
 
 /**
  * The id of a question. The server gives each question a larger id than the questions before it, in each session.
@@ -359,6 +483,24 @@ export type InteractionRequest = { "kind": "questions",
  * has an option or `other`.
  */
 questions: Array<Question>, };
+
+/**
+ * A plugin or yuke asks the user a question. The client answers with `interaction/respond`. The question stays open
+ * until an `interactionClosed` update names it.
+ */
+export type InteractionRequested = { 
+/**
+ * The id that the answer names.
+ */
+interactionId: InteractionId, 
+/**
+ * The plugin that asks, or a part of yuke with a name that starts with `host:`.
+ */
+source: string, 
+/**
+ * The question.
+ */
+request: InteractionRequest, };
 
 /**
  * The response to a request. Its kind matches the kind of the request, or the user closed the request without an
@@ -414,6 +556,16 @@ export type JobId = string;
 export type JobState = "running" | "ended" | "stopped";
 
 /**
+ * A `job` update: a background job of the session started or ended. The update holds the whole job, so a client
+ * replaces its copy.
+ */
+export type JobUpdate = { 
+/**
+ * The job.
+ */
+job: Job, };
+
+/**
  * The result of `catalog/list`.
  */
 export type ListCatalogResult = { 
@@ -436,19 +588,20 @@ plugins: Array<ManagedPlugin>, };
  */
 export type ListSessionsParams = { 
 /**
- * Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
+ * Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
  */
 cwd?: string, 
 /**
- * Only the children of this session. None lists the sessions without a parent.
+ * Only the children of this session. Without it, the list has the sessions without a parent.
  */
 parent?: SessionId, 
 /**
- * The most rows of the page, from 1 to 100. None gives 50.
+ * The most rows of the page, from 1 to 100. The default is 50.
  */
 limit?: number, 
 /**
- * The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
+ * The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+ * session.
  */
 cursor?: string, };
 
@@ -462,143 +615,15 @@ export type ListSessionsResult = {
  */
 sessions: Array<SessionRow>, 
 /**
- * The cursor of the next page. None when no older session exists.
+ * The cursor of the next page. It is absent when no older session exists.
  */
 nextCursor?: string, };
 
 /**
- * A live fact of a session. Saved events remain authoritative after reconnect.
+ * A live fact of a session. Saved events remain authoritative after reconnect. Each variant holds a type of the same
+ * name, apart from `state`, `job`, and `model`.
  */
-export type LiveUpdate = { "sessionUpdate": "state", 
-/**
- * Whether a turn runs.
- */
-state: SessionState, } | { "sessionUpdate": "job", 
-/**
- * The job.
- */
-job: Job, } | { "sessionUpdate": "inputAccepted", 
-/**
- * The id of the input.
- */
-inputId: InputId, 
-/**
- * The input.
- */
-input: Input, } | { "sessionUpdate": "interactionRequested", 
-/**
- * The id that the answer names.
- */
-interactionId: InteractionId, 
-/**
- * The plugin that asks, or a part of yuke with a name that starts with `host:`.
- */
-source: string, 
-/**
- * The question.
- */
-request: InteractionRequest, } | { "sessionUpdate": "interactionClosed", 
-/**
- * The question.
- */
-interactionId: InteractionId, } | { "sessionUpdate": "mcpServer", 
-/**
- * The name of the server in its config.
- */
-name: string, 
-/**
- * The config file of the server.
- */
-source: McpServerSource, } & ({ "state": "connecting" } | { "state": "connected", 
-/**
- * The number of its tools.
- */
-tools: number, } | { "state": "failed", 
-/**
- * Why.
- */
-error: string, } | { "state": "disabled" } | { "state": "untrusted" }) | { "sessionUpdate": "inputRemoved", 
-/**
- * The id of the input.
- */
-inputId: InputId, } | { "sessionUpdate": "turnUnconfirmed" } | { "sessionUpdate": "draftStarted", 
-/**
- * The identity of this attempt, distinct across turns and process restarts.
- */
-draftId: DraftId, } | { "sessionUpdate": "model", 
-/**
- * The draft of this fact.
- */
-draftId: DraftId, 
-/**
- * The model fact.
- */
-event: ModelUpdate, } | { "sessionUpdate": "draftCommitted", 
-/**
- * The draft to replace, including any blocks absent from `blocks`.
- */
-draftId: DraftId, 
-/**
- * The saved commit that holds every retained block.
- */
-eventNumber: EventNumber, 
-/**
- * Original draft block ids in saved block order. Array index `i` maps to commit block index `i`.
- * Draft blocks absent from this array do not enter history.
- */
-blocks: Array<number>, } | { "sessionUpdate": "draftDiscarded", 
-/**
- * The draft to remove.
- */
-draftId: DraftId, 
-/**
- * Why the draft has no confirmed replacement.
- */
-reason: DraftDiscardReason, } | { "sessionUpdate": "toolStarted", 
-/**
- * The position of the saved call, even when the provider repeats its call id.
- */
-position: BlockPosition, 
-/**
- * The resolved call after the deferred-tool bridge. Its call id remains provider data.
- */
-call: ToolCall, } | { "sessionUpdate": "toolOutput", 
-/**
- * The position of the saved call.
- */
-position: BlockPosition, 
-/**
- * The new output text.
- */
-text: string, } | { "sessionUpdate": "toolFinished", 
-/**
- * The position of the saved call.
- */
-position: BlockPosition, 
-/**
- * The result of the call.
- */
-result: ToolResult, 
-/**
- * What a frontend shows in place of the result text. The model never sees it.
- */
-display: Array<DisplayBlock>, 
-/**
- * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
- */
-durationMs?: number, } | { "sessionUpdate": "retryScheduled", 
-/**
- * The wait in milliseconds.
- */
-afterMs: number, 
-/**
- * The failure text.
- */
-error: string, } | { "sessionUpdate": "roundFailed", 
-/**
- * The failure text with each cause.
- */
-error: string, };
+export type LiveUpdate = { "kind": "state" } & StateUpdate | { "kind": "job" } & JobUpdate | { "kind": "inputAccepted" } & InputAccepted | { "kind": "interactionRequested" } & InteractionRequested | { "kind": "interactionClosed" } & InteractionClosed | { "kind": "mcpServer" } & McpServer | { "kind": "inputRemoved" } & InputRemoved | { "kind": "turnUnconfirmed" } | { "kind": "draftStarted" } & DraftStarted | { "kind": "model" } & DraftModelUpdate | { "kind": "draftCommitted" } & DraftCommitted | { "kind": "draftDiscarded" } & DraftDiscarded | { "kind": "toolStarted" } & ToolStarted | { "kind": "toolOutput" } & ToolOutput | { "kind": "toolFinished" } & ToolFinished | { "kind": "retryScheduled" } & RetryScheduled | { "kind": "roundFailed" } & RoundFailed;
 
 /**
  * The id of a login of `auth/login`. A server process gives each login a larger id than the logins before it.
@@ -619,7 +644,7 @@ error: string, };
  */
 export type LoginResult = { 
 /**
- * The login. Its `auth/login_finished` names it.
+ * The login. Its `auth/loginFinished` names it.
  */
 loginId: LoginId, 
 /**
@@ -647,15 +672,11 @@ name?: string,
  * Whether the running plugins hold a plugin of this name. A plugin can be installed and not loaded, or loaded
  * from an older commit until `profile/reload`.
  */
-loaded: boolean, } & ({ "state": "local" } | { "state": "notLocked" } | { "state": "notInstalled", 
+loaded: boolean, 
 /**
- * The full commit id of the lock.
+ * Its state on disk.
  */
-commit: string, } | { "state": "installed", 
-/**
- * The full commit id of the lock.
- */
-commit: string, });
+state: PluginState, };
 
 /**
  * One MCP server of a session.
@@ -668,15 +689,11 @@ name: string,
 /**
  * The config file of the server.
  */
-source: McpServerSource, } & ({ "state": "connecting" } | { "state": "connected", 
+source: McpServerSource, 
 /**
- * The number of its tools.
+ * Its state.
  */
-tools: number, } | { "state": "failed", 
-/**
- * Why.
- */
-error: string, } | { "state": "disabled" } | { "state": "untrusted" });
+state: McpServerState, };
 
 /**
  * The config file of an MCP server.
@@ -684,11 +701,24 @@ error: string, } | { "state": "disabled" } | { "state": "untrusted" });
 export type McpServerSource = "user" | "project";
 
 /**
+ * The state of one MCP server of a session.
+ */
+export type McpServerState = { "kind": "connecting" } | { "kind": "connected", 
+/**
+ * The number of its tools.
+ */
+tools: number, } | { "kind": "failed", 
+/**
+ * Why.
+ */
+error: string, } | { "kind": "disabled" } | { "kind": "untrusted" };
+
+/**
  * One attachment. Its media type selects the block each protocol writes.
  */
 export type Media = { 
 /**
- * The bytes in the caller's store. The encoder reads them through [`Request::blobs`] only when it writes the
+ * The bytes in the store of the session. A request reads them only when it sends the
  * element.
  */
 blob: Blob, 
@@ -719,11 +749,11 @@ id: string,
  */
 name: string, 
 /**
- * The context window in tokens. None when the catalog does not know it.
+ * The context window in tokens. It is absent when the catalog does not know it.
  */
 contextWindow?: number, 
 /**
- * The output limit in tokens. None when the catalog does not know it.
+ * The output limit in tokens. It is absent when the catalog does not know it.
  */
 maxOutputTokens?: number, 
 /**
@@ -735,11 +765,11 @@ reasoning: Array<ReasoningChoice>,
  */
 cost: Array<PriceBand>, 
 /**
- * Whether the model calls tools. None when the catalog does not know it.
+ * Whether the model calls tools. It is absent when the catalog does not know it.
  */
 tools?: boolean, 
 /**
- * Whether the model takes deferred tools. None when the catalog does not know it.
+ * Whether the model takes deferred tools. It is absent when the catalog does not know it.
  */
 toolSearch?: boolean, 
 /**
@@ -761,73 +791,10 @@ provider: string,
 model: string, };
 
 /**
- * An owned model event for clients. Block ids belong to one draft and follow block start order.
+ * A fact of the model in a draft. Block ids belong to one draft and follow block start order. Each variant holds a
+ * type of the same name.
  */
-export type ModelUpdate = { "kind": "blockStarted", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * What the block holds.
- */
-content: StartedBlock, } | { "kind": "textDelta", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * The new text.
- */
-text: string, } | { "kind": "refusalDelta", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * The new text.
- */
-text: string, } | { "kind": "reasoningDelta", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * The new text.
- */
-text: string, } | { "kind": "reasoningSectionStarted", 
-/**
- * The block id.
- */
-blockId: number, } | { "kind": "toolInputDelta", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * The argument fragment, which need not be valid JSON alone.
- */
-text: string, } | { "kind": "blockStopped", 
-/**
- * The block id.
- */
-blockId: number, 
-/**
- * The authoritative complete call for a tool block, otherwise `None`.
- */
-call?: ToolCall, } | { "kind": "responseCompleted", 
-/**
- * The normalized finish reason.
- */
-finishReason: FinishReason, 
-/**
- * The provider's finish reason.
- */
-rawFinishReason: string, 
-/**
- * The provider's token counts.
- */
-usage: Usage, };
+export type ModelUpdate = { "kind": "blockStarted" } & BlockStarted | { "kind": "textDelta" } & TextDelta | { "kind": "refusalDelta" } & RefusalDelta | { "kind": "reasoningDelta" } & ReasoningDelta | { "kind": "reasoningSectionStarted" } & ReasoningSectionStarted | { "kind": "toolInputDelta" } & ToolInputDelta | { "kind": "blockStopped" } & BlockStopped | { "kind": "responseCompleted" } & ResponseCompleted;
 
 /**
  * The severity of a notice.
@@ -939,13 +906,26 @@ export type PluginSource = {
  */
 git: string, 
 /**
- * The plugin folder in the repository. None is the root.
+ * The plugin folder in the repository. Without it, the plugin is the root.
  */
 folder?: string, 
 /**
- * The branch, tag, or commit that an update follows. None is the default branch.
+ * The branch, tag, or commit that an update follows. Without it, an update follows the default branch.
  */
 ref?: string, };
+
+/**
+ * The state on disk of one plugin of `plugin/list`.
+ */
+export type PluginState = { "kind": "local" } | { "kind": "notLocked" } | { "kind": "notInstalled", 
+/**
+ * The full commit id of the lock.
+ */
+commit: string, } | { "kind": "installed", 
+/**
+ * The full commit id of the lock.
+ */
+commit: string, };
 
 /**
  * Which Git plugins `plugin/check` checks: each one, or the ones with these names in their `plugin.json`.
@@ -1001,7 +981,7 @@ name: string, } | { "kind": "storedApiKey" } | { "kind": "login" };
 
 /**
  * A provider and its models. The `id` of the provider and the `id` of a model make the
- * [`ModelReference`](crate::ModelReference) of a session.
+ * `ModelReference` of a session.
  */
 export type ProviderInfo = { 
 /**
@@ -1109,7 +1089,7 @@ export type Reasoning = {
  */
 text: string, 
 /**
- * `None` for text alone: a block that never finished, or one whose provider sent no state.
+ * Absent for text alone: a block that never finished, or one whose provider sent no state.
  */
 replay?: ReasoningReplay, };
 
@@ -1125,6 +1105,19 @@ level: ReasoningLevel,
  * The reasoning settings that a session sends for this level, as the `reasoning` of its settings.
  */
 settings: ReasoningSettings, };
+
+/**
+ * Reasoning text arrives.
+ */
+export type ReasoningDelta = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * The new text.
+ */
+text: string, };
 
 /**
  * A reasoning level of a model. JSON holds each level as its name: `default`, `off`, or the name of the effort.
@@ -1149,18 +1142,40 @@ kind: ReplayKind,
 data: string, };
 
 /**
+ * A reasoning section starts.
+ */
+export type ReasoningSectionStarted = { 
+/**
+ * The block id.
+ */
+blockId: number, };
+
+/**
  * The reasoning one request asks for, as the caller chose it for the model. Each serializer writes the settings its
  * protocol has.
  */
 export type ReasoningSettings = { 
 /**
- * Whether and how the model thinks. `None` leaves the endpoint default.
+ * Whether and how the model thinks. Without it, the endpoint default applies.
  */
 thinking?: Thinking, 
 /**
- * How hard the model thinks. `None` leaves the endpoint default.
+ * How hard the model thinks. Without it, the endpoint default applies.
  */
 effort?: Effort, };
+
+/**
+ * Refusal text arrives.
+ */
+export type RefusalDelta = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * The new text.
+ */
+text: string, };
 
 /**
  * The params of `plugin/remove`.
@@ -1174,7 +1189,7 @@ name: string, };
 /**
  * A new context: `head`, then the last `keep` blocks of the old context. A compaction gives a summary and the recent
  * blocks. Another rewrite gives the whole new context as `head` and keeps nothing. A hook asks for one in a
- * [`RoundPlan`](crate::RoundPlan), and a [`Commit`] saves it.
+ * `RoundPlan`, and a `Commit` saves it.
  */
 export type Replaced = { 
 /**
@@ -1195,11 +1210,11 @@ export type ReplayKind = "anthropicSignature" | "anthropicRedacted" | "responses
 
 /**
  * The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
- * one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
+ * one for each session. It names no model and holds no secret.
  */
 export type RequestSettings = { 
 /**
- * The output limit. `None` leaves the endpoint default.
+ * The output limit. Without it, the endpoint default applies.
  */
 maxOutputTokens?: number, 
 /**
@@ -1207,11 +1222,11 @@ maxOutputTokens?: number,
  */
 reasoning: ReasoningSettings, 
 /**
- * The sampling temperature. `None` leaves the endpoint default.
+ * The sampling temperature. Without it, the endpoint default applies.
  */
 temperature?: number, 
 /**
- * The nucleus sampling mass. `None` leaves the endpoint default.
+ * The nucleus sampling mass. Without it, the endpoint default applies.
  */
 topP?: number, 
 /**
@@ -1219,9 +1234,26 @@ topP?: number,
  */
 toolChoice: ToolChoice, 
 /**
- * The schema of the response. `None` leaves the response free.
+ * The schema of the response. Without it, the response is free.
  */
 outputSchema?: OutputSchema, };
+
+/**
+ * The response completes. This does not end its turn or confirm a durable save.
+ */
+export type ResponseCompleted = { 
+/**
+ * The normalized finish reason.
+ */
+finishReason: FinishReason, 
+/**
+ * The finish reason of the provider.
+ */
+rawFinishReason: string, 
+/**
+ * The token counts of the provider.
+ */
+usage: Usage, };
 
 /**
  * The display of one tool result of a commit.
@@ -1239,6 +1271,28 @@ blocks: Array<DisplayBlock>,
  * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
  */
 durationMs?: number, };
+
+/**
+ * An attempt failed. The same request follows after a wait.
+ */
+export type RetryScheduled = { 
+/**
+ * The wait in milliseconds.
+ */
+afterMs: number, 
+/**
+ * The failure text.
+ */
+error: string, };
+
+/**
+ * A round failed after its retries.
+ */
+export type RoundFailed = { 
+/**
+ * The failure text with each cause.
+ */
+error: string, };
 
 /**
  * The id of a session: a version 7 UUID, so the ids sort by the millisecond of their creation.
@@ -1335,7 +1389,7 @@ export type SessionTitle = string;
 export type SessionUpdate = StoredEvent | LiveUpdate;
 
 /**
- * The params of `auth/set_api_key`.
+ * The params of `auth/setApiKey`.
  */
 export type SetApiKeyParams = { 
 /**
@@ -1358,6 +1412,15 @@ export type StartedBlock = { "kind": "text" } | { "kind": "refusal" } | { "kind"
 name: string, };
 
 /**
+ * A `state` update: the session starts or ends a turn.
+ */
+export type StateUpdate = { 
+/**
+ * Whether a turn runs.
+ */
+state: SessionState, };
+
+/**
  * One saved event of a session, with its event number. Its JSON holds the number as `seq` beside the fields of the
  * event.
  */
@@ -1365,15 +1428,7 @@ export type StoredEvent = {
 /**
  * The number of the event in its session.
  */
-seq: EventNumber, } & ({ "sessionUpdate": "commit", 
-/**
- * The commit, with its own blocks.
- */
-commit: Commit, 
-/**
- * The inputs that the commit consumed, in input order.
- */
-consumed: Array<ConsumedInput>, } | { "sessionUpdate": "settings" } & SessionSettings);
+seq: EventNumber, } & ({ "kind": "commit" } & CommitEvent | { "kind": "settings" } & SessionSettings);
 
 /**
  * The argument of a call that its summary line shows.
@@ -1429,6 +1484,19 @@ source: PluginSource,
 commit: string, };
 
 /**
+ * Answer text arrives.
+ */
+export type TextDelta = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * The new text.
+ */
+text: string, };
+
+/**
  * The place of assistant text in its turn. The names come from OpenAI Responses, which asks each request to send
  * the phase of each earlier output item back.
  */
@@ -1439,7 +1507,7 @@ export type TextPhase = "commentary" | "finalAnswer";
  */
 export type Thinking = { "kind": "off" } | { "kind": "adaptive", 
 /**
- * Whether a thinking block returns its summary text. `None` leaves the endpoint default.
+ * Whether a thinking block returns its summary text. Without it, the endpoint default applies.
  */
 display?: ThinkingDisplay, } | { "kind": "budget", 
 /**
@@ -1492,10 +1560,31 @@ description: string,
 inputSchema: string, 
 /**
  * Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
- * the native tool search. The encoder refuses it for Chat Completions and for a target without
- * [`Target::tool_search`].
+ * the native tool search. A request fails for Chat Completions and for a target without the
+ * native tool search.
  */
 deferLoading: boolean, };
+
+/**
+ * A tool ends. Its result stays provisional until a saved commit confirms it. A `turnUnconfirmed` update discards it.
+ */
+export type ToolFinished = { 
+/**
+ * The position of the saved call.
+ */
+position: BlockPosition, 
+/**
+ * The result of the call.
+ */
+result: ToolResult, 
+/**
+ * What a frontend shows in place of the result text. The model never sees it.
+ */
+display: Array<DisplayBlock>, 
+/**
+ * The duration of the tool in milliseconds, without the hooks. A call that did not run has no duration.
+ */
+durationMs?: number, };
 
 /**
  * How a frontend shows the calls of a tool. The model never sees the hints.
@@ -1513,6 +1602,32 @@ subject?: Subject,
  * The part of the output that a folded call shows.
  */
 preview: Preview, };
+
+/**
+ * A fragment of tool arguments arrives. The final arguments come with the block stop.
+ */
+export type ToolInputDelta = { 
+/**
+ * The block id.
+ */
+blockId: number, 
+/**
+ * The argument fragment, which need not be valid JSON alone.
+ */
+text: string, };
+
+/**
+ * A tool emits temporary output that the model does not receive.
+ */
+export type ToolOutput = { 
+/**
+ * The position of the saved call.
+ */
+position: BlockPosition, 
+/**
+ * The new output text.
+ */
+text: string, };
 
 /**
  * The result of one tool call.
@@ -1541,8 +1656,20 @@ media?: Array<Media>,
 loaded?: Array<ToolDefinition>, };
 
 /**
- * How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
- * [`crate::TurnError::Round`] gives the caller the error itself.
+ * The driver handles a saved call. A denied call also has this update.
+ */
+export type ToolStarted = { 
+/**
+ * The position of the saved call, even when the provider repeats its call id.
+ */
+position: BlockPosition, 
+/**
+ * The call after yuke resolves a deferred tool. Its call id stays the id of the provider.
+ */
+call: ToolCall, };
+
+/**
+ * How a turn ended, in a form that a journal can save. A failure keeps the text of its error.
  */
 export type TurnEnd = { "kind": "completed", 
 /**

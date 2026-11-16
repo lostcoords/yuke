@@ -63,7 +63,7 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
   assertEquals(reasoning(transcript), []);
 
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "empty" },
+    { kind: "draftStarted", draftId: "empty" },
     model("empty", { kind: "blockStarted", blockId: 4, content: { kind: "reasoning" } }),
   ]);
   const entry = reasoning(transcript)[0];
@@ -74,7 +74,7 @@ test("saved all-empty reasoning runs are omitted, while a live run remains visib
 test("a live group keeps its first key and only changes when its retained text changes", () => {
   const transcript = opened();
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "d1" },
+    { kind: "draftStarted", draftId: "d1" },
     model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoningDelta", blockId: 0, text: "  first  " }),
   ]);
@@ -103,7 +103,7 @@ test("a live group keeps its first key and only changes when its retained text c
 
 test("interleaved reasoning deltas route back to their source group", () => {
   const transcript = fed(opened(), [
-    { sessionUpdate: "draftStarted", draftId: "interleaved" },
+    { kind: "draftStarted", draftId: "interleaved" },
     model("interleaved", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("interleaved", { kind: "reasoningDelta", blockId: 0, text: "one" }),
     model("interleaved", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
@@ -128,7 +128,7 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
     ],
   });
   const updates: SessionUpdate[] = [
-    { sessionUpdate: "draftStarted", draftId: "d1" },
+    { kind: "draftStarted", draftId: "d1" },
     model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("d1", { kind: "reasoningDelta", blockId: 0, text: "first" }),
     model("d1", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
@@ -136,7 +136,7 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
     model("d1", { kind: "blockStarted", blockId: 2, content: { kind: "text" } }),
     model("d1", { kind: "textDelta", blockId: 2, text: "answer" }),
     saved,
-    { sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 4, blocks: [0, 1, 2] },
+    { kind: "draftCommitted", draftId: "d1", eventNumber: 4, blocks: [0, 1, 2] },
   ];
   const live = fed(opened(), updates);
   const replay = opened([saved]);
@@ -151,11 +151,11 @@ test("live grouped reasoning and replayed saved reasoning end equal", () => {
 test("draft discard and replacement do not remove saved neighbors", () => {
   const transcript = opened([commit(1, { blocks: [{ kind: "reasoning", text: "saved" }] })]);
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "discarded" },
+    { kind: "draftStarted", draftId: "discarded" },
     model("discarded", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("discarded", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),
     model("discarded", { kind: "reasoningDelta", blockId: 1, text: "not saved" }),
-    { sessionUpdate: "draftDiscarded", draftId: "discarded", reason: "failed" },
+    { kind: "draftDiscarded", draftId: "discarded", reason: "failed" },
   ]);
   assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -163,11 +163,11 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "cancelled" },
+    { kind: "draftStarted", draftId: "cancelled" },
     model("cancelled", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("cancelled", { kind: "reasoningDelta", blockId: 0, text: "cancelled" }),
     commit(2, { blocks: [{ kind: "reasoning", text: "cancelled" }], end: { kind: "cancelled" } }),
-    { sessionUpdate: "draftDiscarded", draftId: "cancelled", reason: "failed" },
+    { kind: "draftDiscarded", draftId: "cancelled", reason: "failed" },
   ]);
   assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -178,11 +178,11 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "replacement" },
+    { kind: "draftStarted", draftId: "replacement" },
     model("replacement", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("replacement", { kind: "reasoningDelta", blockId: 0, text: "replacement" }),
     commit(3, { blocks: [{ kind: "reasoning", text: "replacement" }] }),
-    { sessionUpdate: "draftCommitted", draftId: "replacement", eventNumber: 3, blocks: [0] },
+    { kind: "draftCommitted", draftId: "replacement", eventNumber: 3, blocks: [0] },
   ]);
   assertEquals(
     reasoning(transcript).map((entry) => [entry.id, entry.text]),
@@ -194,9 +194,9 @@ test("draft discard and replacement do not remove saved neighbors", () => {
   );
 
   fed(transcript, [
-    { sessionUpdate: "draftStarted", draftId: "unconfirmed" },
+    { kind: "draftStarted", draftId: "unconfirmed" },
     model("unconfirmed", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
-    { sessionUpdate: "turnUnconfirmed" },
+    { kind: "turnUnconfirmed" },
   ]);
   assertEquals(
     reasoning(transcript).map((entry) => entry.id),
@@ -257,9 +257,9 @@ test("inserting older and gap events preserves a live group and tool state", () 
   });
   const transcript = opened([newer]);
   fed(transcript, [
-    { sessionUpdate: "toolStarted", position: { eventNumber: 3, blockIndex: 2 }, call },
-    { sessionUpdate: "toolOutput", position: { eventNumber: 3, blockIndex: 2 }, text: "running" },
-    { sessionUpdate: "draftStarted", draftId: "live" },
+    { kind: "toolStarted", position: { eventNumber: 3, blockIndex: 2 }, call },
+    { kind: "toolOutput", position: { eventNumber: 3, blockIndex: 2 }, text: "running" },
+    { kind: "draftStarted", draftId: "live" },
     model("live", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
     model("live", { kind: "reasoningDelta", blockId: 0, text: "draft one" }),
     model("live", { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } }),

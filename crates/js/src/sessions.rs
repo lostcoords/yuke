@@ -257,10 +257,10 @@ pub trait Sessions {
     /// Returns why the request failed.
     async fn wait_for_login(&self, id: LoginId) -> Result<LoginOutcome, SessionsError>;
 
-    /// Ask the login `id` to stop, as `auth/cancel_login` does. A login that ended has nothing to stop.
+    /// Ask the login `id` to stop, as `auth/cancelLogin` does. A login that ended has nothing to stop.
     fn cancel_login(&self, id: LoginId);
 
-    /// Store an API key, as `auth/set_api_key` does.
+    /// Store an API key, as `auth/setApiKey` does.
     ///
     /// # Errors
     ///

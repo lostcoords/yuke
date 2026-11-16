@@ -147,7 +147,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.key("/ n e w enter");
   await waitForSettled();
   frame.draw();

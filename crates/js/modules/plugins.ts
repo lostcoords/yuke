@@ -254,7 +254,7 @@ export interface PluginContext<O = Record<string, never>> {
    *
    * ```ts
    * ctx.addListener("session.update", ({ sessionId, update }) => {
-   *   if (update.sessionUpdate === "state") report(sessionId, update.state);
+   *   if (update.kind === "state") report(sessionId, update.state);
    * });
    * ```
    */

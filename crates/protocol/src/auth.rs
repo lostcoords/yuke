@@ -1,5 +1,5 @@
 //! The credentials that the server stores for a client: the device logins of `auth/login`, and the API keys of
-//! `auth/set_api_key`.
+//! `auth/setApiKey`.
 
 use std::fmt;
 
@@ -21,7 +21,7 @@ pub struct LoginParams {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct LoginResult {
-    /// The login. Its `auth/login_finished` names it.
+    /// The login. Its `auth/loginFinished` names it.
     pub login_id: LoginId,
     /// The page where the user approves the login.
     pub verification_url: String,
@@ -38,7 +38,7 @@ pub struct LogoutParams {
     pub provider: String,
 }
 
-/// The params of `auth/set_api_key`.
+/// The params of `auth/setApiKey`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -59,7 +59,7 @@ impl fmt::Debug for SetApiKeyParams {
     }
 }
 
-/// The params of `auth/cancel_login`.
+/// The params of `auth/cancelLogin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -68,7 +68,7 @@ pub struct CancelLoginParams {
     pub login_id: LoginId,
 }
 
-/// The params of `auth/login_finished`.
+/// The params of `auth/loginFinished`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -88,7 +88,7 @@ pub struct LoginFinishedParams {
 pub enum LoginOutcome {
     /// The user approved, and the server saved the login in `auth.json`.
     Succeeded,
-    /// `auth/cancel_login`, or a new `auth/login` for the provider, ended the login.
+    /// `auth/cancelLogin`, or a new `auth/login` for the provider, ended the login.
     Cancelled,
     /// The provider refused, the login expired, or the save failed.
     Failed {

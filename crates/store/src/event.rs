@@ -1,10 +1,10 @@
 //! The rows of the events table as [`StoredEvent`]s.
 
 use std::borrow::Cow;
+use yuke_protocol::{CommitEvent, EventNumber, SessionEvent, StoredEvent};
 
 use yuke_agent::StoreError;
 use yuke_engine::{Answer, Commit, Replaced, TurnEnd};
-use yuke_protocol::{EventNumber, SessionEvent, StoredEvent};
 use yuke_sql::rusqlite;
 
 use crate::context::required;
@@ -24,10 +24,10 @@ pub(crate) fn stored_event(mut row: events::EventsPage) -> Result<StoredEvent, S
     let kind = std::mem::take(&mut row.kind);
     let event = match kind.as_str() {
         "settings" => SessionEvent::Settings(required(row.settings, "settings").map_err(failed)?.0),
-        "commit" => SessionEvent::Commit {
+        "commit" => SessionEvent::Commit(CommitEvent {
             consumed: required(row.consumed.take(), "consumed").map_err(failed)?.0,
             commit: commit(row).map_err(failed)?,
-        },
+        }),
         kind => return Err(failed(format!("the event kind {kind} is unknown"))),
     };
     Ok(StoredEvent { event_number, event })

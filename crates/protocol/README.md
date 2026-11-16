@@ -11,13 +11,13 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   connect. The server holds `PATH.lock`, so a second server on the path fails.
 - SIGINT, SIGTERM, and SIGHUP end the server. The active client gets the updates of the shutdown.
 - Requests: `initialize`, `session/new`, `session/fork`, `session/load`, `session/close`, `session/input`,
-  `session/remove_input`, `session/set_settings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`,
-  `auth/cancel_login`, `auth/logout`, `auth/set_api_key`, `catalog/list`, `job/list`, `job/stop`,
+  `session/removeInput`, `session/setSettings`, `session/rename`, `session/list`, `session/get`, `session/remove`, `auth/login`,
+  `auth/cancelLogin`, `auth/logout`, `auth/setApiKey`, `catalog/list`, `job/list`, `job/stop`,
   `credential/update`, `interaction/respond`, `mcp/list`, `plugin/list`, `plugin/sync`, `plugin/check`,
   `plugin/apply`, `plugin/add`, `plugin/remove`, `profile/reload`, `blob/put`, `blob/get`.
 - `plugin/list` gives each plugin of `config.json` with its `source` (the folder text of a local plugin, or the
-  `{ git, folder?, ref? }` object of a Git plugin), `state` (`local`, `notLocked`, `notInstalled`, or `installed`
-  with its `commit`), and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
+  `{ git, folder?, ref? }` object of a Git plugin), `state` (the kind `local`, `notLocked`, `notInstalled`, or
+  `installed`, the last two with their `commit`), and `loaded`. It uses no network. `plugin/sync { locked? }` installs the commits of
   `plugins.lock` and locks each new Git plugin at the commit of its ref. `plugin/check { target }` takes `{ "kind": "all" }` or
   `{ "kind": "names", "names": [...] }`, installs each new commit, and answers the `changes` with their `log`. `plugin/apply { changes }`
   writes their `new` commits into `plugins.lock`. `plugin/add { source, options? }` adds a Git plugin to `config.json`,
@@ -44,15 +44,15 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 - `auth/login { provider }` starts the device login of a provider with a login flow, and answers its `loginId`,
   `verificationUrl`, and `userCode` at once. A login in progress of the provider ends as `cancelled` first. The
   client shows the page and the code. The server polls the provider, saves the login in `auth.json`, and sends
-  `auth/login_finished { loginId, provider, outcome }`: `succeeded`, `cancelled`, or `failed { error }`.
-- `auth/cancel_login { loginId }` asks a login in progress to stop. A poll that got the approval still saves the
+  `auth/loginFinished { loginId, provider, outcome }`: `succeeded`, `cancelled`, or `failed { error }`.
+- `auth/cancelLogin { loginId }` asks a login in progress to stop. A poll that got the approval still saves the
   login, so the outcome tells what happened. A client that missed the notification, for example after a reconnect,
   reads the state with `catalog/list`. No answer and no notification holds a token.
 - `auth/logout { provider }` removes what yuke stored for a provider: its login or its API key in `auth.json`, and
   the token of `credential/update`. A login in progress of the provider ends first, and the removal comes after it.
   yuke revokes no token at the provider. `yuke logout PROVIDER` changes `auth.json` only: a running server keeps a
   token of `credential/update`.
-- `auth/set_api_key { provider, apiKey }` stores the key in `auth.json` for a provider with an API key variable. The
+- `auth/setApiKey { provider, apiKey }` stores the key in `auth.json` for a provider with an API key variable. The
   new key replaces the stored key and wins over the variable. Each session takes the key at its next turn.
 - `catalog/list` gives the providers that are ready now, or every provider with `all: true`. Each provider has its
   state (`ready` with its credential, `needsApiKey` with the variable, or `needsLogin`) and its models: limits,
@@ -88,7 +88,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   that it does not know. The server numbers its requests from 1, apart from the ids of the client.
 - Notifications: `session/cancel` and `session/background` from a client. `session/background` moves each tool call of the
   session that waits for a job, such as a running command, to the background, and the turn goes on. `session/update`, `notice`, `extension/event`, `extension/cancel`,
-  and `auth/login_finished` from the server.
+  and `auth/loginFinished` from the server.
 - `notice` is text for the user, for the whole process or one session. It is not part of session history.
 - `extension/event` is an event of a plugin, for the whole process or one session. `extension` is the name that the
   host gives the plugin. The plugin chooses `event` and `data`, and it puts a version in `data` when the shape
@@ -109,7 +109,7 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   round. A `state` update tells when a turn runs. `session/load` starts no turn.
 - During a turn, a client can add and remove inputs, cancel the turn, move its waiting tool calls to the background, close
   the session, and list and stop jobs. The
-  settings (model, request settings, folder) do not change: `session/set_settings` fails while a turn
+  settings (model, request settings, folder) do not change: `session/setSettings` fails while a turn
   runs or input waits.
 - `session/load` sends the session as updates: the saved events, a `state` update, an `inputAccepted` for each
   pending input, a `job` update for each running job, an `interactionRequested` for each open question, and an
@@ -142,8 +142,8 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
   abort of the asker, or the close of the session. A run without a client (`yuke -p`) answers each request with no
   answer.
 - MCP servers: each open session runs the servers of the user config and of `.mcp.json` in its folder. An
-  `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`): `connecting`,
-  `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server
+  `mcpServer` live update holds the whole state of one server, with its `source` (`user` or `project`). Its `state`
+  has the kind `connecting`, `connected` with its tool count, `failed` with its error, `disabled`, or `untrusted`. `mcp/list` gives each server
   of a session.
 - Project servers start only after the user confirms them. yuke asks one question from `host:mcp`, with the options
   "Start" and "Don't start", and keeps a start for that folder and that list of servers.
@@ -151,10 +151,10 @@ is not ACP: for example, it has `session/input` in place of `session/prompt`, an
 
 ## Shapes
 
-- A union is an object with a tag. The tag is `kind`, as in `{ "kind": "userText", "text": "hi" }`. A session update has
-  the tag `sessionUpdate`, and the state of a plugin or an MCP server has the tag `state`. Each tag value and each
-  enum value is camelCase.
-- A failure is the kind or the state `failed` with the text `error`.
+- A union of objects has the tag `kind`, as in `{ "kind": "userText", "text": "hi" }`. Only a union of a text and an
+  object, as the `source` of a plugin, has no tag.
+- Each method, field, tag value, and enum value is camelCase. A method is `noun/verb`, as in `session/setSettings`.
+- A failure is the kind `failed` with the text `error`.
 - An absent field is left out. No value is `null`, apart from the `id` of a response to a message without a readable
   id, as JSON-RPC asks.
 - A flag whose absence means `false` is left out when it is `false`.
@@ -206,6 +206,12 @@ YUKE_WRITE_BINDINGS=1 mise exec -- cargo test -p yuke-protocol
 `ClientRequestResults.ts` maps each client method to its result type, from the same table as `ClientRequest`. A
 `Response` holds a bare `result`, so a client reads its type from the method of the request. In Rust, the server
 answers with a `ServerResult`, so the compiler checks each answer against the table.
+
+`constants.ts` holds `PROTOCOL_VERSION` and `ErrorCode`, the codes of the table above.
+
+Each variant of a union holds a type of its own name, so a client can name the type of one update, as `ToolStarted`.
+Each import names its file with the `.ts` extension, so Node and Bun load the files as they are. The docs speak of
+the JSON: a test turns each rustdoc link into code text, and drops a link in parentheses to a Rust path.
 
 The test exports a `u64` as a TypeScript `number`, because serde writes it as a JSON number. A `number` keeps an
 integer exact up to 2^53; event numbers and ids stay far below that. The `ts` feature of `yuke-ai` and `yuke-engine`

@@ -165,7 +165,7 @@ impl std::error::Error for InputError {}
 /// An input that no commit consumed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingInput {
-    /// The id that `Store::accept_input` of `yuke-agent` gave.
+    /// The id that the session gave the input when it accepted it.
     pub id: InputId,
     /// The input.
     pub input: Input,
@@ -201,7 +201,7 @@ impl PendingInput {
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ConsumedInput {
-    /// The id that `Store::accept_input` of `yuke-agent` gave.
+    /// The id that the session gave the input when it accepted it.
     pub id: InputId,
     /// Who sent the input.
     pub source: InputSource,

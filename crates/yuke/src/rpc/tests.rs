@@ -256,7 +256,7 @@ impl Client {
             messages
                 .iter()
                 .map(|message| &message["params"]["update"])
-                .filter(|update| update["sessionUpdate"] == kind)
+                .filter(|update| update["kind"] == kind)
                 .cloned()
                 .collect()
         };
@@ -280,7 +280,7 @@ fn label(message: &Value) -> Option<String> {
         return Some("response".to_owned());
     }
     let update = &message["params"]["update"];
-    match update["sessionUpdate"].as_str()? {
+    match update["kind"].as_str()? {
         "state" => Some(format!("state {}", update["state"].as_str()?)),
         "model" => None,
         "commit" => Some(format!("saved {}", update["seq"])),
@@ -298,7 +298,7 @@ fn is_idle(message: &Value) -> bool {
 }
 
 fn is_question(message: &Value) -> bool {
-    message["params"]["update"]["sessionUpdate"] == "interactionRequested"
+    message["params"]["update"]["kind"] == "interactionRequested"
 }
 
 /// Send `text` to `session`, and wait until the session is idle again.

@@ -17,13 +17,12 @@ const LISTED: readonly ManagedPlugin[] = [
     source: { git: "https://h/r", folder: "plugins/clock" },
     name: "clock",
     loaded: true,
-    state: "installed",
-    commit: OLD,
+    state: { kind: "installed", commit: OLD },
   },
-  { source: "./notes", name: "notes", loaded: true, state: "local" },
-  { source: { git: "https://h/tools" }, name: "tools", loaded: false, state: "installed", commit: OLD },
-  { source: { git: "https://h/weather" }, loaded: false, state: "notLocked" },
-  { source: { git: "https://h/maps" }, loaded: false, state: "notInstalled", commit: NEW },
+  { source: "./notes", name: "notes", loaded: true, state: { kind: "local" } },
+  { source: { git: "https://h/tools" }, name: "tools", loaded: false, state: { kind: "installed", commit: OLD } },
+  { source: { git: "https://h/weather" }, loaded: false, state: { kind: "notLocked" } },
+  { source: { git: "https://h/maps" }, loaded: false, state: { kind: "notInstalled", commit: NEW } },
 ];
 
 const CHANGE: PluginChange = {

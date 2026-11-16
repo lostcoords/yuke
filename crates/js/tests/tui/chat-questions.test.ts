@@ -8,7 +8,7 @@ import { rows } from "./rows.ts";
 
 /** The update of the question `id` of the plugin `guard`. */
 function asked(id: number, request: InteractionRequest): SessionUpdate {
-  return { sessionUpdate: "interactionRequested", interactionId: id, source: "guard", request };
+  return { kind: "interactionRequested", interactionId: id, source: "guard", request };
 }
 
 /** A request of one question with `options`. */
@@ -271,7 +271,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   frame.key("enter");
   frame.draw();
   const stays = rows(frame.frame).at(-7);
-  sessions.push({ sessionUpdate: "interactionClosed", interactionId: 6 });
+  sessions.push({ kind: "interactionClosed", interactionId: 6 });
   frame.draw();
   assertEquals(
     [chat.notices, stays, rows(frame.frame).at(-2)],
@@ -315,10 +315,10 @@ test("a close of the session by another client drops its question, and the next 
 
 test("a browse of the messages stops while a question shows", async () => {
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     {
       seq: 2,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },

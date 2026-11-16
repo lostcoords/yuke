@@ -21,7 +21,7 @@ const HIGH = {
 
 /** A session on `p/m` at the level high, with one answer that used 30,000 input and 2,000 output tokens. */
 const SAVED: StoredEvent[] = [
-  { seq: 1, sessionUpdate: "settings", ...HIGH },
+  { seq: 1, kind: "settings", ...HIGH },
   commit(2, [{ kind: "assistantText", text: "hi" }], {
     answer: {
       origin: { model: "m", baseUrl: "https://p" },

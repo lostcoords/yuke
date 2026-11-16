@@ -56,7 +56,7 @@ test("a listener gets each open session first, then the states of a turn, a late
   ctx.addListener("session.update", (data) => {
     early ||= !opened.has(data.sessionId);
     frozen &&= Object.isFrozen(data) && Object.isFrozen(data.update);
-    if (data.update.sessionUpdate === "state") seen.push(`state ${data.update.state}`);
+    if (data.update.kind === "state") seen.push(`state ${data.update.state}`);
   });
   ctx.addListener("session.closed", (data) => seen.push(`closed ${data.sessionId === first.id ? "first" : "second"}`));
   await waitForSettled();

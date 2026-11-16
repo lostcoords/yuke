@@ -8,15 +8,14 @@
 
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use yuke_protocol::{
+    CommitEvent, ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput,
+    SessionEvent, SessionId, SessionSettings, SessionTitle, StoredEvent,
+};
 
 use yuke_engine::{
     Answer, CallDisplay, Commit, CommitDisplay, DisplayBlock, Preview, Replaced, ResultDisplay, Subject, SubjectKind,
     ToolHints, TurnEnd,
-};
-
-use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
-    SessionId, SessionSettings, SessionTitle, StoredEvent,
 };
 
 use crate::PromptSection;
@@ -570,10 +569,10 @@ pub async fn a_load_gives_the_events_with_the_inputs_that_are_still_pending(stor
         loaded.events,
         [StoredEvent {
             event_number: EventNumber(2),
-            event: SessionEvent::Commit {
+            event: SessionEvent::Commit(CommitEvent {
                 commit: step(&[yuke_ai::Block::user_text("one")]).into_owned(),
                 consumed: vec![consumed(first, 1)],
-            },
+            }),
         }]
     );
     assert_eq!(
@@ -722,7 +721,7 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
         .unwrap();
     assert_eq!(
         events[1].event,
-        SessionEvent::Commit {
+        SessionEvent::Commit(CommitEvent {
             commit: step(&[yuke_ai::Block::user_text("job-1 ended with exit code 0.")]).into_owned(),
             consumed: vec![ConsumedInput {
                 id: input_id,
@@ -731,7 +730,7 @@ pub async fn an_input_keeps_its_source_and_both_contents_through_its_commit(stor
                 display_content: Some(vec![yuke_ai::Block::user_text("job-1 finished")]),
                 block_count: 1,
             }],
-        }
+        })
     );
 }
 
@@ -1113,7 +1112,7 @@ fn kinds(events: &[StoredEvent]) -> Vec<(u64, &'static str)> {
         .iter()
         .map(|stored| {
             let kind = match stored.event {
-                SessionEvent::Commit { .. } => "commit",
+                SessionEvent::Commit(..) => "commit",
                 SessionEvent::Settings(_) => "settings",
             };
             (stored.event_number.0, kind)
@@ -1172,10 +1171,10 @@ pub async fn each_commit_and_each_new_settings_is_the_next_event_and_an_input_is
     assert_eq!(kinds(&events), [(1, "settings"), (2, "commit"), (3, "settings")]);
     assert_eq!(
         events[1].event,
-        SessionEvent::Commit {
+        SessionEvent::Commit(CommitEvent {
             commit: step(&blocks).into_owned(),
             consumed: vec![consumed(input, 1)],
-        }
+        })
     );
     assert_eq!(events[2].event, SessionEvent::Settings(settings("two")));
 }
@@ -1329,9 +1328,11 @@ pub async fn a_saved_commit_reads_back_equal(store: &dyn Store) {
     let read: Vec<&SessionEvent> = events.iter().map(|stored| &stored.event).collect();
     let saved: Vec<SessionEvent> = commits
         .iter()
-        .map(|commit| SessionEvent::Commit {
-            commit: commit.clone().into_owned(),
-            consumed: Vec::new(),
+        .map(|commit| {
+            SessionEvent::Commit(CommitEvent {
+                commit: commit.clone().into_owned(),
+                consumed: Vec::new(),
+            })
         })
         .collect();
     assert_eq!(read, saved.iter().collect::<Vec<_>>());
@@ -1914,10 +1915,10 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
             .unwrap(),
         [StoredEvent {
             event_number: EventNumber(3),
-            event: SessionEvent::Commit {
+            event: SessionEvent::Commit(CommitEvent {
                 commit: end(&blocks).into_owned(),
                 consumed: vec![consumed(input, 1)],
-            },
+            }),
         }]
     );
     assert_eq!(store.pending(source.id).await.unwrap(), []);
@@ -1935,10 +1936,10 @@ pub async fn a_commit_receipt_names_its_saved_event_after_settings_and_a_fork(st
             .unwrap(),
         [StoredEvent {
             event_number: EventNumber(4),
-            event: SessionEvent::Commit {
+            event: SessionEvent::Commit(CommitEvent {
                 commit: end(&[]).into_owned(),
                 consumed: vec![],
-            },
+            }),
         }]
     );
 }

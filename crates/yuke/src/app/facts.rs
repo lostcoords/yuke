@@ -5,12 +5,12 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
-
-use tokio::sync::oneshot;
-use yuke_js::{Fact, FactSink};
 use yuke_protocol::{
     ExtensionRequestParams, InteractionId, Job, NoticeParams, ServerNotification, SessionId, SessionState,
 };
+
+use tokio::sync::oneshot;
+use yuke_js::{Fact, FactSink};
 
 use super::{Answer, Observer};
 
@@ -176,7 +176,7 @@ impl Observer for Noticed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yuke_protocol::{LiveUpdate, NoticeLevel, SessionUpdate};
+    use yuke_protocol::{LiveUpdate, NoticeLevel, SessionUpdate, StateUpdate};
 
     #[test]
     fn a_fact_callback_can_change_watches_and_only_known_sessions_get_updates() {
@@ -190,9 +190,9 @@ mod tests {
             kept.borrow_mut().push(fact);
         }));
         let session = SessionId::generate();
-        let update = SessionUpdate::Live(LiveUpdate::State {
+        let update = SessionUpdate::Live(LiveUpdate::State(StateUpdate {
             state: SessionState::Running,
-        });
+        }));
         let notice = NoticeParams {
             session_id: None,
             level: NoticeLevel::Info,

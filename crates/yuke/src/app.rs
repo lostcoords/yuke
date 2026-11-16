@@ -271,7 +271,7 @@ impl Shared {
 
     /// Start a device login of `provider`, and give its code and a receiver of its end. A login in progress of the
     /// provider ends as cancelled first. A task polls the provider, saves the login in `auth.json`, and sends
-    /// `auth/login_finished`.
+    /// `auth/loginFinished`.
     ///
     /// # Errors
     ///
@@ -356,7 +356,7 @@ impl Shared {
         Ok((result, ended))
     }
 
-    /// Ask the login `id` in progress to stop. Its `auth/login_finished` tells how it ended.
+    /// Ask the login `id` in progress to stop. Its `auth/loginFinished` tells how it ended.
     ///
     /// # Errors
     ///

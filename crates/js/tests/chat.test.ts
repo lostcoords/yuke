@@ -253,7 +253,7 @@ test("older recalls the newest waiting message, and gives taken when a turn took
   const composer = new ChatComposer(chat, editor, { handle: async () => chat.handle, signal: owner.signal });
   const waiting = (id: number, text: string) =>
     sessions.push({
-      sessionUpdate: "inputAccepted",
+      kind: "inputAccepted",
       inputId: id,
       input: { source: { kind: "user" }, kind: "message", content: [{ kind: "userText", text: text }] },
     });
@@ -279,7 +279,7 @@ test("the questions show the first open one, a cancel answers it once, and a ref
   });
   const ask = (id: number) =>
     sessions.push({
-      sessionUpdate: "interactionRequested",
+      kind: "interactionRequested",
       interactionId: id,
       source: "guard",
       request: {
@@ -310,7 +310,7 @@ test("questions that start after a question opened show it at once", async () =>
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");
   sessions.push({
-    sessionUpdate: "interactionRequested",
+    kind: "interactionRequested",
     interactionId: 3,
     source: "guard",
     request: {
@@ -324,7 +324,7 @@ test("questions that start after a question opened show it at once", async () =>
 
 test("the timer counts from observation, resets for another session, and stops when the handle ends", async () => {
   // Each open gives a snapshot of a running turn.
-  const sessions = fakeSessions([...replies(2), { sessionUpdate: "state", state: "running" } as never]);
+  const sessions = fakeSessions([...replies(2), { kind: "state", state: "running" } as never]);
   const owner = new AbortController();
   const chat = new ChatSession(sessions as unknown as Sessions, { signal: owner.signal, id: "s1" });
   await chat.open("s1");

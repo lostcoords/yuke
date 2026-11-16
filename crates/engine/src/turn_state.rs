@@ -65,8 +65,7 @@ pub(crate) enum Action<'a> {
 }
 
 /// The change of the context since the last commit, and the facts of the turn. Replay each commit in order on a copy
-/// of the context: apply `replaced`, then append `blocks`. The copy then equals the context. The driver lends its
-/// blocks, and a store that reads a commit back owns them.
+/// of the context: apply `replaced`, then append `blocks`. The copy then equals the context.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
@@ -78,11 +77,11 @@ pub struct Commit<'a> {
     /// The blocks after the saved blocks, in context order.
     pub blocks: Cow<'a, [Block]>,
 
-    /// The facts of the answer in `blocks`. A commit without an answer has `None`.
+    /// The facts of the answer in `blocks`. A commit without an answer has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<Answer>,
 
-    /// How the turn ended. A commit in the middle of a turn has `None`.
+    /// How the turn ended. A commit in the middle of a turn has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<TurnEnd>,
 
@@ -186,8 +185,7 @@ impl<'a> Commit<'a> {
     }
 }
 
-/// How a turn ended, in a form that a journal can save. A failure keeps the text of its error, and
-/// [`crate::TurnError::Round`] gives the caller the error itself.
+/// How a turn ended, in a form that a journal can save. A failure keeps the text of its error.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]

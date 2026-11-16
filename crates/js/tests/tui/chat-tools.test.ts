@@ -34,7 +34,7 @@ interface Call {
 
 /** A session with each call of `calls` in its own event, and its result in the next event. */
 function calls(...called: Call[]): StoredEvent[] {
-  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
+  const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (const [at, call] of called.entries()) {
     const callId = `c${at}`;
     const block: Block = { kind: "toolCall", callId, name: call.name, arguments: JSON.stringify(call.args) };
@@ -272,7 +272,7 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "read", arguments: '{"path":"a' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: PROBE, cwd: "/w" }], results: [] },
     }),
@@ -284,15 +284,15 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
 
 test("a streaming call shows its name and raw arguments, and the subject takes their place when the hints come", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
   frame.start();
-  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
+  const model = (event: object) => sessions.push({ kind: "model", draftId: "d1", event } as never);
   const head = (): string | undefined => {
     frame.draw();
     return transcriptRows(frame)[1];
   };
-  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
+  sessions.push({ kind: "draftStarted", draftId: "d1" });
   model({ kind: "blockStarted", blockId: 0, content: { kind: "toolCall", name: "exec" } });
   model({ kind: "toolInputDelta", blockId: 0, text: '{"command":' });
   const streaming = head();
@@ -305,7 +305,7 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
   );
-  sessions.push({ sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
+  sessions.push({ kind: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
   assertEquals(
     [streaming, stopped, head()],
     [' exec {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
@@ -357,11 +357,11 @@ test("the tool toggle folds each shown tool when each one is open, and a hidden 
 
 test("a streaming tool search shows no row from its start", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
-  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
   frame.start();
-  const model = (event: object) => sessions.push({ sessionUpdate: "model", draftId: "d1", event } as never);
-  sessions.push({ sessionUpdate: "draftStarted", draftId: "d1" });
+  const model = (event: object) => sessions.push({ kind: "model", draftId: "d1", event } as never);
+  sessions.push({ kind: "draftStarted", draftId: "d1" });
   model({ kind: "blockStarted", blockId: 0, content: { kind: "text" } });
   model({ kind: "textDelta", blockId: 0, text: "I look for a tool." });
   model({ kind: "blockStarted", blockId: 1, content: { kind: "toolCall", name: "tool_search" } });
@@ -390,7 +390,7 @@ test("the live output of a call gives way to its result at once", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
@@ -400,12 +400,12 @@ test("the live output of a call gives way to its result at once", async () => {
   frame.start();
   using _clock = fixedClock();
   const position = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "toolStarted", position, call });
-  sessions.push({ sessionUpdate: "toolOutput", position, text: "compiling" });
+  sessions.push({ kind: "toolStarted", position, call });
+  sessions.push({ kind: "toolOutput", position, text: "compiling" });
   frame.draw();
   assertEquals(transcriptRows(frame).slice(0, 4), ["", " exec make · running", " compiling", ""]);
   const result = { callId: "c0", content: "built", isError: false };
-  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
+  sessions.push({ kind: "toolFinished", position, result, display: [] });
   frame.draw();
   assertEquals(transcriptRows(frame).slice(0, 4), ["", " exec make", " built", ""]);
 });
@@ -431,7 +431,7 @@ test("a silent running call counts up on its own, and its end shows the measured
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
@@ -442,8 +442,8 @@ test("a silent running call counts up on its own, and its end shows the measured
   await waitForSettled();
   using clock = fixedClock();
   const position = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "toolStarted", position, call });
+  sessions.push({ kind: "state", state: "running" });
+  sessions.push({ kind: "toolStarted", position, call });
   frame.draw();
   assertEquals(transcriptRows(frame)[1], " exec make · running");
   clock.now += 12_000;
@@ -451,7 +451,7 @@ test("a silent running call counts up on its own, and its end shows the measured
   frame.draw();
   assertEquals(transcriptRows(frame)[1], " exec make · 12s");
   const result = { callId: "c0", content: "", isError: false };
-  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [], durationMs: 40_000 });
+  sessions.push({ kind: "toolFinished", position, result, display: [], durationMs: 40_000 });
   frame.draw();
   assertEquals(transcriptRows(frame)[1], " exec make · 40s");
 });
@@ -460,7 +460,7 @@ test("a copy of live output gives its lines", async () => {
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
@@ -469,8 +469,8 @@ test("a copy of live output gives its lines", async () => {
   await loadChat(frame, sessions);
   frame.start();
   const position = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "toolStarted", position, call });
-  sessions.push({ sessionUpdate: "toolOutput", position, text: "one\ntwo" });
+  sessions.push({ kind: "toolStarted", position, call });
+  sessions.push({ kind: "toolOutput", position, text: "one\ntwo" });
   frame.draw();
   frame.mouse(mouse(1, 2, "press"));
   frame.mouse(mouse(4, 3, "drag"));
@@ -482,7 +482,7 @@ test("a folded call gives no count of the lines that its live output leaves out,
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
@@ -491,12 +491,12 @@ test("a folded call gives no count of the lines that its live output leaves out,
   await loadChat(frame, sessions);
   frame.start();
   const position = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "toolStarted", position, call });
-  sessions.push({ sessionUpdate: "toolOutput", position, text: lines("out", 8) });
+  sessions.push({ kind: "toolStarted", position, call });
+  sessions.push({ kind: "toolOutput", position, text: lines("out", 8) });
   frame.draw();
   const live = transcriptRows(frame).slice(2, 8);
   const result = { callId: "c0", content: lines("out", 8), isError: false };
-  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
+  sessions.push({ kind: "toolFinished", position, result, display: [] });
   frame.draw();
   const tail = lines(" out", 8).split("\n").slice(3);
   assertEquals(
@@ -669,7 +669,7 @@ test("a click on a body row, a preview row, or the count row toggles a call, and
 test("a click on the text of an open thought folds it", async () => {
   using frame = createFrame({ width: 40, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "reasoning", text: "why" } as never]),
   ];
   await loadChat(frame, fakeSessions(saved));
@@ -790,7 +790,7 @@ test("a link in a reply copies its target, and a relative target starts in the f
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/start", session: "s1" });
   const reply = "see [source](src/main.rs#L40-L52) or [docs](https://docs.rs)";
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "assistantText", text: reply }]),
   ];
   await loadChat(frame, fakeSessions(saved));
@@ -848,7 +848,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   using frame = createFrame({ width: 30, height: 10 }, undefined, { cwd: "/w", session: "s1" });
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "toolCall", ...call }], {
       display: { calls: [{ blockIndex: 0, hints: EXEC, cwd: "/w" }], results: [] },
     }),
@@ -858,8 +858,8 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   frame.start();
   using _clock = fixedClock();
   const position = { eventNumber: 2, blockIndex: 0 };
-  sessions.push({ sessionUpdate: "toolStarted", position, call });
-  sessions.push({ sessionUpdate: "toolOutput", position, text: "compiling" });
+  sessions.push({ kind: "toolStarted", position, call });
+  sessions.push({ kind: "toolOutput", position, text: "compiling" });
   frame.draw();
   const band = themeStyle("chat.tool.pending").bg;
   assert(band !== undefined);
@@ -869,7 +869,7 @@ test("a running call has a band until its result comes, and a copy leaves the ba
   frame.mouse(mouse(29, 2, "release"));
   const copied = [...frame.copies];
   const result = { callId: "c0", content: "built", isError: false };
-  sessions.push({ sessionUpdate: "toolFinished", position, result, display: [] });
+  sessions.push({ kind: "toolFinished", position, result, display: [] });
   frame.draw();
   assertEquals(
     [running, copied, frame.frame.cells[1]?.[29]?.style],
@@ -895,7 +895,7 @@ test("a diff shows an added line, a removed line, and its context in their own l
 test("the failure of a turn shows in bold in the danger color", async () => {
   using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [], { end: { kind: "failed", error: "boom" } }),
   ];
   await loadChat(frame, fakeSessions(saved));

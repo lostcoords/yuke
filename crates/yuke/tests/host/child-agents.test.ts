@@ -61,7 +61,7 @@ function agents() {
             tail: 0,
             signal: ended.signal,
             onEvent: (event) => {
-              if (event.kind === "snapshot" || event.update.sessionUpdate !== "interactionRequested") return;
+              if (event.kind === "snapshot" || event.update.kind !== "interactionRequested") return;
               const update = event.update;
               void s
                 .ask({ questions: update.request.questions })
@@ -78,7 +78,7 @@ function agents() {
           await handle.waitForIdle();
           const events = await list.events(child, { limit: 2 });
           ended.abort();
-          const blocks = events.flatMap((event) => (event.sessionUpdate === "commit" ? event.commit.blocks : []));
+          const blocks = events.flatMap((event) => (event.kind === "commit" ? event.commit.blocks : []));
           const text = blocks.flatMap((block) => (block.kind === "assistantText" ? [block.text] : [])).join("");
           return { status: "completed", text };
         });

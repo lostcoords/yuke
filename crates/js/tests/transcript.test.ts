@@ -26,15 +26,15 @@ const shown: DisplayBlock[] = [{ kind: "markdown", text: "**1 failed**" }];
 
 /** The updates of one turn in the order of the protocol: it reads a test, runs it, and answers. */
 const turn: SessionUpdate[] = [
-  { seq: 1, sessionUpdate: "settings", ...settings },
+  { seq: 1, kind: "settings", ...settings },
   {
-    sessionUpdate: "inputAccepted",
+    kind: "inputAccepted",
     inputId: 1,
     input: { source: { kind: "user" }, kind: "message", content: [userText] },
   },
-  { sessionUpdate: "state", state: "running" },
+  { kind: "state", state: "running" },
   commit(2, { blocks: [userText] }, [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }]),
-  { sessionUpdate: "draftStarted", draftId: "d1" },
+  { kind: "draftStarted", draftId: "d1" },
   model("d1", { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } }),
   model("d1", { kind: "reasoningDelta", blockId: 0, text: "the test " }),
   model("d1", { kind: "reasoningSectionStarted", blockId: 0 }),
@@ -61,22 +61,22 @@ const turn: SessionUpdate[] = [
     answer: answer("toolCalls"),
     display: { calls: [{ blockIndex: 2, hints, cwd: "/w" }], results: [] },
   }),
-  { sessionUpdate: "draftCommitted", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
-  { sessionUpdate: "toolStarted", position: position(3, 2), call },
-  { sessionUpdate: "toolOutput", position: position(3, 2), text: "running 1 test\n" },
-  { sessionUpdate: "toolFinished", position: position(3, 2), result, display: shown, durationMs: 40_000 },
+  { kind: "draftCommitted", draftId: "d1", eventNumber: 3, blocks: [0, 1, 2] },
+  { kind: "toolStarted", position: position(3, 2), call },
+  { kind: "toolOutput", position: position(3, 2), text: "running 1 test\n" },
+  { kind: "toolFinished", position: position(3, 2), result, display: shown, durationMs: 40_000 },
   commit(4, {
     blocks: [{ kind: "toolResult", ...result }],
     display: { calls: [], results: [{ blockIndex: 0, blocks: shown, durationMs: 40_000 }] },
   }),
-  { sessionUpdate: "draftStarted", draftId: "d2" },
+  { kind: "draftStarted", draftId: "d2" },
   model("d2", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
   model("d2", { kind: "textDelta", blockId: 0, text: "Fixed." }),
   model("d2", { kind: "blockStopped", blockId: 0 }),
   commit(5, { blocks: [{ kind: "assistantText", text: "Fixed." }], answer: answer("stop") }),
-  { sessionUpdate: "draftCommitted", draftId: "d2", eventNumber: 5, blocks: [0] },
+  { kind: "draftCommitted", draftId: "d2", eventNumber: 5, blocks: [0] },
   commit(6, { end: { kind: "completed", finishReason: "stop" } }),
-  { sessionUpdate: "state", state: "idle" },
+  { kind: "state", state: "idle" },
 ];
 const saved = turn.filter((update): update is StoredEvent => "seq" in update);
 
@@ -177,8 +177,8 @@ test("tool updates reach their call by position when call ids repeat", () => {
   const transcript = fed(opened(saved.slice(0, 3)), [
     commit(4, { blocks: [{ kind: "toolResult", ...result }] }),
     commit(5, { blocks: [{ kind: "toolCall", ...read }], answer: answer("toolCalls") }),
-    { sessionUpdate: "toolStarted", position: position(5, 0), call: read },
-    { sessionUpdate: "toolOutput", position: position(5, 0), text: "lib.rs" },
+    { kind: "toolStarted", position: position(5, 0), call: read },
+    { kind: "toolOutput", position: position(5, 0), text: "lib.rs" },
   ]);
   const tools = transcript.entries.filter((entry) => entry.kind === "tool");
   assertEquals(
@@ -233,7 +233,7 @@ test("a page that starts mid-turn pairs its results after the older page", () =>
 test("a trim holds the newest events and keeps the draft, the usage, and each kept entry object", () => {
   const withUsage: Answer = { ...answer("stop"), usage: { input: 100, output: 10 } };
   const transcript = fed(opened([...saved.slice(0, 5), commit(6, { answer: withUsage }), commit(7, {})]), [
-    { sessionUpdate: "draftStarted", draftId: "d3" },
+    { kind: "draftStarted", draftId: "d3" },
     model("d3", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
   ]);
   const fixed = transcript.entries.find((entry) => entry.id === "5:0");
@@ -276,7 +276,7 @@ test("a cancel mid-draft keeps only what its commit saved", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 11),
     commit(3, { blocks: [{ kind: "assistantText", text: "I run " }], end: { kind: "cancelled" } }),
-    { sessionUpdate: "draftDiscarded", draftId: "d1", reason: "failed" },
+    { kind: "draftDiscarded", draftId: "d1", reason: "failed" },
   ]);
   assertEquals(transcript.entries, [
     input,
@@ -337,9 +337,9 @@ test("the updates of a draft that started before the snapshot add nothing", () =
 test("an unconfirmed turn drops its draft and the live state of its tools", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 21),
-    { sessionUpdate: "draftStarted", draftId: "d2" },
+    { kind: "draftStarted", draftId: "d2" },
     model("d2", { kind: "blockStarted", blockId: 0, content: { kind: "text" } }),
-    { sessionUpdate: "turnUnconfirmed" },
+    { kind: "turnUnconfirmed" },
   ]);
   assertEquals(keys(transcript), ["2:0", "3:0", "3:1", "3:2"]);
   assertEquals([tool(transcript, 3).status, tool(transcript, 3).output], ["waiting", ""]);
@@ -350,9 +350,7 @@ test("a running tool has its start timestamp, and a finished tool has its durati
   const transcript = fed(opened(), turn.slice(0, 20));
   const running = tool(transcript, 3);
   assert(running.startedAt !== undefined && running.startedAt >= before, `${running.startedAt}`);
-  fed(transcript, [
-    { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
-  ]);
+  fed(transcript, [{ kind: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 }]);
   assertEquals([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, 40_000]);
 });
 
@@ -376,8 +374,8 @@ test("a gap fill keeps the start timestamp of a running tool", () => {
   fed(transcript, saved.slice(2, 3));
   // The output makes the tool differ from its saved form, so only the rule for a waiting tool keeps it.
   fed(transcript, [
-    { sessionUpdate: "toolStarted", position: position(3, 2), call },
-    { sessionUpdate: "toolOutput", position: position(3, 2), text: "running" },
+    { kind: "toolStarted", position: position(3, 2), call },
+    { kind: "toolOutput", position: position(3, 2), text: "running" },
   ]);
   const started = tool(transcript, 2).startedAt;
   assert(started !== undefined, "the tool has no start timestamp");
@@ -388,8 +386,8 @@ test("a gap fill keeps the start timestamp of a running tool", () => {
 test("an unconfirmed turn drops the start timestamps and the durations of its tools", () => {
   const transcript = fed(opened(), [
     ...turn.slice(0, 20),
-    { sessionUpdate: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
-    { sessionUpdate: "turnUnconfirmed" },
+    { kind: "toolFinished", position: position(3, 2), result, display: [], durationMs: 40_000 },
+    { kind: "turnUnconfirmed" },
   ]);
   assertEquals([tool(transcript, 3).startedAt, tool(transcript, 3).durationMs], [undefined, undefined]);
 });
@@ -406,7 +404,7 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
   fed(transcript, turn.slice(0, 3));
   fed(transcript, [
     {
-      sessionUpdate: "interactionRequested",
+      kind: "interactionRequested",
       interactionId: 7,
       source: "ask",
       request: {
@@ -414,15 +412,15 @@ test("the inputs, questions, failure, and settings follow their updates", () => 
         questions: [{ id: "go", header: "Go", question: "t", options: [{ label: "Yes" }, { label: "No" }] }],
       },
     },
-    { sessionUpdate: "retryScheduled", afterMs: 3000, error: "overloaded" },
+    { kind: "retryScheduled", afterMs: 3000, error: "overloaded" },
   ]);
   assertEquals(facts(), ["running", [1], [7], { kind: "retryScheduled", afterMs: 3000, error: "overloaded" }, "m"]);
-  fed(transcript, [...turn.slice(3, 5), { sessionUpdate: "interactionClosed", interactionId: 7 }]);
+  fed(transcript, [...turn.slice(3, 5), { kind: "interactionClosed", interactionId: 7 }]);
   assertEquals(facts(), ["running", [], [], undefined, "m"]);
-  fed(transcript, [{ seq: 3, sessionUpdate: "settings", ...settings, model: { provider: "p", model: "n" } }]);
+  fed(transcript, [{ seq: 3, kind: "settings", ...settings, model: { provider: "p", model: "n" } }]);
   assertEquals(facts(), ["running", [], [], undefined, "n"]);
   // The snapshot and the live events give the settings. An older page holds older settings.
-  const paged = opened([{ seq: 7, sessionUpdate: "settings", ...settings, model: { provider: "p", model: "n" } }]);
+  const paged = opened([{ seq: 7, kind: "settings", ...settings, model: { provider: "p", model: "n" } }]);
   paged.insert(saved);
   assertEquals(paged.settings?.model.model, "n");
 });

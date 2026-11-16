@@ -7,6 +7,9 @@ mod support;
 mod updates;
 
 use std::sync::Arc;
+use yuke_protocol::{
+    CommitEvent, ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
+};
 
 use std::pin::pin;
 use std::task::{Context, Waker};
@@ -18,9 +21,6 @@ use yuke_ai::{Block, Header, Media, SessionHeader, ToolCall, ToolDefinition, Too
 use yuke_engine::NoWait;
 use yuke_engine::{
     Commit, CommitDisplay, Driver, Hooks, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text,
-};
-use yuke_protocol::{
-    ConsumedInput, Input, InputId, InputKind, InputSource, ModelReference, SessionEvent, SessionSettings,
 };
 use yuke_testing::{assert_in_order, model};
 
@@ -339,7 +339,7 @@ async fn a_failed_commit_leaves_the_session_stale_until_a_recovery_ends_the_open
         "{failed:?}"
     );
     assert!(matches!(refused, Err(SessionError::Stale)), "{refused:?}");
-    let SessionEvent::Commit { commit, consumed } = repair.event else {
+    let SessionEvent::Commit(CommitEvent { commit, consumed }) = repair.event else {
         panic!("{:?}", repair.event);
     };
     assert_eq!(

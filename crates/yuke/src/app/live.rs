@@ -6,6 +6,12 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
+use yuke_protocol::{
+    CommitEvent, EventNumber, ExtensionRequestParams, Input, InputAccepted, InputId, InputRemoved, InteractionClosed,
+    InteractionId, InteractionRequest, InteractionRequested, InteractionResponse, Job, JobId, JobUpdate, LiveUpdate,
+    McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent, SessionId, SessionSettings,
+    SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StateUpdate, StoredEvent,
+};
 
 use async_trait::async_trait;
 use tokio::sync::{Notify, oneshot, watch};
@@ -15,11 +21,6 @@ use yuke_ai::ToolDefinition;
 use yuke_engine::{CancellationToken, Driver, MediaStore, Model, Toolset, chain_text};
 use yuke_js::{Handle, RequestFailure, ScriptSession, ScriptTool, SessionHost, ViewEvent, ViewSink};
 use yuke_mcp::{McpTool, OnChange, Servers};
-use yuke_protocol::{
-    EventNumber, ExtensionRequestParams, Input, InputId, InteractionId, InteractionRequest, InteractionResponse, Job,
-    JobId, LiveUpdate, McpServer, ModelReference, NoticeLevel, NoticeParams, ServerNotification, SessionEvent,
-    SessionId, SessionSettings, SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StoredEvent,
-};
 
 use super::facts::Facts;
 use super::sessions::SessionService;
@@ -109,7 +110,7 @@ impl LiveSession {
             Err(error) => return Err(error),
         }
         host.output
-            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }));
+            .publish(SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id })));
         Ok(true)
     }
 
@@ -356,7 +357,7 @@ struct Sent {
     running: bool,
     /// The views and the facts of the session have ended. Nothing announces the session again.
     ended: bool,
-    /// The inputs that a published commit consumed or a published removal named. An `input_accepted` can come after
+    /// The inputs that a published commit consumed or a published removal named. An `inputAccepted` can come after
     /// them, because the store saves an input before the server publishes it, so the output drops it.
     gone: HashSet<InputId>,
     /// The open questions that appear in snapshots and live updates.
@@ -371,17 +372,19 @@ struct Sent {
 const OBSERVER: u64 = 0;
 
 impl Sent {
-    /// Whether `update` goes out. A late `input_accepted` of an input that left does not.
+    /// Whether `update` goes out. A late `inputAccepted` of an input that left does not.
     fn admit(&mut self, update: &SessionUpdate) -> bool {
         match update {
             SessionUpdate::Saved(StoredEvent {
-                event: SessionEvent::Commit { consumed, .. },
+                event: SessionEvent::Commit(CommitEvent { consumed, .. }),
                 ..
             }) => self.gone.extend(consumed.iter().map(|input| input.id)),
-            SessionUpdate::Live(LiveUpdate::InputRemoved { input_id }) => {
+            SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id })) => {
                 self.gone.insert(*input_id);
             }
-            SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) => return !self.gone.contains(input_id),
+            SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted { input_id, .. })) => {
+                return !self.gone.contains(input_id);
+            }
             _ => {}
         }
         true
@@ -397,25 +400,28 @@ impl Sent {
     fn snapshot(&self, loaded: Loaded, now: (SessionState, Vec<Job>, Vec<McpServer>)) -> Vec<SessionUpdate> {
         let (state, jobs, servers) = now;
         let mut updates: Vec<SessionUpdate> = loaded.events.into_iter().map(SessionUpdate::Saved).collect();
-        updates.push(SessionUpdate::Live(LiveUpdate::State { state }));
+        updates.push(SessionUpdate::Live(LiveUpdate::State(StateUpdate { state })));
         updates.extend(loaded.pending.into_iter().map(|pending| {
-            SessionUpdate::Live(LiveUpdate::InputAccepted {
+            SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted {
                 input_id: pending.id,
                 input: pending.input,
-            })
+            }))
         }));
-        updates.extend(jobs.into_iter().map(|job| SessionUpdate::Live(LiveUpdate::Job { job })));
+        updates.extend(
+            jobs.into_iter()
+                .map(|job| SessionUpdate::Live(LiveUpdate::Job(JobUpdate { job }))),
+        );
         updates.extend(
             servers
                 .into_iter()
-                .map(|server| SessionUpdate::Live(LiveUpdate::McpServer { server })),
+                .map(|server| SessionUpdate::Live(LiveUpdate::McpServer(server))),
         );
         updates.extend(self.questions.iter().map(|(id, question)| {
-            SessionUpdate::Live(LiveUpdate::InteractionRequested {
+            SessionUpdate::Live(LiveUpdate::InteractionRequested(InteractionRequested {
                 interaction_id: *id,
                 source: question.source.clone(),
                 request: question.request.clone(),
-            })
+            }))
         }));
         updates
     }
@@ -453,13 +459,13 @@ fn after(loaded: &Loaded, mut updates: Vec<SessionUpdate>) -> Vec<SessionUpdate>
     let last = loaded.events.last().map(|event| event.event_number);
     let mut known: HashSet<InputId> = loaded.pending.iter().map(|pending| pending.id).collect();
     for event in &loaded.events {
-        if let SessionEvent::Commit { consumed, .. } = &event.event {
+        if let SessionEvent::Commit(CommitEvent { consumed, .. }) = &event.event {
             known.extend(consumed.iter().map(|input| input.id));
         }
     }
     updates.retain(|update| match update {
         SessionUpdate::Saved(event) => last.is_none_or(|last| event.event_number > last),
-        SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, .. }) => !known.contains(input_id),
+        SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted { input_id, .. })) => !known.contains(input_id),
         SessionUpdate::Live(_) => true,
     });
     updates
@@ -517,7 +523,7 @@ impl Output {
             if !sent.admit(&update) {
                 return;
             }
-            if let SessionUpdate::Live(LiveUpdate::State { state }) = &update {
+            if let SessionUpdate::Live(LiveUpdate::State(StateUpdate { state })) = &update {
                 sent.running = *state == SessionState::Running;
             }
             sent.listeners
@@ -623,11 +629,11 @@ impl Output {
         let id = InteractionId(self.last_question.get() + 1);
         self.last_question.set(id.0);
         let (answer, answered) = oneshot::channel();
-        let update = LiveUpdate::InteractionRequested {
+        let update = LiveUpdate::InteractionRequested(InteractionRequested {
             interaction_id: id,
             source: source.to_owned(),
             request: request.clone(),
-        };
+        });
         sent.questions.insert(
             id,
             Question {
@@ -645,7 +651,7 @@ impl Output {
     fn close_question(&self, id: InteractionId) {
         let question = self.sent.borrow_mut().questions.remove(&id);
         if question.is_some() {
-            let update = LiveUpdate::InteractionClosed { interaction_id: id };
+            let update = LiveUpdate::InteractionClosed(InteractionClosed { interaction_id: id });
             self.publish(SessionUpdate::Live(update));
         }
     }
@@ -658,7 +664,7 @@ impl Output {
         };
         check_answer(&open.get().request, &response)?;
         let question = open.remove();
-        let update = LiveUpdate::InteractionClosed { interaction_id: id };
+        let update = LiveUpdate::InteractionClosed(InteractionClosed { interaction_id: id });
         drop(sent);
         self.publish(SessionUpdate::Live(update));
         // The asker closes the question before it stops waiting, so an open question has a receiver.
@@ -767,18 +773,22 @@ impl Parts {
         if let Some(service) = self.host.service.upgrade() {
             service.touch(self.host.output.session);
         }
-        self.host.output.publish(SessionUpdate::Live(LiveUpdate::State {
-            state: SessionState::Running,
-        }));
+        self.host
+            .output
+            .publish(SessionUpdate::Live(LiveUpdate::State(StateUpdate {
+                state: SessionState::Running,
+            })));
         Some(token)
     }
 
     /// Mark the session as idle, and tell the observer.
     fn finish_turn(&self) {
         *self.turn.borrow_mut() = None;
-        self.host.output.publish(SessionUpdate::Live(LiveUpdate::State {
-            state: SessionState::Idle,
-        }));
+        self.host
+            .output
+            .publish(SessionUpdate::Live(LiveUpdate::State(StateUpdate {
+                state: SessionState::Idle,
+            })));
     }
 
     /// Run one turn after another while input waits.
@@ -910,8 +920,7 @@ fn start_servers(host: &Rc<Host>, folder: &Path) -> Servers {
             yuke_mcp::Config::default()
         }
     };
-    let on_change: OnChange =
-        Rc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer { server })));
+    let on_change: OnChange = Rc::new(move |server| output.publish(SessionUpdate::Live(LiveUpdate::McpServer(server))));
     let shared = &host.shared;
     let variable = |name: &str| (shared.machine.variable)(name).and_then(|value| value.into_string().ok());
     let user: Vec<_> = shared.mcp.servers.clone().into_iter().collect();
@@ -1046,7 +1055,10 @@ impl Host {
             .accept_input(self.output.session, input.clone())
             .await?;
         self.output
-            .publish(SessionUpdate::Live(LiveUpdate::InputAccepted { input_id, input }));
+            .publish(SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted {
+                input_id,
+                input,
+            })));
         self.accepted.set(self.accepted.get() + 1);
         self.wake.notify_one();
         Ok(input_id)
@@ -1084,7 +1096,8 @@ impl SessionHost for Host {
     }
 
     fn job_changed(&self, job: Job) {
-        self.output.publish(SessionUpdate::Live(LiveUpdate::Job { job }));
+        self.output
+            .publish(SessionUpdate::Live(LiveUpdate::Job(JobUpdate { job })));
     }
 
     async fn accept_input(&self, input: Input) {
@@ -1208,14 +1221,14 @@ mod tests {
     }
 
     fn removed(id: u64) -> SessionUpdate {
-        SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(id) })
+        SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id: InputId(id) }))
     }
 
     /// A commit numbered `number` that consumed the input `input`.
     fn consuming(number: u64, input: u64) -> StoredEvent {
         StoredEvent {
             event_number: EventNumber(number),
-            event: SessionEvent::Commit {
+            event: SessionEvent::Commit(CommitEvent {
                 commit: yuke_engine::Commit::blocks(Vec::new()),
                 consumed: vec![yuke_protocol::ConsumedInput {
                     id: InputId(input),
@@ -1224,7 +1237,7 @@ mod tests {
                     display_content: None,
                     block_count: 0,
                 }],
-            },
+            }),
         }
     }
 
@@ -1233,14 +1246,14 @@ mod tests {
     }
 
     fn accepted(id: u64) -> SessionUpdate {
-        SessionUpdate::Live(LiveUpdate::InputAccepted {
+        SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted {
             input_id: InputId(id),
             input: input(),
-        })
+        }))
     }
 
     fn job() -> SessionUpdate {
-        SessionUpdate::Live(LiveUpdate::Job { job: running_job() })
+        SessionUpdate::Live(LiveUpdate::Job(JobUpdate { job: running_job() }))
     }
 
     fn running_job() -> Job {
@@ -1274,8 +1287,10 @@ mod tests {
             let output = weak.upgrade().unwrap();
             drop(output.watch(Rc::new(|_| {})));
             kept.borrow_mut().push(event.clone());
-            if let ViewEvent::Update(SessionUpdate::Live(LiveUpdate::InteractionRequested { interaction_id, .. })) =
-                event
+            if let ViewEvent::Update(SessionUpdate::Live(LiveUpdate::InteractionRequested(InteractionRequested {
+                interaction_id,
+                ..
+            }))) = event
             {
                 output
                     .answer_question(interaction_id, InteractionResponse::Cancelled)
@@ -1300,9 +1315,9 @@ mod tests {
             [
                 ViewEvent::Snapshot(SessionSnapshot {
                     settings: settings(),
-                    updates: vec![SessionUpdate::Live(LiveUpdate::State {
+                    updates: vec![SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                         state: SessionState::Idle
-                    })],
+                    }))],
                 }),
                 ViewEvent::Update(requested(id.0, confirm())),
                 ViewEvent::Update(closed(id.0)),
@@ -1344,9 +1359,9 @@ mod tests {
                     updates: vec![
                         saved(4),
                         saved(5),
-                        SessionUpdate::Live(LiveUpdate::State {
+                        SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                             state: SessionState::Idle
-                        }),
+                        })),
                         accepted(7),
                     ],
                 }),
@@ -1393,9 +1408,9 @@ mod tests {
                 removed(1),
                 saved(4),
                 SessionUpdate::Saved(consuming(5, 8)),
-                SessionUpdate::Live(LiveUpdate::State {
+                SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                     state: SessionState::Running
-                }),
+                })),
                 accepted(7),
                 job(),
                 // The snapshot shows input 7 as pending and input 8 as consumed, so their kept copies are gone.
@@ -1477,17 +1492,17 @@ mod tests {
     }
 
     fn requested(id: u64, request: InteractionRequest) -> SessionUpdate {
-        SessionUpdate::Live(LiveUpdate::InteractionRequested {
+        SessionUpdate::Live(LiveUpdate::InteractionRequested(InteractionRequested {
             interaction_id: InteractionId(id),
             source: "guard".to_owned(),
             request,
-        })
+        }))
     }
 
     fn closed(id: u64) -> SessionUpdate {
-        SessionUpdate::Live(LiveUpdate::InteractionClosed {
+        SessionUpdate::Live(LiveUpdate::InteractionClosed(InteractionClosed {
             interaction_id: InteractionId(id),
-        })
+        }))
     }
 
     #[test]
@@ -1594,9 +1609,9 @@ mod tests {
             *recorder.0.borrow_mut(),
             [
                 requested(1, confirm()),
-                SessionUpdate::Live(LiveUpdate::State {
+                SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                     state: SessionState::Idle
-                }),
+                })),
                 requested(1, confirm()),
                 requested(2, confirm()),
                 // A client drops the second copy of question 2.

@@ -4,6 +4,10 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use yuke_protocol::{
+    CommitEvent, ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput,
+    SessionEvent, SessionId, SessionSettings, SessionSummary,
+};
 
 use async_trait::async_trait;
 use yuke_agent::{
@@ -11,10 +15,6 @@ use yuke_agent::{
 };
 use yuke_ai::Block;
 use yuke_engine::{Commit, Tool, ToolContent, ToolContext};
-use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, InputKind, InputSource, ModelReference, PendingInput, SessionEvent,
-    SessionId, SessionSettings, SessionSummary,
-};
 
 /// A system prompt of one section.
 pub(crate) fn prompt() -> Vec<PromptSection> {
@@ -47,7 +47,7 @@ pub(crate) async fn consumed_inputs(store: &dyn Store, id: SessionId) -> Vec<Con
         .unwrap()
         .into_iter()
         .flat_map(|stored| match stored.event {
-            SessionEvent::Commit { consumed, .. } => consumed,
+            SessionEvent::Commit(CommitEvent { consumed, .. }) => consumed,
             SessionEvent::Settings(_) => Vec::new(),
         })
         .collect()

@@ -56,7 +56,7 @@ export const SETTINGS: SessionSettings = {
 export function commit(seq: number, blocks: Block[], fields: Partial<Commit> = {}): StoredEvent {
   return {
     seq,
-    sessionUpdate: "commit",
+    kind: "commit",
     commit: { blocks, ...fields },
     consumed: [],
   };
@@ -64,7 +64,7 @@ export function commit(seq: number, blocks: Block[], fields: Partial<Commit> = {
 
 /** A session with the settings event 1, then a reply `reply <seq>` in each event up to `last`. */
 export function replies(last: number): StoredEvent[] {
-  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
+  const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= last; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
   return saved;
 }
@@ -201,7 +201,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
         async removeInput(inputId: number) {
           removals.push(inputId);
           await state.removal;
-          if (state.removed) deliver(id, { sessionUpdate: "inputRemoved", inputId });
+          if (state.removed) deliver(id, { kind: "inputRemoved", inputId });
           return state.removed;
         },
         async putBlob(bytes: Uint8Array) {
@@ -213,7 +213,7 @@ export function fakeSessions(saved: StoredEvent[] = []) {
           if (state.refuseAnswer) throw new Error(`no open question ${interactionId}`);
           responses.push([interactionId, response]);
           // As the host does, the first answer closes the question for each handle, later through the event feed.
-          queueMicrotask(() => deliver(id, { sessionUpdate: "interactionClosed", interactionId }));
+          queueMicrotask(() => deliver(id, { kind: "interactionClosed", interactionId }));
         },
       });
     },

@@ -183,7 +183,7 @@ pub enum Preview {
 /// One block that a frontend shows for a result. The model never sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DisplayBlock {
     /// Markdown text. A relative file link starts in the folder of the call, and `#L40` or `#L40-L52` names lines.
     Markdown {

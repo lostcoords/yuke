@@ -15,7 +15,7 @@ const plain =
 /** The update that accepts the waiting message `text` of the user as the input `id`. */
 function waiting(id: number, text: string): SessionUpdate {
   return {
-    sessionUpdate: "inputAccepted",
+    kind: "inputAccepted",
     inputId: id,
     input: { source: { kind: "user" }, kind: "message", content: [{ kind: "userText", text: text }] },
   };
@@ -197,7 +197,7 @@ test("a view above sits directly above the working row", async () => {
   chat.chat.addComposerView("above", plain("view row"));
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.draw();
   const shown = rows(frame.frame);
   const at = shown.indexOf("view row");
@@ -341,7 +341,7 @@ test("a tall question stays above the rule below the composer, with the caret on
   const question = Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n");
   const options = [{ label: "Yes" }];
   sessions.push({
-    sessionUpdate: "interactionRequested",
+    kind: "interactionRequested",
     interactionId: 1,
     source: "guard",
     request: { kind: "questions", questions: [{ id: "q", header: "Q", question, options, other: true }] },

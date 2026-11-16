@@ -256,7 +256,7 @@ impl Role {
 }
 
 /// One block of the context. Its kind fixes its role ([`Block::role`]), so it holds only content of that role.
-/// The serializer groups the blocks into the messages of each protocol.
+/// yuke groups the blocks into the messages of each provider protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -363,7 +363,7 @@ impl TextPhase {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
 pub struct Media {
-    /// The bytes in the caller's store. The encoder reads them through [`Request::blobs`] only when it writes the
+    /// The bytes in the store of the session. A request reads them ([`Request::blobs`]) only when it sends the
     /// element.
     pub blob: Blob,
     /// The IANA media type, such as `image/png` or `application/pdf`.
@@ -412,7 +412,7 @@ impl Media {
 pub struct Reasoning {
     /// The reasoning text.
     pub text: String,
-    /// `None` for text alone: a block that never finished, or one whose provider sent no state.
+    /// Absent for text alone: a block that never finished, or one whose provider sent no state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<ReasoningReplay>,
 }

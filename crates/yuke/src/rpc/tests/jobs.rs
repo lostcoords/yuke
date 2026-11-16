@@ -25,10 +25,10 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
     loop {
         let message = client.next().await;
         let update = &message["params"]["update"];
-        if update["sessionUpdate"] == "inputAccepted" && update["input"]["source"]["name"] == "host:jobs" {
+        if update["kind"] == "inputAccepted" && update["input"]["source"]["name"] == "host:jobs" {
             job_input = Some((messages.len(), update["inputId"].clone(), update["input"].clone()));
         } else if let Some((_, id, _)) = &job_input
-            && update["sessionUpdate"] == "commit"
+            && update["kind"] == "commit"
             && update["consumed"]
                 .as_array()
                 .unwrap()
@@ -45,7 +45,7 @@ async fn a_background_job_tells_its_start_and_end_then_sends_an_input_that_the_m
     let (input_index, _, job_input) = job_input.unwrap();
     let jobs: Vec<&Value> = messages[..input_index]
         .iter()
-        .filter(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .filter(|message| message["params"]["update"]["kind"] == "job")
         .map(|message| &message["params"]["update"]["job"])
         .collect();
     // The start and the end update come before the report.
@@ -153,7 +153,7 @@ async fn after_a_folder_change_the_tools_work_in_the_new_folder_and_stop_the_old
     let mut settings = settings(&place);
     settings["sessionId"] = session.clone();
     settings["cwd"] = json!(other);
-    client.call("session/set_settings", settings).await.unwrap();
+    client.call("session/setSettings", settings).await.unwrap();
     transport.push(tool_reply(&[("c2", "stop", &json!({ "id": job }).to_string())]));
     transport.push(tool_reply(&[("c3", "exec", r#"{"command":"pwd"}"#)]));
     transport.push(text_reply("stopped"));
@@ -348,7 +348,7 @@ async fn a_reload_stops_a_plugin_job() {
 
     let ended = reloaded
         .iter()
-        .find(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .find(|message| message["params"]["update"]["kind"] == "job")
         .map(|message| &message["params"]["update"]["job"]);
     assert_eq!(
         ended.map(|job| (&job["id"], &job["state"])),
@@ -389,7 +389,7 @@ async fn a_background_request_moves_the_running_command_and_the_turn_goes_on() {
 
     let job = messages
         .iter()
-        .find(|message| message["params"]["update"]["sessionUpdate"] == "job")
+        .find(|message| message["params"]["update"]["kind"] == "job")
         .map(|message| &message["params"]["update"]["job"]);
     assert_eq!(job.map(|job| &job["state"]), Some(&json!("running")));
     let bodies = transport.requests();

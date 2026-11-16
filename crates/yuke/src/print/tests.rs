@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::time::Instant;
+use yuke_protocol::StateUpdate;
 
 use yuke_agent::{Access, EventPage, Store};
 use yuke_ai::transport::{BoxBody, BoxFuture, Fault, Head, Outgoing, Transport};
@@ -539,7 +540,7 @@ async fn a_level_or_a_model_on_a_continued_session_saves_new_settings() {
         .iter()
         .filter_map(|stored| match &stored.event {
             SessionEvent::Settings(settings) => Some(settings),
-            SessionEvent::Commit { .. } => None,
+            SessionEvent::Commit(..) => None,
         })
         .collect();
     let minimax_m3 = ModelReference {
@@ -880,9 +881,9 @@ fn the_end_of_another_session_does_not_end_the_run() {
     let idle = |session_id| {
         ServerNotification::SessionUpdate(Box::new(SessionUpdateParams {
             session_id,
-            update: SessionUpdate::Live(LiveUpdate::State {
+            update: SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                 state: SessionState::Idle,
-            }),
+            })),
         }))
     };
 

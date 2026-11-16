@@ -6,13 +6,13 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-
 use yuke_protocol::{
     ApplyPluginsParams, ApplyPluginsResult, CheckPluginsParams, CheckPluginsResult, EventNumber, Input, InputId,
-    InputKind, InputSource, InteractionId, InteractionResponse, Job, ListCatalogResult, ListPluginsResult,
-    ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId, LoginOutcome, LoginResult, McpServer, ModelReference,
-    SessionId, SessionRow, SessionSettings, SessionSnapshot, SessionState, SessionTitle, SessionUpdate,
-    SetApiKeyParams, StoredEvent, SyncPluginsParams, SyncPluginsResult,
+    InputKind, InputRemoved, InputSource, InteractionClosed, InteractionId, InteractionRequested, InteractionResponse,
+    Job, JobUpdate, ListCatalogResult, ListPluginsResult, ListSessionsParams, ListSessionsResult, LiveUpdate, LoginId,
+    LoginOutcome, LoginResult, McpServer, ModelReference, SessionId, SessionRow, SessionSettings, SessionSnapshot,
+    SessionState, SessionTitle, SessionUpdate, SetApiKeyParams, StateUpdate, StoredEvent, SyncPluginsParams,
+    SyncPluginsResult,
 };
 
 use super::{evaluate, folder, load_entry, options, write};
@@ -97,7 +97,7 @@ impl crate::SessionHost for Scripted {
     }
     fn job_changed(&self, job: Job) {
         if job.state != yuke_protocol::JobState::Ended {
-            self.publish_before_reply(SessionUpdate::Live(LiveUpdate::Job { job }));
+            self.publish_before_reply(SessionUpdate::Live(LiveUpdate::Job(JobUpdate { job })));
         }
     }
     async fn accept_input(&self, _: Input) {}
@@ -110,15 +110,17 @@ impl crate::SessionHost for Scripted {
         let sink = self.facts.borrow().as_ref().unwrap().clone();
         sink(Fact::Update {
             session_id: session(),
-            update: Box::new(SessionUpdate::Live(LiveUpdate::InteractionRequested {
-                interaction_id: InteractionId(4),
-                source: source.to_owned(),
-                request,
-            })),
+            update: Box::new(SessionUpdate::Live(LiveUpdate::InteractionRequested(
+                InteractionRequested {
+                    interaction_id: InteractionId(4),
+                    source: source.to_owned(),
+                    request,
+                },
+            ))),
         });
-        self.publish_before_reply(SessionUpdate::Live(LiveUpdate::InteractionClosed {
+        self.publish_before_reply(SessionUpdate::Live(LiveUpdate::InteractionClosed(InteractionClosed {
             interaction_id: InteractionId(4),
-        }));
+        })));
         InteractionResponse::Questions { answers: Vec::new() }
     }
     async fn request(
@@ -149,7 +151,7 @@ fn settings() -> SessionSettings {
 }
 
 fn state(state: SessionState) -> SessionUpdate {
-    SessionUpdate::Live(LiveUpdate::State { state })
+    SessionUpdate::Live(LiveUpdate::State(StateUpdate { state }))
 }
 
 fn session() -> SessionId {
@@ -223,7 +225,7 @@ impl Sessions for Scripted {
         if self.follow_up_on_cancel.replace(false) {
             self.send(
                 0,
-                SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(9) }),
+                SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id: InputId(9) })),
             );
         } else {
             self.record(format!("cancel {id}"));
@@ -466,7 +468,7 @@ async fn idle_delivers_prior_events_when_a_listener_calls_the_host() {
                recursed ||= delivering;
                delivering = true;
                if (event.kind === 'update') {{
-                 updates.push(event.update.sessionUpdate === 'state' ? event.update.state : 'follow-up');
+                 updates.push(event.update.kind === 'state' ? event.update.state : 'follow-up');
                  if (!called) {{ called = true; handle.cancel(); }}
                }}
                delivering = false;
@@ -850,7 +852,7 @@ async fn ask_delivers_host_events_before_its_reply() {
 
     let delivered = evaluate::<Vec<String>>(
         &runtime,
-        "context.addListener('session.update', data => seen.push(data.update.sessionUpdate));
+        "context.addListener('session.update', data => seen.push(data.update.kind));
          const answer = await session.ask({ questions: [{ id: 'choice', header: 'Choice', question: 'Which?', options: [] }] });
          seen.push(`reply ${answer.length}`);
          return seen;",
@@ -893,8 +895,8 @@ async fn start_job_delivers_host_events_before_its_reply() {
     let delivered = evaluate::<Vec<String>>(
         &runtime,
         "context.addListener('session.update', data => {
-           if (data.update.sessionUpdate !== 'job' || data.update.job.state === 'running') {
-             seen.push(data.update.sessionUpdate);
+           if (data.update.kind !== 'job' || data.update.job.state === 'running') {
+             seen.push(data.update.kind);
            }
          });
          await call.startJob('true', undefined);
@@ -939,8 +941,8 @@ async fn stop_job_delivers_host_events_before_its_reply() {
         &runtime,
         "let recording = false;
          context.addListener('session.update', data => {
-           if (recording && (data.update.sessionUpdate !== 'job' || data.update.job.state === 'stopped')) {
-             seen.push(data.update.sessionUpdate);
+           if (recording && (data.update.kind !== 'job' || data.update.job.state === 'stopped')) {
+             seen.push(data.update.kind);
            }
          });
          // The events of the start arrive before its reply, so the record holds only the events of the stop.

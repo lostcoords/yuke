@@ -4,7 +4,7 @@ use super::*;
 
 fn mcp_state(message: &Value, name: &str, state: &str) -> bool {
     let update = &message["params"]["update"];
-    update["sessionUpdate"] == "mcpServer" && update["name"] == name && update["state"] == state
+    update["kind"] == "mcpServer" && update["name"] == name && update["state"]["kind"] == state
 }
 
 // A server of the user config starts with the session: its state reaches the client, its tool reaches the model, and
@@ -41,22 +41,22 @@ async fn a_user_mcp_server_gives_its_tool_to_the_model_and_its_state_to_the_clie
     let loaded = client.load(&session, json!({})).await;
 
     let servers = json!([
-        { "name": "off", "source": "user", "state": "disabled" },
-        { "name": "sh", "source": "user", "state": "connected", "tools": 1 },
+        { "name": "off", "source": "user", "state": { "kind": "disabled" } },
+        { "name": "sh", "source": "user", "state": { "kind": "connected", "tools": 1 } },
     ]);
     assert_eq!(listed, json!({ "servers": servers }));
     let replayed: Vec<Value> = loaded
         .messages
         .iter()
         .map(|message| &message["params"]["update"])
-        .filter(|update| update["sessionUpdate"] == "mcpServer")
-        .map(|update| json!({ "name": update["name"], "state": update["state"], "tools": update["tools"] }))
+        .filter(|update| update["kind"] == "mcpServer")
+        .map(|update| json!({ "name": update["name"], "state": update["state"] }))
         .collect();
     assert_eq!(
         replayed,
         [
-            json!({ "name": "off", "state": "disabled", "tools": null }),
-            json!({ "name": "sh", "state": "connected", "tools": 1 }),
+            json!({ "name": "off", "state": { "kind": "disabled" } }),
+            json!({ "name": "sh", "state": { "kind": "connected", "tools": 1 } }),
         ]
     );
     assert!(
@@ -180,7 +180,7 @@ async fn a_no_leaves_a_project_mcp_server_untrusted_and_the_next_session_asks_ag
 
     assert_eq!(
         listed,
-        json!({ "servers": [{ "name": "proj", "source": "project", "state": "untrusted" }] })
+        json!({ "servers": [{ "name": "proj", "source": "project", "state": { "kind": "untrusted" } }] })
     );
     let text = asked_again["request"]["questions"][0]["question"].as_str().unwrap();
     assert!(text.starts_with("Start the MCP servers of this project?\n"), "{text}");

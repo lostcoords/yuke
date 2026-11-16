@@ -3,13 +3,13 @@
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::sync::Arc;
+use yuke_protocol::{
+    CommitEvent, ConsumedInput, EventNumber, Input, InputRemoved, InputSource, LiveUpdate, SessionEvent, SessionId,
+    SessionSettings, SessionUpdate, StoredEvent,
+};
 
 use async_trait::async_trait;
 use yuke_engine::{CancellationToken, Commit, Driver, Inbox, Journal, Outcome, RoundError, TurnEnd, TurnError};
-use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputSource, LiveUpdate, SessionEvent, SessionId, SessionSettings,
-    SessionUpdate, StoredEvent,
-};
 
 use crate::input_hook::{InputDecision, InputHook, NoInputHook};
 use crate::store::{Access, Lease, NewestTurn, Opened, Store, StoreError};
@@ -152,7 +152,9 @@ impl TurnInputs<'_> {
                     match self.store.remove_input(self.id, input.id).await {
                         Ok(()) => {
                             if let Some(observer) = self.observer {
-                                observer.update(SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: input.id }));
+                                observer.update(SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved {
+                                    input_id: input.id,
+                                })));
                             }
                         }
                         // A client removed the input during the hook, and that removal sent its update.
@@ -377,10 +379,10 @@ async fn open_and_end_turn(
     opened.newest_turn = NewestTurn::Ended(end);
     let event = StoredEvent {
         event_number,
-        event: SessionEvent::Commit {
+        event: SessionEvent::Commit(CommitEvent {
             commit: repair,
             consumed: Vec::new(),
-        },
+        }),
     };
     Ok((opened, Some(event)))
 }

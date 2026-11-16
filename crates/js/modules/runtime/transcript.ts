@@ -144,7 +144,7 @@ export class Transcript {
     if (added.length === 0) return;
     // A commit of a gap can consume an input that waits.
     for (const event of added)
-      if (event.sessionUpdate === "commit") for (const input of event.consumed) this.pending.delete(input.id);
+      if (event.kind === "commit") for (const input of event.consumed) this.pending.delete(input.id);
     this.#refold([...this.#saved, ...added].sort((a, b) => a.seq - b.seq));
   }
 
@@ -184,7 +184,7 @@ export class Transcript {
         this.#missingEvents ??= { before: update.seq, limit: update.seq - last - 1 };
       }
       this.#saved.push(update);
-      if (update.sessionUpdate === "settings") {
+      if (update.kind === "settings") {
         this.#settings = { model: update.model, settings: update.settings, cwd: update.cwd };
         return;
       }
@@ -194,7 +194,7 @@ export class Transcript {
       this.#fold(update);
       return;
     }
-    switch (update.sessionUpdate) {
+    switch (update.kind) {
       case "state":
         this.#state = update.state;
         break;
@@ -299,8 +299,8 @@ export class Transcript {
       case "toolFinished": {
         const entry = this.#at(`${update.position.eventNumber}:${update.position.blockIndex}`);
         if (entry?.kind !== "tool" || entry.status === "done") break;
-        if (update.sessionUpdate === "toolStarted") this.#set({ ...entry, status: "running", startedAt: Date.now() });
-        else if (update.sessionUpdate === "toolOutput") this.#set({ ...entry, output: entry.output + update.text });
+        if (update.kind === "toolStarted") this.#set({ ...entry, status: "running", startedAt: Date.now() });
+        else if (update.kind === "toolOutput") this.#set({ ...entry, output: entry.output + update.text });
         else {
           const display = update.display.length === 0 ? NO_DISPLAY : update.display;
           const durationMs = update.durationMs;
@@ -313,7 +313,7 @@ export class Transcript {
 
   /** Add the entries of the saved event `event`. The snapshot and the live settings events give the settings. */
   #fold(event: Saved): void {
-    if (event.sessionUpdate === "settings") return;
+    if (event.kind === "settings") return;
     const commit = event.commit;
     // A replaced context makes the counts of the earlier answer stale, until the next answer.
     if (commit.replaced !== undefined) this.#usage = undefined;

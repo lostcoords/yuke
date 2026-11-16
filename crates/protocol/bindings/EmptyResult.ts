@@ -3,4 +3,4 @@
 /**
  * The result of a request with no data: an empty object.
  */
-export type EmptyResult = Record<symbol, never>;
+export type EmptyResult = Record<string, never>;

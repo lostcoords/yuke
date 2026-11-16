@@ -1,11 +1,13 @@
 //! The session boundary between engine facts and saved event positions.
 
 use std::cell::RefCell;
+use yuke_protocol::{
+    BlockPosition, CommitEvent, DraftCommitted, DraftDiscardReason, DraftDiscarded, DraftId, DraftModelUpdate,
+    DraftStarted, EventNumber, LiveUpdate, ModelUpdate, RetryScheduled, RoundFailed, SessionUpdate, StoredEvent,
+    ToolFinished, ToolOutput, ToolStarted,
+};
 
 use yuke_engine::{Commit, Observer, TurnEvent, chain_text};
-use yuke_protocol::{
-    BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionUpdate, StoredEvent,
-};
 
 /// Receives typed session updates without a wait. RPC and in-process clients use the same facts.
 /// A callback must not block. The caller owns delivery queues and serialization.
@@ -58,10 +60,10 @@ impl<'a> Updates<'a> {
     fn discard(&self, reason: DraftDiscardReason) {
         let draft = self.state.borrow_mut().draft.take();
         if let Some(draft) = draft {
-            self.live(LiveUpdate::DraftDiscarded {
+            self.live(LiveUpdate::DraftDiscarded(DraftDiscarded {
                 draft_id: draft.id,
                 reason,
-            });
+            }));
         }
     }
 
@@ -90,17 +92,17 @@ impl<'a> Updates<'a> {
         };
         self.emit(SessionUpdate::Saved(StoredEvent {
             event_number,
-            event: yuke_protocol::SessionEvent::Commit {
+            event: yuke_protocol::SessionEvent::Commit(CommitEvent {
                 commit: commit.clone().into_owned(),
                 consumed,
-            },
+            }),
         }));
         if let Some(draft) = draft {
-            self.live(LiveUpdate::DraftCommitted {
+            self.live(LiveUpdate::DraftCommitted(DraftCommitted {
                 draft_id: draft.id,
                 event_number,
                 blocks: draft.blocks,
-            });
+            }));
         }
     }
 
@@ -132,7 +134,7 @@ impl Observer for Updates<'_> {
                     id: draft_id,
                     blocks: Vec::new(),
                 });
-                self.live(LiveUpdate::DraftStarted { draft_id });
+                self.live(LiveUpdate::DraftStarted(DraftStarted { draft_id }));
             }
             TurnEvent::ResponseFailed(_) => self.discard(DraftDiscardReason::Failed),
             TurnEvent::ResponseCancelled { blocks } => {
@@ -151,38 +153,38 @@ impl Observer for Updates<'_> {
                     }
                     draft.id
                 };
-                self.live(LiveUpdate::Model {
+                self.live(LiveUpdate::Model(DraftModelUpdate {
                     draft_id,
                     event: ModelUpdate::from_event(*event),
-                });
+                }));
             }
-            TurnEvent::ToolStarted { block_index, call } => self.live(LiveUpdate::ToolStarted {
+            TurnEvent::ToolStarted { block_index, call } => self.live(LiveUpdate::ToolStarted(ToolStarted {
                 position: self.position(*block_index),
                 call: (*call).clone(),
-            }),
-            TurnEvent::ToolOutput { block_index, text } => self.live(LiveUpdate::ToolOutput {
+            })),
+            TurnEvent::ToolOutput { block_index, text } => self.live(LiveUpdate::ToolOutput(ToolOutput {
                 position: self.position(*block_index),
                 text: (*text).to_owned(),
-            }),
+            })),
             TurnEvent::ToolFinished {
                 block_index,
                 result,
                 display,
                 duration,
-            } => self.live(LiveUpdate::ToolFinished {
+            } => self.live(LiveUpdate::ToolFinished(ToolFinished {
                 position: self.position(*block_index),
                 result: (*result).clone(),
                 display: display.to_vec(),
                 duration_ms: duration.map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
-            }),
-            TurnEvent::RetryScheduled { after, error } => self.live(LiveUpdate::RetryScheduled {
+            })),
+            TurnEvent::RetryScheduled { after, error } => self.live(LiveUpdate::RetryScheduled(RetryScheduled {
                 after_ms: u64::try_from(after.as_millis()).unwrap_or(u64::MAX),
                 error: error.to_string(),
-            }),
+            })),
             // The saved end of a failed turn keeps each cause, so the live text keeps them too.
-            TurnEvent::RoundFailed(error) => self.live(LiveUpdate::RoundFailed {
+            TurnEvent::RoundFailed(error) => self.live(LiveUpdate::RoundFailed(RoundFailed {
                 error: chain_text(error),
-            }),
+            })),
         }
     }
 }

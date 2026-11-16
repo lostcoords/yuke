@@ -3,4 +3,4 @@
 /**
  * The params of a request with no data: an empty object.
  */
-export type EmptyParams = Record<symbol, never>;
+export type EmptyParams = Record<string, never>;

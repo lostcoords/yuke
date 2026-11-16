@@ -27,7 +27,7 @@ export const settings: SessionSettings = {
 export function commit(seq: number, fields: Partial<Commit>, consumed: ConsumedInput[] = []): StoredEvent {
   return {
     seq,
-    sessionUpdate: "commit",
+    kind: "commit",
     commit: { blocks: [], ...fields },
     consumed,
   };
@@ -40,7 +40,7 @@ export function answer(finishReason: FinishReason): Answer {
 
 /** The live update `event` of the draft `draftId`. */
 export function model(draftId: DraftId, event: ModelUpdate): LiveUpdate {
-  return { sessionUpdate: "model", draftId, event };
+  return { kind: "model", draftId, event };
 }
 
 /** A transcript after a snapshot with `updates`. */

@@ -3,18 +3,20 @@
 #![expect(clippy::unwrap_used, clippy::panic, reason = "a test fails by panicking")]
 
 use std::borrow::Cow;
+use yuke_protocol::{
+    BlockStarted, ClientNotification, ClientRequest, CommitEvent, ConsumedInput, DraftCommitted, DraftModelUpdate,
+    DraftStarted, EventNumber, ExtensionCancelParams, ExtensionEventParams, ExtensionRequestParams, Input,
+    InputAccepted, InputError, InputId, InputKind, InputRemoved, InputSource, JobId, JobKind, JobState, JobUpdate,
+    ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
+    NoticeParams, Notification, ReasoningLevel, Request, Response, ServerNotification, ServerRequest, SessionEvent,
+    SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StateUpdate, StoredEvent, TextDelta,
+    ToolOutput,
+};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use yuke_engine::{Commit, CommitDisplay, TurnEnd};
-use yuke_protocol::{
-    ClientNotification, ClientRequest, ConsumedInput, EventNumber, ExtensionCancelParams, ExtensionEventParams,
-    ExtensionRequestParams, Input, InputError, InputId, InputKind, InputSource, JobId, JobKind, JobState,
-    ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
-    NoticeParams, Notification, ReasoningLevel, Request, Response, ServerNotification, ServerRequest, SessionEvent,
-    SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StoredEvent,
-};
 
 const SESSION: &str = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9d";
 
@@ -124,7 +126,7 @@ fn each_request_reads_and_writes_its_json() {
             ),
         ),
         (
-            json!({ "jsonrpc": "2.0", "id": 6, "method": "session/remove_input", "params": {
+            json!({ "jsonrpc": "2.0", "id": 6, "method": "session/removeInput", "params": {
                 "sessionId": SESSION, "inputId": 3
             } }),
             request(
@@ -152,7 +154,7 @@ fn each_request_reads_and_writes_its_json() {
     let mut set_settings = settings_json();
     set_settings["sessionId"] = json!(SESSION);
     assert_json(
-        &json!({ "jsonrpc": "2.0", "id": "five", "method": "session/set_settings", "params": set_settings }),
+        &json!({ "jsonrpc": "2.0", "id": "five", "method": "session/setSettings", "params": set_settings }),
         &Request {
             jsonrpc: yuke_protocol::JsonRpc::V2,
             id: yuke_protocol::RequestId::Text("five".to_owned()),
@@ -313,18 +315,20 @@ fn an_accepted_input_reads_and_writes_its_json_with_its_model_content_only_when_
         .clone()
         .with_model_content(vec![yuke_ai::Block::user_text("Review main.rs, and read it first.")])
         .unwrap();
-    let accepted = |id, input| LiveUpdate::InputAccepted {
-        input_id: InputId(id),
-        input,
+    let accepted = |id, input| {
+        LiveUpdate::InputAccepted(InputAccepted {
+            input_id: InputId(id),
+            input,
+        })
     };
 
     assert_json(
-        &json!({ "sessionUpdate": "inputAccepted", "inputId": 1,
+        &json!({ "kind": "inputAccepted", "inputId": 1,
             "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "kind": "userText", "text": "Review @main.rs" }] } }),
         &accepted(1, same),
     );
     assert_json(
-        &json!({ "sessionUpdate": "inputAccepted", "inputId": 2,
+        &json!({ "kind": "inputAccepted", "inputId": 2,
             "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "kind": "userText", "text": "Review @main.rs" }],
               "modelContent": [{ "kind": "userText", "text": "Review main.rs, and read it first." }] } }),
         &accepted(2, other),
@@ -387,31 +391,31 @@ fn queue_updates_and_an_empty_result_read_and_write_their_json() {
 
     assert_json(
         &json!({ "sessionId": SESSION, "update": {
-            "sessionUpdate": "inputAccepted", "inputId": 3,
+            "kind": "inputAccepted", "inputId": 3,
             "input": { "source": { "kind": "user" }, "kind": "message", "content": [{ "kind": "userText", "text": "run npm ci" }] }
         } }),
         &SessionUpdateParams {
             session_id: session(),
-            update: SessionUpdate::Live(LiveUpdate::InputAccepted {
+            update: SessionUpdate::Live(LiveUpdate::InputAccepted(InputAccepted {
                 input_id: InputId(3),
                 input,
-            }),
+            })),
         },
     );
     assert_json(
-        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "state", "state": "idle" } }),
+        &json!({ "sessionId": SESSION, "update": { "kind": "state", "state": "idle" } }),
         &SessionUpdateParams {
             session_id: session(),
-            update: SessionUpdate::Live(LiveUpdate::State {
+            update: SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                 state: yuke_protocol::SessionState::Idle,
-            }),
+            })),
         },
     );
     assert_json(
-        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "inputRemoved", "inputId": 3 } }),
+        &json!({ "sessionId": SESSION, "update": { "kind": "inputRemoved", "inputId": 3 } }),
         &SessionUpdateParams {
             session_id: session(),
-            update: SessionUpdate::Live(LiveUpdate::InputRemoved { input_id: InputId(3) }),
+            update: SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id: InputId(3) })),
         },
     );
     assert_json(&json!({}), &yuke_protocol::EmptyResult {});
@@ -461,25 +465,25 @@ fn process_job(state: JobState, exit_code: Option<i32>) -> yuke_protocol::Job {
 fn a_job_update_holds_the_whole_job_and_its_end() {
     let update = |job| SessionUpdateParams {
         session_id: session(),
-        update: SessionUpdate::Live(LiveUpdate::Job { job }),
+        update: SessionUpdate::Live(LiveUpdate::Job(JobUpdate { job })),
     };
 
     assert_json(
-        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+        &json!({ "sessionId": SESSION, "update": { "kind": "job", "job": {
             "id": "job-1a2b", "label": "sleep 30", "state": "ended",
             "kind": "process", "command": "sleep 30", "log": "/tmp/job-1a2b.log", "exitCode": 0
         } } }),
         &update(process_job(JobState::Ended, Some(0))),
     );
     assert_json(
-        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+        &json!({ "sessionId": SESSION, "update": { "kind": "job", "job": {
             "id": "job-1a2b", "label": "sleep 30", "state": "stopped",
             "kind": "process", "command": "sleep 30", "log": "/tmp/job-1a2b.log"
         } } }),
         &update(process_job(JobState::Stopped, None)),
     );
     assert_json(
-        &json!({ "sessionId": SESSION, "update": { "sessionUpdate": "job", "job": {
+        &json!({ "sessionId": SESSION, "update": { "kind": "job", "job": {
             "id": "explorer", "label": "explore the store", "state": "running",
             "kind": "plugin", "plugin": "agents"
         } } }),
@@ -504,19 +508,17 @@ fn an_mcp_server_update_and_the_server_list_read_and_write_their_json() {
 
     assert_json(
         &json!({ "sessionId": SESSION, "update": {
-            "sessionUpdate": "mcpServer", "name": "git", "source": "project", "state": "connected", "tools": 3
+            "kind": "mcpServer", "name": "git", "source": "project", "state": { "kind": "connected", "tools": 3 }
         } }),
         &SessionUpdateParams {
             session_id: session(),
-            update: SessionUpdate::Live(LiveUpdate::McpServer {
-                server: server(McpServerState::Connected { tools: 3 }),
-            }),
+            update: SessionUpdate::Live(LiveUpdate::McpServer(server(McpServerState::Connected { tools: 3 }))),
         },
     );
     assert_json(
         &json!({ "servers": [
-            { "name": "git", "source": "project", "state": "failed", "error": "the server stopped" },
-            { "name": "git", "source": "project", "state": "untrusted" },
+            { "name": "git", "source": "project", "state": { "kind": "failed", "error": "the server stopped" } },
+            { "name": "git", "source": "project", "state": { "kind": "untrusted" } },
         ] }),
         &ListMcpServersResult {
             servers: vec![
@@ -622,7 +624,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
     let blocks = [yuke_ai::Block::user_text("job-7 ended with exit code 0.")];
     let commit = StoredEvent {
         event_number: EventNumber(3),
-        event: SessionEvent::Commit {
+        event: SessionEvent::Commit(CommitEvent {
             commit: Commit {
                 replaced: None,
                 blocks: Cow::Borrowed(&blocks),
@@ -640,12 +642,12 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
                 display_content: Some(vec![yuke_ai::Block::user_text("job-7 finished")]),
                 block_count: 1,
             }],
-        },
+        }),
     };
     assert_json(
         &json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
             "sessionId": SESSION, "update": {
-                "seq": 3, "sessionUpdate": "commit",
+                "seq": 3, "kind": "commit",
                 "commit": { "blocks": [{ "kind": "userText", "text": "job-7 ended with exit code 0." }],
                             "end": { "kind": "cancelled" } },
                 "consumed": [{
@@ -665,7 +667,7 @@ fn cancel_and_update_notifications_read_and_write_their_json() {
 
     let mut saved_settings = settings_json();
     saved_settings["seq"] = json!(1);
-    saved_settings["sessionUpdate"] = json!("settings");
+    saved_settings["kind"] = json!("settings");
     assert_json(
         &json!({ "sessionId": SESSION, "update": saved_settings }),
         &SessionUpdateParams {
@@ -683,54 +685,51 @@ fn live_updates_preserve_draft_and_execution_identity_in_json() {
     let draft = "0192f0c1-7d4e-7a3b-9c2d-1e5f6a7b8c9e";
     let draft_id = serde_json::from_value(json!(draft)).unwrap();
     let cases = [
+        (json!({ "kind": "turnUnconfirmed" }), LiveUpdate::TurnUnconfirmed),
         (
-            json!({ "sessionUpdate": "turnUnconfirmed" }),
-            LiveUpdate::TurnUnconfirmed,
+            json!({ "kind": "draftStarted", "draftId": draft }),
+            LiveUpdate::DraftStarted(DraftStarted { draft_id }),
         ),
         (
-            json!({ "sessionUpdate": "draftStarted", "draftId": draft }),
-            LiveUpdate::DraftStarted { draft_id },
-        ),
-        (
-            json!({ "sessionUpdate": "model", "draftId": draft,
+            json!({ "kind": "model", "draftId": draft,
                 "event": { "kind": "textDelta", "blockId": 2, "text": "Hello" } }),
-            LiveUpdate::Model {
+            LiveUpdate::Model(DraftModelUpdate {
                 draft_id,
-                event: yuke_protocol::ModelUpdate::TextDelta {
+                event: yuke_protocol::ModelUpdate::TextDelta(TextDelta {
                     block_id: 2,
                     text: "Hello".to_owned(),
-                },
-            },
+                }),
+            }),
         ),
         (
-            json!({ "sessionUpdate": "model", "draftId": draft,
+            json!({ "kind": "model", "draftId": draft,
                 "event": { "kind": "blockStarted", "blockId": 2, "content": { "kind": "toolCall", "name": "read" } } }),
-            LiveUpdate::Model {
+            LiveUpdate::Model(DraftModelUpdate {
                 draft_id,
-                event: yuke_protocol::ModelUpdate::BlockStarted {
+                event: yuke_protocol::ModelUpdate::BlockStarted(BlockStarted {
                     block_id: 2,
                     content: yuke_protocol::StartedBlock::ToolCall { name: "read".into() },
-                },
-            },
+                }),
+            }),
         ),
         (
-            json!({ "sessionUpdate": "draftCommitted", "draftId": draft,
+            json!({ "kind": "draftCommitted", "draftId": draft,
                 "eventNumber": 7, "blocks": [2, 5] }),
-            LiveUpdate::DraftCommitted {
+            LiveUpdate::DraftCommitted(DraftCommitted {
                 draft_id,
                 event_number: EventNumber(7),
                 blocks: vec![2, 5],
-            },
+            }),
         ),
         (
-            json!({ "sessionUpdate": "toolOutput", "position": { "eventNumber": 7, "blockIndex": 0 }, "text": "line" }),
-            LiveUpdate::ToolOutput {
+            json!({ "kind": "toolOutput", "position": { "eventNumber": 7, "blockIndex": 0 }, "text": "line" }),
+            LiveUpdate::ToolOutput(ToolOutput {
                 position: yuke_protocol::BlockPosition {
                     event_number: EventNumber(7),
                     block_index: 0,
                 },
                 text: "line".to_owned(),
-            },
+            }),
         ),
     ];
     for (json, update) in cases {

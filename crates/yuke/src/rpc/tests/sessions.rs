@@ -67,7 +67,7 @@ async fn the_model_reads_the_model_content_of_an_input_and_the_client_sees_its_c
     assert_eq!(empty["message"], "the model content of the input has no block");
     let accepted = messages
         .iter()
-        .find(|message| message["params"]["update"]["sessionUpdate"] == "inputAccepted")
+        .find(|message| message["params"]["update"]["kind"] == "inputAccepted")
         .unwrap();
     assert_eq!(accepted["params"]["update"]["input"]["content"], content);
     assert_eq!(accepted["params"]["update"]["input"]["modelContent"], model_content);
@@ -117,7 +117,7 @@ async fn a_running_session_refuses_new_settings_and_a_cancel_ends_its_turn() {
 
     let mut settings = settings(&place);
     settings["sessionId"] = session.clone();
-    let refused = client.call("session/set_settings", settings).await;
+    let refused = client.call("session/setSettings", settings).await;
     client.notify("session/cancel", json!({ "sessionId": session })).await;
     let messages = client.until(is_idle).await;
 
@@ -154,7 +154,7 @@ async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answe
     let params = json!({ "sessionId": session, "inputId": input });
     let mut messages = Vec::new();
     for _ in 0..2 {
-        let id = client.request("session/remove_input", params.clone()).await;
+        let id = client.request("session/removeInput", params.clone()).await;
         messages.extend(client.until(|message| message["id"] == json!(id)).await);
     }
     client.notify("session/cancel", json!({ "sessionId": session })).await;
@@ -164,7 +164,7 @@ async fn a_removal_of_a_waiting_input_answers_removed_and_a_second_removal_answe
     assert_eq!(results, [&json!({ "removed": true }), &json!({ "removed": false })]);
     let removed: Vec<&Value> = messages
         .iter()
-        .filter(|message| message["params"]["update"]["sessionUpdate"] == "inputRemoved")
+        .filter(|message| message["params"]["update"]["kind"] == "inputRemoved")
         .map(|message| &message["params"]["update"]["inputId"])
         .collect();
     assert_eq!(removed, [&input]);
@@ -199,7 +199,7 @@ async fn a_regular_file_is_no_folder_for_a_new_session_or_new_settings() {
     changed["cwd"] = json!(file);
 
     let created = client.call("session/new", new).await;
-    let refused = client.call("session/set_settings", changed).await;
+    let refused = client.call("session/setSettings", changed).await;
 
     for error in [created.unwrap_err(), refused.unwrap_err()] {
         assert_eq!(error["code"], json!(ResponseError::INVALID_PARAMS), "{error}");
@@ -363,7 +363,7 @@ async fn a_load_only_reads_and_waiting_input_blocks_new_settings() {
     let loaded = client.load(&json!(session), json!({})).await;
     let mut settings = settings(&place);
     settings["sessionId"] = json!(session);
-    let id = client.request("session/set_settings", settings).await;
+    let id = client.request("session/setSettings", settings).await;
     let refused = client.until(|message| message["id"] == json!(id)).await;
     let reloaded = client.load(&json!(session), json!({ "after": 1 })).await;
 
@@ -471,7 +471,7 @@ async fn a_plugin_sends_the_model_on_once_after_its_final_answer() {
         .messages
         .iter()
         .map(|message| &message["params"]["update"])
-        .filter(|update| update["sessionUpdate"] == "commit")
+        .filter(|update| update["kind"] == "commit")
         .collect();
     let ends: Vec<&Value> = commits.iter().map(|commit| &commit["commit"]["end"]).collect();
     assert_eq!(
@@ -540,7 +540,7 @@ async fn a_close_ends_the_turn_keeps_waiting_input_and_a_load_opens_the_session_
     client.request("session/input", input_params(&session, "first")).await;
     // The turn takes the waiting input when it starts, so the second input comes after its request.
     client
-        .until(|message| message["params"]["update"]["sessionUpdate"] == "draftStarted")
+        .until(|message| message["params"]["update"]["kind"] == "draftStarted")
         .await;
     client
         .call("session/input", input_params(&session, "second"))

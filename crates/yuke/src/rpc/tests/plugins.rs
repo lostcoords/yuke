@@ -37,7 +37,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     let source = json!({ "git": url, "folder": "plugins/clock" });
     assert_eq!(
         listed,
-        Ok(json!({ "plugins": [{ "source": source, "loaded": false, "state": "notLocked" }] }))
+        Ok(json!({ "plugins": [{ "source": source, "loaded": false, "state": { "kind": "notLocked" } }] }))
     );
     assert_eq!(synced["plugins"][0]["commit"], json!(commit));
     assert_eq!(synced["written"], json!(true));
@@ -45,7 +45,7 @@ async fn a_server_starts_without_a_missing_git_plugin_and_a_sync_and_a_reload_lo
     assert_eq!(
         loaded,
         Ok(
-            json!({ "plugins": [{ "source": source, "name": "clock", "loaded": true, "state": "installed", "commit": commit }] })
+            json!({ "plugins": [{ "source": source, "name": "clock", "loaded": true, "state": { "kind": "installed", "commit": commit } }] })
         )
     );
     client.end().await;
@@ -100,7 +100,7 @@ async fn plugin_add_writes_config_json_and_the_lock_and_plugin_remove_takes_both
         added,
         Ok(json!({ "name": "clock", "source": { "git": url, "folder": "plugins/clock" }, "commit": commit }))
     );
-    assert_eq!(listed["plugins"][0]["state"], json!("installed"));
+    assert_eq!(listed["plugins"][0]["state"]["kind"], json!("installed"));
     assert_eq!(removed, Ok(json!({})));
     assert!(config.contains("// mine"), "{config}");
     assert!(!config.contains("clock"), "{config}");

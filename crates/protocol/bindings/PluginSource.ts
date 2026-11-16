@@ -9,10 +9,10 @@ export type PluginSource = {
  */
 git: string, 
 /**
- * The plugin folder in the repository. None is the root.
+ * The plugin folder in the repository. Without it, the plugin is the root.
  */
 folder?: string, 
 /**
- * The branch, tag, or commit that an update follows. None is the default branch.
+ * The branch, tag, or commit that an update follows. Without it, an update follows the default branch.
  */
 ref?: string, };

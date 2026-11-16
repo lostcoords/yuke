@@ -7,7 +7,7 @@ import { rows } from "./rows.ts";
 
 const JOB: Job = { id: "j1", label: "npm run dev", state: "running", kind: "process", command: "npm", log: "/tmp/j" };
 const SUBAGENT: Job = { id: "j2", label: "Read", state: "running", kind: "plugin", plugin: "agents" };
-const RUNNING: SessionUpdate = { sessionUpdate: "state", state: "running" };
+const RUNNING: SessionUpdate = { kind: "state", state: "running" };
 const RESUME = "To resume this session, run: yuke -r s1";
 
 /** A chat pane on the session `s1` with the running jobs `jobs`. */
@@ -171,7 +171,7 @@ test("an idle read-only session warns while its parent runs a turn, and not afte
   assertEquals(screen(frame).join("\n").includes("1 turn is running."), true);
   frame.key("esc");
 
-  chat.fact("session.update", { sessionId: "p1", update: { sessionUpdate: "state", state: "idle" } });
+  chat.fact("session.update", { sessionId: "p1", update: { kind: "state", state: "idle" } });
   frame.key("ctrl+q");
   assertEquals(frame.quits, ["To resume this session, run: yuke -r p1"]);
 });
@@ -225,8 +225,8 @@ test("a job that ends and a turn that ends no longer count", async () => {
   const { frame, chat } = await opened([JOB]);
   using _frame = frame;
   chat.fact("session.update", { sessionId: "s1", update: RUNNING });
-  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "job", job: { ...JOB, state: "ended" } } });
-  chat.fact("session.update", { sessionId: "s1", update: { sessionUpdate: "state", state: "idle" } });
+  chat.fact("session.update", { sessionId: "s1", update: { kind: "job", job: { ...JOB, state: "ended" } } });
+  chat.fact("session.update", { sessionId: "s1", update: { kind: "state", state: "idle" } });
 
   frame.key("ctrl+q");
 

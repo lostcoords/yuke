@@ -115,12 +115,12 @@ test("a frame gets the view in the input area, the focus, and the state of the t
   await waitForSettled();
   frame.draw();
   assertEquals(seen.at(-1), "composer true false 1 s1");
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.draw();
   assertEquals(seen.at(-1), "composer true true 1 s1");
-  sessions.push({ sessionUpdate: "state", state: "idle" });
+  sessions.push({ kind: "state", state: "idle" });
   frame.draw();
-  sessions.push({ sessionUpdate: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION });
+  sessions.push({ kind: "interactionRequested", interactionId: 1, source: "guard", request: QUESTION });
   await waitForSettled();
   frame.draw();
   assertEquals(seen.at(-1), "question true false 0 s1");

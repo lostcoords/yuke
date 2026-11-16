@@ -292,9 +292,9 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
   ctx.addListener("session.update", ({ sessionId, update }) => {
     const entry = work.get(sessionId);
     if (entry === undefined) return;
-    if (update.sessionUpdate === "state") entry.turn = update.state === "running";
-    else if (update.sessionUpdate === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
-    else if (update.sessionUpdate === "job") entry.jobs.delete(update.job.id);
+    if (update.kind === "state") entry.turn = update.state === "running";
+    else if (update.kind === "job" && update.job.state === "running") entry.jobs.add(update.job.id);
+    else if (update.kind === "job") entry.jobs.delete(update.job.id);
   });
   ctx.addListener("session.closed", ({ sessionId }) => work.delete(sessionId));
   const chat: Chat = {

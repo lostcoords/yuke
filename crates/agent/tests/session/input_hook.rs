@@ -3,6 +3,7 @@
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
+use yuke_protocol::{InputRemoved, LiveUpdate, PendingInput, SessionId, SessionUpdate};
 
 use async_trait::async_trait;
 use yuke_agent::{InputDecision, InputHook, MemoryStore, Session, SessionError, SessionObserver, Store};
@@ -10,7 +11,6 @@ use yuke_ai::Block;
 use yuke_ai::scripted::{ScriptedTransport, Stalled, text_reply, tool_reply};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Driver, Outcome, Toolset, chain_text};
-use yuke_protocol::{LiveUpdate, PendingInput, SessionId, SessionUpdate};
 use yuke_testing::{assert_in_order, definition, model};
 
 use crate::support::{SendsInput, consumed_inputs, prompt, settings, user_input};
@@ -73,7 +73,7 @@ async fn a_removed_input_leaves_the_store_and_starts_no_turn() {
     assert_eq!(transport.requests(), Vec::<String>::new());
     assert_eq!(
         *observer.0.lock().unwrap(),
-        [SessionUpdate::Live(LiveUpdate::InputRemoved { input_id })]
+        [SessionUpdate::Live(LiveUpdate::InputRemoved(InputRemoved { input_id }))]
     );
 }
 

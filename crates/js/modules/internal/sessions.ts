@@ -214,7 +214,7 @@ export interface LoginInProgress {
   readonly waitForEnd: () => Promise<LoginOutcome>;
 }
 
-/** The credentials of the providers, for the bundled plugin `login`, as the requests `auth/login`, `auth/set_api_key`, and `auth/logout` do. */
+/** The credentials of the providers, for the bundled plugin `login`, as the requests `auth/login`, `auth/setApiKey`, and `auth/logout` do. */
 export interface Auth {
   /**
    * Start a device login of `provider`. A new login of the provider ends the login before it as `cancelled`.

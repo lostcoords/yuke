@@ -4,15 +4,15 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use yuke_protocol::{
+    CommitEvent, ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings,
+    SessionSummary, SessionTitle, StoredEvent,
+};
 
 use async_trait::async_trait;
 use yuke_engine::{Commit, TurnEnd};
 
 use crate::{PromptSection, lock};
-use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, SessionSummary,
-    SessionTitle, StoredEvent,
-};
 
 use crate::store::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, SessionPage, Store, StoreError, blob_of,
@@ -107,7 +107,7 @@ impl Saved {
     fn settings(&self) -> Option<&SessionSettings> {
         self.events.iter().rev().find_map(|stored| match &stored.event {
             SessionEvent::Settings(settings) => Some(settings),
-            SessionEvent::Commit { .. } => None,
+            SessionEvent::Commit(..) => None,
         })
     }
 
@@ -121,7 +121,7 @@ impl Saved {
         for stored in &self.events {
             match &stored.event {
                 SessionEvent::Settings(event_settings) => settings = Some(event_settings),
-                SessionEvent::Commit { commit, .. } => {
+                SessionEvent::Commit(CommitEvent { commit, .. }) => {
                     commit.apply(&mut context);
                     newest_turn = commit.end.clone().map_or(NewestTurn::Open, NewestTurn::Ended);
                     input_tokens = commit.input_tokens(input_tokens);
@@ -147,7 +147,7 @@ fn fork_cut(events: &[StoredEvent], through: Option<EventNumber>) -> Result<usiz
     let completed = |stored: &StoredEvent| {
         matches!(
             &stored.event,
-            SessionEvent::Commit { commit, .. }
+            SessionEvent::Commit(CommitEvent { commit, .. })
                 if matches!(commit.end, Some(TurnEnd::Completed { .. }))
         )
     };
@@ -166,7 +166,7 @@ fn fork_cut(events: &[StoredEvent], through: Option<EventNumber>) -> Result<usiz
             .or_else(|| {
                 events
                     .iter()
-                    .position(|stored| matches!(stored.event, SessionEvent::Commit { .. }))
+                    .position(|stored| matches!(stored.event, SessionEvent::Commit(..)))
             })
             .unwrap_or(events.len())),
     }
@@ -357,10 +357,10 @@ impl Store for MemoryStore {
             .pending
             .retain(|pending| !consumed.iter().any(|input| input.id == pending.id));
         let event_number = saved.push_event(
-            SessionEvent::Commit {
+            SessionEvent::Commit(CommitEvent {
                 commit: commit.clone().into_owned(),
                 consumed: consumed.to_vec(),
-            },
+            }),
             write,
         );
         Ok(event_number)

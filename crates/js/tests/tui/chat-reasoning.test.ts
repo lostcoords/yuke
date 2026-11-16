@@ -7,7 +7,7 @@ import { rows } from "./rows.ts";
 test("one thought opens and copies every adjacent reasoning block of a saved response", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions([
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [
       { kind: "reasoning", text: "first thought" },
       { kind: "reasoning", text: "second thought" },
@@ -45,32 +45,32 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
 
 test("adjacent empty reasoning blocks keep one working phase without drawing thought rows", async () => {
   using frame = createFrame({ width: 60, height: 14 }, undefined, { cwd: "/w", session: "s1" });
-  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
-  sessions.push({ sessionUpdate: "state", state: "running" });
-  sessions.push({ sessionUpdate: "draftStarted", draftId: "d" });
+  sessions.push({ kind: "state", state: "running" });
+  sessions.push({ kind: "draftStarted", draftId: "d" });
   sessions.push({
-    sessionUpdate: "model",
+    kind: "model",
     draftId: "d",
     event: { kind: "blockStarted", blockId: 0, content: { kind: "reasoning" } },
   });
   sessions.push({
-    sessionUpdate: "model",
+    kind: "model",
     draftId: "d",
     event: { kind: "blockStarted", blockId: 1, content: { kind: "reasoning" } },
   });
-  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 1, text: " \n\t" } });
+  sessions.push({ kind: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 1, text: " \n\t" } });
   frame.draw();
   assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [],
   );
   assert(rows(frame.frame).some((row) => row.includes("Reasoning…")));
-  sessions.push({ sessionUpdate: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 0, text: "first" } });
+  sessions.push({ kind: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 0, text: "first" } });
   sessions.push({
-    sessionUpdate: "model",
+    kind: "model",
     draftId: "d",
     event: { kind: "reasoningDelta", blockId: 1, text: "second" },
   });

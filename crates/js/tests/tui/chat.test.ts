@@ -93,10 +93,10 @@ test("two panes on one session hold their own handles, and a reload keeps the se
 test("each kind of entry draws its rows, and a click on a thought opens it", async () => {
   const user = { kind: "user" } as const;
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     {
       seq: 2,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: {
         blocks: [
           { kind: "userText", text: "fix the test" },
@@ -109,7 +109,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
     },
     {
       seq: 3,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: {
         blocks: [
           { kind: "userText", text: "build done" },
@@ -121,7 +121,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
     },
     {
       seq: 4,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: { replaced: { head: [], keep: 0 }, blocks: [], end: { kind: "stopped" } },
       consumed: [],
     },
@@ -130,7 +130,7 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   const sessions = fakeSessions(saved);
   await loadChat(frame, sessions);
   frame.start();
-  sessions.push({ sessionUpdate: "retryScheduled", afterMs: 2500, error: "overloaded" });
+  sessions.push({ kind: "retryScheduled", afterMs: 2500, error: "overloaded" });
   frame.draw();
   const before = transcriptRows(frame);
   // The blank rows between the entries are a layout choice, so the test reads only the rows with text.
@@ -270,12 +270,12 @@ test("a live event after a gap loads the missing events, and an unchanged entry 
 test("a notification from yuke shows its source without host:, and a plugin keeps its whole name", async () => {
   const notification = (seq: number, id: number, name: string, text: string): StoredEvent => ({
     seq,
-    sessionUpdate: "commit",
+    kind: "commit",
     commit: { blocks: [{ kind: "userText", text: text }] },
     consumed: [{ id, source: { kind: "plugin", name }, kind: "notification", blockCount: 1 }],
   });
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     notification(2, 1, "host:jobs", "make · exited 0"),
     notification(3, 2, "myhost:ci", "build done"),
   ];

@@ -86,20 +86,20 @@ pub struct ModelInfo {
     pub id: String,
     /// The display name.
     pub name: String,
-    /// The context window in tokens. None when the catalog does not know it.
+    /// The context window in tokens. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
-    /// The output limit in tokens. None when the catalog does not know it.
+    /// The output limit in tokens. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
     /// The reasoning choices of the model, each with the settings that a session sends for it.
     pub reasoning: Vec<ReasoningChoice>,
     /// The price bands in threshold order. The last band that the prompt reaches prices the whole request.
     pub cost: Vec<PriceBand>,
-    /// Whether the model calls tools. None when the catalog does not know it.
+    /// Whether the model calls tools. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<bool>,
-    /// Whether the model takes deferred tools. None when the catalog does not know it.
+    /// Whether the model takes deferred tools. It is absent when the catalog does not know it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_search: Option<bool>,
     /// The kinds of content that the model reads. Empty when the catalog does not know them.

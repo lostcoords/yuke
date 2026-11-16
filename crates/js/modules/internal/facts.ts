@@ -46,15 +46,15 @@ function track(fact: Fact): void {
     const session = open.get(fact.data.sessionId);
     const update = fact.data.update;
     if (session === undefined) return;
-    if (update.sessionUpdate === "state") session.state = update.state;
-    else if (update.sessionUpdate === "job") {
+    if (update.kind === "state") session.state = update.state;
+    else if (update.kind === "job") {
       const job = update.job;
       const known = session.jobs.some((entry) => entry.id === job.id);
       if (job.state !== "running") session.jobs = session.jobs.filter((entry) => entry.id !== job.id);
       else if (known) session.jobs = session.jobs.map((entry) => (entry.id === job.id ? job : entry));
       else session.jobs.push(job);
-    } else if (update.sessionUpdate === "interactionRequested") session.interactions.push(update.interactionId);
-    else if (update.sessionUpdate === "interactionClosed") {
+    } else if (update.kind === "interactionRequested") session.interactions.push(update.interactionId);
+    else if (update.kind === "interactionClosed") {
       session.interactions = session.interactions.filter((id) => id !== update.interactionId);
     }
   }

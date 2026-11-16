@@ -11,7 +11,7 @@ import { rows } from "./rows.ts";
 /** The update of the accepted input `id` with `content`, of the user, or a notification of the plugin `ci`. */
 function accepted(id: number, content: Block[], source: "user" | "plugin" = "user"): SessionUpdate {
   return {
-    sessionUpdate: "inputAccepted",
+    kind: "inputAccepted",
     inputId: id,
     input:
       source === "user"
@@ -309,7 +309,7 @@ test("up in an empty composer shows the older messages of the user, down past th
   const user = { kind: "user" } as const;
   const message = (seq: number, text: string, source: "user" | "plugin" = "user"): StoredEvent => ({
     seq,
-    sessionUpdate: "commit",
+    kind: "commit",
     commit: { blocks: [{ kind: "userText", text: text }] },
     consumed: [
       {
@@ -321,7 +321,7 @@ test("up in an empty composer shows the older messages of the user, down past th
     ],
   });
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     message(2, "one"),
     message(3, "two"),
     message(4, "build done", "plugin"),
@@ -351,7 +351,7 @@ test("up in an empty composer shows the older messages of the user, down past th
 
 test("ctrl+c clears the draft, then stops the turn, and esc drops the selection before it stops the turn", async () => {
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     commit(2, [{ kind: "assistantText", text: "hello" }]),
   ];
   using frame = createFrame({ width: 20, height: 6 }, undefined, { cwd: "/w", session: "s1" });
@@ -375,7 +375,7 @@ test("ctrl+c clears the draft, then stops the turn, and esc drops the selection 
 });
 
 test("page keys scroll the transcript, and a pane of one row keeps the composer", async () => {
-  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
+  const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (let seq = 2; seq <= 20; seq += 1) saved.push(commit(seq, [{ kind: "assistantText", text: `reply ${seq}` }]));
   using frame = createFrame({ width: 20, height: 9 }, undefined, { cwd: "/w", session: "s1" });
   const chat = await loadChat(frame, fakeSessions(saved));
@@ -393,10 +393,10 @@ test("page keys scroll the transcript, and a pane of one row keeps the composer"
 
 test("a refusal while the user browses the messages ends the browse, so down keeps the restored draft", async () => {
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     {
       seq: 2,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },
@@ -460,7 +460,7 @@ test("ctrl+k m in a new pane saves a new choice for the first send", async () =>
 
 test("ctrl+k m in a pane with a session changes its model and level and keeps its other settings", async () => {
   using frame = createFrame({ width: 30, height: 14 }, undefined, { cwd: "/w", session: "s1" });
-  const sessions = fakeSessions([{ seq: 1, sessionUpdate: "settings", ...SETTINGS }]);
+  const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   const chat = await loadChat(frame, sessions);
   frame.start();
   await waitForSettled();
@@ -470,7 +470,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
     settings: { ...SETTINGS.settings, maxOutputTokens: 1000 },
     cwd: "/session",
   };
-  sessions.push({ seq: 2, sessionUpdate: "settings", ...own });
+  sessions.push({ seq: 2, kind: "settings", ...own });
   frame.key("ctrl+k m");
   await waitForSettled();
   frame.key("enter");
@@ -595,7 +595,7 @@ test("a question in the place of the composer hides the commands", async () => {
   frame.key("/ a l p");
   const before = listed();
   sessions.push({
-    sessionUpdate: "interactionRequested",
+    kind: "interactionRequested",
     interactionId: 1,
     source: "guard",
     request: {
@@ -760,10 +760,10 @@ test("a pane close during a recall leaves the composer and gives no notice", asy
 
 test("up during a browse goes on with the history, and the end of the browse gives up to a recall", async () => {
   const saved: StoredEvent[] = [
-    { seq: 1, sessionUpdate: "settings", ...SETTINGS },
+    { seq: 1, kind: "settings", ...SETTINGS },
     {
       seq: 2,
-      sessionUpdate: "commit",
+      kind: "commit",
       commit: { blocks: [{ kind: "userText", text: "old" }] },
       consumed: [{ id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 }],
     },

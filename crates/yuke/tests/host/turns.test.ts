@@ -247,10 +247,10 @@ test("a plugin creates a session, sends input, and sees the turn of that session
             return;
           }
           const update = event.update;
-          if (update.sessionUpdate === "commit") {
+          if (update.kind === "commit") {
             for (const block of update.commit.blocks) if (block.kind === "assistantText") texts.push(block.text);
           }
-          if (!("state" in update)) return;
+          if (update.kind !== "state") return;
           states.push(update.state);
         },
       });

@@ -26,8 +26,8 @@ pub struct ToolDefinition {
     /// A JSON Schema object text, written verbatim. The caller checks it.
     pub input_schema: String,
     /// Exclude the definition from the prompt until a tool search names it. A request with a deferred tool asks for
-    /// the native tool search. The encoder refuses it for Chat Completions and for a target without
-    /// [`Target::tool_search`].
+    /// the native tool search. A request fails for Chat Completions and for a target without the
+    /// native tool search ([`Target::tool_search`]).
     pub defer_loading: bool,
 }
 
@@ -121,7 +121,7 @@ pub enum Thinking {
     /// disabled thinking.
     #[cfg_attr(feature = "ts", ts(optional_fields))]
     Adaptive {
-        /// Whether a thinking block returns its summary text. `None` leaves the endpoint default.
+        /// Whether a thinking block returns its summary text. Without it, the endpoint default applies.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<ThinkingDisplay>,
     },
@@ -159,10 +159,10 @@ impl ThinkingDisplay {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ReasoningSettings {
-    /// Whether and how the model thinks. `None` leaves the endpoint default.
+    /// Whether and how the model thinks. Without it, the endpoint default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking: Option<Thinking>,
-    /// How hard the model thinks. `None` leaves the endpoint default.
+    /// How hard the model thinks. Without it, the endpoint default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
 }
@@ -175,25 +175,25 @@ impl ReasoningSettings {
 }
 
 /// The settings of a request apart from its system prompt, its context, its tools, and its blobs. A caller can store
-/// one for each session, and [`Request::settings`] applies it. It names no model and holds no secret.
+/// one for each session ([`Request::settings`]). It names no model and holds no secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct RequestSettings {
-    /// The output limit. `None` leaves the endpoint default.
+    /// The output limit. Without it, the endpoint default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
     /// The reasoning settings.
     pub reasoning: ReasoningSettings,
-    /// The sampling temperature. `None` leaves the endpoint default.
+    /// The sampling temperature. Without it, the endpoint default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
-    /// The nucleus sampling mass. `None` leaves the endpoint default.
+    /// The nucleus sampling mass. Without it, the endpoint default applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     /// The tool control.
     pub tool_choice: ToolChoice,
-    /// The schema of the response. `None` leaves the response free.
+    /// The schema of the response. Without it, the response is free.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<OutputSchema>,
 }

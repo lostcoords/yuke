@@ -3,6 +3,12 @@
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Waker};
+use yuke_protocol::{
+    BlockPosition, BlockStarted, BlockStopped, CommitEvent, DraftCommitted, DraftDiscardReason, DraftDiscarded,
+    DraftId, DraftModelUpdate, DraftStarted, EventNumber, LiveUpdate, ModelUpdate, ReasoningDelta,
+    ReasoningSectionStarted, ResponseCompleted, RoundFailed, SessionEvent, SessionUpdate, TextDelta, ToolFinished,
+    ToolInputDelta, ToolOutput, ToolStarted,
+};
 
 use async_trait::async_trait;
 use yuke_agent::{EventPage, MemoryStore, Session, SessionObserver, Store};
@@ -10,9 +16,6 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, failed_reply, sse, text_repl
 use yuke_ai::{Block, Credential, ToolDefinition, Wire};
 use yuke_engine::NoWait;
 use yuke_engine::{CancellationToken, Concurrency, CredentialSource, Driver, Model, Tool, ToolContent, ToolContext};
-use yuke_protocol::{
-    BlockPosition, DraftDiscardReason, DraftId, EventNumber, LiveUpdate, ModelUpdate, SessionEvent, SessionUpdate,
-};
 use yuke_testing::{model, model_of, target};
 
 use super::support::{FailingStore, StoreBehavior, prompt, settings, user_input};
@@ -43,7 +46,7 @@ impl Capture {
         self.live()
             .iter()
             .filter_map(|update| match update {
-                LiveUpdate::DraftStarted { draft_id } => Some(*draft_id),
+                LiveUpdate::DraftStarted(DraftStarted { draft_id }) => Some(*draft_id),
                 _ => None,
             })
             .collect()
@@ -53,9 +56,9 @@ impl Capture {
         self.live()
             .iter()
             .flat_map(|update| match update {
-                LiveUpdate::DraftCommitted {
+                LiveUpdate::DraftCommitted(DraftCommitted {
                     event_number, blocks, ..
-                } => blocks
+                }) => blocks
                     .iter()
                     .enumerate()
                     .map(|(block_index, block)| (event_number.0, *block, block_index))
@@ -98,51 +101,51 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     let events: Vec<ModelUpdate> = live
         .iter()
         .filter_map(|update| match update {
-            LiveUpdate::Model { draft_id, event } => {
+            LiveUpdate::Model(DraftModelUpdate { draft_id, event }) => {
                 assert_eq!(*draft_id, drafts[0]);
                 Some(event.clone())
             }
             _ => None,
         })
         .collect();
-    let stopped = |block_id| ModelUpdate::BlockStopped { block_id, call: None };
+    let stopped = |block_id| ModelUpdate::BlockStopped(BlockStopped { block_id, call: None });
     assert_eq!(
         &events[..8],
         [
-            ModelUpdate::BlockStarted {
+            ModelUpdate::BlockStarted(BlockStarted {
                 block_id: 0,
                 content: yuke_protocol::StartedBlock::Reasoning
-            },
-            ModelUpdate::ReasoningDelta {
+            }),
+            ModelUpdate::ReasoningDelta(ReasoningDelta {
                 block_id: 0,
                 text: "why".into()
-            },
-            ModelUpdate::BlockStarted {
+            }),
+            ModelUpdate::BlockStarted(BlockStarted {
                 block_id: 1,
                 content: yuke_protocol::StartedBlock::Text
-            },
-            ModelUpdate::TextDelta {
+            }),
+            ModelUpdate::TextDelta(TextDelta {
                 block_id: 1,
                 text: "Hello".into()
-            },
-            ModelUpdate::ReasoningDelta {
+            }),
+            ModelUpdate::ReasoningDelta(ReasoningDelta {
                 block_id: 0,
                 text: " now".into()
-            },
-            ModelUpdate::TextDelta {
+            }),
+            ModelUpdate::TextDelta(TextDelta {
                 block_id: 1,
                 text: " world".into()
-            },
+            }),
             stopped(0),
             stopped(1),
         ]
     );
     assert!(matches!(
         &events[8],
-        ModelUpdate::ResponseCompleted {
+        ModelUpdate::ResponseCompleted(ResponseCompleted {
             finish_reason: yuke_ai::FinishReason::Stop,
             ..
-        }
+        })
     ));
     assert_eq!(capture.positions(), [(3, 0, 0), (3, 1, 1)]);
     let updates = capture.0.lock().unwrap().clone();
@@ -163,7 +166,7 @@ async fn session_updates_preserve_interleaved_blocks_and_confirm_the_saved_answe
     );
     let confirmed = updates
         .iter()
-        .position(|update| matches!(update, SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })))
+        .position(|update| matches!(update, SessionUpdate::Live(LiveUpdate::DraftCommitted(..))))
         .unwrap();
     assert!(matches!(&updates[confirmed - 1], SessionUpdate::Saved(event) if event.event_number == EventNumber(3)));
     assert_eq!(session.context()[2], Block::assistant_text("Hello world"));
@@ -204,10 +207,10 @@ async fn unfinished_blocks_do_not_shift_live_to_saved_positions() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::Model {
-                event: ModelUpdate::BlockStarted { block_id: block, .. },
+            LiveUpdate::Model(DraftModelUpdate {
+                event: ModelUpdate::BlockStarted(BlockStarted { block_id: block, .. }),
                 ..
-            } => Some(block),
+            }) => Some(block),
             _ => None,
         })
         .collect();
@@ -271,7 +274,7 @@ async fn a_finished_tool_reports_its_duration() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolFinished { duration_ms, .. } => Some(duration_ms),
+            LiveUpdate::ToolFinished(ToolFinished { duration_ms, .. }) => Some(duration_ms),
             _ => None,
         })
         .collect();
@@ -296,10 +299,10 @@ async fn the_live_start_of_a_tool_call_names_its_tool() {
         .await
         .unwrap();
     let started = capture.live().into_iter().find_map(|update| match update {
-        LiveUpdate::Model {
-            event: ModelUpdate::BlockStarted { content, .. },
+        LiveUpdate::Model(DraftModelUpdate {
+            event: ModelUpdate::BlockStarted(BlockStarted { content, .. }),
             ..
-        } => Some(content),
+        }) => Some(content),
         _ => None,
     });
     assert_eq!(
@@ -333,9 +336,11 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolStarted { position, call, .. } => Some(("start", position, call.call_id)),
-            LiveUpdate::ToolOutput { position, text } => Some(("output", position, text)),
-            LiveUpdate::ToolFinished { position, result, .. } => Some(("finish", position, result.call_id)),
+            LiveUpdate::ToolStarted(ToolStarted { position, call, .. }) => Some(("start", position, call.call_id)),
+            LiveUpdate::ToolOutput(ToolOutput { position, text }) => Some(("output", position, text)),
+            LiveUpdate::ToolFinished(ToolFinished { position, result, .. }) => {
+                Some(("finish", position, result.call_id))
+            }
             _ => None,
         })
         .collect();
@@ -369,7 +374,7 @@ async fn repeated_provider_ids_use_distinct_saved_execution_positions() {
         .unwrap()
         .into_iter()
         .flat_map(|stored| match stored.event {
-            SessionEvent::Commit { commit, .. } => commit
+            SessionEvent::Commit(CommitEvent { commit, .. }) => commit
                 .blocks
                 .iter()
                 .enumerate()
@@ -409,12 +414,12 @@ async fn failed_attempts_discard_their_drafts_and_retry_uses_a_new_identity() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::DraftStarted { draft_id } => Some((draft_id, "start")),
-            LiveUpdate::DraftDiscarded {
+            LiveUpdate::DraftStarted(DraftStarted { draft_id }) => Some((draft_id, "start")),
+            LiveUpdate::DraftDiscarded(DraftDiscarded {
                 draft_id,
                 reason: DraftDiscardReason::Failed,
-            } => Some((draft_id, "failed")),
-            LiveUpdate::DraftCommitted { draft_id, .. } => Some((draft_id, "saved")),
+            }) => Some((draft_id, "failed")),
+            LiveUpdate::DraftCommitted(DraftCommitted { draft_id, .. }) => Some((draft_id, "saved")),
             _ => None,
         })
         .collect();
@@ -454,14 +459,14 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     );
     let live = capture.live();
     assert!(live.iter().any(
-        |update| matches!(update, LiveUpdate::Model { event: ModelUpdate::TextDelta { text, .. }, .. } if text == "cut")
+        |update| matches!(update, LiveUpdate::Model(DraftModelUpdate { event: ModelUpdate::TextDelta(TextDelta { text, .. }), .. }) if text == "cut")
     ));
     assert!(live.iter().any(|update| matches!(
         update,
-        LiveUpdate::DraftDiscarded {
+        LiveUpdate::DraftDiscarded(DraftDiscarded {
             reason: DraftDiscardReason::Failed,
             ..
-        }
+        })
     )));
     assert_eq!(capture.positions(), []);
     assert_eq!(session.context(), [Block::user_text("go")]);
@@ -469,7 +474,7 @@ async fn a_failed_stream_discards_visible_text_without_a_saved_answer() {
     let updates = capture.0.lock().unwrap();
     assert!(matches!(updates.last(),
         Some(SessionUpdate::Saved(event)) if event.event_number == EventNumber(3)
-            && matches!(&event.event, SessionEvent::Commit { commit, .. } if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed { .. })))));
+            && matches!(&event.event, SessionEvent::Commit(CommitEvent { commit, .. }) if matches!(commit.end, Some(yuke_engine::TurnEnd::Failed { .. })))));
 }
 
 /// A refused login. Its text names no cause, so only `source` gives the cause.
@@ -523,13 +528,13 @@ async fn a_round_failure_reaches_clients_with_each_cause() {
     let failures: Vec<LiveUpdate> = capture
         .live()
         .into_iter()
-        .filter(|update| matches!(update, LiveUpdate::RoundFailed { .. }))
+        .filter(|update| matches!(update, LiveUpdate::RoundFailed(..)))
         .collect();
     assert_eq!(
         failures,
-        [LiveUpdate::RoundFailed {
+        [LiveUpdate::RoundFailed(RoundFailed {
             error: "the login refresh failed: the grant was revoked".to_owned()
-        }]
+        })]
     );
 }
 
@@ -553,17 +558,17 @@ async fn an_unconfirmed_answer_save_discards_the_draft_and_starts_no_tool() {
     );
     assert!(matches!(
         capture.live().iter().rev().nth(1),
-        Some(LiveUpdate::DraftDiscarded {
+        Some(LiveUpdate::DraftDiscarded(DraftDiscarded {
             reason: DraftDiscardReason::Unconfirmed,
             ..
-        })
+        }))
     ));
     assert_eq!(capture.positions(), []);
     assert_eq!(
         capture
             .live()
             .iter()
-            .filter(|update| matches!(update, LiveUpdate::ToolStarted { .. }))
+            .filter(|update| matches!(update, LiveUpdate::ToolStarted(..)))
             .count(),
         0
     );
@@ -627,11 +632,11 @@ async fn a_dropped_turn_discards_its_draft() {
     assert_eq!(
         capture.live(),
         [
-            LiveUpdate::DraftStarted { draft_id: drafts[0] },
-            LiveUpdate::DraftDiscarded {
+            LiveUpdate::DraftStarted(DraftStarted { draft_id: drafts[0] }),
+            LiveUpdate::DraftDiscarded(DraftDiscarded {
                 draft_id: drafts[0],
                 reason: DraftDiscardReason::Unconfirmed
-            },
+            }),
             LiveUpdate::TurnUnconfirmed,
         ]
     );
@@ -651,10 +656,10 @@ async fn cancelled_text_reconciles_to_the_terminal_commit() {
     let observer = |update| {
         if matches!(
             update,
-            SessionUpdate::Live(LiveUpdate::Model {
-                event: ModelUpdate::TextDelta { .. },
+            SessionUpdate::Live(LiveUpdate::Model(DraftModelUpdate {
+                event: ModelUpdate::TextDelta(..),
                 ..
-            })
+            }))
         ) {
             cancellation.cancel();
         }
@@ -673,7 +678,7 @@ async fn cancelled_text_reconciles_to_the_terminal_commit() {
         session.context(),
         [Block::user_text("go"), Block::assistant_text("partial")]
     );
-    assert!(matches!(capture.live().last(), Some(LiveUpdate::DraftCommitted { .. })));
+    assert!(matches!(capture.live().last(), Some(LiveUpdate::DraftCommitted(..))));
 }
 
 #[tokio::test]
@@ -710,7 +715,7 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolFinished { position, result, .. } => {
+            LiveUpdate::ToolFinished(ToolFinished { position, result, .. }) => {
                 Some((position.event_number.0, position.block_index, result.content))
             }
             _ => None,
@@ -721,7 +726,7 @@ async fn parallel_results_keep_call_positions_when_completion_order_differs() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolOutput { position, text } => Some((position.block_index, text)),
+            LiveUpdate::ToolOutput(ToolOutput { position, text }) => Some((position.block_index, text)),
             _ => None,
         })
         .collect();
@@ -767,35 +772,35 @@ async fn reasoning_sections_reach_clients_without_provider_replay_state() {
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::Model { event, .. } => Some(event),
+            LiveUpdate::Model(DraftModelUpdate { event, .. }) => Some(event),
             _ => None,
         })
         .collect();
     assert_eq!(
         &model[..7],
         [
-            ModelUpdate::BlockStarted {
+            ModelUpdate::BlockStarted(BlockStarted {
                 block_id: 0,
                 content: yuke_protocol::StartedBlock::Reasoning
-            },
-            ModelUpdate::ReasoningSectionStarted { block_id: 0 },
-            ModelUpdate::ReasoningDelta {
+            }),
+            ModelUpdate::ReasoningSectionStarted(ReasoningSectionStarted { block_id: 0 }),
+            ModelUpdate::ReasoningDelta(ReasoningDelta {
                 block_id: 0,
                 text: "One".into()
-            },
-            ModelUpdate::ReasoningDelta {
+            }),
+            ModelUpdate::ReasoningDelta(ReasoningDelta {
                 block_id: 0,
                 text: "\n\n".into()
-            },
-            ModelUpdate::ReasoningSectionStarted { block_id: 0 },
-            ModelUpdate::ReasoningDelta {
+            }),
+            ModelUpdate::ReasoningSectionStarted(ReasoningSectionStarted { block_id: 0 }),
+            ModelUpdate::ReasoningDelta(ReasoningDelta {
                 block_id: 0,
                 text: "Two".into()
-            },
-            ModelUpdate::BlockStopped {
+            }),
+            ModelUpdate::BlockStopped(BlockStopped {
                 block_id: 0,
                 call: None
-            },
+            }),
         ]
     );
     let Block::Reasoning(reasoning) = &session.context()[1] else {
@@ -827,10 +832,10 @@ async fn cancellation_omits_reasoning_but_retains_complete_calls_and_open_text()
     let observer = |update| {
         if matches!(
             update,
-            SessionUpdate::Live(LiveUpdate::Model {
-                event: ModelUpdate::TextDelta { .. },
+            SessionUpdate::Live(LiveUpdate::Model(DraftModelUpdate {
+                event: ModelUpdate::TextDelta(..),
                 ..
-            })
+            }))
         ) {
             cancellation.cancel();
         }
@@ -886,18 +891,18 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::Model {
-                event: ModelUpdate::ToolInputDelta { block_id: block, text },
+            LiveUpdate::Model(DraftModelUpdate {
+                event: ModelUpdate::ToolInputDelta(ToolInputDelta { block_id: block, text }),
                 ..
-            } => Some(("fragment", block, text)),
-            LiveUpdate::Model {
+            }) => Some(("fragment", block, text)),
+            LiveUpdate::Model(DraftModelUpdate {
                 event:
-                    ModelUpdate::BlockStopped {
+                    ModelUpdate::BlockStopped(BlockStopped {
                         block_id: block,
                         call: Some(call),
-                    },
+                    }),
                 ..
-            } => Some(("final", block, call.arguments)),
+            }) => Some(("final", block, call.arguments)),
             _ => None,
         })
         .collect();
@@ -913,7 +918,9 @@ async fn tool_argument_fragments_and_authoritative_arguments_both_reach_clients(
         .live()
         .into_iter()
         .filter_map(|update| match update {
-            LiveUpdate::ToolOutput { position, text } => Some((position.event_number.0, position.block_index, text)),
+            LiveUpdate::ToolOutput(ToolOutput { position, text }) => {
+                Some((position.event_number.0, position.block_index, text))
+            }
             _ => None,
         })
         .collect();
@@ -941,14 +948,14 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
         let cancellation = CancellationToken::new();
         let observer = |update| {
             match update {
-                SessionUpdate::Live(LiveUpdate::Model {
-                    event: ModelUpdate::TextDelta { .. },
+                SessionUpdate::Live(LiveUpdate::Model(DraftModelUpdate {
+                    event: ModelUpdate::TextDelta(..),
                     ..
-                }) if cancel_at == "text" => cancellation.cancel(),
-                SessionUpdate::Live(LiveUpdate::Model {
-                    event: ModelUpdate::ResponseCompleted { .. },
+                })) if cancel_at == "text" => cancellation.cancel(),
+                SessionUpdate::Live(LiveUpdate::Model(DraftModelUpdate {
+                    event: ModelUpdate::ResponseCompleted(..),
                     ..
-                }) if cancel_at == "completion" => cancellation.cancel(),
+                })) if cancel_at == "completion" => cancellation.cancel(),
                 _ => {}
             }
             capture.update(update);
@@ -974,7 +981,7 @@ async fn cancellation_before_or_after_completion_omits_empty_blocks_from_saved_p
         );
         assert!(matches!(
             &updates[updates.len() - 1],
-            SessionUpdate::Live(LiveUpdate::DraftCommitted { .. })
+            SessionUpdate::Live(LiveUpdate::DraftCommitted(..))
         ));
     }
 }
@@ -1006,7 +1013,7 @@ async fn result_and_terminal_write_failures_invalidate_provisional_tool_state() 
         let finished: Vec<_> = live
             .iter()
             .filter_map(|event| match event {
-                LiveUpdate::ToolFinished { position, result, .. } => {
+                LiveUpdate::ToolFinished(ToolFinished { position, result, .. }) => {
                     Some((position.event_number.0, position.block_index, result.content.as_str()))
                 }
                 _ => None,
@@ -1072,7 +1079,7 @@ async fn a_dropped_result_or_terminal_save_reports_an_unconfirmed_turn() {
                     .is_pending()
             );
             assert!(capture.live().iter().any(|event| matches!(event,
-                LiveUpdate::ToolFinished { position, result, .. } if position.event_number == EventNumber(3) && result.content == "{}")));
+                LiveUpdate::ToolFinished(ToolFinished { position, result, .. }) if position.event_number == EventNumber(3) && result.content == "{}")));
             assert!(!capture.live().contains(&LiveUpdate::TurnUnconfirmed));
         }
         assert_eq!(capture.live().last(), Some(&LiveUpdate::TurnUnconfirmed));

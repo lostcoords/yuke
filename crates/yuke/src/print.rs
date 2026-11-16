@@ -6,17 +6,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+use yuke_protocol::{
+    CommitEvent, Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
+    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
+    StateUpdate, StoredEvent,
+};
 
 use serde::Serialize;
 use tokio::sync::Notify;
 use yuke_agent::{Store, StoreError};
 use yuke_ai::Block;
 use yuke_engine::{CancellationToken, TurnEnd, answer_text, chain_text};
-use yuke_protocol::{
-    Input, InputKind, InputSource, LiveUpdate, ModelReference, NoticeLevel, NoticeParams, ReasoningLevel,
-    ServerNotification, SessionEvent, SessionId, SessionSettings, SessionState, SessionUpdate, SessionUpdateParams,
-    StoredEvent,
-};
 
 use crate::app::{App, AppError, Machine, Observer, RunMode, SOURCE, TokioTimer, open_store, warn};
 use crate::providers::Providers;
@@ -288,7 +288,7 @@ impl Observer for Watcher {
                 let SessionUpdateParams { session_id, update } = *params;
                 match update {
                     SessionUpdate::Saved(StoredEvent {
-                        event: SessionEvent::Commit { commit, .. },
+                        event: SessionEvent::Commit(CommitEvent { commit, .. }),
                         ..
                     }) => self.change(session_id, |watched| {
                         // A replacement starts the context again, and the answer comes after it.
@@ -300,15 +300,15 @@ impl Observer for Watcher {
                             watched.end = commit.end;
                         }
                     }),
-                    SessionUpdate::Live(LiveUpdate::State {
+                    SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                         state: SessionState::Running,
-                    }) => self.change(session_id, |watched| watched.ran = true),
-                    SessionUpdate::Live(LiveUpdate::InputRemoved { .. }) => {
+                    })) => self.change(session_id, |watched| watched.ran = true),
+                    SessionUpdate::Live(LiveUpdate::InputRemoved(..)) => {
                         self.change(session_id, |watched| watched.removed = true);
                     }
-                    SessionUpdate::Live(LiveUpdate::State {
+                    SessionUpdate::Live(LiveUpdate::State(StateUpdate {
                         state: SessionState::Idle,
-                    }) => {
+                    })) => {
                         self.change(session_id, |watched| watched.ended = true);
                         self.ended.notify_one();
                     }

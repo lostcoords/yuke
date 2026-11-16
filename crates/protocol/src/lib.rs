@@ -22,7 +22,7 @@ pub use catalog::{
     ListCatalogParams, ListCatalogResult, Modality, ModelInfo, PriceBand, ProviderCredential, ProviderInfo,
     ProviderState, ReasoningChoice, ReasoningLevel,
 };
-pub use event::{SessionEvent, StoredEvent};
+pub use event::{CommitEvent, SessionEvent, StoredEvent};
 pub use id::{DraftId, EventNumber, InputId, InstanceId, InteractionId, JobId, LoginId, SessionId};
 pub use input::{ConsumedInput, Input, InputError, InputKind, InputSource, PendingInput};
 pub use interaction::{
@@ -46,6 +46,9 @@ pub use plugin::{
 };
 pub use session::{InvalidSessionTitle, ModelReference, SessionRow, SessionSettings, SessionSummary, SessionTitle};
 pub use update::{
-    BlockPosition, DraftDiscardReason, LiveUpdate, ModelUpdate, SessionSnapshot, SessionState, SessionUpdate,
-    SessionUpdateParams, StartedBlock,
+    BlockPosition, BlockStarted, BlockStopped, DraftCommitted, DraftDiscardReason, DraftDiscarded, DraftModelUpdate,
+    DraftStarted, InputAccepted, InputRemoved, InteractionClosed, InteractionRequested, JobUpdate, LiveUpdate,
+    ModelUpdate, ReasoningDelta, ReasoningSectionStarted, RefusalDelta, ResponseCompleted, RetryScheduled, RoundFailed,
+    SessionSnapshot, SessionState, SessionUpdate, SessionUpdateParams, StartedBlock, StateUpdate, TextDelta,
+    ToolFinished, ToolInputDelta, ToolOutput, ToolStarted,
 };

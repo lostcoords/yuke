@@ -78,7 +78,7 @@ async fn a_turn_outlives_its_socket_client_and_the_next_client_takes_it_over() {
     assert!(
         ended
             .iter()
-            .any(|message| message["params"]["update"]["sessionUpdate"] == "commit"),
+            .any(|message| message["params"]["update"]["kind"] == "commit"),
         "{ended:?}"
     );
     listening.stop().await;
@@ -122,7 +122,7 @@ async fn a_socket_server_outlives_its_clients_and_its_shutdown_ends_the_turns_th
     assert!(
         ended
             .iter()
-            .any(|message| message["params"]["update"]["sessionUpdate"] == "commit"),
+            .any(|message| message["params"]["update"]["kind"] == "commit"),
         "{ended:?}"
     );
     second.expect_closed().await;

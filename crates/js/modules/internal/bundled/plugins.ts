@@ -47,14 +47,14 @@ function short(commit: string): string {
 
 /** The sections of the dashboard, in order, with the test of the plugins of each one. */
 const SECTIONS: readonly { readonly title: string; readonly has: (plugin: ManagedPlugin) => boolean }[] = [
-  { title: "Needs sync", has: (plugin) => plugin.state === "notLocked" || plugin.state === "notInstalled" },
-  { title: "Installed", has: (plugin) => plugin.state === "installed" },
-  { title: "Local", has: (plugin) => plugin.state === "local" },
+  { title: "Needs sync", has: (plugin) => plugin.state.kind === "notLocked" || plugin.state.kind === "notInstalled" },
+  { title: "Installed", has: (plugin) => plugin.state.kind === "installed" },
+  { title: "Local", has: (plugin) => plugin.state.kind === "local" },
 ];
 
 /** The mark of `plugin`: loaded, not loaded, or a problem that a sync fixes. */
 function markOf(plugin: ManagedPlugin): string {
-  if (plugin.state === "notLocked" || plugin.state === "notInstalled") return "!";
+  if (plugin.state.kind === "notLocked" || plugin.state.kind === "notInstalled") return "!";
   return plugin.loaded ? "●" : "○";
 }
 
@@ -71,21 +71,22 @@ function sourceOf(plugin: ManagedPlugin): string {
 
 /** The state of `plugin` after its source on its row. */
 function stateOf(plugin: ManagedPlugin): string {
-  switch (plugin.state) {
+  const state = plugin.state;
+  switch (state.kind) {
     case "local":
       return plugin.loaded ? "" : "not loaded";
     case "notLocked":
       return "not locked";
     case "notInstalled":
-      return `${short(plugin.commit)} not installed`;
+      return `${short(state.commit)} not installed`;
     case "installed":
-      return plugin.loaded ? short(plugin.commit) : `${short(plugin.commit)} not loaded`;
+      return plugin.loaded ? short(state.commit) : `${short(state.commit)} not loaded`;
   }
 }
 
 /** The details of `plugin` under its row. */
 function detailsOf(plugin: ManagedPlugin): string {
-  const commit = "commit" in plugin ? ` · commit ${plugin.commit}` : "";
+  const commit = "commit" in plugin.state ? ` · commit ${plugin.state.commit}` : "";
   return `${sourceOf(plugin)}${commit} · ${plugin.loaded ? "loaded" : "not loaded"}`;
 }
 
@@ -252,7 +253,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
       {
         key: "u",
         label: "update",
-        when: () => idle() && list.selected?.state === "installed" && named() !== undefined,
+        when: () => idle() && list.selected?.state.kind === "installed" && named() !== undefined,
         run: () => update({ kind: "names", names: [named() ?? ""] }),
       },
       { key: "a", label: "add", when: idle, run: () => void add() },

@@ -103,8 +103,8 @@ client_requests!(
     /// Fork a session at the end of a completed turn.
     "session/fork" => ForkSession(ForkSessionParams) -> SessionResult,
     /// Open a session, and send it as `session/update` notifications: the saved events, a `state` update, an
-    /// `input_accepted` update for each pending input, a `job` update for each running job, an `mcp_server` update for
-    /// each MCP server, and an `interaction_requested` update for each open question. The live updates that come during
+    /// `inputAccepted` update for each pending input, a `job` update for each running job, an `mcpServer` update for
+    /// each MCP server, and an `interactionRequested` update for each open question. The live updates that come during
     /// the load and that these updates do not hold follow them. The result comes last. A load starts no turn, also when
     /// input waits.
     "session/load" => LoadSession(LoadSessionParams) -> EmptyResult,
@@ -116,12 +116,12 @@ client_requests!(
     "session/input" => Input(InputParams) -> InputResult,
     /// Replace the settings of a session from its next turn on. It fails while a turn runs or input waits, because
     /// the settings of a turn do not change.
-    "session/set_settings" => SetSettings(SetSettingsParams) -> EmptyResult,
+    "session/setSettings" => SetSettings(SetSettingsParams) -> EmptyResult,
     /// Rename a saved session.
     "session/rename" => RenameSession(RenameSessionParams) -> EmptyResult,
     /// Remove a pending input of a session. A turn saves its input before the model reads it, so the model never reads
     /// a removed input.
-    "session/remove_input" => RemoveInput(RemoveInputParams) -> RemoveInputResult,
+    "session/removeInput" => RemoveInput(RemoveInputParams) -> RemoveInputResult,
     /// List the saved sessions, newest first, in pages.
     "session/list" => ListSessions(ListSessionsParams) -> ListSessionsResult,
     /// The row of one saved session.
@@ -130,17 +130,17 @@ client_requests!(
     /// while one of these sessions is open: close them first with `session/close`.
     "session/remove" => RemoveSession(RemoveSessionParams) -> EmptyResult,
     /// Start a device login of a provider, and give its code at once. A login in progress of the provider ends as
-    /// cancelled first. The server polls the provider, saves the login, and sends `auth/login_finished`.
+    /// cancelled first. The server polls the provider, saves the login, and sends `auth/loginFinished`.
     "auth/login" => Login(crate::LoginParams) -> LoginResult,
-    /// Ask a login in progress to stop. Its `auth/login_finished` tells how it ended: a poll that got the approval
+    /// Ask a login in progress to stop. Its `auth/loginFinished` tells how it ended: a poll that got the approval
     /// still saves the login.
-    "auth/cancel_login" => CancelLogin(crate::CancelLoginParams) -> EmptyResult,
+    "auth/cancelLogin" => CancelLogin(crate::CancelLoginParams) -> EmptyResult,
     /// Remove what yuke stored for a provider: its login or its API key in `auth.json`, and the token of
     /// `credential/update`. A login in progress of the provider ends first. yuke revokes no token at the provider.
     "auth/logout" => Logout(crate::LogoutParams) -> EmptyResult,
     /// Store an API key in `auth.json` for a provider with an API key variable. The new key replaces the stored key and
     /// wins over the variable. Each session takes the key at its next turn.
-    "auth/set_api_key" => SetApiKey(crate::SetApiKeyParams) -> EmptyResult,
+    "auth/setApiKey" => SetApiKey(crate::SetApiKeyParams) -> EmptyResult,
     /// List the providers and their models.
     "catalog/list" => ListCatalog(crate::ListCatalogParams) -> ListCatalogResult,
     /// List the running background jobs of an open session.
@@ -152,7 +152,7 @@ client_requests!(
     /// running turn. The server keeps it only in memory and never refreshes it. After the first update, the server never
     /// uses the stored login of the provider. An expired token fails each attempt until the next update.
     "credential/update" => UpdateCredential(UpdateCredentialParams) -> EmptyResult,
-    /// Answer an open question of a session. The `interaction_closed` update of the question comes before the answer.
+    /// Answer an open question of a session. The `interactionClosed` update of the question comes before the answer.
     "interaction/respond" => InteractionRespond(InteractionRespondParams) -> EmptyResult,
     /// List the MCP servers of an open session.
     "mcp/list" => ListMcpServers(SessionParams) -> ListMcpServersResult,
@@ -214,8 +214,8 @@ pub enum ClientNotification {
     Background(SessionParams),
 }
 
-/// The method and the params of a server request. A client answers each one. It answers
-/// [`ResponseError::METHOD_NOT_FOUND`] for a method or an extension that it does not know.
+/// The method and the params of a server request. A client answers each one. It answers the error -32601
+/// ([`ResponseError::METHOD_NOT_FOUND`]) for a method or an extension that it does not know.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "method", content = "params")]
@@ -245,7 +245,7 @@ pub enum ServerNotification {
     #[serde(rename = "extension/cancel")]
     ExtensionCancel(ExtensionCancelParams),
     /// The end of a login of `auth/login`.
-    #[serde(rename = "auth/login_finished")]
+    #[serde(rename = "auth/loginFinished")]
     LoginFinished(crate::LoginFinishedParams),
 }
 
@@ -361,40 +361,53 @@ pub struct ResponseError {
     pub data: Option<serde_json::Value>,
 }
 
-impl ResponseError {
-    /// The server cannot read the message as JSON.
-    pub const PARSE_ERROR: i32 = -32_700;
-    /// The JSON is no valid message object: no object, or a request without a valid `jsonrpc`, `id`, or `method`.
-    pub const INVALID_REQUEST: i32 = -32_600;
-    /// The server has no such method.
-    pub const METHOD_NOT_FOUND: i32 = -32_601;
-    /// The params do not fit the method.
-    pub const INVALID_PARAMS: i32 = -32_602;
-    /// The server failed.
-    pub const INTERNAL_ERROR: i32 = -32_603;
-    /// The server has no session with this id.
-    pub const SESSION_NOT_FOUND: i32 = -32_002;
-    /// Another writer holds the session.
-    pub const SESSION_OWNED: i32 = -32_003;
-    /// The session runs no background job with this id: the id is unknown, or the job has ended.
-    pub const JOB_NOT_FOUND: i32 = -32_004;
-    /// The session has no open question with this id: the id is unknown, or the question has ended.
-    pub const INTERACTION_NOT_FOUND: i32 = -32_005;
-    /// The server has no login in progress with this id: the id is unknown, or the login has ended.
-    pub const LOGIN_NOT_FOUND: i32 = -32_006;
-    /// The session has no blob with this digest.
-    pub const BLOB_NOT_FOUND: i32 = -32_007;
-    /// The session is open, so the server cannot remove it. Close it first.
-    pub const SESSION_OPEN: i32 = -32_008;
-    /// A turn runs or input waits, so the request cannot run now. Send it again after the turn ends.
-    pub const TURN_ACTIVE: i32 = -32_009;
-    /// Another call opens or closes the session, or a reload runs. Send the request again after it ends.
-    pub const TRY_AGAIN: i32 = -32_010;
-    /// The server shuts down, so it opens no session.
-    pub const STOPPING: i32 = -32_011;
-    /// The connection sent no `initialize` yet.
-    pub const NOT_INITIALIZED: i32 = -32_012;
+/// Define the error codes as constants of [`ResponseError`], and list them for the TypeScript constants.
+macro_rules! error_codes {
+    ($($(#[doc = $doc:literal])* $name:ident = $code:expr,)*) => {
+        impl ResponseError {
+            $($(#[doc = $doc])* pub const $name: i32 = $code;)*
+        }
+
+        /// The name, the value, and the doc of each error code.
+        #[cfg(test)]
+        pub(crate) const ERROR_CODES: &[(&str, i32, &str)] = &[$((stringify!($name), $code, concat!($($doc),*)),)*];
+    };
 }
+
+error_codes!(
+    /// The server cannot read the message as JSON.
+    PARSE_ERROR = -32_700,
+    /// The JSON is no valid message object: no object, or a request without a valid `jsonrpc`, `id`, or `method`.
+    INVALID_REQUEST = -32_600,
+    /// The server has no such method.
+    METHOD_NOT_FOUND = -32_601,
+    /// The params do not fit the method.
+    INVALID_PARAMS = -32_602,
+    /// The server failed.
+    INTERNAL_ERROR = -32_603,
+    /// The server has no session with this id.
+    SESSION_NOT_FOUND = -32_002,
+    /// Another writer holds the session.
+    SESSION_OWNED = -32_003,
+    /// The session runs no background job with this id: the id is unknown, or the job has ended.
+    JOB_NOT_FOUND = -32_004,
+    /// The session has no open question with this id: the id is unknown, or the question has ended.
+    INTERACTION_NOT_FOUND = -32_005,
+    /// The server has no login in progress with this id: the id is unknown, or the login has ended.
+    LOGIN_NOT_FOUND = -32_006,
+    /// The session has no blob with this digest.
+    BLOB_NOT_FOUND = -32_007,
+    /// The session is open, so the server cannot remove it. Close it first.
+    SESSION_OPEN = -32_008,
+    /// A turn runs or input waits, so the request cannot run now. Send it again after the turn ends.
+    TURN_ACTIVE = -32_009,
+    /// Another call opens or closes the session, or a reload runs. Send the request again after it ends.
+    TRY_AGAIN = -32_010,
+    /// The server shuts down, so it opens no session.
+    STOPPING = -32_011,
+    /// The connection sent no `initialize` yet.
+    NOT_INITIALIZED = -32_012,
+);
 
 /// The name, an optional title, and the version of a client or a server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -450,8 +463,8 @@ pub struct SessionResult {
 pub struct ForkSessionParams {
     /// The source session.
     pub session_id: SessionId,
-    /// The event number of the end of a completed turn. None takes the newest completed turn, or the settings before
-    /// the first commit when no turn completed.
+    /// The event number of the end of a completed turn. Without it, the fork takes the newest completed turn, or the
+    /// settings before the first commit when no turn completed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<EventNumber>,
 }
@@ -476,7 +489,7 @@ pub struct NewSessionParams {
 pub struct LoadSessionParams {
     /// The session.
     pub session_id: SessionId,
-    /// The last event that the client has. None sends every event.
+    /// The last event that the client has. Without it, the load sends every event.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<EventNumber>,
 }
@@ -486,16 +499,17 @@ pub struct LoadSessionParams {
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
 pub struct ListSessionsParams {
-    /// Only the sessions whose newest settings name this folder. None lists the sessions of every folder.
+    /// Only the sessions whose newest settings name this folder. Without it, the list has the sessions of every folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
-    /// Only the children of this session. None lists the sessions without a parent.
+    /// Only the children of this session. Without it, the list has the sessions without a parent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<SessionId>,
-    /// The most rows of the page, from 1 to 100. None gives 50.
+    /// The most rows of the page, from 1 to 100. The default is 50.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
-    /// The `nextCursor` of the page before, with the same `cwd` and `parent`. None starts at the newest session.
+    /// The `nextCursor` of the page before, with the same `cwd` and `parent`. Without it, the page starts at the newest
+    /// session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
@@ -508,7 +522,7 @@ pub struct ListSessionsResult {
     /// The sessions of the page, newest first by their newest event. The pages are no snapshot: a session that a new
     /// event moves to the front between two pages comes only in a new list.
     pub sessions: Vec<SessionRow>,
-    /// The cursor of the next page. None when no older session exists.
+    /// The cursor of the next page. It is absent when no older session exists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
@@ -663,7 +677,7 @@ pub struct InputResult {
     pub input_id: InputId,
 }
 
-/// The params of `session/set_settings`.
+/// The params of `session/setSettings`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -686,7 +700,7 @@ pub struct RenameSessionParams {
     pub title: SessionTitle,
 }
 
-/// The params of `session/remove_input`.
+/// The params of `session/removeInput`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -697,7 +711,7 @@ pub struct RemoveInputParams {
     pub input_id: InputId,
 }
 
-/// The result of `session/remove_input`.
+/// The result of `session/removeInput`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
@@ -763,7 +777,7 @@ mod media_bytes {
 
 /// The params of a request with no data: an empty object.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(type = "Record<string, never>"))]
 #[expect(
     clippy::empty_structs_with_brackets,
     reason = "serde reads a struct with braces from `{}`, and a unit struct from `null`"
@@ -772,7 +786,7 @@ pub struct EmptyParams {}
 
 /// The result of a request with no data: an empty object.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(ts_rs::TS), ts(type = "Record<string, never>"))]
 #[expect(
     clippy::empty_structs_with_brackets,
     reason = "serde writes a struct with braces as `{}`, and a unit struct as `null`"

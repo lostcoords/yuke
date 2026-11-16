@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 pub struct PluginSource {
     /// The URL of the repository, as `git` takes it.
     pub git: String,
-    /// The plugin folder in the repository. None is the root.
+    /// The plugin folder in the repository. Without it, the plugin is the root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
-    /// The branch, tag, or commit that an update follows. None is the default branch.
+    /// The branch, tag, or commit that an update follows. Without it, an update follows the default branch.
     #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
 }
@@ -67,14 +67,13 @@ pub struct ManagedPlugin {
     /// from an older commit until `profile/reload`.
     pub loaded: bool,
     /// Its state on disk.
-    #[serde(flatten)]
     pub state: PluginState,
 }
 
 /// The state on disk of one plugin of `plugin/list`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PluginState {
     /// A folder of the user.
     Local,
@@ -225,7 +224,7 @@ pub struct ApplyPluginsResult {
 pub struct AddPluginParams {
     /// The Git plugin to add.
     pub source: PluginSource,
-    /// The options of the plugin. None gives it no options.
+    /// The options of the plugin. Without them, the plugin gets no options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub options: Option<serde_json::Map<String, serde_json::Value>>,

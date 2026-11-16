@@ -21,16 +21,22 @@ pub struct StoredEvent {
 /// A change of a session that the store saves. A `session/update` carries it with its event number.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
-#[serde(tag = "sessionUpdate", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SessionEvent {
-    /// A commit of a turn, and the inputs that it consumed. The blocks of the commit start with the model blocks of
-    /// those inputs.
-    Commit {
-        /// The commit, with its own blocks.
-        commit: Commit<'static>,
-        /// The inputs that the commit consumed, in input order.
-        consumed: Vec<ConsumedInput>,
-    },
+    /// A commit of a turn, and the inputs that it consumed.
+    Commit(CommitEvent),
     /// The settings of the session from this event on.
     Settings(SessionSettings),
+}
+
+/// A `commit` event: a commit of a turn, and the inputs that it consumed. The blocks of the commit start with the model
+/// blocks of those inputs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[serde(rename_all = "camelCase")]
+pub struct CommitEvent {
+    /// The commit, with its own blocks.
+    pub commit: Commit<'static>,
+    /// The inputs that the commit consumed, in input order.
+    pub consumed: Vec<ConsumedInput>,
 }

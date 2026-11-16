@@ -50,7 +50,7 @@ test("a removal of a waiting input gives true and one update, and a second remov
   const handle = await sessions.open(session.id, {
     tail: 0,
     onEvent: (event) => {
-      if (event.kind === "update" && event.update.sessionUpdate === "inputRemoved") removed.push(event.update.inputId);
+      if (event.kind === "update" && event.update.kind === "inputRemoved") removed.push(event.update.inputId);
     },
   });
 

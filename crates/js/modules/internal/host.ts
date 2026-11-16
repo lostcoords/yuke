@@ -118,7 +118,7 @@ export async function createHost(options: HostOptions): Promise<Host> {
 
   /** Record the question of `update` in the session `id`, and answer it. */
   const ask = (id: SessionId, update: Frozen<SessionUpdate>): void => {
-    if (update.sessionUpdate !== "interactionRequested") return;
+    if (update.kind !== "interactionRequested") return;
     const question: TestQuestion = Object.freeze({ sessionId: id, source: update.source, request: update.request });
     questions.push(question);
     // A rejection that no code handles is a fault, so a failed `onQuestion` fails the test.

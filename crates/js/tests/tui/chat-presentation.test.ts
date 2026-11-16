@@ -50,7 +50,7 @@ class Grouped implements ChatPresentation {
 /** A session with one read call and its result for each of `paths`. */
 function reads(...paths: string[]): StoredEvent[] {
   const hints = { subject: { argument: "path", kind: "file" as const }, preview: "none" as const };
-  const saved: StoredEvent[] = [{ seq: 1, sessionUpdate: "settings", ...SETTINGS }];
+  const saved: StoredEvent[] = [{ seq: 1, kind: "settings", ...SETTINGS }];
   for (const [at, path] of paths.entries()) {
     const callId = `c${at}`;
     const call: Block = { kind: "toolCall", callId, name: "read", arguments: JSON.stringify({ path }) };
@@ -63,7 +63,7 @@ function reads(...paths: string[]): StoredEvent[] {
 }
 
 /** The first tool call of the commit `event`. */
-function toolCall(event: Extract<StoredEvent, { sessionUpdate: "commit" }>): ToolCall {
+function toolCall(event: Extract<StoredEvent, { kind: "commit" }>): ToolCall {
   const block = event.commit.blocks.find((candidate) => candidate.kind === "toolCall");
   assert(block?.kind === "toolCall", "the commit has no tool call");
   return { callId: block.callId, name: block.name, arguments: block.arguments };
@@ -114,7 +114,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   using frame = createFrame({ width: 30, height: 12 }, undefined, { cwd: "/w", session: "s1" });
   const saved = reads("a");
   const called = saved[1];
-  assert(called?.sessionUpdate === "commit");
+  assert(called?.kind === "commit");
   const sessions = fakeSessions(saved.slice(0, 2));
   const chat = await loadChat(frame, sessions);
   let projections = 0;
@@ -133,7 +133,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   frame.start();
   await waitForSettled();
   using clock = fixedClock();
-  sessions.push({ sessionUpdate: "state", state: "running" });
+  sessions.push({ kind: "state", state: "running" });
   frame.draw();
   /** The projections of one more second of the turn. */
   const nextSecond = (): number => {
@@ -147,7 +147,7 @@ test("a turn calls the presentation again each second only while a tool runs", a
   nextSecond();
   const idle = nextSecond();
   sessions.push({
-    sessionUpdate: "toolStarted",
+    kind: "toolStarted",
     position: { eventNumber: called.seq, blockIndex: 0 },
     call: toolCall(called),
   });

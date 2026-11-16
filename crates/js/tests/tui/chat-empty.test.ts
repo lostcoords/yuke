@@ -26,7 +26,7 @@ async function savedPick(): Promise<void> {
 
 function accepted(id: number, content: Block[]): SessionUpdate {
   return {
-    sessionUpdate: "inputAccepted",
+    kind: "inputAccepted",
     inputId: id,
     input: { source: { kind: "user" }, kind: "message", content },
   };
