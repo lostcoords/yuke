@@ -72,7 +72,7 @@ macro_rules! store_tests {
             events_after_a_number_are_the_newer_events,
             a_fork_has_the_events_of_its_source_and_numbers_on_from_them,
             the_context_holds_only_commit_blocks_across_pending_inputs_and_settings_events,
-            the_list_gives_the_session_with_the_newest_event_first,
+            the_list_orders_sessions_by_their_newest_turn_or_settings_change,
             the_pages_of_a_list_follow_each_other,
             a_new_session_after_a_delete_does_not_come_after_an_older_cursor,
             a_session_lists_in_the_folder_of_its_newest_settings,
@@ -885,7 +885,7 @@ pub async fn a_fork_has_the_settings_and_the_context_of_its_source_and_no_pendin
         )
         .await
         .unwrap();
-    // A replacement makes the context depend on the order and the columns of the copied commits.
+    // A replacement makes the context depend on the order of the copied commits.
     let head = [yuke_ai::Block::user_text("summary")];
     let replacement = Commit {
         replaced: Some(Replaced {
@@ -1478,9 +1478,9 @@ fn listed(page: &crate::SessionPage) -> Vec<SessionId> {
     page.sessions.iter().map(|summary| summary.session_id).collect()
 }
 
-/// The list gives the newest event first. A commit moves its session to the front, and a folder filter keeps only the
-/// sessions of that folder.
-pub async fn the_list_gives_the_session_with_the_newest_event_first(store: &dyn Store) {
+/// The list gives the session with the newest turn start, turn end, or settings change first. A step of a turn moves
+/// no session. A folder filter keeps only the sessions of that folder.
+pub async fn the_list_orders_sessions_by_their_newest_turn_or_settings_change(store: &dyn Store) {
     let first = store
         .create_session(&settings_in("/work"), &prompt(), None)
         .await
@@ -1499,12 +1499,26 @@ pub async fn the_list_gives_the_session_with_the_newest_event_first(store: &dyn 
 
     let all = store.list_sessions(None, None, None, 10).await.unwrap();
     assert_eq!(listed(&all), [other, second, first]);
+    let work = || async {
+        listed(
+            &store
+                .list_sessions(Some(Path::new("/work")), None, None, 10)
+                .await
+                .unwrap(),
+        )
+    };
     store.commit(first, &end(&[]), &[]).await.unwrap();
-    let work = store
-        .list_sessions(Some(Path::new("/work")), None, None, 10)
+    assert_eq!(work().await, [first, second], "a turn end moves its session");
+    store.commit(second, &step(&[]), &[]).await.unwrap();
+    assert_eq!(work().await, [first, second], "a step moves no session");
+    store.set_settings(second, &settings_in("/work")).await.unwrap();
+    assert_eq!(work().await, [second, first], "a settings change moves its session");
+    let input = store.accept_input(first, user_input("a")).await.unwrap();
+    store
+        .commit(first, &step(&[yuke_ai::Block::user_text("a")]), &[consumed(input, 1)])
         .await
         .unwrap();
-    assert_eq!(listed(&work), [first, second]);
+    assert_eq!(work().await, [first, second], "a turn start moves its session");
     let none = store
         .list_sessions(Some(Path::new("/none")), None, None, 10)
         .await
@@ -1869,8 +1883,8 @@ pub async fn a_fork_without_a_title_takes_its_first_text_message(store: &dyn Sto
     );
 }
 
-/// A summary gives the saved times: the creation time, and the time of the newest event, which a commit moves on. An
-/// unknown session gets not found.
+/// A summary gives the saved times: the creation time, and the time of the newest turn start, turn end, or settings
+/// change, which a turn end moves on. An unknown session gets not found.
 pub async fn a_summary_gives_the_saved_times_and_an_unknown_session_gets_not_found(store: &dyn Store) {
     let id = store
         .create_session(&settings("one"), &prompt(), None)

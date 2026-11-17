@@ -2,7 +2,7 @@
 
 A file store for the sessions of [`yuke-agent`](../agent). `FileStore::open(folder)` keeps one index for all sessions
 in `folder/sessions.jsonl`, and a folder for each session in `folder/sessions/<id>/` with the lock file, the event log,
-and the blobs of the session. The store uses no database.
+and the blobs of the session. `<id>` is the session id as 32 lowercase hex digits, with no hyphens.
 
 ## Files
 
@@ -46,10 +46,8 @@ folder/
 
 - Each process keeps the folded index in memory. Its first read folds the whole index. A later read reads only the
   lines after the newest line that it folded. So a list of 1000 sessions reads no session folder.
-- The list filters the folded facts by parent and folder, sorts by position, and copies only the facts of the page.
-  The position is the microsecond of the newest turn start, turn end, or settings change, and each writer takes a
-  position above every position in the index, so two processes never tie.
-- `open` reads and replays the log: each commit applies its replacement, then appends its blocks.
+- The list orders the sessions by position: the microsecond of the newest turn start, turn end, or settings change.
+  Each writer takes a position above every position in the index, so two processes never tie.
 - `load` reads the pending inputs from the index, then the log. An input that the newest event consumed is not
   pending.
 

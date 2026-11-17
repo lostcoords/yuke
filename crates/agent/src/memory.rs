@@ -33,12 +33,13 @@ struct State {
     sessions: HashMap<SessionId, Saved>,
     /// The id of the newest input of all sessions.
     newest_input: u64,
-    /// The number of event writes of all sessions. It orders the sessions by their newest event.
+    /// The number of writes that moved a session in the list: a create, a fork, a settings change, and a turn start or
+    /// end. It orders the list.
     writes: u64,
 }
 
 impl State {
-    /// The order number of a new event write.
+    /// The order number of a new write that moves a session in the list.
     fn next_write(&mut self) -> u64 {
         self.writes += 1;
         self.writes
@@ -55,7 +56,7 @@ struct Saved {
     pending: Vec<PendingInput>,
     /// The blobs of the session, by digest.
     blobs: HashMap<yuke_ai::Digest, Vec<u8>>,
-    /// The order number of the newest event write of the session.
+    /// The order number of the newest write that moved the session in the list.
     newest_write: u64,
     /// The display title of the session.
     title: Option<SessionTitle>,
@@ -65,7 +66,7 @@ struct Saved {
     parent: Option<SessionId>,
     /// The creation time, in milliseconds since the Unix epoch.
     created_at: u64,
-    /// The time of the newest event, in milliseconds since the Unix epoch.
+    /// The time of the newest write that moved the session in the list, in milliseconds since the Unix epoch.
     updated_at: u64,
 }
 
@@ -78,12 +79,15 @@ fn now_ms() -> u64 {
 }
 
 impl Saved {
-    /// Save `event` with the next number of the session. `write` is the order number of the write.
-    fn push_event(&mut self, event: SessionEvent, write: u64) -> EventNumber {
+    /// Save `event` with the next number of the session. With `write`, the order number of the write, the event moves
+    /// the session in the list.
+    fn push_event(&mut self, event: SessionEvent, write: Option<u64>) -> EventNumber {
         let event_number = EventNumber(self.events.len() as u64 + 1);
         self.events.push(StoredEvent { event_number, event });
-        self.newest_write = write;
-        self.updated_at = now_ms();
+        if let Some(write) = write {
+            self.newest_write = write;
+            self.updated_at = now_ms();
+        }
         event_number
     }
 
@@ -225,7 +229,7 @@ impl Store for MemoryStore {
             created_at: now,
             updated_at: now,
         };
-        saved.push_event(SessionEvent::Settings(settings.clone()), state.next_write());
+        saved.push_event(SessionEvent::Settings(settings.clone()), Some(state.next_write()));
         let opened = saved.to_opened(id, Some(self.take_writer(id)?));
         state.sessions.insert(id, saved);
         Ok(opened)
@@ -258,7 +262,7 @@ impl Store for MemoryStore {
         let mut state = lock(&self.state);
         let write = state.next_write();
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
-        Ok(saved.push_event(SessionEvent::Settings(settings.clone()), write))
+        Ok(saved.push_event(SessionEvent::Settings(settings.clone()), Some(write)))
     }
 
     async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
@@ -351,7 +355,8 @@ impl Store for MemoryStore {
                 return Err(StoreError::InputNotPending(input.id));
             }
         }
-        let write = state.next_write();
+        // A step of a turn does not move the session in the list.
+        let write = (!consumed.is_empty() || commit.end.is_some()).then(|| state.next_write());
         let saved = state.sessions.get_mut(&id).ok_or(StoreError::NotFound)?;
         saved
             .pending
