@@ -1499,7 +1499,7 @@ pub async fn the_list_gives_the_session_with_the_newest_event_first(store: &dyn 
 
     let all = store.list_sessions(None, None, None, 10).await.unwrap();
     assert_eq!(listed(&all), [other, second, first]);
-    store.commit(first, &step(&[]), &[]).await.unwrap();
+    store.commit(first, &end(&[]), &[]).await.unwrap();
     let work = store
         .list_sessions(Some(Path::new("/work")), None, None, 10)
         .await
@@ -1880,7 +1880,7 @@ pub async fn a_summary_gives_the_saved_times_and_an_unknown_session_gets_not_fou
     let created = store.session_summary(id).await.unwrap();
     // The times count milliseconds, so the commit comes in a later millisecond.
     std::thread::sleep(std::time::Duration::from_millis(5));
-    store.commit(id, &step(&[]), &[]).await.unwrap();
+    store.commit(id, &end(&[]), &[]).await.unwrap();
 
     let committed = store.session_summary(id).await.unwrap();
     assert_eq!(committed.created_at, created.created_at);

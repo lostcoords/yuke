@@ -40,7 +40,7 @@ use yuke_protocol::{
     ServerNotification, SessionEvent, SessionId, SessionSettings, StoredEvent, SyncPluginsParams, SyncPluginsResult,
     UpdateCredentialParams,
 };
-use yuke_store::SqliteStore;
+use yuke_store::FileStore;
 
 use self::models::PluginModels;
 use self::plugin_sessions::PluginSessions;
@@ -1056,7 +1056,7 @@ pub(crate) fn warn(text: &str) {
 /// Returns a text for the user when the store does not open.
 pub(crate) async fn open_store(data: &Path) -> Result<Arc<dyn Store>, String> {
     Ok(Arc::new(
-        SqliteStore::open(data).await.map_err(|error| chain_text(&error))?,
+        FileStore::open(data).await.map_err(|error| chain_text(&error))?,
     ))
 }
 

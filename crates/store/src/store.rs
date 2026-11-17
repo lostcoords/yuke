@@ -1,41 +1,52 @@
-//! [`SqliteStore`]: the connection, the owner locks, and the [`Store`] methods.
+//! [`FileStore`]: the store lock, the session index, the owner locks, and the [`Store`] methods.
 
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use yuke_agent::{
     Access, EventPage, Lease, ListPosition, Loaded, NewestTurn, Opened, PromptSection, SessionPage, Store, StoreError,
     fork_title_of, title_of,
 };
-use yuke_engine::{Commit, TurnEnd};
+use yuke_engine::Commit;
 use yuke_protocol::{
-    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionId, SessionSettings, SessionSummary, SessionTitle,
+    ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, SessionSummary,
+    SessionTitle, StoredEvent,
 };
-use yuke_sql::rusqlite::{self, Connection, TransactionBehavior};
 
-use crate::context;
-use crate::event;
 use crate::files::{self, SessionLock};
-use crate::queries::{MIGRATIONS, events, pending_inputs, sessions};
-use crate::schema;
+use crate::index::{Added, Index, Line, Meta};
+use crate::log;
 
-/// A [`Store`] in one SQLite file. One connection runs every read and write in call order on its own thread.
-pub struct SqliteStore {
-    connection: tokio_rusqlite::Connection,
-    /// The folder of the session folders.
-    sessions: PathBuf,
+/// A [`Store`] in a folder: the index `sessions.jsonl`, the store lock, and a folder for each session. One thread runs
+/// the calls of this process in order, and the store lock orders the appends to the index between processes.
+pub struct FileStore {
+    inner: Arc<Inner>,
+    /// The queue of the store thread. One thread runs every call in order, so the allocations of the store stay in one
+    /// malloc arena.
+    jobs: std::sync::mpsc::Sender<Job>,
     owners: Owners,
 }
 
-/// The lock of each session that a lease of this store holds. Each write holds a clone, so the lock stays held until
-/// the write ends, also when the lease drops while the write waits in the queue of the connection. Each change of the
-/// map is one call, so the map stays valid after a panic of another holder of the mutex.
+/// A call that the store thread runs.
+type Job = Box<dyn FnOnce(&Inner) + Send>;
+
+struct Inner {
+    /// The folder of the session folders.
+    sessions: PathBuf,
+    /// The store lock file: held for each append to the index.
+    lock: File,
+    /// The index as this process read it last.
+    index: Mutex<Index>,
+    /// The next event number of each session that a lease of this store wrote. Only the holder of the lease appends.
+    next: Mutex<HashMap<SessionId, u64>>,
+}
+
 type Owners = Arc<Mutex<HashMap<SessionId, Arc<SessionLock>>>>;
 
-/// The guard of a [`Lease`]. Its drop removes the lock from the owners, and the last clone of the lock releases it.
 struct Owner {
     id: SessionId,
     owners: Owners,
@@ -50,71 +61,140 @@ impl Drop for Owner {
     }
 }
 
-impl fmt::Debug for SqliteStore {
+impl fmt::Debug for FileStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SqliteStore")
-            .field("sessions", &self.sessions)
+        f.debug_struct("FileStore")
+            .field("sessions", &self.inner.sessions)
             .finish_non_exhaustive()
     }
 }
 
-impl SqliteStore {
-    /// Open the store in `folder`. The store keeps the database `yuke.db` and a folder for each session in `sessions/`.
-    /// The open makes what is missing, runs the missing migrations, and removes the folders of deleted sessions.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError::Failed`] when a folder or the database does not open, or a migration fails. It also
-    /// returns it when the schema version of the database is above the versions that this yuke knows.
-    pub async fn open(folder: impl AsRef<Path>) -> Result<SqliteStore, StoreError> {
-        let folder = folder.as_ref();
-        let sessions = folder.join("sessions");
-        let database = folder.join("yuke.db");
-        // A sync costs milliseconds on macOS, so only an open that makes an entry syncs.
-        let new_folder = !folder.is_dir();
-        let created = new_folder || !sessions.is_dir() || !database.exists();
-        std::fs::create_dir_all(&sessions).map_err(failed)?;
-
-        let connection = tokio_rusqlite::Connection::open(&database).await.map_err(failed)?;
-
-        let store = SqliteStore {
-            connection,
-            sessions: sessions.clone(),
-            owners: Owners::default(),
-        };
-        store
-            .call(move |connection| {
-                schema::prepare(connection, MIGRATIONS).map_err(failed)?;
-                files::sweep(connection, &sessions)
-            })
-            .await?;
-        if created {
-            files::sync_folder(folder).map_err(failed)?;
-            if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-                files::sync_folder(parent).map_err(failed)?;
-            }
-        }
-
-        Ok(store)
-    }
-
-    /// Run `function` on the thread of the connection.
-    async fn call<T: Send + 'static>(
-        &self,
-        function: impl FnOnce(&mut Connection) -> Result<T, StoreError> + Send + 'static,
-    ) -> Result<T, StoreError> {
-        self.connection.call(function).await.map_err(|error| match error {
-            tokio_rusqlite::Error::Error(error) => error,
-            error => failed(error),
-        })
-    }
-
-    /// The folder of session `id`.
+impl Inner {
     fn folder(&self, id: SessionId) -> PathBuf {
         files::session_folder(&self.sessions, id.as_bytes())
     }
 
-    /// The lock that a lease of this store holds for session `id`.
+    /// The index with the lines that other processes appended.
+    fn index(&self) -> Result<MutexGuard<'_, Index>, StoreError> {
+        let mut index = self.index.lock().unwrap_or_else(PoisonError::into_inner);
+        index.refresh().map_err(failed)?;
+        Ok(index)
+    }
+
+    /// Run `function` on the newest index while this process holds the store lock.
+    fn locked<T>(&self, function: impl FnOnce(&mut Index) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        self.lock.lock().map_err(failed)?;
+        let result = self.index().and_then(|mut index| function(&mut index));
+        if self.lock.unlock().is_err() {
+            // The close of the file at the end of the process releases the lock, so nothing is left to do.
+        }
+        result
+    }
+
+    fn set_next(&self, id: SessionId, seq: u64) {
+        self.next.lock().unwrap_or_else(PoisonError::into_inner).insert(id, seq);
+    }
+
+    fn next_seq(&self, id: SessionId, folder: &Path) -> Result<u64, StoreError> {
+        if let Some(&seq) = self.next.lock().unwrap_or_else(PoisonError::into_inner).get(&id) {
+            return Ok(seq);
+        }
+        Ok(log::read(folder).map_err(failed)?.events.len() as u64 + 1)
+    }
+}
+
+/// The facts of session `id`, or [`StoreError::NotFound`].
+fn meta_of(index: &Index, id: SessionId) -> Result<Meta, StoreError> {
+    index
+        .get(id)
+        .map(|entry| entry.meta.clone())
+        .ok_or(StoreError::NotFound)
+}
+
+/// `Ok` when `folder` holds a log. A step checks only this file, so a step reads no index.
+fn ensure_log(folder: &Path) -> Result<(), StoreError> {
+    if log::path(folder).is_file() {
+        Ok(())
+    } else {
+        Err(StoreError::NotFound)
+    }
+}
+
+impl FileStore {
+    /// Open the store in `folder`: the index `folder/sessions.jsonl`, the session folders in `folder/sessions/`, and
+    /// the store lock `folder/store.lock`. The open makes what is missing and removes the folders of deleted sessions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Failed`] when a folder does not open.
+    pub async fn open(folder: impl AsRef<Path>) -> Result<FileStore, StoreError> {
+        let folder = folder.as_ref().to_path_buf();
+        let sessions = folder.join("sessions");
+        let new_folder = !folder.is_dir();
+        let created = new_folder || !sessions.is_dir();
+        std::fs::create_dir_all(&sessions).map_err(failed)?;
+        let lock = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(folder.join("store.lock"))
+            .map_err(failed)?;
+        let inner = Arc::new(Inner {
+            sessions: sessions.clone(),
+            lock,
+            index: Mutex::new(Index::new(&folder)),
+            next: Mutex::new(HashMap::new()),
+        });
+        let (jobs, queue) = std::sync::mpsc::channel::<Job>();
+        let worker = Arc::clone(&inner);
+        std::thread::Builder::new()
+            .name("yuke-store".to_owned())
+            .spawn(move || {
+                for job in queue {
+                    job(&worker);
+                }
+            })
+            .map_err(failed)?;
+        let store = FileStore {
+            inner,
+            jobs,
+            owners: Owners::default(),
+        };
+        store
+            .call(move |inner| {
+                inner.locked(|index| files::sweep(&inner.sessions, |id| index.get(SessionId::from_bytes(id)).is_some()))
+            })
+            .await?;
+        if created {
+            files::sync_folder(&folder).map_err(failed)?;
+            if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                files::sync_folder(parent).map_err(failed)?;
+            }
+        }
+        Ok(store)
+    }
+
+    /// Run `function` on the store thread, after the calls before it. The call runs also when the caller stops
+    /// waiting.
+    async fn call<T: Send + 'static>(
+        &self,
+        function: impl FnOnce(&Inner) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.jobs
+            .send(Box::new(move |inner: &Inner| {
+                if sender.send(function(inner)).is_err() {
+                    // The caller stopped waiting. The call ran, as a call of a stopped caller does.
+                }
+            }))
+            .map_err(|_| failed("the store thread stopped"))?;
+        receiver.await.map_err(failed)?
+    }
+
+    fn folder(&self, id: SessionId) -> PathBuf {
+        self.inner.folder(id)
+    }
+
     fn owner(&self, id: SessionId) -> Option<Arc<SessionLock>> {
         self.owners
             .lock()
@@ -123,13 +203,11 @@ impl SqliteStore {
             .cloned()
     }
 
-    /// The lease of `lock`, the lock of session `id`.
     fn lease(&self, id: SessionId, lock: SessionLock) -> Lease {
         self.owners
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id, Arc::new(lock));
-
         Lease::new(Owner {
             id,
             owners: Arc::clone(&self.owners),
@@ -137,8 +215,40 @@ impl SqliteStore {
     }
 }
 
+/// Make the session folder `folder` with its lock and log, then add `meta` to the index durably. On an error, the
+/// folder goes again. The lock keeps the sweep of another process away until the index has the session.
+fn make_session(
+    inner: &Inner,
+    id: SessionId,
+    folder: &Path,
+    write_folder: impl FnOnce() -> std::io::Result<()>,
+    meta: Meta,
+) -> Result<SessionLock, StoreError> {
+    let lock = files::take_lock(folder)?;
+    let made = files::sync_folder(&inner.sessions)
+        .and_then(|()| write_folder())
+        .map_err(failed)
+        .and_then(|()| {
+            inner.locked(|index| {
+                let meta = Meta {
+                    position: index.next_position(),
+                    ..meta
+                };
+                index.append(Line::meta(id, meta), true).map_err(failed)
+            })
+        });
+    match made {
+        Ok(()) => Ok(lock),
+        Err(error) => {
+            drop(lock);
+            files::remove_session_folder(folder).map_err(failed)?;
+            Err(error)
+        }
+    }
+}
+
 #[async_trait]
-impl Store for SqliteStore {
+impl Store for FileStore {
     async fn create_session(
         &self,
         settings: &SessionSettings,
@@ -147,33 +257,21 @@ impl Store for SqliteStore {
     ) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
         let folder = self.folder(id);
-        let sessions_folder = self.sessions.clone();
-        let session = *id.as_bytes();
-        let settings_json = serde_json::to_string(settings).map_err(failed)?;
-        let params = sessions::InsertSessionParams {
-            id: session,
-            prompt: serde_json::to_string(prompt).map_err(failed)?,
-            settings: settings_json.clone(),
-            parent: parent.map(|parent| *parent.as_bytes()),
+        let line = log::line(1, &log::settings_body(settings, Some(prompt)).map_err(failed)?);
+        let meta = Meta {
+            model: settings.model.clone(),
+            cwd: settings.cwd.clone(),
+            title: None,
+            fork_of: None,
+            parent,
+            position: 0,
+            next_input: 1,
         };
 
         let lock = self
-            .call(move |connection| {
-                // No other process knows the new id yet, so the rows can come first. Then each folder that the sweep
-                // finds for a live session has its row.
-                insert_session(connection, &params, settings_json).map_err(failed)?;
-                let locked = files::take_lock(&folder).and_then(|lock| {
-                    // A crash must not lose the entry of the new folder, so the call syncs the folder that holds it.
-                    files::sync_folder(&sessions_folder).map_err(failed)?;
-                    Ok(lock)
-                });
-                // The caller never learns the id of a failed creation, so nothing else can open or delete it.
-                locked.or_else(|error| {
-                    delete_new_session(connection, session, &folder)?;
-                    Err(error)
-                })
-            })
+            .call(move |inner| make_session(inner, id, &folder, || log::append(&folder, &line, true), meta))
             .await?;
+        self.inner.set_next(id, 2);
 
         Ok(Opened {
             id,
@@ -189,38 +287,65 @@ impl Store for SqliteStore {
 
     async fn fork_session(&self, source: SessionId, through: Option<EventNumber>) -> Result<Opened, StoreError> {
         let id = SessionId::generate();
-        let fork = *id.as_bytes();
-        let source_bytes = *source.as_bytes();
         let source_folder = self.folder(source);
         let folder = self.folder(id);
-        let sessions_folder = self.sessions.clone();
 
-        // The copy of the blobs runs on the thread of the connection, as a put does. Forks are rare.
-        let (opened, lock) = self
-            .call(move |connection| {
-                let rows = events::CopyEventsParams {
-                    source: source_bytes,
-                    session_id: fork,
-                    cut: fork_point(connection, source_bytes, through)?,
+        let (opened, lock, cut) = self
+            .call(move |inner| {
+                let source_meta = meta_of(&*inner.index()?, source)?;
+                let title = source_meta
+                    .title
+                    .as_deref()
+                    .and_then(fork_title_of)
+                    .map(|title| title.to_string());
+                let source_log = log::read(&source_folder).map_err(failed)?;
+                let cut = match through {
+                    Some(EventNumber(through)) if source_log.ends_completed_turn(through) => through,
+                    Some(_) => return Err(StoreError::NotACompletedTurn),
+                    None => source_log.fork_cut(),
                 };
-                // The blobs come before the rows, so a fork that a reader finds has each of its blobs. The lock of the
-                // new folder keeps the sweep away from the folder until the rows exist.
-                let forked = files::take_lock(&folder).and_then(|lock| {
-                    // A crash must not lose the new folder entry. The fork syncs its parent folder.
-                    files::sync_folder(&sessions_folder).map_err(failed)?;
-                    files::copy_blobs(&source_folder, &folder).map_err(failed)?;
-                    copy_rows(connection, &rows)?;
-                    let opened = read(connection, |connection| context::load(connection, id).map_err(failed))?;
-                    Ok((opened.ok_or(StoreError::NotFound)?, lock))
-                });
-                // The caller never learns the id of a failed fork, so nothing else can open or delete it.
-                forked.or_else(|error| {
-                    delete_new_session(connection, fork, &folder)?;
-                    Err(error)
-                })
+                let settings = settings_of(&source_log, cut)?;
+                let meta = Meta {
+                    model: settings.model.clone(),
+                    cwd: settings.cwd.clone(),
+                    title,
+                    fork_of: Some(source),
+                    parent: None,
+                    position: 0,
+                    next_input: 1,
+                };
+                // The blobs come before the log, so a reader finds every blob that a copied event names. The first
+                // copied line holds the prompt.
+                let lock = make_session(
+                    inner,
+                    id,
+                    &folder,
+                    || {
+                        files::copy_blobs(&source_folder, &folder)
+                            .and_then(|()| log::copy_prefix(&source_folder, &folder, source_log.prefix_len(cut)))
+                    },
+                    meta,
+                )?;
+                let events =
+                    &source_log.events[..usize::try_from(cut).unwrap_or(usize::MAX).min(source_log.events.len())];
+                let (context, newest_turn, input_tokens) = log::replay(events);
+                Ok((
+                    Opened {
+                        id,
+                        settings,
+                        prompt: source_log.prompt,
+                        parent: None,
+                        context,
+                        newest_turn,
+                        input_tokens,
+                        lease: None,
+                    },
+                    lock,
+                    cut,
+                ))
             })
             .await?;
-
+        self.inner.set_next(id, cut + 1);
         Ok(Opened {
             lease: Some(self.lease(id, lock)),
             ..opened
@@ -229,11 +354,26 @@ impl Store for SqliteStore {
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
         let owner = self.owner(id);
-        let session = *id.as_bytes();
-        let settings_json = serde_json::to_string(settings).map_err(failed)?;
+        let folder = self.folder(id);
+        let body = log::settings_body(settings, None).map_err(failed)?;
+        let settings = settings.clone();
 
-        self.call(move |connection| {
-            let saved = save_settings(connection, session, settings_json);
+        self.call(move |inner| {
+            let saved = inner.locked(|index| {
+                let mut meta = meta_of(index, id)?;
+                let seq = inner.next_seq(id, &folder)?;
+                let before = log::len(&folder).map_err(failed)?;
+                log::append(&folder, &log::line(seq, &body), true).map_err(failed)?;
+                meta.model = settings.model;
+                meta.cwd = settings.cwd;
+                meta.position = index.next_position();
+                if let Err(error) = index.append(Line::meta(id, meta), false) {
+                    log::truncate(&folder, before).map_err(failed)?;
+                    return Err(failed(error));
+                }
+                inner.set_next(id, seq + 1);
+                Ok(EventNumber(seq))
+            });
             drop(owner);
             saved
         })
@@ -241,65 +381,49 @@ impl Store for SqliteStore {
     }
 
     async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
-        let session = *id.as_bytes();
         let title = title.to_string();
-        self.call(move |connection| {
-            let params = sessions::RenameSessionParams {
-                id: session,
-                title: &title,
-            };
-            if sessions::rename_session(connection, &params).map_err(failed)? == 0 {
-                return Err(StoreError::NotFound);
-            }
-            Ok(())
+        self.call(move |inner| {
+            inner.locked(|index| {
+                let mut meta = meta_of(index, id)?;
+                meta.title = Some(title);
+                index.append(Line::meta(id, meta), false).map_err(failed)
+            })
         })
         .await
     }
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
-        let params = pending_inputs::InsertPendingInputParams {
-            session_id: *id.as_bytes(),
-            input: serde_json::to_string(&input).map_err(failed)?,
-        };
-        let title = title_of(&input);
-
-        self.call(move |connection| {
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(failed)?;
-            let id = pending_inputs::insert_pending_input(&transaction, &params)
-                .opt()
-                .map_err(failed)?
-                .ok_or(StoreError::NotFound)?;
-            if let Some(title) = &title {
-                let title = sessions::InitializeTitleParams {
-                    id: params.session_id,
-                    title: title.as_str(),
+        let title = title_of(&input).map(|title| title.to_string());
+        self.call(move |inner| {
+            inner.locked(|index| {
+                let mut meta = meta_of(index, id)?;
+                let input_id = InputId(meta.next_input.max(1));
+                meta.next_input = input_id.0 + 1;
+                if meta.title.is_none() {
+                    meta.title = title;
+                }
+                // One line saves the input, its id, and the title. No sync: like the NORMAL sync of a database, a
+                // power loss can take it back, but no crash of the process.
+                let line = Line {
+                    add: Some(Added { id: input_id, input }),
+                    ..Line::meta(id, meta)
                 };
-                sessions::initialize_title(&transaction, &title).map_err(failed)?;
-            }
-            transaction.commit().map_err(failed)?;
-            Ok(InputId(id))
+                index.append(line, false).map_err(failed)?;
+                Ok(input_id)
+            })
         })
         .await
     }
 
     async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError> {
-        let params = pending_inputs::DeletePendingInputParams {
-            session_id: *id.as_bytes(),
-            id: input.0,
-        };
-
-        self.call(move |connection| {
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(failed)?;
-            if pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)? == 0 {
-                // No row: the session is unknown, or the input is not pending.
-                ensure_session(&transaction, params.session_id)?;
-                return Err(StoreError::InputNotPending(input));
-            }
-            transaction.commit().map_err(failed)
+        self.call(move |inner| {
+            inner.locked(|index| {
+                let entry = index.get(id).ok_or(StoreError::NotFound)?;
+                if !entry.pending.iter().any(|pending| pending.id == input) {
+                    return Err(StoreError::InputNotPending(input));
+                }
+                index.append(Line::remove(id, vec![input]), false).map_err(failed)
+            })
         })
         .await
     }
@@ -311,96 +435,79 @@ impl Store for SqliteStore {
         after: Option<ListPosition>,
         limit: usize,
     ) -> Result<SessionPage, StoreError> {
-        // The settings save `cwd` as JSON text, which holds only UTF-8, so a lossy name matches no session.
-        let cwd = cwd.map(|cwd| cwd.to_string_lossy().into_owned());
-        // No event id reaches `i64::MAX`, so a larger position starts at the newest session too.
-        let before = after.map_or(i64::MAX, |ListPosition(position)| {
-            i64::try_from(position).unwrap_or(i64::MAX)
-        });
-        // One row more than the page tells whether an older session exists.
-        let rows = limit.saturating_add(1);
+        let cwd = cwd.map(Path::to_path_buf);
+        let before = after.map_or(u64::MAX, |ListPosition(position)| position);
 
-        let mut listed = self
-            .call(move |connection| {
-                let params = sessions::ListSessionsParams {
-                    parent: parent.map(|parent| *parent.as_bytes()),
-                    cwd: cwd.as_deref(),
-                    before,
-                    limit: rows,
-                };
-                let found = sessions::list_sessions(connection, &params).all().map_err(failed)?;
-                found
+        self.call(move |inner| {
+            let index = inner.index()?;
+            // Sort references, and copy only the facts of the page.
+            let mut listed: Vec<(&SessionId, &Meta)> = index
+                .sessions()
+                .iter()
+                .map(|(id, entry)| (id, &entry.meta))
+                .filter(|(_, meta)| meta.parent == parent && meta.position < before)
+                .filter(|(_, meta)| cwd.as_ref().is_none_or(|cwd| meta.cwd == *cwd))
+                .collect();
+            listed.sort_unstable_by_key(|(_, meta)| std::cmp::Reverse(meta.position));
+            let next = if listed.len() > limit {
+                listed.truncate(limit);
+                listed.last().map(|(_, meta)| ListPosition(meta.position))
+            } else {
+                None
+            };
+            Ok(SessionPage {
+                sessions: listed
                     .into_iter()
-                    .map(|row| {
-                        let summary = summary_of(
-                            row.id,
-                            row.settings,
-                            row.title.as_deref(),
-                            row.fork_of,
-                            row.parent,
-                            row.created_at,
-                            row.updated_at,
-                        )?;
-                        Ok((summary, row.newest_event))
-                    })
-                    .collect::<Result<Vec<(SessionSummary, i64)>, StoreError>>()
+                    .map(|(&id, meta)| summary_of(id, meta))
+                    .collect::<Result<_, _>>()?,
+                next,
             })
-            .await?;
-
-        let next = if listed.len() > limit {
-            listed.truncate(limit);
-            listed
-                .last()
-                .map(|(_, newest_event)| ListPosition(newest_event.unsigned_abs()))
-        } else {
-            None
-        };
-        Ok(SessionPage {
-            sessions: listed.into_iter().map(|(summary, _)| summary).collect(),
-            next,
         })
+        .await
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
-        let session = *id.as_bytes();
-        let row = self
-            .call(move |connection| sessions::session_summary(connection, session).opt().map_err(failed))
-            .await?
-            .ok_or(StoreError::NotFound)?;
-        summary_of(
-            row.id,
-            row.settings,
-            row.title.as_deref(),
-            row.fork_of,
-            row.parent,
-            row.created_at,
-            row.updated_at,
-        )
+        self.call(move |inner| {
+            let index = inner.index()?;
+            summary_of(id, &index.get(id).ok_or(StoreError::NotFound)?.meta)
+        })
+        .await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
-        let folder = match access {
-            Access::Read => None,
-            Access::Write => Some(self.folder(id)),
-        };
-        let session = *id.as_bytes();
+        let folder = self.folder(id);
 
-        let (opened, lock) = self
-            .call(move |connection| {
-                // The lock comes before the load, so no other writer commits between the lock and the load.
-                let lock = match folder {
-                    Some(folder) => {
-                        ensure_session(connection, session)?;
-                        Some(files::take_lock(&folder)?)
-                    }
-                    None => None,
+        let (opened, next, lock) = self
+            .call(move |inner| {
+                let meta = meta_of(&*inner.index()?, id)?;
+                // The lock comes before the read, so no other writer appends between the lock and the read.
+                let lock = match access {
+                    Access::Write => Some(files::take_lock(&folder)?),
+                    Access::Read => None,
                 };
-
-                let opened = read(connection, |connection| context::load(connection, id).map_err(failed))?;
-                Ok((opened.ok_or(StoreError::NotFound)?, lock))
+                let log = log::read(&folder).map_err(failed)?;
+                if lock.is_some() {
+                    repair(inner, id, &folder, &log)?;
+                }
+                let (context, newest_turn, input_tokens) = log::replay(&log.events);
+                let settings = settings_of(&log, u64::MAX)?;
+                let next = log.events.len() as u64 + 1;
+                let opened = Opened {
+                    id,
+                    settings,
+                    prompt: log.prompt,
+                    parent: meta.parent,
+                    context,
+                    newest_turn,
+                    input_tokens,
+                    lease: None,
+                };
+                Ok((opened, next, lock))
             })
             .await?;
-
+        if lock.is_some() {
+            self.inner.set_next(id, next);
+        }
         Ok(Opened {
             lease: lock.map(|lock| self.lease(id, lock)),
             ..opened
@@ -414,11 +521,48 @@ impl Store for SqliteStore {
         consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
         let owner = self.owner(id);
-        let params = commit_params(id, commit, consumed).map_err(failed)?;
+        let folder = self.folder(id);
+        let body = log::commit_body(commit, consumed).map_err(failed)?;
         let consumed: Vec<InputId> = consumed.iter().map(|input| input.id).collect();
+        // A turn end is durable at once. A step of a turn survives a crash of the process, not a power loss.
+        let ends_turn = commit.end.is_some();
 
-        self.call(move |connection| {
-            let saved = save_commit(connection, &params, &consumed);
+        self.call(move |inner| {
+            let saved = (|| {
+                if consumed.is_empty() && !ends_turn {
+                    ensure_log(&folder)?;
+                    let seq = inner.next_seq(id, &folder)?;
+                    log::append(&folder, &log::line(seq, &body), false).map_err(failed)?;
+                    inner.set_next(id, seq + 1);
+                    return Ok(EventNumber(seq));
+                }
+                // A turn start or end also changes the facts and the pending inputs: one line in the log, then one
+                // line in the index. A crash between the two leaves consumed inputs that the next lease removes.
+                inner.locked(|index| {
+                    let entry = index.get(id).ok_or(StoreError::NotFound)?;
+                    if let Some(&input) = consumed
+                        .iter()
+                        .find(|&&input| !entry.pending.iter().any(|pending| pending.id == input))
+                    {
+                        return Err(StoreError::InputNotPending(input));
+                    }
+                    let mut meta = entry.meta.clone();
+                    let seq = inner.next_seq(id, &folder)?;
+                    let before = log::len(&folder).map_err(failed)?;
+                    log::append(&folder, &log::line(seq, &body), ends_turn).map_err(failed)?;
+                    meta.position = index.next_position();
+                    let line = Line {
+                        remove: consumed,
+                        ..Line::meta(id, meta)
+                    };
+                    if let Err(error) = index.append(line, false) {
+                        log::truncate(&folder, before).map_err(failed)?;
+                        return Err(failed(error));
+                    }
+                    inner.set_next(id, seq + 1);
+                    Ok(EventNumber(seq))
+                })
+            })();
             drop(owner);
             saved
         })
@@ -426,68 +570,32 @@ impl Store for SqliteStore {
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
-        let session = *id.as_bytes();
-
-        let rows = self
-            .call(move |connection| {
-                read(connection, |connection| {
-                    ensure_session(connection, session)?;
-                    pending_inputs::pending_inputs(connection, session)
-                        .all()
-                        .map_err(failed)
-                })
-            })
-            .await?;
-
-        Ok(rows.into_iter().map(PendingInput::from).collect())
+        self.call(move |inner| {
+            let index = inner.index()?;
+            Ok(index.get(id).ok_or(StoreError::NotFound)?.pending.clone())
+        })
+        .await
     }
 
     async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError> {
-        let session_id = *id.as_bytes();
-        let seq = |number: EventNumber| number.0.min(LARGEST_SEQ);
-        let params = match page {
-            EventPage::After(after) => events::EventsPageParams {
-                session_id,
-                after: after.map_or(0, seq),
-                before: LARGEST_SEQ,
-                limit: -1,
-            },
-            EventPage::Before { before, limit } => events::EventsPageParams {
-                session_id,
-                after: 0,
-                before: before.map_or(LARGEST_SEQ, seq),
-                limit: i64::try_from(limit).unwrap_or(i64::MAX),
-            },
-        };
-
-        // One read transaction gives both, so they come from one moment.
-        let (events, pending) = self
-            .call(move |connection| {
-                read(connection, |connection| {
-                    ensure_session(connection, params.session_id)?;
-                    let events = events::events_page(connection, &params).all().map_err(failed)?;
-                    let pending = pending_inputs::pending_inputs(connection, params.session_id)
-                        .all()
-                        .map_err(failed)?;
-                    Ok((events, pending))
-                })
-            })
-            .await?;
-
-        Ok(Loaded {
-            events: events.into_iter().map(event::stored_event).collect::<Result<_, _>>()?,
-            pending: pending.into_iter().map(PendingInput::from).collect(),
+        let folder = self.folder(id);
+        self.call(move |inner| {
+            // The inputs come before the log. An input that a newer line consumed is no longer pending.
+            let pending = inner.index()?.get(id).ok_or(StoreError::NotFound)?.pending.clone();
+            let (events, consumed) = log::page(&folder, page, !pending.is_empty()).map_err(failed)?;
+            let pending = pending
+                .into_iter()
+                .filter(|input| !consumed.contains(&input.id))
+                .collect();
+            Ok(Loaded { events, pending })
         })
+        .await
     }
 
     async fn put_blob(&self, id: SessionId, bytes: Vec<u8>) -> Result<yuke_ai::Blob, StoreError> {
-        let session = *id.as_bytes();
         let folder = self.folder(id);
-
-        // The write runs on the thread of the connection, and the calls behind it wait. Puts are rare, and this keeps
-        // the caller's task free of blocking work.
-        self.call(move |connection| {
-            ensure_session(connection, session)?;
+        self.call(move |_| {
+            ensure_log(&folder)?;
             files::write_blob(&folder, &bytes).map_err(failed)
         })
         .await
@@ -498,263 +606,97 @@ impl Store for SqliteStore {
     }
 
     async fn delete_session(&self, id: SessionId) -> Result<(), StoreError> {
-        let session = *id.as_bytes();
         let folder = self.folder(id);
-
-        self.call(move |connection| {
-            ensure_session(connection, session)?;
-            let lock = files::take_lock(&folder)?;
-            sessions::delete_session(connection, session).map_err(failed)?;
-
-            // Windows does not delete an open file, so the lock closes before the folder goes. When the removal
-            // fails, the rows are already gone, and the sweep of the next open removes the folder.
-            drop(lock);
-            files::remove_session_folder(&folder).map_err(failed)
+        self.call(move |inner| {
+            inner.locked(|index| {
+                if index.get(id).is_none() {
+                    return Err(StoreError::NotFound);
+                }
+                let lock = files::take_lock(&folder)?;
+                index.append(Line::deleted(id), false).map_err(failed)?;
+                // Windows does not delete an open file, so the lock closes before the folder goes. When the removal
+                // fails, the index has no session, and the sweep of the next open removes the folder.
+                drop(lock);
+                files::remove_session_folder(&folder).map_err(failed)
+            })
         })
-        .await
-    }
-}
-
-/// The largest event number that SQLite can hold. A larger number names no event.
-const LARGEST_SEQ: u64 = i64::MAX.unsigned_abs();
-
-/// Run `function` in a read transaction, so each of its queries reads the same state.
-fn read<T>(
-    connection: &mut Connection,
-    function: impl FnOnce(&Connection) -> Result<T, StoreError>,
-) -> Result<T, StoreError> {
-    let transaction = connection.transaction().map_err(failed)?;
-    let value = function(&transaction)?;
-    transaction.commit().map_err(failed)?;
-    Ok(value)
-}
-
-/// Save a new session row and its first event, which holds its settings, in one transaction.
-fn insert_session(
-    connection: &mut Connection,
-    session: &sessions::InsertSessionParams,
-    settings: String,
-) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    sessions::insert_session(&transaction, session)?;
-    let params = events::InsertSettingsParams {
-        session_id: session.id,
-        settings,
-    };
-    events::insert_settings(&transaction, &params).one()?;
-    sessions::touch_session(&transaction, session.id)?;
-    transaction.commit()
-}
-
-/// Save a settings event in one transaction. Returns [`StoreError::NotFound`] for an unknown session.
-fn save_settings(connection: &mut Connection, session: [u8; 16], settings: String) -> Result<EventNumber, StoreError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(failed)?;
-    let seq = events::insert_settings(
-        &transaction,
-        &events::InsertSettingsParams {
-            session_id: session,
-            settings: settings.clone(),
-        },
-    )
-    .opt()
-    .map_err(failed)?
-    .ok_or(StoreError::NotFound)?;
-    let params = sessions::SetSessionSettingsParams { id: session, settings };
-    sessions::set_session_settings(&transaction, &params).map_err(failed)?;
-    sessions::touch_session(&transaction, session).map_err(failed)?;
-    transaction.commit().map_err(failed)?;
-    Ok(EventNumber(seq))
-}
-
-/// Save the commit event and remove the consumed inputs in one transaction. Returns [`StoreError::NotFound`] for an
-/// unknown session, and [`StoreError::InputNotPending`] for a consumed input that is not pending. A failure saves
-/// nothing.
-fn save_commit(
-    connection: &mut Connection,
-    params: &events::InsertCommitParams,
-    consumed: &[InputId],
-) -> Result<EventNumber, StoreError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(failed)?;
-    let seq = events::insert_commit(&transaction, params)
-        .opt()
-        .map_err(failed)?
-        .ok_or(StoreError::NotFound)?;
-
-    for &input in consumed {
-        let params = pending_inputs::DeletePendingInputParams {
-            session_id: params.session_id,
-            id: input.0,
-        };
-        // A drop of the transaction rolls it back, so the error saves nothing.
-        if pending_inputs::delete_pending_input(&transaction, &params).map_err(failed)? == 0 {
-            return Err(StoreError::InputNotPending(input));
-        }
-    }
-
-    sessions::touch_session(&transaction, params.session_id).map_err(failed)?;
-    transaction.commit().map_err(failed)?;
-    Ok(EventNumber(seq))
-}
-
-/// The newest event of session `source` that a fork copies: event `through`, which must end a completed turn, or the
-/// cut that `fork_cut` gives.
-fn fork_point(connection: &mut Connection, source: [u8; 16], through: Option<EventNumber>) -> Result<u64, StoreError> {
-    let transaction = connection.transaction().map_err(failed)?;
-    let cut = match through {
-        Some(EventNumber(through)) => {
-            ensure_session(&transaction, source)?;
-            if through > LARGEST_SEQ {
-                return Err(StoreError::NotACompletedTurn);
-            }
-            let params = events::EndsCompletedTurnParams {
-                session_id: source,
-                seq: through,
-            };
-            if !events::ends_completed_turn(&transaction, &params)
-                .one()
-                .map_err(failed)?
-            {
-                return Err(StoreError::NotACompletedTurn);
-            }
-            through
-        }
-        None => events::fork_cut(&transaction, source)
-            .opt()
-            .map_err(failed)?
-            .ok_or(StoreError::NotFound)?,
-    };
-    transaction.commit().map_err(failed)?;
-    Ok(cut)
-}
-
-/// Add session `rows.session_id`. Copy events from `rows.source` through `rows.cut` in the same transaction.
-fn copy_rows(connection: &mut Connection, rows: &events::CopyEventsParams) -> Result<(), StoreError> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(failed)?;
-    // Another writer can delete the source between the read of the cut and this write.
-    let title = sessions::session_summary(&transaction, rows.source)
-        .opt()
-        .map_err(failed)?
-        .ok_or(StoreError::NotFound)?
-        .title
-        .and_then(|title| fork_title_of(&title))
-        .map(|title| title.to_string());
-    let session = sessions::CopySessionParams {
-        source: rows.source,
-        id: rows.session_id,
-        cut: rows.cut,
-        title,
-    };
-    sessions::copy_session(&transaction, &session).map_err(failed)?;
-    events::copy_events(&transaction, rows).map_err(failed)?;
-    sessions::place_fork(&transaction, rows.session_id).map_err(failed)?;
-    transaction.commit().map_err(failed)
-}
-
-/// Delete the rows and the folder of a new session whose creation or fork failed. Its lock is already free. An error
-/// here returns in place of the first error, because the session then stays.
-fn delete_new_session(connection: &Connection, session: [u8; 16], folder: &Path) -> Result<(), StoreError> {
-    sessions::delete_session(connection, session).map_err(failed)?;
-    files::remove_session_folder(folder).map_err(failed)
-}
-
-/// The row of `commit` and its `consumed` inputs, with its blocks as JSON text.
-fn commit_params(
-    id: SessionId,
-    commit: &Commit<'_>,
-    consumed: &[ConsumedInput],
-) -> serde_json::Result<events::InsertCommitParams<'static>> {
-    let (head, keep) = match &commit.replaced {
-        Some(replaced) => (Some(serde_json::to_string(&replaced.head)?), Some(replaced.keep)),
-        None => (None, None),
-    };
-
-    let answer = commit.answer.as_ref();
-    let usage = answer.map(|answer| answer.usage);
-
-    let (end_kind, end_finish_reason, end_message) = match &commit.end {
-        None => (None, None, None),
-        Some(TurnEnd::Completed { finish_reason }) => (Some(event::COMPLETED), Some(finish_reason.as_str()), None),
-        Some(TurnEnd::Stopped) => (Some(event::STOPPED), None, None),
-        Some(TurnEnd::Cancelled) => (Some(event::CANCELLED), None, None),
-        Some(TurnEnd::Failed { error: message }) => (Some(event::FAILED), None, Some(message.clone())),
-    };
-
-    Ok(events::InsertCommitParams {
-        session_id: *id.as_bytes(),
-        blocks: serde_json::to_string(&commit.blocks)?,
-        consumed: serde_json::to_string(consumed)?,
-        head,
-        keep,
-        model: answer.map(|answer| answer.origin.model.clone()),
-        base_url: answer.map(|answer| answer.origin.base_url.clone()),
-        input_tokens: usage.and_then(|usage| usage.input),
-        output_tokens: usage.and_then(|usage| usage.output),
-        reasoning_tokens: usage.and_then(|usage| usage.reasoning),
-        cache_read_tokens: usage.and_then(|usage| usage.cache_read),
-        cache_write_tokens: usage.and_then(|usage| usage.cache_write),
-        finish_reason: answer.map(|answer| answer.finish_reason.as_str()),
-        end_kind,
-        end_finish_reason,
-        end_message,
-        display: (!commit.display.is_empty())
-            .then(|| serde_json::to_string(&commit.display))
-            .transpose()?,
-    })
-}
-
-/// Tell whether the database has session `session`.
-pub(crate) fn has_session(connection: &Connection, session: [u8; 16]) -> Result<bool, StoreError> {
-    sessions::session_exists(connection, session).one().map_err(failed)
-}
-
-/// The summary of the session columns that `list_sessions` and `session_summary` select.
-fn summary_of(
-    id: [u8; 16],
-    settings: crate::Json<SessionSettings>,
-    title: Option<&str>,
-    fork_of: Option<[u8; 16]>,
-    parent: Option<[u8; 16]>,
-    created_at: u64,
-    updated_at: u64,
-) -> Result<SessionSummary, StoreError> {
-    let SessionSettings { model, cwd, .. } = settings.0;
-    Ok(SessionSummary {
-        session_id: SessionId::from_bytes(id),
-        model,
-        cwd,
-        title: title.map(SessionTitle::new).transpose().map_err(failed)?,
-        created_at,
-        updated_at,
-        fork_of: fork_of.map(SessionId::from_bytes),
-        parent: parent.map(SessionId::from_bytes),
-    })
-}
-
-/// `Ok` when the database has session `session`, and [`StoreError::NotFound`] otherwise. Call this function before the
-/// lock of the session, so an unknown session gets no folder.
-fn ensure_session(connection: &Connection, session: [u8; 16]) -> Result<(), StoreError> {
-    if has_session(connection, session)? {
+        .await?;
+        self.inner
+            .next
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
         Ok(())
-    } else {
-        Err(StoreError::NotFound)
     }
+}
+
+/// The ids of the inputs that the commits of `events` consumed.
+fn consumed_ids(events: &[StoredEvent]) -> Vec<InputId> {
+    events
+        .iter()
+        .filter_map(|event| match &event.event {
+            SessionEvent::Commit(commit) => Some(commit.consumed.iter().map(|input| input.id)),
+            SessionEvent::Settings(_) => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// Repair the session in `folder` for a new writer: cut a torn tail of the log, and remove the pending inputs that a
+/// line consumed before a crash removed them from the index.
+fn repair(inner: &Inner, id: SessionId, folder: &Path, log: &log::Log) -> Result<(), StoreError> {
+    if log.torn {
+        log::truncate(folder, log.prefix_len(u64::MAX)).map_err(failed)?;
+    }
+    let consumed = consumed_ids(&log.events);
+    inner.locked(|index| {
+        let stale: Vec<InputId> = index
+            .get(id)
+            .map(|entry| {
+                entry
+                    .pending
+                    .iter()
+                    .map(|input| input.id)
+                    .filter(|input| consumed.contains(input))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if stale.is_empty() {
+            return Ok(());
+        }
+        index.append(Line::remove(id, stale), false).map_err(failed)
+    })
+}
+
+/// The newest settings of `log` through event `cut`. The first line of each log is a settings event.
+fn settings_of(log: &log::Log, cut: u64) -> Result<SessionSettings, StoreError> {
+    log.settings_through(cut)
+        .cloned()
+        .ok_or_else(|| failed("the log has no settings event"))
+}
+
+/// The summary of session `id` from its facts.
+fn summary_of(id: SessionId, meta: &Meta) -> Result<SessionSummary, StoreError> {
+    let bytes = id.as_bytes();
+    Ok(SessionSummary {
+        session_id: id,
+        model: meta.model.clone(),
+        cwd: meta.cwd.clone(),
+        title: meta
+            .title
+            .as_deref()
+            .map(SessionTitle::new)
+            .transpose()
+            .map_err(failed)?,
+        // A version 7 id starts with the millisecond of its creation, and the list position is the microsecond of the
+        // newest activity, so the index stores neither time.
+        created_at: u64::from_be_bytes([0, 0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]),
+        updated_at: meta.position / 1000,
+        fork_of: meta.fork_of,
+        parent: meta.parent,
+    })
 }
 
 pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {
     StoreError::Failed(error.into())
-}
-
-impl From<pending_inputs::PendingInputs> for PendingInput {
-    fn from(row: pending_inputs::PendingInputs) -> Self {
-        PendingInput {
-            id: InputId(row.id),
-            input: row.input.0,
-        }
-    }
 }

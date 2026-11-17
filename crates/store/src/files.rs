@@ -1,15 +1,13 @@
-//! The folder of each session: its lock file and its blobs. A blob file has the hex SHA-256 of its bytes as its name,
-//! and no other session reads it.
+//! The folder of each session: its lock file, its log, and its blobs. A blob file has the hex SHA-256 of its bytes as
+//! its name, and no other session reads it.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::store::failed;
 use yuke_agent::StoreError;
-use yuke_sql::rusqlite::Connection;
-
-use crate::store::{failed, has_session};
 
 /// The name of the lock file in a session folder. No blob has this name, because a blob name has 64 characters.
 const LOCK: &str = "lock";
@@ -137,19 +135,20 @@ pub(crate) fn remove_session_folder(folder: &Path) -> io::Result<()> {
     }
 }
 
-/// Remove each session folder in `sessions` that has no session row and a free lock. A crash during a delete, or a
-/// put of another process during a delete, leaves such a folder. A delete in progress holds the lock.
-pub(crate) fn sweep(connection: &Connection, sessions: &Path) -> Result<(), StoreError> {
+/// Remove each session folder in `sessions` that is not a session of the index and has a free lock. A crash during a
+/// create or a delete, or a put of another process during a delete, leaves such a folder. A create or a delete in
+/// progress holds the lock.
+pub(crate) fn sweep(sessions: &Path, is_session: impl Fn([u8; 16]) -> bool) -> Result<(), StoreError> {
     for entry in std::fs::read_dir(sessions).map_err(failed)? {
         let entry = entry.map_err(failed)?;
-        let Some(session) = entry.file_name().to_str().and_then(parse_session) else {
+        let Some(id) = entry.file_name().to_str().and_then(parse_session) else {
             continue;
         };
-        if has_session(connection, session)? {
+        let folder = entry.path();
+        if is_session(id) {
             continue;
         }
 
-        let folder = entry.path();
         match take_lock(&folder) {
             Ok(lock) => {
                 // Windows does not delete an open file, so the lock closes before the folder goes.
@@ -164,7 +163,7 @@ pub(crate) fn sweep(connection: &Connection, sessions: &Path) -> Result<(), Stor
 }
 
 /// The session id of a folder name: 32 lowercase hex digits.
-fn parse_session(name: &str) -> Option<[u8; 16]> {
+pub(crate) fn parse_session(name: &str) -> Option<[u8; 16]> {
     let lowercase_hex = name.len() == 32 && name.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
     if !lowercase_hex {
         return None;

@@ -1,31 +1,71 @@
 # store
 
-A SQLite store for the sessions of [`yuke-agent`](../agent). `SqliteStore::open(folder)` opens `folder/yuke.db` and
-keeps a folder for each session in `folder/sessions/<id>/`, with the lock file and the blobs of the session.
+A file store for the sessions of [`yuke-agent`](../agent). `FileStore::open(folder)` keeps one index for all sessions
+in `folder/sessions.jsonl`, and a folder for each session in `folder/sessions/<id>/` with the lock file, the event log,
+and the blobs of the session. The store uses no database.
 
-## Database
+## Files
 
-- One file holds all sessions. The connection uses WAL. A returned commit survives a crash, but on macOS not always a
-  power loss (plain `fsync`).
-- One connection runs each read and write in call order on its own thread.
-- The `sessions` table holds one row for each session: a copy of its newest settings, its title, its fork source,
-  its parent, its times, and the id of its newest event, which orders `list_sessions`.
-- The `events` table holds the engine commits and the settings of each session, numbered 1, 2, 3, and so on. The
-  first event of a session holds its settings, and the newest settings event holds the current settings.
-- The `pending_inputs` table holds the inputs that no commit consumed.
-- The first message with text supplies a title only if the session has none.
-  The title has one line and at most 200 Unicode scalar values. `rename_session` replaces it.
-  A rename changes no event, activity time, or list position. Later messages do not replace the title.
-- Each commit and each settings change take the next event number in the same transaction, so the numbers have no gap.
-- Blocks and settings are JSON. The answer facts and the turn end are columns.
-- `open` loads the context from the newest replacement: its head, the blocks that it keeps, and the commits after it.
-- `load(id, EventPage::After(after))` reads the events after event number `after` (every event for `None`) and the pending inputs in one
-  read transaction, so both come from one moment.
+```text
+folder/
+  store.lock          held for each append to the index
+  sessions.jsonl      the index: facts and pending inputs of all sessions
+  sessions/<id>/
+    lock              the owner lock of the session
+    events.jsonl      the event log: one StoredEvent per line
+    <sha256>          a blob
+```
+
+- The first line of `events.jsonl` is settings event 1. It also holds the system prompt in a `prompt` field, so no
+  other file holds the prompt and a fork copies it with the events.
+- The first line of `sessions.jsonl` holds the tag of the file. Each later line names a session and holds one or more
+  changes: `meta` (model, folder, title, parent, fork source, list position, next input id), `add` (a new
+  pending input), `remove` (inputs that are no longer pending), or `deleted`. The newest `meta` of a session wins.
+- The index stores no time. The creation time comes from the version 7 session id, and the activity time from the
+  list position, the microsecond of the newest turn start, turn end, or settings change.
+- Only the holder of `store.lock` appends to the index. One thread orders the calls of one process.
+
+## Writes
+
+- A step of a turn appends one line to the log, with no sync. It reads no index.
+- A turn start or end, under the store lock: append the line to the log (a turn end syncs it), then append one line
+  to the index with the new facts and the consumed inputs. When the index line does not save, the store cuts the log
+  line again.
+- An accepted input appends one line to the index with the input, its id, and the first title. No sync.
+- A new session and a fork take the owner lock of the new folder, write the log durably, and then append the facts to
+  the index durably. A folder that the index does not know is no session, and the sweep removes it.
+- A rename appends one line. It changes no event, activity time, or list position.
+- A delete appends `deleted`, then removes the folder.
+
+## Reads
+
+- Each process keeps the folded index in memory. A read opens the index, checks the tag, and reads only the bytes
+  after the newest line that it folded. So a list of 1000 sessions reads no session folder.
+- The list filters the folded facts by parent and folder, sorts by position, and copies only the facts of the page.
+  The position is the microsecond of the newest turn start, turn end, or settings change, and each writer takes a
+  position above every position in the index, so two processes never tie.
+- `open` reads and replays the log: each commit applies its replacement, then appends its blocks.
+- `load` reads the pending inputs from the index, then the log. An input that a log line consumed is not pending.
+
+## Crashes
+
+- A reader stops at the first incomplete line of a log. A new writer cuts such a tail.
+- A reader skips an incomplete last line of the index. The next writer cuts it under the store lock, because no other
+  writer can be in its append.
+- A crash between the log line and the index line of a turn start leaves consumed inputs in the index. `load` hides
+  them, and the next writer of the session appends their removal.
+
+## Compaction
+
+When the index is above 1 MiB and above 4 times its live lines, the writer writes the live facts and pending inputs
+to a new file with a new tag, syncs it, and renames it over the index. A reader sees the new tag and reads the whole
+file again.
 
 ## Owner lock
 
 `open` with `Access::Write` locks `sessions/<id>/lock`. A second writer, in this process or another one, gets
 `StoreError::Owned`. The lock stays held until the `Lease` drops and each write that the lease started has ended.
+`tests/processes.rs` runs a second process on the same folder.
 
 ## Blobs
 
@@ -33,13 +73,11 @@ keeps a folder for each session in `folder/sessions/<id>/`, with the lock file a
 - A second put of the same bytes replaces the file with equal content.
 - A blob belongs to one session. The same image in two sessions is two files.
 - `read_blob` reads the file synchronously, because the request encoder reads blobs synchronously.
-- `delete_session` deletes the rows. Then it removes the folder of the session.
-- `SqliteStore::open` removes each folder that has no session row and no held lock, for example after a crash during
-  a delete.
 
 ## Session titles
 
 A new session has no title until a text message or an explicit rename supplies one.
+The first message with text supplies a title only if the session has none. Later messages do not replace it.
 A fork of a titled session starts with `Fork — ` before the source title, limited to 200 Unicode scalar values.
 A fork of an unnamed session takes its own first text message as its title.
 Titles are display metadata, not model context.
@@ -48,27 +86,11 @@ An explicit rename normalizes whitespace and rejects empty titles or titles abov
 ## Fork
 
 - `fork_session` copies the session up to the end of a completed turn: the event that the fork names, or the newest
-  completed turn. A copied event keeps its number, its token usage, and its creation time. The newest copied settings
+  completed turn. A copied event keeps its number and its token usage. The newest copied settings
   event gives the settings of the fork. The pending inputs stay with the source.
-- The blobs come before the rows, so a reader finds every blob of a fork. The fork locks its new folder and
-  copies each blob file through a temporary file. Then one transaction copies the rows. On a file system with
-  reflinks, such as btrfs or APFS, a copy can share the blocks of the source file.
+- The fork locks its new folder, copies each blob file through a temporary file, writes the copied lines, and then
+  appends its facts to the index. On a file system with reflinks, such as btrfs or APFS, a copy can share the blocks
+  of the source file.
 - The fork takes no lock on the source, so a writer of the source can keep its lease during the fork.
-- When the copy fails, the store deletes the rows and the folder of the fork. An error of that delete returns in
-  place of the error of the copy.
-
-## Migrations and queries
-
-The migrations are in `migrations/`, and the queries are in `queries/`. After a change, write `src/queries.rs` again:
-
-```sh
-mise exec -- cargo run -p yuke-sqlgen
-```
-
-A database at `user_version` `n` runs each migration after the first `n`. A database that a newer yuke migrated does
-not open. The first migration gives a new database the yuke `application_id`. The store runs no migration on a
-database with another `application_id`, or on a database with a `user_version` and no `application_id`.
-
-The store turns foreign keys off while it runs the migrations, so a migration can rebuild a table. With foreign keys
-on, a drop of a table deletes each row that refers to it. Before each commit, the store checks that no row refers to a
-missing row. After the migrations, the store turns foreign keys on again.
+- When the copy fails, the store removes the folder of the fork. An error of that removal returns in place of the
+  error of the copy.
