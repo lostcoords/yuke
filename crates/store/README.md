@@ -18,6 +18,8 @@ folder/
 
 - The first line of `events.jsonl` is settings event 1. It also holds the system prompt in a `prompt` field, so no
   other file holds the prompt and a fork copies it with the events.
+- Each line of `events.jsonl` holds `at`, the millisecond of its write, for a reader of the file such as `jq`. The
+  store does not read it, and a fork keeps the times of the copied lines.
 - The first line of `sessions.jsonl` holds the tag of the file. Each later line names a session and holds one or more
   changes: `meta` (model, folder, title, parent, fork source, list position, next input id), `add` (a new
   pending input), `remove` (inputs that are no longer pending), or `deleted`. The newest `meta` of a session wins.

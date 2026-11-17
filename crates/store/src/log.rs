@@ -1,13 +1,14 @@
-//! The event log of a session: `events.jsonl` in the session folder, one [`StoredEvent`] as JSON on each line. The
-//! first line, the first settings event, also holds the system prompt in a `prompt` field, so a fork copies the prompt
-//! with the events and no other file holds it. Line `n` holds event `n`. Only the holder of the lease appends. A
-//! reader stops at the first line that is not complete, so a torn append of a crash reads as no event. The writer cuts
-//! such a tail when it takes the lease.
+//! The event log of a session: `events.jsonl` in the session folder, one [`StoredEvent`] as JSON on each line. Each
+//! line also holds `at`, the millisecond of the write. The first line, the first settings event, also holds the system
+//! prompt in a `prompt` field, so a fork copies the prompt with the events and no other file holds it. Line `n` holds
+//! event `n`. Only the holder of the lease appends. A reader stops at the first line that is not complete, so a torn
+//! append of a crash reads as no event. The writer cuts such a tail when it takes the lease.
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use yuke_agent::{EventPage, NewestTurn, PromptSection};
@@ -245,9 +246,14 @@ pub(crate) fn commit_body(commit: &Commit<'_>, consumed: &[ConsumedInput]) -> se
     serde_json::to_vec(&CommitBody { commit, consumed })
 }
 
-/// The line of event `seq` with the fields `body`, a JSON object.
+/// The line of event `seq` with the fields `body`, a JSON object. The `at` field holds the millisecond of the write,
+/// so a reader of the file, such as `jq`, sees when each event came. The store does not read it.
 pub(crate) fn line(seq: u64, body: &[u8]) -> Vec<u8> {
-    let mut line = format!("{{\"seq\":{seq},").into_bytes();
+    // A clock before 1970 writes 0. No ordering depends on this value.
+    let at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() * 1000 + u64::from(since.subsec_millis()));
+    let mut line = format!("{{\"seq\":{seq},\"at\":{at},").into_bytes();
     line.extend_from_slice(body.get(1..).unwrap_or_default());
     line.push(b'\n');
     line

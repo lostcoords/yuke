@@ -333,6 +333,47 @@ async fn a_failed_append_to_the_index_returns_no_receipt_and_keeps_the_input() {
     assert_eq!(events.last().unwrap().event_number, EventNumber(2));
 }
 
+/// The milliseconds since 1970.
+fn now_ms() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn each_line_of_the_log_holds_the_millisecond_of_its_write() {
+    let folder = folder("each_line_of_the_log_holds_the_millisecond_of_its_write");
+    let store = FileStore::open(&folder).await.unwrap();
+    let before = now_ms();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    store
+        .commit(id, &step(&[yuke_ai::Block::user_text("a")]), &[])
+        .await
+        .unwrap();
+    let after = now_ms();
+    let log = folder
+        .join("sessions")
+        .join(format!("{:032x}", u128::from_be_bytes(*id.as_bytes())))
+        .join("events.jsonl");
+
+    let text = std::fs::read_to_string(log).unwrap();
+    let times: Vec<u64> = text
+        .lines()
+        .map(|line| {
+            let at = line.split_once(",\"at\":").unwrap().1;
+            at[..at.find(',').unwrap()].parse().unwrap()
+        })
+        .collect();
+    assert_eq!(times.len(), 2);
+    assert!(times.iter().all(|&at| (before..=after).contains(&at)));
+    drop(opened);
+}
+
 #[tokio::test]
 async fn a_torn_line_of_a_crash_reads_as_no_event_and_the_next_writer_cuts_it() {
     let folder = folder("a_torn_line_of_a_crash_reads_as_no_event_and_the_next_writer_cuts_it");
