@@ -31,14 +31,11 @@ pub(crate) fn read(folder: &Path) -> io::Result<Log> {
         events: Vec::new(),
         ends: Vec::new(),
         prompt: Vec::new(),
-        torn: false,
     };
-    log.torn = lines(folder, |line, end| {
+    lines(folder, |line, end| {
         let event = parse(line, log.events.len() as u64 + 1)?;
         if log.events.is_empty() {
-            log.prompt = serde_json::from_slice::<FirstLine>(line)
-                .map(|first| first.prompt)
-                .unwrap_or_default();
+            log.prompt = serde_json::from_slice::<FirstLine>(line)?.prompt;
         }
         log.events.push(event);
         log.ends.push(end);
@@ -47,35 +44,43 @@ pub(crate) fn read(folder: &Path) -> io::Result<Log> {
     Ok(log)
 }
 
-/// The events of `page`, and with `consumed` the ids of the inputs that each line consumed. Only the lines of the page
-/// become events, so a short page of a long log parses few lines.
-pub(crate) fn page(folder: &Path, page: EventPage, consumed: bool) -> io::Result<(Vec<StoredEvent>, Vec<InputId>)> {
+/// The events of `page`, and the ids of the inputs that the newest event consumed. Only the lines of the page become
+/// events, so a short page of a long log parses few lines.
+pub(crate) fn page(folder: &Path, page: EventPage) -> io::Result<(Vec<StoredEvent>, Vec<InputId>)> {
     let (after, before, limit) = match page {
         EventPage::After(after) => (after.map_or(0, |number| number.0), u64::MAX, usize::MAX),
         EventPage::Before { before, limit } => (0, before.map_or(u64::MAX, |number| number.0), limit),
     };
-    let mut ids = Vec::new();
     let mut lines_of_page: VecDeque<(u64, Vec<u8>)> = VecDeque::new();
+    let mut newest = Vec::new();
     let mut seq = 0;
     lines(folder, |line, _| {
         seq += 1;
-        if consumed {
-            let Consumed { consumed } = serde_json::from_slice(line)?;
-            ids.extend(consumed.into_iter().map(|input| input.id));
-        }
         if seq > after && seq < before && limit > 0 {
             if lines_of_page.len() == limit {
                 lines_of_page.pop_front();
             }
             lines_of_page.push_back((seq, line.to_vec()));
         }
+        newest.clear();
+        newest.extend_from_slice(line);
         Ok(())
     })?;
     let events = lines_of_page
         .into_iter()
         .map(|(seq, line)| parse(&line, seq))
         .collect::<io::Result<_>>()?;
-    Ok((events, ids))
+    // The writer appends the index line of a turn start right after its log line, so only the newest event can
+    // consume an input that the index still holds.
+    let consumed = if newest.is_empty() {
+        Vec::new()
+    } else {
+        match parse(&newest, seq)?.event {
+            SessionEvent::Commit(commit) => commit.consumed.into_iter().map(|input| input.id).collect(),
+            SessionEvent::Settings(_) => Vec::new(),
+        }
+    };
+    Ok((events, consumed))
 }
 
 /// Event `seq` from `line`.
@@ -91,11 +96,11 @@ fn parse(line: &[u8], seq: u64) -> io::Result<StoredEvent> {
 }
 
 /// Call `take` with each complete line of the log, without its newline, and the end of the line in the file. Stops at
-/// the first error of `take`. Returns whether bytes without a newline follow the last line.
-fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> io::Result<()>) -> io::Result<bool> {
+/// the first error of `take`, and at bytes without a newline.
+fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> io::Result<()>) -> io::Result<()> {
     let file = match File::open(path(folder)) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
     let mut reader = BufReader::with_capacity(1 << 16, file);
@@ -104,11 +109,8 @@ fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> io::Result<()>) -> i
     loop {
         line.clear();
         let read = reader.read_until(b'\n', &mut line)?;
-        if read == 0 {
-            return Ok(false);
-        }
         if line.pop() != Some(b'\n') {
-            return Ok(true);
+            return Ok(());
         }
         end += read as u64;
         take(&line, end)?;
@@ -118,20 +120,7 @@ fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> io::Result<()>) -> i
 /// The field of the first line that is not part of its event.
 #[derive(Deserialize)]
 struct FirstLine {
-    #[serde(default)]
     prompt: Vec<PromptSection>,
-}
-
-/// The consumed inputs of a line, without the rest of the line.
-#[derive(Deserialize)]
-struct Consumed {
-    #[serde(default)]
-    consumed: Vec<ConsumedId>,
-}
-
-#[derive(Deserialize)]
-struct ConsumedId {
-    id: InputId,
 }
 
 /// The read log of one session.
@@ -142,36 +131,35 @@ pub(crate) struct Log {
     ends: Vec<u64>,
     /// The system prompt from the first line.
     pub(crate) prompt: Vec<PromptSection>,
-    /// Whether the file has bytes after its complete lines.
-    pub(crate) torn: bool,
 }
 
 impl Log {
+    /// Events 1 through `cut`, or each event when the log has fewer.
+    pub(crate) fn through(&self, cut: u64) -> &[StoredEvent] {
+        &self.events[..usize::try_from(cut).unwrap_or(usize::MAX).min(self.events.len())]
+    }
+
     /// The length of the lines of events 1 through `cut`.
     pub(crate) fn prefix_len(&self, cut: u64) -> u64 {
-        let lines = usize::try_from(cut).unwrap_or(usize::MAX).min(self.ends.len());
-        lines.checked_sub(1).map_or(0, |last| self.ends[last])
+        self.ends[..self.through(cut).len()].last().copied().unwrap_or(0)
     }
 
     /// The newest settings event through event `cut`.
     pub(crate) fn settings_through(&self, cut: u64) -> Option<&SessionSettings> {
-        self.events
-            .iter()
-            .take(usize::try_from(cut).unwrap_or(usize::MAX))
-            .rev()
-            .find_map(|event| match &event.event {
-                SessionEvent::Settings(settings) => Some(settings),
-                SessionEvent::Commit(_) => None,
-            })
+        self.through(cut).iter().rev().find_map(|event| match &event.event {
+            SessionEvent::Settings(settings) => Some(settings),
+            SessionEvent::Commit(_) => None,
+        })
     }
 
     /// Whether event `seq` is a commit that ends a completed turn.
     pub(crate) fn ends_completed_turn(&self, seq: u64) -> bool {
-        let index = usize::try_from(seq).ok().and_then(|seq| seq.checked_sub(1));
-        matches!(
-            index.and_then(|index| self.events.get(index)).map(|event| &event.event),
-            Some(SessionEvent::Commit(commit)) if matches!(commit.commit.end, Some(TurnEnd::Completed { .. }))
-        )
+        let events = self.through(seq);
+        events.len() as u64 == seq
+            && matches!(
+                events.last().map(|event| &event.event),
+                Some(SessionEvent::Commit(commit)) if matches!(commit.commit.end, Some(TurnEnd::Completed { .. }))
+            )
     }
 
     /// The event that a fork with no `through` copies through: the end of the newest completed turn. With no completed

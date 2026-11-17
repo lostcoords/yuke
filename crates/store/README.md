@@ -20,11 +20,14 @@ folder/
   other file holds the prompt and a fork copies it with the events.
 - Each line of `events.jsonl` holds `at`, the millisecond of its write, for a reader of the file such as `jq`. The
   store does not read it, and a fork keeps the times of the copied lines.
-- Each line of `sessions.jsonl` names a session and holds one or more changes: `meta` (model, folder, title, parent, fork source, list position, next input id), `add` (a new
-  pending input), `remove` (inputs that are no longer pending), or `deleted`. The newest `meta` of a session wins.
+- Each line of `sessions.jsonl` names a session and holds one or more changes: `meta` (model, folder, title,
+  parent, fork source, list position), `add` (a new pending input), `remove` (inputs that are no longer pending), or
+  `deleted`. The newest `meta` of a session wins. The next input id is one above each id that an `add` holds, so ids
+  never repeat in a session.
 - The index stores no time. The creation time comes from the version 7 session id, and the activity time from the
   list position, the microsecond of the newest turn start, turn end, or settings change.
-- Only the holder of `store.lock` appends to the index. One thread orders the calls of one process.
+- Only the holder of `store.lock` appends to the index. One thread orders the calls of one process, because a file
+  lock does not keep apart two threads that share its file.
 
 ## Writes
 
@@ -47,7 +50,8 @@ folder/
   The position is the microsecond of the newest turn start, turn end, or settings change, and each writer takes a
   position above every position in the index, so two processes never tie.
 - `open` reads and replays the log: each commit applies its replacement, then appends its blocks.
-- `load` reads the pending inputs from the index, then the log. An input that a log line consumed is not pending.
+- `load` reads the pending inputs from the index, then the log. An input that the newest event consumed is not
+  pending.
 
 ## Crashes
 

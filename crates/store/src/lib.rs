@@ -7,3 +7,8 @@ mod log;
 mod store;
 
 pub use store::FileStore;
+
+/// A [`StoreError::Failed`](yuke_agent::StoreError::Failed) with the cause `error`.
+pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> yuke_agent::StoreError {
+    yuke_agent::StoreError::Failed(error.into())
+}

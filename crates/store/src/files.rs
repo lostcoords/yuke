@@ -6,8 +6,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::store::failed;
 use yuke_agent::StoreError;
+
+use crate::failed;
 
 /// The name of the lock file in a session folder. No blob has this name, because a blob name has 64 characters.
 const LOCK: &str = "lock";

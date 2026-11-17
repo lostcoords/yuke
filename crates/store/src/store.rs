@@ -1,10 +1,11 @@
-//! [`FileStore`]: the store lock, the session index, the owner locks, and the [`Store`] methods.
+//! [`FileStore`]: the store thread, the session index, the owner locks, and the [`Store`] methods.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use async_trait::async_trait;
 use yuke_agent::{
@@ -14,92 +15,69 @@ use yuke_agent::{
 use yuke_engine::Commit;
 use yuke_protocol::{
     ConsumedInput, EventNumber, Input, InputId, PendingInput, SessionEvent, SessionId, SessionSettings, SessionSummary,
-    SessionTitle, StoredEvent,
+    SessionTitle,
 };
 
+use crate::failed;
 use crate::files::{self, SessionLock};
 use crate::index::{Added, Index, Line, Meta};
 use crate::log;
 
-/// A [`Store`] in a folder: the index `sessions.jsonl`, the store lock, and a folder for each session. One thread runs
-/// the calls of this process in order, and the store lock orders the appends to the index between processes.
+/// A [`Store`] in a folder: the index `sessions.jsonl`, the store lock, and a folder for each session.
 pub struct FileStore {
-    inner: Arc<Inner>,
-    /// The queue of the store thread. One thread runs every call in order, so the allocations of the store stay in one
-    /// malloc arena.
+    /// The folder of the session folders.
+    sessions: PathBuf,
+    /// The queue of the store thread. The store lock orders the processes, and the thread orders the calls of this
+    /// process: a file lock does not keep apart two threads that share its file.
     jobs: std::sync::mpsc::Sender<Job>,
-    owners: Owners,
+    /// The writer of each session that a lease of this store holds.
+    writers: Mutex<HashMap<SessionId, Weak<Writer>>>,
 }
 
 /// A call that the store thread runs.
-type Job = Box<dyn FnOnce(&Inner) + Send>;
+type Job = Box<dyn FnOnce(&mut State) + Send>;
 
-struct Inner {
+/// What the store thread owns.
+struct State {
     /// The folder of the session folders.
     sessions: PathBuf,
     /// The store lock file: held for each append to the index.
     lock: File,
     /// The index as this process read it last.
-    index: Mutex<Index>,
-    /// The next event number of each session that a lease of this store wrote. Only the holder of the lease appends.
-    next: Mutex<HashMap<SessionId, u64>>,
+    index: Index,
 }
 
-type Owners = Arc<Mutex<HashMap<SessionId, Arc<SessionLock>>>>;
-
-struct Owner {
-    id: SessionId,
-    owners: Owners,
-}
-
-impl Drop for Owner {
-    fn drop(&mut self) {
-        self.owners
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.id);
-    }
+/// The owner lock of a session and the number of its next event. The lease and each call that the lease started hold
+/// it, so the lock stays until the last write ends.
+struct Writer {
+    #[expect(dead_code, reason = "only the drop of the lock matters: it releases the session")]
+    lock: SessionLock,
+    next: AtomicU64,
 }
 
 impl fmt::Debug for FileStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileStore")
-            .field("sessions", &self.inner.sessions)
+            .field("sessions", &self.sessions)
             .finish_non_exhaustive()
     }
 }
 
-impl Inner {
-    fn folder(&self, id: SessionId) -> PathBuf {
-        files::session_folder(&self.sessions, id.as_bytes())
-    }
-
+impl State {
     /// The index with the lines that other processes appended.
-    fn index(&self) -> Result<MutexGuard<'_, Index>, StoreError> {
-        let mut index = self.index.lock().unwrap_or_else(PoisonError::into_inner);
-        index.refresh().map_err(failed)?;
-        Ok(index)
+    fn index(&mut self) -> Result<&mut Index, StoreError> {
+        self.index.refresh().map_err(failed)?;
+        Ok(&mut self.index)
     }
 
     /// Run `function` on the newest index while this process holds the store lock.
-    fn locked<T>(&self, function: impl FnOnce(&mut Index) -> Result<T, StoreError>) -> Result<T, StoreError> {
+    fn locked<T>(&mut self, function: impl FnOnce(&mut Index) -> Result<T, StoreError>) -> Result<T, StoreError> {
         self.lock.lock().map_err(failed)?;
-        let result = self.index().and_then(|mut index| function(&mut index));
+        let result = self.index().and_then(function);
         if self.lock.unlock().is_err() {
             // The close of the file at the end of the process releases the lock, so nothing is left to do.
         }
         result
-    }
-
-    fn set_next(&self, id: SessionId, seq: u64) {
-        self.next.lock().unwrap_or_else(PoisonError::into_inner).insert(id, seq);
-    }
-
-    fn next_seq(&self, id: SessionId, folder: &Path) -> Result<u64, StoreError> {
-        if let Some(&seq) = self.next.lock().unwrap_or_else(PoisonError::into_inner).get(&id) {
-            return Ok(seq);
-        }
-        Ok(log::read(folder).map_err(failed)?.events.len() as u64 + 1)
     }
 }
 
@@ -120,9 +98,19 @@ fn ensure_log(folder: &Path) -> Result<(), StoreError> {
     }
 }
 
+/// The number of the next event of the session in `folder`. The writer of a lease counts it. A call without a lease
+/// counts the lines of the log.
+fn next_event_number(writer: Option<&Writer>, folder: &Path) -> Result<u64, StoreError> {
+    match writer {
+        Some(writer) => Ok(writer.next.load(Ordering::Relaxed)),
+        None => Ok(log::read(folder).map_err(failed)?.events.len() as u64 + 1),
+    }
+}
+
 impl FileStore {
     /// Open the store in `folder`: the index `folder/sessions.jsonl`, the session folders in `folder/sessions/`, and
-    /// the store lock `folder/store.lock`. The open makes what is missing and removes the folders of deleted sessions.
+    /// the store lock `folder/store.lock`. The open makes what is missing and removes the folders that a crash left
+    /// without a log.
     ///
     /// # Errors
     ///
@@ -139,28 +127,26 @@ impl FileStore {
             .truncate(false)
             .open(folder.join("store.lock"))
             .map_err(failed)?;
-        let inner = Arc::new(Inner {
+        let mut state = State {
             sessions: sessions.clone(),
             lock,
-            index: Mutex::new(Index::new(&folder)),
-            next: Mutex::new(HashMap::new()),
-        });
+            index: Index::new(&folder),
+        };
         let (jobs, queue) = std::sync::mpsc::channel::<Job>();
-        let worker = Arc::clone(&inner);
         std::thread::Builder::new()
             .name("yuke-store".to_owned())
             .spawn(move || {
                 for job in queue {
-                    job(&worker);
+                    job(&mut state);
                 }
             })
             .map_err(failed)?;
         let store = FileStore {
-            inner,
+            sessions,
             jobs,
-            owners: Owners::default(),
+            writers: Mutex::default(),
         };
-        store.call(move |inner| files::sweep(&inner.sessions)).await?;
+        store.call(|state| files::sweep(&state.sessions)).await?;
         if created {
             files::sync_folder(&folder).map_err(failed)?;
             if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -174,12 +160,12 @@ impl FileStore {
     /// waiting.
     async fn call<T: Send + 'static>(
         &self,
-        function: impl FnOnce(&Inner) -> Result<T, StoreError> + Send + 'static,
+        function: impl FnOnce(&mut State) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, StoreError> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         self.jobs
-            .send(Box::new(move |inner: &Inner| {
-                if sender.send(function(inner)).is_err() {
+            .send(Box::new(move |state: &mut State| {
+                if sender.send(function(state)).is_err() {
                     // The caller stopped waiting. The call ran, as a call of a stopped caller does.
                 }
             }))
@@ -188,49 +174,56 @@ impl FileStore {
     }
 
     fn folder(&self, id: SessionId) -> PathBuf {
-        self.inner.folder(id)
+        files::session_folder(&self.sessions, id.as_bytes())
     }
 
-    fn owner(&self, id: SessionId) -> Option<Arc<SessionLock>> {
-        self.owners
+    /// The writer of session `id` while a lease of this store holds it.
+    fn writer(&self, id: SessionId) -> Option<Arc<Writer>> {
+        self.writers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&id)
-            .cloned()
+            .and_then(Weak::upgrade)
     }
 
-    fn lease(&self, id: SessionId, lock: SessionLock) -> Lease {
-        self.owners
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, Arc::new(lock));
-        Lease::new(Owner {
-            id,
-            owners: Arc::clone(&self.owners),
-        })
+    /// A lease of session `id` that holds `lock`, with `next` as the number of the next event.
+    fn lease(&self, id: SessionId, lock: SessionLock, next: u64) -> Lease {
+        let writer = Arc::new(Writer {
+            lock,
+            next: AtomicU64::new(next),
+        });
+        let mut writers = self.writers.lock().unwrap_or_else(PoisonError::into_inner);
+        // The drop of a lease leaves its entry. Each new lease removes such entries.
+        writers.retain(|_, writer| writer.strong_count() > 0);
+        writers.insert(id, Arc::downgrade(&writer));
+        Lease::new(writer)
     }
 }
 
 /// Make the session folder `folder` with its lock and log, then add `meta` to the index durably. On an error, the
-/// folder goes again. The lock keeps the sweep of another process away until the index has the session.
+/// folder goes again. The lock keeps the sweep of another process away until the folder has its log.
 fn make_session(
-    inner: &Inner,
+    state: &mut State,
     id: SessionId,
     folder: &Path,
     write_folder: impl FnOnce() -> std::io::Result<()>,
     meta: Meta,
 ) -> Result<SessionLock, StoreError> {
     let lock = files::take_lock(folder)?;
-    let made = files::sync_folder(&inner.sessions)
+    let made = files::sync_folder(&state.sessions)
         .and_then(|()| write_folder())
         .map_err(failed)
         .and_then(|()| {
-            inner.locked(|index| {
+            state.locked(|index| {
                 let meta = Meta {
                     position: index.next_position(),
                     ..meta
                 };
-                index.append(Line::meta(id, meta), true).map_err(failed)
+                let line = Line {
+                    meta: Some(meta),
+                    ..Line::new(id)
+                };
+                index.append(line, true).map_err(failed)
             })
         });
     match made {
@@ -241,6 +234,33 @@ fn make_session(
             Err(error)
         }
     }
+}
+
+/// Append `body` as the next event of the session in `folder`, then `line` with a new list position in its facts.
+/// When `line` does not save, the log line goes again. The caller holds the store lock.
+fn write_event(
+    index: &mut Index,
+    folder: &Path,
+    writer: Option<&Writer>,
+    body: &[u8],
+    durable: bool,
+    mut line: Line,
+) -> Result<EventNumber, StoreError> {
+    let number = next_event_number(writer, folder)?;
+    let before = log::len(folder).map_err(failed)?;
+    log::append(folder, &log::line(number, body), durable).map_err(failed)?;
+    if let Some(meta) = &mut line.meta {
+        meta.position = index.next_position();
+    }
+    let saved = index.append(line, false);
+    // When the cut fails too, the line stays in the log, so the next event takes the number after it. The error of
+    // the index tells the cause.
+    let kept = saved.is_ok() || log::truncate(folder, before).is_err();
+    if kept && let Some(writer) = writer {
+        writer.next.store(number + 1, Ordering::Relaxed);
+    }
+    saved.map_err(failed)?;
+    Ok(EventNumber(number))
 }
 
 #[async_trait]
@@ -261,13 +281,11 @@ impl Store for FileStore {
             fork_of: None,
             parent,
             position: 0,
-            next_input: 1,
         };
 
         let lock = self
-            .call(move |inner| make_session(inner, id, &folder, || log::append(&folder, &line, true), meta))
+            .call(move |state| make_session(state, id, &folder, || log::append(&folder, &line, true), meta))
             .await?;
-        self.inner.set_next(id, 2);
 
         Ok(Opened {
             id,
@@ -277,7 +295,7 @@ impl Store for FileStore {
             context: Vec::new(),
             newest_turn: NewestTurn::Empty,
             input_tokens: None,
-            lease: Some(self.lease(id, lock)),
+            lease: Some(self.lease(id, lock, 2)),
         })
     }
 
@@ -287,8 +305,8 @@ impl Store for FileStore {
         let folder = self.folder(id);
 
         let (opened, lock, cut) = self
-            .call(move |inner| {
-                let source_meta = meta_of(&*inner.index()?, source)?;
+            .call(move |state| {
+                let source_meta = meta_of(state.index()?, source)?;
                 let title = source_meta
                     .title
                     .as_deref()
@@ -308,12 +326,11 @@ impl Store for FileStore {
                     fork_of: Some(source),
                     parent: None,
                     position: 0,
-                    next_input: 1,
                 };
                 // The blobs come before the log, so a reader finds every blob that a copied event names. The first
                 // copied line holds the prompt.
                 let lock = make_session(
-                    inner,
+                    state,
                     id,
                     &folder,
                     || {
@@ -322,9 +339,7 @@ impl Store for FileStore {
                     },
                     meta,
                 )?;
-                let events =
-                    &source_log.events[..usize::try_from(cut).unwrap_or(usize::MAX).min(source_log.events.len())];
-                let (context, newest_turn, input_tokens) = log::replay(events);
+                let (context, newest_turn, input_tokens) = log::replay(source_log.through(cut));
                 Ok((
                     Opened {
                         id,
@@ -341,48 +356,44 @@ impl Store for FileStore {
                 ))
             })
             .await?;
-        self.inner.set_next(id, cut + 1);
         Ok(Opened {
-            lease: Some(self.lease(id, lock)),
+            lease: Some(self.lease(id, lock, cut + 1)),
             ..opened
         })
     }
 
     async fn set_settings(&self, id: SessionId, settings: &SessionSettings) -> Result<EventNumber, StoreError> {
-        let owner = self.owner(id);
+        let writer = self.writer(id);
         let folder = self.folder(id);
         let body = log::settings_body(settings, None).map_err(failed)?;
         let settings = settings.clone();
 
-        self.call(move |inner| {
-            let saved = inner.locked(|index| {
+        self.call(move |state| {
+            state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
-                let seq = inner.next_seq(id, &folder)?;
-                let before = log::len(&folder).map_err(failed)?;
-                log::append(&folder, &log::line(seq, &body), true).map_err(failed)?;
                 meta.model = settings.model;
                 meta.cwd = settings.cwd;
-                meta.position = index.next_position();
-                if let Err(error) = index.append(Line::meta(id, meta), false) {
-                    log::truncate(&folder, before).map_err(failed)?;
-                    return Err(failed(error));
-                }
-                inner.set_next(id, seq + 1);
-                Ok(EventNumber(seq))
-            });
-            drop(owner);
-            saved
+                let line = Line {
+                    meta: Some(meta),
+                    ..Line::new(id)
+                };
+                write_event(index, &folder, writer.as_deref(), &body, true, line)
+            })
         })
         .await
     }
 
     async fn rename_session(&self, id: SessionId, title: &SessionTitle) -> Result<(), StoreError> {
         let title = title.to_string();
-        self.call(move |inner| {
-            inner.locked(|index| {
+        self.call(move |state| {
+            state.locked(|index| {
                 let mut meta = meta_of(index, id)?;
                 meta.title = Some(title);
-                index.append(Line::meta(id, meta), false).map_err(failed)
+                let line = Line {
+                    meta: Some(meta),
+                    ..Line::new(id)
+                };
+                index.append(line, false).map_err(failed)
             })
         })
         .await
@@ -390,19 +401,24 @@ impl Store for FileStore {
 
     async fn accept_input(&self, id: SessionId, input: Input) -> Result<InputId, StoreError> {
         let title = title_of(&input).map(|title| title.to_string());
-        self.call(move |inner| {
-            inner.locked(|index| {
-                let mut meta = meta_of(index, id)?;
-                let input_id = InputId(meta.next_input.max(1));
-                meta.next_input = input_id.0 + 1;
-                if meta.title.is_none() {
-                    meta.title = title;
-                }
+        self.call(move |state| {
+            state.locked(|index| {
+                let entry = index.get(id).ok_or(StoreError::NotFound)?;
+                let input_id = entry.next_input;
+                // The first input with a title names the session.
+                let meta = match (&entry.meta.title, title) {
+                    (None, Some(title)) => Some(Meta {
+                        title: Some(title),
+                        ..entry.meta.clone()
+                    }),
+                    _ => None,
+                };
                 // One line saves the input, its id, and the title. No sync: like the NORMAL sync of a database, a
                 // power loss can take it back, but no crash of the process.
                 let line = Line {
+                    meta,
                     add: Some(Added { id: input_id, input }),
-                    ..Line::meta(id, meta)
+                    ..Line::new(id)
                 };
                 index.append(line, false).map_err(failed)?;
                 Ok(input_id)
@@ -412,13 +428,17 @@ impl Store for FileStore {
     }
 
     async fn remove_input(&self, id: SessionId, input: InputId) -> Result<(), StoreError> {
-        self.call(move |inner| {
-            inner.locked(|index| {
+        self.call(move |state| {
+            state.locked(|index| {
                 let entry = index.get(id).ok_or(StoreError::NotFound)?;
                 if !entry.pending.iter().any(|pending| pending.id == input) {
                     return Err(StoreError::InputNotPending(input));
                 }
-                index.append(Line::remove(id, vec![input]), false).map_err(failed)
+                let line = Line {
+                    remove: vec![input],
+                    ..Line::new(id)
+                };
+                index.append(line, false).map_err(failed)
             })
         })
         .await
@@ -434,8 +454,8 @@ impl Store for FileStore {
         let cwd = cwd.map(Path::to_path_buf);
         let before = after.map_or(u64::MAX, |ListPosition(position)| position);
 
-        self.call(move |inner| {
-            let index = inner.index()?;
+        self.call(move |state| {
+            let index = state.index()?;
             // Sort references, and copy only the facts of the page.
             let mut listed: Vec<(&SessionId, &Meta)> = index
                 .sessions()
@@ -463,19 +483,16 @@ impl Store for FileStore {
     }
 
     async fn session_summary(&self, id: SessionId) -> Result<SessionSummary, StoreError> {
-        self.call(move |inner| {
-            let index = inner.index()?;
-            summary_of(id, &index.get(id).ok_or(StoreError::NotFound)?.meta)
-        })
-        .await
+        self.call(move |state| summary_of(id, &state.index()?.get(id).ok_or(StoreError::NotFound)?.meta))
+            .await
     }
 
     async fn open(&self, id: SessionId, access: Access) -> Result<Opened, StoreError> {
         let folder = self.folder(id);
 
-        let (opened, next, lock) = self
-            .call(move |inner| {
-                let meta = meta_of(&*inner.index()?, id)?;
+        let (opened, lock, next) = self
+            .call(move |state| {
+                let parent = meta_of(state.index()?, id)?.parent;
                 // The lock comes before the read, so no other writer appends between the lock and the read.
                 let lock = match access {
                     Access::Write => Some(files::take_lock(&folder)?),
@@ -483,29 +500,55 @@ impl Store for FileStore {
                 };
                 let log = log::read(&folder).map_err(failed)?;
                 if lock.is_some() {
-                    repair(inner, id, &folder, &log)?;
+                    // A crash can leave a torn line after the last event, and inputs in the index that an event
+                    // consumed. The new writer removes both.
+                    let complete = log.prefix_len(u64::MAX);
+                    if log::len(&folder).map_err(failed)? > complete {
+                        log::truncate(&folder, complete).map_err(failed)?;
+                    }
+                    let consumed: Vec<InputId> = log
+                        .events
+                        .iter()
+                        .filter_map(|event| match &event.event {
+                            SessionEvent::Commit(commit) => Some(commit.consumed.iter().map(|input| input.id)),
+                            SessionEvent::Settings(_) => None,
+                        })
+                        .flatten()
+                        .collect();
+                    state.locked(|index| {
+                        let entry = index.get(id).ok_or(StoreError::NotFound)?;
+                        let stale: Vec<InputId> = entry
+                            .pending
+                            .iter()
+                            .map(|input| input.id)
+                            .filter(|input| consumed.contains(input))
+                            .collect();
+                        if stale.is_empty() {
+                            return Ok(());
+                        }
+                        let line = Line {
+                            remove: stale,
+                            ..Line::new(id)
+                        };
+                        index.append(line, false).map_err(failed)
+                    })?;
                 }
                 let (context, newest_turn, input_tokens) = log::replay(&log.events);
-                let settings = settings_of(&log, u64::MAX)?;
-                let next = log.events.len() as u64 + 1;
                 let opened = Opened {
                     id,
-                    settings,
+                    settings: settings_of(&log, u64::MAX)?,
                     prompt: log.prompt,
-                    parent: meta.parent,
+                    parent,
                     context,
                     newest_turn,
                     input_tokens,
                     lease: None,
                 };
-                Ok((opened, next, lock))
+                Ok((opened, lock, log.events.len() as u64 + 1))
             })
             .await?;
-        if lock.is_some() {
-            self.inner.set_next(id, next);
-        }
         Ok(Opened {
-            lease: lock.map(|lock| self.lease(id, lock)),
+            lease: lock.map(|lock| self.lease(id, lock, next)),
             ..opened
         })
     }
@@ -516,69 +559,56 @@ impl Store for FileStore {
         commit: &Commit<'_>,
         consumed: &[ConsumedInput],
     ) -> Result<EventNumber, StoreError> {
-        let owner = self.owner(id);
+        let writer = self.writer(id);
         let folder = self.folder(id);
         let body = log::commit_body(commit, consumed).map_err(failed)?;
         let consumed: Vec<InputId> = consumed.iter().map(|input| input.id).collect();
         // A turn end is durable at once. A step of a turn survives a crash of the process, not a power loss.
         let ends_turn = commit.end.is_some();
 
-        self.call(move |inner| {
-            let saved = (|| {
-                if consumed.is_empty() && !ends_turn {
-                    ensure_log(&folder)?;
-                    let seq = inner.next_seq(id, &folder)?;
-                    log::append(&folder, &log::line(seq, &body), false).map_err(failed)?;
-                    inner.set_next(id, seq + 1);
-                    return Ok(EventNumber(seq));
+        self.call(move |state| {
+            let writer = writer.as_deref();
+            if consumed.is_empty() && !ends_turn {
+                ensure_log(&folder)?;
+                let number = next_event_number(writer, &folder)?;
+                log::append(&folder, &log::line(number, &body), false).map_err(failed)?;
+                if let Some(writer) = writer {
+                    writer.next.store(number + 1, Ordering::Relaxed);
                 }
-                // A turn start or end also changes the facts and the pending inputs: one line in the log, then one
-                // line in the index. A crash between the two leaves consumed inputs that the next lease removes.
-                inner.locked(|index| {
-                    let entry = index.get(id).ok_or(StoreError::NotFound)?;
-                    if let Some(&input) = consumed
-                        .iter()
-                        .find(|&&input| !entry.pending.iter().any(|pending| pending.id == input))
-                    {
-                        return Err(StoreError::InputNotPending(input));
-                    }
-                    let mut meta = entry.meta.clone();
-                    let seq = inner.next_seq(id, &folder)?;
-                    let before = log::len(&folder).map_err(failed)?;
-                    log::append(&folder, &log::line(seq, &body), ends_turn).map_err(failed)?;
-                    meta.position = index.next_position();
-                    let line = Line {
-                        remove: consumed,
-                        ..Line::meta(id, meta)
-                    };
-                    if let Err(error) = index.append(line, false) {
-                        log::truncate(&folder, before).map_err(failed)?;
-                        return Err(failed(error));
-                    }
-                    inner.set_next(id, seq + 1);
-                    Ok(EventNumber(seq))
-                })
-            })();
-            drop(owner);
-            saved
+                return Ok(EventNumber(number));
+            }
+            // A turn start or end also changes the facts and the pending inputs: one line in the log, then one line
+            // in the index. A crash between the two leaves consumed inputs that the next lease removes.
+            state.locked(|index| {
+                let entry = index.get(id).ok_or(StoreError::NotFound)?;
+                if let Some(&input) = consumed
+                    .iter()
+                    .find(|&&input| !entry.pending.iter().any(|pending| pending.id == input))
+                {
+                    return Err(StoreError::InputNotPending(input));
+                }
+                let line = Line {
+                    meta: Some(entry.meta.clone()),
+                    remove: consumed,
+                    ..Line::new(id)
+                };
+                write_event(index, &folder, writer, &body, ends_turn, line)
+            })
         })
         .await
     }
 
     async fn pending(&self, id: SessionId) -> Result<Vec<PendingInput>, StoreError> {
-        self.call(move |inner| {
-            let index = inner.index()?;
-            Ok(index.get(id).ok_or(StoreError::NotFound)?.pending.clone())
-        })
-        .await
+        self.call(move |state| Ok(state.index()?.get(id).ok_or(StoreError::NotFound)?.pending.clone()))
+            .await
     }
 
     async fn load(&self, id: SessionId, page: EventPage) -> Result<Loaded, StoreError> {
         let folder = self.folder(id);
-        self.call(move |inner| {
-            // The inputs come before the log. An input that a newer line consumed is no longer pending.
-            let pending = inner.index()?.get(id).ok_or(StoreError::NotFound)?.pending.clone();
-            let (events, consumed) = log::page(&folder, page, !pending.is_empty()).map_err(failed)?;
+        self.call(move |state| {
+            // The inputs come before the log. An input that the newest event consumed is no longer pending.
+            let pending = state.index()?.get(id).ok_or(StoreError::NotFound)?.pending.clone();
+            let (events, consumed) = log::page(&folder, page).map_err(failed)?;
             let pending = pending
                 .into_iter()
                 .filter(|input| !consumed.contains(&input.id))
@@ -603,13 +633,17 @@ impl Store for FileStore {
 
     async fn delete_session(&self, id: SessionId) -> Result<(), StoreError> {
         let folder = self.folder(id);
-        self.call(move |inner| {
-            inner.locked(|index| {
+        self.call(move |state| {
+            state.locked(|index| {
                 if index.get(id).is_none() {
                     return Err(StoreError::NotFound);
                 }
                 let lock = files::take_lock(&folder)?;
-                index.append(Line::deleted(id), false).map_err(failed)?;
+                let line = Line {
+                    deleted: true,
+                    ..Line::new(id)
+                };
+                index.append(line, false).map_err(failed)?;
                 // Windows does not delete an open file, so the lock closes before the folder goes. The log goes first,
                 // so when the removal of the rest fails, the sweep of the next open removes the folder.
                 drop(lock);
@@ -617,52 +651,8 @@ impl Store for FileStore {
                 files::remove_session_folder(&folder).map_err(failed)
             })
         })
-        .await?;
-        self.inner
-            .next
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&id);
-        Ok(())
+        .await
     }
-}
-
-/// The ids of the inputs that the commits of `events` consumed.
-fn consumed_ids(events: &[StoredEvent]) -> Vec<InputId> {
-    events
-        .iter()
-        .filter_map(|event| match &event.event {
-            SessionEvent::Commit(commit) => Some(commit.consumed.iter().map(|input| input.id)),
-            SessionEvent::Settings(_) => None,
-        })
-        .flatten()
-        .collect()
-}
-
-/// Repair the session in `folder` for a new writer: cut a torn tail of the log, and remove the pending inputs that a
-/// line consumed before a crash removed them from the index.
-fn repair(inner: &Inner, id: SessionId, folder: &Path, log: &log::Log) -> Result<(), StoreError> {
-    if log.torn {
-        log::truncate(folder, log.prefix_len(u64::MAX)).map_err(failed)?;
-    }
-    let consumed = consumed_ids(&log.events);
-    inner.locked(|index| {
-        let stale: Vec<InputId> = index
-            .get(id)
-            .map(|entry| {
-                entry
-                    .pending
-                    .iter()
-                    .map(|input| input.id)
-                    .filter(|input| consumed.contains(input))
-                    .collect()
-            })
-            .unwrap_or_default();
-        if stale.is_empty() {
-            return Ok(());
-        }
-        index.append(Line::remove(id, stale), false).map_err(failed)
-    })
 }
 
 /// The newest settings of `log` through event `cut`. The first line of each log is a settings event.
@@ -692,8 +682,4 @@ fn summary_of(id: SessionId, meta: &Meta) -> Result<SessionSummary, StoreError> 
         fork_of: meta.fork_of,
         parent: meta.parent,
     })
-}
-
-pub(crate) fn failed(error: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> StoreError {
-    StoreError::Failed(error.into())
 }
