@@ -20,8 +20,7 @@ folder/
   other file holds the prompt and a fork copies it with the events.
 - Each line of `events.jsonl` holds `at`, the millisecond of its write, for a reader of the file such as `jq`. The
   store does not read it, and a fork keeps the times of the copied lines.
-- The first line of `sessions.jsonl` holds the tag of the file. Each later line names a session and holds one or more
-  changes: `meta` (model, folder, title, parent, fork source, list position, next input id), `add` (a new
+- Each line of `sessions.jsonl` names a session and holds one or more changes: `meta` (model, folder, title, parent, fork source, list position, next input id), `add` (a new
   pending input), `remove` (inputs that are no longer pending), or `deleted`. The newest `meta` of a session wins.
 - The index stores no time. The creation time comes from the version 7 session id, and the activity time from the
   list position, the microsecond of the newest turn start, turn end, or settings change.
@@ -42,8 +41,8 @@ folder/
 
 ## Reads
 
-- Each process keeps the folded index in memory. A read opens the index, checks the tag, and reads only the bytes
-  after the newest line that it folded. So a list of 1000 sessions reads no session folder.
+- Each process keeps the folded index in memory. Its first read folds the whole index. A later read reads only the
+  lines after the newest line that it folded. So a list of 1000 sessions reads no session folder.
 - The list filters the folded facts by parent and folder, sorts by position, and copies only the facts of the page.
   The position is the microsecond of the newest turn start, turn end, or settings change, and each writer takes a
   position above every position in the index, so two processes never tie.
@@ -61,11 +60,10 @@ folder/
 - A crash between the log line and the index line of a turn start leaves consumed inputs in the index. `load` hides
   them, and the next writer of the session appends their removal.
 
-## Compaction
+## Growth
 
-When the index is above 1 MiB and above 4 times its live lines, the writer writes the live facts and pending inputs
-to a new file with a new tag, syncs it, and renames it over the index. A reader sees the new tag and reads the whole
-file again.
+The index only grows. A turn adds about 1.5 KB, about 1% of the log of a turn. The first read of a process folds
+about 500 MB per second, so 50 MB of index, about a year of heavy use, adds about 0.1 s.
 
 ## Owner lock
 
