@@ -160,11 +160,7 @@ impl FileStore {
             jobs,
             owners: Owners::default(),
         };
-        store
-            .call(move |inner| {
-                inner.locked(|index| files::sweep(&inner.sessions, |id| index.get(SessionId::from_bytes(id)).is_some()))
-            })
-            .await?;
+        store.call(move |inner| files::sweep(&inner.sessions)).await?;
         if created {
             files::sync_folder(&folder).map_err(failed)?;
             if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -614,9 +610,10 @@ impl Store for FileStore {
                 }
                 let lock = files::take_lock(&folder)?;
                 index.append(Line::deleted(id), false).map_err(failed)?;
-                // Windows does not delete an open file, so the lock closes before the folder goes. When the removal
-                // fails, the index has no session, and the sweep of the next open removes the folder.
+                // Windows does not delete an open file, so the lock closes before the folder goes. The log goes first,
+                // so when the removal of the rest fails, the sweep of the next open removes the folder.
                 drop(lock);
+                std::fs::remove_file(log::path(&folder)).map_err(failed)?;
                 files::remove_session_folder(&folder).map_err(failed)
             })
         })

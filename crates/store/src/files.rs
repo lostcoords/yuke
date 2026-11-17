@@ -135,17 +135,18 @@ pub(crate) fn remove_session_folder(folder: &Path) -> io::Result<()> {
     }
 }
 
-/// Remove each session folder in `sessions` that is not a session of the index and has a free lock. A crash during a
-/// create or a delete, or a put of another process during a delete, leaves such a folder. A create or a delete in
-/// progress holds the lock.
-pub(crate) fn sweep(sessions: &Path, is_session: impl Fn([u8; 16]) -> bool) -> Result<(), StoreError> {
+/// Remove each session folder in `sessions` that has no log and has a free lock. A crash during a create or a delete,
+/// or a put of another process during a delete, leaves such a folder. A create or a delete in progress holds the lock.
+/// A folder with a log stays, also when the index does not name it, so an index that this yuke cannot read removes no
+/// session.
+pub(crate) fn sweep(sessions: &Path) -> Result<(), StoreError> {
     for entry in std::fs::read_dir(sessions).map_err(failed)? {
         let entry = entry.map_err(failed)?;
-        let Some(id) = entry.file_name().to_str().and_then(parse_session) else {
+        if entry.file_name().to_str().and_then(parse_session).is_none() {
             continue;
-        };
+        }
         let folder = entry.path();
-        if is_session(id) {
+        if crate::log::path(&folder).exists() {
             continue;
         }
 

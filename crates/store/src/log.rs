@@ -1,8 +1,9 @@
 //! The event log of a session: `events.jsonl` in the session folder, one [`StoredEvent`] as JSON on each line. Each
 //! line also holds `at`, the millisecond of the write. The first line, the first settings event, also holds the system
 //! prompt in a `prompt` field, so a fork copies the prompt with the events and no other file holds it. Line `n` holds
-//! event `n`. Only the holder of the lease appends. A reader stops at the first line that is not complete, so a torn
-//! append of a crash reads as no event. The writer cuts such a tail when it takes the lease.
+//! event `n`. Only the holder of the lease appends. A reader stops at the last newline, so a torn append of a crash reads
+//! as no event. The writer cuts such a tail when it takes the lease. A complete line that is not its event is an error,
+//! so a change of the event format does not cut the log.
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
@@ -23,7 +24,8 @@ pub(crate) fn path(folder: &Path) -> PathBuf {
     folder.join(LOG)
 }
 
-/// The events of the log and the end of the line of each. A missing file has no event.
+/// The events of the log and the end of the line of each. A missing file has no event. A complete line that is not
+/// its event is an error.
 pub(crate) fn read(folder: &Path) -> io::Result<Log> {
     let mut log = Log {
         events: Vec::new(),
@@ -32,10 +34,7 @@ pub(crate) fn read(folder: &Path) -> io::Result<Log> {
         torn: false,
     };
     log.torn = lines(folder, |line, end| {
-        // A line with another number is the rest of a torn append.
-        let Some(event) = parse(line, log.events.len() as u64 + 1) else {
-            return false;
-        };
+        let event = parse(line, log.events.len() as u64 + 1)?;
         if log.events.is_empty() {
             log.prompt = serde_json::from_slice::<FirstLine>(line)
                 .map(|first| first.prompt)
@@ -43,7 +42,7 @@ pub(crate) fn read(folder: &Path) -> io::Result<Log> {
         }
         log.events.push(event);
         log.ends.push(end);
-        true
+        Ok(())
     })?;
     Ok(log)
 }
@@ -61,9 +60,7 @@ pub(crate) fn page(folder: &Path, page: EventPage, consumed: bool) -> io::Result
     lines(folder, |line, _| {
         seq += 1;
         if consumed {
-            let Ok(Consumed { consumed }) = serde_json::from_slice(line) else {
-                return false;
-            };
+            let Consumed { consumed } = serde_json::from_slice(line)?;
             ids.extend(consumed.into_iter().map(|input| input.id));
         }
         if seq > after && seq < before && limit > 0 {
@@ -72,25 +69,30 @@ pub(crate) fn page(folder: &Path, page: EventPage, consumed: bool) -> io::Result
             }
             lines_of_page.push_back((seq, line.to_vec()));
         }
-        true
+        Ok(())
     })?;
     let events = lines_of_page
         .into_iter()
-        .map_while(|(seq, line)| parse(&line, seq))
-        .collect();
+        .map(|(seq, line)| parse(&line, seq))
+        .collect::<io::Result<_>>()?;
     Ok((events, ids))
 }
 
-/// Event `seq` from `line`, or `None` when the line is not that event.
-fn parse(line: &[u8], seq: u64) -> Option<StoredEvent> {
-    serde_json::from_slice::<StoredEvent>(line)
-        .ok()
-        .filter(|event| event.event_number.0 == seq)
+/// Event `seq` from `line`.
+fn parse(line: &[u8], seq: u64) -> io::Result<StoredEvent> {
+    let event: StoredEvent = serde_json::from_slice(line)?;
+    if event.event_number.0 != seq {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("line {seq} of the log holds event {}", event.event_number.0),
+        ));
+    }
+    Ok(event)
 }
 
-/// Call `take` with each complete line of the log, without its newline, and the end of the line in the file, until
-/// `take` returns `false`. Returns whether bytes remain after the last line that `take` took.
-fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> bool) -> io::Result<bool> {
+/// Call `take` with each complete line of the log, without its newline, and the end of the line in the file. Stops at
+/// the first error of `take`. Returns whether bytes without a newline follow the last line.
+fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> io::Result<()>) -> io::Result<bool> {
     let file = match File::open(path(folder)) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -105,10 +107,11 @@ fn lines(folder: &Path, mut take: impl FnMut(&[u8], u64) -> bool) -> io::Result<
         if read == 0 {
             return Ok(false);
         }
-        end += read as u64;
-        if line.pop() != Some(b'\n') || !take(&line, end) {
+        if line.pop() != Some(b'\n') {
             return Ok(true);
         }
+        end += read as u64;
+        take(&line, end)?;
     }
 }
 

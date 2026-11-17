@@ -35,9 +35,10 @@ folder/
   line again.
 - An accepted input appends one line to the index with the input, its id, and the first title. No sync.
 - A new session and a fork take the owner lock of the new folder, write the log durably, and then append the facts to
-  the index durably. A folder that the index does not know is no session, and the sweep removes it.
+  the index durably. The sweep at each open removes a folder with no log and a free lock: the rest of a crash during
+  a create or a delete.
 - A rename appends one line. It changes no event, activity time, or list position.
-- A delete appends `deleted`, then removes the folder.
+- A delete appends `deleted`, then removes the log, then the folder.
 
 ## Reads
 
@@ -51,7 +52,10 @@ folder/
 
 ## Crashes
 
-- A reader stops at the first incomplete line of a log. A new writer cuts such a tail.
+- A reader stops at the last newline of a log. A new writer cuts the bytes after it. A complete line that is not its
+  event fails the read, and no writer cuts it.
+- A folder with a log stays, also when the index does not name it. So an index that this yuke cannot read removes no
+  session.
 - A reader skips an incomplete last line of the index. The next writer cuts it under the store lock, because no other
   writer can be in its append.
 - A crash between the log line and the index line of a turn start leaves consumed inputs in the index. `load` hides

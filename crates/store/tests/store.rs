@@ -17,6 +17,14 @@ fn folder(name: &str) -> PathBuf {
     yuke_testing::folder("store", name)
 }
 
+/// The log of session `id` in the store folder `folder`.
+fn log_of(folder: &std::path::Path, id: yuke_protocol::SessionId) -> PathBuf {
+    folder
+        .join("sessions")
+        .join(format!("{:032x}", u128::from_be_bytes(*id.as_bytes())))
+        .join("events.jsonl")
+}
+
 async fn make_store(name: &str) -> std::sync::Arc<FileStore> {
     std::sync::Arc::new(FileStore::open(folder(name)).await.unwrap())
 }
@@ -127,14 +135,14 @@ async fn an_open_for_writing_of_an_unknown_session_makes_no_folder() {
 }
 
 #[tokio::test]
-async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
-    let folder = folder("the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one");
+async fn the_sweep_removes_a_folder_without_a_log_and_keeps_a_locked_one() {
+    let folder = folder("the_sweep_removes_a_folder_without_a_log_and_keeps_a_locked_one");
     drop(FileStore::open(&folder).await.unwrap());
-    // The index has no session for this folder, as after a crash during a delete.
+    // This folder has no log, as after a crash during a delete.
     let left = folder.join("sessions").join("0123456789abcdef0123456789abcdef");
     std::fs::create_dir_all(&left).unwrap();
     std::fs::write(left.join("blob"), b"image").unwrap();
-    // The index has no session for this folder, and its lock is held, as during a create in another process.
+    // This folder has no log, and its lock is held, as during a create in another process.
     let deleting = folder.join("sessions").join("fedcba9876543210fedcba9876543210");
     std::fs::create_dir_all(&deleting).unwrap();
     let lock = std::fs::File::create(deleting.join("lock")).unwrap();
@@ -144,6 +152,51 @@ async fn the_sweep_removes_a_folder_without_a_session_and_keeps_a_locked_one() {
 
     assert!(!left.exists());
     assert!(deleting.exists());
+}
+
+// An index that this yuke cannot read, such as one of another version, must not cost the sessions.
+#[tokio::test]
+async fn a_lost_index_removes_no_session_folder() {
+    let folder = folder("a_lost_index_removes_no_session_folder");
+    let store = FileStore::open(&folder).await.unwrap();
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    drop(store);
+    let log = std::fs::read(log_of(&folder, id)).unwrap();
+    std::fs::remove_file(folder.join("sessions.jsonl")).unwrap();
+
+    drop(FileStore::open(&folder).await.unwrap());
+
+    assert_eq!(std::fs::read(log_of(&folder, id)).unwrap(), log);
+}
+
+// A change of the event format makes an old line unreadable. The open must fail, not cut the events after it.
+#[tokio::test]
+async fn a_complete_line_that_is_not_an_event_fails_the_open_and_keeps_the_log() {
+    let folder = folder("a_complete_line_that_is_not_an_event_fails_the_open_and_keeps_the_log");
+    let store = FileStore::open(&folder).await.unwrap();
+    let opened = store.create_session(&settings("one"), &prompt(), None).await.unwrap();
+    let id = opened.id;
+    for text in ["a", "b"] {
+        store
+            .commit(id, &step(&[yuke_ai::Block::user_text(text)]), &[])
+            .await
+            .unwrap();
+    }
+    drop(opened);
+    let log = log_of(&folder, id);
+    let changed = std::fs::read_to_string(&log)
+        .unwrap()
+        .replacen(r#""kind":"commit""#, r#""kind":"newCommit""#, 1);
+    std::fs::write(&log, &changed).unwrap();
+
+    let written = store.open(id, Access::Write).await;
+
+    assert!(matches!(written, Err(StoreError::Failed(_))), "{written:?}");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), changed);
 }
 
 #[tokio::test]
@@ -385,10 +438,7 @@ async fn a_torn_line_of_a_crash_reads_as_no_event_and_the_next_writer_cuts_it() 
         .await
         .unwrap();
     drop(opened);
-    let log = folder
-        .join("sessions")
-        .join(format!("{:032x}", u128::from_be_bytes(*id.as_bytes())))
-        .join("events.jsonl");
+    let log = log_of(&folder, id);
     let complete = std::fs::metadata(&log).unwrap().len();
     let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
     std::io::Write::write_all(&mut file, br#"{"seq":3,"kind":"comm"#).unwrap();
