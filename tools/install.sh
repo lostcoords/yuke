@@ -7,187 +7,58 @@ fail() {
   exit 1
 }
 
-probe_release() {
-  local result code
-  result="$(curl --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 60 \
-    -sIL -o /dev/null -w '%{http_code} %{url_effective}' "$1")" || fail 'cannot reach GitHub.'
-  code="${result%% *}"
-  [ "${code}" = 200 ] || fail "GitHub answered ${code}; ${repo} needs a public ${channel} release."
-  landed="${result#* }"
-}
-
-resolve_release() {
-  case "${channel}" in
-    stable)
-      probe_release "https://github.com/${repo}/releases/latest"
-      case "${landed}" in
-        "https://github.com/${repo}/releases/tag/"*) tag="${landed##*/}" ;;
-        *) fail "${repo} has no stable release." ;;
-      esac
-      ;;
-    nightly)
-      probe_release "https://github.com/${repo}/releases/tag/nightly"
-      tag=nightly
-      ;;
-    *) fail 'YUKE_CHANNEL must be stable or nightly.' ;;
-  esac
-  [[ "${tag}" =~ ^[a-zA-Z0-9._+-]+$ ]] || fail 'the release tag contains unsupported characters.'
-}
-
-check_package_path() {
-  case "$1" in
-    /* | ../* | */../* | */.. | *\\*) fail 'the package contains an unsafe path.' ;;
-    bin | bin/ | bin/yuke | lib | lib/ | lib/yuke | lib/yuke/ | lib/yuke/*) ;;
-    *) fail "the package contains an unexpected path: $1" ;;
-  esac
-}
-
-extract_archive() {
-  local archive="$1" name
-  tar -tzf "${archive}" > "${staging}/entries" || fail 'cannot read the package archive.'
-  while IFS= read -r name; do
-    check_package_path "${name}"
-  done < "${staging}/entries"
-  # Packages contain only regular files and directories, never links or device files.
-  tar -tvzf "${archive}" > "${staging}/entry-types"
-  if ! awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }' "${staging}/entry-types"; then
-    fail 'the archive contains a link or special file.'
-  fi
-  mkdir "${staging}/package"
-  tar -xzf "${archive}" -C "${staging}/package"
-}
-
-cleanup() {
-  local status="$?" recovery_failed=false
-  trap - EXIT
-  if [ "${committed}" = false ]; then
-    if [ "${new_library}" = true ] && ! mv "${lib_dir}" "${staging}/failed-library"; then
-      recovery_failed=true
-    fi
-    if [ "${recovery_failed}" = false ] && [ -d "${staging}/previous-library" ]; then
-      if ! mv "${staging}/previous-library" "${lib_dir}"; then recovery_failed=true; fi
-    fi
-  fi
-  if [ "${recovery_failed}" = true ]; then
-    printf 'error: recovery files remain at %s. Restore the previous library to %s manually.\n' "${staging}" "${lib_dir}" >&2
-    status=1
-  elif ! rm -rf "${staging}"; then
-    printf 'warning: could not remove %s. The installation files are already restored or committed.\n' "${staging}" >&2
-  fi
-  rmdir "${lock}" || printf 'warning: could not remove %s\n' "${lock}" >&2
-  exit "${status}"
-}
-
+# An editor checks the plugins of the profile against the installed API. A tsconfig.json of the user stays.
 configure_editor() {
-  local root name profile
+  local root profile
   root="${XDG_CONFIG_HOME:-}"
   case "${root}" in /*) ;; *) root="${HOME}/.config" ;; esac
-  name="${YUKE_APPNAME:-yuke}"
-  case "${name}" in
-    . | .. | */* | *\\*) printf 'warning: YUKE_APPNAME needs a plain profile name; editor configuration stays unchanged.\n' >&2; return ;;
-  esac
-  profile="${root}/${name}"
-  if ! mkdir -p "${profile}"; then
-    printf 'warning: cannot create %s; editor configuration stays unchanged.\n' "${profile}" >&2
-    return
-  fi
-  if [ ! -e "${profile}/tsconfig.json" ] && [ ! -L "${profile}/tsconfig.json" ]; then
-    if ! (set -C; cat > "${profile}/tsconfig.json" <<JSON
+  profile="${root}/${YUKE_APPNAME:-yuke}"
+  mkdir -p "${profile}"
+  [ -e "${profile}/tsconfig.json" ] || cat > "${profile}/tsconfig.json" <<JSON
 {
   "extends": "${lib_dir}/tsconfig.json",
   "include": ["./**/*.ts"],
   "exclude": ["./node_modules"]
 }
 JSON
-    ); then
-      printf 'warning: cannot create %s/tsconfig.json.\n' "${profile}" >&2
-    fi
-  fi
 }
 
 install_yuke() {
   [ "$#" -le 1 ] || fail 'usage: install.sh [archive.tar.gz]'
-  case "${HOME:-}" in /*) ;; *) fail 'HOME must be an absolute directory.' ;; esac
-  repo=lostcoords/yuke
-  channel="${YUKE_CHANNEL:-stable}"
-  bin_dir="${HOME}/.local/bin"
+  local repo=lostcoords/yuke channel="${YUKE_CHANNEL:-stable}" bin_dir="${HOME}/.local/bin" os arch url archive version
   lib_dir="${HOME}/.local/lib/yuke"
-  command -v tar >/dev/null || fail 'tar is required.'
+  case "$(uname -m)" in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) fail "no package for $(uname -m)." ;; esac
+  case "$(uname -s)" in Darwin) os=macos ;; Linux) os=linux-musl ;; *) fail "no package for $(uname -s)." ;; esac
 
   mkdir -p "${HOME}/.local"
-  lock="${HOME}/.local/.yuke-install.lock"
-  mkdir "${lock}" 2>/dev/null || fail "another installer holds ${lock}; check it before removing the lock."
-  if ! staging="$(mktemp -d "${HOME}/.local/.yuke-install.XXXXXX")"; then
-    rmdir "${lock}"
-    fail 'cannot create an installation staging directory.'
-  fi
-  committed=false
-  new_library=false
-  trap cleanup EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-
-  local archive asset os arch base version expected_target package_target package_format
-  os="$(uname -s)"
-  arch="$(uname -m)"
-  case "${arch}" in arm64 | aarch64) arch=aarch64 ;; x86_64 | amd64) arch=x86_64 ;; *) fail "no package for ${arch}." ;; esac
-  case "${os}" in
-    Darwin) os=macos; expected_target="${arch}-apple-darwin" ;;
-    Linux) os=linux-musl; expected_target="${arch}-unknown-linux-musl" ;;
-    *) fail "no package for ${os}." ;;
-  esac
+  staging="$(mktemp -d "${HOME}/.local/.yuke-install.XXXXXX")"
+  trap 'rm -rf "${staging}"' EXIT
   if [ "$#" = 1 ]; then
     archive="$1"
-    [ -f "${archive}" ] || fail 'the local package must be an archive file.'
   else
-    command -v curl >/dev/null || fail 'curl is required for downloads.'
-    resolve_release
-    asset="yuke-${arch}-${os}.tar.gz"
-    archive="${staging}/${asset}"
-    base="https://github.com/${repo}/releases/download/${tag}"
-    curl --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 300 \
-      -fsSL -o "${archive}" "${base}/${asset}"
+    case "${channel}" in
+      stable) url="https://github.com/${repo}/releases/latest/download" ;;
+      nightly) url="https://github.com/${repo}/releases/download/nightly" ;;
+      *) fail 'YUKE_CHANNEL must be stable or nightly.' ;;
+    esac
+    archive="${staging}/yuke.tar.gz"
+    curl --proto '=https' --proto-redir '=https' -fsSL -o "${archive}" "${url}/yuke-${arch}-${os}.tar.gz" ||
+      fail "cannot download the ${channel} release of ${repo}."
   fi
-  extract_archive "${archive}"
-
-  local package="${staging}/package" file
-  for file in bin/yuke lib/yuke/modules/tools.ts lib/yuke/modules/plugins.ts \
-    lib/yuke/types/globals.d.ts lib/yuke/types/fs.d.ts lib/yuke/tsconfig.json \
-    lib/yuke/protocol/bindings/ClientRequest.ts lib/yuke/protocol/README.md \
-    lib/yuke/LICENSE.md lib/yuke/build.json; do
-    [ -f "${package}/${file}" ] && [ ! -L "${package}/${file}" ] || fail "the package has no regular ${file}."
-  done
-  package_format="$(sed -n 's/^[[:space:]]*"format": \([0-9][0-9]*\)[[:space:],]*$/\1/p' "${package}/lib/yuke/build.json")"
-  [ "${package_format}" = 1 ] || fail 'unsupported package format.'
-  package_target="$(sed -n 's/^[[:space:]]*"target": "\([^"]*\)".*/\1/p' "${package}/lib/yuke/build.json")"
-  [ "${package_target}" = "${expected_target}" ] || fail 'the package target does not match this machine.'
-  version="$(sed -n 's/^[[:space:]]*"version": "\([^"]*\)".*/\1/p' "${package}/lib/yuke/build.json")"
-  [ -n "${version}" ] || fail 'the package has no build version.'
-  [ "$("${package}/bin/yuke" --version)" = "yuke ${version}" ] || fail 'the staged binary does not run or has the wrong version.'
-  if [ "$#" = 0 ] && [ "${channel}" = stable ]; then
-    [ "v${version}" = "${tag}" ] || fail 'the stable tag does not match the package version.'
-  fi
+  # A broken download or binary stops here, before the working installation changes.
+  tar -xzf "${archive}" -C "${staging}"
+  version="$("${staging}/bin/yuke" --version)" || fail 'the new yuke binary does not run on this machine.'
 
   mkdir -p "${bin_dir}" "${lib_dir%/*}"
-  [ ! -L "${lib_dir}" ] || fail "${lib_dir} is a symlink; move it before installation."
-  if [ -e "${bin_dir}/yuke" ] || [ -L "${bin_dir}/yuke" ]; then
-    [ ! -d "${bin_dir}/yuke" ] || fail "${bin_dir}/yuke is a directory."
-    printf 'Replacing %s/yuke\n' "${bin_dir}"
-  fi
-  if [ -e "${lib_dir}" ]; then
-    [ -d "${lib_dir}" ] || fail "${lib_dir} is not a directory."
-    mv "${lib_dir}" "${staging}/previous-library"
-  fi
-  mv "${package}/lib/yuke" "${lib_dir}"
-  new_library=true
-  mv -f "${package}/bin/yuke" "${bin_dir}/yuke"
-  committed=true
-
+  rm -rf "${lib_dir}"
+  mv "${staging}/lib/yuke" "${lib_dir}"
+  mv -f "${staging}/bin/yuke" "${bin_dir}/yuke"
   configure_editor
   # Agents that read ~/.agents/skills, yuke too, find the skill of the installed release there.
   mkdir -p "${HOME}/.agents/skills"
   ln -sfn "${lib_dir}/skills/yuke" "${HOME}/.agents/skills/yuke"
-  printf 'Installed %s/yuke (%s)\n' "${bin_dir}" "${version}"
+
+  printf 'Installed %s/yuke (%s)\n' "${bin_dir}" "${version#yuke }"
   case ":${PATH}:" in
     *":${bin_dir}:"*) ;;
     *) printf 'Add ~/.local/bin to PATH in your shell configuration.\n' ;;

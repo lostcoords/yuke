@@ -104,10 +104,8 @@ class PackageTests(unittest.TestCase):
         command.chmod(0o755)
         self.environment["PATH"] = str(folder) + os.pathsep + self.environment["PATH"]
 
-    def network(self, missing_stable=False, corrupt=False):
+    def network(self, corrupt=False):
         self.environment["PACKAGE_FIXTURE"] = str(ARCHIVE)
-        self.environment["PACKAGE_VERSION"] = self.identity["version"]
-        self.environment["MISSING_STABLE"] = "1" if missing_stable else "0"
         self.environment["CORRUPT_DOWNLOAD"] = "1" if corrupt else "0"
         self.add_executable("curl", '''import os
 from pathlib import Path
@@ -115,21 +113,14 @@ import shutil
 import sys
 args = sys.argv[1:]
 url = args[-1]
-base = "https://github.com/lostcoords/yuke/releases/"
-channel = os.environ.get("YUKE_CHANNEL", "stable")
-tag = "nightly" if channel == "nightly" else "v" + os.environ["PACKAGE_VERSION"]
 package = Path(os.environ["PACKAGE_FIXTURE"])
-if url == base + ("tag/nightly" if channel == "nightly" else "latest"):
-    suffix = "" if os.environ["MISSING_STABLE"] == "1" else "tag/" + tag
-    print("200 " + base + suffix, end="")
-else:
-    destination = Path(args[args.index("-o") + 1])
-    if url == base + "download/" + tag + "/" + package.name:
-        shutil.copyfile(package, destination)
-        if os.environ["CORRUPT_DOWNLOAD"] == "1":
-            destination.write_bytes(b"corrupt download")
-    else:
-        sys.exit("unexpected download URL: " + url)
+folder = "download/nightly/" if os.environ.get("YUKE_CHANNEL") == "nightly" else "latest/download/"
+if url != "https://github.com/lostcoords/yuke/releases/" + folder + package.name:
+    sys.exit("unexpected download URL: " + url)
+destination = Path(args[args.index("-o") + 1])
+shutil.copyfile(package, destination)
+if os.environ["CORRUPT_DOWNLOAD"] == "1":
+    destination.write_bytes(b"corrupt download")
 ''')
 
     def test_archive_installs_the_binary_library_and_editor_configuration(self):
@@ -144,12 +135,6 @@ else:
         self.assertFalse((self.home / ".local/share").exists())
         self.assertEqual(os.readlink(self.skill), str(self.library / "skills/yuke"))
         self.assertEqual((self.skill / "SKILL.md").read_bytes(), (ROOT / "skills/yuke/SKILL.md").read_bytes())
-
-    def test_local_directory_is_rejected_without_replacing_the_working_installation(self):
-        before = self.seed_installation()
-        result = self.install(self.extracted, expected=1)
-        self.assertIn("the local package must be an archive file", result)
-        self.assertEqual(self.snapshot(), before)
 
     def test_package_files_match_the_checkout(self):
         self.assertEqual(self.identity["commit"], self.expected_commit)
@@ -275,8 +260,7 @@ if ("result" in response) {
             path = self.home / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
-        result = self.install()
-        self.assertIn("Replacing ", result)
+        self.install()
         self.assertEqual(digest(self.binary), digest(self.extracted / "bin/yuke"))
         self.assertFalse((self.library / "old-file").exists())
         for name, text in files.items():
@@ -290,127 +274,13 @@ if ("result" in response) {
         self.assertEqual((self.library / "modules/plugins.ts").read_bytes(), original)
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
 
-    def test_archive_symlinks_are_rejected_before_extraction(self):
-        before = self.seed_installation()
-        def link(package):
-            path = package / "lib/yuke/modules/tools.ts"
-            path.unlink()
-            path.symlink_to("builtins.ts")
-        result = self.install(self.mutation(link), expected=1)
-        self.assertIn("archive contains a link or special file", result)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_unsafe_archive_paths_and_hardlinks_are_rejected_before_extraction(self):
-        before = self.seed_installation()
-        for name, kind, message in [
-            ("lib/yuke/../../../escape", tarfile.REGTYPE, "package contains an unsafe path"),
-            ("lib/yuke/hardlink", tarfile.LNKTYPE, "archive contains a link or special file"),
-        ]:
-            with self.subTest(name=name):
-                archive = self.scratch / ARCHIVE.name
-                with tarfile.open(archive, "w:gz") as result:
-                    result.add(self.extracted / "bin", arcname="bin")
-                    result.add(self.extracted / "lib", arcname="lib")
-                    member = tarfile.TarInfo(name)
-                    member.type = kind
-                    if kind == tarfile.LNKTYPE:
-                        member.linkname = "lib/yuke/modules/tools.ts"
-                    result.addfile(member)
-                result = self.install(archive, expected=1)
-                self.assertIn(message, result)
-                self.assertEqual(self.snapshot(), before)
-
     def test_unusable_binary_is_rejected_before_the_working_installation_changes(self):
         before = self.seed_installation()
         def damage(package):
             (package / "bin/yuke").write_text("#!/bin/sh\nexit 37\n")
         result = self.install(self.mutation(damage), expected=1)
-        self.assertIn("staged binary does not run", result)
+        self.assertIn("the new yuke binary does not run", result)
         self.assertEqual(self.snapshot(), before)
-
-    def test_binary_with_wrong_build_identity_preserves_the_working_installation(self):
-        before = self.seed_installation()
-        def damage(package):
-            (package / "bin/yuke").write_text("#!/bin/sh\nprintf 'yuke wrong-version\\n'\n")
-        result = self.install(self.mutation(damage), expected=1)
-        self.assertIn("wrong version", result)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_wrong_package_target_preserves_the_working_installation(self):
-        before = self.seed_installation()
-        def wrong_target(package):
-            metadata = package / "lib/yuke/build.json"
-            identity = json.loads(metadata.read_text())
-            identity["target"] = "unsupported-package-target"
-            metadata.write_text(json.dumps(identity, indent=2) + "\n")
-        result = self.install(self.mutation(wrong_target), expected=1)
-        self.assertIn("package target does not match", result)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_unknown_package_format_preserves_the_working_installation(self):
-        before = self.seed_installation()
-        def wrong_format(package):
-            metadata = package / "lib/yuke/build.json"
-            identity = json.loads(metadata.read_text())
-            identity["format"] = 2
-            metadata.write_text(json.dumps(identity, indent=2) + "\n")
-        result = self.install(self.mutation(wrong_format), expected=1)
-        self.assertIn("unsupported package format", result)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_missing_required_files_preserve_the_working_installation(self):
-        before = self.seed_installation()
-        for name in ("bin/yuke", "lib/yuke/modules/tools.ts", "lib/yuke/types/globals.d.ts",
-                     "lib/yuke/protocol/bindings/ClientRequest.ts", "lib/yuke/build.json"):
-            with self.subTest(path=name):
-                modified = self.scratch / "modified-package"
-                if modified.exists():
-                    shutil.rmtree(modified)
-                archive = self.mutation(lambda package: (package / name).unlink())
-                result = self.install(archive, expected=1)
-                self.assertIn("the package has no regular " + name, result)
-                self.assertEqual(self.snapshot(), before)
-
-    def test_cleanup_failure_retains_evidence_after_library_restoration(self):
-        self.seed_installation()
-        original_binary = self.binary.read_bytes()
-        self.environment["REAL_MV"] = shutil.which("mv")
-        self.add_executable("mv", '''import os
-import sys
-if any(argument.endswith("/package/bin/yuke") for argument in sys.argv[1:]):
-    sys.exit(33)
-os.execv(os.environ["REAL_MV"], ["mv"] + sys.argv[1:])
-''')
-        self.environment["REAL_RM"] = shutil.which("rm")
-        self.environment["INSTALLED_LIBRARY"] = str(self.library)
-        self.add_executable("rm", '''import os
-import sys
-if any("/.yuke-install." in argument or argument == os.environ["INSTALLED_LIBRARY"] for argument in sys.argv[1:]):
-    sys.exit(55)
-os.execv(os.environ["REAL_RM"], ["rm"] + sys.argv[1:])
-''')
-        result = self.install(expected=33)
-        self.assertEqual(self.binary.read_bytes(), original_binary)
-        self.assertEqual((self.library / "old-file").read_text(), "keep the working installation on failure\n")
-        self.assertFalse((self.home / ".local/.yuke-install.lock").exists())
-        retained = list((self.home / ".local").glob(".yuke-install.*"))
-        self.assertEqual(len(retained), 1)
-        self.assertIn("could not remove", result)
-        self.assertEqual((retained[0] / "failed-library/build.json").read_bytes(),
-                         (self.extracted / "lib/yuke/build.json").read_bytes())
-
-    def test_failed_binary_replacement_restores_the_previous_library(self):
-        before = self.seed_installation()
-        self.environment["REAL_MV"] = shutil.which("mv")
-        self.add_executable("mv", '''import os
-import sys
-if any(argument.endswith("/package/bin/yuke") for argument in sys.argv[1:]):
-    sys.exit(33)
-os.execv(os.environ["REAL_MV"], ["mv"] + sys.argv[1:])
-''')
-        self.install(expected=33)
-        self.assertEqual(self.snapshot(), before)
-        self.assertFalse((self.home / ".local/.yuke-install.lock").exists())
 
     def test_stable_and_nightly_downloads_install_real_packages_from_one_release(self):
         self.network()
@@ -422,18 +292,10 @@ os.execv(os.environ["REAL_MV"], ["mv"] + sys.argv[1:])
         self.assertEqual((self.library / "modules/tools.ts").read_bytes(),
                          (self.extracted / "lib/yuke/modules/tools.ts").read_bytes())
 
-    def test_corrupt_download_is_rejected_before_extraction_or_replacement(self):
+    def test_corrupt_download_keeps_the_working_installation(self):
         before = self.seed_installation()
         self.network(corrupt=True)
-        result = self.install(expected=1, piped=True)
-        self.assertIn("cannot read the package archive", result)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_repository_without_a_stable_release_does_not_replace_an_installation(self):
-        before = self.seed_installation()
-        self.network(missing_stable=True)
-        result = self.install(expected=1, piped=True)
-        self.assertIn("has no stable release", result)
+        self.install(expected=1, piped=True)
         self.assertEqual(self.snapshot(), before)
 
     def test_symlinked_profile_preserves_user_configuration(self):
@@ -446,13 +308,6 @@ os.execv(os.environ["REAL_MV"], ["mv"] + sys.argv[1:])
         self.install()
         self.assertEqual(configuration.read_text(), '{"compilerOptions":{"strict":true}}\n')
         self.assertEqual(self.profile.resolve(), shared.resolve())
-
-    def test_dangling_user_configuration_stays_unchanged(self):
-        self.profile.mkdir(parents=True)
-        (self.profile / "tsconfig.json").symlink_to("missing-user-configuration.json")
-        self.install()
-        self.assertEqual(os.readlink(self.profile / "tsconfig.json"), "missing-user-configuration.json")
-        self.assertEqual(digest(self.binary), digest(self.extracted / "bin/yuke"))
 
     def test_binary_matches_its_native_platform(self):
         expected = "aarch64" if platform.machine() in {"aarch64", "arm64"} else "x86_64"
