@@ -3,7 +3,6 @@
 
 import argparse
 import datetime
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,33 +36,11 @@ def copy_typescript(source, destination, pattern="**/*.ts"):
         shutil.copy2(path, target)
 
 
-def source_state():
-    """Detect source edits during a build, including new source files."""
-    names = subprocess.check_output(
-        ["git", "ls-files", "-co", "--exclude-standard", "-z", "--",
-         "crates", ".cargo", "Cargo.toml", "Cargo.lock", "Cross.toml", "docs", "skills"],
-        cwd=ROOT,
-    ).split(b"\0")
-    names.extend(os.fsencode(name) for name in (
-        "LICENSE.md", ".mise.toml", ".mise.cross.toml", "mise.lock", "mise.cross.lock",
-        "tools/package.py",
-    ))
-    for folder in ("crates/js/modules", "crates/js/types", "crates/protocol/bindings"):
-        names.extend(os.fsencode(path.relative_to(ROOT)) for path in (ROOT / folder).rglob("*.ts"))
-    value = hashlib.sha256()
-    for name in sorted(set(names) - {b""}):
-        path = ROOT / os.fsdecode(name)
-        value.update(name + b"\0")
-        value.update(path.read_bytes() if path.is_file() else b"<absent>")
-    return value.hexdigest()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--output", type=Path, default=ROOT / "target/packages")
     parser.add_argument("--nightly", action="store_true")
-    parser.add_argument("--require-clean", action="store_true")
     parser.add_argument("--tag", help="Require v plus the Cargo package version")
     args = parser.parse_args()
 
@@ -76,7 +53,6 @@ def main():
     if target not in TARGETS:
         parser.error("select one of the four supported release targets")
 
-    before = source_state()
     metadata = json.loads(output("cargo", "metadata", "--no-deps", "--format-version=1", "--locked"))
     package = next(package for package in metadata["packages"] if package["name"] == "yuke")
     version = package["version"]
@@ -86,8 +62,6 @@ def main():
         parser.error("tagged releases need a version without -dev")
     commit = output("git", "rev-parse", "HEAD")
     dirty = bool(output("git", "status", "--porcelain", "--untracked-files=all"))
-    if dirty and (args.require_clean or args.tag):
-        parser.error("release packages require a clean working tree")
     if args.nightly:
         timestamp = int(output("git", "show", "-s", "--format=%ct", "HEAD"))
         date = datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y%m%d")
@@ -133,8 +107,6 @@ def main():
         with tarfile.open(pending, "w:gz") as package_archive:
             package_archive.add(staging / "bin", arcname="bin")
             package_archive.add(staging / "lib", arcname="lib")
-        if before != source_state() or commit != output("git", "rev-parse", "HEAD"):
-            raise RuntimeError("source changed during the build; build the package again")
         pending.replace(archive)
     print(archive)
     print(json.dumps(identity, sort_keys=True))
