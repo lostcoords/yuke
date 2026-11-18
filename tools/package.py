@@ -32,10 +32,13 @@ def copy_files(source, destination, pattern="**/*", skip=()):
     for path in sorted(source.glob(pattern)):
         relative = path.relative_to(source)
         # A dot file is local editor or system state, such as .DS_Store.
-        if relative.parts[0] in skip or path.is_dir() or any(part.startswith(".") for part in relative.parts):
+        if relative.parts[0] in skip or any(part.startswith(".") for part in relative.parts):
             continue
+        # Check the link first: a link to a folder must fail the build, not vanish from the package.
         if path.is_symlink():
             raise RuntimeError("package source must be a regular file: " + str(path))
+        if path.is_dir():
+            continue
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)

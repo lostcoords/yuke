@@ -14,11 +14,10 @@ In a POSIX shell:
 
 ```sh
 profile="${XDG_CONFIG_HOME:-$HOME/.config}/${YUKE_APPNAME:-yuke}"
-mkdir -p "$profile/plugins"
-mkdir "$profile/plugins/hello"
+mkdir -p "$profile/plugins/hello"
 ```
 
-Use an unused folder and plugin name. If `hello` exists, choose another name. Change the paths and manifest to match.
+If a plugin named `hello` exists, choose another name. Change the paths and manifest to match.
 
 ## 2. Create the plugin
 
@@ -35,15 +34,11 @@ Create `plugins/hello/plugin.json` in the profile:
 }
 ```
 
-Yuke reads `entry` from `extensions["sh.yuke"]`. The built-in `tui` service needs no `uses` entry.
-
 Copy this code into `plugins/hello/index.js`:
 
 <<< @/guide/examples/hello.js
 
-The entry exports a function named `apply`. The loader does not call a default export. `apply` runs once per runtime.
-
-`ctx.get("tui")` returns `undefined` in `yuke -p` and `yuke --rpc`. The early return skips terminal work in those modes. `ctx.notify` sends a notice with the plugin name as its source.
+The entry exports a function named `apply`. It runs once per runtime. `ctx.get("tui")` returns `undefined` in `yuke -p` and `yuke --rpc`, so the early return skips terminal work in those modes. `ctx.notify` sends a notice with the plugin name as its source.
 
 ## 3. List the plugin
 
@@ -55,7 +50,7 @@ If the profile has no `config.json`, create it:
 }
 ```
 
-Otherwise, add `"./plugins/hello"` to its existing `plugins` list. Keep the other settings and plugin paths. A relative path resolves against `config.json`.
+Otherwise, add `"./plugins/hello"` to its existing `plugins` list. A relative path resolves against `config.json`.
 
 ## 4. Check the types
 
@@ -80,7 +75,7 @@ Run the type check:
 tsc -p "$profile/tsconfig.json"
 ```
 
-A successful check exits without diagnostics. This checks types. It does not load the plugin or test the terminal.
+A successful check exits without diagnostics. It checks types only. It does not load the plugin.
 
 ## 5. Run the command
 
@@ -90,13 +85,11 @@ Start yuke:
 yuke
 ```
 
-Press `ctrl+g`. The command sends the notice **hi from hello**. You can also type `/hi` in the composer. Press Enter to run the selected command.
+Press `ctrl+g`. The command sends the notice **hi from hello**. You can also type `/hi` in the composer and press Enter.
 
-The bare command name `hi` gets the plugin prefix `hello:`. The key binding uses the same prefix. The `slash` field gives the word that the composer lists: without it, the command has no slash form. Yuke removes both registrations when the plugin stops.
+yuke adds the plugin prefix `hello:` to the bare command name `hi` and to the key binding. The `slash` field gives the word that the composer lists. yuke removes both registrations when the plugin stops.
 
-Change the notice text in `index.js`. Save the file. Run `/reload` when work is idle. Press `ctrl+g` again. Confirm that the new notice appears.
-
-To remove the plugin, remove its path from `config.json`. Run `/reload`. The files can stay on disk.
+To change the notice, edit `index.js` and run `/reload` when work is idle. To remove the plugin, remove its path from `config.json` and run `/reload`.
 
 ## Next step
 

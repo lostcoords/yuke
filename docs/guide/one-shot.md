@@ -31,9 +31,7 @@ Add `--json` to get one JSON object with `sessionId`, `end`, and `text`:
 
 ## Exit status
 
-The exit status is `0` when the turn ends as `completed` or `stopped`. It is `1` when the turn ends as `failed` or `cancelled`, or when yuke cannot start the turn. SIGINT, SIGTERM, and SIGHUP cancel the turn. A cancelled turn exits with 128 plus the signal number. A second signal stops yuke at once.
-
-Without `--json`, yuke prints a failure text to stderr.
+The exit status is `0` when the turn ends as `completed` or `stopped`. It is `1` when the turn ends as `failed` or `cancelled`, or when yuke cannot start the turn. SIGINT, SIGTERM, and SIGHUP cancel the turn, and the exit status is then 128 plus the signal number. Without `--json`, yuke prints a failure text to stderr.
 
 ## Continue a session
 
@@ -47,10 +45,10 @@ To continue a session by its ID, in any folder, use `--resume ID` (or `-r ID`) w
 
 ## Plugins without a terminal
 
-Plugins load in this mode. Their tools and engine hooks work as in the terminal UI. The TUI service is absent, so terminal commands, keys, and views do not load. See [Plugins](plugins.md).
+Plugins load in this mode. Their tools and engine hooks work as in the terminal UI. Terminal commands, keys, and views do not load. See [Plugins](plugins.md).
 
-Some actions need a person to answer:
+No person can answer, so some actions do not work:
 
 - A question from `s.ask` gets no answer. A hook that asks before a tool call therefore blocks that call. See [Approve a tool call](engine.md#approve-a-tool-call).
 - A tool cannot start a background job. See [Background jobs](tools.md#background-jobs).
-- Project MCP servers do not start without approval. See [MCP servers](mcp.md#sources-and-trust).
+- Project MCP servers start only when an earlier session kept their approval. See [MCP servers](mcp.md#sources-and-trust).

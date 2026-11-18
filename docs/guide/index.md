@@ -4,22 +4,20 @@ description: Install yuke, connect a model, and extend the terminal coding agent
 
 # Documentation
 
-yuke is a fast, hackable coding agent for your terminal.
-
-New to yuke? Start with the [Quick start](get-started.md) to install yuke, connect a model, and give it your first task.
+yuke is a fast, hackable coding agent for your terminal. Start with the [Quick start](get-started.md).
 
 ## Configure
 
 - [Configuration](config.md): choose a profile, edit its files, and add plugin sources.
 - [Providers](providers.md): add credentials, change a built-in provider, or connect a local model server.
-- [AGENTS.md and skills](instructions.md): give the model project rules with `AGENTS.md` and reusable instructions with skills.
+- [AGENTS.md and skills](instructions.md): give the model project rules and reusable instructions.
 - [MCP servers](mcp.md): connect local MCP servers and approve project servers.
-- [Themes](/docs/themes): write a theme to change colors and text styles.
+- [Themes](themes.md): change colors and text styles.
 
 ## Run headless
 
 - [One-shot tasks](one-shot.md): run one task with `-p` in a script or a CI job.
-- [Embed with RPC](rpc.md): drive yuke from your own app over the JSON-RPC protocol.
+- [Embed with RPC](rpc.md): drive yuke from your own app over JSON-RPC.
 
 ## Extend
 

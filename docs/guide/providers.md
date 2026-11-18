@@ -8,27 +8,9 @@ Edit `~/.config/yuke/providers.json` to add a provider or change a built-in one.
 
 ## Credentials
 
-| Source | Credential |
-|---|---|
-| `/login` in yuke | An API key or an account login. yuke stores it in `auth.json` in the [data folder](config.md). |
-| `yuke login <provider>` | An account login, for a provider in the table below. yuke stores it in `auth.json`. |
-| The provider variable | An API key from the environment, such as `ANTHROPIC_API_KEY`. |
-| An RPC client | An API key or a login through `auth/setApiKey` or `auth/login`, or a token through `credential/update`. See the [protocol reference](https://github.com/lostcoords/yuke/blob/main/crates/protocol/README.md). |
+Use `/login` in yuke to store an API key or an account login in `auth.json` in the [data folder](config.md). Set the provider variable to use an API key from the environment. A stored API key takes priority over the variable.
 
-A stored API key takes priority over the variable.
-
-An account login uses a device code. yuke shows a page and a code. Open the page, enter the code, and confirm. Two providers take an account login:
-
-| Provider | Account |
-|---|---|
-| `openai-codex` | ChatGPT |
-| `xai-grok` | xAI (Grok) |
-
-`yuke login` with another provider ID fails. For a provider with a variable, use `/login` to store a key, or set the variable.
-
-The providers with an API key use these variables:
-
-| Provider | Variable |
+| Provider | Credential |
 |---|---|
 | `anthropic` | `ANTHROPIC_API_KEY` |
 | `openai` | `OPENAI_API_KEY` |
@@ -42,16 +24,12 @@ The providers with an API key use these variables:
 | `fireworks-ai` | `FIREWORKS_API_KEY` |
 | `minimax` | `MINIMAX_API_KEY` |
 | `opencode`, `opencode-go` | `OPENCODE_API_KEY` |
+| `openai-codex` | ChatGPT account login |
+| `xai-grok` | xAI (Grok) account login |
 
-Run `/logout` or `yuke logout <provider>` to remove a stored login or API key. A variable stays: to stop using it, unset it. yuke revokes no token at the provider: to revoke a token, revoke it there. A running RPC server keeps a token that it got from `credential/update`.
+An account login uses a device code: open the page that yuke shows, enter the code, and confirm. You can also run `yuke login openai-codex` or `yuke login xai-grok` from the shell.
 
-The catalog reports these states. The terminal UI and `catalog/list` list the models of a `ready` provider only. `catalog/list` with `all: true` lists every provider.
-
-| State | Meaning |
-|---|---|
-| `ready` | The provider needs no credential, or a credential is present. `credential` names it: `none`, `variable`, `storedApiKey`, or `login`. yuke does not test the credential. |
-| `needsApiKey` | The provider variable is unset, not UTF-8, or empty, and no API key is stored. |
-| `needsLogin` | No stored login or pushed access token is present. |
+Run `/logout` or `yuke logout <provider>` to remove a stored login or API key. A variable stays: to stop using it, unset it.
 
 ## Add a provider
 
@@ -105,32 +83,28 @@ For example, this entry sends OpenAI requests through a proxy:
 
 ## Fields
 
-The file accepts JSON with `//` and `/* */` comments. The schema is strict. Unknown fields, duplicate IDs, and bad routes stop startup.
-
-Each entry of the `providers` list accepts these fields.
+The file accepts JSON with `//` and `/* */` comments. Unknown fields, duplicate IDs, and bad routes stop startup.
 
 ### Provider fields
 
 | Field | Meaning |
 |---|---|
-| `id` | Required. A nonempty ID with no `/`, whitespace, or control character. |
-| `name` | Display name. A new provider defaults to its ID. |
-| `base_url` | An `http` or `https` URL with a host and no user, query, or fragment. Required for a new provider. |
-| `api_key_env` | The environment variable for an API key. A built-in provider keeps its variable when omitted. A new provider needs no credential when omitted. OAuth providers cannot set this field. |
+| `id` | Required. It has no `/`, whitespace, or control character. |
+| `name` | Display name. Defaults to the ID. |
+| `base_url` | An `http` or `https` URL. Required for a new provider. |
+| `api_key_env` | The environment variable for an API key. Omit it for a provider that needs no credential. |
 | `endpoints` | Protocol endpoints. Required for a new provider. Each protocol appears at most once. |
-| `headers` | Extra headers as `[{ "name": "x-team", "value": "core" }]`. Header names and values must be valid. yuke writes values as is, with no variable expansion. A header must not replace a header that yuke writes: the credential and session headers, and `accept`, `accept-encoding`, `connection`, `content-length`, `content-type`, `host`, `te`, `transfer-encoding`, `upgrade`, and `user-agent`. |
-| `session_header` | `none` (default for a new provider), `session_id`, or `x_opencode_session`. |
+| `headers` | Extra headers as `[{ "name": "x-team", "value": "core" }]`. A header must not replace a header that yuke writes. |
+| `session_header` | `none` (default), `session_id`, or `x_opencode_session`. |
 | `models` | Model entries. Required for a new provider. |
-
-Use `api_key_env` for an API-key route. For an account login, use a built-in OAuth provider.
 
 ### Endpoint fields
 
 | Field | Meaning |
 |---|---|
 | `protocol` | Required: `anthropic_messages` (`/messages`), `openai_chat` (`/chat/completions`), or `openai_responses` (`/responses`). yuke appends the protocol path to the base URL. |
-| `credential_header` | `x_api_key`, `authorization_bearer`, or `api_key`. Required when the provider sends a credential, including an account login. Omit it for a provider that needs no credential. |
-| `cache_breakpoint` | Boolean, default `false`. Mark an explicit prompt-cache breakpoint. `openai_chat` does not support this field set to `true`. |
+| `credential_header` | `x_api_key`, `authorization_bearer`, or `api_key`. Required when the provider sends a credential. |
+| `cache_breakpoint` | Boolean, default `false`. Marks an explicit prompt-cache breakpoint. `openai_chat` does not support `true`. |
 | `responses_dialect` | `standard` (default) or `codex`. Only on `openai_responses`. |
 | `chat_dialect` | `standard` (default) or `mistral`. Only on `openai_chat`. |
 
@@ -138,63 +112,37 @@ Use `api_key_env` for an API-key route. For an account login, use a built-in OAu
 
 | Field | Meaning |
 |---|---|
-| `id` | Required. The model part of the selector. It can contain `/`, but not whitespace or control characters. |
+| `id` | Required. The model part of the selector. It has no whitespace or control character. |
 | `upstream_id` | The model name that the host receives. Defaults to `id`. |
 | `name` | Display name. Defaults to `id`. |
-| `protocol` | Required when the provider has more than one endpoint. Otherwise, defaults to the only endpoint's protocol. |
+| `protocol` | Required when the provider has more than one endpoint. |
 | `limits` | `context_window` and `max_output_tokens`. Omitted values are unknown. |
-| `cost` | Price bands in USD per million tokens. Omitted prices are unknown, not zero. See [Cost](#cost). |
-| `reasoning_levels` | The efforts that the model takes, from `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. `/model` offers `default`, `off`, and these efforts. An empty list accepts any effort, but `/model` then offers only `default` and `off`. The `default` choice sends no control. |
-| `flags` | Protocol behavior and capability facts. See below. |
+| `cost` | Price bands in USD per million tokens. See [Cost](#cost). |
+| `reasoning_levels` | The efforts that the model takes, from `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. |
+| `flags` | Capability facts. Omitted facts are unknown. See below. |
+
+`/model` offers `default`, each effort of `reasoning_levels`, and `off` when the model can turn reasoning off.
 
 ### Model flags
 
 | Flag | Meaning |
 |---|---|
-| `supports_tool_search` | Boolean. Whether the model supports deferred tool search. The protocol and route must also support it. |
-| `can_disable_reasoning` | Boolean. `false` rejects an explicit off choice. |
-| `supports_cache_breakpoint` | Boolean. Whether the model accepts an explicit cache marker. |
-| `thinking_format` | Chat Completions format: `none`, `openai`, `openrouter`, `deepseek`, `zai`, or `qwen`. Default: `none`. |
-| `reasoning_replay` | Chat Completions replay: `none`, `reasoning_content`, or `reasoning_details`. Default: `none`. |
-| `max_tokens_field` | Chat Completions output limit field: `max_tokens` (default) or `max_completion_tokens`. |
-| `anthropic_thinking` | Messages thinking shape: `toggle`, `adaptive`, or `budget`. |
-| `reasoning_budget_min`, `reasoning_budget_max` | Optional bounds for `anthropic_thinking: "budget"`. |
-
-Omitted capability facts are unknown.
-
-For `anthropic_messages`, a named reasoning level uses this shape:
-
-| `anthropic_thinking` | Request |
-|---|---|
-| absent | Set `output_config.effort` to the level. |
-| `toggle` | Send `thinking: { "type": "adaptive" }`, without an effort or display field. |
-| `adaptive` | Send `thinking: { "type": "adaptive", "display": "summarized" }` and set `output_config.effort`. |
-| `budget` | Send `thinking: { "type": "enabled", "budget_tokens": 16000 }`, kept within the configured bounds and at least 1024. The budget must be below `limits.max_output_tokens`. Otherwise, yuke sets `output_config.effort`. |
-
-An allowed off choice sends `thinking: { "type": "disabled" }`. The default choice sends no reasoning control.
+| `supports_tool_search` | Whether the model supports deferred tool search. |
+| `can_disable_reasoning` | `false` rejects an explicit off choice. |
+| `supports_cache_breakpoint` | Whether the model accepts an explicit cache marker. |
+| `thinking_format` | Chat Completions only: `none` (default), `openai`, `openrouter`, `deepseek`, `zai`, or `qwen`. |
+| `reasoning_replay` | Chat Completions only: `none` (default), `reasoning_content`, or `reasoning_details`. |
+| `max_tokens_field` | Chat Completions only: `max_tokens` (default) or `max_completion_tokens`. |
+| `anthropic_thinking` | Messages only: `toggle`, `adaptive`, or `budget`. |
+| `reasoning_budget_min`, `reasoning_budget_max` | Bounds for `anthropic_thinking: "budget"`. |
 
 ### Cost
 
-`cost` is a list of price bands. The first band starts at `0`; you can omit `min_prompt_tokens` there. Each later band starts at a higher prompt size. Prices must not be negative.
-
-| Band field | Meaning |
-|---|---|
-| `min_prompt_tokens` | The smallest prompt size that uses the band. |
-| `input`, `output` | Prices for uncached input tokens and output tokens. |
-| `reasoning` | Price for reasoning tokens. Use the output price when the vendor bills reasoning at that rate. |
-| `cache_read`, `cache_write` | Prices for cached input tokens and tokens written to the prompt cache. |
-
-The prompt size includes cached input tokens. The last band that the prompt reaches prices the whole request. A missing price stays unknown. For example:
+`cost` is a list of price bands. The first band starts at `0`, so it can omit `min_prompt_tokens`. Each later band sets a higher `min_prompt_tokens`. The last band that the prompt size reaches prices the whole request. Prices are `input`, `output`, `reasoning`, `cache_read`, and `cache_write`. A missing price is unknown, not zero. For example:
 
 ```json
 "cost": [
-  { "input": 4, "output": 20, "reasoning": 20, "cache_read": 0.4, "cache_write": 5 },
-  { "min_prompt_tokens": 272001, "input": 8, "output": 30, "reasoning": 30, "cache_read": 0.8, "cache_write": 10 }
+  { "input": 4, "output": 20, "cache_read": 0.4 },
+  { "min_prompt_tokens": 272001, "input": 8, "output": 30, "cache_read": 0.8 }
 ]
 ```
-
-## Failure diagnostics
-
-CLI startup errors go to stderr. Runtime notices reach the terminal UI or the RPC client. A headless task reports a failed turn through its exit status and, with `--json`, its `end` value.
-
-Capture the error from your command or client. Check the provider's service status and the route configuration before you retry. Do not publish credentials or private task content in a diagnostic report.

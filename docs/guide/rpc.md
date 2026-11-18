@@ -14,4 +14,4 @@ description: Embed yuke in your own app over the JSON-RPC protocol on stdio or a
 
 The protocol reference lists the requests, the updates, and their fields. It is in `~/.local/lib/yuke/protocol/README.md`, with the TypeScript types in `protocol/bindings/`. It is also on [GitHub](https://github.com/lostcoords/yuke/blob/main/crates/protocol/README.md).
 
-Plugins load in this mode, but without the `tui` service. Their tools and engine hooks work as in the terminal UI.
+Plugins load in this mode without the `tui` service.

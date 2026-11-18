@@ -9,11 +9,8 @@
       "crates/js/tests/**/*.ts",
       "crates/yuke/tests/**/*.ts",
       "docs/guide/examples/**/*.js",
-      "docs/guide/examples/**/*.ts",
       "docs/snippets/**/*.ts",
-      "docs/snippets/**/*.js",
-      "docs/tests/**/*.ts",
-      "docs/tsconfig.json"
+      "docs/tests/**/*.ts"
     ]
   },
   "formatter": {

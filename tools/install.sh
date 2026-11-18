@@ -109,7 +109,7 @@ JSON
 # folder, so the installer adds only its own link and keeps any other entry with the name yuke.
 link_skill() {
   local skill="${HOME}/.agents/skills/yuke" target="${lib_dir}/skills/yuke"
-  if [ -L "${skill}" ] && [ "$(readlink "${skill}")" = "${target}" ]; then
+  if [ "$(readlink "${skill}" 2>/dev/null)" = "${target}" ]; then
     return
   fi
   if [ -e "${skill}" ] || [ -L "${skill}" ]; then

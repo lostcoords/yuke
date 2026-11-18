@@ -24,24 +24,20 @@ An entry is a path, or an object with `path` or `git`:
 
 | Key | Default | Description |
 |---|---|---|
-| `path` | — | A folder with a `plugin.json`, the manifest that names the plugin and its entry module. A relative path starts in the profile folder. |
+| `path` | — | A folder with a `plugin.json`. A relative path starts in the profile folder. |
 | `git` | — | The URL of a Git repository, as `git` takes it. |
-| `folder` | The repository root | The plugin folder in the repository. It cannot be absolute or contain `..`. |
+| `folder` | The repository root | The plugin folder in the repository. |
 | `ref` | The default branch | The branch, tag, or commit to follow. |
-| `options` | — | The options of the plugin. Each plugin defines and checks its own options. |
+| `options` | — | The options of the plugin. |
 
-### Git plugins
-
-yuke only loads installed plugins, and it never downloads a plugin at startup. If you add a Git plugin to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the terminal UI to install it.
-
-Manage Git plugins with these commands, or with `/plugins`:
+yuke never downloads a plugin at startup. For a Git plugin that you add to `config.json` by hand, run `yuke plugin sync` or use `/plugins` in the terminal UI.
 
 | Command | Description |
 |---|---|
 | `yuke plugin add URL` | Add a Git plugin to `config.json`, install it, and lock its commit in `plugins.lock`. `--folder` and `--ref` select the folder and the ref. |
 | `yuke plugin remove NAME` | Remove a plugin from `config.json` and `plugins.lock`. Its files stay on disk. |
-| `yuke plugin list` | Show each plugin, its locked commit, and whether it is installed. It uses no network. |
-| `yuke plugin sync` | Install the locked commits, and lock each Git plugin that you added by hand. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
+| `yuke plugin list` | Show each plugin, its locked commit, and whether it is installed. |
+| `yuke plugin sync` | Install the locked commits, and lock each new Git plugin. With `--locked`, fail instead when `plugins.lock` does not match `config.json`. |
 | `yuke plugin update NAME...` | Show the new commits of each plugin's ref, and ask before it moves the lock. `--all` updates every Git plugin, and `--yes` skips the question. |
 
 A plugin runs with your user rights. Read its source before you install it.
@@ -71,15 +67,11 @@ Use `disable` to turn off a bundled plugin, and `bundled` to give it options:
 }
 ```
 
-### Replace a bundled plugin
-
-To replace a bundled plugin, disable its name and add your replacement. A replacement must provide the services that its consumers require. It must also supply the behavior that you want to keep. Do not import `yuke:internal/*`.
-
-UI plugins return when `ctx.get("tui")` is `undefined`. The session API itself does not depend on the bundled `sessions` plugin.
+To replace a bundled plugin, disable its name and add your own. Your plugin must provide the services that consumers of the old plugin use.
 
 ## Entry points
 
-The entry module exports named `apply`, named `session`, or both:
+The entry module of a plugin exports `apply`, `session`, or both:
 
 | Export | Scope | Context |
 |---|---|---|
@@ -87,33 +79,27 @@ The entry module exports named `apply`, named `session`, or both:
 | `session(s)` | Once per open session | `SessionContext` from `yuke:plugins` |
 | `optionsSchema` | Validates plugin options | `ObjectSchema` from `yuke:tools` |
 
-Use `apply` for services, host listeners, and UI. Use `session` for model tools, engine hooks, and session jobs. A plugin that needs no code can omit its entry module.
+Use `apply` for services, host listeners, and UI. Use `session` for model tools, engine hooks, and session jobs.
 
 Without `optionsSchema`, a plugin accepts no options. With a schema, use `Infer<typeof optionsSchema>` from `yuke:tools` as the type parameter of both contexts. The host validates and freezes the options before setup.
 
-The loader awaits each `apply` in load order. Each `session` setup starts before any of the setups settles. Opening a session does not wait for setup. The first request for its tools waits for setup.
+Opening a session does not wait for `session`. The first request for its tools waits.
 
 ## Lifecycle
 
-Both entry functions can return `undefined` or a cleanup function. They can also return a promise for either value. Cleanup can be async.
-
-This entry module returns cleanup for a host listener:
+Both entry functions can return a cleanup function, or a promise for one. This entry module returns cleanup for a host listener:
 
 <<< @/guide/examples/lifecycle.js
 
-`ctx.signal` aborts when the plugin fails to load or the runtime closes. `s.signal` aborts when the session closes or that plugin's session setup fails. Pass the appropriate signal to I/O. Stop timers and other work in cleanup. A setup that awaits work must end when its signal aborts.
+`ctx.signal` aborts when the plugin fails to load or the runtime closes. `s.signal` aborts when the session closes or that plugin's `session` fails. Pass the signal to I/O, and stop timers in cleanup.
 
-Session close stops plugin jobs, aborts session signals, and awaits setup, cleanup, and job work. Runtime close then aborts plugin signals and awaits `apply` cleanup in reverse plugin order. A cleanup failure sends a notice and does not prevent the other cleanups.
+Session close runs the `session` cleanups. Runtime close then runs the `apply` cleanups, last plugin first. A failed cleanup sends a notice and does not stop the others. A failed `session` setup removes only that plugin's tools and hooks from the session.
 
-A failed `session` setup removes that plugin's tools and hooks from the session. It does not remove the other plugins' registrations.
-
-Module state lasts for one runtime. Use `ctx.dataDir` for files that must survive reload. Use `import.meta.dirname` for files beside a file-based entry module.
+Module state lasts for one runtime. Use `ctx.dataDir` for files that must survive a reload.
 
 ## Services
 
-A service shares a typed value between plugins. The provider declares its name in `provides` and publishes it with `ctx.provide(name, value)` during `apply`. A consumer declares the name in `uses` and reads it with `ctx.get(name)`.
-
-The loader applies providers before consumers. It rejects missing providers, duplicate providers, and cycles. A plugin does not load when a provider that it uses failed to load. A service provider adds its type to the `Services` interface of `yuke:plugins`.
+A service shares a typed value between plugins. The provider names the service in `provides` in the `sh.yuke` extension of `plugin.json`, and publishes it with `ctx.provide(name, value)` during `apply`. A consumer names it in `uses` and reads it with `ctx.get(name)`. The loader loads providers first, and rejects a missing provider, a duplicate provider, and a cycle. A provider adds the type of its service to the `Services` interface of `yuke:plugins`.
 
 Three services need no `uses` entry:
 
@@ -123,7 +109,7 @@ Three services need no `uses` entry:
 | `sessions` | Session creation, queries, and handles in every mode. |
 | `catalog` | Provider and model queries in every mode. |
 
-The bundled `chat` plugin provides the `chat` service. A consumer of `chat` needs a `uses` entry. A declared plugin service is present after its provider loads; it is not an optional `null` result.
+The bundled `chat` plugin provides the `chat` service. A consumer of `chat` needs a `uses` entry.
 
 ## Events
 
@@ -131,20 +117,18 @@ The bundled `chat` plugin provides the `chat` service. A consumer of `chat` need
 
 | Event | Data |
 |---|---|
-| `session.opened` | `sessionId`, `parent` (when the session has one), `state`, the running `jobs`, and the open question IDs in `interactions` |
+| `session.opened` | `sessionId`, `parent`, `state`, `jobs`, and `interactions` |
 | `session.update` | `sessionId` and `update` |
 | `session.closed` | `sessionId` |
-| `notice` | The notice: `level`, `source`, `text`, and `sessionId` when a session sent it |
+| `notice` | `level`, `source`, `text`, and `sessionId` |
 | `catalog.changed` | No data. A login, a logout, or a credential changed the ready providers. |
 | `theme.changed` | Theme `name` and terminal `background`. Only the terminal interface sends it. |
 
-A `session.opened` listener first receives the sessions that are already open. A listener holds no session open. Event data is read-only. A `session.update` has a `kind`, such as `state`.
+A `session.opened` listener first receives the sessions that are already open. A `session.update` has a `kind`, such as `state`.
 
 <<< @/snippets/plugins/events.ts
 
-The host does not await listeners. A throw sends a notice, and the listener stays. Handle failures inside async work that a listener starts. Use an [engine hook](engine.md#engine-hooks) when work must block an action.
-
-`ctx.sendClientEvent` and `s.sendClientEvent` send extension events to the active RPC client. They do not publish host facts to other plugins. With no client, the host drops the event.
+The host does not await listeners. A throw sends a notice, and the listener stays. Use an [engine hook](engine.md#engine-hooks) when work must block an action.
 
 ## Find the API
 
@@ -152,30 +136,19 @@ The installer puts the public API of your release in `~/.local/lib/yuke`:
 
 | Path | Content |
 |---|---|
-| `modules/plugins.ts` | `yuke:plugins`: `PluginContext`, `SessionContext`, `SessionHooks`, `HostEvents`, `Sessions`, and `SessionHandle`. |
-| `modules/tools.ts` | `yuke:tools`: `ObjectSchema`, `Infer`, and `ToolExecuteResult`. |
+| `modules/*.ts` | `yuke:plugins` (`PluginContext`, `SessionContext`, `SessionHooks`, `HostEvents`, `Sessions`), `yuke:tools`, and `yuke:protocol`. |
 | `types/*.d.ts` | The host modules: `yuke:tui`, `yuke:chat`, `yuke:ai`, `yuke:transcript`, `yuke:fs`, `yuke:net`, `yuke:process`, and `yuke:test`. |
 | `protocol/` | The RPC protocol reference and its types. |
 | `tsconfig.json` | The configuration that maps each `yuke:*` import to these files. |
 
-The doc comments in these files describe each member. Do not import `yuke:internal/*`, and do not reach a missing name through a cast or `any`.
+The doc comments in these files describe each member. Do not import `yuke:internal/*`.
 
 ## Test and debug
 
-Check the types against the profile configuration:
+Check the types with `tsc -p ~/.config/yuke/tsconfig.json`. Use your actual profile path if it differs.
 
-```sh
-tsc -p ~/.config/yuke/tsconfig.json
-```
+For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. A test uses an isolated app and a fake model, and needs no provider credentials. `types/test.d.ts` has the test API. A type check or a test does not show how the terminal draws: start a terminal session to check that.
 
-Use your actual profile path if it differs. For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. It runs the files that you name, or each such file below the current folder. A test uses an isolated app and a fake model. It does not need provider credentials. `types/test.d.ts` has the test API.
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end first. A reload replaces the JavaScript runtime, so module state resets and plugin jobs stop. A failed reload keeps the previous plugins and providers.
 
-A type check does not verify terminal input or drawing. Start a separate terminal session to check those behaviors.
-
-`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end before you reload. A reload replaces the JavaScript runtime, so module state resets. Process jobs continue, but plugin-owned jobs stop. A failed reload keeps the previous plugins and providers.
-
-### Debug a plugin
-
-Console output becomes a `notice` notification from the source `console`. Plugin notices and script faults also reach the active frontend. Inspect terminal notices or the `notice` messages of an RPC client. CLI startup errors go to stderr.
-
-Capture stderr or protocol notifications when you need a record of a failure. Do not publish credentials or private task content in a diagnostic report.
+Console output becomes a `notice` from the source `console`. A terminal shows it as a notice, and an RPC client gets it as a `notice` notification. CLI startup errors go to stderr.

@@ -151,7 +151,7 @@ else:
         self.assertIn("the local package must be an archive file", result)
         self.assertEqual(self.snapshot(), before)
 
-    def test_package_source_and_protocol_bindings_match_the_checkout(self):
+    def test_package_files_match_the_checkout(self):
         self.assertEqual(self.identity["commit"], self.expected_commit)
         for source, installed, pattern in [(ROOT / "crates/js/modules", "modules", "*.ts"),
                                            (ROOT / "crates/js/types", "types", "*.d.ts"),
@@ -177,7 +177,7 @@ else:
     def test_each_library_file_that_the_skill_names_is_in_the_package(self):
         library = self.extracted / "lib/yuke"
         text = (library / "skills/yuke/SKILL.md").read_text()
-        names = [name.removeprefix("~/.local/lib/yuke/") for name in re.findall(r"`([^`\s]+)`", text)]
+        names = re.findall(r"`([^`\s]+)`", text)
         names = [name for name in names
                  if name.startswith(("docs/", "modules/", "types/", "protocol/")) and name.endswith((".md", ".ts"))]
         self.assertIn("docs/guide/index.md", names)
@@ -296,7 +296,7 @@ if ("result" in response) {
         original = (self.library / "modules/plugins.ts").read_bytes()
         (self.library / "modules/plugins.ts").unlink()
         result = self.install()
-        self.assertNotIn("skill", result)
+        self.assertNotIn("warning", result)
         self.assertEqual((self.library / "modules/plugins.ts").read_bytes(), original)
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
 

@@ -9,9 +9,7 @@
   },
   "include": [
     "guide/examples/**/*.js",
-    "guide/examples/**/*.ts",
     "snippets/**/*.ts",
-    "snippets/**/*.js",
     "tests/**/*.ts",
     "../crates/js/types/**/*.d.ts"
   ]
