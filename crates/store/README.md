@@ -37,8 +37,8 @@ folder/
   line again.
 - An accepted input appends one line to the index with the input, its id, and the first title. No sync.
 - A new session and a fork take the owner lock of the new folder, write the log durably, and then append the facts to
-  the index durably. The sweep at each open removes a folder with no log and a free lock: the rest of a crash during
-  a create or a delete.
+  the index durably. The sweep at each open, under the store lock, removes a folder that the index does not name, with
+  no log and a free lock: the rest of a crash during a create or a delete.
 - A rename appends one line. It changes no event, activity time, or list position.
 - A delete appends `deleted`, then removes the log, then the folder.
 
@@ -64,8 +64,8 @@ folder/
 
 ## Growth
 
-The index only grows. A turn adds about 1.5 KB, about 1% of the log of a turn. The first read of a process folds
-about 500 MB per second, so 50 MB of index, about a year of heavy use, adds about 0.1 s.
+The index only grows. A turn adds about 700 bytes and the full text of its input. The first read of a process folds
+about 500 MB per second, so a year of heavy use, about 25 to 40 MB, adds about 50 to 80 ms.
 
 ## Owner lock
 

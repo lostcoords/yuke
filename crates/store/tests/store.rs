@@ -154,6 +154,24 @@ async fn the_sweep_removes_a_folder_without_a_log_and_keeps_a_locked_one() {
     assert!(deleting.exists());
 }
 
+// A delete that a crash stopped after the log went, or a hand that removed the log, must not block a new delete.
+#[tokio::test]
+async fn a_delete_of_a_session_without_its_log_removes_the_session() {
+    let folder = new_folder("a_delete_of_a_session_without_its_log_removes_the_session");
+    let store = FileStore::open(&folder).await.unwrap();
+    let id = store
+        .create_session(&settings("one"), &prompt(), None)
+        .await
+        .unwrap()
+        .id;
+    std::fs::remove_file(log_of(&folder, id)).unwrap();
+
+    store.delete_session(id).await.unwrap();
+
+    assert!(!log_of(&folder, id).parent().unwrap().exists());
+    assert!(matches!(store.open(id, Access::Read).await, Err(StoreError::NotFound)));
+}
+
 // An index that this yuke cannot read, such as one of another version, must not cost the sessions.
 #[tokio::test]
 async fn a_lost_index_removes_no_session_folder() {

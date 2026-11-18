@@ -44,9 +44,9 @@ pub(crate) fn read(folder: &Path) -> io::Result<Log> {
     Ok(log)
 }
 
-/// The events of `page`, and the ids of the inputs that the newest event consumed. Only the lines of the page become
-/// events, so a short page of a long log parses few lines.
-pub(crate) fn page(folder: &Path, page: EventPage) -> io::Result<(Vec<StoredEvent>, Vec<InputId>)> {
+/// The events of `page`, and with `pending` the ids of the inputs that the newest event consumed. Only the lines of the
+/// page become events, so a short page of a long log parses few lines.
+pub(crate) fn page(folder: &Path, page: EventPage, pending: bool) -> io::Result<(Vec<StoredEvent>, Vec<InputId>)> {
     let (after, before, limit) = match page {
         EventPage::After(after) => (after.map_or(0, |number| number.0), u64::MAX, usize::MAX),
         EventPage::Before { before, limit } => (0, before.map_or(u64::MAX, |number| number.0), limit),
@@ -62,8 +62,10 @@ pub(crate) fn page(folder: &Path, page: EventPage) -> io::Result<(Vec<StoredEven
             }
             lines_of_page.push_back((seq, line.to_vec()));
         }
-        newest.clear();
-        newest.extend_from_slice(line);
+        if pending {
+            newest.clear();
+            newest.extend_from_slice(line);
+        }
         Ok(())
     })?;
     let events = lines_of_page

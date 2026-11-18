@@ -136,18 +136,19 @@ pub(crate) fn remove_session_folder(folder: &Path) -> io::Result<()> {
     }
 }
 
-/// Remove each session folder in `sessions` that has no log and has a free lock. A crash during a create or a delete,
-/// or a put of another process during a delete, leaves such a folder. A create or a delete in progress holds the lock.
-/// A folder with a log stays, also when the index does not name it, so an index that this yuke cannot read removes no
-/// session.
-pub(crate) fn sweep(sessions: &Path) -> Result<(), StoreError> {
+/// Remove each session folder in `sessions` that `indexed` does not name, that has no log, and that has a free lock. A
+/// crash during a create or a delete, or a put of another process during a delete, leaves such a folder. A create or a
+/// delete in progress holds the lock. A folder with a log stays, also when the index does not name it, so an index that
+/// this yuke cannot read removes no session. The caller holds the store lock, so no delete runs at the same time.
+pub(crate) fn sweep(sessions: &Path, indexed: impl Fn([u8; 16]) -> bool) -> Result<(), StoreError> {
     for entry in std::fs::read_dir(sessions).map_err(failed)? {
         let entry = entry.map_err(failed)?;
-        if entry.file_name().to_str().and_then(parse_session).is_none() {
+        let Some(id) = entry.file_name().to_str().and_then(parse_session) else {
             continue;
-        }
+        };
+        // An indexed folder needs no stat, so an open with many sessions stays fast.
         let folder = entry.path();
-        if crate::log::path(&folder).exists() {
+        if indexed(id) || crate::log::path(&folder).exists() {
             continue;
         }
 

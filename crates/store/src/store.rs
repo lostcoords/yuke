@@ -146,7 +146,12 @@ impl FileStore {
             jobs,
             writers: Mutex::default(),
         };
-        store.call(|state| files::sweep(&state.sessions)).await?;
+        store
+            .call(|state| {
+                let sessions = state.sessions.clone();
+                state.locked(|index| files::sweep(&sessions, |id| index.get(SessionId::from_bytes(id)).is_some()))
+            })
+            .await?;
         if created {
             files::sync_folder(&folder).map_err(failed)?;
             if new_folder && let Some(parent) = folder.parent().filter(|parent| !parent.as_os_str().is_empty()) {
@@ -608,7 +613,7 @@ impl Store for FileStore {
         self.call(move |state| {
             // The inputs come before the log. An input that the newest event consumed is no longer pending.
             let pending = state.index()?.get(id).ok_or(StoreError::NotFound)?.pending.clone();
-            let (events, consumed) = log::page(&folder, page).map_err(failed)?;
+            let (events, consumed) = log::page(&folder, page, !pending.is_empty()).map_err(failed)?;
             let pending = pending
                 .into_iter()
                 .filter(|input| !consumed.contains(&input.id))
@@ -647,7 +652,10 @@ impl Store for FileStore {
                 // Windows does not delete an open file, so the lock closes before the folder goes. The log goes first,
                 // so when the removal of the rest fails, the sweep of the next open removes the folder.
                 drop(lock);
-                std::fs::remove_file(log::path(&folder)).map_err(failed)?;
+                match std::fs::remove_file(log::path(&folder)) {
+                    Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(failed(error)),
+                    _ => {}
+                }
                 files::remove_session_folder(&folder).map_err(failed)
             })
         })
