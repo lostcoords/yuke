@@ -8,7 +8,7 @@ This tutorial adds one terminal command. It needs an installed yuke and TypeScri
 
 ## 1. Find the profile
 
-The default profile is `~/.config/yuke`. The [installer](types.md#installed-layout) creates `tsconfig.json` there. That file extends the public library configuration of the installed release.
+The default profile is `~/.config/yuke`. The installer creates `tsconfig.json` there. That file extends the public library configuration of the installed release.
 
 In a POSIX shell:
 
@@ -100,4 +100,4 @@ To remove the plugin, remove its path from `config.json`. Run `/reload`. The fil
 
 ## Next step
 
-Read [Plugins](plugins.md) for session tools, hooks, services, and cleanup. Read [Terminal UI](ui.md) for commands and views. Read [Public types](types.md) for the installed API reference.
+Read [Plugins](plugins.md) for session tools, hooks, services, and cleanup. Read [Terminal UI](ui.md) for commands and views. Read [Find the API](plugins.md#find-the-api) for the installed API reference.

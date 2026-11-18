@@ -32,8 +32,7 @@ description: Read and fill PDF forms.
 The steps of the skill.
 ```
 
-- `name` is optional and defaults to the folder name. It has 1 to 64 characters from `a-z`, `0-9`, and `-`. It does not start or end with `-` and has no `--`.
-- `description` is required and has at most 1024 characters.
+`name` defaults to the folder name. `description` is required.
 
 The name, description, and location of each skill appear in the catalog, sorted by name. The model reads a matching skill through the `read` tool.
 

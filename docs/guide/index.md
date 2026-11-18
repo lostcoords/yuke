@@ -19,14 +19,12 @@ New to yuke? Start with the [Quick start](get-started.md) to install yuke, conne
 ## Run headless
 
 - [One-shot tasks](one-shot.md): run one task with `-p` in a script or a CI job.
-- [Embed with RPC](rpc.md): drive yuke from your own app over the JSONL protocol.
+- [Embed with RPC](rpc.md): drive yuke from your own app over the JSON-RPC protocol.
 
 ## Extend
 
-- [Customize yuke](customize.md): choose the right extension point for a task.
 - [Your first plugin](first-plugin.md): add a command and check it against the public API.
 - [Plugins](plugins.md): runtime and session entry points, cleanup, events, and services.
-- [UI](ui.md): commands, keys, views, status items, and dialogs.
+- [UI](ui.md): commands, keys, status items, and styles.
 - [Tools](tools.md): define a model tool and return its result.
-- [Engine](engine.md): hooks, model requests, forks, and subagents.
-- [Types](types.md): find public types and check a plugin.
+- [Engine](engine.md): engine hooks and the prompt.

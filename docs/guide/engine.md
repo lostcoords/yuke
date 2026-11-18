@@ -1,5 +1,5 @@
 ---
-description: Add session hooks, make model requests, fork sessions, and build subagents.
+description: Add model tools and engine hooks to a session, and change the prompt.
 ---
 
 # Engine
@@ -81,43 +81,3 @@ A call that `tool.before` stopped gets no `tool.after` hook. Use [host facts](pl
 ## Prompt
 
 The default prompt contains base instructions, applicable `AGENTS.md` files, a skill catalog, and environment facts. See [AGENTS.md and skills](instructions.md). Use `prompt.build` to add session policy without replacing the default sections.
-
-## Conversation forks
-
-Get the `sessions` service in `apply`. Call `sessions.fork(id, { through })` to copy a session through the end of a completed turn. Omit `through` for the newest completed turn. The result is the new session ID, and the fork starts open.
-
-`through` is an event number, not a message ID. The source stays unchanged. A fork has no parent; its saved session summary identifies its source in `forkOf`. Use a session handle's `setSettings` to change the fork's folder or model while it is idle.
-
-## Compaction
-
-The bundled `compaction` plugin summarizes old context with `round.before` and `round.retry`. It keeps a recent exact tail and the newest user input. Its tail target is 20,000 estimated tokens, or a tenth of the model window when that is smaller.
-
-The plugin requests a summary through the round event's `sideRequest`. This method uses the round's model, prompt, tools, and settings. It sends context followed by a summary instruction, but runs no returned tool call. A successful summary becomes a saved context replacement.
-
-The plugin also retries context-overflow failures with a smaller tail. A failed summary does not replace the context. To change compaction policy, replace this bundled plugin with your own round hooks.
-
-## Tool-free model requests
-
-Use `generateText` from `yuke:ai` for a request outside a session conversation:
-
-<<< @/snippets/engine/summarize.ts
-
-A tool or hook can call this helper with `s.settings.model` and its own cancellation `signal`. The result also includes `finishReason`, `usage`, and `output`. `Output.object({ schema })` requests a validated JSON object in `output`.
-
-The request uses the configured catalog and credentials. It offers no tools, runs no session hooks, and saves nothing in the session. Transient failures use the host retry policy. An abort rejects with the signal's reason.
-
-## Subagents
-
-A plugin can build delegation from ordinary sessions and jobs. There is no bundled delegation plugin.
-
-1. Capture `ctx.get("sessions")` in `apply`.
-2. In a tool, run child work through `context.jobs.run`.
-3. Create the child with `sessions.create(s.settings, { parent: s.sessionId })`.
-4. Open a child handle with `sessions.open`.
-5. Send a message with `handle.sendMessage` and wait with `handle.waitForIdle`.
-6. Read the child's saved events with `sessions.events` and return a job report.
-7. Abort the open signal, or call `handle.close()`, to release the handle.
-
-A child stays out of the default session list. Removing its parent removes it too. Parentage does not forward answers or questions automatically. The plugin decides how to report results, forward questions, stop children, and limit recursion. Connect the job's abort signal to `handle.cancel()` when the job must stop the child's turn.
-
-`waitForIdle()` is a completion barrier, not a success result. Inspect the terminal saved commit's `end` before reporting success. A job report goes to its waiting call, or becomes a notification when the job runs in the background. See [Background jobs](tools.md#background-jobs).

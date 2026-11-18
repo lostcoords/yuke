@@ -1,5 +1,5 @@
 ---
-description: Install plugins, and write them with entry points, cleanup, typed services, and host facts.
+description: Install plugins, and write them with entry points, cleanup, services, and host events.
 ---
 
 # Plugins
@@ -109,28 +109,11 @@ A failed `session` setup removes that plugin's tools and hooks from the session.
 
 Module state lasts for one runtime. Use `ctx.dataDir` for files that must survive reload. Use `import.meta.dirname` for files beside a file-based entry module.
 
-## Contexts
-
-| `PluginContext` member | Use |
-|---|---|
-| `name` | Read the plugin name. |
-| `dataDir` | Read the absolute, persistent data folder. |
-| `options` | Read validated, deeply frozen options. |
-| `signal` | Observe plugin shutdown. |
-| `get`, `provide` | Use or publish a service. |
-| `addListener` | Observe a host fact. |
-| `notify(level, text)` | Send a notice with this plugin as its source. |
-| `sendClientEvent(event, data?)` | Send a plugin extension event to an RPC client. |
-
-`SessionContext` supplies `sessionId`, `parent`, `cwd`, `settings`, `options`, and `signal`. Each read of `settings` gives a frozen copy of the current session settings. `parent` is `undefined` for a session without a parent. `cwd` is the workspace folder of the session when it opened.
-
-Its operations are `tools.add`, `tools.remove`, `addHook`, `jobs.start`, `notify`, `sendClientEvent`, `sendClientRequest`, and `ask`. See [Tools](tools.md) and [Engine](engine.md). Capture a shared service in `apply` when the session code needs it.
-
 ## Services
 
 A service shares a typed value between plugins. The provider declares its name in `provides` and publishes it with `ctx.provide(name, value)` during `apply`. A consumer declares the name in `uses` and reads it with `ctx.get(name)`.
 
-The loader applies providers before consumers. It rejects missing providers, duplicate providers, and cycles. A plugin does not load when a provider that it uses failed to load. A service provider adds its type to the `Services` interface of `yuke:plugins`. See [Types](types.md) for module augmentation.
+The loader applies providers before consumers. It rejects missing providers, duplicate providers, and cycles. A plugin does not load when a provider that it uses failed to load. A service provider adds its type to the `Services` interface of `yuke:plugins`.
 
 Three services need no `uses` entry:
 
@@ -163,22 +146,19 @@ The host does not await listeners. A throw sends a notice, and the listener stay
 
 `ctx.sendClientEvent` and `s.sendClientEvent` send extension events to the active RPC client. They do not publish host facts to other plugins. With no client, the host drops the event.
 
-## Browse and open sessions
+## Find the API
 
-Get the service with `ctx.get("sessions")`.
+The installer puts the public API of your release in `~/.local/lib/yuke`:
 
-- `list(params?)` returns a page with `sessions` and an optional `nextCursor`. Pass that cursor as `cursor` for the next page. Keep the same filters.
-- `get(id)` returns the saved row with current activity.
-- `events(id, { limit, before? })` reads saved events without an open handle.
-- `open(id, { tail, onEvent, signal? })` returns a `SessionHandle` after it delivers the initial snapshot. Later calls to `onEvent` receive updates.
+| Path | Content |
+|---|---|
+| `modules/plugins.ts` | `yuke:plugins`: `PluginContext`, `SessionContext`, `SessionHooks`, `HostEvents`, `Sessions`, and `SessionHandle`. |
+| `modules/tools.ts` | `yuke:tools`: `ObjectSchema`, `Infer`, and `ToolExecuteResult`. |
+| `types/*.d.ts` | The host modules: `yuke:tui`, `yuke:chat`, `yuke:ai`, `yuke:transcript`, `yuke:fs`, `yuke:net`, `yuke:process`, and `yuke:test`. |
+| `protocol/` | The RPC protocol reference and its types. |
+| `tsconfig.json` | The configuration that maps each `yuke:*` import to these files. |
 
-A list without `parent` contains sessions without a parent. Set `parent` to list that session's children. Set `cwd` to filter by the current session folder.
-
-An open handle holds a session open. Abort the signal passed to `open` to release that handle. Other handles remain valid. `sessions.closeForAll(id)` instead closes the session for every holder and stops its jobs.
-
-The service also has `create`, `fork`, `rename`, and `remove`. A handle supplies `sendMessage`, `notifyModel`, `cancel`, `waitForIdle`, `setSettings`, `close`, and other session operations. See the `SessionHandle` declaration in [Types](types.md). `waitForIdle()` waits for accepted input to be handled; it does not prove that the turn succeeded. A terminal saved commit records its outcome in `end`.
-
-For terminal panes and drafts, use the public `chat` service. See [UI](ui.md).
+The doc comments in these files describe each member. Do not import `yuke:internal/*`, and do not reach a missing name through a cast or `any`.
 
 ## Test and debug
 
@@ -188,34 +168,11 @@ Check the types against the profile configuration:
 tsc -p ~/.config/yuke/tsconfig.json
 ```
 
-Use your actual profile path if it differs. For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. It runs the files that you name, or each such file below the current folder. A test uses an isolated app and a fake model. It does not need provider credentials. See [Public types](types.md) for the test API.
+Use your actual profile path if it differs. For behavior tests, run `yuke test` on `*.test.ts` files that use `yuke:test`. It runs the files that you name, or each such file below the current folder. A test uses an isolated app and a fake model. It does not need provider credentials. `types/test.d.ts` has the test API.
 
 A type check does not verify terminal input or drawing. Start a separate terminal session to check those behaviors.
 
-`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end before you reload. A reload replaces the JavaScript runtime, so module state resets. Process jobs continue, but plugin-owned jobs stop. A failed reload keeps the previous plugins and providers. See [Terminal UI](ui.md) for the reload controls and pane state.
-
-### Isolated check
-
-Use a temporary home, workspace, and XDG directories before you load unverified code. For example, start an empty terminal session without provider credentials:
-
-```sh
-(
-  set -eu
-  scratch="$(mktemp -d)"
-  trap 'rm -rf "$scratch"' EXIT
-  bin="$HOME/.local/bin/yuke"
-  mkdir -p "$scratch/home" "$scratch/workspace"
-  cd "$scratch/workspace"
-  env -i HOME="$scratch/home" PATH="$PATH" \
-    XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
-    XDG_CACHE_HOME="$scratch/cache" YUKE_APPNAME=yuke-doc-check \
-    "$bin"
-)
-```
-
-Press **Ctrl+Q** to exit. The subshell then removes the temporary files, including any session data. This empty profile checks startup only. To test a plugin, prepare its profile files in the temporary config directory before you start yuke. Do not copy credentials there.
-
-This is isolation, not a sandbox. A plugin can still access an absolute path or run a command with your user rights.
+`/reload` reads the configuration, providers, and plugin files again. Wait for active turns to end before you reload. A reload replaces the JavaScript runtime, so module state resets. Process jobs continue, but plugin-owned jobs stop. A failed reload keeps the previous plugins and providers.
 
 ### Debug a plugin
 

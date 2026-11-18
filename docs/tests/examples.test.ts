@@ -1,13 +1,8 @@
 import type { PluginApply } from "yuke:plugins";
 import { assertEquals, createFrame, createHost, type FrameTest, test, waitForSettled } from "yuke:test";
-import { stack, TextEditor } from "yuke:tui";
 import * as hello from "../guide/examples/hello.js";
 import * as lifecycle from "../guide/examples/lifecycle.js";
-import * as picker from "../guide/examples/picker.js";
 import * as counter from "../guide/examples/plugin.js";
-import * as prompt from "../guide/examples/roomy-chat.js";
-import * as sidebar from "../guide/examples/sidebar.js";
-import * as stopwatch from "../guide/examples/stopwatch.js";
 import { withSurface } from "./context.ts";
 
 function loadExample(name: string, apply: PluginApply, frame: FrameTest) {
@@ -52,103 +47,5 @@ test("the documented event listener reports the session that opens", async () =>
   assertEquals(
     host.notices.map((notice) => [notice.source, notice.text]),
     [["lifecycle", `Opened ${session.id}`]],
-  );
-});
-
-test("the documented picker stores the chosen review focus", async () => {
-  using frame = createFrame({ width: 50, height: 12 });
-  const tui = frame.surface("observer").tui;
-  await using host = await loadExample("picker", picker.apply, frame);
-  tui.commands.run("picker:focus");
-  frame.draw();
-  frame.key("down enter");
-  await waitForSettled();
-  assertEquals(
-    tui.status.list().map((item) => [item.id, item.text]),
-    [["picker:focus", "Performance"]],
-  );
-  assertEquals(host.notices, []);
-});
-
-test("the documented stopwatch freezes its duration and resets it", async () => {
-  using frame = createFrame({ width: 40, height: 10 });
-  const tui = frame.surface("observer").tui;
-  await using host = await loadExample("clock", stopwatch.apply, frame);
-  tui.commands.run("clock:toggle");
-  frame.advance(2100);
-  const running = tui.status.list().map((item) => item.text);
-  tui.commands.run("clock:toggle");
-  frame.advance(5000);
-  const stopped = tui.status.list().map((item) => item.text);
-  tui.commands.run("clock:reset");
-  assertEquals([running, stopped, tui.status.list().map((item) => item.text)], [["2s"], ["2s"], ["0s"]]);
-  await host.close();
-  assertEquals(tui.status.list(), []);
-});
-
-test("the documented sidebar keeps pane content and hides on a narrow terminal", async () => {
-  using frame = createFrame({ width: 100, height: 10 });
-  const tui = frame.surface("observer").tui;
-  tui.panes.setDefault(() => ({ draw: (canvas) => canvas.text(0, 0, "Workspace") }));
-  await using host = await loadExample("sidebar", sidebar.apply, frame);
-  frame.start();
-  const wide = frame.frame.cells[0]
-    ?.map((cell) => cell.text)
-    .join("")
-    .trimEnd();
-  frame.resize({ width: 70, height: 10 });
-  assertEquals(
-    [
-      wide,
-      frame.frame.cells[0]
-        ?.map((cell) => cell.text)
-        .join("")
-        .trimEnd(),
-    ],
-    [`Workspace${" ".repeat(68)}Shortcuts`, "Workspace"],
-  );
-  assertEquals(host.notices, []);
-});
-
-test("the documented widget extension changes only composer prompts and unload restores them", async () => {
-  using frame = createFrame({ width: 30, height: 4 });
-  const tui = frame.surface("layout").tui;
-  const composer = new TextEditor({ role: "composer", appearance: { prompt: "chat> " } });
-  const field = new TextEditor({ appearance: { prompt: "field> " } });
-  tui.panes.setDefault(() =>
-    stack("column", [
-      { view: composer, size: 1 },
-      { view: field, size: 1 },
-    ]),
-  );
-  frame.start();
-  await using host = await loadExample("prompt", prompt.apply, frame);
-  const extended = frame
-    .draw()
-    .cells.slice(0, 2)
-    .map((row) =>
-      row
-        .map((cell) => cell.text)
-        .join("")
-        .trimEnd(),
-    );
-  await host.close();
-  assertEquals(
-    [
-      extended,
-      frame
-        .draw()
-        .cells.slice(0, 2)
-        .map((row) =>
-          row
-            .map((cell) => cell.text)
-            .join("")
-            .trimEnd(),
-        ),
-    ],
-    [
-      [">", "field>"],
-      ["chat>", "field>"],
-    ],
   );
 });
