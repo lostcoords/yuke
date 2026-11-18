@@ -1,3 +1,7 @@
+---
+description: Write a yuke theme plugin and set its palette, style groups, and terminal color variants.
+---
+
 # Themes
 
 A theme sets the colors and the text styles of yuke. yuke has one theme, `default`. This theme works on light and dark terminals.
@@ -17,21 +21,7 @@ A theme is a plugin. Create the file `~/.config/yuke/nord/plugin.json`:
 
 In the same folder, create the file `index.ts`. The colors in this file are an example:
 
-```ts
-import type { PluginContext } from "yuke:plugins";
-
-export function apply(ctx: PluginContext): void {
-  ctx.get("tui")?.styles.addTheme("nord", {
-    dark: {
-      palette: { fg: "#eceff4", bg: "#2e3440", accent: "#88c0d0", surface: "#3b4252" },
-      groups: { "chat.title": { fg: "#ebcb8b" } },
-    },
-    light: {
-      palette: { accent: "#2e6f8e" },
-    },
-  });
-}
-```
+<<< @/snippets/themes/nord.ts
 
 Add the folder to `~/.config/yuke/config.json`:
 
@@ -85,7 +75,7 @@ groups: {
 
 The fields are `fg`, `bg`, `underlineColor`, `bold`, `dim`, `italic`, `reverse`, `underline`, and `inherits`. `inherits` names a second group. That group gives the fields that the first group does not set.
 
-[`default-theme.ts`](../crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
+[`default-theme.ts`](https://github.com/lostcoords/yuke/blob/main/crates/js/modules/internal/tui/default-theme.ts) has all the groups and all the colors. To change many values, copy this file.
 
 ## Start from a different theme
 
@@ -98,11 +88,11 @@ ctx.get("tui")?.styles.addTheme("my-nord", {
 
 The order in which the plugins load has no effect.
 
-If two plugins add a theme with the same name, yuke uses the newest theme. You cannot use the name `default`. The call `addTheme("default", ...)` gives an error.
+If two plugins add a theme with the same name, yuke uses the newest theme. You cannot use the name `default`. The call `addTheme("default", ...)` throws a `TypeError`. `addTheme` returns a remover.
 
 ## Plugins and themes
 
-Use `styles.add` to set the style of the groups of your plugin. Use palette names or `inherits`. Your plugin then follows each theme:
+Use `styles.add` to set the style of the groups of your plugin. It returns a remover. Use palette names or `inherits`. Your plugin then follows each theme:
 
 ```ts
 ctx.get("tui")?.styles.add({
@@ -115,28 +105,14 @@ A hex value does not change with the theme or the background.
 
 A theme has priority over `styles.add`. `styles.add` has priority over `default`.
 
-To set a style for one theme, read `styles.theme` at startup and on the event `theme.changed`. yuke also sends this event when the background of the terminal changes.
+To set a style for one theme, read `styles.theme` at startup and on the event `theme.changed`, which you listen to with `ctx.addListener`. yuke also sends this event when the background of the terminal changes.
 
-```ts
-import type { PluginContext } from "yuke:plugins";
-
-export function apply(ctx: PluginContext): void {
-  const tui = ctx.get("tui");
-  if (tui === undefined) return;
-  let undo = (): void => {};
-  const look = (): void => {
-    undo();
-    undo = tui.styles.theme === "nord" ? tui.styles.add({ "notes.title": { fg: "#ebcb8b" } }) : () => {};
-  };
-  look();
-  ctx.addListener("theme.changed", look);
-}
-```
+<<< @/snippets/themes/theme-aware.ts
 
 If `nord` sets `notes.title` at a later time, the value of `nord` has priority. You can keep this code.
 
 ## Known limits
 
-A theme plugin loads after the chat. The first frame can show the colors of `default`.
+The `themes` plugin applies the saved theme name at startup. Until the plugin that adds that theme loads, yuke shows the look of `default`.
 
 `bg` fills only the cells of the terminal. The padding of the terminal keeps its color.

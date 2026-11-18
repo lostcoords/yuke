@@ -43,7 +43,9 @@ jobs:
 
       - name: Check TypeScript
         if: ${{ !cancelled() }}
-        run: mise exec -- tsc -p crates/js/tsconfig.json
+        run: |
+          mise exec -- tsc -p crates/js/tsconfig.json
+          mise exec -- tsc -p docs/tsconfig.json
 
       - name: Check TypeScript format and lint
         if: ${{ !cancelled() }}
@@ -75,6 +77,10 @@ jobs:
 
       - name: Test all features
         run: mise exec -- cargo test --workspace --locked --all-features
+
+      - name: Test documentation examples
+        if: ${{ !cancelled() }}
+        run: mise exec -- cargo run --locked --package yuke -- test docs/tests
 
       # Other workspace members can enable yuke-ai's default transport through their test dependencies.
       - name: Test yuke-ai without default features
