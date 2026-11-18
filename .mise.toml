@@ -14,12 +14,8 @@ description = "Test a package and its installer with an isolated home"
 run = "python3 tools/test-package.py"
 
 [tasks."package:test-builder"]
-description = "Test package input checks and concurrent output writes"
+description = "Test the package version rules"
 run = "python3 tools/test-builder.py"
-
-[tasks."release:test"]
-description = "Test release publication with an isolated HTTP server"
-run = "python3 tools/test-release.py"
 
 [tasks.check]
 description = "Run every check that a change must pass"

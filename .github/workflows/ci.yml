@@ -53,11 +53,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: mise exec -- biome ci --error-on-warnings
 
-      - name: Test distribution tools
+      - name: Test the package builder
         if: ${{ !cancelled() }}
-        run: |
-          mise exec -- python3 tools/test-builder.py
-          mise exec -- python3 tools/test-release.py
+        run: mise exec -- python3 tools/test-builder.py
 
   test:
     name: Test (${{ matrix.platform }})

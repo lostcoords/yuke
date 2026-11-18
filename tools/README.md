@@ -18,7 +18,6 @@ Use `--target` to select another platform.
 
 ```sh
 mise run package:test-builder
-mise run release:test
 mise run package:test target/packages/yuke-aarch64-macos.tar.gz
 ```
 
@@ -34,9 +33,8 @@ The installer writes `~/.local/bin/yuke` and `~/.local/lib/yuke` and preserves u
 
 ## Releases
 
-A `vVERSION` tag runs CI and publishes all four archives through a draft release.
+A `vVERSION` tag runs CI, and `gh release create` publishes the four tested archives.
 The tag must match `crates/yuke/Cargo.toml` without `-dev`. A hyphen suffix creates a prerelease.
-Successful push CI on `main` triggers the rolling nightly. Manual runs also require successful CI.
-Stale runs skip publication. Nightly needs mutable releases.
-Published versioned releases stay unchanged. An upload or publish failure can hide nightly until retry.
-Retry all jobs to rebuild expired artifacts and complete the draft.
+Successful push CI on `main` builds the rolling nightly. The nightly job deletes the release and the tag `nightly`,
+and creates them again on the new commit, so the nightly is absent for a few seconds.
+If an upload fails, `gh` leaves a draft release. Delete the draft, then run the job again.

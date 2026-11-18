@@ -25,11 +25,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           pattern: package-*
@@ -37,7 +32,12 @@ jobs:
           path: dist
       - name: Publish the four tested archives
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          mise exec -- python3 tools/release.py publish --commit "$(mise exec -- git rev-parse HEAD)" --tag "${RELEASE_TAG}" --directory dist
+          # A suffix before the build metadata, such as v1.2.0-rc.1, makes a prerelease.
+          flags=()
+          case "${RELEASE_TAG%%+*}" in *-*) flags=(--prerelease --latest=false) ;; esac
+          gh release create "${RELEASE_TAG}" dist/*.tar.gz --verify-tag --title "${RELEASE_TAG}" \
+            --notes "Built from commit \`${GITHUB_SHA}\`." "${flags[@]}"
