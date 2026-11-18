@@ -32,11 +32,8 @@ yuke --help
 Remove the binary, the library, and the skill link:
 
 ```sh
-rm -rf ~/.local/bin/yuke ~/.local/lib/yuke
-rm ~/.agents/skills/yuke
+rm -rf ~/.local/bin/yuke ~/.local/lib/yuke ~/.agents/skills/yuke
 ```
-
-The second `rm` removes only a link. It fails on a folder, so it keeps a skill of your own with that name.
 
 This keeps your configuration, sessions, and credentials. To remove them too, delete the folders in [Configuration](config.md).
 
