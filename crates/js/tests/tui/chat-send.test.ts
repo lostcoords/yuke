@@ -142,7 +142,7 @@ for (const failure of ["read", "parse"]) {
       [
         rows(frame.frame).includes("p/m"),
         chat.notices.length,
-        chat.notices[0]?.startsWith("error the model choice did not load:"),
+        chat.notices[0]?.startsWith("error The model choice did not load:"),
       ],
       [true, 1, true],
     );
@@ -174,7 +174,7 @@ test("a choice that does not save gives a notice and the send goes on", async ()
       chat.tui.status.list().some((item) => item.id === "chat:model"),
     ],
     [
-      ["error the model choice did not load", "error the model choice did not save"],
+      ["error The model choice did not load", "error The model choice did not save"],
       [[{ kind: "userText", text: "hi" }]],
       false,
     ],
@@ -199,7 +199,7 @@ test("a refused input comes back above the newer text with the spans of both, an
   refuse.reject(new Error("full"));
   await waitForSettled();
   assertEquals(draft(composerOf(chat).state), [`first\n${"x".repeat(301)}`, [[6, 307, "[Pasted text · 301 chars]"]]]);
-  assertEquals(chat.notices, ["error the message did not send: Error: full"]);
+  assertEquals(chat.notices, ["error The message did not send: Error: full"]);
 });
 
 test("an accepted input followed by a failed turn does not come back", async () => {
@@ -229,7 +229,7 @@ test("a pane whose open failed opens its session again at the next send", async 
   await waitForSettled();
   assertEquals(
     [sessions.opened.map((open) => open.id), sessions.inputs, chat.notices],
-    [["s1", "s1"], [[{ kind: "userText", text: "again" }]], ["error the session s1 did not open: Error: busy"]],
+    [["s1", "s1"], [[{ kind: "userText", text: "again" }]], ["error The session s1 did not open: Error: busy"]],
   );
 });
 
@@ -242,7 +242,7 @@ test("a send with no ready provider names /login, opens no picker, and keeps the
   frame.key("enter");
   await waitForSettled();
   assertEquals([sessions.created, composerOf(chat).state.text], [[], "hi"]);
-  assertEquals(chat.notices, ["info no provider is ready: run /login"]);
+  assertEquals(chat.notices, ["info No provider is ready: run /login"]);
 });
 
 test("a cancel of the model picker, a catalog that fails, and a pane close each keep the draft and create nothing", async () => {
@@ -275,7 +275,7 @@ test("a cancel of the model picker, a catalog that fails, and a pane close each 
   await waitForSettled();
   assertEquals(
     [composerOf(failing).state.text, failing.notices],
-    ["hi", ["error the models did not load: Error: offline"]],
+    ["hi", ["error The models did not load: Error: offline"]],
   );
 });
 
@@ -492,7 +492,7 @@ test("ctrl+k m in a pane with a session changes its model and level and keeps it
   await waitForSettled();
   frame.key("enter");
   await waitForSettled();
-  assertEquals(chat.notices, ["error the model did not change: Error: a turn runs"]);
+  assertEquals(chat.notices, ["error The model did not change: Error: a turn runs"]);
 });
 
 test("a slash word lists the matching commands above the composer, and enter runs the selected one", async () => {
@@ -728,7 +728,7 @@ test("a message that a turn took stays sent and the next up recalls an older one
   sessions.state.removed = false;
   frame.key("up");
   await waitForSettled();
-  assertEquals([composerOf(chat).state.text, chat.notices], ["", ["info the message reached the turn already"]]);
+  assertEquals([composerOf(chat).state.text, chat.notices], ["", ["info The message reached the turn already"]]);
   // The next up goes on with the older message, so it never asks for the sent one again.
   sessions.state.removed = true;
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -802,7 +802,7 @@ test("the strip keeps the newest messages when rows run out, and a failed recall
   await waitForSettled();
   assertEquals(
     [strip, composerOf(chat).state.text, chat.notices],
-    [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error the message did not come back: Error: disk"]],
+    [[" b", `${" c".padEnd(13)} ↑ edit`], "", ["error The message did not come back: Error: disk"]],
   );
 });
 
@@ -888,7 +888,7 @@ test("ctrl+v without an image gives a notice, a failed store gives a notice, and
       sessions.opened.map((open) => open.id),
       composerOf(chat).state.text,
     ],
-    [["info the clipboard holds no image"], ["error the image did not attach: Error: disk full"], 1, ["s-new"], ""],
+    [["info The clipboard holds no image"], ["error The image did not attach: Error: disk full"], 1, ["s-new"], ""],
   );
 });
 
@@ -962,8 +962,8 @@ test("ctrl+k m after a failed open gives the notice of the open only", async () 
   frame.key("enter");
   await waitForSettled();
   assertEquals(chat.notices, [
-    "error the session s1 did not open: Error: busy",
-    "error the session s1 did not open: Error: busy",
+    "error The session s1 did not open: Error: busy",
+    "error The session s1 did not open: Error: busy",
   ]);
 });
 

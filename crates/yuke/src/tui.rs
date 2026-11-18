@@ -222,7 +222,7 @@ async fn reload(app: Option<&mut App>, display: &Display, snapshot: String) {
         session_id: None,
         level: NoticeLevel::Error,
         source: SOURCE.to_owned(),
-        text: format!("the reload failed: {failure}"),
+        text: format!("The reload failed: {failure}"),
     }));
 }
 

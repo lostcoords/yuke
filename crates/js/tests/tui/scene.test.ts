@@ -429,7 +429,7 @@ test("a throwing timer is reported under its plugin", () => {
   terminal.clock.advance(0);
   assertEquals(
     core.notices.list().map((notice) => [notice.source, notice.text.split("\n")[0]]),
-    [["timers", "a timer failed: Error: bad timer"]],
+    [["timers", "A timer failed: Error: bad timer"]],
   );
 });
 
@@ -756,7 +756,7 @@ test("a command of a plugin keeps its this and its fault names the plugin", () =
   assertEquals(counter.count, 2);
   assertEquals(
     [fault?.source, fault?.text.split("\n")[0]],
-    ["notes", "the command notes:broken failed: Error: no disk"],
+    ["notes", "The command notes:broken failed: Error: no disk"],
   );
 });
 
@@ -851,7 +851,7 @@ test("a restore drops a pane without its plugin and keeps an empty pane for a fa
   // The restore closes the panes from before it.
   assertEquals(earlier.signal.aborted, true);
   const fault = core.notices.list().at(-1);
-  assertEquals([fault?.source, fault?.text.split("\n")[0]], ["broken", "a view did not start: Error: old state"]);
+  assertEquals([fault?.source, fault?.text.split("\n")[0]], ["broken", "A view did not start: Error: old state"]);
   // The stop of `notes` closes its restored pane too.
   notes.abort();
   assertEquals(terminal.screen(core)[0], "");

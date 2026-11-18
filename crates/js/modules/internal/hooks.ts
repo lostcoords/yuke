@@ -249,7 +249,7 @@ export function startInputBefore(
         (handler) => handler(Object.freeze({ source: frozen(source), kind, blocks: frozen(current), signal })),
         (answer, plugin) => {
           if (answer.deny !== undefined) {
-            notify(plugin, "warn", `the plugin denied the input: ${answer.deny}`, sessionId);
+            notify(plugin, "warn", `The plugin denied the input: ${answer.deny}`, sessionId);
             removed = true;
             return true;
           }
@@ -640,7 +640,7 @@ function start(
     try {
       await cleanup();
     } catch (error) {
-      report(`the cleanup of the session failed: ${failureOf(error)}`);
+      report(`The cleanup of the session failed: ${failureOf(error)}`);
     }
   };
   const scope: Scope = {
@@ -803,7 +803,7 @@ function start(
       scope.closed = true;
       unregister(scope.toolChanges);
       abort(`session of plugin ${plugin} failed`);
-      report(`the session setup failed, and its tools and hooks are gone: ${failureOf(error)}`);
+      report(`The session setup failed, and its tools and hooks are gone: ${failureOf(error)}`);
       return undefined;
     }
   })();

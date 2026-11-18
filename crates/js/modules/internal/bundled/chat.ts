@@ -208,7 +208,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     try {
       entry.watch(actions.pane, AbortSignal.any([actions.signal, entry.stop.signal]));
     } catch (error) {
-      ctx.notify("error", `a pane watcher failed: ${failureOf(error)}`);
+      ctx.notify("error", `A pane watcher failed: ${failureOf(error)}`);
     }
   };
   const presenters = new Stack<(options: ChatPresentationOptions) => ChatPresentation>();
@@ -303,7 +303,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
     panes,
     refresh: () => publish(),
     choice: await SavedChoice.load(ctx.dataDir, (error) => {
-      if (!ctx.signal.aborted) ctx.notify("error", `the model choice did not load: ${String(error)}`);
+      if (!ctx.signal.aborted) ctx.notify("error", `The model choice did not load: ${String(error)}`);
     }),
     presenter: () => presenters.top(),
     frame: () => frames.top(),
@@ -427,7 +427,7 @@ export async function apply(ctx: PluginContext<Options>): Promise<void> {
       tui.status.set("context", { text, side: "right", order: 20, priority: 1 });
     }
     if (status.jobs === 0) tui.status.delete("jobs");
-    else tui.status.set("jobs", { text: `jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
+    else tui.status.set("jobs", { text: `Jobs ${status.jobs}`, side: "right", order: 1, priority: 2 });
   };
   defaultEmptyView =
     ctx.options.emptyView === false

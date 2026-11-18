@@ -94,5 +94,5 @@ test("a saved empty pane comes back as a default pane, and a default pane that t
   });
   other.event({ type: "start" });
   assertEquals(terminal.screen(other)[0], "");
-  assertEquals(other.notices.list().at(-1)?.text.split("\n")[0], "a view did not start: Error: no pane");
+  assertEquals(other.notices.list().at(-1)?.text.split("\n")[0], "A view did not start: Error: no pane");
 });

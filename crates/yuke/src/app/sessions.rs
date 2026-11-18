@@ -732,7 +732,7 @@ impl SessionService {
             && let Err(error) = self.shared.store.delete_session(id).await
         {
             self.shared.warn(&format!(
-                "the session {id} that did not start stays: {}",
+                "The session {id} that did not start stays: {}",
                 chain_text(&error)
             ));
         }

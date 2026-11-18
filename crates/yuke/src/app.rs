@@ -571,7 +571,7 @@ impl App {
                 session_id: None,
                 level: NoticeLevel::Error,
                 source: SOURCE.to_owned(),
-                text: format!("only the bundled plugins run, because the plugin list did not load: {error}"),
+                text: format!("Only the bundled plugins run, because the plugin list did not load: {error}"),
             }));
         }
         let sessions = SessionService::new(Rc::clone(&shared));
@@ -1027,7 +1027,7 @@ async fn report(
                 session_id: None,
                 level: NoticeLevel::Warn,
                 source: SOURCE.to_owned(),
-                text: format!("a script failed: {fault}"),
+                text: format!("A script failed: {fault}"),
             }),
             Report::Notice(notice) => ServerNotification::Notice(notice),
             Report::Event(event) => ServerNotification::ExtensionEvent(event),
@@ -1126,7 +1126,7 @@ mod tests {
                 (
                     NoticeLevel::Warn,
                     "host:yuke".to_owned(),
-                    "a script failed: lost".to_owned()
+                    "A script failed: lost".to_owned()
                 ),
             ]
         );

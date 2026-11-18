@@ -305,7 +305,7 @@ impl LiveSession {
         if let Some(task) = task
             && let Err(error) = task.await
         {
-            self.parts.host.shared.warn(&format!("a session task failed: {error}"));
+            self.parts.host.shared.warn(&format!("A session task failed: {error}"));
         }
         // After the last update of the turn, and before the plugin cleanup, which can wait for the end of a handle.
         self.parts.host.output.end_views();
@@ -327,7 +327,7 @@ impl LiveSession {
 pub(super) async fn close_plugins(shared: &Shared, script: &ScriptSession) {
     if let Err(error) = script.close().await {
         shared.warn(&format!(
-            "the plugins of a session did not close: {}",
+            "The plugins of a session did not close: {}",
             chain_text(&error)
         ));
     }
@@ -940,7 +940,7 @@ async fn trust_of(host: Rc<Host>, folder: PathBuf, project: yuke_mcp::Config) ->
         Err(error) => {
             output.notice(
                 NoticeLevel::Error,
-                &format!("the project MCP servers have no key: {error}"),
+                &format!("The project MCP servers have no key: {error}"),
             );
             return false;
         }
@@ -1114,7 +1114,7 @@ impl SessionHost for Host {
             output.notice(
                 NoticeLevel::Warn,
                 &format!(
-                    "no client can answer the question of {source}: {}",
+                    "No client can answer the question of {source}: {}",
                     headers.collect::<Vec<_>>().join(", ")
                 ),
             );

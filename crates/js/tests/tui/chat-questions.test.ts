@@ -275,7 +275,7 @@ test("a late answer gives a notice and the question stays until it closes", asyn
   frame.draw();
   assertEquals(
     [chat.notices, stays, rows(frame.frame).at(-2)],
-    [["error the answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
+    [["error The answer did not reach the plugin: Error: no open question 6"], " guard · Branch", "Message…"],
   );
 });
 

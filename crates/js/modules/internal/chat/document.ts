@@ -1,7 +1,7 @@
 /**
  * `ChatDocument` of `yuke:chat`: one item for each entry of a transcript, with its folds, and one item after them for a
- * failure of the running turn. A tool search that does not fail has no item. An item stays the same object while its
- * entry, its fold, and its shown duration stay, so the view keeps its rows.
+ * failure of the running turn. An input without content and a tool search that does not fail have no item. An item
+ * stays the same object while its entry, its fold, and its shown duration stay, so the view keeps its rows.
  */
 
 import type { ChatPresentation } from "yuke:chat";
@@ -11,8 +11,8 @@ import { sourceName } from "yuke:internal/source-name";
 import type { Entry, ReasoningEntry, Transcript, TurnFailure } from "yuke:transcript";
 import { Markdown, type TextDocument, type TextItem, type TextSection } from "yuke:tui";
 
-/** The key of the item of a failure of the running turn. It comes after the entries. */
-const STATUS = "status";
+/** The id of the item of a failure of the running turn. It comes after the entries. */
+const FAILURE = "failure";
 
 /** The tool of the engine that loads deferred tools. */
 const SEARCH_TOOL_NAME = "tool_search";
@@ -31,7 +31,7 @@ export class ChatDocument implements ChatPresentation {
   /** The fold choices of the pane: `true` is open. An entry without a choice has its default. */
   readonly #folds: Map<string, boolean>;
   #cache = new Map<string, Cached>();
-  #status: { readonly status: TurnFailure; readonly item: TextItem } | undefined;
+  #failure: { readonly failure: TurnFailure; readonly item: TextItem } | undefined;
   #document: TextDocument;
 
   /** The document `id` with the fold choices `folds`. */
@@ -73,18 +73,22 @@ export class ChatDocument implements ChatPresentation {
       const duration = entry.kind === "tool" ? shownDuration(entry, now) : undefined;
       let cached = this.#cache.get(entry.id);
       if (cached?.entry !== entry || cached.open !== open || cached.duration !== duration) {
-        const markdown = entry.kind === "text" ? (cached?.markdown ?? new Markdown()) : undefined;
-        if (entry.kind === "text" && cached?.entry !== entry) markdown?.setText(entry.text);
+        // A text entry has no fold and no duration, so only a new entry brings it here.
+        let markdown: Markdown | undefined;
+        if (entry.kind === "text") {
+          markdown = cached?.markdown ?? new Markdown();
+          markdown.setText(entry.text);
+        }
         cached = { entry, open, duration, item: itemOf(entry, open, markdown, duration), markdown };
       }
       cache.set(entry.id, cached);
       items.push(cached.item);
     }
-    const status = transcript.failure;
-    if (status !== undefined) {
-      if (this.#status?.status !== status) this.#status = { status, item: statusItem(status) };
-      items.push(this.#status.item);
-    } else this.#status = undefined;
+    const failure = transcript.failure;
+    if (failure !== undefined) {
+      if (this.#failure?.failure !== failure) this.#failure = { failure, item: failureItem(failure) };
+      items.push(this.#failure.item);
+    } else this.#failure = undefined;
     this.#cache = cache;
     const before = this.#document.items;
     if (before.length !== items.length || before.some((item, at) => item !== items[at])) {
@@ -100,10 +104,11 @@ export class ChatDocument implements ChatPresentation {
 }
 
 /**
- * Whether the document has an item for `entry`. A tool search only prepares the calls after it, so only a failed
- * search shows.
+ * Whether the document has an item for `entry`. A hidden input has no content, so it never shows. A tool search only
+ * prepares the calls after it, so only a failed search shows.
  */
 function shown(entry: Entry): boolean {
+  if (entry.kind === "input") return entry.content.length > 0;
   return !(entry.kind === "tool" && entry.name === SEARCH_TOOL_NAME && entry.result?.isError !== true);
 }
 
@@ -116,7 +121,7 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
         return item(entry.id, { id: "text", kind: "text", text, render: (width) => filledRows(text, width) });
       }
       const sender = entry.source.kind === "plugin" ? sourceName(entry.source.name) : "you";
-      const title = entry.inputKind === "notification" ? `notification · ${sender}` : `message · ${sender}`;
+      const title = entry.inputKind === "notification" ? `Notification · ${sender}` : `Message · ${sender}`;
       return item(entry.id, label(title, STYLE.meta), plain("text", text, undefined));
     }
     case "text": {
@@ -127,23 +132,25 @@ function itemOf(entry: Entry, open: boolean, markdown: Markdown | undefined, dur
         text: parser.source(),
         render: (width) => parser.rows(Math.max(1, width - 2)).map(indented),
       };
-      return entry.refusal ? item(entry.id, label("refused", STYLE.error), body) : item(entry.id, body);
+      return entry.refusal ? item(entry.id, label("Refused", STYLE.error), body) : item(entry.id, body);
     }
     case "reasoning": {
       // An encrypted thought streams no text. The working row still shows the reasoning phase.
       if (!hasText(entry)) return { id: entry.id, sections: [] };
-      const title = label(entry.draft ? "thinking" : "thought", STYLE.title);
+      const title = label(entry.draft ? "Thinking" : "Thought", STYLE.title);
       const body = plain("text", entry.text, STYLE.thought);
       return item(entry.id, title, open ? body : { ...body, render: () => [] });
     }
     case "tool":
       return toolItem(entry, open, duration);
     case "compaction":
-      return item(entry.id, label("context replaced", STYLE.meta));
+      return item(entry.id, label("Context replaced", STYLE.meta));
     case "end": {
       const end = entry.end;
-      if (end.kind === "failed") return item(entry.id, label(`failed: ${end.error}`, STYLE.error));
-      if (end.kind === "stopped" || end.kind === "cancelled") return item(entry.id, label(end.kind, STYLE.meta));
+      if (end.kind === "failed") return item(entry.id, label(`Failed: ${end.error}`, STYLE.error));
+      if (end.kind === "stopped") return item(entry.id, label("Stopped", STYLE.meta));
+      if (end.kind === "cancelled")
+        return item(entry.id, label("Interrupted · tell yuke what to do instead", STYLE.meta));
       // A completed turn shows no row.
       return { id: entry.id, sections: [] };
     }
@@ -156,12 +163,12 @@ function hasText(entry: ReasoningEntry): boolean {
 }
 
 /** The item of a failure of the running turn. */
-function statusItem(status: TurnFailure): TextItem {
+function failureItem(failure: TurnFailure): TextItem {
   const text =
-    status.kind === "retryScheduled"
-      ? `retry in ${Math.ceil(status.afterMs / 1000)} s: ${status.error}`
-      : `round failed: ${status.error}`;
-  return item(STATUS, label(text, STYLE.error));
+    failure.kind === "retryScheduled"
+      ? `Retrying in ${Math.ceil(failure.afterMs / 1000)}s: ${failure.error}`
+      : `Round failed: ${failure.error}`;
+  return item(FAILURE, label(text, STYLE.error));
 }
 
 /** The text of the blocks of an input, with a label for each media block. */

@@ -22,7 +22,7 @@ export function apply(ctx: PluginContext): undefined {
     slash: "sessions",
     description: "Show a recent session in the pane",
     run: () =>
-      open(ctx, tui).catch((error: unknown) => ctx.notify("error", `the sessions did not load: ${String(error)}`)),
+      open(ctx, tui).catch((error: unknown) => ctx.notify("error", `The sessions did not load: ${String(error)}`)),
   });
   return undefined;
 }
@@ -93,7 +93,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     onChoose: (row) => {
       dialog.close();
       const id = row.sessionId;
-      chat.show(id).catch((error: unknown) => ctx.notify("error", `the session ${id} did not show: ${String(error)}`));
+      chat.show(id).catch((error: unknown) => ctx.notify("error", `The session ${id} did not show: ${String(error)}`));
     },
     onCancel: () => dialog.close(),
   });
@@ -118,7 +118,7 @@ async function open(ctx: PluginContext, tui: Tui): Promise<void> {
     } catch (error) {
       if (dialog.signal.aborted) return;
       dialog.close();
-      ctx.notify("error", `the sessions did not load: ${String(error)}`);
+      ctx.notify("error", `The sessions did not load: ${String(error)}`);
       return;
     }
     if (dialog.signal.aborted) return;

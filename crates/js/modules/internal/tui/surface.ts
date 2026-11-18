@@ -91,7 +91,7 @@ class Scope {
       try {
         cleanup();
       } catch (error) {
-        this.#report(`a cleanup of the tui failed: ${String(error)}`);
+        this.#report(`A cleanup of the tui failed: ${String(error)}`);
       }
     }
   }

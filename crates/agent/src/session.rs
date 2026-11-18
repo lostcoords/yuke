@@ -25,17 +25,23 @@ const TURN_STOPPED: &str = "the turn stopped before it saved its end";
 /// The plugin name of the notes of the session.
 const SESSION_SOURCE: &str = "host:session";
 
-/// The note about `newest_turn`, when that turn was cancelled or failed.
+/// Whether `source` is a note of the session. The input hook does not check such a note.
+fn is_session_note(source: &InputSource) -> bool {
+    matches!(source, InputSource::Plugin { name } if name == SESSION_SOURCE)
+}
+
+/// The hidden note about `newest_turn`, when that turn was cancelled or failed. The user sees nothing, because the
+/// transcript already shows the end of that turn.
 fn interruption_note(newest_turn: &NewestTurn) -> Option<Input> {
     match newest_turn {
         NewestTurn::Ended(TurnEnd::Cancelled) => Some(Input::notification(
             SESSION_SOURCE,
-            "The previous turn was cancelled.",
+            None,
             "The user cancelled the previous turn before it ended.",
         )),
         NewestTurn::Ended(TurnEnd::Failed { error }) => Some(Input::notification(
             SESSION_SOURCE,
-            "The previous turn failed.",
+            None,
             &format!("The previous turn ended with an error: {error}"),
         )),
         NewestTurn::Empty | NewestTurn::Open | NewestTurn::Ended(TurnEnd::Completed { .. } | TurnEnd::Stopped) => None,
@@ -123,8 +129,7 @@ impl TurnInputs<'_> {
             if self.taken.borrow().iter().any(|known| known.id == input.id) {
                 continue;
             }
-            let ours = matches!(input.input.source(), InputSource::Plugin { name } if name == SESSION_SOURCE);
-            let decision = if ours {
+            let decision = if is_session_note(input.input.source()) {
                 InputDecision::Keep
             } else {
                 self.hook.before_input(&input).await.map_err(TakeError::Hook)?
@@ -228,8 +233,8 @@ impl Session {
     }
 
     /// Open session `id` of `store`, and own it. A turn that the store holds as open ends as [`TurnEnd::Failed`], and
-    /// each call without a result gets an error result. The session starts no turn, so the
-    /// pending inputs wait for [`Session::turn`].
+    /// each call without a result gets an error result. The session starts no turn, so the pending inputs wait for
+    /// [`Session::turn`].
     ///
     /// # Errors
     ///
@@ -478,16 +483,18 @@ impl<'s> SessionTurn<'s> {
             taken: RefCell::default(),
         };
         let mut input = inputs.take().await?;
-        if input.is_empty() {
+        // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
+        // before its first commit leaves its note pending, and that note counts here.
+        let (noted, started) = {
+            let taken = inputs.taken.borrow();
+            (
+                taken.iter().any(|taken| is_session_note(&taken.source)),
+                taken.iter().any(|taken| !is_session_note(&taken.source)),
+            )
+        };
+        if !started {
             return Err(SessionError::NoInput);
         }
-        // The note follows the input that starts the turn, so a note alone never starts a turn. A turn that failed
-        // before its first commit leaves its note pending.
-        let noted = inputs
-            .taken
-            .borrow()
-            .iter()
-            .any(|taken| matches!(&taken.source, InputSource::Plugin { name } if name == SESSION_SOURCE));
         if !noted && let Some(note) = interruption_note(&session.newest_turn) {
             session.store.accept_input(session.id, note).await?;
             input.extend(inputs.take().await?);
@@ -547,7 +554,8 @@ pub enum SessionError {
     Store(StoreError),
     /// A failed or dropped write left the session behind its store. [`Session::recover`] opens it again.
     Stale,
-    /// No input waits, so no turn ran. A removal of the last input can come between a check and the turn.
+    /// No input waits, so no turn ran. A note of the session is no input. A removal of the last input can come between
+    /// a check and the turn.
     NoInput,
     /// The input hook failed. No turn ran, and the input stays pending.
     InputHook(Box<dyn std::error::Error + Send + Sync>),

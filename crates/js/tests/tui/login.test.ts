@@ -131,7 +131,7 @@ test("a chosen key provider opens a masked field that stores the key and shows n
   assertEquals(typed.includes("sk-secret"), false);
   assertEquals(typed.includes("•••"), true);
   assertEquals(login.calls, ["set env sk-secret"]);
-  assertEquals(login.notices, ["info key saved · env"]);
+  assertEquals(login.notices, ["info Key saved · env"]);
   assertEquals(rowWith(frame, "API key · ENV"), undefined);
 });
 
@@ -177,7 +177,7 @@ test("a refused key stays in the field with its error, and an empty field stores
   assertEquals(afterEmpty, []);
   assertEquals(refused !== undefined, true);
   assertEquals(open !== undefined, true);
-  assertEquals(login.notices, ["info key saved · needs-key"]);
+  assertEquals(login.notices, ["info Key saved · needs-key"]);
   assertEquals(login.calls, ["set needs-key first", "set needs-key first"]);
 });
 
@@ -215,10 +215,10 @@ test("/logout lists only what yuke stored, removes it, and names the variable of
   for (const absent of ["ENV", "NEEDS-KEY", "DEVICE", "LOCAL"]) assertEquals(listed.includes(absent), false);
   assertEquals(login.calls, ["logout stored", "logout logged"]);
   assertEquals(login.notices, [
-    "info logged out · stored",
+    "info Logged out · stored",
     "info env has its key in $ENV_KEY: unset the variable",
     "info yuke stores no credential for device",
-    "info logged out · logged",
+    "info Logged out · logged",
   ]);
 });
 
@@ -245,16 +245,16 @@ test("a login provider shows the page and the code, its keys copy each, and a co
   assertEquals(shown.includes(`Code: ${CODE}`), true);
   assertEquals(shown.includes("o: open"), true);
   assertEquals(frame.copies, [CODE, URL]);
-  assertEquals(login.notices, ["info code copied", "info URL copied"]);
+  assertEquals(login.notices, ["info Code copied", "info URL copied"]);
   frame.key("esc");
   await waitForSettled();
 });
 
 test("each end of a device login closes the dialog with its notice, and esc cancels the login with no notice", async () => {
   for (const [outcome, notice] of [
-    [{ kind: "succeeded" }, "info logged in · device"],
-    [{ kind: "failed", error: "denied" }, "error the login failed: denied"],
-    [{ kind: "cancelled" }, "info login cancelled"],
+    [{ kind: "succeeded" }, "info Logged in · device"],
+    [{ kind: "failed", error: "denied" }, "error The login failed: denied"],
+    [{ kind: "cancelled" }, "info Login cancelled"],
   ] as const) {
     using frame = createFrame({ width: 70, height: 16 });
     const login = load(frame);
@@ -285,6 +285,6 @@ test("a login that does not start closes the dialog with a notice", async () => 
 
   await login.run("login", "device");
 
-  assertEquals(login.notices, ["error the login failed: Error: no network"]);
+  assertEquals(login.notices, ["error The login failed: Error: no network"]);
   assertEquals(rowWith(frame, "Log in · DEVICE"), undefined);
 });

@@ -110,7 +110,7 @@ test("a bad saved file is a notice, and yuke starts on the default theme", async
   await writeTextFile("theme.json", "{", { cwd: dataDir });
   const { tui, notices } = await load(frame, dataDir);
   assertEquals(
-    [tui.styles.theme, notices.length, notices[0]?.startsWith("error the saved theme")],
+    [tui.styles.theme, notices.length, notices[0]?.startsWith("error The saved theme")],
     ["default", 1, true],
   );
 });

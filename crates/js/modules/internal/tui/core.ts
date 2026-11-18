@@ -183,7 +183,7 @@ export class Core {
       try {
         callback();
       } catch (error) {
-        this.notices.add("error", owner, `a timer failed: ${failureOf(error)}`);
+        this.notices.add("error", owner, `A timer failed: ${failureOf(error)}`);
       }
       this.driver.requestFrame();
     });

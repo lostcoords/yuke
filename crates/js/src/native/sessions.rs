@@ -173,7 +173,9 @@ fn add_requests(object: &Object<'_>, sessions: &Rc<dyn Sessions>) -> rquickjs::R
         object,
         "sessionNotify",
         |sessions, (id, plugin, display, text): (SessionId, String, String, String)| async move {
-            sessions.input(id, Input::notification(&plugin, &display, &text)).await
+            sessions
+                .input(id, Input::notification(&plugin, Some(&display), &text))
+                .await
         },
     )?;
     request.add(object, "sessionIdle", |sessions, id: SessionId| async move {

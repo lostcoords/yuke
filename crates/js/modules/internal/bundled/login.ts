@@ -10,7 +10,7 @@ import type { LoginOutcome, ProviderInfo, ProviderState } from "yuke:protocol";
 import type { Canvas, Tui, View } from "yuke:tui";
 
 /** A notice must not repeat the text after `/login`, because that text can be a key. */
-const NO_PROVIDER = "no provider with this id: run /login to see the list";
+const NO_PROVIDER = "No provider with this id: run /login to see the list";
 
 /** The text of a provider in a list. */
 function stateText(state: ProviderState): string {
@@ -71,7 +71,7 @@ async function openKeyDialog(ctx: PluginContext, auth: Auth, tui: Tui, provider:
       await auth.setApiKey(provider.id, key);
     },
   });
-  if (saved !== undefined) ctx.notify("info", `key saved · ${provider.id}`);
+  if (saved !== undefined) ctx.notify("info", `Key saved · ${provider.id}`);
 }
 
 /** Open `url` in the browser. The module cannot read the platform, and `open` on Linux can be another program. */
@@ -114,7 +114,7 @@ async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provide
         run: () => {
           if (login === undefined) return;
           void openBrowser(login.verificationUrl, ctx.dataDir).then((opened) => {
-            if (!opened) ctx.notify("error", "the browser did not open: copy the URL with u");
+            if (!opened) ctx.notify("error", "The browser did not open: copy the URL with u");
           });
         },
       },
@@ -125,7 +125,7 @@ async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provide
         run: () => {
           if (login === undefined) return;
           tui.clipboard.writeText(login.userCode);
-          ctx.notify("info", "code copied");
+          ctx.notify("info", "Code copied");
         },
       },
       {
@@ -147,14 +147,14 @@ async function openLoginDialog(ctx: PluginContext, auth: Auth, tui: Tui, provide
     outcome = await login.waitForEnd();
   } catch (error) {
     dialog.close();
-    ctx.notify("error", `the login failed: ${String(error)}`);
+    ctx.notify("error", `The login failed: ${String(error)}`);
     return;
   }
   const closedByUser = dialog.signal.aborted;
   if (!closedByUser) dialog.close();
-  if (outcome.kind === "succeeded") ctx.notify("info", `logged in · ${provider.id}`);
-  else if (outcome.kind === "failed") ctx.notify("error", `the login failed: ${outcome.error}`);
-  else if (!closedByUser) ctx.notify("info", "login cancelled");
+  if (outcome.kind === "succeeded") ctx.notify("info", `Logged in · ${provider.id}`);
+  else if (outcome.kind === "failed") ctx.notify("error", `The login failed: ${outcome.error}`);
+  else if (!closedByUser) ctx.notify("info", "Login cancelled");
 }
 
 /** Run `/login`. `args` is the text after the command. */
@@ -178,7 +178,7 @@ async function runLogout(ctx: PluginContext, auth: Auth, tui: Tui, args: unknown
   const state = provider.state;
   if (isStored(state)) {
     await auth.logout(provider.id);
-    ctx.notify("info", `logged out · ${provider.id}`);
+    ctx.notify("info", `Logged out · ${provider.id}`);
   } else if (state.kind === "ready" && state.credential.kind === "variable") {
     ctx.notify("info", `${provider.id} has its key in $${state.credential.name}: unset the variable`);
   } else ctx.notify("info", `yuke stores no credential for ${provider.id}`);

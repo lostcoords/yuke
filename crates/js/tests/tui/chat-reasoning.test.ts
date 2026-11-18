@@ -18,10 +18,10 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   await waitForSettled();
   assertEquals(
     transcriptRows(frame).filter((row) => row !== ""),
-    [" thought"],
+    [" Thought"],
   );
   click(frame, 2, 1);
-  assertEquals(transcriptRows(frame).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 6), ["", " Thought", " first thought", "", " second thought", ""]);
   const view = chat.transcript();
   const thought = view.document.items.find((item) =>
     item.sections.some((section) => section.text === "first thought\n\nsecond thought"),
@@ -35,11 +35,11 @@ test("one thought opens and copies every adjacent reasoning block of a saved res
   await loadChat(restored, sessions);
   restored.start(snapshot);
   await waitForSettled();
-  assertEquals(transcriptRows(restored).slice(0, 6), ["", " thought", " first thought", "", " second thought", ""]);
+  assertEquals(transcriptRows(restored).slice(0, 6), ["", " Thought", " first thought", "", " second thought", ""]);
   click(frame, 2, 4);
   assertEquals(
     transcriptRows(frame).filter((row) => row !== ""),
-    [" thought"],
+    [" Thought"],
   );
 });
 
@@ -67,7 +67,7 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     [],
   );
-  assert(rows(frame.frame).some((row) => row.includes("Reasoning…")));
+  assert(rows(frame.frame).some((row) => row.includes("Thinking…")));
   sessions.push({ kind: "model", draftId: "d", event: { kind: "reasoningDelta", blockId: 0, text: "first" } });
   sessions.push({
     kind: "model",
@@ -77,12 +77,12 @@ test("adjacent empty reasoning blocks keep one working phase without drawing tho
   frame.draw();
   assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
-    [" thinking"],
+    [" Thinking"],
   );
   click(frame, 2, 1);
   assertEquals(
     transcriptRows(frame).filter((row) => row !== "" && !row.includes("to interrupt")),
     // The tab of the second block takes four cells.
-    [" thinking", " first", "     second"],
+    [" Thinking", " first", "     second"],
   );
 });

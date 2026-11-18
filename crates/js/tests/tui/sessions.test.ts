@@ -134,7 +134,7 @@ test("a pick that does not open gives a notice", async () => {
   frame.paste("gone");
   frame.key("enter");
   await waitForSettled();
-  assertEquals(loaded.notices, ["error the session missing did not show: Error: no session missing"]);
+  assertEquals(loaded.notices, ["error The session missing did not show: Error: no session missing"]);
 });
 
 test("a match of the first prompt comes before a match of the folder of a newer session", async () => {

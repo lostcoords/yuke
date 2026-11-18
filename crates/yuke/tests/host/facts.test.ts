@@ -220,7 +220,7 @@ test("a listener that throws gives a notice for each throw, and it and the other
     [
       2,
       2,
-      ["a listener of session.opened failed: Error: broken", "a listener of session.opened failed: Error: broken"],
+      ["A listener of session.opened failed: Error: broken", "A listener of session.opened failed: Error: broken"],
     ],
   );
 });

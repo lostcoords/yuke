@@ -33,7 +33,7 @@ export function startView(
     // A factory that closed its own mount wants no view.
     return mount.signal.aborted ? undefined : view;
   } catch (error) {
-    report(owner, `a view did not start: ${failureOf(error)}`);
+    report(owner, `A view did not start: ${failureOf(error)}`);
     mount.close();
     return undefined;
   }

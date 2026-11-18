@@ -20,7 +20,8 @@ use yuke_ai::scripted::{ScriptedTransport, Stalled, counted, failed_reply, text_
 use yuke_ai::{Block, Header, Media, SessionHeader, ToolCall, ToolDefinition, ToolResult};
 use yuke_engine::NoWait;
 use yuke_engine::{
-    Commit, CommitDisplay, Driver, Hooks, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd, chain_text,
+    Commit, CommitDisplay, Driver, Hooks, Model, Replaced, RoundError, RoundPlan, RoundStart, Toolset, TurnEnd,
+    chain_text,
 };
 use yuke_testing::{assert_in_order, model};
 
@@ -36,6 +37,21 @@ fn step(blocks: &[Block]) -> Commit<'_> {
         end: None,
         display: CommitDisplay::default(),
     }
+}
+
+/// Run a turn on a stalled transport, and cancel it after its request starts.
+async fn cancel_a_stalled_turn(session: &mut Session, model: &Model) {
+    let token = yuke_engine::CancellationToken::new();
+    let mut run = pin!(
+        session
+            .turn(Driver::new(&Stalled, model, &NoWait))
+            .cancellation_token(token.clone())
+            .run()
+    );
+    assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    token.cancel();
+    let ended = run.await;
+    assert!(matches!(ended, Ok(yuke_engine::Outcome::Cancelled)), "{ended:?}");
 }
 
 #[tokio::test]
@@ -463,7 +479,7 @@ async fn the_model_reads_the_model_content_and_the_saved_record_keeps_what_the_u
 }
 
 #[tokio::test]
-async fn a_dropped_turn_releases_the_lease_and_the_next_turn_reads_a_note_about_it() {
+async fn a_dropped_turn_releases_the_lease_and_the_next_turn_reads_a_hidden_note_about_it() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
@@ -514,10 +530,7 @@ async fn a_dropped_turn_releases_the_lease_and_the_next_turn_reads_a_note_about_
     );
     assert_eq!(note.kind, InputKind::Notification);
     assert_eq!(note.block_count, 1);
-    assert_eq!(
-        note.display_content,
-        Some(vec![Block::user_text("The previous turn failed.")])
-    );
+    assert_eq!(note.display_content, Some(Vec::new()));
     let saved = store.open(session.id(), Access::Read).await.unwrap();
     assert!(!saved.newest_turn.is_open());
     assert_eq!(saved.context.last(), Some(&Block::assistant_text("three")));
@@ -586,26 +599,14 @@ async fn a_stale_session_refuses_new_settings_and_its_recovery_gets_owned_while_
 }
 
 #[tokio::test]
-async fn a_cancelled_turn_gives_the_next_turn_a_note_after_its_input() {
+async fn a_cancelled_turn_gives_the_next_turn_a_hidden_note_after_its_input() {
     let store = Arc::new(MemoryStore::new());
     let model = model();
     let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
         .await
         .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
-    let token = yuke_engine::CancellationToken::new();
-    {
-        let mut run = pin!(
-            session
-                .turn(Driver::new(&Stalled, &model, &NoWait))
-                .cancellation_token(token.clone())
-                .run()
-        );
-        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
-        token.cancel();
-        let ended = run.await;
-        assert!(matches!(ended, Ok(yuke_engine::Outcome::Cancelled)), "{ended:?}");
-    }
+    cancel_a_stalled_turn(&mut session, &model).await;
     let transport = ScriptedTransport::new([text_reply("three")]);
     store.accept_input(session.id(), user_input("two")).await.unwrap();
 
@@ -628,10 +629,7 @@ async fn a_cancelled_turn_gives_the_next_turn_a_note_after_its_input() {
         panic!("{consumed:?}");
     };
     assert_eq!((two.display_content.as_ref(), two.block_count), (None, 1));
-    assert_eq!(
-        note.display_content,
-        Some(vec![Block::user_text("The previous turn was cancelled.")])
-    );
+    assert_eq!(note.display_content, Some(Vec::new()));
 }
 
 #[tokio::test]
@@ -677,29 +675,6 @@ async fn a_failed_turn_gives_the_next_turn_a_note_also_after_an_open_and_a_compl
 }
 
 #[tokio::test]
-async fn a_failed_turn_gives_the_next_turn_of_the_same_session_a_note() {
-    let store = Arc::new(MemoryStore::new());
-    let transport = ScriptedTransport::new([failed_reply("cut"), text_reply("three")]);
-    let model = model();
-    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
-        .await
-        .unwrap();
-    store.accept_input(session.id(), user_input("one")).await.unwrap();
-    let failed = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
-    store.accept_input(session.id(), user_input("two")).await.unwrap();
-
-    session
-        .turn(Driver::new(&transport, &model, &NoWait))
-        .run()
-        .await
-        .unwrap();
-
-    assert!(matches!(failed, Err(SessionError::Round(_))), "{failed:?}");
-    let request = &transport.requests()[1];
-    assert!(request.contains("The previous turn ended with an error: "), "{request}");
-}
-
-#[tokio::test]
 async fn a_failed_read_of_the_inbox_after_a_round_ends_the_turn_as_failed_and_keeps_the_session() {
     // The commits save the input and the answer. The read after the round fails.
     let store = FailingStore::new(StoreBehavior::FailPendingAfterCommits(2));
@@ -735,18 +710,7 @@ async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once()
         .await
         .unwrap();
     store.accept_input(session.id(), user_input("one")).await.unwrap();
-    let token = yuke_engine::CancellationToken::new();
-    {
-        let mut run = pin!(
-            session
-                .turn(Driver::new(&Stalled, &model, &NoWait))
-                .cancellation_token(token.clone())
-                .run()
-        );
-        assert!(run.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
-        token.cancel();
-        run.await.unwrap();
-    }
+    cancel_a_stalled_turn(&mut session, &model).await;
     store.accept_input(session.id(), user_input("two")).await.unwrap();
     let transport = ScriptedTransport::new([text_reply("three")]);
 
@@ -760,6 +724,48 @@ async fn a_note_that_a_failed_first_commit_left_pending_goes_to_the_model_once()
 
     assert!(matches!(failed, Err(SessionError::Store(_))), "{failed:?}");
     let request = &transport.requests()[0];
+    assert_eq!(request.matches("<system_notification").count(), 1, "{request}");
+}
+
+#[tokio::test]
+async fn a_pending_note_alone_starts_no_turn() {
+    // The first turn saves its input and its cancelled end. The first commit of the second turn fails and leaves its
+    // input and the note pending.
+    let store = FailingStore::new(StoreBehavior::FailCommit(3));
+    let model = model();
+    let mut session = Session::create(store.clone(), &settings(), &prompt(), None)
+        .await
+        .unwrap();
+    store.accept_input(session.id(), user_input("one")).await.unwrap();
+    cancel_a_stalled_turn(&mut session, &model).await;
+    let two = store.accept_input(session.id(), user_input("two")).await.unwrap();
+    let transport = ScriptedTransport::new([text_reply("four")]);
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap_err();
+    session.recover().await.unwrap();
+    store.remove_input(session.id(), two).await.unwrap();
+
+    let idle = session.turn(Driver::new(&transport, &model, &NoWait)).run().await;
+    store.accept_input(session.id(), user_input("three")).await.unwrap();
+    session
+        .turn(Driver::new(&transport, &model, &NoWait))
+        .run()
+        .await
+        .unwrap();
+
+    assert!(matches!(idle, Err(SessionError::NoInput)), "{idle:?}");
+    let request = &transport.requests()[0];
+    assert_in_order(
+        request,
+        &[
+            "one",
+            r#"<system_notification plugin="host:session">The user cancelled the previous turn before it ended.</system_notification>"#,
+            "three",
+        ],
+    );
     assert_eq!(request.matches("<system_notification").count(), 1, "{request}");
 }
 

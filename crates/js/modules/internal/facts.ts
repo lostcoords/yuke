@@ -65,7 +65,7 @@ function call(listener: Listener, data: unknown): void {
   try {
     listener.call(data as never);
   } catch (error) {
-    notify(listener.plugin, "error", `a listener of ${listener.event} failed: ${failureOf(error)}`, undefined);
+    notify(listener.plugin, "error", `A listener of ${listener.event} failed: ${failureOf(error)}`, undefined);
   }
 }
 

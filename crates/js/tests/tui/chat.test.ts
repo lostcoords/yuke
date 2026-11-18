@@ -86,7 +86,7 @@ test("two panes on one session hold their own handles, and a reload keeps the se
   const failed = await loadChat(other);
   other.start(JSON.stringify({ tree: { type: "chat:pane", state: { session: "missing", draft: EMPTY } }, focus: 0 }));
   await waitForSettled();
-  assertEquals(failed.notices, ["error the session missing did not open: Error: no session missing"]);
+  assertEquals(failed.notices, ["error The session missing did not open: Error: no session missing"]);
   assertEquals(JSON.parse(other.snapshot()).tree.state.session, "missing");
 });
 
@@ -137,16 +137,16 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   const texts = (all: readonly string[]) => all.filter((text) => text.trim() !== "");
   assertEquals(texts(before.slice(0, 21)), [
     " fix the test",
-    " thought",
+    " Thought",
     " Found it",
     " exec",
     " ok",
-    " notification · ci",
+    " Notification · ci",
     " build done",
-    " failed: boom",
-    " context replaced",
-    " stopped",
-    " retry in 3 s: overloaded",
+    " Failed: boom",
+    " Context replaced",
+    " Stopped",
+    " Retrying in 3s: overloaded",
   ]);
   click(frame, 2, 3);
   assertEquals(
@@ -155,6 +155,69 @@ test("each kind of entry draws its rows, and a click on a thought opens it", asy
   );
   click(frame, 2, 3);
   assertEquals(transcriptRows(frame), before);
+});
+
+test("a refusal and a failed round have a label before their text", async () => {
+  const answer = { origin: { model: "m", baseUrl: "https://p" }, usage: {}, finishReason: "refusal" } as const;
+  const saved = [
+    { seq: 1, kind: "settings", ...SETTINGS } as const,
+    commit(2, [{ kind: "assistantText", text: "no" }], { answer }),
+  ];
+  using frame = createFrame({ width: 30, height: 8 }, undefined, { cwd: "/w", session: "s1" });
+  const sessions = fakeSessions(saved);
+  await loadChat(frame, sessions);
+  frame.start();
+  sessions.push({ kind: "roundFailed", error: "denied" });
+  frame.draw();
+
+  assertEquals(
+    transcriptRows(frame).filter((text) => text.trim() !== ""),
+    [" Refused", " no", " Round failed: denied"],
+  );
+});
+
+test("a hidden note draws no row, and an interrupted turn tells the user what to do", async () => {
+  const note =
+    '<system_notification plugin="host:session">The user cancelled the previous turn before it ended.</system_notification>';
+  const saved: StoredEvent[] = [
+    { seq: 1, kind: "settings", ...SETTINGS },
+    {
+      seq: 2,
+      kind: "commit",
+      commit: { blocks: [{ kind: "userText", text: "one" }], end: { kind: "cancelled" } },
+      consumed: [{ id: 1, source: { kind: "user" }, kind: "message", blockCount: 1 }],
+    },
+    {
+      seq: 3,
+      kind: "commit",
+      commit: {
+        blocks: [
+          { kind: "userText", text: "two" },
+          { kind: "userText", text: note },
+          { kind: "assistantText", text: "done" },
+        ],
+        end: { kind: "completed", finishReason: "stop" },
+      },
+      consumed: [
+        { id: 2, source: { kind: "user" }, kind: "message", blockCount: 1 },
+        {
+          id: 3,
+          source: { kind: "plugin", name: "host:session" },
+          kind: "notification",
+          displayContent: [],
+          blockCount: 1,
+        },
+      ],
+    },
+  ];
+  using frame = createFrame({ width: 60, height: 12 }, undefined, { cwd: "/w", session: "s1" });
+  await loadChat(frame, fakeSessions(saved));
+  frame.start();
+
+  assertEquals(
+    transcriptRows(frame).filter((text) => text.trim() !== ""),
+    [" one", " Interrupted · tell yuke what to do instead", " two", " done"],
+  );
 });
 
 test("the top loads older pages, keeps the shown rows, and stops at the first event", async () => {
@@ -233,7 +296,7 @@ test("a reload keeps the folds and the scrolled place of a pane", async () => {
   chat.transcript().scroll.scrollBy(1);
   before.draw();
   const shown = transcriptRows(before);
-  assertEquals(shown.slice(0, 2), [" thought", " deep"]);
+  assertEquals(shown.slice(0, 2), [" Thought", " deep"]);
   using after = createFrame({ width: 20, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   await loadChat(after, fakeSessions(saved));
   after.start(before.snapshot());
@@ -285,10 +348,10 @@ test("a notification from yuke shows its source without host:, and a plugin keep
   frame.draw();
 
   assertEquals(transcriptRows(frame).slice(1, 6), [
-    " notification · jobs",
+    " Notification · jobs",
     " make · exited 0",
     "",
-    " notification · myhost:ci",
+    " Notification · myhost:ci",
     " build done",
   ]);
 });

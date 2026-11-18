@@ -117,6 +117,7 @@ export function filledRows(text: string, width: number): TextRow[] {
   return bandedRows(styledRows(text, width, STYLE.user), width, STYLE.user);
 }
 
+/** `row` with one more indent cell at its start. */
 export function indented(row: TextRow): TextRow {
   return { segments: [INDENT, ...row.segments], join: row.join };
 }

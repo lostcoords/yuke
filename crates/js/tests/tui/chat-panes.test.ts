@@ -45,6 +45,6 @@ test("a pane watcher that throws gives a notice, and the pane still opens", asyn
       chat.notices.filter((notice) => notice.includes("boom")).map((notice) => notice.split("\n")[0]),
       chat.tui.panes.active?.view !== undefined,
     ],
-    [["error a pane watcher failed: Error: boom", "error a pane watcher failed: Error: boom"], true],
+    [["error A pane watcher failed: Error: boom", "error A pane watcher failed: Error: boom"], true],
   );
 });

@@ -249,7 +249,8 @@ source: InputSource,
  */
 kind: InputKind, 
 /**
- * The blocks that the user saw, only when they differ from the blocks that the model read.
+ * The blocks that the user saw, only when they differ from the blocks that the model read. An empty list means
+ * that the user saw nothing.
  */
 displayContent?: Array<Block>, 
 /**
@@ -397,8 +398,9 @@ data: unknown, };
 export type FinishReason = "stop" | "length" | "contentFilter" | "refusal" | "toolCalls" | "pause" | "unknown";
 
 /**
- * An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. An input
- * has at least one block.
+ * An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. The model
+ * reads at least one block. An input with no content is hidden: the user sees nothing, a client shows nothing, and
+ * the model reads the model content.
  */
 export type Input = { 
 /**
@@ -410,7 +412,7 @@ source: InputSource,
  */
 kind: InputKind, 
 /**
- * The blocks that the user saw.
+ * The blocks that the user saw. They are empty for a hidden input.
  */
 content: Array<Block>, 
 /**

@@ -22,7 +22,7 @@ async function refusal(call: Promise<unknown>): Promise<string> {
   return error instanceof Error ? error.message : String(error);
 }
 
-const SETUP_FAILED = "the session setup failed, and its tools and hooks are gone: ";
+const SETUP_FAILED = "The session setup failed, and its tools and hooks are gone: ";
 
 test("each session has its own tools, also with one name", async () => {
   let count = 0;
@@ -444,7 +444,7 @@ test("a close refuses definitions from the abort on, and awaits every cleanup", 
   assertEquals([cleaned, refused], [1, "plugin kept defines a tool after the end of its session"]);
   assertEquals(
     host.notices.map((notice) => notice.text.split("\n")[0]),
-    ["the cleanup of the session failed: Error: broken cleanup"],
+    ["The cleanup of the session failed: Error: broken cleanup"],
   );
   assertEquals(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });

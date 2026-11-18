@@ -144,7 +144,7 @@ for (const [name, definition, expected] of [
     const missing = await assertRejects(() => session.call(definition.name, {}));
 
     const [notice] = host.notices;
-    const prefix = "the session setup failed, and its tools and hooks are gone: TypeError: ";
+    const prefix = "The session setup failed, and its tools and hooks are gone: TypeError: ";
     assertEquals(
       [host.notices.length, notice?.text.startsWith(prefix), notice?.text.includes(expected)],
       [1, true, true],

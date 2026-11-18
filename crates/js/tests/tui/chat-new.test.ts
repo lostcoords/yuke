@@ -161,7 +161,7 @@ test("/new during a turn leaves the turn running and says so", async () => {
       shown.includes("Type / for commands"),
       shown.includes("esc to interrupt"),
     ],
-    [undefined, 0, ["info the work goes on: /sessions shows it"], true, false],
+    [undefined, 0, ["info The work goes on: /sessions shows it"], true, false],
   );
 });
 
@@ -175,7 +175,7 @@ test("/new with a running job of a subagent says that the work goes on", async (
   frame.key("/ n e w enter");
   await waitForSettled();
 
-  assertEquals(chat.notices, ["info the work goes on: /sessions shows it"]);
+  assertEquals(chat.notices, ["info The work goes on: /sessions shows it"]);
 });
 
 test("a reload after /new keeps the folder of the old session", async () => {

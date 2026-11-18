@@ -223,7 +223,7 @@ test("the close aborts each signal, then awaits each cleanup newest first, once"
   assertEquals(events, ["three", "two true,true,true", "one"]);
   assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text.split("\n")[0]]),
-    [["three", "error", "the cleanup of the plugin failed: Error: broken cleanup"]],
+    [["three", "error", "The cleanup of the plugin failed: Error: broken cleanup"]],
   );
   assertEquals(/\n\s+at /.test(host.notices[0]?.text ?? ""), true);
 });

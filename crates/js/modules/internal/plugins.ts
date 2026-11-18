@@ -176,6 +176,6 @@ async function clean(plugin: string, cleanup: Cleanup): Promise<void> {
   try {
     await cleanup();
   } catch (error) {
-    notify(plugin, "error", `the cleanup of the plugin failed: ${failureOf(error)}`, undefined);
+    notify(plugin, "error", `The cleanup of the plugin failed: ${failureOf(error)}`, undefined);
   }
 }

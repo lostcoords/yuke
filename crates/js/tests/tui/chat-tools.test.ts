@@ -218,7 +218,7 @@ test("a click on a clipped path copies the whole path", async () => {
   frame.start();
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " read crates/js/mo…", ""]);
   click(frame, 7, 1);
-  assertEquals(chat.notices, [`info copied /tools/${path}`]);
+  assertEquals(chat.notices, [`info Copied /tools/${path}`]);
 });
 
 test("a subject with a line end that fits in one row still opens below the head line", async () => {
@@ -632,7 +632,7 @@ test("a click on a subject copies its path in the folder of the call, and a clic
   const chat = await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 7, 1);
-  assertEquals([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info copied /tools/src/main.rs"]]);
+  assertEquals([frame.copies, chat.notices], [["/tools/src/main.rs"], ["info Copied /tools/src/main.rs"]]);
   assertEquals(transcriptRows(frame).slice(0, 3), ["", " read src/main.rs", ""]);
   click(frame, 2, 1);
   assertEquals(transcriptRows(frame).slice(0, 4), ["", " read src/main.rs", " fn main() {}", ""]);
@@ -672,9 +672,9 @@ test("a click on the text of an open thought folds it", async () => {
   await loadChat(frame, fakeSessions(saved));
   frame.start();
   click(frame, 2, 1);
-  assertEquals(transcriptRows(frame).slice(0, 4), ["", " thought", " why", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 4), ["", " Thought", " why", ""]);
   click(frame, 2, 2);
-  assertEquals(transcriptRows(frame).slice(0, 3), ["", " thought", ""]);
+  assertEquals(transcriptRows(frame).slice(0, 3), ["", " Thought", ""]);
 });
 
 test("a call that opens at the tail stays on its rows, and the pane follows the tail again when it folds", async () => {
@@ -773,14 +773,14 @@ test("ctrl+o in the composer opens each tool when one is folded, else folds each
     " read b",
     " B",
     "",
-    " thought",
+    " Thought",
     "",
     "",
     "",
     "",
   ]);
   frame.key("ctrl+o");
-  assertEquals(transcriptRows(frame).slice(0, 6), ["", " read a", "", " read b", "", " thought"]);
+  assertEquals(transcriptRows(frame).slice(0, 6), ["", " read a", "", " read b", "", " Thought"]);
 });
 
 test("a link in a reply copies its target, and a relative target starts in the folder of the session", async () => {
@@ -897,7 +897,7 @@ test("the failure of a turn shows in bold in the danger color", async () => {
   ];
   await loadChat(frame, fakeSessions(saved));
   frame.start();
-  const row = transcriptRows(frame).findIndex((line) => line.includes("failed: boom"));
+  const row = transcriptRows(frame).findIndex((line) => line.includes("Failed: boom"));
   const danger = themeStyle("chat.error").fg;
   assert(danger !== undefined);
   assertEquals(frame.frame.cells[row]?.[1]?.style, { fg: danger, bold: true });

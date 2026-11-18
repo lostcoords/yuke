@@ -74,7 +74,7 @@ test("a denial removes the input with a notice, and the later handlers do not ru
   assertEquals(decision, "remove");
   assertEquals(
     host.notices.map((notice) => [notice.source, notice.level, notice.text]),
-    [["guard", "warn", "the plugin denied the input: it names a secret"]],
+    [["guard", "warn", "The plugin denied the input: it names a secret"]],
   );
   assertEquals(later, false);
 });

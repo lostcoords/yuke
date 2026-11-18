@@ -288,7 +288,7 @@ test("a check that fails closes the review and gives one error notice", async ()
   const after = await run(frame, "plugins:update");
 
   assertEquals(shows(after, "the check of the Git plugins runs"), false);
-  assertEquals(notices, ["error the update failed: Error: the remote is gone"]);
+  assertEquals(notices, ["error The update failed: Error: the remote is gone"]);
 });
 
 test("the arrow and page keys scroll a long review", async () => {
@@ -314,7 +314,7 @@ test("the sync command tells its start and its result", async () => {
   await run(frame, "plugins:sync");
 
   assertEquals(fake.calls, ["sync undefined with a signal"]);
-  assertEquals(notices, ["info the sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
+  assertEquals(notices, ["info The sync of the Git plugins runs", "info plugins.lock written: run /reload"]);
 });
 
 test("the command update writes the chosen commits with a notice", async () => {

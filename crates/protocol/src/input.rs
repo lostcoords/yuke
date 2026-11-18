@@ -32,8 +32,9 @@ pub enum InputKind {
     Notification,
 }
 
-/// An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. An input
-/// has at least one block.
+/// An accepted input. It holds the blocks that the user saw, and other blocks for the model when they differ. The model
+/// reads at least one block. An input with no content is hidden: the user sees nothing, a client shows nothing, and
+/// the model reads the model content.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(optional_fields))]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +43,7 @@ pub struct Input {
     source: InputSource,
     /// What the input is.
     kind: InputKind,
-    /// The blocks that the user saw.
+    /// The blocks that the user saw. They are empty for a hidden input.
     content: Vec<Block>,
     /// The blocks that the model reads, only when they differ from the content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,20 +57,12 @@ impl Input {
     ///
     /// Returns [`InputError::EmptyContent`] when `content` has no block.
     pub fn new(source: InputSource, kind: InputKind, content: Vec<Block>) -> Result<Input, InputError> {
-        if content.is_empty() {
-            return Err(InputError::EmptyContent);
-        }
-        Ok(Input {
-            source,
-            kind,
-            content,
-            model_content: None,
-        })
+        Input::from_parts(source, kind, content, None)
     }
 
-    /// Make a notification of the plugin `plugin`. The user sees `display`. The model reads `text` in a
-    /// `system_notification` tag that names the plugin.
-    pub fn notification(plugin: &str, display: &str, text: &str) -> Input {
+    /// Make a notification of the plugin `plugin`. The user sees `display`, or nothing when it is `None`. The model
+    /// reads `text` in a `system_notification` tag that names the plugin.
+    pub fn notification(plugin: &str, display: Option<&str>, text: &str) -> Input {
         // A text can hold the closing tag, for example in a job log, and that tag would end the notice early.
         let text = text.replace("</system_notification>", "</ system_notification>");
         Input {
@@ -77,7 +70,7 @@ impl Input {
                 name: plugin.to_owned(),
             },
             kind: InputKind::Notification,
-            content: vec![Block::user_text(display)],
+            content: display.map(Block::user_text).into_iter().collect(),
             model_content: Some(vec![Block::user_text(format!(
                 "<system_notification plugin=\"{plugin}\">{text}</system_notification>"
             ))]),
@@ -91,11 +84,29 @@ impl Input {
     ///
     /// Returns [`InputError::EmptyModelContent`] when `model_content` has no block.
     pub fn with_model_content(self, model_content: Vec<Block>) -> Result<Input, InputError> {
-        if model_content.is_empty() {
+        Input::from_parts(self.source, self.kind, self.content, Some(model_content))
+    }
+
+    // The one place that checks the invariants, for the constructors and for a read.
+    fn from_parts(
+        source: InputSource,
+        kind: InputKind,
+        content: Vec<Block>,
+        model_content: Option<Vec<Block>>,
+    ) -> Result<Input, InputError> {
+        if model_content.as_ref().is_some_and(Vec::is_empty) {
             return Err(InputError::EmptyModelContent);
         }
-        let model_content = (model_content != self.content).then_some(model_content);
-        Ok(Input { model_content, ..self })
+        let model_content = model_content.filter(|blocks| *blocks != content);
+        if content.is_empty() && model_content.is_none() {
+            return Err(InputError::EmptyContent);
+        }
+        Ok(Input {
+            source,
+            kind,
+            content,
+            model_content,
+        })
     }
 
     /// Who sent the input.
@@ -108,7 +119,7 @@ impl Input {
         self.kind
     }
 
-    /// The blocks that the user saw.
+    /// The blocks that the user saw. They are empty for a hidden input.
     pub fn content(&self) -> &[Block] {
         &self.content
     }
@@ -133,12 +144,8 @@ impl<'de> Deserialize<'de> for Input {
         }
 
         let fields = Fields::deserialize(deserializer)?;
-        let input = Input::new(fields.source, fields.kind, fields.content);
-        match fields.model_content {
-            Some(model_content) => input.and_then(|input| input.with_model_content(model_content)),
-            None => input,
-        }
-        .map_err(serde::de::Error::custom)
+        Input::from_parts(fields.source, fields.kind, fields.content, fields.model_content)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -207,7 +214,8 @@ pub struct ConsumedInput {
     pub source: InputSource,
     /// What the input is.
     pub kind: InputKind,
-    /// The blocks that the user saw, only when they differ from the blocks that the model read.
+    /// The blocks that the user saw, only when they differ from the blocks that the model read. An empty list means
+    /// that the user saw nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_content: Option<Vec<Block>>,
     /// The number of blocks of the commit that the model read for this input.

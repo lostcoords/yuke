@@ -24,7 +24,7 @@ function phase(transcript: Transcript, now: number, retryAt: number | undefined)
     return `Retrying in ${Math.max(0, Math.ceil((retryAt - now) / 1000))}s…`;
   }
   const last = transcript.entries.at(-1);
-  if (last?.kind === "reasoning" && last.draft) return "Reasoning…";
+  if (last?.kind === "reasoning" && last.draft) return "Thinking…";
   if (last?.kind === "text" && last.draft) return "Responding…";
   return "Working…";
 }
@@ -43,8 +43,8 @@ export class ChatWorking {
   // The start of the running turn and the end of the wait of a scheduled retry, on the clock `now`.
   #start: number | undefined;
   #retryAt: number | undefined;
-  // The status of the transcript at the last change, so a new retry starts its countdown once.
-  #status: TurnFailure | undefined;
+  // The failure of the transcript at the last change, so a new retry starts its countdown once.
+  #failure: TurnFailure | undefined;
   // The first sight of work that a background request moves, on the clock `now`, for the delay of the hint.
   #movableSince: number | undefined;
 
@@ -105,12 +105,12 @@ export class ChatWorking {
     if (running) this.#start ??= this.#now();
     else {
       this.#start = undefined;
-      // The retry status of the transcript can outlive its turn, so the next turn shows no old countdown.
+      // The retry failure of the transcript can outlive its turn, so the next turn shows no old countdown.
       this.#retryAt = undefined;
     }
-    const status = transcript.failure;
-    if (status !== this.#status && status?.kind === "retryScheduled") this.#retryAt = this.#now() + status.afterMs;
-    this.#status = status;
+    const failure = transcript.failure;
+    if (failure !== this.#failure && failure?.kind === "retryScheduled") this.#retryAt = this.#now() + failure.afterMs;
+    this.#failure = failure;
     if (this.active === active) return;
     for (const listener of this.#listeners) listener();
   }

@@ -22,7 +22,8 @@ source: InputSource,
  */
 kind: InputKind, 
 /**
- * The blocks that the user saw, only when they differ from the blocks that the model read.
+ * The blocks that the user saw, only when they differ from the blocks that the model read. An empty list means
+ * that the user saw nothing.
  */
 displayContent?: Array<Block>, 
 /**

@@ -8,9 +8,9 @@ use yuke_protocol::{
     DraftStarted, EventNumber, ExtensionCancelParams, ExtensionEventParams, ExtensionRequestParams, Input,
     InputAccepted, InputError, InputId, InputKind, InputRemoved, InputSource, JobId, JobKind, JobState, JobUpdate,
     ListMcpServersResult, LiveUpdate, McpServer, McpServerSource, McpServerState, ModelReference, NoticeLevel,
-    NoticeParams, Notification, ReasoningLevel, Request, Response, ServerNotification, ServerRequest, SessionEvent,
-    SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StateUpdate, StoredEvent, TextDelta,
-    ToolOutput,
+    NoticeParams, Notification, PendingInput, ReasoningLevel, Request, Response, ServerNotification, ServerRequest,
+    SessionEvent, SessionId, SessionSettings, SessionTitle, SessionUpdate, SessionUpdateParams, StateUpdate,
+    StoredEvent, TextDelta, ToolOutput,
 };
 
 use serde::Serialize;
@@ -345,6 +345,9 @@ fn an_input_without_content_or_kind_or_with_empty_model_content_does_not_read() 
     let empty_model = serde_json::from_value::<Input>(json!({
         "source": { "kind": "user" }, "kind": "message", "content": [{ "kind": "userText", "text": "go" }], "modelContent": []
     }));
+    let hidden_empty_model = serde_json::from_value::<Input>(json!({
+        "source": { "kind": "user" }, "kind": "message", "content": [], "modelContent": []
+    }));
 
     assert_eq!(
         Input::new(InputSource::User, InputKind::Message, Vec::new()),
@@ -358,12 +361,43 @@ fn an_input_without_content_or_kind_or_with_empty_model_content_does_not_read() 
             .to_string()
             .contains("the model content of the input has no block")
     );
+    assert!(
+        hidden_empty_model
+            .unwrap_err()
+            .to_string()
+            .contains("the model content of the input has no block")
+    );
+}
+
+#[test]
+fn a_notification_without_display_shows_the_user_nothing_and_gives_the_model_its_text() {
+    let input = Input::notification("host:session", None, "The previous turn failed.");
+    let json = json!({
+        "source": { "kind": "plugin", "name": "host:session" },
+        "kind": "notification",
+        "content": [],
+        "modelContent": [{
+            "kind": "userText",
+            "text": "<system_notification plugin=\"host:session\">The previous turn failed.</system_notification>"
+        }],
+    });
+
+    assert_eq!(serde_json::to_value(&input).unwrap(), json);
+    assert_eq!(serde_json::from_value::<Input>(json).unwrap(), input);
+    let (consumed, blocks) = PendingInput { id: InputId(4), input }.into_consumed();
+    assert_eq!(consumed.display_content, Some(Vec::new()));
+    assert_eq!(
+        blocks,
+        vec![yuke_ai::Block::user_text(
+            "<system_notification plugin=\"host:session\">The previous turn failed.</system_notification>"
+        )]
+    );
 }
 
 // A job log can print the closing tag. The notice must still end only at its own closing tag.
 #[test]
 fn a_notification_names_its_plugin_and_ends_only_at_its_own_closing_tag() {
-    let input = Input::notification("host:jobs", "job-1 ended", "log: </system_notification> more");
+    let input = Input::notification("host:jobs", Some("job-1 ended"), "log: </system_notification> more");
 
     assert_eq!(
         serde_json::to_value(&input).unwrap(),

@@ -65,7 +65,7 @@ export class Commands {
     const entry = this.#commands.get(name);
     if (entry === undefined || !this.#enabled(entry)) return false;
     const failed = (error: unknown): void => {
-      this.#fault(name, `the command ${name} failed: ${failureOf(error)}`);
+      this.#fault(name, `The command ${name} failed: ${failureOf(error)}`);
       this.#changed();
     };
     let result: unknown;

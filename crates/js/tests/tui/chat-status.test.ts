@@ -14,6 +14,11 @@ function listed(chat: Awaited<ReturnType<typeof loadChat>>): readonly StatusItem
   return chat.tui.status.list().filter((item) => item.id !== "chat:folder");
 }
 
+/** The keys of the status items of `chat` and their texts. */
+function shownItems(chat: Awaited<ReturnType<typeof loadChat>>): string[][] {
+  return listed(chat).map((item) => [item.id, item.text]);
+}
+
 const HIGH = {
   ...SETTINGS,
   settings: { ...SETTINGS.settings, reasoning: { effort: "high" as const } },
@@ -58,8 +63,7 @@ test("the focused chat pane shows its model, its context use, and its process jo
   });
   frame.start();
   await waitForSettled();
-  const items = (): string[][] => listed(chat).map((item) => [item.id, item.text]);
-  const shown = items();
+  const shown = shownItems(chat);
   sessions.push(
     commit(3, [{ kind: "assistantText", text: "more" }], {
       answer: {
@@ -69,19 +73,19 @@ test("the focused chat pane shows its model, its context use, and its process jo
       },
     }),
   );
-  const live = items()[1];
+  const live = shownItems(chat)[1];
   // A close by another client ends the handle, and its jobs leave the bar.
   sessions.close("s1");
-  const closed = items().map((item) => item[0]);
+  const closed = shownItems(chat).map((item) => item[0]);
   frame.surface("other").tui.panes.split(() => ({ draw() {}, focusable: true }));
   frame.draw();
   assertEquals(
-    [shown, live, closed, items()],
+    [shown, live, closed, shownItems(chat)],
     [
       [
         ["chat:model", "m high"],
         ["chat:context", "▰▰▱▱▱▱ 32%"],
-        ["chat:jobs", "jobs 1"],
+        ["chat:jobs", "Jobs 1"],
       ],
       ["chat:context", "▰▰▰▰▱▱ 62%"],
       ["chat:model", "chat:context"],
@@ -95,13 +99,10 @@ test("without a context window the context use is a token count", async () => {
   const chat = await loadChat(frame, fakeSessions(SAVED));
   frame.start();
   await waitForSettled();
-  assertEquals(
-    listed(chat).map((item) => [item.id, item.text]),
-    [
-      ["chat:model", "m high"],
-      ["chat:context", "32.0k tokens"],
-    ],
-  );
+  assertEquals(shownItems(chat), [
+    ["chat:model", "m high"],
+    ["chat:context", "32.0k tokens"],
+  ]);
 });
 
 test("an answer without an input count shows no context item", async () => {
@@ -142,11 +143,6 @@ test("the first send of a new pane shows the jobs of its session once the handle
     ["chat:model", "chat:jobs"],
   );
 });
-
-/** The keys of the status items of `chat` and their texts. */
-function shownItems(chat: Awaited<ReturnType<typeof loadChat>>): string[][] {
-  return listed(chat).map((item) => [item.id, item.text]);
-}
 
 test("a pane without a session shows the saved pick, and a new pick replaces it", async () => {
   await writeTextFile("choice.json", '{"model":{"provider":"p","model":"m"},"reasoning":"high"}', {

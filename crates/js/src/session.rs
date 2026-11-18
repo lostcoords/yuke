@@ -310,7 +310,9 @@ impl Hooks for ScriptHooks {
                 self.continues.set(self.continues.get() + 1);
                 // The request is a notification of the plugin, so the user sees who sent it. The turn takes the
                 // input of the session after this round, together with an input of the user.
-                self.host.accept_input(Input::notification(&plugin, &text, &text)).await;
+                self.host
+                    .accept_input(Input::notification(&plugin, Some(&text), &text))
+                    .await;
                 RoundDecision::Proceed
             }
             // A cancel ends the turn, so the driver does not read this answer.

@@ -165,7 +165,7 @@ export function session(s: SessionContext): undefined {
       return await compact(event, context, cut, undefined);
     } catch (error) {
       if (event.signal.aborted) throw error;
-      s.notify("warn", `the compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+      s.notify("warn", `The compaction failed: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
   });

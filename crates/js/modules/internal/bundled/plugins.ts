@@ -23,19 +23,19 @@ export function apply(ctx: PluginContext, plugins: PluginManager = manager): und
     name: "open",
     slash: "plugins",
     description: "Show the plugins of config.json, and sync, update, add, or remove them",
-    run: () => open(ctx, tui, plugins).catch(report("the plugins did not load")),
+    run: () => open(ctx, tui, plugins).catch(report("The plugins did not load")),
   });
   tui.commands.add({
     name: "sync",
     slash: "plugins:sync",
     description: "Install the locked Git plugins, and lock the new ones",
-    run: () => sync(ctx, plugins).catch(report("the sync failed")),
+    run: () => sync(ctx, plugins).catch(report("The sync failed")),
   });
   tui.commands.add({
     name: "update",
     slash: "plugins:update",
     description: "Check each Git plugin for a new commit of its ref",
-    run: () => update(ctx, tui, plugins).catch(report("the update failed")),
+    run: () => update(ctx, tui, plugins).catch(report("The update failed")),
   });
   return undefined;
 }
@@ -224,7 +224,7 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
         },
       )
       .then(refresh)
-      .catch((error: unknown) => ctx.notify("error", `the plugins did not load: ${String(error)}`))
+      .catch((error: unknown) => ctx.notify("error", `The plugins did not load: ${String(error)}`))
       .finally(() => {
         busy = false;
         tui.requestFrame();
@@ -316,9 +316,9 @@ async function open(ctx: PluginContext, tui: Tui, plugins: PluginManager): Promi
 
 /** Install the locked commits and lock the new Git plugins. A notice tells the result. */
 async function sync(ctx: PluginContext, plugins: PluginManager): Promise<void> {
-  ctx.notify("info", "the sync of the Git plugins runs");
+  ctx.notify("info", "The sync of the Git plugins runs");
   const synced = await plugins.sync({ signal: ctx.signal });
-  ctx.notify("info", synced.written ? "plugins.lock written: run /reload" : "each Git plugin is at its locked commit");
+  ctx.notify("info", synced.written ? "plugins.lock written: run /reload" : "Each Git plugin is at its locked commit");
 }
 
 /** A document of one text item for each entry of `items`: a label and its lines. */

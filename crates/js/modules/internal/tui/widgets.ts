@@ -321,7 +321,7 @@ export class PlacedWidgets {
       const cleanup = watch.attach(mount);
       if (typeof cleanup === "function") watch.cleanups.set(mount, cleanup);
     } catch (error) {
-      this.#report(watch.owner, `a widget watch failed: ${failureOf(error)}`);
+      this.#report(watch.owner, `A widget watch failed: ${failureOf(error)}`);
     }
   }
 
@@ -329,7 +329,7 @@ export class PlacedWidgets {
     try {
       cleanup();
     } catch (error) {
-      this.#report(owner, `a widget cleanup failed: ${failureOf(error)}`);
+      this.#report(owner, `A widget cleanup failed: ${failureOf(error)}`);
     }
   }
 }

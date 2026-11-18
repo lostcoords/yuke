@@ -18,7 +18,7 @@ async function saved(ctx: PluginContext): Promise<string> {
     return typeof name === "string" && name !== "" ? name : DEFAULT;
   } catch (error) {
     if (!(error instanceof FileSystemError && error.code === "ENOENT")) {
-      ctx.notify("error", `the saved theme did not load: ${String(error)}`);
+      ctx.notify("error", `The saved theme did not load: ${String(error)}`);
     }
     return DEFAULT;
   }
@@ -40,7 +40,7 @@ function open(ctx: PluginContext, tui: Tui): void {
       dialog.close();
       tui.styles.setTheme(item.name);
       writeTextFile(FILE, JSON.stringify({ name: item.name }), { cwd: ctx.dataDir, atomic: true }).catch(
-        (error: unknown) => ctx.notify("error", `the theme did not save: ${String(error)}`),
+        (error: unknown) => ctx.notify("error", `The theme did not save: ${String(error)}`),
       );
     },
     onCancel: () => {

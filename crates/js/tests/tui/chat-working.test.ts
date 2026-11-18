@@ -108,7 +108,7 @@ test("reasoning and response drafts have phase labels, and tool input has a gene
   model({ kind: "textDelta", blockId: 1, text: "Sure" });
   const responding = phase();
   model({ kind: "blockStarted", blockId: 2, content: { kind: "toolCall", name: "bash" } });
-  assertEquals([reasoning, responding, phase()], ["Reasoning…", "Responding…", "Working…"]);
+  assertEquals([reasoning, responding, phase()], ["Thinking…", "Responding…", "Working…"]);
 });
 
 test("a thought without text to show draws no rows, and the working row still shows the reasoning phase", async () => {
@@ -138,9 +138,9 @@ test("a thought without text to show draws no rows, and the working row still sh
   assertEquals(
     [empty, blank, [thought[0].slice(-4), thought[1]]],
     [
-      [before, "Reasoning…"],
-      [before, "Reasoning…"],
-      [[" reply 20", "", " thinking", ""], "Reasoning…"],
+      [before, "Thinking…"],
+      [before, "Thinking…"],
+      [[" reply 20", "", " Thinking", ""], "Thinking…"],
     ],
   );
 });

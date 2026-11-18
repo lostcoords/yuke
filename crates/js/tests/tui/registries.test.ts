@@ -314,7 +314,7 @@ test("an async command lets keys go on and a failure names it", async () => {
   await waitForSettled();
   assertEquals(
     keys.faults.map((fault) => fault.split("\n")[0]),
-    ["the command sync failed: Error: bad state", "the command broken failed: Error: no disk"],
+    ["The command sync failed: Error: bad state", "The command broken failed: Error: no disk"],
   );
 });
 

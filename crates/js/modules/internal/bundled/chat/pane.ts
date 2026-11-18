@@ -277,7 +277,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const absolute = /^[a-z][a-z0-9+.-]*:/i.test(link) || link.startsWith("/");
       const target = absolute ? link : `${folder.replace(/\/$/, "")}/${link}`;
       tui.clipboard.writeText(target);
-      ctx.notify("info", `copied ${target}`);
+      ctx.notify("info", `Copied ${target}`);
     },
     onTopReached: () => chatSession.loadOlderHistory(),
   });
@@ -294,7 +294,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     signal: mount.signal,
     enabled: () => questions.current === undefined && locked() === undefined && frameRow > 0,
     onChange: () => tui.requestFrame(),
-    onError: (error) => ctx.notify("error", `a completion failed: ${failureOf(error)}`),
+    onError: (error) => ctx.notify("error", `A completion failed: ${failureOf(error)}`),
   });
   // The word of a draft that Enter runs as a command gets its style, so a user sees it before the key.
   const composerExtension = composer.extend(mount.signal);
@@ -318,7 +318,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     const providers = (await ctx.get("catalog").list()).providers;
     const models = providers.flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, model })));
     if (models.length === 0) {
-      ctx.notify("info", "no provider is ready: run /login");
+      ctx.notify("info", "No provider is ready: run /login");
       return undefined;
     }
     const saved = pick ? undefined : chat.choice.current;
@@ -346,7 +346,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         chat.refresh();
       } catch (error) {
         // The session can start without the saved choice.
-        ctx.notify("error", `the model choice did not save: ${String(error)}`);
+        ctx.notify("error", `The model choice did not save: ${String(error)}`);
       }
     }
     return {
@@ -376,7 +376,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const reasoning = settings.settings.reasoning;
       await target.setSettings({ ...current, model: settings.model, settings: { ...current.settings, reasoning } });
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the model did not change: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The model did not change: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -393,14 +393,14 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         try {
           return await settingsOf(false);
         } catch (error) {
-          if (!mount.signal.aborted) ctx.notify("error", `the models did not load: ${String(error)}`);
+          if (!mount.signal.aborted) ctx.notify("error", `The models did not load: ${String(error)}`);
           return undefined;
         }
       });
     } catch (error) {
       // The failure of a new session goes to the caller.
       if (id === undefined) throw error;
-      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not open: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The session ${id} did not open: ${String(error)}`);
       return undefined;
     }
   };
@@ -411,7 +411,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     try {
       await chatComposer.send();
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the message did not send: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The message did not send: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -421,9 +421,9 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const olderMessage = async (): Promise<void> => {
     try {
       const result = await chatComposer.olderMessage();
-      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "the message reached the turn already");
+      if (result === "taken" && !mount.signal.aborted) ctx.notify("info", "The message reached the turn already");
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the message did not come back: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The message did not come back: ${String(error)}`);
     }
   };
 
@@ -435,12 +435,12 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       const image = await tui.clipboard.readImage();
       if (mount.signal.aborted) return;
       if (image === undefined) {
-        ctx.notify("info", "the clipboard holds no image");
+        ctx.notify("info", "The clipboard holds no image");
         return;
       }
       await chatComposer.attachImage(image);
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the image did not attach: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The image did not attach: ${String(error)}`);
     } finally {
       busy = false;
     }
@@ -465,7 +465,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
 
   const questions = new ChatQuestions(chatSession, {
     signal: mount.signal,
-    onError: (error) => ctx.notify("error", `the answer did not reach the plugin: ${String(error)}`),
+    onError: (error) => ctx.notify("error", `The answer did not reach the plugin: ${String(error)}`),
   });
 
   /** The pane is busy: a send, a model choice, an image paste, a recall, a show, or a rename runs. */
@@ -492,7 +492,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
         onSubmit: (text) => ctx.get("sessions").rename(id, text),
       });
     } catch (error) {
-      if (!mount.signal.aborted) ctx.notify("error", `the session ${id} did not load: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The session ${id} did not load: ${String(error)}`);
     } finally {
       busy = false;
       if (!ctx.signal.aborted) tui.requestFrame();
@@ -504,7 +504,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
   const saved = chatSession.id;
   if (saved !== undefined) {
     chatSession.open(saved).catch((error: unknown) => {
-      if (!mount.signal.aborted) ctx.notify("error", `the session ${saved} did not open: ${String(error)}`);
+      if (!mount.signal.aborted) ctx.notify("error", `The session ${saved} did not open: ${String(error)}`);
     });
   }
 
@@ -796,7 +796,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
     nextFolder = chatSession.transcript.settings?.cwd ?? nextFolder;
     chatComposer.setDraft(EMPTY);
     chatSession.leave();
-    if (running) ctx.notify("info", "the work goes on: /sessions shows it");
+    if (running) ctx.notify("info", "The work goes on: /sessions shows it");
   };
   const actions: PaneActions = {
     pane: chatPaneFields,
@@ -835,7 +835,7 @@ export function chatPane(chat: Chat, mount: Mount, state: PaneState): View {
       else if (back === undefined) chatSession.handle?.cancel();
       else {
         show(back).catch((error: unknown) => {
-          if (!mount.signal.aborted) ctx.notify("error", `the session ${back} did not open: ${String(error)}`);
+          if (!mount.signal.aborted) ctx.notify("error", `The session ${back} did not open: ${String(error)}`);
         });
       }
     },

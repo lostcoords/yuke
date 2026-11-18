@@ -449,7 +449,7 @@ pub(crate) fn short_label(text: &str) -> String {
 pub(crate) fn report_input(source: &str, id: &str, label: &str, status: &str, text: &str) -> Input {
     Input::notification(
         source,
-        &format!("{label} · {status}"),
+        Some(&format!("{label} · {status}")),
         &format!("{id} {label}: {status}.\n{text}"),
     )
 }

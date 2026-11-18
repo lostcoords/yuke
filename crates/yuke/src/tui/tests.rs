@@ -220,7 +220,7 @@ async fn a_failed_reload_keeps_the_old_runtime_and_shows_a_notice() {
 
     // The new plugins have no board, so the notice on the screen comes from the old runtime.
     output
-        .shows("error host:yuke: the reload failed: the reload keeps the old plugins")
+        .shows("error host:yuke: The reload failed: the reload keeps the old plugins")
         .await;
     app.shutdown().await;
 }
@@ -273,7 +273,7 @@ async fn a_bundled_plugin_checks_its_options_at_the_start_and_at_a_reload() {
 
     config(r#""no""#);
     reload(Some(&mut app), &display, r#"{"tree":null,"focus":0}"#.to_owned()).await;
-    output.contains("the reload failed").await;
+    output.contains("The reload failed").await;
     // The old runtime keeps its bar.
     output.contains("marked").await;
     app.shutdown().await;
@@ -348,7 +348,7 @@ async fn a_reload_while_the_first_plugins_load_gives_a_notice() {
     reload(None, &display, "{}".to_owned()).await;
 
     let messages: Vec<String> = display.take_notices().into_iter().map(|notice| notice.text).collect();
-    assert_eq!(messages, ["the reload failed: yuke is still loading the plugins"]);
+    assert_eq!(messages, ["The reload failed: yuke is still loading the plugins"]);
 }
 
 #[tokio::test(flavor = "local")]
