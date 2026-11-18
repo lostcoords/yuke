@@ -144,8 +144,8 @@ test("a draft streams its blocks until its saved commit replaces them", () => {
       id: "draft:d1:2",
       name: "bash",
       arguments: '{"command":"cargo test"}',
-      status: "waiting",
-      // The host has not handled the call yet, so it has the default hints.
+      // The answer is not saved yet, so the call still streams and has the default hints.
+      status: "preparing",
       hints: { preview: "head" },
       cwd: undefined,
       startedAt: undefined,

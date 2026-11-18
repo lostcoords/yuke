@@ -269,7 +269,7 @@ export class Transcript {
             draft.keys.set(model.blockId, key);
             if (model.content.kind === "toolCall") {
               const name = model.content.name;
-              this.#put({ kind: "tool", id: key, name, arguments: "", status: "streaming", ...UNHANDLED });
+              this.#put({ kind: "tool", id: key, name, arguments: "", status: "preparing", ...UNHANDLED });
             } else
               this.#put({ kind: "text", id: key, text: "", refusal: model.content.kind === "refusal", draft: true });
           }
@@ -281,8 +281,7 @@ export class Transcript {
         if (model.kind === "toolInputDelta") {
           if (entry.kind === "tool") this.#set({ ...entry, arguments: entry.arguments + model.text });
         } else if (model.kind === "blockStopped") {
-          if (entry.kind === "tool" && model.call !== undefined)
-            this.#set({ ...entry, ...called(model.call), status: "waiting" });
+          if (entry.kind === "tool" && model.call !== undefined) this.#set({ ...entry, ...called(model.call) });
         } else if (entry.kind === "reasoning") {
           // A later block can start before an earlier block sends its last delta.
           const parts = draft.reasoning.get(entry.id) as Map<number, string>;

@@ -282,7 +282,7 @@ test("a call without a subject hint shows its incomplete raw arguments", async (
   assertEquals(transcriptRows(frame).slice(1, 2), [' Probe {"path":"a · waiting']);
 });
 
-test("a streaming call shows its name and raw arguments, and the subject takes their place when the hints come", async () => {
+test("a call shows only its name until its answer saves, and then its subject", async () => {
   using frame = createFrame({ width: 40, height: 8 }, undefined, { cwd: "/w", session: "s1" });
   const sessions = fakeSessions([{ seq: 1, kind: "settings", ...SETTINGS }]);
   await loadChat(frame, sessions);
@@ -295,7 +295,7 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
   sessions.push({ kind: "draftStarted", draftId: "d1" });
   model({ kind: "blockStarted", blockId: 0, content: { kind: "toolCall", name: "exec" } });
   model({ kind: "toolInputDelta", blockId: 0, text: '{"command":' });
-  const streaming = head();
+  const preparing = head();
   const call = { callId: "c0", name: "exec", arguments: '{"command":"make"}' };
   model({ kind: "toolInputDelta", blockId: 0, text: '"make"}' });
   model({ kind: "blockStopped", blockId: 0, call });
@@ -306,10 +306,7 @@ test("a streaming call shows its name and raw arguments, and the subject takes t
     }),
   );
   sessions.push({ kind: "draftCommitted", draftId: "d1", eventNumber: 2, blocks: [0] });
-  assertEquals(
-    [streaming, stopped, head()],
-    [' exec {"command": · …', ' exec {"command":"make"} · waiting', " exec make · waiting"],
-  );
+  assertEquals([preparing, stopped, head()], [" exec · preparing", " exec · preparing", " exec make · waiting"]);
 });
 
 test("a tool search that ends well shows no row, and a failed one shows its error", async () => {

@@ -1,9 +1,10 @@
 /**
  * The item of a tool call. Its head line comes from the hints of its tool, and it fills one row. The subject is the
- * argument that the hints name, or the raw arguments of a call without a subject hint. An open call shows a subject
- * that does not fit the head line below it. The body is the live output until a result comes. Then it is the display
- * of the result, or the text of a result without a display, and then the media. A folded call shows the preview of
- * its hints, and a folded failed call shows its first rows. A failure also gives the call its state and its band.
+ * argument that the hints name, or the raw arguments of a call without a subject hint. A preparing call has no hints
+ * yet, so it shows no subject. An open call shows a subject that does not fit the head line below it. The body is the
+ * live output until a result comes. Then it is the display of the result, or the text of a result without a display,
+ * and then the media. A folded call shows the preview of its hints, and a folded failed call shows its first rows. A
+ * failure also gives the call its state and its band.
  */
 
 import { diffRows, diffSource } from "yuke:internal/chat/diff";
@@ -79,7 +80,7 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
   const state = entry.status === "running" && duration !== undefined ? undefined : stateOf(entry);
   const end = [state, duration].map((part) => (part === undefined ? "" : ` · ${part}`)).join("");
   const value = subjectOf(entry);
-  // The head line fills one row, so a long subject, such as streamed arguments, costs no more than a short one.
+  // The head line fills one row, so a long subject costs no more than a short one.
   const source = value === undefined ? name : `${name} ${value.slice(0, HEAD_SUBJECT)}`;
   // Each line end unit becomes one space, so the shown text keeps the offsets of its source.
   const head = source.replaceAll(/[\r\n]/g, " ");
@@ -122,16 +123,16 @@ function heading(entry: ToolEntry, open: boolean, duration: string | undefined):
 
 /** The state of a call that did not end well, or `undefined` for a call that ended well. */
 function stateOf(entry: ToolEntry): string | undefined {
-  if (entry.status === "streaming") return "…";
   if (entry.status !== "done") return entry.status;
   return entry.result?.isError === true ? "error" : undefined;
 }
 
 /**
  * The subject of `entry`: the string argument that its hints name, or its raw arguments when the hints name no subject.
- * Empty arguments give no subject, and so does a missing named string.
+ * A preparing call, empty arguments, and a missing named string give no subject.
  */
 function subjectOf(entry: ToolEntry): string | undefined {
+  if (entry.status === "preparing") return undefined;
   const subject = entry.hints.subject;
   if (subject === undefined) return entry.arguments === "" || entry.arguments === "{}" ? undefined : entry.arguments;
   try {
@@ -140,7 +141,7 @@ function subjectOf(entry: ToolEntry): string | undefined {
       typeof value === "object" && value !== null ? (value as Record<string, unknown>)[subject.argument] : undefined;
     return typeof field === "string" ? field : undefined;
   } catch {
-    // A call can send incomplete JSON before it ends.
+    // The model can write arguments that are not JSON.
     return undefined;
   }
 }

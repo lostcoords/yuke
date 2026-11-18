@@ -55,7 +55,8 @@ declare module "yuke:transcript" {
 
   /**
    * A tool call of the model.
-   * - `streaming`: the model writes the call. `name` is empty until the call is complete.
+   * - `preparing`: the model writes the answer that holds the call, until the answer saves. `name` can be empty until
+   *   the call is complete.
    * - `waiting`: the call is complete. The transcript knows no run of it yet. A snapshot has no runs, so a call that
    *   runs since before the snapshot shows as `waiting`.
    * - `running`: the call runs. `output` grows.
@@ -75,7 +76,7 @@ declare module "yuke:transcript" {
     id: string;
     name: string;
     arguments: string;
-    status: "streaming" | "waiting" | "running" | "done";
+    status: "preparing" | "waiting" | "running" | "done";
     hints: ToolHints;
     cwd: string | undefined;
     startedAt: number | undefined;
