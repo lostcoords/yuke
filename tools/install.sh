@@ -46,7 +46,7 @@ install_yuke() {
       fail "cannot download the ${channel} release of ${repo}."
   fi
   # A broken download or binary stops here, before the working installation changes.
-  tar -xzf "${archive}" -C "${staging}"
+  tar -xzf "${archive}" -C "${staging}" || fail 'the download is not a yuke package.'
   version="$("${staging}/bin/yuke" --version)" || fail 'the new yuke binary does not run on this machine.'
 
   mkdir -p "${bin_dir}" "${lib_dir%/*}"

@@ -295,7 +295,8 @@ if ("result" in response) {
     def test_corrupt_download_keeps_the_working_installation(self):
         before = self.seed_installation()
         self.network(corrupt=True)
-        self.install(expected=1, piped=True)
+        result = self.install(expected=1, piped=True)
+        self.assertIn("the download is not a yuke package", result)
         self.assertEqual(self.snapshot(), before)
 
     def test_symlinked_profile_preserves_user_configuration(self):
