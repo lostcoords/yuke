@@ -117,6 +117,8 @@ const OL_ITEM = /^( *)(\d{1,9})([.)])([ \t]+)(.*)$/;
 const SETEXT = /^( {0,3})(=+|-+)[ \t]*$/;
 // QuickJS builds a new RegExp each time a literal runs, so the tests per line and per delimiter hold one each.
 const TABLE_RULE = /^:?-{1,}:?$/;
+/** An HTML line break tag. GitHub renders it as a line break, and models use it in table cells. */
+const BREAK_TAG = /<br[ \t]*\/?>/iy;
 const HEADING_TAIL = /[ \t]+#+[ \t]*$/;
 const SPACE = /\s/u;
 const PUNCT = /[\p{P}\p{S}]/u;
@@ -278,7 +280,7 @@ function segment(text: string, base: number): Block[] {
         if (m === null) break;
         const src = start(j) + (m[1] as string).length + 1 + (m[2] as string).length;
         if (j === i) markEnd = src;
-        else addSource(body, "\n", start(j) - 1);
+        else addSource(body, " ", start(j) - 1);
         addSource(body, m[3] as string, src);
       }
       push({ kind: "quote", text: body.text, runs: body.runs, markAt: start(i), markEnd }, i, j);
@@ -403,9 +405,9 @@ function isEscaped(text: string, index: number): boolean {
   return slashes % 2 === 1;
 }
 
-const ESCAPABLE = "\\`*{}[]()#+-.!_>~|";
+const ESCAPABLE = "\\`*{}[]()#+-.!_<>~|";
 /** The characters that start an inline rule. Each is ASCII, so a scan of UTF-16 units never meets one in a pair. */
-const INLINE_MARKER = /[\\`[*_]/g;
+const INLINE_MARKER = /[\\`[*_<]/g;
 
 /** The emphasis group for a bold and an italic depth. */
 function emphasisStyle(bold: boolean, italic: boolean): string | undefined {
@@ -579,6 +581,16 @@ function parseInline(text: string, baseStyle: string = STYLE.text): Piece[] {
         continue;
       }
     }
+    if (c === "<") {
+      BREAK_TAG.lastIndex = i;
+      const tag = BREAK_TAG.exec(text);
+      if (tag !== null) {
+        // The block text holds no other "\n", and this piece joins no other, so the wrap reads each "\n" as a break.
+        nodes.push({ kind: "styled", text: "\n", style: baseStyle, ...span(i, i + tag[0].length) });
+        i += tag[0].length;
+        continue;
+      }
+    }
     if (c === "*" || c === "_") {
       const d = scanDelimiters(text, i, c);
       nodes.push({
@@ -747,7 +759,7 @@ interface WrapOptions {
 }
 
 /** Printable ASCII with blanks: each character that is no blank is one cell. */
-const ASCII_TEXT = /^[\x20-\x7e\t\n]*$/;
+const ASCII_TEXT = /^[\x20-\x7e\t]*$/;
 
 /** The offset of the first `character` in `text` from `from`, or the length of `text`. */
 function indexOrEnd(text: string, character: string, from: number): number {
@@ -755,15 +767,15 @@ function indexOrEnd(text: string, character: string, from: number): number {
   return at < 0 ? text.length : at;
 }
 
-/** Whether the UTF-16 unit `code` is a space, a tab, or a line end. A wrap puts one space in place of a run of them. */
+/** Whether the UTF-16 unit `code` is a space or a tab. A wrap puts one space in place of a run of them. */
 function isBlank(code: number): boolean {
-  return code === 32 || code === 9 || code === 10;
+  return code === 32 || code === 9;
 }
 
 /**
  * The rows of `segments` wrapped at `width`, at most `limit`. A word wider than the row breaks between graphemes.
- * A wrap at a space joins with " ". A break in a word joins with "". The last row joins with "\n". Two words on a row
- * have one space between them.
+ * A wrap at a space joins with " ". A break in a word joins with "". A "\n" ends its row, and that row and the last row
+ * join with "\n". Two words on a row have one space between them.
  */
 function wrapSegments(segments: readonly Part[], width: number, options: WrapOptions = {}): Row[] {
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
@@ -877,11 +889,13 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
     const ascii = ASCII_TEXT.test(text);
     let nextSpace = -1;
     let nextTab = -1;
-    let nextNewline = -1;
     let at = 0;
     while (at < text.length) {
       let end = at + 1;
-      if (isBlank(text.charCodeAt(at))) {
+      if (text.charCodeAt(at) === 10) {
+        if (word.length > 0 && !place()) break read;
+        if (!emit("\n")) break read;
+      } else if (isBlank(text.charCodeAt(at))) {
         while (end < text.length && isBlank(text.charCodeAt(end))) end += 1;
         if (word.length > 0 && !place()) break read;
         blankAt = index;
@@ -890,8 +904,7 @@ function wrapSegments(segments: readonly Part[], width: number, options: WrapOpt
       } else {
         if (nextSpace < at) nextSpace = indexOrEnd(text, " ", at);
         if (nextTab < at) nextTab = indexOrEnd(text, "\t", at);
-        if (nextNewline < at) nextNewline = indexOrEnd(text, "\n", at);
-        end = Math.min(nextSpace, nextTab, nextNewline);
+        end = Math.min(nextSpace, nextTab);
         word.push(index, at, end);
         wordWidth += ascii ? end - at : widthOf(text.slice(at, end));
       }
@@ -953,13 +966,16 @@ function hardBreak(pieces: readonly Part[], width: number, limit: number): Row[]
 
 const TABLE_GAP = " │ ";
 
-/** The width of each column: its widest cell. When the columns do not fit, wide columns shrink to a common cap of 3 or more. */
+/**
+ * The width of each column: its widest line of a cell. A "\n" segment, from a break tag, starts a line, and the wrap
+ * drops the blanks at each end of a line. When the columns do not fit, wide columns shrink to a common cap of 3 or more.
+ */
 function columnWidths(cells: readonly Part[][][], available: number): number[] {
   const widths: number[] = [];
   for (const row of cells) {
     row.forEach((segments, c) => {
-      const cellWidth = segments.reduce((n, s) => n + widthOf(s.text), 0);
-      widths[c] = Math.max(widths[c] ?? 0, cellWidth);
+      const text = segments.map((s) => s.text).join("");
+      for (const line of text.split("\n")) widths[c] = Math.max(widths[c] ?? 0, widthOf(line.trim()));
     });
   }
   const total = widths.reduce((n, w) => n + w, 0);

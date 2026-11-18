@@ -178,6 +178,27 @@ test("a table aligns each column by the colons of its separator", () => {
   ]);
 });
 
+test("a break tag starts a line inside a table cell, and the column fits its widest line", () => {
+  const rows = rowsOf("| k | v |\n|---|---|\n| x | one<br>• two<BR/>three <br /> four |", 80);
+  assertEquals(lines(rows), ["k │ v", "──┼──────", "x │ one", "  │ • two", "  │ three", "  │ four"]);
+});
+
+test("a break tag ends a paragraph row, and a copy keeps it as a line end", () => {
+  const rows = rowsOf("alpha<br>bravo charlie", 9);
+  assertEquals(
+    rows.map((row) => [row.segments.map((s) => s.text).join(""), row.join]),
+    [
+      ["alpha", "\n"],
+      ["bravo", " "],
+      ["charlie", ""],
+    ],
+  );
+});
+
+test("a break tag in a code span or after a backslash stays literal", () => {
+  assertEquals(lines(rowsOf("a `<br>` b \\<br> c", 80)), ["a <br> b <br> c"]);
+});
+
 test("a long paragraph wraps to the width and keeps each word", () => {
   assertEquals(lines(rowsOf("alpha bravo charlie delta", 11)), ["alpha bravo", "charlie", "delta"]);
 });
@@ -294,6 +315,8 @@ test("each segment maps back to its source at each width", () => {
     "---",
     "Setext\n======",
     "two  spaces and\n a line feed",
+    "| a | b<br>c **d<br/>e** |\n|---|---|\n| 1 | 2 |",
+    "> one<br>two\n> three",
   ];
   const wrong: string[] = [];
   for (const source of corpus) {
