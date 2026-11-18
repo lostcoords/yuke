@@ -27,12 +27,16 @@ def output(*command):
     return subprocess.check_output(command, cwd=ROOT, text=True).strip()
 
 
-def copy_typescript(source, destination, pattern="**/*.ts"):
-    """Copy TS source without local editor files or other development state."""
+def copy_files(source, destination, pattern="**/*", skip=()):
+    """Copy the files of a folder that match `pattern`, without the top-level names in `skip`."""
     for path in sorted(source.glob(pattern)):
+        relative = path.relative_to(source)
+        # A dot file is local editor or system state, such as .DS_Store.
+        if relative.parts[0] in skip or path.is_dir() or any(part.startswith(".") for part in relative.parts):
+            continue
         if path.is_symlink():
             raise RuntimeError("package source must be a regular file: " + str(path))
-        target = destination / path.relative_to(source)
+        target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
 
@@ -41,7 +45,7 @@ def source_state():
     """Detect source edits during a build, including new source files."""
     names = subprocess.check_output(
         ["git", "ls-files", "-co", "--exclude-standard", "-z", "--",
-         "crates", ".cargo", "Cargo.toml", "Cargo.lock", "Cross.toml"],
+         "crates", ".cargo", "Cargo.toml", "Cargo.lock", "Cross.toml", "docs", "skills"],
         cwd=ROOT,
     ).split(b"\0")
     names.extend(os.fsencode(name) for name in (
@@ -112,13 +116,16 @@ def main():
         library = staging / "lib/yuke"
         library.mkdir(parents=True)
         # Authors get only the public modules and their declarations, so an internal import fails their type check too.
-        copy_typescript(ROOT / "crates/js/modules", library / "modules", "*.ts")
+        copy_files(ROOT / "crates/js/modules", library / "modules", "*.ts")
         declarations = sorted(path.name for path in (ROOT / "crates/js/types").glob("*.d.ts") if path.name != "native.d.ts")
         for name in declarations:
-            copy_typescript(ROOT / "crates/js/types", library / "types", name)
-        copy_typescript(ROOT / "crates/protocol/bindings", library / "protocol/bindings")
+            copy_files(ROOT / "crates/js/types", library / "types", name)
+        copy_files(ROOT / "crates/protocol/bindings", library / "protocol/bindings", "**/*.ts")
         shutil.copy2(ROOT / "crates/protocol/README.md", library / "protocol/README.md")
         shutil.copy2(ROOT / "LICENSE.md", library / "LICENSE.md")
+        # The skill points agents to these guides, so both match the installed release. The docs tests stay in CI.
+        copy_files(ROOT / "docs", library / "docs", skip={"tests", "tsconfig.json"})
+        copy_files(ROOT / "skills/yuke", library / "skills/yuke")
         configuration = json.loads((ROOT / "crates/js/tsconfig.json").read_text())
         configuration["include"] = ["./modules/*.ts", "./protocol/bindings/**/*.ts"]
         configuration["files"] = ["./types/" + name for name in declarations]

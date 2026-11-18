@@ -105,6 +105,24 @@ JSON
   fi
 }
 
+# Agents that read ~/.agents/skills, yuke too, find the skill of the installed release there. Other skills share the
+# folder, so the installer adds only its own link and keeps any other entry with the name yuke.
+link_skill() {
+  local skill="${HOME}/.agents/skills/yuke" target="${lib_dir}/skills/yuke"
+  if [ -L "${skill}" ] && [ "$(readlink "${skill}")" = "${target}" ]; then
+    return
+  fi
+  if [ -e "${skill}" ] || [ -L "${skill}" ]; then
+    printf 'warning: %s is not the link of the yuke skill; it stays unchanged.\n' "${skill}" >&2
+    return
+  fi
+  if mkdir -p "${skill%/*}" && ln -s "${target}" "${skill}"; then
+    printf 'Linked the yuke agent skill at %s\n' "${skill}"
+  else
+    printf 'warning: cannot link the yuke skill at %s.\n' "${skill}" >&2
+  fi
+}
+
 install_yuke() {
   [ "$#" -le 1 ] || fail 'usage: install.sh [archive.tar.gz]'
   case "${HOME:-}" in /*) ;; *) fail 'HOME must be an absolute directory.' ;; esac
@@ -154,7 +172,7 @@ install_yuke() {
   for file in bin/yuke lib/yuke/modules/tools.ts lib/yuke/modules/plugins.ts \
     lib/yuke/types/globals.d.ts lib/yuke/types/fs.d.ts lib/yuke/tsconfig.json \
     lib/yuke/protocol/bindings/ClientRequest.ts lib/yuke/protocol/README.md \
-    lib/yuke/LICENSE.md lib/yuke/build.json; do
+    lib/yuke/LICENSE.md lib/yuke/build.json lib/yuke/skills/yuke/SKILL.md lib/yuke/docs/guide/index.md; do
     [ -f "${package}/${file}" ] && [ ! -L "${package}/${file}" ] || fail "the package has no regular ${file}."
   done
   package_format="$(sed -n 's/^[[:space:]]*"format": \([0-9][0-9]*\)[[:space:],]*$/\1/p' "${package}/lib/yuke/build.json")"
@@ -185,6 +203,7 @@ install_yuke() {
 
   configure_editor
   printf 'Installed %s/yuke (%s)\n' "${bin_dir}" "${version}"
+  link_skill
   case ":${PATH}:" in
     *":${bin_dir}:"*) ;;
     *) printf 'Add ~/.local/bin to PATH in your shell configuration.\n' ;;

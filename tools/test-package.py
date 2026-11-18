@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -63,6 +64,7 @@ class PackageTests(unittest.TestCase):
         self.profile = self.home / ".config/yuke"
         self.binary = self.home / ".local/bin/yuke"
         self.library = self.home / ".local/lib/yuke"
+        self.skill = self.home / ".agents/skills/yuke"
 
     def install(self, package=ARCHIVE, expected=0, piped=False):
         command = ["bash"] if piped else ["bash", str(INSTALLER), str(package)]
@@ -140,7 +142,8 @@ else:
         self.assertEqual(configuration["extends"], str(self.library / "tsconfig.json"))
         self.assertFalse((self.profile / "yuke-library").exists())
         self.assertFalse((self.home / ".local/share").exists())
-        self.assertFalse((self.home / ".agents").exists())
+        self.assertEqual(os.readlink(self.skill), str(self.library / "skills/yuke"))
+        self.assertEqual((self.skill / "SKILL.md").read_bytes(), (ROOT / "skills/yuke/SKILL.md").read_bytes())
 
     def test_local_directory_is_rejected_without_replacing_the_working_installation(self):
         before = self.seed_installation()
@@ -161,6 +164,34 @@ else:
             self.assertEqual(actual, expected)
         self.assertEqual((self.extracted / "lib/yuke/protocol/README.md").read_bytes(),
                          (ROOT / "crates/protocol/README.md").read_bytes())
+        for source, installed in [(ROOT / "docs", "docs"), (ROOT / "skills/yuke", "skills/yuke")]:
+            expected = {path.relative_to(source).as_posix(): path.read_bytes()
+                        for path in source.rglob("*") if path.is_file()
+                        and path.relative_to(source).parts[0] not in {"tests", "tsconfig.json"}
+                        and not any(part.startswith(".") for part in path.relative_to(source).parts)}
+            folder = self.extracted / "lib/yuke" / installed
+            actual = {path.relative_to(folder).as_posix(): path.read_bytes()
+                      for path in folder.rglob("*") if path.is_file()}
+            self.assertEqual(actual, expected)
+
+    def test_each_library_file_that_the_skill_names_is_in_the_package(self):
+        library = self.extracted / "lib/yuke"
+        text = (library / "skills/yuke/SKILL.md").read_text()
+        names = [name.removeprefix("~/.local/lib/yuke/") for name in re.findall(r"`([^`\s]+)`", text)]
+        names = [name for name in names
+                 if name.startswith(("docs/", "modules/", "types/", "protocol/")) and name.endswith((".md", ".ts"))]
+        self.assertIn("docs/guide/index.md", names)
+        for name in names:
+            with self.subTest(name=name):
+                self.assertTrue(list(library.glob(name)), name + " is not in the package")
+
+    def test_an_existing_yuke_skill_of_the_user_stays(self):
+        self.skill.mkdir(parents=True)
+        (self.skill / "SKILL.md").write_text("the skill of the user\n")
+        result = self.install()
+        self.assertIn("is not the link of the yuke skill", result)
+        self.assertFalse(self.skill.is_symlink())
+        self.assertEqual((self.skill / "SKILL.md").read_text(), "the skill of the user\n")
 
     def test_all_installed_modules_and_protocol_bindings_type_check(self):
         self.install()
@@ -264,7 +295,8 @@ if ("result" in response) {
         self.install()
         original = (self.library / "modules/plugins.ts").read_bytes()
         (self.library / "modules/plugins.ts").unlink()
-        self.install()
+        result = self.install()
+        self.assertNotIn("skill", result)
         self.assertEqual((self.library / "modules/plugins.ts").read_bytes(), original)
         self.assertEqual(json.loads((self.library / "build.json").read_text()), self.identity)
 

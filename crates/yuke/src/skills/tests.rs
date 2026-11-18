@@ -194,3 +194,21 @@ fn a_plain_value_on_the_next_lines_folds_into_one_line_also_after_a_byte_order_m
 
     assert_eq!(fields.description.unwrap(), "Read and fill forms.");
 }
+
+// The installer links the shipped skill into ~/.agents/skills, so yuke must load it with no warning.
+#[test]
+fn the_shipped_yuke_skill_loads_with_no_warning() {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
+
+    let catalog = catalog(&[shipped]);
+
+    assert_eq!(catalog.warnings, Vec::<String>::new());
+    assert_eq!(
+        catalog
+            .skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect::<Vec<_>>(),
+        ["yuke"]
+    );
+}

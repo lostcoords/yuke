@@ -11,7 +11,7 @@ yuke keeps its files in these folders. For the first three, yuke uses each XDG v
 | `$XDG_CONFIG_HOME/yuke` | `~/.config/yuke` | `config.json`, `providers.json`, `mcp.json`, `plugins.lock`, your local plugins, and editor configuration |
 | `$XDG_DATA_HOME/yuke` | `~/.local/share/yuke` | Sessions, `auth.json`, `choice.json`, `mcp-trust`, installed Git plugins, and plugin data |
 | `$XDG_CACHE_HOME/yuke` | `~/.cache/yuke` | Files that yuke can create again, such as compiled TypeScript and Git clones of plugins |
-| `~/.local/lib/yuke` | `~/.local/lib/yuke` | The public TypeScript API: modules, type declarations, and protocol bindings. |
+| `~/.local/lib/yuke` | `~/.local/lib/yuke` | The installed release: the public TypeScript API, the protocol bindings, these guides, and the agent skill. The installer replaces it at each update. |
 
 ## Sessions
 

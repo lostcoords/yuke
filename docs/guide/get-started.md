@@ -12,7 +12,7 @@ yuke runs in your terminal on macOS, Linux, and Windows (WSL). One binary holds 
 curl -fsSL https://yuke.sh/install.sh | bash
 ```
 
-The installer writes `~/.local/bin/yuke` and its library to `~/.local/lib/yuke`. It keeps your configuration. If `~/.local/bin` is not on your `PATH`, the installer tells you to add it.
+The installer writes `~/.local/bin/yuke` and its library to `~/.local/lib/yuke`. It also links the yuke agent skill at `~/.agents/skills/yuke`, so yuke and other coding agents know how to configure and extend yuke. It keeps your configuration. If `~/.local/bin` is not on your `PATH`, the installer tells you to add it.
 
 The default channel installs the latest stable release. To select the nightly release instead:
 
@@ -28,6 +28,19 @@ yuke --help
 ```
 
 These pages describe the current Rust and QuickJS implementation. An older release can have different commands and profile files. Check the help of your installed binary before you use a command from these pages.
+
+### Uninstall yuke
+
+Remove the binary, the library, and the skill link:
+
+```sh
+rm -rf ~/.local/bin/yuke ~/.local/lib/yuke
+rm ~/.agents/skills/yuke
+```
+
+The second `rm` removes only a link. It fails on a folder, so it keeps a skill of your own with that name.
+
+This keeps your configuration, sessions, and credentials. To remove them too, delete the folders in [Configuration](config.md).
 
 ## Connect a model
 
