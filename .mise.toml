@@ -20,3 +20,16 @@ run = "python3 tools/test-builder.py"
 [tasks."release:test"]
 description = "Test release publication with an isolated HTTP server"
 run = "python3 tools/test-release.py"
+
+[tasks.check]
+description = "Run every check that a change must pass"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets --all-features -- -D warnings",
+  "cargo test --all-features",
+  "RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features",
+  "tsc -p crates/js/tsconfig.json",
+  "biome ci --error-on-warnings",
+  # Build each crate with its own features only, so a feature that another crate turns on hides no gap.
+  'for manifest in crates/*/Cargo.toml; do cargo check --manifest-path "$manifest" --all-targets; done',
+]

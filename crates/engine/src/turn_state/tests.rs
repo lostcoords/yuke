@@ -83,8 +83,14 @@ fn tool_answer(finish_reason: FinishReason) -> Completion {
 fn send_after_a_round_sends_another_request_without_input() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(answer("done"), origin());
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
+    assert!(matches!(
+        turn_state.model_finished(answer("done"), origin()),
+        Action::AfterRound { .. }
+    ));
 
     assert!(matches!(turn_state.send(Vec::new()), Action::Send(_)));
 
@@ -95,7 +101,10 @@ fn send_after_a_round_sends_another_request_without_input() {
 fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_next_request() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
 
     let action = turn_state.model_finished(tool_answer(FinishReason::ToolCalls), origin());
     assert_eq!(called_names(action), ["read", "write"]);
@@ -136,7 +145,10 @@ fn tool_call_answer_asks_for_its_calls_and_the_results_and_new_input_join_the_ne
 fn stop_finish_with_tool_calls_runs_them() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
 
     let action = turn_state.model_finished(tool_answer(FinishReason::Stop), origin());
 
@@ -147,7 +159,10 @@ fn stop_finish_with_tool_calls_runs_them() {
 fn length_finish_runs_no_tool_and_asks_the_model_again() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
 
     let action = turn_state.model_finished(tool_answer(FinishReason::Length), origin());
     assert!(matches!(
@@ -179,8 +194,14 @@ fn length_finish_runs_no_tool_and_asks_the_model_again() {
 fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
-    let _ = turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin());
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
+    assert!(matches!(
+        turn_state.model_finished(tool_answer(FinishReason::ContentFilter), origin()),
+        Action::AfterRound { .. }
+    ));
 
     assert!(matches!(
         turn_state.proceed(Vec::new()),
@@ -207,7 +228,10 @@ fn content_filter_finish_runs_no_tool_and_ends_the_turn() {
 fn cancelled_request_keeps_its_text_and_gives_each_call_an_error_result() {
     let mut context = Vec::new();
     let mut turn_state = TurnState::new(&mut context, None);
-    let _ = turn_state.send(vec![Block::user_text("one")]);
+    assert!(matches!(
+        turn_state.send(vec![Block::user_text("one")]),
+        Action::Send(_)
+    ));
 
     let action = turn_state.model_cancelled(vec![
         Partial::Text("Let me check.".to_owned()),
